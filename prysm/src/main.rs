@@ -1,7 +1,5 @@
 
 use anyhow::Result;
-use futures::{pin_mut, StreamExt};
-use tracing::info;
 use desktop_renderer::DesktopRenderer;
 use prysm_capture::PrysmCapturer;
 use prysm_processor::PrysmProcessor;
@@ -13,23 +11,17 @@ async fn main() -> Result<()> {
     let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let mut capturer = V4lCapturer::new("/dev/video0")?;
-    let mut processor = PrysmProcessor::default();
+    // Leak capturer and processor to make them 'static
+    // This is acceptable since they need to live for the entire program duration
+    let capturer = Box::leak(Box::new(V4lCapturer::new("/dev/video0")?));
+    let processor = Box::leak(Box::new(PrysmProcessor::default()));
     let mut renderer = DesktopRenderer::new();
 
     let video_feed = capturer.run(1920, 1080);
-    let regions =  processor.run(video_feed);
+    let regions = processor.run(video_feed);
 
+    // This blocks until the window is closed
     renderer.run(regions);
-
-    // pin_mut!(stream);
-    //
-    // while let Some(update) = stream.next().await {
-    //     info!("Update:");
-    //     for (zone, color) in &update {
-    //         info!("{:?}: rgb({}, {}, {})", zone, color.r, color.g, color.b);
-    //     }
-    // }
 
     Ok(())
 }

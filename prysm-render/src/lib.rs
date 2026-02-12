@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use futures::Stream;
 
 pub trait PrysmRenderer {
-    fn run(&mut self, input: impl Stream<Item = HashMap<Zone, Color>>);
+    fn run(&mut self, input: impl Stream<Item = HashMap<Zone, Color>> + Send + 'static);
 }
 
 
