@@ -1,0 +1,7 @@
+[workspace]
+resolver = "3"
+members = ["prysm", "prysm-capture", "prysm-render", "renderers/desktop-renderer", "renderers/led-renderer"]
+
+[workspace.dependencies]
+tokio = { version = "1"}
+tokio-stream = {version = "0.1"}
