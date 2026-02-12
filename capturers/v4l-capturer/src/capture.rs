@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use async_stream::stream;
 use futures::{Stream};
 use prysm_capture::{Frame,PrysmCapturer};
-use tracing::info;
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
@@ -52,15 +51,28 @@ impl V4lCapturer {
 impl PrysmCapturer for V4lCapturer {
     fn run(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_ {
         let (mut input_stream, format) = self.create_stream(width, height).expect("Failed to create stream");
-        info!("stream started with format: {:?}", format);
+        tracing::info!("stream started with format: {:?}", format);
 
         stream! {
 
             loop {
                 match input_stream.next() {
                     Ok((buffer, _metadata)) => {
+                        // Extract actual RGB data, removing any padding
+                        let bytes_per_pixel = 3; // RGB3 format
+                        let row_size = format.width as usize * bytes_per_pixel;
+                        let stride = format.stride as usize;
+
+                        let mut rgb_data = Vec::with_capacity(format.height as usize * row_size);
+
+                        for row in 0..format.height as usize {
+                            let row_start = row * stride;
+                            let row_end = row_start + row_size;
+                            rgb_data.extend_from_slice(&buffer[row_start..row_end]);
+                        }
+
                         yield Frame {
-                            data: buffer.to_vec(),
+                            data: rgb_data,
                             height: format.height,
                             width: format.width,
                         }

@@ -1,4 +1,5 @@
 
+use futures::StreamExt;
 use anyhow::Result;
 use desktop_renderer::DesktopRenderer;
 use prysm_capture::{Frame, PrysmCapturer};
@@ -17,7 +18,7 @@ async fn main() -> Result<()> {
     // This is acceptable since they need to live for the entire program duration
     let capturer = Box::leak(Box::new(V4lCapturer::new("/dev/video0")?));
     let processor = Box::leak(Box::new(PrysmProcessor::default()));
-    let mut renderer = DesktopRenderer::new();
+    let renderer = DesktopRenderer::new();
 
     let video_feed = capturer.run(800, 600);
 
