@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "prysm-render", "renderers/desktop-renderer", "renderers/led-renderer"]
+members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "prysm-render", "renderers/desktop-renderer", "renderers/led-renderer", "capturers/v4l-capturer"]
 
 [workspace.dependencies]
 tokio = { version = "1"}
