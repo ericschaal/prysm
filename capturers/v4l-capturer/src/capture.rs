@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_stream::stream;
 use futures::{Stream};
-use prysm_capture::{CaptureMessage, Frame, Info, PrysmCapturer};
+use prysm_capture::{Frame,PrysmCapturer};
 use tracing::info;
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
@@ -50,18 +50,20 @@ impl V4lCapturer {
 }
 
 impl PrysmCapturer for V4lCapturer {
-    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = CaptureMessage> + '_ {
+    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_ {
         let (mut input_stream, format) = self.create_stream(width, height).expect("Failed to create stream");
         info!("stream started with format: {:?}", format);
 
         stream! {
 
-            yield CaptureMessage::Info(Info {height: format.height, width: format.width});
-
             loop {
                 match input_stream.next() {
                     Ok((buffer, _metadata)) => {
-                        yield CaptureMessage::Frame(Frame(buffer.to_vec()));
+                        yield Frame {
+                            data: buffer.to_vec(),
+                            height: format.height,
+                            width: format.width,
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Error capturing frame: {}", e);

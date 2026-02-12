@@ -14,13 +14,16 @@ async fn main() -> Result<()> {
     let mut capturer = V4lCapturer::new("/dev/video0")?;
     let video_feed = capturer.start(1920, 1080);
 
-    let mut processor = PrysmProcessor::new();
+    let mut processor = PrysmProcessor::default();
     let stream =  processor.run(video_feed);
 
     pin_mut!(stream);
 
-    while let Some(stream) = stream.next().await {
-        info!("Got tiny frame")
+    while let Some(update) = stream.next().await {
+        info!("Update:");
+        for (zone, color) in &update {
+            info!("{:?}: rgb({}, {}, {})", zone, color.r, color.g, color.b);
+        }
     }
 
 

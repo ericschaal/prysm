@@ -3,20 +3,13 @@
 use futures::Stream;
 
 #[derive(Debug, Clone)]
-pub struct Frame(pub Vec<u8>);
-
-
-#[derive(Debug, Clone)]
-pub struct Info {
+pub struct Frame {
+    pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
 }
 
-pub enum CaptureMessage {
-    Frame(Frame),
-    Info(Info)
-}
 
 pub trait PrysmCapturer {
-    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = CaptureMessage> + '_;
+    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_;
 }

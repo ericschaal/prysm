@@ -1,28 +1,30 @@
-use std::marker::PhantomData;
-use async_stream::stream;
-use futures::{pin_mut, Stream, StreamExt};
-use prysm_capture::CaptureMessage;
-use prysm_render::TinyFrame;
+use std::collections::HashMap;
+use futures::{Stream, StreamExt};
+use prysm_capture::{Frame};
+use prysm_core::{Color, Config, Zone};
+use crate::color::ColorProcessor;
+
+mod color;
 
 #[derive(Debug, Default)]
 pub struct PrysmProcessor {
+    color_processor: ColorProcessor
 }
 
-
 impl PrysmProcessor {
-    #[must_use]
-    pub fn new() -> Self {
+
+    pub fn new(config: Config) -> Self {
         Self {
+            color_processor: ColorProcessor::new(config),
         }
     }
 
-    pub async fn run<'a>(&mut self, input: impl Stream<Item = CaptureMessage> + 'a) -> impl Stream<Item = TinyFrame> + 'a {
-        pin_mut!(input);
-
-        stream! {
-            while let Some(message) = input.next().await {
-                yield TinyFrame;
-            }
-        }
+    pub fn run<'a>(
+        &'a mut self,
+        input: impl Stream<Item = Frame> + 'a
+    ) -> impl Stream<Item = HashMap<Zone, Color>> + 'a {
+        input.map(|frame| self.color_processor.process_frame(&frame))
     }
+
+
 }
