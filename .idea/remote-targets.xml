@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteTargetsManager">
+    <targets>
+      <target name="eschaal@192.168.139.195:22" type="ssh/sftp" uuid="614c33dd-45b1-4302-ac91-b03084186f59">
+        <config>
+          <option name="projectRootOnTarget" value="/home/eschaal/src/prysm" />
+          <option name="serverName" value="eschaal@192.168.139.195:22 password" />
+          <option name="useRsync" value="true" />
+        </config>
+        <ContributedStateBase type="RsLanguageRuntime">
+          <config>
+            <option name="cargoPath" value="/home/eschaal/.cargo/bin/cargo" />
+            <option name="cargoVersion" value="1.93.0 (083ac5135 2025-12-15)" />
+            <option name="rustcPath" value="/home/eschaal/.cargo/bin/rustc" />
+            <option name="rustcVersion" value="1.93.0 (254b59607 2026-01-19)" />
+          </config>
+        </ContributedStateBase>
+      </target>
+    </targets>
+  </component>
+</project>

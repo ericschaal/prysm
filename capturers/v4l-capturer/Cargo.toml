@@ -3,4 +3,14 @@ name = "v4l-capturer"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
+v4l = {version = "0.14.0", features = []}
+tokio-stream.workspace = true
+tracing.workspace =  true
+anyhow.workspace = true
+futures.workspace = true
+prysm-capture = {path = "../../prysm-capture"}
+prysm-core = {path = "../../prysm-core"}

@@ -3,4 +3,9 @@ name = "prysm-capture"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
+prysm-core = {path = "../prysm-core"}
+futures.workspace = true
