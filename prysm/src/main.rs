@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let processor = Box::leak(Box::new(PrysmProcessor::default()));
     let mut renderer = DesktopRenderer::new();
 
-    let video_feed = capturer.run(1920, 1080);
+    let video_feed = capturer.run(800, 600);
     let regions = processor.run(video_feed);
 
     // This blocks until the window is closed
