@@ -1,50 +1,40 @@
 use anyhow::{Context, Result};
 use async_stream::stream;
-use futures::{Stream, stream};
-use prysm_capture::VideoCaptureBackend;
-use prysm_core::Frame;
-use std::pin::Pin;
-use std::sync::Arc;
+use futures::{Stream};
+use prysm_capture::{CaptureMessage, Frame, Info, PrysmCapturer};
+use tracing::info;
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
 use v4l::video::Capture;
-use v4l::{Device, FourCC};
+use v4l::{Device, Format, FourCC};
 
-pub struct VideoCapture {
+pub struct V4lCapturer {
     device: Device,
-    width: u32,
-    height: u32,
 }
 
-impl VideoCapture {
-    pub fn new(device_path: &str, width: u32, height: u32) -> Result<Self> {
+impl V4lCapturer {
+    pub fn new(device_path: &str) -> Result<Self> {
         tracing::info!("Opening video device: {}", device_path);
         let device = Device::with_path(device_path).context("Failed to open video device")?;
 
         Ok(Self {
             device,
-            width,
-            height,
         })
     }
 
-    fn create_stream(&mut self) -> Result<MmapStream<'_>> {
-        tracing::info!("Starting video capture at {}x{}", self.width, self.height);
-
-        // Set format
+    fn create_stream(&mut self, width: u32, height: u32) -> Result<(MmapStream<'_>, Format)> {
         let mut fmt = self.device.format()?;
-        tracing::info!("Original video device settings: {fmt:?}");
 
-        fmt.width = self.width;
-        fmt.height = self.height;
+        fmt.width = width;
+        fmt.height = height;
         fmt.fourcc = FourCC::new(b"RGB3"); // Try RGB24 first
 
         self.device
             .set_format(&fmt)
             .context("Format not supported")?;
 
-        let fmt = self.device.format()?;
+        let format = self.device.format()?;
         tracing::info!(
             "Video format set to: {:?} {}x{}",
             fmt.fourcc,
@@ -52,33 +42,26 @@ impl VideoCapture {
             fmt.height
         );
 
-        // Update actual dimensions
-        self.width = fmt.width;
-        self.height = fmt.height;
-
-        // Create stream
         let mmap_stream = MmapStream::with_buffers(&self.device, Type::VideoCapture, 4)
             .context("Failed to create stream")?;
 
-        Ok(mmap_stream)
+        Ok((mmap_stream, format))
     }
 }
 
-impl VideoCaptureBackend for VideoCapture {
-    fn start(&mut self) -> impl Stream<Item = Frame> + '_ {
-        let width = self.width;
-        let height = self.height;
-        let mut input = self.create_stream().expect("Failed to create stream");
+impl PrysmCapturer for V4lCapturer {
+    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = CaptureMessage> + '_ {
+        let (mut input_stream, format) = self.create_stream(width, height).expect("Failed to create stream");
+        info!("stream started with format: {:?}", format);
 
         stream! {
+
+            yield CaptureMessage::Info(Info {height: format.height, width: format.width});
+
             loop {
-                match input.next() {
+                match input_stream.next() {
                     Ok((buffer, _metadata)) => {
-                        yield Frame {
-                            buffer: buffer.to_vec(),
-                            width,
-                            height,
-                        };
+                        yield CaptureMessage::Frame(Frame(buffer.to_vec()));
                     }
                     Err(e) => {
                         tracing::error!("Error capturing frame: {}", e);

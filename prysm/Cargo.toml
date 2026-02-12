@@ -8,3 +8,13 @@ workspace = true
 
 [dependencies]
 tokio = {workspace = true, features = ["full"]}
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+async-stream.workspace = true
+prysm-capture = { path = "../prysm-capture" }
+prysm-render = {path = "../prysm-render"}
+prysm-processor = {path = "../prysm-processor"}
+prysm-core = { path = "../prysm-core" }
+v4l-capturer = {path = "../capturers/v4l-capturer"}

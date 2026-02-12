@@ -9,7 +9,6 @@ workspace = true
 [dependencies]
 tokio = { workspace = true, features = ["full"] }
 v4l = { version = "0.14.0", features = [] }
-tokio-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
