@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use futures::{Stream, StreamExt};
 use prysm_capture::{Frame};
-use prysm_core::{Color, Config, Zone};
+use prysm_core::{Config};
+use prysm_render::{Color, Zone};
 use crate::color::ColorProcessor;
 
 mod color;

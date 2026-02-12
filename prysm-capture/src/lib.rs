@@ -11,5 +11,5 @@ pub struct Frame {
 
 
 pub trait PrysmCapturer {
-    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_;
+    fn run(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_;
 }

@@ -50,7 +50,7 @@ impl V4lCapturer {
 }
 
 impl PrysmCapturer for V4lCapturer {
-    fn start(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_ {
+    fn run(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_ {
         let (mut input_stream, format) = self.create_stream(width, height).expect("Failed to create stream");
         info!("stream started with format: {:?}", format);
 

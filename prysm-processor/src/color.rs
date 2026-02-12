@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use image::{ImageBuffer, Rgb};
 use prysm_capture::Frame;
-use prysm_core::{Color, Config, Zone};
+use prysm_core::{Config};
+use prysm_render::{Color, Zone};
 
 #[derive(Debug, Default)]
 pub struct ColorProcessor {
