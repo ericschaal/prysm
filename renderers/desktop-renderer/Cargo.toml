@@ -12,6 +12,8 @@ anyhow.workspace = true
 futures.workspace = true
 async-stream.workspace = true
 prysm-render = { path = "../../prysm-render" }
+prysm-capture = { path = "../../prysm-capture" }
+tokio-stream = { workspace = true }
 
 # Desktop renderer dependencies
 eframe = "0.33"
