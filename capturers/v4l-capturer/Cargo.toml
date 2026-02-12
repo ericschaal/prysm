@@ -7,10 +7,13 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-v4l = {version = "0.14.0", features = []}
+tokio = { workspace = true, features = ["full"] }
+v4l = { version = "0.14.0", features = [] }
 tokio-stream.workspace = true
-tracing.workspace =  true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 anyhow.workspace = true
 futures.workspace = true
-prysm-capture = {path = "../../prysm-capture"}
-prysm-core = {path = "../../prysm-core"}
+async-stream.workspace = true
+prysm-capture = { path = "../../prysm-capture" }
+prysm-core = { path = "../../prysm-core" }

@@ -1,6 +1,6 @@
 #[derive(Debug, Clone)]
-pub struct Frame<'a> {
-    pub buffer: &'a [u8],
+pub struct Frame {
+    pub buffer: Vec<u8>,
     pub width: u32,
     pub height: u32,
 }
