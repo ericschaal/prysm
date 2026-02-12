@@ -2,11 +2,9 @@
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Number of LEDs per zone
-    pub leds_per_zone: usize,
-
-    /// Total number of LEDs
-    pub total_leds: usize,
+    /// Sample density per 1000 pixels of edge length
+    /// Example: 40 samples per 1000px means a 1920px edge gets ~77 samples
+    pub samples_per_1000px: usize,
 
     /// Brightness (0.0 to 1.0)
     pub brightness: f32,
@@ -14,8 +12,8 @@ pub struct Config {
     /// Smoothing factor for color transitions (0.0 = no smoothing, 1.0 = maximum smoothing)
     pub smoothing: f32,
 
-    /// Depth of the edge sampling (as fraction of screen, e.g., 0.1 = 10% from edge)
-    pub edge_depth: f32,
+    /// Depth of the edge sampling in pixels from the screen edge
+    pub edge_depth_px: u32,
 
     /// Target FPS
     pub target_fps: u32,
@@ -24,11 +22,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            leds_per_zone: 20,
-            total_leds: 160,
+            samples_per_1000px: 50,
             brightness: 0.8,
             smoothing: 0.7,
-            edge_depth: 0.15,
+            edge_depth_px: 50,
             target_fps: 30,
         }
     }

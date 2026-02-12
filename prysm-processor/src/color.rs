@@ -1,27 +1,33 @@
-use std::collections::HashMap;
 use image::{ImageBuffer, Rgb};
 use prysm_capture::Frame;
 use prysm_core::{Config};
-use prysm_render::{Color, Zone};
+use prysm_render::{Color, ColorSpectrum, Edge, EdgeSpectrums};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ColorProcessor {
     config: Config,
-    previous_colors: HashMap<Zone, Color>,
+    previous_spectrums: Option<EdgeSpectrums>,
+}
+
+impl Default for ColorProcessor {
+    fn default() -> Self {
+        Self {
+            config: Config::default(),
+            previous_spectrums: None,
+        }
+    }
 }
 
 impl ColorProcessor {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            previous_colors: HashMap::new(),
+            previous_spectrums: None,
         }
     }
 
-    /// Process a frame and extract colors for each zone
-    pub fn process_frame(&mut self, frame: &Frame) -> HashMap<Zone, Color> {
-        let mut zone_colors = HashMap::new();
-
+    /// Process a frame and extract color spectrums for each edge
+    pub fn process_frame(&mut self, frame: &Frame) -> EdgeSpectrums {
         // Convert frame data to image buffer for easier processing
         let img = ImageBuffer::<Rgb<u8>, _>::from_raw(
             frame.width,
@@ -31,46 +37,98 @@ impl ColorProcessor {
 
         if img.is_none() {
             tracing::error!("Failed to create image buffer from frame");
-            return zone_colors;
+            // Return black spectrums on error
+            return EdgeSpectrums::black(
+                frame.width as usize,
+                frame.height as usize,
+                self.config.samples_per_1000px,
+            );
         }
 
         let img = img.unwrap();
 
-        for zone in Zone::all() {
-            let color = self.extract_zone_color(&img, *zone);
+        // Extract spectrum for each edge
+        let top_spectrum = self.extract_edge_spectrum(&img, Edge::Top);
+        let right_spectrum = self.extract_edge_spectrum(&img, Edge::Right);
+        let bottom_spectrum = self.extract_edge_spectrum(&img, Edge::Bottom);
+        let left_spectrum = self.extract_edge_spectrum(&img, Edge::Left);
 
-            // Apply smoothing with previous frame
-            let smoothed_color = if let Some(prev_color) = self.previous_colors.get(zone) {
-                prev_color.blend(&color, 1.0 - self.config.smoothing)
-            } else {
-                color
-            };
+        let current_spectrums = EdgeSpectrums::new(
+            top_spectrum,
+            right_spectrum,
+            bottom_spectrum,
+            left_spectrum,
+        );
 
-            zone_colors.insert(*zone, smoothed_color);
-            self.previous_colors.insert(*zone, smoothed_color);
-        }
-
-        zone_colors
-    }
-
-    /// Extract average color from a specific zone
-    fn extract_zone_color(&self, img: &ImageBuffer<Rgb<u8>, Vec<u8>>, zone: Zone) -> Color {
-        let (width, height) = img.dimensions();
-        let edge_depth = (self.config.edge_depth * width.min(height) as f32) as u32;
-
-        // Define zone boundaries
-        let (x_start, y_start, x_end, y_end) = match zone {
-            Zone::TopLeft => (0, 0, edge_depth, edge_depth),
-            Zone::Top => (edge_depth, 0, width - edge_depth, edge_depth),
-            Zone::TopRight => (width - edge_depth, 0, width, edge_depth),
-            Zone::Right => (width - edge_depth, edge_depth, width, height - edge_depth),
-            Zone::BottomRight => (width - edge_depth, height - edge_depth, width, height),
-            Zone::Bottom => (edge_depth, height - edge_depth, width - edge_depth, height),
-            Zone::BottomLeft => (0, height - edge_depth, edge_depth, height),
-            Zone::Left => (0, edge_depth, edge_depth, height - edge_depth),
+        // Apply temporal smoothing
+        let smoothed_spectrums = if let Some(ref prev) = self.previous_spectrums {
+            prev.blend(&current_spectrums, 1.0 - self.config.smoothing)
+        } else {
+            current_spectrums.clone()
         };
 
-        Self::average_color_in_region(img, x_start, y_start, x_end, y_end)
+        self.previous_spectrums = Some(smoothed_spectrums.clone());
+        smoothed_spectrums
+    }
+
+    /// Extract color spectrum from a specific edge
+    fn extract_edge_spectrum(&self, img: &ImageBuffer<Rgb<u8>, Vec<u8>>, edge: Edge) -> ColorSpectrum {
+        let (width, height) = img.dimensions();
+
+        // Calculate sample count based on edge length
+        let (edge_length, sample_count) = match edge {
+            Edge::Top | Edge::Bottom => {
+                let length = width;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                (length, samples)
+            }
+            Edge::Left | Edge::Right => {
+                let length = height;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                (length, samples)
+            }
+        };
+
+        // Use fixed edge depth in pixels (uniform for all edges)
+        let edge_depth = self.config.edge_depth_px;
+
+        let segment_length = edge_length as f32 / sample_count as f32;
+
+        // Extract color samples along the edge
+        let mut samples = Vec::with_capacity(sample_count);
+
+        for i in 0..sample_count {
+            let segment_start = (i as f32 * segment_length) as u32;
+            let segment_end = ((i + 1) as f32 * segment_length).min(edge_length as f32) as u32;
+
+            // Define the sampling region for this segment
+            // All edges sample in consistent directions that match rendering:
+            // - Horizontal edges: left to right
+            // - Vertical edges: top to bottom
+            let (x_start, y_start, x_end, y_end) = match edge {
+                Edge::Top => {
+                    // Sample from top edge, left to right
+                    (segment_start, 0, segment_end, edge_depth)
+                }
+                Edge::Bottom => {
+                    // Sample from bottom edge, left to right
+                    (segment_start, height - edge_depth, segment_end, height)
+                }
+                Edge::Left => {
+                    // Sample from left edge, top to bottom
+                    (0, segment_start, edge_depth, segment_end)
+                }
+                Edge::Right => {
+                    // Sample from right edge, top to bottom
+                    (width - edge_depth, segment_start, width, segment_end)
+                }
+            };
+
+            let color = Self::average_color_in_region(img, x_start, y_start, x_end, y_end);
+            samples.push(color);
+        }
+
+        ColorSpectrum::new(samples)
     }
 
     /// Calculate average color in a rectangular region
@@ -109,10 +167,5 @@ impl ColorProcessor {
             (g_sum / count) as u8,
             (b_sum / count) as u8,
         )
-    }
-
-    /// Update configuration
-    pub fn update_config(&mut self, config: Config) {
-        self.config = config;
     }
 }

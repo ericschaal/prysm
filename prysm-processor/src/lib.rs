@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use futures::{Stream, StreamExt};
 use prysm_capture::{Frame};
 use prysm_core::{Config};
-use prysm_render::{Color, Zone};
+use prysm_render::{EdgeSpectrums};
 use crate::color::ColorProcessor;
 
 mod color;
@@ -23,7 +22,7 @@ impl PrysmProcessor {
     pub fn run<'a>(
         &'a mut self,
         input: impl Stream<Item = Frame> + 'a
-    ) -> impl Stream<Item = HashMap<Zone, Color>> + 'a {
+    ) -> impl Stream<Item = EdgeSpectrums> + 'a {
         input.map(|frame| self.color_processor.process_frame(&frame))
     }
 
