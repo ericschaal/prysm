@@ -158,10 +158,10 @@ impl EdgeSpectra {
     /// Create `EdgeSpectra` filled with the specified color
     /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
-    pub fn fill(color: Color, width: usize, height: usize, samples_per_1000px: usize) -> Self {
-        let top_samples = ((width as f32 / 1000.0) * samples_per_1000px as f32).max(1.0) as usize;
+    pub fn fill(color: Color, width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
+        let top_samples = sample_density.samples_for_length(width);
         let bottom_samples = top_samples;
-        let left_samples = ((height as f32 / 1000.0) * samples_per_1000px as f32).max(1.0) as usize;
+        let left_samples = sample_density.samples_for_length(height);
         let right_samples = left_samples;
 
         Self {
@@ -175,8 +175,8 @@ impl EdgeSpectra {
     /// Create `EdgeSpectra` with all black colors
     /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
-    pub fn black(width: usize, height: usize, samples_per_1000px: usize) -> Self {
-        Self::fill(Color::black(), width, height, samples_per_1000px)
+    pub fn black(width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
+        Self::fill(Color::black(), width, height, sample_density)
     }
 
     /// Create a dummy EdgeSpectra (filled with magenta to make it obviously a placeholder)
@@ -190,7 +190,7 @@ impl EdgeSpectra {
             },
             width,
             height,
-            1,
+            crate::SampleDensity(1),
         )
     }
 
@@ -210,7 +210,7 @@ impl EdgeSpectra {
 
 impl Default for EdgeSpectra {
     fn default() -> Self {
-        Self::black(1920, 1080, 50)
+        Self::black(1920, 1080, crate::SampleDensity(50))
     }
 }
 

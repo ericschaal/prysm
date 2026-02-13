@@ -54,7 +54,7 @@ impl PrysmProcessor {
         Self {
             algorithm: Box::new(EdgeSamplingAlgorithm::new(
                 config.sample_step,
-                config.samples_per_1000px,
+                config.sample_density,
                 config.edge_depth_px,
             )),
             post_processor: Some(Box::new(TemporalSmoothingProcessor::new(

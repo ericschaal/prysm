@@ -2,7 +2,7 @@ use crate::algorithm::Algorithm;
 use crate::pixel_reader::PixelReader;
 use crate::pixel_readers::{Rgb24Reader, YuyvReader};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectra};
+use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectra, SampleDensity};
 use std::ops::Range;
 
 /// Edge sampling algorithm - analyzes edge regions and extracts color spectra
@@ -16,7 +16,7 @@ pub struct EdgeSamplingAlgorithm {
     /// Sample step for region averaging (e.g., 4 = sample every 4th pixel)
     sample_step: usize,
     /// Sample density per 1000 pixels of edge length
-    samples_per_1000px: usize,
+    sample_density: SampleDensity,
     /// Depth of edge sampling in pixels from the screen edge
     edge_depth_px: u32,
 }
@@ -26,7 +26,7 @@ impl Default for EdgeSamplingAlgorithm {
         Self {
             sample_step: 1,
             edge_depth_px: 1,
-            samples_per_1000px: 1000,
+            sample_density: SampleDensity(1000),
         }
     }
 }
@@ -41,7 +41,7 @@ impl Algorithm for EdgeSamplingAlgorithm {
                 EdgeSpectra::black(
                     frame.width as usize,
                     frame.height as usize,
-                    self.samples_per_1000px,
+                    self.sample_density,
                 )
             }
         }
@@ -50,10 +50,10 @@ impl Algorithm for EdgeSamplingAlgorithm {
 
 impl EdgeSamplingAlgorithm {
     #[must_use]
-    pub fn new(sample_step: usize, samples_per_1000px: usize, edge_depth_px: u32) -> Self {
+    pub fn new(sample_step: usize, sample_density: SampleDensity, edge_depth_px: u32) -> Self {
         Self {
             sample_step,
-            samples_per_1000px,
+            sample_density,
             edge_depth_px,
         }
     }
@@ -88,14 +88,12 @@ impl EdgeSamplingAlgorithm {
         let (edge_length, sample_count) = match edge {
             Edge::Top | Edge::Bottom => {
                 let length = width;
-                let samples =
-                    ((length as f32 / 1000.0) * self.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = self.sample_density.samples_for_length(length as usize);
                 (length, samples)
             }
             Edge::Left | Edge::Right => {
                 let length = height;
-                let samples =
-                    ((length as f32 / 1000.0) * self.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = self.sample_density.samples_for_length(length as usize);
                 (length, samples)
             }
         };
