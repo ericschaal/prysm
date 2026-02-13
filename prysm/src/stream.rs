@@ -1,7 +1,9 @@
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use futures::Stream;
+use futures::{Stream, StreamExt};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
 /// State shared between two tee'd streams
 struct TeeState<S, T> {
@@ -83,4 +85,32 @@ where
     };
 
     (stream1, stream2)
+}
+
+pub fn stream_split<S>(source: S) -> (impl Stream<Item = S::Item>, impl Stream<Item = S::Item>)
+where
+    S: Stream + Send + 'static,
+    S::Item: Clone + Send,
+{
+    // Create broadcast channel for frame distribution
+    let (frame_tx, processor_rx) = broadcast::channel::<S::Item>(10);
+
+    // Subscribe to broadcast for renderer
+    let renderer_rx = frame_tx.subscribe();
+
+    // Spawn task to broadcast frames
+    tokio::spawn(async move {
+        futures::pin_mut!(source);
+        while let Some(frame) = source.next().await {
+            let _ = frame_tx.send(frame);
+        }
+    });
+
+    // Convert broadcast receiver to stream for processor
+    let processor_stream = BroadcastStream::new(processor_rx)
+        .filter_map(|result| async move { result.ok() });
+    let renderer_stream = BroadcastStream::new(renderer_rx)
+        .filter_map(|result| async move { result.ok() });
+
+    (processor_stream, renderer_stream)
 }
