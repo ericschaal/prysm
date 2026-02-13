@@ -49,12 +49,11 @@ fn main() -> Result<()> {
                 let capturer = V4lCapturer::new("/dev/video2", shutdown_token.clone())
                     .expect("Failed to create V4L capturer");
                 let processor = PrysmProcessor::default();
-                let config = prysm_core::Config::default();
 
                 // Create async streams
                 let video_feed = capturer.into_stream(CAPTURE_WIDTH, CAPTURE_HEIGHT);
                 let (frame_stream, frame_stream_bis) = stream::stream_split(video_feed);
-                let spectrum_stream = processor.into_stream(config, frame_stream);
+                let spectrum_stream = processor.into_stream(frame_stream);
 
                 let spectrum_task = spectrums.into_task(spectrum_stream);
                 let frame_task = frames.into_task(frame_stream_bis);

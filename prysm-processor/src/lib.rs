@@ -1,5 +1,3 @@
-#![no_main]
-
 use futures::{Stream, StreamExt};
 use prysm_capture::Frame;
 use prysm_core::{Config, EdgeSpectrums};
@@ -22,14 +20,25 @@ pub use post_processors::{ChainedPostProcessor, TemporalSmoothingProcessor};
 /// Combines an Algorithm (frame analysis) with optional PostProcessor(s)
 /// (temporal smoothing, brightness, etc.) to generate edge color spectrums.
 ///
+/// Configuration is baked in at construction time via `Config`, making
+/// the processor stateful but eliminating per-frame config overhead.
+///
 /// # Example
 /// ```ignore
+/// use prysm_core::Config;
+///
 /// // Default behavior (edge sampling + temporal smoothing)
 /// let processor = PrysmProcessor::default();
 ///
 /// // Custom configuration
-/// let processor = PrysmProcessor::new()
-///     .with_algorithm(EdgeSamplingAlgorithm)
+/// let mut config = Config::default();
+/// config.sample_step = 2;
+/// config.temporal_smoothing = 0.8;
+/// let processor = PrysmProcessor::new(&config);
+///
+/// // Or customize algorithm/post-processor directly
+/// let processor = PrysmProcessor::new(&config)
+///     .with_algorithm(EdgeSamplingAlgorithm::new(4, 50, 100))
 ///     .with_post_processor(TemporalSmoothingProcessor::new(0.7));
 /// ```
 #[derive(Debug)]
@@ -39,12 +48,18 @@ pub struct PrysmProcessor {
 }
 
 impl PrysmProcessor {
-    /// Create a new processor with default algorithm and no post-processing
+    /// Create a new processor with default edge sampling and temporal smoothing post processing
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
-            algorithm: Box::new(EdgeSamplingAlgorithm),
-            post_processor: None,
+            algorithm: Box::new(EdgeSamplingAlgorithm::new(
+                config.sample_step,
+                config.samples_per_1000px,
+                config.edge_depth_px,
+            )),
+            post_processor: Some(Box::new(TemporalSmoothingProcessor::new(
+                config.temporal_smoothing,
+            ))),
         }
     }
 
@@ -71,14 +86,15 @@ impl PrysmProcessor {
 
     /// Process a single frame
     ///
+    /// Uses the algorithm and post-processor configured during construction.
+    ///
     /// # Arguments
     /// * `frame` - Frame to process
-    /// * `config` - Processing configuration
     ///
     /// # Returns
     /// `EdgeSpectrums` for the frame
-    pub fn process_frame(&mut self, frame: &Frame, config: &Config) -> EdgeSpectrums {
-        let spectrums = self.algorithm.process(frame, config);
+    pub fn process_frame(&mut self, frame: &Frame) -> EdgeSpectrums {
+        let spectrums = self.algorithm.process(frame);
 
         if let Some(ref mut post_processor) = self.post_processor {
             post_processor.process(spectrums)
@@ -89,25 +105,24 @@ impl PrysmProcessor {
 
     /// Convert into a stream processor
     ///
+    /// Consumes the processor and transforms a frame stream into an edge spectrum stream.
+    /// Uses the algorithm and post-processor configured during construction.
+    ///
     /// # Arguments
-    /// * `config` - Processing configuration
     /// * `input` - Input frame stream
     ///
     /// # Returns
     /// Stream of `EdgeSpectrums`
     pub fn into_stream(
         mut self,
-        config: Config,
         input: impl Stream<Item = Frame> + Send + 'static,
     ) -> impl Stream<Item = EdgeSpectrums> + Send + 'static {
-        input.map(move |frame| self.process_frame(&frame, &config))
+        input.map(move |frame| self.process_frame(&frame))
     }
 }
 
 impl Default for PrysmProcessor {
     fn default() -> Self {
-        Self::new()
-            .with_algorithm(EdgeSamplingAlgorithm)
-            .with_post_processor(TemporalSmoothingProcessor::default())
+        Self::new(&Config::default())
     }
 }

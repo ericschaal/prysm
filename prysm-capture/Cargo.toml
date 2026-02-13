@@ -8,4 +8,4 @@ workspace = true
 
 [dependencies]
 futures.workspace = true
-yuv = { version = "0.8", features = ["fast_mode"] }
+yuv = { workspace = true, features = ["fast_mode"] }

@@ -8,10 +8,12 @@ pub struct Config {
     pub brightness: f32,
 
     /// Smoothing factor for color transitions (0.0 = no smoothing, 1.0 = maximum smoothing)
-    pub smoothing: f32,
+    pub temporal_smoothing: f32,
 
     /// Depth of the edge sampling in pixels from the screen edge
     pub edge_depth_px: u32,
+
+    pub sample_step: usize,
 
     /// Target FPS
     pub target_fps: u32,
@@ -22,8 +24,9 @@ impl Default for Config {
         Self {
             samples_per_1000px: 50,
             brightness: 0.8,
-            smoothing: 0.7,
+            temporal_smoothing: 0.7,
             edge_depth_px: 100,
+            sample_step: 4,
             target_fps: 30,
         }
     }

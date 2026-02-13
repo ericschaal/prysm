@@ -2,26 +2,46 @@ use crate::algorithm::Algorithm;
 use crate::pixel_reader::PixelReader;
 use crate::pixel_readers::{Rgb24Reader, YuyvReader};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, ColorSpectrum, Config, Edge, EdgeSpectrums};
+use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectrums};
+use std::ops::Range;
 
 /// Edge sampling algorithm - analyzes edge regions and extracts color spectrums
 ///
 /// Divides each screen edge into segments and samples the average color
 /// in each segment from a configurable depth inward from the edge.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct EdgeSamplingAlgorithm;
+///
+/// Configuration is stored in the algorithm instance for zero per-frame overhead.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeSamplingAlgorithm {
+    /// Sample step for region averaging (e.g., 4 = sample every 4th pixel)
+    sample_step: usize,
+    /// Sample density per 1000 pixels of edge length
+    samples_per_1000px: usize,
+    /// Depth of edge sampling in pixels from the screen edge
+    edge_depth_px: u32,
+}
+
+impl Default for EdgeSamplingAlgorithm {
+    fn default() -> Self {
+        Self {
+            sample_step: 1,
+            edge_depth_px: 1,
+            samples_per_1000px: 1000,
+        }
+    }
+}
 
 impl Algorithm for EdgeSamplingAlgorithm {
-    fn process(&self, frame: &Frame, config: &Config) -> EdgeSpectrums {
+    fn process(&self, frame: &Frame) -> EdgeSpectrums {
         match frame.format {
-            PixelFormat::RGB24 => self.process_with_reader(frame, config, &Rgb24Reader),
-            PixelFormat::YUYV => self.process_with_reader(frame, config, &YuyvReader),
+            PixelFormat::RGB24 => self.process_with_reader(frame, &Rgb24Reader),
+            PixelFormat::YUYV => self.process_with_reader(frame, &YuyvReader),
             PixelFormat::MJPEG | PixelFormat::BGR24 => {
                 tracing::error!("{} format not yet supported", frame.format);
                 EdgeSpectrums::black(
                     frame.width as usize,
                     frame.height as usize,
-                    config.samples_per_1000px,
+                    self.samples_per_1000px,
                 )
             }
         }
@@ -29,60 +49,62 @@ impl Algorithm for EdgeSamplingAlgorithm {
 }
 
 impl EdgeSamplingAlgorithm {
+    #[must_use]
+    pub fn new(sample_step: usize, samples_per_1000px: usize, edge_depth_px: u32) -> Self {
+        Self {
+            sample_step,
+            samples_per_1000px,
+            edge_depth_px,
+        }
+    }
+
     /// Process frame using a specific pixel reader (generic over format)
-    fn process_with_reader<R: PixelReader>(
-        &self,
-        frame: &Frame,
-        config: &Config,
-        reader: &R,
-    ) -> EdgeSpectrums {
+    fn process_with_reader<R: PixelReader>(&self, frame: &Frame, reader: &R) -> EdgeSpectrums {
         let width = frame.width;
         let height = frame.height;
 
-        // Extract spectrum for each edge using the pixel reader
-        let top_spectrum = self.extract_edge_spectrum(&frame.data, width, height, Edge::Top, config, reader);
-        let right_spectrum = self.extract_edge_spectrum(&frame.data, width, height, Edge::Right, config, reader);
-        let bottom_spectrum = self.extract_edge_spectrum(&frame.data, width, height, Edge::Bottom, config, reader);
-        let left_spectrum = self.extract_edge_spectrum(&frame.data, width, height, Edge::Left, config, reader);
+        let top_spectrum =
+            self.extract_edge_spectrum(&frame.data, width, height, Edge::Top, reader);
+        let right_spectrum =
+            self.extract_edge_spectrum(&frame.data, width, height, Edge::Right, reader);
+        let bottom_spectrum =
+            self.extract_edge_spectrum(&frame.data, width, height, Edge::Bottom, reader);
+        let left_spectrum =
+            self.extract_edge_spectrum(&frame.data, width, height, Edge::Left, reader);
 
         EdgeSpectrums::new(top_spectrum, right_spectrum, bottom_spectrum, left_spectrum)
     }
 
     /// Extract color spectrum from a specific edge (generic over pixel format)
-    ///
-    /// This consolidates the previously duplicated RGB24 and YUYV implementations
-    /// into a single generic method using the PixelReader trait.
     fn extract_edge_spectrum<R: PixelReader>(
         &self,
         data: &[u8],
         width: u32,
         height: u32,
         edge: Edge,
-        config: &Config,
         reader: &R,
     ) -> ColorSpectrum {
         // Calculate sample count based on edge length
         let (edge_length, sample_count) = match edge {
             Edge::Top | Edge::Bottom => {
                 let length = width;
-                let samples = ((length as f32 / 1000.0) * config.samples_per_1000px as f32)
-                    .max(1.0) as usize;
+                let samples =
+                    ((length as f32 / 1000.0) * self.samples_per_1000px as f32).max(1.0) as usize;
                 (length, samples)
             }
             Edge::Left | Edge::Right => {
                 let length = height;
-                let samples = ((length as f32 / 1000.0) * config.samples_per_1000px as f32)
-                    .max(1.0) as usize;
+                let samples =
+                    ((length as f32 / 1000.0) * self.samples_per_1000px as f32).max(1.0) as usize;
                 (length, samples)
             }
         };
 
         // Use fixed edge depth in pixels (uniform for all edges)
-        let edge_depth = config.edge_depth_px;
+        let edge_depth = self.edge_depth_px;
 
         let segment_length = edge_length as f32 / sample_count as f32;
 
-        // Extract color samples along the edge
         let mut samples = Vec::with_capacity(sample_count);
 
         for i in 0..sample_count {
@@ -97,24 +119,24 @@ impl EdgeSamplingAlgorithm {
                 Edge::Right => (width - edge_depth, segment_start, width, segment_end),
             };
 
-            let color = Self::average_color_in_region(data, width, x_start, y_start, x_end, y_end, reader);
+            let x_range = x_start..x_end;
+            let y_range = y_start..y_end;
+
+            let color = self.average_color_in_region(data, width, height, x_range, y_range, reader);
             samples.push(color);
         }
 
         ColorSpectrum::new(samples)
     }
 
-    /// Calculate average color in a rectangular region (generic over pixel format)
-    ///
-    /// This consolidates the previously separate RGB24 and YUYV averaging methods
-    /// into a single generic implementation using the PixelReader trait.
+    /// Calculate average color in a rectangular region
     fn average_color_in_region<R: PixelReader>(
+        &self,
         data: &[u8],
         width: u32,
-        x_start: u32,
-        y_start: u32,
-        x_end: u32,
-        y_end: u32,
+        height: u32,
+        x_range: Range<u32>,
+        y_range: Range<u32>,
         reader: &R,
     ) -> Color {
         let mut r_sum: u64 = 0;
@@ -122,16 +144,19 @@ impl EdgeSamplingAlgorithm {
         let mut b_sum: u64 = 0;
         let mut count: u64 = 0;
 
-        // Sample every Nth pixel for performance
-        let sample_step = 4;
-
-        for y in (y_start..y_end).step_by(sample_step) {
-            for x in (x_start..x_end).step_by(sample_step) {
-                let color = reader.read_pixel(data, x, y, width);
-                r_sum += color.r as u64;
-                g_sum += color.g as u64;
-                b_sum += color.b as u64;
-                count += 1;
+        let color_region =
+            reader.read_region(data, width, height, x_range.clone(), y_range.clone());
+        let region_width = x_range.len();
+        for y_offset in (0..y_range.len()).step_by(self.sample_step) {
+            for x_offset in (0..x_range.len()).step_by(self.sample_step) {
+                let idx = y_offset * region_width + x_offset;
+                if idx < color_region.len() {
+                    let color = color_region[idx];
+                    r_sum += u64::from(color.r);
+                    g_sum += u64::from(color.g);
+                    b_sum += u64::from(color.b);
+                    count += 1;
+                }
             }
         }
 
