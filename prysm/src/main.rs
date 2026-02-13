@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let black_frame = prysm_capture::Frame::black(
         CAPTURE_WIDTH,
         CAPTURE_HEIGHT,
-        prysm_capture::PixelFormat::YUYV,
+        prysm_capture::PixelFormat::default(),
     );
     let frames = stream::StreamWatcher::new(black_frame);
 

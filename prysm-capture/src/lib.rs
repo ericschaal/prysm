@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 pub mod yuyv;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
     RGB24, // 3 bytes per pixel
     BGR24, // 3 bytes per pixel
-    YUYV,  // 2 bytes per pixel (4:2:2 subsampling)
+    #[default]
+    YUYV, // 2 bytes per pixel (4:2:2 subsampling)
     MJPEG, // Variable size (future support)
 }
 
@@ -82,9 +83,7 @@ impl Frame {
     pub fn black(width: u32, height: u32, format: PixelFormat) -> Self {
         let expected_size = format.expected_size(width, height).unwrap();
         let value = match format {
-            PixelFormat::RGB24 => 0,
-            PixelFormat::BGR24 => 0,
-            PixelFormat::YUYV => 0,
+            PixelFormat::RGB24 | PixelFormat::BGR24 | PixelFormat::YUYV => 0, // TODO check this holds
             PixelFormat::MJPEG => unimplemented!("MJPEG is not yet implemented"),
         };
         let data = vec![value; expected_size];
