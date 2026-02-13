@@ -1,47 +1,41 @@
-/// Converts YUYV (YUV 4:2:2) format to RGB using ITU-R BT.601 standard
+use yuv::{yuyv422_to_rgb, YuvPackedImage, YuvRange, YuvStandardMatrix};
+
+/// Converts YUYV (YUV 4:2:2) format to RGB using the `yuv` crate
+///
+/// This uses SIMD-optimized conversions with automatic platform detection:
+/// - x86_64: AVX2 or SSE4.1
+/// - ARM64: NEON
+/// - Fallback: Portable scalar code
 ///
 /// YUYV format stores 2 pixels in 4 bytes: [Y0 U Y1 V]
 /// where Y0 and Y1 are luminance values for two adjacent pixels,
 /// and U, V are shared chrominance values for both pixels.
 ///
-/// Uses fixed-point integer arithmetic for performance:
-/// - Coefficients multiplied by 1024
-/// - Results shifted right by 10 bits
+/// Uses ITU-R BT.601 standard with full range (0-255) color space.
 pub fn yuyv_to_rgb(yuyv_data: &[u8], width: usize, height: usize) -> Vec<u8> {
-    // Fixed-point coefficients (multiplied by 1024)
-    const V_TO_R: i32 = 1437;  // 1.402 * 1024
-    const U_TO_G: i32 = 352;   // 0.344136 * 1024
-    const V_TO_G: i32 = 731;   // 0.714136 * 1024
-    const U_TO_B: i32 = 1814;  // 1.772 * 1024
+    // Create packed image wrapper for YUYV data
+    // Stride is in components, YUYV has 2 components per pixel (4 bytes per 2 pixels)
+    let packed_image = YuvPackedImage {
+        yuy: yuyv_data,
+        yuy_stride: (width * 2) as u32,
+        width: width as u32,
+        height: height as u32,
+    };
 
+    // Allocate output RGB buffer
     let rgb_size = width * height * 3;
-    let mut rgb_data = Vec::with_capacity(rgb_size);
+    let mut rgb_data = vec![0u8; rgb_size];
+    let rgb_stride = (width * 3) as u32;
 
-    // Process YUYV in chunks of 4 bytes (2 pixels)
-    for chunk in yuyv_data.chunks_exact(4) {
-        let y0 = chunk[0] as i32;
-        let u = chunk[1] as i32 - 128;
-        let y1 = chunk[2] as i32;
-        let v = chunk[3] as i32 - 128;
-
-        // First pixel (Y0, U, V)
-        let r0 = (y0 + ((v * V_TO_R) >> 10)).clamp(0, 255) as u8;
-        let g0 = (y0 - ((u * U_TO_G + v * V_TO_G) >> 10)).clamp(0, 255) as u8;
-        let b0 = (y0 + ((u * U_TO_B) >> 10)).clamp(0, 255) as u8;
-
-        rgb_data.push(r0);
-        rgb_data.push(g0);
-        rgb_data.push(b0);
-
-        // Second pixel (Y1, U, V)
-        let r1 = (y1 + ((v * V_TO_R) >> 10)).clamp(0, 255) as u8;
-        let g1 = (y1 - ((u * U_TO_G + v * V_TO_G) >> 10)).clamp(0, 255) as u8;
-        let b1 = (y1 + ((u * U_TO_B) >> 10)).clamp(0, 255) as u8;
-
-        rgb_data.push(r1);
-        rgb_data.push(g1);
-        rgb_data.push(b1);
-    }
+    // Convert YUYV to RGB using BT.601 standard with full range
+    yuyv422_to_rgb(
+        &packed_image,
+        &mut rgb_data,
+        rgb_stride,
+        YuvRange::Full,
+        YuvStandardMatrix::Bt601,
+    )
+    .expect("YUYV to RGB conversion failed");
 
     rgb_data
 }
