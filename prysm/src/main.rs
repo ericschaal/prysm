@@ -30,7 +30,11 @@ async fn run_app() -> Result<()> {
     let processor = PrysmProcessor::default();
 
     // Pass shutdown sender and receiver to renderer constructor
-    let renderer = DesktopRenderer::new(shutdown_tx, shutdown_rx);
+    let renderer = DesktopRenderer::new(
+        CAPTURE_WIDTH as usize,
+        CAPTURE_HEIGHT as usize,
+        shutdown_tx,
+        shutdown_rx);
 
     let video_feed = capturer.run(CAPTURE_WIDTH, CAPTURE_HEIGHT);
 

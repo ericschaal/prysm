@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use futures::Stream;
 
 pub trait PrysmRenderer {
@@ -56,14 +57,14 @@ impl Color {
 /// ColorSpectrum represents a gradient of colors along an edge
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorSpectrum {
-    samples: Vec<Color>,
+    samples: Arc<Vec<Color>>,
 }
 
 impl ColorSpectrum {
     /// Create a new ColorSpectrum from a vector of color samples
     pub fn new(samples: Vec<Color>) -> Self {
         assert!(!samples.is_empty(), "ColorSpectrum must have at least one sample");
-        Self { samples }
+        Self { samples: Arc::new(samples) }
     }
 
     /// Create a ColorSpectrum with all black samples

@@ -4,6 +4,8 @@ use prysm_render::{Color, EdgeSpectrums, PrysmRenderer};
 use std::pin::Pin;
 
 pub struct DesktopRenderer {
+    height: usize,
+    width: usize,
     frame_stream: Option<Pin<Box<dyn Stream<Item = Frame> + Send>>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -22,8 +24,15 @@ impl std::fmt::Debug for DesktopRenderer {
 }
 
 impl DesktopRenderer {
-    pub fn new(shutdown_tx: tokio::sync::watch::Sender<bool>, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Self {
+    pub fn new(
+        target_width: usize,
+        target_height: usize,
+        shutdown_tx: tokio::sync::watch::Sender<bool>,
+        shutdown_rx: tokio::sync::watch::Receiver<bool>
+    ) -> Self {
         Self {
+            height: target_height,
+            width: target_width,
             frame_stream: None,
             shutdown_tx,
             shutdown_rx,
@@ -206,11 +215,11 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 
 /// The eframe application that displays edge color gradients
 struct PrysmApp {
-    spectrums: EdgeSpectrums,
-    spectrum_rx: tokio::sync::mpsc::Receiver<EdgeSpectrums>,
-    frame_rx: Option<tokio::sync::mpsc::Receiver<Frame>>,
+    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
+    frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
     shutdown: tokio::sync::watch::Receiver<bool>,
     texture_handle: Option<egui::TextureHandle>,
+    black_frame: Frame,
     layout_config: LayoutConfig,
 }
 
@@ -224,52 +233,47 @@ impl eframe::App for PrysmApp {
         }
 
         // Poll for new spectrums (non-blocking)
-        while let Ok(spectrums) = self.spectrum_rx.try_recv() {
-            self.spectrums = spectrums;
-        }
+        let spectrum_changed = self.spectrum_rx.has_changed().unwrap_or_default();
+        let spectrums = self.spectrum_rx.borrow_and_update().clone();
 
-        // Poll for new frames (non-blocking)
-        if let Some(ref mut rx) = self.frame_rx {
-            while let Ok(frame) = rx.try_recv() {
-                // Convert frame to RGB data based on format
-                let rgb_data: Vec<u8> = match frame.format {
-                    PixelFormat::RGB24 => {
-                        // Already RGB, use as-is
-                        frame.data.as_ref().clone()
-                    }
-                    PixelFormat::YUYV => {
-                        // Convert YUYV to RGB for display
-                        prysm_capture::yuyv::yuyv_to_rgb(
-                            &frame.data,
-                            frame.width as usize,
-                            frame.height as usize,
-                        )
-                    }
-                    PixelFormat::MJPEG | PixelFormat::BGR24  => {
-                        tracing::error!("{} format not yet supported", frame.format);
-                        // Return black frame
-                        vec![0u8; (frame.width * frame.height * 3) as usize]
-                    }
-                };
-
-                // Convert RGB data to ColorImage
-                let color_image = egui::ColorImage::from_rgb(
-                    [frame.width as usize, frame.height as usize],
-                    &rgb_data,
-                );
-
-                // Update or create texture
-                if let Some(texture) = &mut self.texture_handle {
-                    texture.set(color_image, egui::TextureOptions::LINEAR);
-                } else {
-                    self.texture_handle = Some(ctx.load_texture(
-                        "video_feed",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
+        let frame_changed = self.frame_rx.as_ref().map(|rx| rx.has_changed().unwrap_or_default()).unwrap_or(false);
+        if let Some(frame_rx) = self.frame_rx.as_ref() && frame_changed {
+            let frame = frame_rx.borrow();
+            let rgb_data: &Vec<u8> = match frame.format {
+                PixelFormat::RGB24 => {
+                    // Already RGB, use as-is
+                    &frame.data
                 }
+                PixelFormat::YUYV => {
+                    // Convert YUYV to RGB for display
+                    &prysm_capture::yuyv::yuyv_to_rgb(
+                        &frame.data,
+                        frame.width as usize,
+                        frame.height as usize,
+                    )
+                }
+                PixelFormat::MJPEG | PixelFormat::BGR24  => {
+                    &self.black_frame.data
+                }
+            };
+
+            // Convert RGB data to ColorImage
+            let color_image = egui::ColorImage::from_rgb(
+                [frame.width as usize, frame.height as usize],
+                rgb_data,
+            );
+
+            if let Some(texture) = &mut self.texture_handle {
+                texture.set(color_image, egui::TextureOptions::LINEAR);
+            } else {
+                self.texture_handle = Some(ctx.load_texture(
+                    "video_feed",
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                ));
             }
         }
+
 
         // Draw the UI
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -279,10 +283,10 @@ impl eframe::App for PrysmApp {
             let layout = LayoutDimensions::calculate(available, &self.layout_config);
 
             // Render LED strips (excluding corners)
-            self.render_discrete_leds(ui, &self.spectrums.top, layout.top_strip, EdgePosition::Top);
-            self.render_discrete_leds(ui, &self.spectrums.bottom, layout.bottom_strip, EdgePosition::Bottom);
-            self.render_discrete_leds(ui, &self.spectrums.left, layout.left_strip, EdgePosition::Left);
-            self.render_discrete_leds(ui, &self.spectrums.right, layout.right_strip, EdgePosition::Right);
+            self.render_discrete_leds(ui, &spectrums.top, layout.top_strip, EdgePosition::Top);
+            self.render_discrete_leds(ui, &spectrums.bottom, layout.bottom_strip, EdgePosition::Bottom);
+            self.render_discrete_leds(ui, &spectrums.left, layout.left_strip, EdgePosition::Left);
+            self.render_discrete_leds(ui, &spectrums.right, layout.right_strip, EdgePosition::Right);
 
             // Corners use default background (no LEDs in corners)
 
@@ -311,8 +315,10 @@ impl eframe::App for PrysmApp {
             }
         });
 
-        // Request continuous repainting for smooth updates
-        ctx.request_repaint();
+        // Request repainting on update
+        if frame_changed || spectrum_changed {
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -387,27 +393,37 @@ enum EdgePosition {
 impl PrysmRenderer for DesktopRenderer {
     fn run(self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static) {
         // Create mpsc channel for async->sync bridge (edge spectrums)
-        let (spectrum_tx, spectrum_rx) = tokio::sync::mpsc::channel(10);
+        let (spectrum_tx, spectrum_rx) = tokio::sync::watch::channel(EdgeSpectrums::black(
+            self.width,
+            self.height,
+            40 // TODO pass this config value
+        ));
+
+        let black_frame = Frame::black(
+            self.width as u32,
+            self.height as u32,
+            PixelFormat::YUYV
+        );
 
         // Spawn async task to consume spectrum stream
         tokio::spawn(async move {
             futures::pin_mut!(input);
             use futures::StreamExt;
             while let Some(spectrums) = input.next().await {
-                let _ = spectrum_tx.send(spectrums).await;
+                let _ = spectrum_tx.send(spectrums);
             }
         });
 
         // Handle frame source (either stream or broadcast receiver)
         let frame_rx = if let Some(mut frame_stream) = self.frame_stream {
             // Create mpsc channel for async->sync bridge (frames)
-            let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(10);
+            let (frame_tx, frame_rx) = tokio::sync::watch::channel(black_frame.clone());
 
             // Spawn async task to bridge stream to mpsc sender
             tokio::spawn(async move {
                 use futures::StreamExt;
                 while let Some(frame) = frame_stream.next().await {
-                    if frame_tx.send(frame).await.is_err() {
+                    if frame_tx.send(frame).is_err() {
                         break; // Receiver dropped
                     }
                 }
@@ -418,14 +434,11 @@ impl PrysmRenderer for DesktopRenderer {
             None
         };
 
-        // Initialize app state with black spectrums
-        // Using typical HD resolution for initial state (will adapt to actual frames)
-        let spectrums = EdgeSpectrums::black(1920, 1080, 40);
 
         let app = PrysmApp {
-            spectrums,
             spectrum_rx,
             frame_rx,
+            black_frame,
             shutdown: self.shutdown_rx.clone(),
             texture_handle: None,
             layout_config: self.layout_config.clone(),

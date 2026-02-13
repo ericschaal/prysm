@@ -79,6 +79,18 @@ impl Frame {
         }
     }
 
+    pub fn black(width: u32, height: u32, format: PixelFormat) -> Self {
+        let expected_size = format.expected_size(width, height).unwrap();
+        let value = match format {
+            PixelFormat::RGB24 => 0,
+            PixelFormat::BGR24 => 0,
+            PixelFormat::YUYV => 0,
+            PixelFormat::MJPEG => unimplemented!("MJPEG is not yet implemented"),
+        };
+        let data = vec![value; expected_size];
+        Self::new(data, width, height, format)
+    }
+
     /// Returns a slice view of the frame data.
     pub fn as_slice(&self) -> &[u8] {
         &self.data
