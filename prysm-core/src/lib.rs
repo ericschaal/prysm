@@ -29,6 +29,8 @@ impl Default for Config {
     }
 }
 
+use std::fmt;
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::sync::Arc;
 
 /// Edge represents one of the four edges of the screen
@@ -75,6 +77,97 @@ impl Color {
             g: (self.g as f32 * brightness) as u8,
             b: (self.b as f32 * brightness) as u8,
         }
+    }
+}
+
+// Trait implementations for Color
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::black()
+    }
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "rgb({}, {}, {})", self.r, self.g, self.b)
+    }
+}
+
+impl Add for Color {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            r: self.r.saturating_add(other.r),
+            g: self.g.saturating_add(other.g),
+            b: self.b.saturating_add(other.b),
+        }
+    }
+}
+
+impl AddAssign for Color {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl Sub for Color {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            r: self.r.saturating_sub(other.r),
+            g: self.g.saturating_sub(other.g),
+            b: self.b.saturating_sub(other.b),
+        }
+    }
+}
+
+impl SubAssign for Color {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
+    }
+}
+
+impl Mul<f32> for Color {
+    type Output = Self;
+
+    fn mul(self, scalar: f32) -> Self {
+        let scalar = scalar.clamp(0.0, 1.0);
+        Self {
+            r: (self.r as f32 * scalar) as u8,
+            g: (self.g as f32 * scalar) as u8,
+            b: (self.b as f32 * scalar) as u8,
+        }
+    }
+}
+
+impl MulAssign<f32> for Color {
+    fn mul_assign(&mut self, scalar: f32) {
+        *self = *self * scalar;
+    }
+}
+
+impl Div<f32> for Color {
+    type Output = Self;
+
+    fn div(self, scalar: f32) -> Self {
+        if scalar == 0.0 {
+            return Self::black();
+        }
+        let scalar = 1.0 / scalar;
+        Self {
+            r: ((self.r as f32 * scalar).min(255.0)) as u8,
+            g: ((self.g as f32 * scalar).min(255.0)) as u8,
+            b: ((self.b as f32 * scalar).min(255.0)) as u8,
+        }
+    }
+}
+
+impl DivAssign<f32> for Color {
+    fn div_assign(&mut self, scalar: f32) {
+        *self = *self / scalar;
     }
 }
 
@@ -165,6 +258,42 @@ impl ColorSpectrum {
     }
 }
 
+// Trait implementations for ColorSpectrum
+
+impl Default for ColorSpectrum {
+    fn default() -> Self {
+        Self::black(1)
+    }
+}
+
+impl Add for ColorSpectrum {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        let result_len = self.samples.len().max(other.samples.len());
+        let summed: Vec<Color> = (0..result_len)
+            .map(|i| {
+                let pos = if result_len == 1 {
+                    0.5
+                } else {
+                    i as f32 / (result_len - 1) as f32
+                };
+                self.sample_at(pos) + other.sample_at(pos)
+            })
+            .collect();
+        Self::new(summed)
+    }
+}
+
+impl Mul<f32> for ColorSpectrum {
+    type Output = Self;
+
+    fn mul(self, scalar: f32) -> Self {
+        let scaled: Vec<Color> = self.samples.iter().map(|&c| c * scalar).collect();
+        Self::new(scaled)
+    }
+}
+
 /// EdgeSpectrums contains color spectrums for all four edges
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EdgeSpectrums {
@@ -213,6 +342,40 @@ impl EdgeSpectrums {
             right: self.right.blend(&other.right, ratio),
             bottom: self.bottom.blend(&other.bottom, ratio),
             left: self.left.blend(&other.left, ratio),
+        }
+    }
+}
+
+// Trait implementations for EdgeSpectrums
+
+impl Default for EdgeSpectrums {
+    fn default() -> Self {
+        Self::black(1920, 1080, 50)
+    }
+}
+
+impl Add for EdgeSpectrums {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            top: self.top + other.top,
+            right: self.right + other.right,
+            bottom: self.bottom + other.bottom,
+            left: self.left + other.left,
+        }
+    }
+}
+
+impl Mul<f32> for EdgeSpectrums {
+    type Output = Self;
+
+    fn mul(self, scalar: f32) -> Self {
+        Self {
+            top: self.top * scalar,
+            right: self.right * scalar,
+            bottom: self.bottom * scalar,
+            left: self.left * scalar,
         }
     }
 }
