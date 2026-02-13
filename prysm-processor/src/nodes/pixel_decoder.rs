@@ -1,6 +1,6 @@
-use crate::frames::{ColorFrame, RawFrame};
+use crate::frames::ColorFrame;
 use crate::pipeline::Node;
-use prysm_capture::PixelFormat;
+use prysm_capture::{Frame, PixelFormat};
 use prysm_core::Color;
 
 /// Decodes raw pixel data into Color array
@@ -19,11 +19,7 @@ impl PixelDecoder {
         for i in 0..pixel_count {
             let offset = i * 3;
             if offset + 2 < data.len() {
-                colors.push(Color::new(
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                ));
+                colors.push(Color::new(data[offset], data[offset + 1], data[offset + 2]));
             } else {
                 colors.push(Color::black());
             }
@@ -53,8 +49,8 @@ impl PixelDecoder {
     }
 }
 
-impl Node<RawFrame, ColorFrame> for PixelDecoder {
-    fn process(&mut self, input: RawFrame) -> ColorFrame {
+impl Node<Frame, ColorFrame> for PixelDecoder {
+    fn process(&mut self, input: Frame) -> ColorFrame {
         let pixels = match input.format {
             PixelFormat::RGB24 => self.decode_rgb24(&input.data, input.width, input.height),
             PixelFormat::YUYV => self.decode_yuyv(&input.data, input.width, input.height),

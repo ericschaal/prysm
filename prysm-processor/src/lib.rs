@@ -1,4 +1,3 @@
-use frames::RawFrame;
 use futures::{Stream, StreamExt};
 use nodes::{BandDetector, EdgeSampler, PixelDecoder, TemporalSmoothing};
 use pipeline::Node;
@@ -38,20 +37,15 @@ impl PrysmProcessor {
     }
 
     /// Process a single frame through the pipeline
-    pub fn process_frame(&mut self, frame: &Frame) -> EdgeSpectra {
-        // Stage 1: Decode to ColorFrame
-        let raw_frame = RawFrame::from(frame.clone());
-        let mut color_frame = self.decoder.process(raw_frame);
+    pub fn process_frame(&mut self, frame: Frame) -> EdgeSpectra {
+        let mut color_frame = self.decoder.process(frame);
 
-        // Stage 2: Band detection (optional)
         if let Some(ref mut detector) = self.band_detector {
             color_frame = detector.process(color_frame);
         }
 
-        // Stage 3: Edge sampling
         let mut spectra = self.sampler.process(color_frame);
 
-        // Stage 4: Temporal smoothing
         if let Some(ref mut smoother) = self.temporal_smoothing {
             spectra = smoother.process(spectra);
         }
@@ -72,7 +66,7 @@ impl PrysmProcessor {
         mut self,
         input: impl Stream<Item = Frame> + Send + 'static,
     ) -> impl Stream<Item = EdgeSpectra> + Send + 'static {
-        input.map(move |frame| self.process_frame(&frame))
+        input.map(move |frame| self.process_frame(frame))
     }
 }
 
