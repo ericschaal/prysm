@@ -40,17 +40,22 @@ pub struct Config {
     /// Enable black band detection
     pub black_band_detection: bool,
 
-    /// Pixel brightness threshold (0-255) for "black"
-    pub black_threshold: u8,
+    /// Brightness percentile threshold (0-100) for band detection
+    /// Example: 15 means use 15th percentile of row/col brightness as threshold
+    pub band_brightness_percentile: u8,
 
     /// Minimum band size in pixels
     pub min_band_size: u32,
 
-    /// Frames between detection scans
+    /// Frames between detection scans (lower = faster detection)
     pub band_detection_interval: u32,
 
-    /// Stability frames before applying change
-    pub band_stability_frames: u32,
+    /// Temporal smoothing factor (0.0-1.0) for viewport changes
+    /// 0.0 = instant, 1.0 = never change
+    pub band_temporal_smoothing: f32,
+
+    /// Sample stride for projection calculation (pixels to skip)
+    pub band_sample_stride: u32,
 }
 
 impl Default for Config {
@@ -62,11 +67,12 @@ impl Default for Config {
             edge_depth_px: 100,
             sample_step: 30,
             target_fps: 30,
-            black_band_detection: true,
-            black_threshold: 30,
+            black_band_detection: false,
+            band_brightness_percentile: 30,
             min_band_size: 50,
-            band_detection_interval: 15,
-            band_stability_frames: 3,
+            band_detection_interval: 8,
+            band_temporal_smoothing: 0.7,
+            band_sample_stride: 8,
         }
     }
 }
