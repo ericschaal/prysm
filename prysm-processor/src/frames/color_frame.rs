@@ -20,6 +20,7 @@ impl Viewport {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_full_frame(&self, frame_width: u32, frame_height: u32) -> bool {
         self.x == 0 && self.y == 0 && self.width == frame_width && self.height == frame_height
     }

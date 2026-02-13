@@ -62,7 +62,7 @@ impl Default for Config {
             edge_depth_px: 100,
             sample_step: 30,
             target_fps: 30,
-            black_band_detection: false,
+            black_band_detection: true,
             black_threshold: 30,
             min_band_size: 50,
             band_detection_interval: 15,

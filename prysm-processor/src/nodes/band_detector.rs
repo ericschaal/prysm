@@ -52,7 +52,8 @@ impl BandDetector {
         // Scan rows from top downward
         for y in 0..(frame.height / 2) {
             if !self.is_black_row(frame, y) {
-                return y;
+                // Only consider it a band if it meets minimum size
+                return if y >= self.min_band_size { y } else { 0 };
             }
         }
         0
@@ -62,7 +63,13 @@ impl BandDetector {
         // Scan rows from bottom upward
         for y in (frame.height / 2..frame.height).rev() {
             if !self.is_black_row(frame, y) {
-                return frame.height - y - 1;
+                let band_size = frame.height - y - 1;
+                // Only consider it a band if it meets minimum size
+                return if band_size >= self.min_band_size {
+                    band_size
+                } else {
+                    0
+                };
             }
         }
         0
@@ -72,7 +79,8 @@ impl BandDetector {
         // Scan columns from left rightward
         for x in 0..(frame.width / 2) {
             if !self.is_black_column(frame, x) {
-                return x;
+                // Only consider it a band if it meets minimum size
+                return if x >= self.min_band_size { x } else { 0 };
             }
         }
         0
@@ -82,7 +90,13 @@ impl BandDetector {
         // Scan columns from right leftward
         for x in (frame.width / 2..frame.width).rev() {
             if !self.is_black_column(frame, x) {
-                return frame.width - x - 1;
+                let band_size = frame.width - x - 1;
+                // Only consider it a band if it meets minimum size
+                return if band_size >= self.min_band_size {
+                    band_size
+                } else {
+                    0
+                };
             }
         }
         0
