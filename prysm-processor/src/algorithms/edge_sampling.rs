@@ -2,10 +2,10 @@ use crate::algorithm::Algorithm;
 use crate::pixel_reader::PixelReader;
 use crate::pixel_readers::{Rgb24Reader, YuyvReader};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectrums};
+use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectra};
 use std::ops::Range;
 
-/// Edge sampling algorithm - analyzes edge regions and extracts color spectrums
+/// Edge sampling algorithm - analyzes edge regions and extracts color spectra
 ///
 /// Divides each screen edge into segments and samples the average color
 /// in each segment from a configurable depth inward from the edge.
@@ -32,13 +32,13 @@ impl Default for EdgeSamplingAlgorithm {
 }
 
 impl Algorithm for EdgeSamplingAlgorithm {
-    fn process(&self, frame: &Frame) -> EdgeSpectrums {
+    fn process(&self, frame: &Frame) -> EdgeSpectra {
         match frame.format {
             PixelFormat::RGB24 => self.process_with_reader(frame, &Rgb24Reader),
             PixelFormat::YUYV => self.process_with_reader(frame, &YuyvReader),
             PixelFormat::MJPEG | PixelFormat::BGR24 => {
                 tracing::error!("{} format not yet supported", frame.format);
-                EdgeSpectrums::black(
+                EdgeSpectra::black(
                     frame.width as usize,
                     frame.height as usize,
                     self.samples_per_1000px,
@@ -59,7 +59,7 @@ impl EdgeSamplingAlgorithm {
     }
 
     /// Process frame using a specific pixel reader (generic over format)
-    fn process_with_reader<R: PixelReader>(&self, frame: &Frame, reader: &R) -> EdgeSpectrums {
+    fn process_with_reader<R: PixelReader>(&self, frame: &Frame, reader: &R) -> EdgeSpectra {
         let width = frame.width;
         let height = frame.height;
 
@@ -72,7 +72,7 @@ impl EdgeSamplingAlgorithm {
         let left_spectrum =
             self.extract_edge_spectrum(&frame.data, width, height, Edge::Left, reader);
 
-        EdgeSpectrums::new(top_spectrum, right_spectrum, bottom_spectrum, left_spectrum)
+        EdgeSpectra::new(top_spectrum, right_spectrum, bottom_spectrum, left_spectrum)
     }
 
     /// Extract color spectrum from a specific edge (generic over pixel format)

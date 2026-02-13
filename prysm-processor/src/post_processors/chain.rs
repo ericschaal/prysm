@@ -1,5 +1,5 @@
 use crate::post_processor::PostProcessor;
-use prysm_core::EdgeSpectrums;
+use prysm_core::EdgeSpectra;
 
 /// Chained post-processor for composing multiple post-processors
 ///
@@ -31,7 +31,7 @@ impl ChainedPostProcessor {
 }
 
 impl PostProcessor for ChainedPostProcessor {
-    fn process(&mut self, mut input: EdgeSpectrums) -> EdgeSpectrums {
+    fn process(&mut self, mut input: EdgeSpectra) -> EdgeSpectra {
         for processor in &mut self.processors {
             input = processor.process(input);
         }

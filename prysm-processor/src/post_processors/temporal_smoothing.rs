@@ -1,5 +1,5 @@
 use crate::post_processor::PostProcessor;
-use prysm_core::EdgeSpectrums;
+use prysm_core::EdgeSpectra;
 
 /// Temporal smoothing post-processor
 ///
@@ -9,8 +9,8 @@ use prysm_core::EdgeSpectrums;
 pub struct TemporalSmoothingProcessor {
     /// Smoothing factor (0.0 = no smoothing, 1.0 = maximum smoothing)
     smoothing: f32,
-    /// Previous frame's spectrums for blending
-    previous_spectrums: Option<EdgeSpectrums>,
+    /// Previous frame's spectra for blending
+    previous_spectra: Option<EdgeSpectra>,
 }
 
 impl TemporalSmoothingProcessor {
@@ -24,15 +24,15 @@ impl TemporalSmoothingProcessor {
     pub fn new(smoothing: f32) -> Self {
         Self {
             smoothing: smoothing.clamp(0.0, 1.0),
-            previous_spectrums: None,
+            previous_spectra: None,
         }
     }
 }
 
 impl PostProcessor for TemporalSmoothingProcessor {
-    fn process(&mut self, input: EdgeSpectrums) -> EdgeSpectrums {
+    fn process(&mut self, input: EdgeSpectra) -> EdgeSpectra {
         // Apply temporal smoothing by blending with previous frame
-        let smoothed = if let Some(ref prev) = self.previous_spectrums {
+        let smoothed = if let Some(ref prev) = self.previous_spectra {
             // Blend: ratio=1.0-smoothing means higher smoothing gives more weight to previous
             prev.blend(&input, 1.0 - self.smoothing)
         } else {
@@ -41,7 +41,7 @@ impl PostProcessor for TemporalSmoothingProcessor {
         };
 
         // Store current smoothed result for next frame
-        self.previous_spectrums = Some(smoothed.clone());
+        self.previous_spectra = Some(smoothed.clone());
         smoothed
     }
 }

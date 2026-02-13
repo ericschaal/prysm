@@ -3,7 +3,7 @@ mod stream;
 use anyhow::Result;
 use desktop_renderer::DesktopRendererBuilder;
 use prysm_capture::{Frame, PrysmCapturer};
-use prysm_core::EdgeSpectrums;
+use prysm_core::EdgeSpectra;
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
 use v4l_capturer::V4lCapturer;
@@ -18,8 +18,8 @@ fn main() -> Result<()> {
     // Create shutdown token
     let shutdown_token = CancellationToken::new();
 
-    let dummy_spectrum = EdgeSpectrums::dummy(CAPTURE_WIDTH as usize, CAPTURE_HEIGHT as usize);
-    let spectrums = stream::StreamWatcher::new(dummy_spectrum);
+    let dummy_spectrum = EdgeSpectra::dummy(CAPTURE_WIDTH as usize, CAPTURE_HEIGHT as usize);
+    let spectra = stream::StreamWatcher::new(dummy_spectrum);
     let dummy_frame = Frame::dummy(CAPTURE_WIDTH, CAPTURE_HEIGHT);
     let frames = stream::StreamWatcher::new(dummy_frame);
 
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let runtime_handle = std::thread::spawn({
         // Clone what we need for the async runtime
         let shutdown_token = shutdown_token.clone();
-        let spectrums = spectrums.clone();
+        let spectra = spectra.clone();
         let frames = frames.clone();
         let config = config.clone();
 
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
                 let (frame_stream, frame_stream_bis) = stream::stream_split(video_feed);
                 let spectrum_stream = processor.into_stream(frame_stream);
 
-                let spectrum_task = spectrums.into_task(spectrum_stream);
+                let spectrum_task = spectra.into_task(spectrum_stream);
                 let frame_task = frames.into_task(frame_stream_bis);
 
                 // Spawn ctrl-C handler
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let app = DesktopRendererBuilder::new(spectrums.receiver())
+    let app = DesktopRendererBuilder::new(spectra.receiver())
         .with_shutdown_token(&shutdown_token)
         .with_frame_rx(frames.receiver())
         .with_layout(layout_config)

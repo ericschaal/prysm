@@ -153,8 +153,8 @@ where
 
     tokio::spawn(async move {
         futures::pin_mut!(stream);
-        while let Some(spectrums) = stream.next().await {
-            let _ = tx.send(spectrums);
+        while let Some(spectra) = stream.next().await {
+            let _ = tx.send(spectra);
         }
         tracing::info!("Spectrum stream ended");
     });

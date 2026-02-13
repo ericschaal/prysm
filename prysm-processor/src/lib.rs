@@ -1,6 +1,6 @@
 use futures::{Stream, StreamExt};
 use prysm_capture::Frame;
-use prysm_core::{Config, EdgeSpectrums};
+use prysm_core::{Config, EdgeSpectra};
 
 mod algorithm;
 mod algorithms;
@@ -18,7 +18,7 @@ pub use post_processors::{ChainedPostProcessor, TemporalSmoothingProcessor};
 /// Main processor facade for frame-to-spectrum transformation
 ///
 /// Combines an Algorithm (frame analysis) with optional PostProcessor(s)
-/// (temporal smoothing, brightness, etc.) to generate edge color spectrums.
+/// (temporal smoothing, brightness, etc.) to generate edge color spectra.
 ///
 /// Configuration is baked in at construction time via `Config`, making
 /// the processor stateful but eliminating per-frame config overhead.
@@ -92,14 +92,14 @@ impl PrysmProcessor {
     /// * `frame` - Frame to process
     ///
     /// # Returns
-    /// `EdgeSpectrums` for the frame
-    pub fn process_frame(&mut self, frame: &Frame) -> EdgeSpectrums {
-        let spectrums = self.algorithm.process(frame);
+    /// `EdgeSpectra` for the frame
+    pub fn process_frame(&mut self, frame: &Frame) -> EdgeSpectra {
+        let spectra = self.algorithm.process(frame);
 
         if let Some(ref mut post_processor) = self.post_processor {
-            post_processor.process(spectrums)
+            post_processor.process(spectra)
         } else {
-            spectrums
+            spectra
         }
     }
 
@@ -112,11 +112,11 @@ impl PrysmProcessor {
     /// * `input` - Input frame stream
     ///
     /// # Returns
-    /// Stream of `EdgeSpectrums`
+    /// Stream of `EdgeSpectra`
     pub fn into_stream(
         mut self,
         input: impl Stream<Item = Frame> + Send + 'static,
-    ) -> impl Stream<Item = EdgeSpectrums> + Send + 'static {
+    ) -> impl Stream<Item = EdgeSpectra> + Send + 'static {
         input.map(move |frame| self.process_frame(&frame))
     }
 }

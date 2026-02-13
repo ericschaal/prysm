@@ -74,7 +74,7 @@ impl ColorSpectrum {
         (0..count).map(|i| self.color_at(i, count)).collect()
     }
 
-    /// Blend two spectrums together with a ratio (0.0 = full self, 1.0 = full other)
+    /// Blend two spectra together with a ratio (0.0 = full self, 1.0 = full other)
     pub fn blend(&self, other: &ColorSpectrum, ratio: f32) -> ColorSpectrum {
         // Use the larger sample count for the result
         let result_len = self.samples.len().max(other.samples.len());
@@ -130,17 +130,17 @@ impl Mul<f32> for ColorSpectrum {
     }
 }
 
-/// EdgeSpectrums contains color spectrums for all four edges
+/// EdgeSpectra contains color spectra for all four edges
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EdgeSpectrums {
+pub struct EdgeSpectra {
     pub top: ColorSpectrum,
     pub right: ColorSpectrum,
     pub bottom: ColorSpectrum,
     pub left: ColorSpectrum,
 }
 
-impl EdgeSpectrums {
-    /// Create new EdgeSpectrums with the given spectrums
+impl EdgeSpectra {
+    /// Create new EdgeSpectra with the given spectra
     pub fn new(
         top: ColorSpectrum,
         right: ColorSpectrum,
@@ -155,7 +155,7 @@ impl EdgeSpectrums {
         }
     }
 
-    /// Create `EdgeSpectrums` filled with the specified color
+    /// Create `EdgeSpectra` filled with the specified color
     /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
     pub fn fill(color: Color, width: usize, height: usize, samples_per_1000px: usize) -> Self {
@@ -172,14 +172,14 @@ impl EdgeSpectrums {
         }
     }
 
-    /// Create `EdgeSpectrums` with all black colors
+    /// Create `EdgeSpectra` with all black colors
     /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
     pub fn black(width: usize, height: usize, samples_per_1000px: usize) -> Self {
         Self::fill(Color::black(), width, height, samples_per_1000px)
     }
 
-    /// Create a dummy EdgeSpectrums (filled with magenta to make it obviously a placeholder)
+    /// Create a dummy EdgeSpectra (filled with magenta to make it obviously a placeholder)
     #[must_use]
     pub fn dummy(width: usize, height: usize) -> Self {
         Self::fill(
@@ -194,10 +194,10 @@ impl EdgeSpectrums {
         )
     }
 
-    /// Blend two `EdgeSpectrums` together with a ratio (0.0 = full self, 1.0 = full other)
+    /// Blend two `EdgeSpectra` together with a ratio (0.0 = full self, 1.0 = full other)
     #[must_use]
-    pub fn blend(&self, other: &EdgeSpectrums, ratio: f32) -> EdgeSpectrums {
-        EdgeSpectrums {
+    pub fn blend(&self, other: &EdgeSpectra, ratio: f32) -> EdgeSpectra {
+        EdgeSpectra {
             top: self.top.blend(&other.top, ratio),
             right: self.right.blend(&other.right, ratio),
             bottom: self.bottom.blend(&other.bottom, ratio),
@@ -206,15 +206,15 @@ impl EdgeSpectrums {
     }
 }
 
-// Trait implementations for EdgeSpectrums
+// Trait implementations for EdgeSpectra
 
-impl Default for EdgeSpectrums {
+impl Default for EdgeSpectra {
     fn default() -> Self {
         Self::black(1920, 1080, 50)
     }
 }
 
-impl Add for EdgeSpectrums {
+impl Add for EdgeSpectra {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -227,7 +227,7 @@ impl Add for EdgeSpectrums {
     }
 }
 
-impl Mul<f32> for EdgeSpectrums {
+impl Mul<f32> for EdgeSpectra {
     type Output = Self;
 
     fn mul(self, scalar: f32) -> Self {

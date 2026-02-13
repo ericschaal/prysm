@@ -4,7 +4,7 @@ mod spectrum;
 
 pub use color::Color;
 pub use config::Config;
-pub use spectrum::{ColorSpectrum, EdgeSpectrums};
+pub use spectrum::{ColorSpectrum, EdgeSpectra};
 
 /// Edge represents one of the four edges of the screen
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

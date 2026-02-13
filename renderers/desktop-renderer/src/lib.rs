@@ -1,11 +1,11 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, EdgeSpectrums};
+use prysm_core::{Color, EdgeSpectra};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
     layout_config: LayoutConfig,
     shutdown_token: Option<CancellationToken>,
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
+    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
 }
 
@@ -22,7 +22,7 @@ impl std::fmt::Debug for DesktopRendererBuilder {
 
 impl DesktopRendererBuilder {
     #[must_use]
-    pub fn new(spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>) -> Self {
+    pub fn new(spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>) -> Self {
         Self {
             frame_rx: None,
             shutdown_token: None,
@@ -226,7 +226,7 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
+    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
     shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
@@ -263,8 +263,8 @@ impl eframe::App for DesktopRenderer {
             return;
         }
 
-        // Poll for new spectrums (non-blocking)
-        let spectrums = self.spectrum_rx.borrow_and_update().clone();
+        // Poll for new spectra (non-blocking)
+        let spectra = self.spectrum_rx.borrow_and_update().clone();
 
         // Poll for new frames (non-blocking) and update texture when needed
         if let Some(frame_rx) = self.frame_rx.as_mut() {
@@ -319,34 +319,34 @@ impl eframe::App for DesktopRenderer {
                     calculate_led_distribution(render_width, render_height, total_leds)
                 } else {
                     // Fall back to EdgeSpectrum sample counts (current behavior)
-                    (spectrums.top.len(), spectrums.left.len())
+                    (spectra.top.len(), spectra.left.len())
                 };
 
             // Render LED strips (excluding corners)
             self.render_discrete_leds(
                 ui,
-                &spectrums.top,
+                &spectra.top,
                 layout.top_strip,
                 EdgePosition::Top,
                 horizontal_display_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectrums.bottom,
+                &spectra.bottom,
                 layout.bottom_strip,
                 EdgePosition::Bottom,
                 horizontal_display_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectrums.left,
+                &spectra.left,
                 layout.left_strip,
                 EdgePosition::Left,
                 vertical_display_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectrums.right,
+                &spectra.right,
                 layout.right_strip,
                 EdgePosition::Right,
                 vertical_display_leds,
@@ -379,7 +379,7 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Request continuous repaints at target FPS to keep polling for new frames/spectrums
+        // Request continuous repaints at target FPS to keep polling for new frames/spectra
         // This is necessary because egui only calls update() when requested - without
         // continuous repaints, we'd stop polling for new data when no UI events occur
         let frame_duration_ms = 1000 / self.layout_config.target_fps.max(1);
