@@ -1,7 +1,5 @@
-#![no_main]
-
 use futures::Stream;
-use prysm_capture::Frame;
+use prysm_capture::{Frame, PixelFormat};
 use prysm_render::{Color, EdgeSpectrums, PrysmRenderer};
 
 #[derive(Debug)]
@@ -86,7 +84,7 @@ impl Default for LayoutConfig {
             led_strip_width_px: 60.0,
             border_width_px: 10.0,
             enable_border: true,
-            led_size_px: 8.0,
+            led_size_px: 10.0,
             led_spacing_ratio: 0.3,
         }
     }
@@ -216,10 +214,31 @@ impl eframe::App for PrysmApp {
         // Poll for new frames (non-blocking)
         if let Some(ref mut rx) = self.frame_rx {
             while let Ok(frame) = rx.try_recv() {
-                // Convert Frame to ColorImage
+                // Convert frame to RGB data based on format
+                let rgb_data: Vec<u8> = match frame.format {
+                    PixelFormat::RGB24 => {
+                        // Already RGB, use as-is
+                        frame.data.as_ref().clone()
+                    }
+                    PixelFormat::YUYV => {
+                        // Convert YUYV to RGB for display
+                        prysm_capture::yuyv::yuyv_to_rgb(
+                            &frame.data,
+                            frame.width as usize,
+                            frame.height as usize,
+                        )
+                    }
+                    PixelFormat::MJPEG | PixelFormat::BGR24  => {
+                        tracing::error!("{} format not yet supported", frame.format);
+                        // Return black frame
+                        vec![0u8; (frame.width * frame.height * 3) as usize]
+                    }
+                };
+
+                // Convert RGB data to ColorImage
                 let color_image = egui::ColorImage::from_rgb(
                     [frame.width as usize, frame.height as usize],
-                    &frame.data,
+                    &rgb_data,
                 );
 
                 // Update or create texture

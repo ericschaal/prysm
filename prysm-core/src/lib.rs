@@ -1,5 +1,3 @@
-#![no_main]
-
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Sample density per 1000 pixels of edge length
@@ -25,7 +23,7 @@ impl Default for Config {
             samples_per_1000px: 50,
             brightness: 0.8,
             smoothing: 0.7,
-            edge_depth_px: 50,
+            edge_depth_px: 100,
             target_fps: 30,
         }
     }

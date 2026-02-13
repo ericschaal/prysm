@@ -16,11 +16,11 @@ async fn main() -> Result<()> {
 
     // Leak capturer and processor to make them 'static
     // This is acceptable since they need to live for the entire program duration
-    let capturer = Box::leak(Box::new(V4lCapturer::new("/dev/video0")?));
+    let capturer = Box::leak(Box::new(V4lCapturer::new("/dev/video1")?));
     let processor = Box::leak(Box::new(PrysmProcessor::default()));
     let renderer = DesktopRenderer::new();
 
-    let video_feed = capturer.run(800, 600);
+    let video_feed = capturer.run(1920, 1080);
 
     // Create broadcast channel for frame distribution
     let (frame_tx, _) = broadcast::channel::<Frame>(10);

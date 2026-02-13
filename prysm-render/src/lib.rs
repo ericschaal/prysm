@@ -1,5 +1,3 @@
-#![no_main]
-
 use futures::Stream;
 
 pub trait PrysmRenderer {
