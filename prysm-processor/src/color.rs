@@ -1,6 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Config};
-use prysm_render::{Color, ColorSpectrum, Edge, EdgeSpectrums};
+use prysm_core::{Color, ColorSpectrum, Config, Edge, EdgeSpectrums};
 
 #[derive(Debug)]
 pub struct ColorProcessor {
@@ -58,16 +57,13 @@ impl ColorProcessor {
 
         // Extract spectrum for each edge using direct RGB sampling (zero-copy)
         let top_spectrum = self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Top);
-        let right_spectrum = self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Right);
-        let bottom_spectrum = self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Bottom);
+        let right_spectrum =
+            self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Right);
+        let bottom_spectrum =
+            self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Bottom);
         let left_spectrum = self.extract_edge_spectrum_rgb(&frame.data, width, height, Edge::Left);
 
-        EdgeSpectrums::new(
-            top_spectrum,
-            right_spectrum,
-            bottom_spectrum,
-            left_spectrum,
-        )
+        EdgeSpectrums::new(top_spectrum, right_spectrum, bottom_spectrum, left_spectrum)
     }
 
     /// Process a YUYV frame with inline conversion (only convert sampled pixels)
@@ -77,18 +73,14 @@ impl ColorProcessor {
 
         // Extract spectrum for each edge using inline YUYV conversion
         let top_spectrum = self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Top);
-        let right_spectrum = self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Right);
-        let bottom_spectrum = self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Bottom);
+        let right_spectrum =
+            self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Right);
+        let bottom_spectrum =
+            self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Bottom);
         let left_spectrum = self.extract_edge_spectrum_yuyv(&frame.data, width, height, Edge::Left);
 
-        EdgeSpectrums::new(
-            top_spectrum,
-            right_spectrum,
-            bottom_spectrum,
-            left_spectrum,
-        )
+        EdgeSpectrums::new(top_spectrum, right_spectrum, bottom_spectrum, left_spectrum)
     }
-
 
     /// Extract color spectrum from a specific edge in RGB24 format (zero-copy)
     fn extract_edge_spectrum_rgb(
@@ -102,12 +94,14 @@ impl ColorProcessor {
         let (edge_length, sample_count) = match edge {
             Edge::Top | Edge::Bottom => {
                 let length = width;
-                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32)
+                    .max(1.0) as usize;
                 (length, samples)
             }
             Edge::Left | Edge::Right => {
                 let length = height;
-                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32)
+                    .max(1.0) as usize;
                 (length, samples)
             }
         };
@@ -126,28 +120,14 @@ impl ColorProcessor {
 
             // Define the sampling region for this segment
             let (x_start, y_start, x_end, y_end) = match edge {
-                Edge::Top => {
-                    (segment_start, 0, segment_end, edge_depth)
-                }
-                Edge::Bottom => {
-                    (segment_start, height - edge_depth, segment_end, height)
-                }
-                Edge::Left => {
-                    (0, segment_start, edge_depth, segment_end)
-                }
-                Edge::Right => {
-                    (width - edge_depth, segment_start, width, segment_end)
-                }
+                Edge::Top => (segment_start, 0, segment_end, edge_depth),
+                Edge::Bottom => (segment_start, height - edge_depth, segment_end, height),
+                Edge::Left => (0, segment_start, edge_depth, segment_end),
+                Edge::Right => (width - edge_depth, segment_start, width, segment_end),
             };
 
-            let color = Self::average_color_in_region_rgb(
-                rgb_data,
-                width,
-                x_start,
-                y_start,
-                x_end,
-                y_end,
-            );
+            let color =
+                Self::average_color_in_region_rgb(rgb_data, width, x_start, y_start, x_end, y_end);
             samples.push(color);
         }
 
@@ -166,12 +146,14 @@ impl ColorProcessor {
         let (edge_length, sample_count) = match edge {
             Edge::Top | Edge::Bottom => {
                 let length = width;
-                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32)
+                    .max(1.0) as usize;
                 (length, samples)
             }
             Edge::Left | Edge::Right => {
                 let length = height;
-                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32).max(1.0) as usize;
+                let samples = ((length as f32 / 1000.0) * self.config.samples_per_1000px as f32)
+                    .max(1.0) as usize;
                 (length, samples)
             }
         };
@@ -190,27 +172,14 @@ impl ColorProcessor {
 
             // Define the sampling region for this segment
             let (x_start, y_start, x_end, y_end) = match edge {
-                Edge::Top => {
-                    (segment_start, 0, segment_end, edge_depth)
-                }
-                Edge::Bottom => {
-                    (segment_start, height - edge_depth, segment_end, height)
-                }
-                Edge::Left => {
-                    (0, segment_start, edge_depth, segment_end)
-                }
-                Edge::Right => {
-                    (width - edge_depth, segment_start, width, segment_end)
-                }
+                Edge::Top => (segment_start, 0, segment_end, edge_depth),
+                Edge::Bottom => (segment_start, height - edge_depth, segment_end, height),
+                Edge::Left => (0, segment_start, edge_depth, segment_end),
+                Edge::Right => (width - edge_depth, segment_start, width, segment_end),
             };
 
             let color = Self::average_color_in_region_yuyv(
-                yuyv_data,
-                width,
-                x_start,
-                y_start,
-                x_end,
-                y_end,
+                yuyv_data, width, x_start, y_start, x_end, y_end,
             );
             samples.push(color);
         }
@@ -273,10 +242,10 @@ impl ColorProcessor {
         y_end: u32,
     ) -> Color {
         // Fixed-point coefficients (multiplied by 1024) - BT.601 standard
-        const V_TO_R: i32 = 1437;  // 1.402 * 1024
-        const U_TO_G: i32 = 352;   // 0.344136 * 1024
-        const V_TO_G: i32 = 731;   // 0.714136 * 1024
-        const U_TO_B: i32 = 1814;  // 1.772 * 1024
+        const V_TO_R: i32 = 1437; // 1.402 * 1024
+        const U_TO_G: i32 = 352; // 0.344136 * 1024
+        const V_TO_G: i32 = 731; // 0.714136 * 1024
+        const U_TO_B: i32 = 1814; // 1.772 * 1024
 
         let mut r_sum: u64 = 0;
         let mut g_sum: u64 = 0;
@@ -292,7 +261,7 @@ impl ColorProcessor {
                 // Each pixel pair shares U and V values
 
                 // Calculate offset for the pixel pair containing this pixel
-                let pixel_pair_x = (x / 2) * 2;  // Align to even pixel
+                let pixel_pair_x = (x / 2) * 2; // Align to even pixel
                 let yuyv_offset = ((y * width + pixel_pair_x) * 2) as usize;
 
                 // Bounds check
@@ -302,9 +271,9 @@ impl ColorProcessor {
 
                 // Extract Y, U, V values
                 let y_value = if x % 2 == 0 {
-                    yuyv_data[yuyv_offset] as i32      // Y0 for even pixels
+                    yuyv_data[yuyv_offset] as i32 // Y0 for even pixels
                 } else {
-                    yuyv_data[yuyv_offset + 2] as i32  // Y1 for odd pixels
+                    yuyv_data[yuyv_offset + 2] as i32 // Y1 for odd pixels
                 };
 
                 let u = yuyv_data[yuyv_offset + 1] as i32 - 128;

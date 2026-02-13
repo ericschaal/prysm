@@ -10,12 +10,11 @@ workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 futures.workspace = true
-async-stream.workspace = true
-prysm-render = { path = "../../prysm-render" }
 prysm-capture = { path = "../../prysm-capture" }
-tokio-stream = { workspace = true }
+prysm-core = { path = "../../prysm-core" }
 
 # Desktop renderer dependencies
 eframe = "0.33"
 egui = "0.33"
 tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
+tokio-util.workspace = true

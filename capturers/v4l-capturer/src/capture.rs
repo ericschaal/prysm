@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
 use futures::Stream;
 use prysm_capture::{Frame, PixelFormat, PrysmCapturer};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio_util::sync::CancellationToken;
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
@@ -10,18 +14,22 @@ use v4l::{Device, Format, FourCC};
 
 pub struct V4lCapturer {
     device_path: String,
-    shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown_token: CancellationToken,
 }
 
 impl V4lCapturer {
-    pub fn new(device_path: &str, shutdown: tokio::sync::watch::Receiver<bool>) -> Result<Self> {
+    pub fn new(device_path: &str, shutdown_token: CancellationToken) -> Result<Self> {
         Ok(Self {
             device_path: device_path.to_string(),
-            shutdown,
+            shutdown_token,
         })
     }
 
-    fn create_stream(device: &mut Device, width: u32, height: u32) -> Result<(MmapStream<'_>, Format)> {
+    fn create_stream(
+        device: &mut Device,
+        width: u32,
+        height: u32,
+    ) -> Result<(MmapStream<'_>, Format)> {
         let mut fmt = device.format()?;
 
         fmt.width = width;
@@ -44,8 +52,8 @@ impl V4lCapturer {
                     // Validate that a supported format was set
                     if format.fourcc == FourCC::new(b"YUYV")
                         || format.fourcc == FourCC::new(b"RGB3")
-                        || format.fourcc == FourCC::new(b"BGR3") {
-
+                        || format.fourcc == FourCC::new(b"BGR3")
+                    {
                         tracing::info!(
                             "Video format set to: {:?} {}x{} (stride: {})",
                             format.fourcc,
@@ -75,23 +83,21 @@ impl V4lCapturer {
 }
 
 impl PrysmCapturer for V4lCapturer {
-    fn run(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static {
+    fn into_stream(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static {
         use tokio_stream::wrappers::ReceiverStream;
 
         // Create channel for sending frames from blocking thread to async
         let (tx, rx) = tokio::sync::mpsc::channel(4);
 
-        // Create atomic shutdown flag for OS thread (can't use async watch in blocking context)
+        // Create atomic shutdown flag for OS thread (can't use async CancellationToken in blocking context)
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let shutdown_flag_clone = shutdown_flag.clone();
-        let mut shutdown_watch = self.shutdown.clone();
+        let shutdown_token = self.shutdown_token.clone();
 
-        // Spawn async task to bridge watch receiver to atomic flag
+        // Spawn async task to bridge cancellation token to atomic flag
         tokio::spawn(async move {
-            let _ = shutdown_watch.changed().await;
-            if *shutdown_watch.borrow() {
-                shutdown_flag_clone.store(true, Ordering::Relaxed);
-            }
+            shutdown_token.cancelled().await;
+            shutdown_flag_clone.store(true, Ordering::Relaxed);
         });
 
         // Spawn OS thread for blocking v4l I/O
@@ -147,7 +153,8 @@ impl PrysmCapturer for V4lCapturer {
                             frame_data.extend_from_slice(&buffer[row_start..row_end]);
                         }
 
-                        let frame = Frame::new(frame_data, format.width, format.height, pixel_format);
+                        let frame =
+                            Frame::new(frame_data, format.width, format.height, pixel_format);
 
                         if tx.blocking_send(frame).is_err() {
                             tracing::info!("Frame receiver dropped, stopping capture");

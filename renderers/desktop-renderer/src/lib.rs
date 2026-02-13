@@ -1,63 +1,72 @@
-use futures::Stream;
 use prysm_capture::{Frame, PixelFormat};
-use prysm_render::{Color, EdgeSpectrums, PrysmRenderer};
-use std::pin::Pin;
+use prysm_core::{Color, EdgeSpectrums};
+use tokio_util::sync::CancellationToken;
 
-pub struct DesktopRenderer {
+pub struct DesktopRendererBuilder {
     height: usize,
     width: usize,
-    frame_stream: Option<Pin<Box<dyn Stream<Item = Frame> + Send>>>,
-    shutdown_tx: tokio::sync::watch::Sender<bool>,
-    shutdown_rx: tokio::sync::watch::Receiver<bool>,
     layout_config: LayoutConfig,
+    shutdown_token: Option<CancellationToken>,
+    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
+    frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
 }
 
-impl std::fmt::Debug for DesktopRenderer {
+impl std::fmt::Debug for DesktopRendererBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopRenderer")
-            .field("frame_stream", &self.frame_stream.as_ref().map(|_| "Some(Stream)"))
-            .field("shutdown_tx", &"<watch::Sender>")
-            .field("shutdown_rx", &"<watch::Receiver>")
+            .field("shutdown_token", &"<CancellationToken>")
+            .field("width", &self.width)
+            .field("height", &self.height)
             .field("layout_config", &self.layout_config)
             .finish()
     }
 }
 
-impl DesktopRenderer {
+impl DesktopRendererBuilder {
+    #[must_use]
     pub fn new(
         target_width: usize,
         target_height: usize,
-        shutdown_tx: tokio::sync::watch::Sender<bool>,
-        shutdown_rx: tokio::sync::watch::Receiver<bool>
+        spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
     ) -> Self {
         Self {
             height: target_height,
             width: target_width,
-            frame_stream: None,
-            shutdown_tx,
-            shutdown_rx,
+            frame_rx: None,
+            shutdown_token: None,
+            spectrum_rx,
             layout_config: LayoutConfig::default(),
         }
     }
 
-    pub fn with_frame_stream(mut self, stream: impl Stream<Item = Frame> + Send + 'static) -> Self {
-        self.frame_stream = Some(Box::pin(stream));
+    #[must_use]
+    pub fn with_frame_rx(mut self, frame_rx: tokio::sync::watch::Receiver<Frame>) -> Self {
+        self.frame_rx = Some(frame_rx);
+        self
+    }
+
+    #[must_use]
+    pub fn with_shutdown_token(mut self, token: &CancellationToken) -> Self {
+        self.shutdown_token = Some(token.clone());
         self
     }
 
     /// Configure layout dimensions
+    #[must_use]
     pub fn with_layout(mut self, config: LayoutConfig) -> Self {
         self.layout_config = config;
         self
     }
 
     /// Set LED strip width
+    #[must_use]
     pub fn with_led_strip_width(mut self, width_px: f32) -> Self {
         self.layout_config.led_strip_width_px = width_px;
         self
     }
 
     /// Configure border
+    #[must_use]
     pub fn with_border(mut self, width_px: f32, enabled: bool) -> Self {
         self.layout_config.border_width_px = width_px;
         self.layout_config.enable_border = enabled;
@@ -65,15 +74,28 @@ impl DesktopRenderer {
     }
 
     /// Configure LED appearance
+    #[must_use]
     pub fn with_led_size(mut self, size_px: f32) -> Self {
         self.layout_config.led_size_px = size_px;
         self
     }
 
     /// Configure LED spacing
+    #[must_use]
     pub fn with_led_spacing(mut self, spacing_ratio: f32) -> Self {
         self.layout_config.led_spacing_ratio = spacing_ratio;
         self
+    }
+
+    #[must_use]
+    pub fn build(self) -> DesktopRenderer {
+        DesktopRenderer {
+            spectrum_rx: self.spectrum_rx,
+            shutdown_token: self.shutdown_token,
+            frame_rx: self.frame_rx,
+            texture_handle: None,
+            layout_config: self.layout_config,
+        }
     }
 }
 
@@ -214,19 +236,21 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 }
 
 /// The eframe application that displays edge color gradients
-struct PrysmApp {
+pub struct DesktopRenderer {
     spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
-    shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
-    black_frame: Frame,
     layout_config: LayoutConfig,
 }
 
-impl eframe::App for PrysmApp {
+impl eframe::App for DesktopRenderer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Check shutdown signal
-        if self.shutdown.has_changed().unwrap_or(false) && *self.shutdown.borrow() {
+        if self
+            .shutdown_token
+            .as_ref()
+            .is_some_and(|t| t.is_cancelled())
+        {
             tracing::info!("Shutdown signal received, closing window");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -236,44 +260,49 @@ impl eframe::App for PrysmApp {
         let spectrum_changed = self.spectrum_rx.has_changed().unwrap_or_default();
         let spectrums = self.spectrum_rx.borrow_and_update().clone();
 
-        let frame_changed = self.frame_rx.as_ref().map(|rx| rx.has_changed().unwrap_or_default()).unwrap_or(false);
-        if let Some(frame_rx) = self.frame_rx.as_ref() && frame_changed {
+        let frame_changed = self
+            .frame_rx
+            .as_ref()
+            .is_some_and(|rx| rx.has_changed().unwrap_or_default());
+
+        if let Some(frame_rx) = self.frame_rx.as_ref()
+            && frame_changed
+        {
             let frame = frame_rx.borrow();
-            let rgb_data: &Vec<u8> = match frame.format {
+            let rgb_data: Option<&Vec<u8>> = match frame.format {
                 PixelFormat::RGB24 => {
                     // Already RGB, use as-is
-                    &frame.data
+                    Some(&frame.data)
                 }
                 PixelFormat::YUYV => {
                     // Convert YUYV to RGB for display
-                    &prysm_capture::yuyv::yuyv_to_rgb(
+                    Some(&prysm_capture::yuyv::yuyv_to_rgb(
                         &frame.data,
                         frame.width as usize,
                         frame.height as usize,
-                    )
+                    ))
                 }
-                PixelFormat::MJPEG | PixelFormat::BGR24  => {
-                    &self.black_frame.data
-                }
+                PixelFormat::MJPEG | PixelFormat::BGR24 => None,
             };
 
             // Convert RGB data to ColorImage
-            let color_image = egui::ColorImage::from_rgb(
-                [frame.width as usize, frame.height as usize],
-                rgb_data,
-            );
+            if let Some(rgb_data) = rgb_data {
+                let color_image = egui::ColorImage::from_rgb(
+                    [frame.width as usize, frame.height as usize],
+                    rgb_data,
+                );
 
-            if let Some(texture) = &mut self.texture_handle {
-                texture.set(color_image, egui::TextureOptions::LINEAR);
-            } else {
-                self.texture_handle = Some(ctx.load_texture(
-                    "video_feed",
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                ));
+                if let Some(texture) = &mut self.texture_handle {
+                    texture.set(color_image, egui::TextureOptions::LINEAR);
+                } else {
+                    self.texture_handle = Some(ctx.load_texture(
+                        "video_feed",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
             }
         }
-
 
         // Draw the UI
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -284,9 +313,19 @@ impl eframe::App for PrysmApp {
 
             // Render LED strips (excluding corners)
             self.render_discrete_leds(ui, &spectrums.top, layout.top_strip, EdgePosition::Top);
-            self.render_discrete_leds(ui, &spectrums.bottom, layout.bottom_strip, EdgePosition::Bottom);
+            self.render_discrete_leds(
+                ui,
+                &spectrums.bottom,
+                layout.bottom_strip,
+                EdgePosition::Bottom,
+            );
             self.render_discrete_leds(ui, &spectrums.left, layout.left_strip, EdgePosition::Left);
-            self.render_discrete_leds(ui, &spectrums.right, layout.right_strip, EdgePosition::Right);
+            self.render_discrete_leds(
+                ui,
+                &spectrums.right,
+                layout.right_strip,
+                EdgePosition::Right,
+            );
 
             // Corners use default background (no LEDs in corners)
 
@@ -322,12 +361,12 @@ impl eframe::App for PrysmApp {
     }
 }
 
-impl PrysmApp {
+impl DesktopRenderer {
     /// Render discrete individual LEDs along an edge
     fn render_discrete_leds(
         &self,
         ui: &mut egui::Ui,
-        spectrum: &prysm_render::ColorSpectrum,
+        spectrum: &prysm_core::ColorSpectrum,
         rect: egui::Rect,
         edge: EdgePosition,
     ) {
@@ -390,75 +429,35 @@ enum EdgePosition {
     Right,
 }
 
-impl PrysmRenderer for DesktopRenderer {
-    fn run(self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static) {
-        // Create mpsc channel for async->sync bridge (edge spectrums)
-        let (spectrum_tx, spectrum_rx) = tokio::sync::watch::channel(EdgeSpectrums::black(
-            self.width,
-            self.height,
-            40 // TODO pass this config value
-        ));
+/// Run the desktop renderer on the main thread (blocking).
+///
+/// This function must be called from the main thread. It will:
+/// 1. Call `eframe::run_native()` (blocking)
+/// 2. Signal shutdown when the window closes
+///
+/// # Threading
+/// This function blocks the calling thread until the window is closed.
+/// Async work should be running on a separate runtime thread.
+///
+/// # Arguments
+/// * `app` - The configured PrysmApp instance
+/// * `shutdown_token` - Token to signal shutdown when window closes
+pub fn run(
+    app: DesktopRenderer,
+    shutdown_token: &CancellationToken,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1920.0, 1080.0])
+            .with_title("Prysm - Ambient Lighting"),
+        ..Default::default()
+    };
 
-        let black_frame = Frame::black(
-            self.width as u32,
-            self.height as u32,
-            PixelFormat::YUYV
-        );
+    let result = eframe::run_native("Prysm", options, Box::new(move |_cc| Ok(Box::new(app))));
 
-        // Spawn async task to consume spectrum stream
-        tokio::spawn(async move {
-            futures::pin_mut!(input);
-            use futures::StreamExt;
-            while let Some(spectrums) = input.next().await {
-                let _ = spectrum_tx.send(spectrums);
-            }
-        });
+    // Signal shutdown when window closes
+    tracing::info!("Window closed, signaling shutdown to runtime thread");
+    shutdown_token.cancel();
 
-        // Handle frame source (either stream or broadcast receiver)
-        let frame_rx = if let Some(mut frame_stream) = self.frame_stream {
-            // Create mpsc channel for async->sync bridge (frames)
-            let (frame_tx, frame_rx) = tokio::sync::watch::channel(black_frame.clone());
-
-            // Spawn async task to bridge stream to mpsc sender
-            tokio::spawn(async move {
-                use futures::StreamExt;
-                while let Some(frame) = frame_stream.next().await {
-                    if frame_tx.send(frame).is_err() {
-                        break; // Receiver dropped
-                    }
-                }
-            });
-
-            Some(frame_rx)
-        } else {
-            None
-        };
-
-
-        let app = PrysmApp {
-            spectrum_rx,
-            frame_rx,
-            black_frame,
-            shutdown: self.shutdown_rx.clone(),
-            texture_handle: None,
-            layout_config: self.layout_config.clone(),
-        };
-
-        // 5. Configure and run the native window
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([1920.0, 1080.0])
-                .with_title("Prysm - Ambient Lighting"),
-            ..Default::default()
-        };
-
-        let _ = eframe::run_native(
-            "Prysm",
-            options,
-            Box::new(|_cc| Ok(Box::new(app))),
-        );
-
-        tracing::info!("Window closed, signaling shutdown to other components");
-        let _ = self.shutdown_tx.send(true);
-    }
+    result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
 }

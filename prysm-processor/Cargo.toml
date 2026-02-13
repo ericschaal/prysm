@@ -14,5 +14,4 @@ futures.workspace = true
 async-stream.workspace = true
 image.workspace = true
 prysm-capture = { path = "../prysm-capture" }
-prysm-render = {path = "../prysm-render"}
 prysm-core = { path = "../prysm-core" }

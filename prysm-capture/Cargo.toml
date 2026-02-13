@@ -7,6 +7,5 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-prysm-core = {path = "../prysm-core"}
 futures.workspace = true
 yuv = { version = "0.8", features = ["fast_mode"] }

@@ -1,15 +1,15 @@
-use std::fmt::{Display, Formatter};
 use futures::Stream;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 pub mod yuyv;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
-    RGB24,  // 3 bytes per pixel
-    BGR24,  // 3 bytes per pixel
-    YUYV,   // 2 bytes per pixel (4:2:2 subsampling)
-    MJPEG,  // Variable size (future support)
+    RGB24, // 3 bytes per pixel
+    BGR24, // 3 bytes per pixel
+    YUYV,  // 2 bytes per pixel (4:2:2 subsampling)
+    MJPEG, // Variable size (future support)
 }
 
 impl Display for PixelFormat {
@@ -107,9 +107,8 @@ impl Frame {
     }
 }
 
-
 pub trait PrysmCapturer {
-    fn run(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static
+    fn into_stream(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static
     where
         Self: Sized + Send + 'static;
 }
