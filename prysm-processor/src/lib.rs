@@ -19,11 +19,11 @@ impl PrysmProcessor {
         }
     }
 
-    pub fn run<'a>(
-        &'a mut self,
-        input: impl Stream<Item = Frame> + 'a
-    ) -> impl Stream<Item = EdgeSpectrums> + 'a {
-        input.map(|frame| self.color_processor.process_frame(&frame))
+    pub fn run(
+        mut self,
+        input: impl Stream<Item = Frame> + Send + 'static
+    ) -> impl Stream<Item = EdgeSpectrums> + Send + 'static {
+        input.map(move |frame| self.color_processor.process_frame(&frame))
     }
 
 

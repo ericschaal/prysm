@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use async_stream::stream;
-use futures::{Stream};
+use futures::Stream;
 use prysm_capture::{Frame, PixelFormat, PrysmCapturer};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::MmapStream;
@@ -9,21 +9,20 @@ use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
 
 pub struct V4lCapturer {
-    device: Device,
+    device_path: String,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
 impl V4lCapturer {
-    pub fn new(device_path: &str) -> Result<Self> {
-        tracing::info!("Opening video device: {}", device_path);
-        let device = Device::with_path(device_path).context("Failed to open video device")?;
-
+    pub fn new(device_path: &str, shutdown: tokio::sync::watch::Receiver<bool>) -> Result<Self> {
         Ok(Self {
-            device,
+            device_path: device_path.to_string(),
+            shutdown,
         })
     }
 
-    fn create_stream(&mut self, width: u32, height: u32) -> Result<(MmapStream<'_>, Format)> {
-        let mut fmt = self.device.format()?;
+    fn create_stream(device: &mut Device, width: u32, height: u32) -> Result<(MmapStream<'_>, Format)> {
+        let mut fmt = device.format()?;
 
         fmt.width = width;
         fmt.height = height;
@@ -38,9 +37,9 @@ impl V4lCapturer {
         let mut last_error = None;
         for fourcc in preferred_formats {
             fmt.fourcc = fourcc;
-            match self.device.set_format(&fmt) {
+            match device.set_format(&fmt) {
                 Ok(_) => {
-                    let format = self.device.format()?;
+                    let format = device.format()?;
 
                     // Validate that a supported format was set
                     if format.fourcc == FourCC::new(b"YUYV")
@@ -55,7 +54,7 @@ impl V4lCapturer {
                             format.stride
                         );
 
-                        let mmap_stream = MmapStream::with_buffers(&self.device, Type::VideoCapture, 4)
+                        let mmap_stream = MmapStream::with_buffers(device, Type::VideoCapture, 4)
                             .context("Failed to create stream")?;
 
                         return Ok((mmap_stream, format));
@@ -76,11 +75,45 @@ impl V4lCapturer {
 }
 
 impl PrysmCapturer for V4lCapturer {
-    fn run(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_ {
-        let (mut input_stream, format) = self.create_stream(width, height).expect("Failed to create stream");
+    fn run(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static {
+        use tokio_stream::wrappers::ReceiverStream;
 
-        stream! {
-            // Determine format and bytes per pixel
+        // Create channel for sending frames from blocking thread to async
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+
+        // Create atomic shutdown flag for OS thread (can't use async watch in blocking context)
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let shutdown_flag_clone = shutdown_flag.clone();
+        let mut shutdown_watch = self.shutdown.clone();
+
+        // Spawn async task to bridge watch receiver to atomic flag
+        tokio::spawn(async move {
+            let _ = shutdown_watch.changed().await;
+            if *shutdown_watch.borrow() {
+                shutdown_flag_clone.store(true, Ordering::Relaxed);
+            }
+        });
+
+        // Spawn OS thread for blocking v4l I/O
+        std::thread::spawn(move || {
+            tracing::info!("Opening video device: {}", self.device_path);
+            let mut device = match Device::with_path(&self.device_path) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Failed to open video device: {}", e);
+                    return;
+                }
+            };
+
+            let (mut input_stream, format) = match Self::create_stream(&mut device, width, height) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to create stream: {}", e);
+                    return;
+                }
+            };
+
+            // Determine format
             let (pixel_format, bytes_per_pixel) = match format.fourcc.str() {
                 Ok("YUYV") => (PixelFormat::YUYV, 2),
                 Ok("RGB3") => (PixelFormat::RGB24, 3),
@@ -91,15 +124,21 @@ impl PrysmCapturer for V4lCapturer {
                 }
             };
 
-            tracing::info!("stream started with format: {:?}", pixel_format);
+            tracing::info!("Stream started with format: {:?}", pixel_format);
 
+            // Blocking loop (appropriate for blocking I/O)
             loop {
+                // Check shutdown flag before attempting to read
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    tracing::info!("Shutdown signal received, stopping v4l capture");
+                    break;
+                }
+
                 match input_stream.next() {
                     Ok((buffer, _metadata)) => {
-                        // Extract frame data, removing any stride padding
+                        // Extract frame data (same as current code)
                         let row_size = format.width as usize * bytes_per_pixel;
                         let stride = format.stride as usize;
-
                         let mut frame_data = Vec::with_capacity(format.height as usize * row_size);
 
                         for row in 0..format.height as usize {
@@ -108,8 +147,12 @@ impl PrysmCapturer for V4lCapturer {
                             frame_data.extend_from_slice(&buffer[row_start..row_end]);
                         }
 
-                        // Emit frame with appropriate format
-                        yield Frame::new(frame_data, format.width, format.height, pixel_format);
+                        let frame = Frame::new(frame_data, format.width, format.height, pixel_format);
+
+                        if tx.blocking_send(frame).is_err() {
+                            tracing::info!("Frame receiver dropped, stopping capture");
+                            break;
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Error capturing frame: {}", e);
@@ -117,6 +160,9 @@ impl PrysmCapturer for V4lCapturer {
                     }
                 }
             }
-        }
+        });
+
+        // Return async stream backed by channel
+        ReceiverStream::new(rx)
     }
 }

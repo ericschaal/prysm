@@ -11,5 +11,6 @@ v4l = { git = "https://github.com/raymanfx/libv4l-rs.git", rev = "30f6dbaeed5cdb
 tracing.workspace = true
 anyhow.workspace = true
 futures.workspace = true
-async-stream.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
 prysm-capture = { path = "../../prysm-capture" }

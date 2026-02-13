@@ -1,7 +1,7 @@
 use futures::Stream;
 
 pub trait PrysmRenderer {
-    fn run(&mut self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static);
+    fn run(self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static);
 }
 
 

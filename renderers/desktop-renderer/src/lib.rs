@@ -1,23 +1,38 @@
 use futures::Stream;
 use prysm_capture::{Frame, PixelFormat};
 use prysm_render::{Color, EdgeSpectrums, PrysmRenderer};
+use std::pin::Pin;
 
-#[derive(Debug)]
 pub struct DesktopRenderer {
-    frame_rx: Option<tokio::sync::broadcast::Receiver<Frame>>,
+    frame_stream: Option<Pin<Box<dyn Stream<Item = Frame> + Send>>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
     layout_config: LayoutConfig,
 }
 
+impl std::fmt::Debug for DesktopRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DesktopRenderer")
+            .field("frame_stream", &self.frame_stream.as_ref().map(|_| "Some(Stream)"))
+            .field("shutdown_tx", &"<watch::Sender>")
+            .field("shutdown_rx", &"<watch::Receiver>")
+            .field("layout_config", &self.layout_config)
+            .finish()
+    }
+}
+
 impl DesktopRenderer {
-    pub fn new() -> Self {
+    pub fn new(shutdown_tx: tokio::sync::watch::Sender<bool>, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Self {
         Self {
-            frame_rx: None,
+            frame_stream: None,
+            shutdown_tx,
+            shutdown_rx,
             layout_config: LayoutConfig::default(),
         }
     }
 
-    pub fn with_frames(mut self, rx: tokio::sync::broadcast::Receiver<Frame>) -> Self {
-        self.frame_rx = Some(rx);
+    pub fn with_frame_stream(mut self, stream: impl Stream<Item = Frame> + Send + 'static) -> Self {
+        self.frame_stream = Some(Box::pin(stream));
         self
     }
 
@@ -50,12 +65,6 @@ impl DesktopRenderer {
     pub fn with_led_spacing(mut self, spacing_ratio: f32) -> Self {
         self.layout_config.led_spacing_ratio = spacing_ratio;
         self
-    }
-}
-
-impl Default for DesktopRenderer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -200,12 +209,20 @@ struct PrysmApp {
     spectrums: EdgeSpectrums,
     rx: tokio::sync::mpsc::Receiver<EdgeSpectrums>,
     frame_rx: Option<tokio::sync::mpsc::Receiver<Frame>>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
     texture_handle: Option<egui::TextureHandle>,
     layout_config: LayoutConfig,
 }
 
 impl eframe::App for PrysmApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check shutdown signal
+        if self.shutdown.has_changed().unwrap_or(false) && *self.shutdown.borrow() {
+            tracing::info!("Shutdown signal received, closing window");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         // Poll for new spectrums (non-blocking)
         while let Ok(spectrums) = self.rx.try_recv() {
             self.spectrums = spectrums;
@@ -368,7 +385,7 @@ enum EdgePosition {
 }
 
 impl PrysmRenderer for DesktopRenderer {
-    fn run(&mut self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static) {
+    fn run(self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static) {
         // 1. Create mpsc channel for async->sync bridge (edge spectrums)
         let (tx, rx) = tokio::sync::mpsc::channel(10);
 
@@ -381,13 +398,14 @@ impl PrysmRenderer for DesktopRenderer {
             }
         });
 
-        // 3. Handle frame receiver if present
-        let frame_rx_mpsc = if let Some(mut broadcast_rx) = std::mem::take(&mut self.frame_rx) {
+        // 3. Handle frame source (either stream or broadcast receiver)
+        let frame_rx_mpsc = if let Some(mut frame_stream) = self.frame_stream {
             let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(10);
 
-            // Spawn async task to bridge broadcast receiver to mpsc sender
+            // Spawn async task to bridge stream to mpsc sender
             tokio::spawn(async move {
-                while let Ok(frame) = broadcast_rx.recv().await {
+                use futures::StreamExt;
+                while let Some(frame) = frame_stream.next().await {
                     if frame_tx.send(frame).await.is_err() {
                         break; // Receiver dropped
                     }
@@ -407,6 +425,7 @@ impl PrysmRenderer for DesktopRenderer {
             spectrums,
             rx,
             frame_rx: frame_rx_mpsc,
+            shutdown: self.shutdown_rx.clone(),
             texture_handle: None,
             layout_config: self.layout_config.clone(),
         };
@@ -414,16 +433,18 @@ impl PrysmRenderer for DesktopRenderer {
         // 5. Configure and run the native window
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([800.0, 600.0])
+                .with_inner_size([1920.0, 1080.0])
                 .with_title("Prysm - Ambient Lighting"),
             ..Default::default()
         };
 
-        // 6. Run the app (blocking, consumes thread)
         let _ = eframe::run_native(
             "Prysm",
             options,
             Box::new(|_cc| Ok(Box::new(app))),
         );
+
+        tracing::info!("Window closed, signaling shutdown to other components");
+        let _ = self.shutdown_tx.send(true);
     }
 }

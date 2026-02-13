@@ -97,5 +97,7 @@ impl Frame {
 
 
 pub trait PrysmCapturer {
-    fn run(&mut self, width: u32, height: u32) -> impl Stream<Item = Frame> + '_;
+    fn run(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static
+    where
+        Self: Sized + Send + 'static;
 }
