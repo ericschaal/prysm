@@ -207,7 +207,7 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 /// The eframe application that displays edge color gradients
 struct PrysmApp {
     spectrums: EdgeSpectrums,
-    rx: tokio::sync::mpsc::Receiver<EdgeSpectrums>,
+    spectrum_rx: tokio::sync::mpsc::Receiver<EdgeSpectrums>,
     frame_rx: Option<tokio::sync::mpsc::Receiver<Frame>>,
     shutdown: tokio::sync::watch::Receiver<bool>,
     texture_handle: Option<egui::TextureHandle>,
@@ -224,7 +224,7 @@ impl eframe::App for PrysmApp {
         }
 
         // Poll for new spectrums (non-blocking)
-        while let Ok(spectrums) = self.rx.try_recv() {
+        while let Ok(spectrums) = self.spectrum_rx.try_recv() {
             self.spectrums = spectrums;
         }
 
@@ -386,20 +386,21 @@ enum EdgePosition {
 
 impl PrysmRenderer for DesktopRenderer {
     fn run(self, input: impl Stream<Item = EdgeSpectrums> + Send + 'static) {
-        // 1. Create mpsc channel for async->sync bridge (edge spectrums)
-        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        // Create mpsc channel for async->sync bridge (edge spectrums)
+        let (spectrum_tx, spectrum_rx) = tokio::sync::mpsc::channel(10);
 
-        // 2. Spawn async task to consume spectrum stream
+        // Spawn async task to consume spectrum stream
         tokio::spawn(async move {
             futures::pin_mut!(input);
             use futures::StreamExt;
             while let Some(spectrums) = input.next().await {
-                let _ = tx.send(spectrums).await;
+                let _ = spectrum_tx.send(spectrums).await;
             }
         });
 
-        // 3. Handle frame source (either stream or broadcast receiver)
-        let frame_rx_mpsc = if let Some(mut frame_stream) = self.frame_stream {
+        // Handle frame source (either stream or broadcast receiver)
+        let frame_rx = if let Some(mut frame_stream) = self.frame_stream {
+            // Create mpsc channel for async->sync bridge (frames)
             let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(10);
 
             // Spawn async task to bridge stream to mpsc sender
@@ -417,14 +418,14 @@ impl PrysmRenderer for DesktopRenderer {
             None
         };
 
-        // 4. Initialize app state with black spectrums
+        // Initialize app state with black spectrums
         // Using typical HD resolution for initial state (will adapt to actual frames)
         let spectrums = EdgeSpectrums::black(1920, 1080, 40);
 
         let app = PrysmApp {
             spectrums,
-            rx,
-            frame_rx: frame_rx_mpsc,
+            spectrum_rx,
+            frame_rx,
             shutdown: self.shutdown_rx.clone(),
             texture_handle: None,
             layout_config: self.layout_config.clone(),
