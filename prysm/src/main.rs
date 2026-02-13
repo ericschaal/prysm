@@ -2,14 +2,14 @@ mod stream;
 
 use anyhow::Result;
 use desktop_renderer::DesktopRendererBuilder;
-use prysm_capture::PrysmCapturer;
+use prysm_capture::{Frame, PrysmCapturer};
+use prysm_core::EdgeSpectrums;
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
 use v4l_capturer::V4lCapturer;
 
 const CAPTURE_WIDTH: u32 = 1920;
 const CAPTURE_HEIGHT: u32 = 1080;
-const LED_COUNT: usize = 40;
 
 fn main() -> Result<()> {
     let subscriber = tracing_subscriber::FmtSubscriber::new();
@@ -18,20 +18,13 @@ fn main() -> Result<()> {
     // Create shutdown token
     let shutdown_token = CancellationToken::new();
 
-    // Create watch channels for async->sync bridge
-    let black_spectrums = prysm_core::EdgeSpectrums::black(
-        CAPTURE_WIDTH as usize,
-        CAPTURE_HEIGHT as usize,
-        LED_COUNT,
-    );
-    let spectrums = stream::StreamWatcher::new(black_spectrums);
+    let dummy_spectrum = EdgeSpectrums::dummy(CAPTURE_WIDTH as usize, CAPTURE_HEIGHT as usize);
+    let spectrums = stream::StreamWatcher::new(dummy_spectrum);
+    let dummy_frame = Frame::dummy(CAPTURE_WIDTH, CAPTURE_HEIGHT);
+    let frames = stream::StreamWatcher::new(dummy_frame);
 
-    let black_frame = prysm_capture::Frame::black(
-        CAPTURE_WIDTH,
-        CAPTURE_HEIGHT,
-        prysm_capture::PixelFormat::default(),
-    );
-    let frames = stream::StreamWatcher::new(black_frame);
+    // Configure renderer layout with target FPS from core config
+    let config = prysm_core::Config::default();
 
     // Spawn dedicated runtime thread for all async work
     let runtime_handle = std::thread::spawn({
@@ -39,6 +32,8 @@ fn main() -> Result<()> {
         let shutdown_token = shutdown_token.clone();
         let spectrums = spectrums.clone();
         let frames = frames.clone();
+        let config = config.clone();
+
         move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -48,7 +43,7 @@ fn main() -> Result<()> {
             rt.block_on(async move {
                 let capturer = V4lCapturer::new("/dev/video2", shutdown_token.clone())
                     .expect("Failed to create V4L capturer");
-                let processor = PrysmProcessor::default();
+                let processor = PrysmProcessor::new(&config);
 
                 // Create async streams
                 let video_feed = capturer.into_stream(CAPTURE_WIDTH, CAPTURE_HEIGHT);
@@ -79,14 +74,16 @@ fn main() -> Result<()> {
         }
     });
 
-    let app = DesktopRendererBuilder::new(
-        CAPTURE_WIDTH as usize,
-        CAPTURE_HEIGHT as usize,
-        spectrums.receiver(),
-    )
-    .with_shutdown_token(&shutdown_token)
-    .with_frame_rx(frames.receiver())
-    .build();
+    let layout_config = desktop_renderer::LayoutConfig {
+        target_fps: config.target_fps,
+        ..Default::default()
+    };
+
+    let app = DesktopRendererBuilder::new(spectrums.receiver())
+        .with_shutdown_token(&shutdown_token)
+        .with_frame_rx(frames.receiver())
+        .with_layout(layout_config)
+        .build();
 
     // Run desktop renderer on main thread (blocking until window closes)
     let result = desktop_renderer::run(app, &shutdown_token);

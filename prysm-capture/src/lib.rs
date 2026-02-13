@@ -80,27 +80,34 @@ impl Frame {
         }
     }
 
-    pub fn black(width: u32, height: u32, format: PixelFormat) -> Self {
+    /// Create a frame filled with the specified byte value
+    #[must_use]
+    pub fn fill(value: u8, width: u32, height: u32, format: PixelFormat) -> Self {
         let expected_size = format.expected_size(width, height).unwrap();
-        let value = match format {
-            PixelFormat::RGB24 | PixelFormat::BGR24 | PixelFormat::YUYV => 0, // TODO check this holds
-            PixelFormat::MJPEG => unimplemented!("MJPEG is not yet implemented"),
-        };
         let data = vec![value; expected_size];
         Self::new(data, width, height, format)
     }
 
+    /// Create a dummy frame (zero-filled, which appears green in YUYV)
+    #[must_use]
+    pub fn dummy(width: u32, height: u32) -> Self {
+        Self::fill(0, width, height, PixelFormat::YUYV)
+    }
+
     /// Returns a slice view of the frame data.
+    #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         &self.data
     }
 
     /// Returns the size of the frame data in bytes.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Returns true if the frame data is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }

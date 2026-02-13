@@ -3,8 +3,6 @@ use prysm_core::{Color, EdgeSpectrums};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
-    height: usize,
-    width: usize,
     layout_config: LayoutConfig,
     shutdown_token: Option<CancellationToken>,
     spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
@@ -15,8 +13,8 @@ impl std::fmt::Debug for DesktopRendererBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopRenderer")
             .field("shutdown_token", &"<CancellationToken>")
-            .field("width", &self.width)
-            .field("height", &self.height)
+            .field("spectrum_rx", &self.spectrum_rx)
+            .field("frame_rx", &self.frame_rx)
             .field("layout_config", &self.layout_config)
             .finish()
     }
@@ -24,14 +22,8 @@ impl std::fmt::Debug for DesktopRendererBuilder {
 
 impl DesktopRendererBuilder {
     #[must_use]
-    pub fn new(
-        target_width: usize,
-        target_height: usize,
-        spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>,
-    ) -> Self {
+    pub fn new(spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectrums>) -> Self {
         Self {
-            height: target_height,
-            width: target_width,
             frame_rx: None,
             shutdown_token: None,
             spectrum_rx,
@@ -80,13 +72,6 @@ impl DesktopRendererBuilder {
         self
     }
 
-    /// Configure LED spacing
-    #[must_use]
-    pub fn with_led_spacing(mut self, spacing_ratio: f32) -> Self {
-        self.layout_config.led_spacing_ratio = spacing_ratio;
-        self
-    }
-
     #[must_use]
     pub fn build(self) -> DesktopRenderer {
         DesktopRenderer {
@@ -114,8 +99,11 @@ pub struct LayoutConfig {
     /// Size of individual LED squares in pixels
     pub led_size_px: f32,
 
-    /// Spacing between LEDs as a fraction of LED size (default: 0.3 = 30% spacing)
-    pub led_spacing_ratio: f32,
+    /// Total LED count around entire perimeter (if None, use EdgeSpectrum sample counts directly)
+    pub total_led_count: Option<usize>,
+
+    /// Target frames per second for rendering updates
+    pub target_fps: u32,
 }
 
 impl Default for LayoutConfig {
@@ -125,7 +113,8 @@ impl Default for LayoutConfig {
             border_width_px: 10.0,
             enable_border: true,
             led_size_px: 10.0,
-            led_spacing_ratio: 0.3,
+            total_led_count: Some(300),
+            target_fps: 30,
         }
     }
 }
@@ -244,6 +233,24 @@ pub struct DesktopRenderer {
     layout_config: LayoutConfig,
 }
 
+/// Calculate LED counts per edge for uniform spacing
+///
+/// Distributes total LED count proportionally to edge lengths to achieve
+/// consistent spacing around the perimeter (like real LED strips).
+fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) -> (usize, usize) {
+    assert!(total_leds > 0, "Total LED count must be positive");
+
+    let perimeter = 2.0 * (width as f32 + height as f32);
+    let horizontal_fraction = width as f32 / perimeter;
+    let vertical_fraction = height as f32 / perimeter;
+
+    let horizontal_leds = (total_leds as f32 * horizontal_fraction).round() as usize;
+    let vertical_leds = (total_leds as f32 * vertical_fraction).round() as usize;
+
+    // Ensure at least 1 LED per edge
+    (horizontal_leds.max(1), vertical_leds.max(1))
+}
+
 impl eframe::App for DesktopRenderer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self
@@ -257,49 +264,41 @@ impl eframe::App for DesktopRenderer {
         }
 
         // Poll for new spectrums (non-blocking)
-        let spectrum_changed = self.spectrum_rx.has_changed().unwrap_or_default();
         let spectrums = self.spectrum_rx.borrow_and_update().clone();
 
-        let frame_changed = self
-            .frame_rx
-            .as_ref()
-            .is_some_and(|rx| rx.has_changed().unwrap_or_default());
+        // Poll for new frames (non-blocking) and update texture when needed
+        if let Some(frame_rx) = self.frame_rx.as_mut() {
+            let has_changed = frame_rx.has_changed().unwrap_or_default();
+            let needs_initial_texture = self.texture_handle.is_none();
 
-        if let Some(frame_rx) = self.frame_rx.as_ref()
-            && frame_changed
-        {
-            let frame = frame_rx.borrow();
-            let rgb_data: Option<&Vec<u8>> = match frame.format {
-                PixelFormat::RGB24 => {
-                    // Already RGB, use as-is
-                    Some(&frame.data)
-                }
-                PixelFormat::YUYV => {
-                    // Convert YUYV to RGB for display
-                    Some(&prysm_capture::yuyv::yuyv_to_rgb(
+            if has_changed || needs_initial_texture {
+                let frame = frame_rx.borrow_and_update();
+                let rgb_data: Option<&Vec<u8>> = match frame.format {
+                    PixelFormat::RGB24 => Some(&frame.data),
+                    PixelFormat::YUYV => Some(&prysm_capture::yuyv::yuyv_to_rgb(
                         &frame.data,
                         frame.width as usize,
                         frame.height as usize,
-                    ))
-                }
-                PixelFormat::MJPEG | PixelFormat::BGR24 => None,
-            };
+                    )),
+                    PixelFormat::MJPEG | PixelFormat::BGR24 => None,
+                };
 
-            // Convert RGB data to ColorImage
-            if let Some(rgb_data) = rgb_data {
-                let color_image = egui::ColorImage::from_rgb(
-                    [frame.width as usize, frame.height as usize],
-                    rgb_data,
-                );
+                // Convert RGB data to ColorImage and update texture
+                if let Some(rgb_data) = rgb_data {
+                    let color_image = egui::ColorImage::from_rgb(
+                        [frame.width as usize, frame.height as usize],
+                        rgb_data,
+                    );
 
-                if let Some(texture) = &mut self.texture_handle {
-                    texture.set(color_image, egui::TextureOptions::LINEAR);
-                } else {
-                    self.texture_handle = Some(ctx.load_texture(
-                        "video_feed",
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
+                    if let Some(texture) = &mut self.texture_handle {
+                        texture.set(color_image, egui::TextureOptions::LINEAR);
+                    } else {
+                        self.texture_handle = Some(ctx.load_texture(
+                            "video_feed",
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                    }
                 }
             }
         }
@@ -311,20 +310,46 @@ impl eframe::App for DesktopRenderer {
             // Calculate all layout dimensions
             let layout = LayoutDimensions::calculate(available, &self.layout_config);
 
+            // Determine LED counts per edge based on actual rendered dimensions
+            let (horizontal_display_leds, vertical_display_leds) =
+                if let Some(total_leds) = self.layout_config.total_led_count {
+                    // Use uniform spacing distribution based on actual GUI window size
+                    let render_width = available.width() as usize;
+                    let render_height = available.height() as usize;
+                    calculate_led_distribution(render_width, render_height, total_leds)
+                } else {
+                    // Fall back to EdgeSpectrum sample counts (current behavior)
+                    (spectrums.top.len(), spectrums.left.len())
+                };
+
             // Render LED strips (excluding corners)
-            self.render_discrete_leds(ui, &spectrums.top, layout.top_strip, EdgePosition::Top);
+            self.render_discrete_leds(
+                ui,
+                &spectrums.top,
+                layout.top_strip,
+                EdgePosition::Top,
+                horizontal_display_leds,
+            );
             self.render_discrete_leds(
                 ui,
                 &spectrums.bottom,
                 layout.bottom_strip,
                 EdgePosition::Bottom,
+                horizontal_display_leds,
             );
-            self.render_discrete_leds(ui, &spectrums.left, layout.left_strip, EdgePosition::Left);
+            self.render_discrete_leds(
+                ui,
+                &spectrums.left,
+                layout.left_strip,
+                EdgePosition::Left,
+                vertical_display_leds,
+            );
             self.render_discrete_leds(
                 ui,
                 &spectrums.right,
                 layout.right_strip,
                 EdgePosition::Right,
+                vertical_display_leds,
             );
 
             // Corners use default background (no LEDs in corners)
@@ -354,10 +379,11 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Request repainting on update
-        if frame_changed || spectrum_changed {
-            ctx.request_repaint();
-        }
+        // Request continuous repaints at target FPS to keep polling for new frames/spectrums
+        // This is necessary because egui only calls update() when requested - without
+        // continuous repaints, we'd stop polling for new data when no UI events occur
+        let frame_duration_ms = 1000 / self.layout_config.target_fps.max(1);
+        ctx.request_repaint_after(std::time::Duration::from_millis(frame_duration_ms as u64));
     }
 }
 
@@ -369,18 +395,21 @@ impl DesktopRenderer {
         spectrum: &prysm_core::ColorSpectrum,
         rect: egui::Rect,
         edge: EdgePosition,
+        display_led_count: usize,
     ) {
-        let sample_count = spectrum.len();
         let led_size = self.layout_config.led_size_px;
+
+        // Resample spectrum to display LED count for uniform spacing
+        let colors = spectrum.quantize(display_led_count);
 
         // Calculate spacing between LED centers along the edge
         let spacing = match edge {
-            EdgePosition::Top | EdgePosition::Bottom => rect.width() / sample_count as f32,
-            EdgePosition::Left | EdgePosition::Right => rect.height() / sample_count as f32,
+            EdgePosition::Top | EdgePosition::Bottom => rect.width() / display_led_count as f32,
+            EdgePosition::Left | EdgePosition::Right => rect.height() / display_led_count as f32,
         };
 
-        for i in 0..sample_count {
-            let color = spectrum.color_at(i, sample_count);
+        for i in 0..display_led_count {
+            let color = colors[i];
             let egui_color = color_to_egui(color);
 
             // Calculate LED center position based on edge

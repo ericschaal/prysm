@@ -174,14 +174,14 @@ impl DivAssign<f32> for Color {
     }
 }
 
-/// ColorSpectrum represents a gradient of colors along an edge
+/// `ColorSpectrum` represents a gradient of colors along an edge
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorSpectrum {
     samples: Arc<Vec<Color>>,
 }
 
 impl ColorSpectrum {
-    /// Create a new ColorSpectrum from a vector of color samples
+    /// Create a new `ColorSpectrum` from a vector of color samples
     pub fn new(samples: Vec<Color>) -> Self {
         assert!(
             !samples.is_empty(),
@@ -192,9 +192,14 @@ impl ColorSpectrum {
         }
     }
 
-    /// Create a ColorSpectrum with all black samples
+    /// Create a `ColorSpectrum` filled with the specified color
+    pub fn fill(color: Color, count: usize) -> Self {
+        Self::new(vec![color; count])
+    }
+
+    /// Create a `ColorSpectrum` with all black samples
     pub fn black(count: usize) -> Self {
-        Self::new(vec![Color::black(); count])
+        Self::fill(Color::black(), count)
     }
 
     /// Get the number of samples in the spectrum
@@ -322,23 +327,38 @@ impl EdgeSpectrums {
         }
     }
 
-    /// Create EdgeSpectrums with all black colors
+    /// Create `EdgeSpectrums` filled with the specified color
     /// Sample counts are based on aspect ratio (more samples for longer edges)
-    pub fn black(width: usize, height: usize, samples_per_1000px: usize) -> Self {
+    #[must_use]
+    pub fn fill(color: Color, width: usize, height: usize, samples_per_1000px: usize) -> Self {
         let top_samples = ((width as f32 / 1000.0) * samples_per_1000px as f32).max(1.0) as usize;
         let bottom_samples = top_samples;
         let left_samples = ((height as f32 / 1000.0) * samples_per_1000px as f32).max(1.0) as usize;
         let right_samples = left_samples;
 
         Self {
-            top: ColorSpectrum::black(top_samples),
-            right: ColorSpectrum::black(right_samples),
-            bottom: ColorSpectrum::black(bottom_samples),
-            left: ColorSpectrum::black(left_samples),
+            top: ColorSpectrum::fill(color, top_samples),
+            right: ColorSpectrum::fill(color, right_samples),
+            bottom: ColorSpectrum::fill(color, bottom_samples),
+            left: ColorSpectrum::fill(color, left_samples),
         }
     }
 
-    /// Blend two EdgeSpectrums together with a ratio (0.0 = full self, 1.0 = full other)
+    /// Create `EdgeSpectrums` with all black colors
+    /// Sample counts are based on aspect ratio (more samples for longer edges)
+    #[must_use]
+    pub fn black(width: usize, height: usize, samples_per_1000px: usize) -> Self {
+        Self::fill(Color::black(), width, height, samples_per_1000px)
+    }
+
+    /// Create a dummy EdgeSpectrums (filled with magenta to make it obviously a placeholder)
+    #[must_use]
+    pub fn dummy(width: usize, height: usize) -> Self {
+        Self::fill(Color { r: 255, g: 0, b: 255 }, width, height, 1)
+    }
+
+    /// Blend two `EdgeSpectrums` together with a ratio (0.0 = full self, 1.0 = full other)
+    #[must_use]
     pub fn blend(&self, other: &EdgeSpectrums, ratio: f32) -> EdgeSpectrums {
         EdgeSpectrums {
             top: self.top.blend(&other.top, ratio),
