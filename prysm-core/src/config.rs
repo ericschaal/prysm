@@ -67,12 +67,12 @@ impl Default for Config {
             edge_depth_px: 100,
             sample_step: 30,
             target_fps: 30,
-            black_band_detection: false,
-            band_brightness_percentile: 30,
+            black_band_detection: true,
+            band_brightness_percentile: 4,
             min_band_size: 50,
-            band_detection_interval: 8,
+            band_detection_interval: 4,
             band_temporal_smoothing: 0.7,
-            band_sample_stride: 8,
+            band_sample_stride: 24,
         }
     }
 }
