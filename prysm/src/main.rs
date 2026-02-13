@@ -40,7 +40,7 @@ fn main() -> Result<()> {
         let spectrums = spectrums.clone();
         let frames = frames.clone();
         move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("Failed to build tokio runtime");
