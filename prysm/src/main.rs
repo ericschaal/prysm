@@ -41,7 +41,7 @@ fn main() -> Result<()> {
                 .expect("Failed to build tokio runtime");
 
             rt.block_on(async move {
-                let capturer = V4lCapturer::new("/dev/video2", shutdown_token.clone())
+                let capturer = V4lCapturer::new("/dev/video0", shutdown_token.clone())
                     .expect("Failed to create V4L capturer");
                 let processor = PrysmProcessor::new(&config);
 

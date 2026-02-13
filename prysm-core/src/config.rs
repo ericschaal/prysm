@@ -36,17 +36,37 @@ pub struct Config {
 
     /// Target FPS
     pub target_fps: u32,
+
+    /// Enable black band detection
+    pub black_band_detection: bool,
+
+    /// Pixel brightness threshold (0-255) for "black"
+    pub black_threshold: u8,
+
+    /// Minimum band size in pixels
+    pub min_band_size: u32,
+
+    /// Frames between detection scans
+    pub band_detection_interval: u32,
+
+    /// Stability frames before applying change
+    pub band_stability_frames: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            sample_density: SampleDensity(50),
+            sample_density: SampleDensity(10),
             brightness: 0.8,
             temporal_smoothing: 0.9,
             edge_depth_px: 100,
-            sample_step: 10,
+            sample_step: 30,
             target_fps: 30,
+            black_band_detection: false,
+            black_threshold: 30,
+            min_band_size: 50,
+            band_detection_interval: 15,
+            band_stability_frames: 3,
         }
     }
 }
