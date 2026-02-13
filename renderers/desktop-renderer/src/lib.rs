@@ -249,7 +249,7 @@ impl eframe::App for DesktopRenderer {
         if self
             .shutdown_token
             .as_ref()
-            .is_some_and(|t| t.is_cancelled())
+            .is_some_and(CancellationToken::is_cancelled)
         {
             tracing::info!("Shutdown signal received, closing window");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
