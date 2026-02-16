@@ -1,6 +1,6 @@
 use crate::frames::ColorFrame;
 use crate::pipeline::Node;
-use prysm_core::{Color, ColorSpectrum, Edge, EdgeSpectra, SampleDensity};
+use prysm_core::{Edge, EdgeSpectra, LinearColor, SampleDensity, Spectrum};
 
 /// Samples edge colors from ColorFrame
 #[derive(Debug)]
@@ -19,7 +19,7 @@ impl EdgeSampler {
         }
     }
 
-    fn extract_edge_spectrum(&self, frame: &ColorFrame, edge: Edge) -> ColorSpectrum {
+    fn extract_edge_spectrum(&self, frame: &ColorFrame, edge: Edge) -> Spectrum {
         let width = frame.viewport_width();
         let height = frame.viewport_height();
 
@@ -59,7 +59,7 @@ impl EdgeSampler {
             samples.push(color);
         }
 
-        ColorSpectrum::new(samples)
+        Spectrum::new(samples)
     }
 
     fn average_color_in_region(
@@ -69,32 +69,30 @@ impl EdgeSampler {
         y_start: u32,
         x_end: u32,
         y_end: u32,
-    ) -> Color {
-        let mut r_sum: u64 = 0;
-        let mut g_sum: u64 = 0;
-        let mut b_sum: u64 = 0;
-        let mut count: u64 = 0;
+    ) -> LinearColor {
+        let mut r_sum: f32 = 0.0;
+        let mut g_sum: f32 = 0.0;
+        let mut b_sum: f32 = 0.0;
+        let mut count: u32 = 0;
 
         for y in (y_start..y_end).step_by(self.sample_step) {
             for x in (x_start..x_end).step_by(self.sample_step) {
                 if let Some(color) = frame.get_pixel(x, y) {
-                    r_sum += u64::from(color.r);
-                    g_sum += u64::from(color.g);
-                    b_sum += u64::from(color.b);
+                    let linear = LinearColor::from_srgb(color);
+                    r_sum += linear.r;
+                    g_sum += linear.g;
+                    b_sum += linear.b;
                     count += 1;
                 }
             }
         }
 
         if count == 0 {
-            return Color::black();
+            return LinearColor::black();
         }
 
-        Color::new(
-            (r_sum / count) as u8,
-            (g_sum / count) as u8,
-            (b_sum / count) as u8,
-        )
+        let inv_count = 1.0 / count as f32;
+        LinearColor::new(r_sum * inv_count, g_sum * inv_count, b_sum * inv_count)
     }
 }
 

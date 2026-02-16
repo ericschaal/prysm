@@ -1,33 +1,33 @@
-use crate::Color;
+use crate::LinearColor;
 use std::ops::{Add, Mul};
 use std::sync::Arc;
 
-/// `ColorSpectrum` represents a gradient of colors along an edge
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColorSpectrum {
-    samples: Arc<Vec<Color>>,
+/// Gradient of colors along an edge, in linear RGB space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spectrum {
+    samples: Arc<Vec<LinearColor>>,
 }
 
-impl ColorSpectrum {
-    /// Create a new `ColorSpectrum` from a vector of color samples
-    pub fn new(samples: Vec<Color>) -> Self {
+impl Spectrum {
+    /// Create a new `Spectrum` from a vector of linear color samples
+    pub fn new(samples: Vec<LinearColor>) -> Self {
         assert!(
             !samples.is_empty(),
-            "ColorSpectrum must have at least one sample"
+            "Spectrum must have at least one sample"
         );
         Self {
             samples: Arc::new(samples),
         }
     }
 
-    /// Create a `ColorSpectrum` filled with the specified color
-    pub fn fill(color: Color, count: usize) -> Self {
+    /// Create a `Spectrum` filled with the specified color
+    pub fn fill(color: LinearColor, count: usize) -> Self {
         Self::new(vec![color; count])
     }
 
-    /// Create a `ColorSpectrum` with all black samples
+    /// Create a `Spectrum` with all black samples
     pub fn black(count: usize) -> Self {
-        Self::fill(Color::black(), count)
+        Self::fill(LinearColor::black(), count)
     }
 
     /// Get the number of samples in the spectrum
@@ -41,14 +41,13 @@ impl ColorSpectrum {
     }
 
     /// Sample the spectrum at a normalized position [0.0, 1.0] using linear interpolation
-    pub fn sample_at(&self, position: f32) -> Color {
+    pub fn sample_at(&self, position: f32) -> LinearColor {
         let position = position.clamp(0.0, 1.0);
 
         if self.samples.len() == 1 {
             return self.samples[0];
         }
 
-        // Map position to sample indices
         let float_index = position * (self.samples.len() - 1) as f32;
         let index = float_index.floor() as usize;
         let next_index = (index + 1).min(self.samples.len() - 1);
@@ -58,8 +57,7 @@ impl ColorSpectrum {
     }
 
     /// Get color at specific index in a count-sized output
-    /// Example: color_at(5, 20) = 6th color out of 20 total
-    pub fn color_at(&self, index: usize, count: usize) -> Color {
+    pub fn color_at(&self, index: usize, count: usize) -> LinearColor {
         assert!(index < count, "Index out of bounds");
         let position = if count == 1 {
             0.5
@@ -69,16 +67,15 @@ impl ColorSpectrum {
         self.sample_at(position)
     }
 
-    /// Quantize the spectrum into exactly N colors
-    pub fn quantize(&self, count: usize) -> Vec<Color> {
+    /// Quantize the spectrum into exactly N linear colors
+    pub fn quantize(&self, count: usize) -> Vec<LinearColor> {
         (0..count).map(|i| self.color_at(i, count)).collect()
     }
 
     /// Blend two spectra together with a ratio (0.0 = full self, 1.0 = full other)
-    pub fn blend(&self, other: &ColorSpectrum, ratio: f32) -> ColorSpectrum {
-        // Use the larger sample count for the result
+    pub fn blend(&self, other: &Spectrum, ratio: f32) -> Spectrum {
         let result_len = self.samples.len().max(other.samples.len());
-        let blended: Vec<Color> = (0..result_len)
+        let blended: Vec<LinearColor> = (0..result_len)
             .map(|i| {
                 let pos = if result_len == 1 {
                     0.5
@@ -90,24 +87,22 @@ impl ColorSpectrum {
                 color1.blend(&color2, ratio)
             })
             .collect();
-        ColorSpectrum::new(blended)
+        Spectrum::new(blended)
     }
 }
 
-// Trait implementations for ColorSpectrum
-
-impl Default for ColorSpectrum {
+impl Default for Spectrum {
     fn default() -> Self {
         Self::black(1)
     }
 }
 
-impl Add for ColorSpectrum {
+impl Add for Spectrum {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
         let result_len = self.samples.len().max(other.samples.len());
-        let summed: Vec<Color> = (0..result_len)
+        let summed: Vec<LinearColor> = (0..result_len)
             .map(|i| {
                 let pos = if result_len == 1 {
                     0.5
@@ -121,32 +116,27 @@ impl Add for ColorSpectrum {
     }
 }
 
-impl Mul<f32> for ColorSpectrum {
+impl Mul<f32> for Spectrum {
     type Output = Self;
 
     fn mul(self, scalar: f32) -> Self {
-        let scaled: Vec<Color> = self.samples.iter().map(|&c| c * scalar).collect();
+        let scaled: Vec<LinearColor> = self.samples.iter().map(|&c| c * scalar).collect();
         Self::new(scaled)
     }
 }
 
-/// EdgeSpectra contains color spectra for all four edges
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Color spectra for all four screen edges, in linear RGB space.
+#[derive(Debug, Clone, PartialEq)]
 pub struct EdgeSpectra {
-    pub top: ColorSpectrum,
-    pub right: ColorSpectrum,
-    pub bottom: ColorSpectrum,
-    pub left: ColorSpectrum,
+    pub top: Spectrum,
+    pub right: Spectrum,
+    pub bottom: Spectrum,
+    pub left: Spectrum,
 }
 
 impl EdgeSpectra {
     /// Create new EdgeSpectra with the given spectra
-    pub fn new(
-        top: ColorSpectrum,
-        right: ColorSpectrum,
-        bottom: ColorSpectrum,
-        left: ColorSpectrum,
-    ) -> Self {
+    pub fn new(top: Spectrum, right: Spectrum, bottom: Spectrum, left: Spectrum) -> Self {
         Self {
             top,
             right,
@@ -156,42 +146,34 @@ impl EdgeSpectra {
     }
 
     /// Create `EdgeSpectra` filled with the specified color
-    /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
-    pub fn fill(color: Color, width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
+    pub fn fill(
+        color: LinearColor,
+        width: usize,
+        height: usize,
+        sample_density: crate::SampleDensity,
+    ) -> Self {
         let top_samples = sample_density.samples_for_length(width);
         let bottom_samples = top_samples;
         let left_samples = sample_density.samples_for_length(height);
         let right_samples = left_samples;
 
         Self {
-            top: ColorSpectrum::fill(color, top_samples),
-            right: ColorSpectrum::fill(color, right_samples),
-            bottom: ColorSpectrum::fill(color, bottom_samples),
-            left: ColorSpectrum::fill(color, left_samples),
+            top: Spectrum::fill(color, top_samples),
+            right: Spectrum::fill(color, right_samples),
+            bottom: Spectrum::fill(color, bottom_samples),
+            left: Spectrum::fill(color, left_samples),
         }
     }
 
     /// Create `EdgeSpectra` with all black colors
-    /// Sample counts are based on aspect ratio (more samples for longer edges)
     #[must_use]
-    pub fn black(width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
-        Self::fill(Color::black(), width, height, sample_density)
-    }
-
-    /// Create a dummy EdgeSpectra (filled with magenta to make it obviously a placeholder)
-    #[must_use]
-    pub fn dummy(width: usize, height: usize) -> Self {
-        Self::fill(
-            Color {
-                r: 255,
-                g: 0,
-                b: 255,
-            },
-            width,
-            height,
-            crate::SampleDensity(1),
-        )
+    pub fn black(
+        width: usize,
+        height: usize,
+        sample_density: crate::SampleDensity,
+    ) -> Self {
+        Self::fill(LinearColor::black(), width, height, sample_density)
     }
 
     /// Blend two `EdgeSpectra` together with a ratio (0.0 = full self, 1.0 = full other)
@@ -205,8 +187,6 @@ impl EdgeSpectra {
         }
     }
 }
-
-// Trait implementations for EdgeSpectra
 
 impl Default for EdgeSpectra {
     fn default() -> Self {

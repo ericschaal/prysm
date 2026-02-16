@@ -1,5 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, EdgeSpectra};
+use prysm_core::{Color, EdgeSpectra, Spectrum};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
@@ -392,7 +392,7 @@ impl DesktopRenderer {
     fn render_discrete_leds(
         &self,
         ui: &mut egui::Ui,
-        spectrum: &prysm_core::ColorSpectrum,
+        spectrum: &Spectrum,
         rect: egui::Rect,
         edge: EdgePosition,
         display_led_count: usize,
@@ -409,7 +409,7 @@ impl DesktopRenderer {
         };
 
         for i in 0..display_led_count {
-            let color = colors[i];
+            let color = colors[i].to_srgb();
             let egui_color = color_to_egui(color);
 
             // Calculate LED center position based on edge

@@ -18,8 +18,7 @@ fn main() -> Result<()> {
     // Create shutdown token
     let shutdown_token = CancellationToken::new();
 
-    let dummy_spectrum = EdgeSpectra::dummy(CAPTURE_WIDTH as usize, CAPTURE_HEIGHT as usize);
-    let spectra = stream::StreamWatcher::new(dummy_spectrum);
+    let spectra = stream::StreamWatcher::new(EdgeSpectra::default());
     let dummy_frame = Frame::dummy(CAPTURE_WIDTH, CAPTURE_HEIGHT);
     let frames = stream::StreamWatcher::new(dummy_frame);
 
