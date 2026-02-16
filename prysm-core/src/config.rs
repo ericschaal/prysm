@@ -50,9 +50,11 @@ pub struct Config {
     /// Frames between detection scans (lower = faster detection)
     pub band_detection_interval: u32,
 
-    /// Temporal smoothing factor (0.0-1.0) for viewport changes
-    /// 0.0 = instant, 1.0 = never change
-    pub band_temporal_smoothing: f32,
+    /// Frames of consistent detection before applying new viewport
+    pub band_confirm_frames: u32,
+
+    /// Frames of different detection before resetting candidate
+    pub band_inconsistency_limit: u32,
 
     /// Sample stride for projection calculation (pixels to skip)
     pub band_sample_stride: u32,
@@ -71,7 +73,8 @@ impl Default for Config {
             band_brightness_percentile: 4,
             min_band_size: 50,
             band_detection_interval: 4,
-            band_temporal_smoothing: 0.7,
+            band_confirm_frames: 15,
+            band_inconsistency_limit: 5,
             band_sample_stride: 24,
         }
     }

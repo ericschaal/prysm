@@ -9,12 +9,20 @@ pub struct BandDetector {
     brightness_percentile: u8,
     min_band_size: u32,
     detection_interval: u32,
-    temporal_smoothing: f32,
+    confirm_frames: u32,
+    inconsistency_limit: u32,
     sample_stride: u32,
 
     // State
     frame_count: u32,
-    smoothed_viewport: Option<Viewport>,
+    /// Currently active viewport (applied to frames)
+    current_viewport: Option<Viewport>,
+    /// Candidate viewport being validated
+    candidate_viewport: Option<Viewport>,
+    /// How many consecutive frames the candidate has been detected
+    candidate_count: u32,
+    /// How many consecutive frames have differed from candidate
+    inconsistent_count: u32,
 }
 
 impl BandDetector {
@@ -23,10 +31,14 @@ impl BandDetector {
             brightness_percentile: config.band_brightness_percentile,
             min_band_size: config.min_band_size,
             detection_interval: config.band_detection_interval,
-            temporal_smoothing: config.band_temporal_smoothing,
+            confirm_frames: config.band_confirm_frames,
+            inconsistency_limit: config.band_inconsistency_limit,
             sample_stride: config.band_sample_stride,
             frame_count: 0,
-            smoothed_viewport: None,
+            current_viewport: None,
+            candidate_viewport: None,
+            candidate_count: 0,
+            inconsistent_count: 0,
         }
     }
 
@@ -154,26 +166,14 @@ impl BandDetector {
         }
     }
 
-    /// Apply exponential moving average smoothing to viewport transitions
-    fn apply_temporal_smoothing(&mut self, detected: Viewport) -> Viewport {
-        match self.smoothed_viewport {
-            Some(prev) => {
-                let alpha = 1.0 - self.temporal_smoothing;
+}
 
-                Viewport {
-                    x: (prev.x as f32 * self.temporal_smoothing + detected.x as f32 * alpha)
-                        as u32,
-                    y: (prev.y as f32 * self.temporal_smoothing + detected.y as f32 * alpha)
-                        as u32,
-                    width: (prev.width as f32 * self.temporal_smoothing
-                        + detected.width as f32 * alpha) as u32,
-                    height: (prev.height as f32 * self.temporal_smoothing
-                        + detected.height as f32 * alpha) as u32,
-                }
-            }
-            None => detected,
-        }
-    }
+/// Compare two viewports with pixel tolerance to prevent flickering from detection noise
+fn viewports_match(a: &Viewport, b: &Viewport, tolerance: u32) -> bool {
+    a.x.abs_diff(b.x) <= tolerance
+        && a.y.abs_diff(b.y) <= tolerance
+        && a.width.abs_diff(b.width) <= tolerance
+        && a.height.abs_diff(b.height) <= tolerance
 }
 
 impl Node<ColorFrame, ColorFrame> for BandDetector {
@@ -181,16 +181,32 @@ impl Node<ColorFrame, ColorFrame> for BandDetector {
         self.frame_count += 1;
 
         if self.frame_count % self.detection_interval == 0 {
-            // Run detection
             let detected = self.detect_viewport(&input);
 
-            // Apply temporal smoothing
-            let smoothed = self.apply_temporal_smoothing(detected);
-            self.smoothed_viewport = Some(smoothed);
+            match &self.candidate_viewport {
+                Some(candidate) if viewports_match(candidate, &detected, 5) => {
+                    self.candidate_count += 1;
+                    self.inconsistent_count = 0;
 
-            input.viewport = smoothed;
-        } else if let Some(vp) = self.smoothed_viewport {
-            // Use cached viewport
+                    if self.candidate_count >= self.confirm_frames {
+                        self.current_viewport = self.candidate_viewport;
+                    }
+                }
+                _ => {
+                    self.inconsistent_count += 1;
+
+                    if self.candidate_viewport.is_none()
+                        || self.inconsistent_count > self.inconsistency_limit
+                    {
+                        self.candidate_viewport = Some(detected);
+                        self.candidate_count = 1;
+                        self.inconsistent_count = 0;
+                    }
+                }
+            }
+        }
+
+        if let Some(vp) = self.current_viewport {
             input.viewport = vp;
         }
 
@@ -447,35 +463,110 @@ mod tests {
     }
 
     #[test]
-    fn test_temporal_smoothing() {
+    fn test_debounce_transition() {
         let mut config = Config::default();
-        config.band_temporal_smoothing = 0.5; // 50% smoothing
+        config.band_confirm_frames = 5;
+        config.band_detection_interval = 1; // detect every frame for test simplicity
         let mut detector = BandDetector::new(&config);
 
-        let viewport1 = Viewport {
-            x: 0,
-            y: 0,
-            width: 1920,
-            height: 1080,
-        };
-        let viewport2 = Viewport {
-            x: 0,
-            y: 100,
-            width: 1920,
-            height: 880,
-        };
+        let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
 
-        // First detection: no previous viewport
-        let smoothed = detector.apply_temporal_smoothing(viewport1);
-        assert_eq!(smoothed.y, 0);
+        // Process frames below confirm threshold -- viewport should stay at full frame
+        for i in 0..4 {
+            let result = detector.process(letterboxed.clone());
+            assert_eq!(
+                result.viewport,
+                Viewport::full_frame(1920, 1080),
+                "Frame {} should still be full frame",
+                i
+            );
+        }
 
-        // Update internal state to simulate first detection
-        detector.smoothed_viewport = Some(viewport1);
+        // 5th consistent frame should snap to detected viewport
+        let result = detector.process(letterboxed.clone());
+        assert!(
+            result.viewport.y >= 230 && result.viewport.y <= 250,
+            "Should snap to letterbox viewport, got y={}",
+            result.viewport.y
+        );
+    }
 
-        // Second detection: should be halfway between
-        let smoothed = detector.apply_temporal_smoothing(viewport2);
-        assert!(smoothed.y > 0 && smoothed.y < 100);
-        assert!(smoothed.y >= 45 && smoothed.y <= 55); // Should be around 50
+    #[test]
+    fn test_debounce_noise_rejection() {
+        let mut config = Config::default();
+        config.band_confirm_frames = 5;
+        config.band_inconsistency_limit = 3;
+        config.band_detection_interval = 1;
+        let mut detector = BandDetector::new(&config);
+
+        let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
+        let full_gray = ColorFrame::new(
+            vec![Color::new(128, 128, 128); (1920 * 1080) as usize],
+            1920,
+            1080,
+        );
+
+        // Confirm letterbox viewport
+        for _ in 0..5 {
+            detector.process(letterboxed.clone());
+        }
+        let result = detector.process(letterboxed.clone());
+        assert!(result.viewport.y >= 230, "Should have letterbox viewport");
+
+        // Brief interruption (fewer frames than inconsistency_limit) shouldn't change viewport
+        for _ in 0..2 {
+            let result = detector.process(full_gray.clone());
+            assert!(
+                result.viewport.y >= 230,
+                "Brief noise should not change viewport"
+            );
+        }
+
+        // Return to letterbox -- viewport should still be letterbox
+        let result = detector.process(letterboxed.clone());
+        assert!(
+            result.viewport.y >= 230,
+            "Should still have letterbox viewport after noise"
+        );
+    }
+
+    #[test]
+    fn test_debounce_resets_on_new_content() {
+        let mut config = Config::default();
+        config.band_confirm_frames = 5;
+        config.band_inconsistency_limit = 3;
+        config.band_detection_interval = 1;
+        let mut detector = BandDetector::new(&config);
+
+        let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
+        let full_gray = ColorFrame::new(
+            vec![Color::new(128, 128, 128); (1920 * 1080) as usize],
+            1920,
+            1080,
+        );
+
+        // Confirm letterbox viewport
+        for _ in 0..5 {
+            detector.process(letterboxed.clone());
+        }
+        let result = detector.process(letterboxed.clone());
+        assert!(result.viewport.y >= 230, "Should have letterbox viewport");
+
+        // Sustained different content exceeding inconsistency_limit resets candidate
+        for _ in 0..4 {
+            detector.process(full_gray.clone());
+        }
+
+        // Now confirm the new full-frame viewport
+        for _ in 0..5 {
+            detector.process(full_gray.clone());
+        }
+        let result = detector.process(full_gray.clone());
+        assert_eq!(
+            result.viewport,
+            Viewport::full_frame(1920, 1080),
+            "Should snap to full frame after sustained change"
+        );
     }
 
     #[test]
