@@ -14,17 +14,14 @@ impl PixelDecoder {
 
     fn decode_rgb24(&self, data: &[u8], width: u32, height: u32) -> Vec<Color> {
         let pixel_count = (width * height) as usize;
-        let mut colors = Vec::with_capacity(pixel_count);
+        let mut colors: Vec<Color> = data
+            .chunks_exact(3)
+            .take(pixel_count)
+            .map(|px| Color::new(px[0], px[1], px[2]))
+            .collect();
 
-        for i in 0..pixel_count {
-            let offset = i * 3;
-            if offset + 2 < data.len() {
-                colors.push(Color::new(data[offset], data[offset + 1], data[offset + 2]));
-            } else {
-                colors.push(Color::black());
-            }
-        }
-
+        // Pad with black if the buffer is shorter than expected
+        colors.resize(pixel_count, Color::black());
         colors
     }
 
@@ -33,19 +30,10 @@ impl PixelDecoder {
         // Convert entire frame at once (SIMD optimized)
         let rgb_data = prysm_capture::yuyv::yuyv_to_rgb(data, width as usize, height as usize);
 
-        let pixel_count = (width * height) as usize;
-        let mut colors = Vec::with_capacity(pixel_count);
-
-        for i in 0..pixel_count {
-            let offset = i * 3;
-            colors.push(Color::new(
-                rgb_data[offset],
-                rgb_data[offset + 1],
-                rgb_data[offset + 2],
-            ));
-        }
-
-        colors
+        rgb_data
+            .chunks_exact(3)
+            .map(|px| Color::new(px[0], px[1], px[2]))
+            .collect()
     }
 }
 

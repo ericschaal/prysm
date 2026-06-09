@@ -2,6 +2,15 @@
 resolver = "3"
 members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "renderers/desktop-renderer", "renderers/led-renderer"]
 
+# The video pipeline does per-pixel work on full HD frames; unoptimized dev
+# builds make it burn >100% CPU. Lightly optimize workspace code and fully
+# optimize dependencies (yuv, epaint) while keeping debug assertions on.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
