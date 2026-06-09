@@ -1,6 +1,6 @@
+use crate::{Frame, PixelFormat, PrysmCapturer};
 use anyhow::{Context, Result};
 use futures::Stream;
-use crate::{Frame, PixelFormat, PrysmCapturer};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

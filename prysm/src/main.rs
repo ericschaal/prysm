@@ -7,8 +7,11 @@ use prysm_core::EdgeSpectra;
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
 
-const CAPTURE_WIDTH: u32 = 1920;
-const CAPTURE_HEIGHT: u32 = 1080;
+// Low capture resolution on purpose: LED output is ~20 averaged samples per
+// edge, and the camera ISP's hardware downscale integrates every source pixel,
+// which is both cheaper and more accurate than sampling a high-res frame.
+const CAPTURE_WIDTH: u32 = 640;
+const CAPTURE_HEIGHT: u32 = 360;
 
 fn main() -> Result<()> {
     let subscriber = tracing_subscriber::FmtSubscriber::new();
@@ -39,8 +42,8 @@ fn main() -> Result<()> {
                 .expect("Failed to build tokio runtime");
 
             rt.block_on(async move {
-                let capturer = Capturer::new(None, shutdown_token.clone())
-                    .expect("Failed to create capturer");
+                let capturer =
+                    Capturer::new(None, shutdown_token.clone()).expect("Failed to create capturer");
                 let processor = PrysmProcessor::new(&config);
 
                 // Create async streams

@@ -104,7 +104,9 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
     let width = pixel_buffer.get_width();
     let height = pixel_buffer.get_height();
     let stride = pixel_buffer.get_bytes_per_row();
-    let base = unsafe { pixel_buffer.get_base_address() }.cast_const().cast::<u8>();
+    let base = unsafe { pixel_buffer.get_base_address() }
+        .cast_const()
+        .cast::<u8>();
 
     let frame = if base.is_null() {
         None

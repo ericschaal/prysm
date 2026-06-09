@@ -99,7 +99,8 @@ cargo clippy
 
 **Desktop demo binary (prysm/src/main.rs):**
 
-- Capture resolution: 1920x1080
+- Capture resolution: 640x360 (intentionally low — the camera ISP's hardware downscale integrates every
+  source pixel, which is both cheaper and more accurate than sampling a high-res frame)
 - LED count: 40
 - Video device: `/dev/video2`
 - Note: This is specific to the desktop visualizer, not a global configuration
@@ -108,9 +109,10 @@ cargo clippy
 
 - Target FPS: 30
 - Brightness: 0.8
-- Temporal smoothing: 0.7
-- Edge sampling: 50 samples per 1000px
-- Edge depth: 100px
+- Temporal smoothing: 0.4
+- Edge sampling: 30 samples per 1000px (~19 samples across a 640px edge)
+- Edge depth: 9% of frame height (resolution-independent)
+- Change detection: enabled (skips processing for unchanged frames)
 
 ## Testing Structure
 
@@ -131,9 +133,14 @@ Tests are minimal but focused:
 
 ### When working with the processor:
 
-- `ColorProcessor` is stateful (maintains smoothing history)
-- Supports YUYV and RGB24 with format-specific optimizations
-- MJPEG and BGR24 currently return black spectra
+- `PrysmProcessor` chains typed nodes: `ChangeDetector` (skip identical frames) → `BandDetector`
+  (letterbox/pillarbox viewport) → `EdgeSampler` (linear-light region averaging) → `TemporalSmoothing`
+- Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
+  decodes only the pixels it reads (`ViewFrame::average_linear`), and luma-only stages (band/change
+  detection) read Y bytes straight out of YUYV via `frames::luma_at`
+- The processor is stateful (smoothing history, band debounce, change signature)
+- Supports YUYV and RGB24; MJPEG and BGR24 currently return black spectra
+- `cargo run --release -p prysm-processor --example bench` gives rough per-frame pipeline cost
 
 ### Threading considerations:
 
@@ -153,7 +160,8 @@ Tests are minimal but focused:
 - `prysm/src/main.rs` - Application orchestration and threading setup
 - `prysm/src/stream.rs` - StreamWatcher and stream_split patterns
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
-- `prysm-processor/src/color.rs` - Edge color sampling logic
+- `prysm-processor/src/nodes/` - Pipeline nodes (change detection, band detection, edge sampling, smoothing)
+- `prysm-processor/src/frames/view_frame.rs` - Raw-frame viewport with on-demand pixel decoding
 - `prysm-core/src/lib.rs` - Core types and configuration
 - `renderers/desktop-renderer/src/lib.rs` - GUI implementation
 - `capturers/v4l-capturer/src/capture.rs` - Blocking-to-async bridge pattern

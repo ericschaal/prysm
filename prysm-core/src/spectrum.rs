@@ -168,11 +168,7 @@ impl EdgeSpectra {
 
     /// Create `EdgeSpectra` with all black colors
     #[must_use]
-    pub fn black(
-        width: usize,
-        height: usize,
-        sample_density: crate::SampleDensity,
-    ) -> Self {
+    pub fn black(width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
         Self::fill(LinearColor::black(), width, height, sample_density)
     }
 

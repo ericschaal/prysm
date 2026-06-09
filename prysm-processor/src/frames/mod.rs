@@ -1,3 +1,6 @@
-mod color_frame;
+mod view_frame;
 
-pub use color_frame::{ColorFrame, Viewport};
+pub use view_frame::{ViewFrame, Viewport, luma_at};
+
+#[cfg(test)]
+pub use view_frame::tests::yuyv_frame_from_luma;

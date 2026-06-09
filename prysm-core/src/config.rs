@@ -29,10 +29,9 @@ pub struct Config {
     /// Smoothing factor for color transitions (0.0 = no smoothing, 1.0 = maximum smoothing)
     pub temporal_smoothing: f32,
 
-    /// Depth of the edge sampling in pixels from the screen edge
-    pub edge_depth_px: u32,
-
-    pub sample_step: usize,
+    /// Depth of the edge sampling region as a fraction of frame height.
+    /// Resolution-independent: 0.09 is ~100px at 1080p, ~32px at 360p.
+    pub edge_depth: f32,
 
     /// Target FPS
     pub target_fps: u32,
@@ -44,8 +43,8 @@ pub struct Config {
     /// Example: 15 means use 15th percentile of row/col brightness as threshold
     pub band_brightness_percentile: u8,
 
-    /// Minimum band size in pixels
-    pub min_band_size: u32,
+    /// Minimum band size as a fraction of the frame dimension the band spans
+    pub min_band_fraction: f32,
 
     /// Frames between detection scans (lower = faster detection)
     pub band_detection_interval: u32,
@@ -58,24 +57,38 @@ pub struct Config {
 
     /// Sample stride for projection calculation (pixels to skip)
     pub band_sample_stride: u32,
+
+    /// Skip processing when the frame is unchanged from the last processed one
+    pub change_detection: bool,
+
+    /// Mean absolute luma delta (0-255 scale) below which a frame counts as unchanged
+    pub change_threshold: f32,
+
+    /// Force reprocessing after this many consecutive skipped frames,
+    /// so slow fades below the threshold can never wedge the output
+    pub max_skipped_frames: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            sample_density: SampleDensity(10),
+            // Per 1000px of edge: 30 gives 19 samples across a 640px edge,
+            // matching the gradient resolution 1080p capture had at density 10
+            sample_density: SampleDensity(30),
             brightness: 0.8,
             temporal_smoothing: 0.4,
-            edge_depth_px: 100,
-            sample_step: 30,
+            edge_depth: 0.09,
             target_fps: 30,
             black_band_detection: true,
             band_brightness_percentile: 4,
-            min_band_size: 50,
+            min_band_fraction: 0.04,
             band_detection_interval: 4,
             band_confirm_frames: 15,
             band_inconsistency_limit: 5,
-            band_sample_stride: 24,
+            band_sample_stride: 8,
+            change_detection: true,
+            change_threshold: 1.0,
+            max_skipped_frames: 30,
         }
     }
 }
