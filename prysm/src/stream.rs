@@ -91,7 +91,7 @@ where
     S::Item: Clone + Send,
 {
     // Create broadcast channel for frame distribution
-    let (frame_tx, processor_rx) = broadcast::channel::<S::Item>(10);
+    let (frame_tx, processor_rx) = broadcast::channel::<S::Item>(3);
 
     // Subscribe to broadcast for renderer
     let renderer_rx = frame_tx.subscribe();

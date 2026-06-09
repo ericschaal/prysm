@@ -80,6 +80,7 @@ impl DesktopRendererBuilder {
             frame_rx: self.frame_rx,
             texture_handle: None,
             layout_config: self.layout_config,
+            rgb_scratch: Vec::new(),
         }
     }
 }
@@ -231,6 +232,8 @@ pub struct DesktopRenderer {
     shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
     layout_config: LayoutConfig,
+    /// Scratch buffer reused across frames to avoid a large per-frame allocation
+    rgb_scratch: Vec<u8>,
 }
 
 /// Calculate LED counts per edge for uniform spacing
@@ -272,14 +275,20 @@ impl eframe::App for DesktopRenderer {
             let needs_initial_texture = self.texture_handle.is_none();
 
             if has_changed || needs_initial_texture {
-                let frame = frame_rx.borrow_and_update();
-                let rgb_data: Option<&Vec<u8>> = match frame.format {
+                // Clone is cheap (Arc'd data) and releases the watch lock
+                // before the conversion below, so the sender is never blocked.
+                let frame = frame_rx.borrow_and_update().clone();
+                let rgb_data: Option<&[u8]> = match frame.format {
                     PixelFormat::RGB24 => Some(&frame.data),
-                    PixelFormat::YUYV => Some(&prysm_capture::yuyv::yuyv_to_rgb(
-                        &frame.data,
-                        frame.width as usize,
-                        frame.height as usize,
-                    )),
+                    PixelFormat::YUYV => {
+                        prysm_capture::yuyv::yuyv_to_rgb_into(
+                            &frame.data,
+                            &mut self.rgb_scratch,
+                            frame.width as usize,
+                            frame.height as usize,
+                        );
+                        Some(&self.rgb_scratch)
+                    }
                     PixelFormat::MJPEG | PixelFormat::BGR24 => None,
                 };
 

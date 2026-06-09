@@ -5,11 +5,16 @@ use prysm_core::Color;
 
 /// Decodes raw pixel data into Color array
 #[derive(Debug)]
-pub struct PixelDecoder;
+pub struct PixelDecoder {
+    /// Scratch buffer reused across frames to avoid a large per-frame allocation
+    rgb_scratch: Vec<u8>,
+}
 
 impl PixelDecoder {
     pub fn new() -> Self {
-        Self
+        Self {
+            rgb_scratch: Vec::new(),
+        }
     }
 
     fn decode_rgb24(&self, data: &[u8], width: u32, height: u32) -> Vec<Color> {
@@ -25,12 +30,17 @@ impl PixelDecoder {
         colors
     }
 
-    fn decode_yuyv(&self, data: &[u8], width: u32, height: u32) -> Vec<Color> {
+    fn decode_yuyv(&mut self, data: &[u8], width: u32, height: u32) -> Vec<Color> {
         // Use existing prysm_capture::yuyv conversion
         // Convert entire frame at once (SIMD optimized)
-        let rgb_data = prysm_capture::yuyv::yuyv_to_rgb(data, width as usize, height as usize);
+        prysm_capture::yuyv::yuyv_to_rgb_into(
+            data,
+            &mut self.rgb_scratch,
+            width as usize,
+            height as usize,
+        );
 
-        rgb_data
+        self.rgb_scratch
             .chunks_exact(3)
             .map(|px| Color::new(px[0], px[1], px[2]))
             .collect()

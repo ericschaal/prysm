@@ -69,6 +69,14 @@ pub fn yuyv_pixel_to_rgb(yuyv_data: &[u8], x: u32, y: u32, width: u32) -> (u8, u
 /// due to SIMD optimizations. For sampling a small subset of pixels, use
 /// `yuyv_pixel_to_rgb` instead to avoid allocating the full RGB buffer.
 pub fn yuyv_to_rgb(yuyv_data: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut rgb_data = Vec::new();
+    yuyv_to_rgb_into(yuyv_data, &mut rgb_data, width, height);
+    rgb_data
+}
+
+/// Like [`yuyv_to_rgb`], but writes into a caller-provided buffer so that hot
+/// paths can reuse the allocation across frames.
+pub fn yuyv_to_rgb_into(yuyv_data: &[u8], rgb_out: &mut Vec<u8>, width: usize, height: usize) {
     // Create packed image wrapper for YUYV data
     // Stride is in components, YUYV has 2 components per pixel (4 bytes per 2 pixels)
     let packed_image = YuvPackedImage {
@@ -78,22 +86,18 @@ pub fn yuyv_to_rgb(yuyv_data: &[u8], width: usize, height: usize) -> Vec<u8> {
         height: height as u32,
     };
 
-    // Allocate output RGB buffer
-    let rgb_size = width * height * 3;
-    let mut rgb_data = vec![0u8; rgb_size];
+    rgb_out.resize(width * height * 3, 0);
     let rgb_stride = (width * 3) as u32;
 
     // Convert YUYV to RGB using BT.601 standard with full range
     yuyv422_to_rgb(
         &packed_image,
-        &mut rgb_data,
+        rgb_out,
         rgb_stride,
         YuvRange::Full,
         YuvStandardMatrix::Bt601,
     )
     .expect("YUYV to RGB conversion failed");
-
-    rgb_data
 }
 
 #[cfg(test)]

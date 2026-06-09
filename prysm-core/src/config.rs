@@ -65,7 +65,7 @@ impl Default for Config {
         Self {
             sample_density: SampleDensity(10),
             brightness: 0.8,
-            temporal_smoothing: 0.9,
+            temporal_smoothing: 0.4,
             edge_depth_px: 100,
             sample_step: 30,
             target_fps: 30,
