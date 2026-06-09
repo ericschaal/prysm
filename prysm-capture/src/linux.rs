@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use futures::Stream;
-use prysm_capture::{Frame, PixelFormat, PrysmCapturer};
+use crate::{Frame, PixelFormat, PrysmCapturer};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -18,9 +18,11 @@ pub struct V4lCapturer {
 }
 
 impl V4lCapturer {
-    pub fn new(device_path: &str, shutdown_token: CancellationToken) -> Result<Self> {
+    /// Opens a capture device. `device_path` selects a v4l device node;
+    /// `None` defaults to `/dev/video0`.
+    pub fn new(device_path: Option<&str>, shutdown_token: CancellationToken) -> Result<Self> {
         Ok(Self {
-            device_path: device_path.to_string(),
+            device_path: device_path.unwrap_or("/dev/video0").to_string(),
             shutdown_token,
         })
     }

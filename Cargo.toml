@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "renderers/desktop-renderer", "renderers/led-renderer", "capturers/v4l-capturer"]
+members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "renderers/desktop-renderer", "renderers/led-renderer"]
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -2,11 +2,10 @@ mod stream;
 
 use anyhow::Result;
 use desktop_renderer::DesktopRendererBuilder;
-use prysm_capture::{Frame, PrysmCapturer};
+use prysm_capture::{Capturer, Frame, PrysmCapturer};
 use prysm_core::EdgeSpectra;
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
-use v4l_capturer::V4lCapturer;
 
 const CAPTURE_WIDTH: u32 = 1920;
 const CAPTURE_HEIGHT: u32 = 1080;
@@ -40,8 +39,8 @@ fn main() -> Result<()> {
                 .expect("Failed to build tokio runtime");
 
             rt.block_on(async move {
-                let capturer = V4lCapturer::new("/dev/video0", shutdown_token.clone())
-                    .expect("Failed to create V4L capturer");
+                let capturer = Capturer::new(None, shutdown_token.clone())
+                    .expect("Failed to create capturer");
                 let processor = PrysmProcessor::new(&config);
 
                 // Create async streams

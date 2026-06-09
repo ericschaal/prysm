@@ -9,3 +9,24 @@ workspace = true
 [dependencies]
 futures.workspace = true
 yuv = { workspace = true, features = ["fast_mode"] }
+tracing.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+tokio-stream.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = { git = "https://github.com/raymanfx/libv4l-rs.git", rev = "30f6dbaeed5cdb1b33760fc5b35c1b545cfe0e46", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+av-foundation = "0.8.1"
+core-foundation = { version = "0.10", default-features = false }
+core-media = { version = "0.8.1", default-features = false, features = ["objc"] }
+core-video = { version = "0.6.1", default-features = false, features = ["objc"] }
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSObject", "NSString", "NSValue"] }

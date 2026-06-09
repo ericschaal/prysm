@@ -118,3 +118,17 @@ pub trait PrysmCapturer {
     where
         Self: Sized + Send + 'static;
 }
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::V4lCapturer;
+#[cfg(target_os = "linux")]
+pub use linux::V4lCapturer as Capturer;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::AVFoundationCapturer;
+#[cfg(target_os = "macos")]
+pub use macos::AVFoundationCapturer as Capturer;

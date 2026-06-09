@@ -16,6 +16,5 @@ futures.workspace = true
 prysm-capture = { path = "../prysm-capture" }
 prysm-core = { path = "../prysm-core" }
 prysm-processor = { path = "../prysm-processor" }
-v4l-capturer = { path = "../capturers/v4l-capturer" }
 desktop-renderer = { path = "../renderers/desktop-renderer" }
 tokio-util.workspace = true
