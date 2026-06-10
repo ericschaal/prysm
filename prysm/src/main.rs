@@ -75,15 +75,9 @@ fn main() -> Result<()> {
         }
     });
 
-    let layout_config = desktop_renderer::LayoutConfig {
-        target_fps: config.target_fps,
-        ..Default::default()
-    };
-
     let app = DesktopRendererBuilder::new(spectra.receiver())
         .with_shutdown_token(&shutdown_token)
         .with_frame_rx(frames.receiver())
-        .with_layout(layout_config)
         .build();
 
     // Run desktop renderer on main thread (blocking until window closes)

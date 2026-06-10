@@ -102,9 +102,6 @@ pub struct LayoutConfig {
 
     /// Total LED count around entire perimeter (if None, use EdgeSpectrum sample counts directly)
     pub total_led_count: Option<usize>,
-
-    /// Target frames per second for rendering updates
-    pub target_fps: u32,
 }
 
 impl Default for LayoutConfig {
@@ -115,7 +112,6 @@ impl Default for LayoutConfig {
             enable_border: true,
             led_size_px: 10.0,
             total_led_count: Some(300),
-            target_fps: 30,
         }
     }
 }
@@ -388,11 +384,10 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Request continuous repaints at target FPS to keep polling for new frames/spectra
-        // This is necessary because egui only calls update() when requested - without
-        // continuous repaints, we'd stop polling for new data when no UI events occur
-        let frame_duration_ms = 1000 / self.layout_config.target_fps.max(1);
-        ctx.request_repaint_after(std::time::Duration::from_millis(frame_duration_ms as u64));
+        // Repaints are driven by the notifier thread when new frames/spectra
+        // arrive (see `spawn_repaint_notifier`), so a static source leaves the
+        // GUI idle. Keep a slow heartbeat as a safety net.
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
 }
 
@@ -467,6 +462,54 @@ enum EdgePosition {
     Right,
 }
 
+/// Wake the GUI only when there is something new to draw.
+///
+/// egui repaints on demand; instead of polling at a fixed FPS, a small
+/// thread waits on the spectra/frame watch channels and requests a repaint
+/// per update. When the source is static (and the processor is skipping
+/// frames), the GUI stays idle. Exits when both channels close or on
+/// shutdown; tokio watch futures work under any executor, so a lightweight
+/// `block_on` is enough — no runtime needed on this thread.
+fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
+    let mut spectrum_rx = app.spectrum_rx.clone();
+    let mut frame_rx = app.frame_rx.clone();
+    let shutdown_token = app.shutdown_token.clone().unwrap_or_default();
+
+    std::thread::spawn(move || {
+        futures::executor::block_on(async move {
+            loop {
+                tokio::select! {
+                    changed = spectrum_rx.changed() => {
+                        if changed.is_err() {
+                            break; // Sender dropped
+                        }
+                        ctx.request_repaint();
+                    }
+                    changed = async {
+                        match frame_rx.as_mut() {
+                            Some(rx) => rx.changed().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        if changed.is_err() {
+                            frame_rx = None; // Sender dropped; keep watching spectra
+                        } else {
+                            ctx.request_repaint();
+                        }
+                    }
+                    () = shutdown_token.cancelled() => {
+                        // One last repaint so update() observes the
+                        // cancellation and closes the window
+                        ctx.request_repaint();
+                        break;
+                    }
+                }
+            }
+            tracing::debug!("Repaint notifier thread exiting");
+        });
+    });
+}
+
 /// Run the desktop renderer on the main thread (blocking).
 ///
 /// This function must be called from the main thread. It will:
@@ -491,7 +534,14 @@ pub fn run(
         ..Default::default()
     };
 
-    let result = eframe::run_native("Prysm", options, Box::new(move |_cc| Ok(Box::new(app))));
+    let result = eframe::run_native(
+        "Prysm",
+        options,
+        Box::new(move |cc| {
+            spawn_repaint_notifier(&app, cc.egui_ctx.clone());
+            Ok(Box::new(app))
+        }),
+    );
 
     // Signal shutdown when window closes
     tracing::info!("Window closed, signaling shutdown to runtime thread");

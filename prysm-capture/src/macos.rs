@@ -112,11 +112,17 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
         None
     } else {
         let row_size = width * 2; // YUYV: 2 bytes per pixel
-        let mut data = Vec::with_capacity(height * row_size);
-        for row in 0..height {
-            let row = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
-            data.extend_from_slice(row);
-        }
+        let data = if stride == row_size {
+            // No row padding: copy the whole plane in one memcpy
+            unsafe { slice::from_raw_parts(base, height * row_size) }.to_vec()
+        } else {
+            let mut data = Vec::with_capacity(height * row_size);
+            for row in 0..height {
+                let row = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
+                data.extend_from_slice(row);
+            }
+            data
+        };
         match (u32::try_from(width), u32::try_from(height)) {
             (Ok(width), Ok(height)) => Some(Frame::new(data, width, height, PixelFormat::YUYV)),
             _ => None,
