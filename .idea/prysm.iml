@@ -10,6 +10,8 @@
       <sourceFolder url="file://$MODULE_DIR$/prysm/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/renderers/desktop-renderer/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/renderers/led-renderer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/prysm-capture/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/prysm-processor/examples" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -13,6 +13,6 @@ anyhow.workspace = true
 futures.workspace = true
 async-stream.workspace = true
 image.workspace = true
+yuv = { workspace = true, features = ["fast_mode"] }
 prysm-capture = { path = "../prysm-capture" }
-prysm-render = {path = "../prysm-render"}
 prysm-core = { path = "../prysm-core" }
