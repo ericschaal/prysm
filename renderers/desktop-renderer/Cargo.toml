@@ -8,7 +8,6 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
-anyhow.workspace = true
 futures.workspace = true
 prysm-capture = { path = "../../prysm-capture" }
 prysm-core = { path = "../../prysm-core" }

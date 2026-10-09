@@ -250,6 +250,33 @@ fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) ->
     (horizontal_leds.max(1), vertical_leds.max(1))
 }
 
+fn frame_to_image(frame: &Frame, rgb_scratch: &mut Vec<u8>) -> Option<egui::ColorImage> {
+    let rgb_data: &[u8] = match frame.format {
+        PixelFormat::RGB24 => &frame.data,
+        PixelFormat::BGR24 => {
+            rgb_scratch.clone_from(&frame.data);
+            for pixel in rgb_scratch.chunks_exact_mut(3) {
+                pixel.swap(0, 2);
+            }
+            rgb_scratch
+        }
+        PixelFormat::YUYV => {
+            prysm_capture::yuyv::yuyv_to_rgb_into(
+                &frame.data,
+                rgb_scratch,
+                frame.width as usize,
+                frame.height as usize,
+            );
+            rgb_scratch
+        }
+        PixelFormat::MJPEG => return None,
+    };
+    Some(egui::ColorImage::from_rgb(
+        [frame.width as usize, frame.height as usize],
+        rgb_data,
+    ))
+}
+
 impl eframe::App for DesktopRenderer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self
@@ -274,27 +301,7 @@ impl eframe::App for DesktopRenderer {
                 // Clone is cheap (Arc'd data) and releases the watch lock
                 // before the conversion below, so the sender is never blocked.
                 let frame = frame_rx.borrow_and_update().clone();
-                let rgb_data: Option<&[u8]> = match frame.format {
-                    PixelFormat::RGB24 => Some(&frame.data),
-                    PixelFormat::YUYV => {
-                        prysm_capture::yuyv::yuyv_to_rgb_into(
-                            &frame.data,
-                            &mut self.rgb_scratch,
-                            frame.width as usize,
-                            frame.height as usize,
-                        );
-                        Some(&self.rgb_scratch)
-                    }
-                    PixelFormat::MJPEG | PixelFormat::BGR24 => None,
-                };
-
-                // Convert RGB data to ColorImage and update texture
-                if let Some(rgb_data) = rgb_data {
-                    let color_image = egui::ColorImage::from_rgb(
-                        [frame.width as usize, frame.height as usize],
-                        rgb_data,
-                    );
-
+                if let Some(color_image) = frame_to_image(&frame, &mut self.rgb_scratch) {
                     if let Some(texture) = &mut self.texture_handle {
                         texture.set(color_image, egui::TextureOptions::LINEAR);
                     } else {
@@ -548,4 +555,20 @@ pub fn run(
     shutdown_token.cancel();
 
     result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bgr_frames_display_in_rgb_order() {
+        let frame = Frame::new(vec![10, 20, 200, 255, 0, 0], 2, 1, PixelFormat::BGR24);
+        let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
+        assert_eq!(image.size, [2, 1]);
+        assert_eq!(
+            image.pixels,
+            [egui::Color32::from_rgb(200, 20, 10), egui::Color32::BLUE]
+        );
+    }
 }

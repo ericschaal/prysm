@@ -61,7 +61,7 @@ pub struct Config {
     /// Skip processing when the frame is unchanged from the last processed one
     pub change_detection: bool,
 
-    /// Mean absolute luma delta (0-255 scale) below which a frame counts as unchanged
+    /// Mean absolute RGB channel delta (0-255 scale) below which a frame counts as unchanged
     pub change_threshold: f32,
 
     /// Force reprocessing after this many consecutive skipped frames,

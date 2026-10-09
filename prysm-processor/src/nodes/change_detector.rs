@@ -1,14 +1,14 @@
-use crate::frames::luma_at;
+use crate::frames::ViewFrame;
 use prysm_capture::Frame;
 use prysm_core::Config;
 
-/// Grid resolution of the luma signature (GRID x GRID sample points)
+/// Grid resolution of the RGB signature (GRID x GRID sample points)
 const GRID: u32 = 16;
 
 /// Detects whether a frame differs from the last *processed* frame, so the
 /// pipeline can skip identical content (paused video, static desktop).
 ///
-/// Compares a sparse luma signature against the signature of the last frame
+/// Compares a sparse RGB signature against the signature of the last frame
 /// that was actually processed — never against the last skipped frame — so a
 /// slow fade accumulates delta until it crosses the threshold. A skip cap
 /// forces periodic reprocessing as a backstop.
@@ -34,18 +34,20 @@ impl ChangeDetector {
 
     /// Returns true if the frame should be processed. Call exactly once per frame.
     pub fn has_changed(&mut self, frame: &Frame) -> bool {
+        let view = ViewFrame::new(frame.clone());
         self.scratch.clear();
         for gy in 0..GRID {
             // Sample at cell centers
             let y = (gy * frame.height + frame.height / 2) / GRID;
             for gx in 0..GRID {
                 let x = (gx * frame.width + frame.width / 2) / GRID;
-                self.scratch.push(luma_at(frame, x, y));
+                let color = view.pixel_srgb(x, y).unwrap_or_default();
+                self.scratch.extend([color.r, color.g, color.b]);
             }
         }
 
         let changed = if self.signature.len() != self.scratch.len() {
-            true // First frame or resolution change
+            true // First frame; the processor resets us on layout changes
         } else if self.skipped >= self.max_skipped_frames {
             true // Backstop: never skip indefinitely
         } else {
@@ -125,16 +127,5 @@ mod tests {
         assert!(!cd.has_changed(&frame.clone()));
         assert!(!cd.has_changed(&frame.clone()));
         assert!(cd.has_changed(&frame.clone()), "cap reached, must process");
-    }
-
-    #[test]
-    fn resolution_change_triggers_processing() {
-        let mut cd = detector(1.0, 100);
-        assert!(cd.has_changed(&yuyv_frame_from_luma(64, 64, |_, _| 128)));
-        // Same content, different resolution: signature length stays GRID^2,
-        // but luma positions shift; identical uniform frames still match.
-        assert!(!cd.has_changed(&yuyv_frame_from_luma(32, 32, |_, _| 128)));
-        // A differing uniform frame at the new resolution must process.
-        assert!(cd.has_changed(&yuyv_frame_from_luma(32, 32, |_, _| 200)));
     }
 }

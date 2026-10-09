@@ -119,6 +119,39 @@ pub trait PrysmCapturer {
         Self: Sized + Send + 'static;
 }
 
+#[cfg(any(target_os = "linux", test))]
+async fn send_frame(
+    sender: &tokio::sync::mpsc::Sender<Frame>,
+    frame: Frame,
+    shutdown: &tokio_util::sync::CancellationToken,
+) -> bool {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => false,
+        result = sender.send(frame) => result.is_ok(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn cancellation_unblocks_a_full_frame_channel() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        sender.send(Frame::dummy(2, 1)).await.unwrap();
+        let shutdown = CancellationToken::new();
+        let sending = send_frame(&sender, Frame::dummy(2, 1), &shutdown);
+        futures::pin_mut!(sending);
+        assert!(futures::poll!(&mut sending).is_pending());
+        shutdown.cancel();
+        assert!(!sending.await);
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

@@ -1,4 +1,4 @@
-use frames::ViewFrame;
+use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BandDetector, ChangeDetector, EdgeSampler, TemporalSmoothing};
 use pipeline::Node;
@@ -21,8 +21,10 @@ pub struct PrysmProcessor {
     band_detector: Option<BandDetector>,
     sampler: EdgeSampler,
     temporal_smoothing: Option<TemporalSmoothing>,
-    /// Output of the last processed frame, re-emitted when a frame is skipped
+    /// Last sampled target, before temporal smoothing
     last_spectra: Option<EdgeSpectra>,
+    last_viewport: Option<Viewport>,
+    frame_layout: Option<(u32, u32, PixelFormat)>,
 }
 
 impl PrysmProcessor {
@@ -40,15 +42,29 @@ impl PrysmProcessor {
                 None
             },
             sampler: EdgeSampler::new(config.sample_density, config.edge_depth),
-            temporal_smoothing: Some(TemporalSmoothing::new(config.temporal_smoothing)),
+            temporal_smoothing: (config.temporal_smoothing > 0.0)
+                .then(|| TemporalSmoothing::new(config.temporal_smoothing)),
             last_spectra: None,
+            last_viewport: None,
+            frame_layout: None,
         }
     }
 
     /// Process a single frame through the pipeline
     pub fn process_frame(&mut self, frame: Frame) -> EdgeSpectra {
-        if !matches!(frame.format, PixelFormat::YUYV | PixelFormat::RGB24) {
-            tracing::error!("{} format not yet supported", frame.format);
+        let layout = (frame.width, frame.height, frame.format);
+        if self.frame_layout != Some(layout) {
+            *self = Self::new(&self.config);
+            self.frame_layout = Some(layout);
+        }
+
+        if frame.width == 0 || frame.height == 0 || frame.format == PixelFormat::MJPEG {
+            tracing::error!(
+                "Unsupported frame: {} {}x{}",
+                frame.format,
+                frame.width,
+                frame.height
+            );
             return EdgeSpectra::black(
                 frame.width as usize,
                 frame.height as usize,
@@ -56,27 +72,31 @@ impl PrysmProcessor {
             );
         }
 
-        // Skip identical frames: re-emit the previous output untouched
-        if let Some(ref mut detector) = self.change_detector
-            && let Some(ref last) = self.last_spectra
-            && !detector.has_changed(&frame)
-        {
-            return last.clone();
-        }
-
+        let changed = self
+            .change_detector
+            .as_mut()
+            .is_none_or(|detector| detector.has_changed(&frame));
         let mut view = ViewFrame::new(frame);
 
         if let Some(ref mut detector) = self.band_detector {
             view = detector.process(view);
         }
 
-        let mut spectra = self.sampler.process(view);
+        // Crop confirmation and smoothing still advance on unchanged frames.
+        let mut spectra = match &self.last_spectra {
+            Some(target) if !changed && self.last_viewport == Some(view.viewport) => target.clone(),
+            _ => {
+                self.last_viewport = Some(view.viewport);
+                let target = self.sampler.process(view);
+                self.last_spectra = Some(target.clone());
+                target
+            }
+        };
 
         if let Some(ref mut smoother) = self.temporal_smoothing {
             spectra = smoother.process(spectra);
         }
 
-        self.last_spectra = Some(spectra.clone());
         spectra
     }
 

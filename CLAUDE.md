@@ -136,10 +136,10 @@ Tests are minimal but focused:
 - `PrysmProcessor` chains typed nodes: `ChangeDetector` (skip identical frames) → `BandDetector`
   (letterbox/pillarbox viewport) → `EdgeSampler` (linear-light region averaging) → `TemporalSmoothing`
 - Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
-  decodes only the pixels it reads (`ViewFrame::average_linear`), and luma-only stages (band/change
-  detection) read Y bytes straight out of YUYV via `frames::luma_at`
+  decodes only the pixels it reads (`ViewFrame::average_linear`). Band detection reads luma via
+  `frames::luma_at`; change detection compares sparse RGB samples so color-only changes are detected.
 - The processor is stateful (smoothing history, band debounce, change signature)
-- Supports YUYV and RGB24; MJPEG and BGR24 currently return black spectra
+- Supports YUYV, RGB24, and BGR24; MJPEG currently returns black spectra
 - `cargo run --release -p prysm-processor --example bench` gives rough per-frame pipeline cost
 
 ### Threading considerations:

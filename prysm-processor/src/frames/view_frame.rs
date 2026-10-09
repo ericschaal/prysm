@@ -104,7 +104,7 @@ impl ViewFrame {
     }
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
-    fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
+    pub(crate) fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
         match self.frame.format {
             PixelFormat::YUYV => {
                 let (r, g, b) = prysm_capture::yuyv::yuyv_pixel_to_rgb(
@@ -115,12 +115,16 @@ impl ViewFrame {
                 );
                 Some(Color::new(r, g, b))
             }
-            PixelFormat::RGB24 => {
+            PixelFormat::RGB24 | PixelFormat::BGR24 => {
                 let idx = ((y * self.frame.width + x) * 3) as usize;
                 let px = self.frame.data.get(idx..idx + 3)?;
-                Some(Color::new(px[0], px[1], px[2]))
+                Some(if self.frame.format == PixelFormat::BGR24 {
+                    Color::new(px[2], px[1], px[0])
+                } else {
+                    Color::new(px[0], px[1], px[2])
+                })
             }
-            PixelFormat::BGR24 | PixelFormat::MJPEG => None,
+            PixelFormat::MJPEG => None,
         }
     }
 }

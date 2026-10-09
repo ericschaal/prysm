@@ -73,11 +73,18 @@ impl BandDetector {
         let left = find_band_from_start(&col_brightness, col_threshold, min_col_band);
         let right = find_band_from_end(&col_brightness, col_threshold, min_col_band);
 
-        Viewport {
+        let viewport = Viewport {
             x: left,
             y: top,
             width: frame.width.saturating_sub(left + right),
             height: frame.height.saturating_sub(top + bottom),
+        };
+        // A dark scene provides no crop boundary; keep the last valid crop.
+        if viewport.width == 0 || viewport.height == 0 {
+            self.current_viewport
+                .unwrap_or_else(|| Viewport::full_frame(frame.width, frame.height))
+        } else {
+            viewport
         }
     }
 
