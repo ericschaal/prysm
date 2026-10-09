@@ -24,7 +24,13 @@ pub struct PrysmProcessor {
     /// Last sampled target, before temporal smoothing
     last_spectra: Option<EdgeSpectra>,
     last_viewport: Option<Viewport>,
-    frame_layout: Option<(u32, u32, PixelFormat)>,
+    frame_layout: Option<(
+        u32,
+        u32,
+        PixelFormat,
+        prysm_capture::YuvRange,
+        prysm_capture::YuvStandardMatrix,
+    )>,
 }
 
 impl PrysmProcessor {
@@ -52,7 +58,13 @@ impl PrysmProcessor {
 
     /// Process a single frame through the pipeline
     pub fn process_frame(&mut self, frame: Frame) -> EdgeSpectra {
-        let layout = (frame.width, frame.height, frame.format);
+        let layout = (
+            frame.width,
+            frame.height,
+            frame.format,
+            frame.yuv_range,
+            frame.yuv_matrix,
+        );
         if self.frame_layout != Some(layout) {
             *self = Self::new(&self.config);
             self.frame_layout = Some(layout);
@@ -97,7 +109,7 @@ impl PrysmProcessor {
             spectra = smoother.process(spectra);
         }
 
-        spectra
+        spectra * self.config.brightness.clamp(0.0, 1.0)
     }
 
     /// Convert into a stream processor

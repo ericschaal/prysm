@@ -39,10 +39,10 @@ impl BandDetector {
         Self {
             brightness_percentile: config.band_brightness_percentile,
             min_band_fraction: config.min_band_fraction,
-            detection_interval: config.band_detection_interval,
+            detection_interval: config.band_detection_interval.max(1),
             confirm_frames: config.band_confirm_frames,
             inconsistency_limit: config.band_inconsistency_limit,
-            sample_stride: config.band_sample_stride,
+            sample_stride: config.band_sample_stride.max(1),
             frame_count: 0,
             current_viewport: None,
             candidate_viewport: None,

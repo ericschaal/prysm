@@ -33,9 +33,6 @@ pub struct Config {
     /// Resolution-independent: 0.09 is ~100px at 1080p, ~32px at 360p.
     pub edge_depth: f32,
 
-    /// Target FPS
-    pub target_fps: u32,
-
     /// Enable black band detection
     pub black_band_detection: bool,
 
@@ -78,7 +75,6 @@ impl Default for Config {
             brightness: 0.8,
             temporal_smoothing: 0.4,
             edge_depth: 0.09,
-            target_fps: 30,
             black_band_detection: true,
             band_brightness_percentile: 4,
             min_band_fraction: 0.04,
@@ -86,7 +82,8 @@ impl Default for Config {
             band_confirm_frames: 15,
             band_inconsistency_limit: 5,
             band_sample_stride: 8,
-            change_detection: true,
+            // Sparse signatures can miss changes in the sampled edge regions.
+            change_detection: false,
             change_threshold: 1.0,
             max_skipped_frames: 30,
         }

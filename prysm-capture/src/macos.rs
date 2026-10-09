@@ -12,10 +12,14 @@ use av_foundation::capture_video_data_output::{
 };
 use av_foundation::media_format::AVMediaTypeVideo;
 use core_foundation::base::TCFType;
+use core_foundation::string::CFString;
 use core_media::sample_buffer::{CMSampleBuffer, CMSampleBufferRef};
+use core_video::buffer::TCVBuffer;
+use core_video::image_buffer::{CVImageBufferKeys, ycbcr_matrix_get_integer_code_point_for_string};
 use core_video::pixel_buffer::{
     CVPixelBuffer, kCVPixelBufferHeightKey, kCVPixelBufferLock_ReadOnly,
     kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey, kCVPixelFormatType_422YpCbCr8_yuvs,
+    kCVPixelFormatType_422YpCbCr8FullRange,
 };
 use core_video::r#return::kCVReturnSuccess;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
@@ -26,7 +30,7 @@ use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 use tokio_util::sync::CancellationToken;
 
-use crate::{Frame, PixelFormat, PrysmCapturer};
+use crate::{Frame, PixelFormat, PrysmCapturer, YuvRange, YuvStandardMatrix};
 
 struct DelegateIvars {
     sender: Mutex<Option<tokio::sync::mpsc::Sender<Frame>>>,
@@ -90,13 +94,38 @@ impl Delegate {
 /// padding so the data matches the tightly-packed layout produced by the v4l
 /// capturer on Linux.
 fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
-    if pixel_buffer.get_pixel_format() != kCVPixelFormatType_422YpCbCr8_yuvs {
+    let range = if pixel_buffer.get_pixel_format() == kCVPixelFormatType_422YpCbCr8_yuvs {
+        YuvRange::Limited
+    } else if pixel_buffer.get_pixel_format() == kCVPixelFormatType_422YpCbCr8FullRange {
+        YuvRange::Full
+    } else {
         tracing::error!(
             "Unexpected pixel format: {:?}",
             pixel_buffer.get_pixel_format().to_be_bytes()
         );
         return None;
+    };
+    if !pixel_buffer.get_width().is_multiple_of(2) {
+        tracing::error!("YUYV width must be even");
+        return None;
     }
+    let matrix = pixel_buffer
+        .as_buffer()
+        .get_attachment(&CVImageBufferKeys::YCbCrMatrix.into(), None)
+        .and_then(|value| value.downcast::<CFString>())
+        .map_or(6, |value| {
+            ycbcr_matrix_get_integer_code_point_for_string(&value)
+        });
+    let matrix = match matrix {
+        1 => YuvStandardMatrix::Bt709,
+        5 | 6 => YuvStandardMatrix::Bt601,
+        7 => YuvStandardMatrix::Smpte240,
+        9 => YuvStandardMatrix::Bt2020,
+        _ => {
+            tracing::error!("Unsupported YUYV color matrix: {matrix}");
+            return None;
+        }
+    };
     if pixel_buffer.lock_base_address(kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess {
         return None;
     }
@@ -124,7 +153,12 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
             data
         };
         match (u32::try_from(width), u32::try_from(height)) {
-            (Ok(width), Ok(height)) => Some(Frame::new(data, width, height, PixelFormat::YUYV)),
+            (Ok(width), Ok(height)) => {
+                let mut frame = Frame::new(data, width, height, PixelFormat::YUYV);
+                frame.yuv_range = range;
+                frame.yuv_matrix = matrix;
+                Some(frame)
+            }
             _ => None,
         }
     };
@@ -221,6 +255,18 @@ pub struct AVFoundationCapturer {
     shutdown_token: CancellationToken,
 }
 
+async fn stop_when_capture_closes(
+    sender: tokio::sync::mpsc::Sender<Frame>,
+    shutdown: CancellationToken,
+    stop: std_mpsc::Sender<()>,
+) {
+    tokio::select! {
+        () = shutdown.cancelled() => {},
+        () = sender.closed() => {},
+    }
+    let _ = stop.send(());
+}
+
 impl AVFoundationCapturer {
     /// Opens a capture device. `device_uid` selects a device by its
     /// `AVFoundation` unique ID; `None` picks the system default video device.
@@ -243,20 +289,19 @@ impl PrysmCapturer for AVFoundationCapturer {
 
         // Bridge the async cancellation token to the blocking thread.
         let (stop_tx, stop_rx) = std_mpsc::channel::<()>();
-        let shutdown_token = self.shutdown_token.clone();
-        tokio::spawn(async move {
-            shutdown_token.cancelled().await;
-            let _ = stop_tx.send(());
-        });
+        let runtime = tokio::runtime::Handle::current();
 
         std::thread::spawn(move || {
-            let session = match start_session(self.device_uid.as_deref(), tx, width, height) {
+            let session = match start_session(self.device_uid.as_deref(), tx.clone(), width, height)
+            {
                 Ok(session) => session,
                 Err(e) => {
                     tracing::error!("Failed to start capture session: {e}");
                     return;
                 }
             };
+
+            runtime.spawn(stop_when_capture_closes(tx, self.shutdown_token, stop_tx));
 
             // Block until shutdown is signalled (or the bridge task is gone).
             let _ = stop_rx.recv();
@@ -265,5 +310,78 @@ impl PrysmCapturer for AVFoundationCapturer {
         });
 
         ReceiverStream::new(rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_startup_closes_frame_stream() {
+        use futures::StreamExt;
+        let shutdown = CancellationToken::new();
+        let capturer =
+            AVFoundationCapturer::new(Some("prysm-test-missing-device"), shutdown.clone()).unwrap();
+        let mut stream = capturer.into_stream(640, 360);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(!shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn capture_stops_on_cancellation_or_consumer_drop() {
+        for cancel in [false, true] {
+            let (sender, receiver) = tokio::sync::mpsc::channel(1);
+            let shutdown = CancellationToken::new();
+            let (stop_tx, stop_rx) = std_mpsc::channel();
+            let stop = stop_when_capture_closes(sender, shutdown.clone(), stop_tx);
+            futures::pin_mut!(stop);
+            assert!(futures::poll!(&mut stop).is_pending());
+            if cancel {
+                shutdown.cancel();
+            } else {
+                drop(receiver);
+            }
+            stop.await;
+            assert!(stop_rx.try_recv().is_ok());
+        }
+    }
+
+    #[test]
+    fn pixel_buffer_metadata_and_row_padding_reach_frame() {
+        let buffer = CVPixelBuffer::new(kCVPixelFormatType_422YpCbCr8_yuvs, 4, 2, None).unwrap();
+        let matrix = core_video::image_buffer::CVImageBufferYCbCrMatrix::ITU_R_709_2;
+        let matrix: CFString = matrix.into();
+        buffer.as_buffer().set_attachment(
+            &CVImageBufferKeys::YCbCrMatrix.into(),
+            &matrix.as_CFType(),
+            core_video::buffer::kCVAttachmentMode_ShouldPropagate,
+        );
+        assert_eq!(buffer.lock_base_address(0), kCVReturnSuccess);
+        let stride = buffer.get_bytes_per_row();
+        // SAFETY: The buffer is locked and each row has space for four YUYV pixels.
+        unsafe {
+            let base = buffer.get_base_address().cast::<u8>();
+            for row in 0..2 {
+                std::ptr::copy_nonoverlapping(
+                    [16, 128, 235, 128, 16, 128, 235, 128].as_ptr(),
+                    base.add(row * stride),
+                    8,
+                );
+            }
+        }
+        buffer.unlock_base_address(0);
+        let frame = frame_from_pixel_buffer(&buffer).unwrap();
+        assert_eq!(
+            frame.as_slice(),
+            [16, 128, 235, 128, 16, 128, 235, 128].repeat(2)
+        );
+        assert_eq!(frame.yuv_range, YuvRange::Limited);
+        assert_eq!(frame.yuv_matrix, YuvStandardMatrix::Bt709);
     }
 }

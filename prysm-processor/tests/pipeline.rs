@@ -18,6 +18,8 @@ fn dark_frames_must_not_panic() {
 #[test]
 fn smoothing_must_keep_converging_on_static_input() {
     let c = Config {
+        change_detection: true,
+        brightness: 1.0,
         black_band_detection: false,
         ..Config::default()
     };
@@ -33,6 +35,8 @@ fn smoothing_must_keep_converging_on_static_input() {
 #[test]
 fn color_change_must_update_output() {
     let c = Config {
+        change_detection: true,
+        brightness: 1.0,
         black_band_detection: false,
         temporal_smoothing: 0.0,
         ..Config::default()
@@ -60,6 +64,8 @@ fn color_change_must_update_output() {
 #[test]
 fn static_letterbox_confirms_after_configured_scans() {
     let c = Config {
+        change_detection: true,
+        brightness: 1.0,
         temporal_smoothing: 0.0,
         ..Config::default()
     };
@@ -81,6 +87,7 @@ fn static_letterbox_confirms_after_configured_scans() {
 #[test]
 fn resize_must_update_sample_count() {
     let c = Config {
+        brightness: 1.0,
         black_band_detection: false,
         ..Config::default()
     };
@@ -94,6 +101,7 @@ fn resize_must_update_sample_count() {
 #[test]
 fn bgr_supported_by_capture_must_process() {
     let c = Config {
+        brightness: 1.0,
         black_band_detection: false,
         ..Config::default()
     };
@@ -114,6 +122,7 @@ fn bgr_supported_by_capture_must_process() {
 #[test]
 fn dark_scene_preserves_confirmed_crop() {
     let c = Config {
+        brightness: 1.0,
         temporal_smoothing: 0.0,
         ..Config::default()
     };
@@ -158,6 +167,8 @@ fn empty_frames_return_black() {
 #[test]
 fn equal_mean_rgb_colors_are_detected() {
     let c = Config {
+        change_detection: true,
+        brightness: 1.0,
         black_band_detection: false,
         temporal_smoothing: 0.0,
         ..Config::default()
@@ -172,4 +183,77 @@ fn equal_mean_rgb_colors_are_detected() {
         color.r == 0.0 && color.b > 0.99,
         "color change was skipped: {color:?}"
     );
+}
+
+#[test]
+fn brightness_scales_output_once_after_smoothing() {
+    for brightness in [0.0, 0.5, 1.0] {
+        let config = Config {
+            brightness,
+            black_band_detection: false,
+            ..Config::default()
+        };
+        let mut processor = PrysmProcessor::new(&config);
+        for _ in 0..3 {
+            let color = processor.process_frame(rgb(64, 36, 255)).top.sample_at(0.5);
+            assert!(
+                (color.r - brightness).abs() < 1e-6,
+                "brightness {brightness}: {color:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn default_processing_detects_narrow_edge_changes_immediately() {
+    let config = Config {
+        temporal_smoothing: 0.0,
+        ..Config::default()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    let base = rgb(640, 360, 128);
+    let mut data = base.data.as_ref().clone();
+    data[..640 * 10 * 3].fill(255);
+    let changed = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let old = processor.process_frame(base);
+    let actual = processor.process_frame(changed.clone());
+    let expected = PrysmProcessor::new(&config).process_frame(changed);
+    assert_ne!(actual, old);
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn zero_band_scan_settings_are_clamped() {
+    let config = Config {
+        band_detection_interval: 0,
+        band_sample_stride: 0,
+        ..Config::default()
+    };
+    let actual = PrysmProcessor::new(&config).process_frame(rgb(64, 36, 128));
+    assert!(actual.top.sample_at(0.5).r > 0.0);
+}
+
+#[test]
+fn changing_yuv_metadata_resets_processing_history() {
+    use prysm_capture::{YuvRange, YuvStandardMatrix};
+    let config = Config {
+        brightness: 1.0,
+        change_detection: true,
+        black_band_detection: false,
+        ..Config::default()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    let mut frame = Frame::new(
+        [235, 128, 235, 128].repeat(64 * 36 / 2),
+        64,
+        36,
+        PixelFormat::YUYV,
+    );
+    let full = processor.process_frame(frame.clone());
+    frame.yuv_range = YuvRange::Limited;
+    frame.yuv_matrix = YuvStandardMatrix::Bt709;
+    let limited = processor.process_frame(frame.clone());
+    assert!(full.top.sample_at(0.5).r < 1.0);
+    assert!(limited.top.sample_at(0.5).r > 0.99);
+    assert_eq!(limited, PrysmProcessor::new(&config).process_frame(frame));
 }

@@ -107,12 +107,11 @@ cargo clippy
 
 **Default Config (prysm_core::Config):**
 
-- Target FPS: 30
 - Brightness: 0.8
 - Temporal smoothing: 0.4
 - Edge sampling: 30 samples per 1000px (~19 samples across a 640px edge)
 - Edge depth: 9% of frame height (resolution-independent)
-- Change detection: enabled (skips processing for unchanged frames)
+- Change detection: disabled by default; the optional sparse grid can miss narrow edge changes
 
 ## Testing Structure
 
@@ -135,9 +134,12 @@ Tests are minimal but focused:
 
 - `PrysmProcessor` chains typed nodes: `ChangeDetector` (skip identical frames) → `BandDetector`
   (letterbox/pillarbox viewport) → `EdgeSampler` (linear-light region averaging) → `TemporalSmoothing`
+- Frames carry their YUYV range and matrix from capture into both processing and preview.
+- Brightness scales the final spectra after smoothing.
 - Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
   decodes only the pixels it reads (`ViewFrame::average_linear`). Band detection reads luma via
-  `frames::luma_at`; change detection compares sparse RGB samples so color-only changes are detected.
+  `frames::luma_at`; optional change detection compares sparse RGB samples. It is disabled by
+  default because narrow edge changes can fall between those points.
 - The processor is stateful (smoothing history, band debounce, change signature)
 - Supports YUYV, RGB24, and BGR24; MJPEG currently returns black spectra
 - `cargo run --release -p prysm-processor --example bench` gives rough per-frame pipeline cost

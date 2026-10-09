@@ -266,6 +266,8 @@ fn frame_to_image(frame: &Frame, rgb_scratch: &mut Vec<u8>) -> Option<egui::Colo
                 rgb_scratch,
                 frame.width as usize,
                 frame.height as usize,
+                frame.yuv_range,
+                frame.yuv_matrix,
             );
             rgb_scratch
         }
@@ -392,8 +394,7 @@ impl eframe::App for DesktopRenderer {
         });
 
         // Repaints are driven by the notifier thread when new frames/spectra
-        // arrive (see `spawn_repaint_notifier`), so a static source leaves the
-        // GUI idle. Keep a slow heartbeat as a safety net.
+        // arrive (see `spawn_repaint_notifier`). Keep a slow heartbeat as a safety net.
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
 }
@@ -473,8 +474,8 @@ enum EdgePosition {
 ///
 /// egui repaints on demand; instead of polling at a fixed FPS, a small
 /// thread waits on the spectra/frame watch channels and requests a repaint
-/// per update. When the source is static (and the processor is skipping
-/// frames), the GUI stays idle. Exits when both channels close or on
+/// per update. When no updates arrive, the GUI stays idle. Exits when the
+/// spectra channel closes or on
 /// shutdown; tokio watch futures work under any executor, so a lightweight
 /// `block_on` is enough — no runtime needed on this thread.
 fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
@@ -560,6 +561,15 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limited_range_preview_displays_black_and_white() {
+        let mut frame = Frame::new(vec![16, 128, 235, 128], 2, 1, PixelFormat::YUYV);
+        frame.yuv_range = prysm_capture::YuvRange::Limited;
+        frame.yuv_matrix = prysm_capture::YuvStandardMatrix::Bt709;
+        let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
+        assert_eq!(image.pixels, [egui::Color32::BLACK, egui::Color32::WHITE]);
+    }
 
     #[test]
     fn bgr_frames_display_in_rgb_order() {

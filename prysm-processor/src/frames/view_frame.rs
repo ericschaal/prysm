@@ -112,6 +112,8 @@ impl ViewFrame {
                     x,
                     y,
                     self.frame.width,
+                    self.frame.yuv_range,
+                    self.frame.yuv_matrix,
                 );
                 Some(Color::new(r, g, b))
             }

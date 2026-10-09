@@ -39,7 +39,14 @@ fn bench_full_decode() {
     let start = Instant::now();
     let iterations = 120;
     for _ in 0..iterations {
-        prysm_capture::yuyv::yuyv_to_rgb_into(&frame.data, &mut rgb, 1920, 1080);
+        prysm_capture::yuyv::yuyv_to_rgb_into(
+            &frame.data,
+            &mut rgb,
+            1920,
+            1080,
+            frame.yuv_range,
+            frame.yuv_matrix,
+        );
         std::hint::black_box(&rgb);
     }
     let per_frame = start.elapsed() / iterations;

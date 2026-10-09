@@ -3,6 +3,24 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
+pub async fn wait_for_shutdown(
+    shutdown: &tokio_util::sync::CancellationToken,
+    mut frame_task: JoinHandle<()>,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => frame_task.await.context("Frame watcher failed"),
+        result = &mut frame_task => {
+            let unexpected = !shutdown.is_cancelled();
+            shutdown.cancel();
+            result.context("Frame watcher failed")?;
+            anyhow::ensure!(!unexpected, "Capture stream ended unexpectedly");
+            Ok(())
+        }
+    }
+}
+
 pub fn stream_split<S>(source: S) -> (impl Stream<Item = S::Item>, impl Stream<Item = S::Item>)
 where
     S: Stream + Send + 'static,
@@ -58,5 +76,39 @@ impl<T: Clone + Send + Sync + 'static> StreamWatcher<T> {
 
     pub fn receiver(&self) -> tokio::sync::watch::Receiver<T> {
         self.rx.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn ended_capture_closes_both_consumers_and_reports_failure() {
+        let shutdown = CancellationToken::new();
+        let (a, b) = stream_split(futures::stream::iter([1u8]));
+        let spectra = StreamWatcher::new(0).into_task(a);
+        let frames = StreamWatcher::new(0).into_task(b);
+        let result = wait_for_shutdown(&shutdown, frames).await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Capture stream ended unexpectedly")
+        );
+        assert!(shutdown.is_cancelled());
+        spectra.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn requested_shutdown_is_successful() {
+        let shutdown = CancellationToken::new();
+        let token = shutdown.clone();
+        let frames = tokio::spawn(async move {
+            token.cancelled().await;
+        });
+        shutdown.cancel();
+        wait_for_shutdown(&shutdown, frames).await.unwrap();
     }
 }

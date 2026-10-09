@@ -1,6 +1,6 @@
 mod stream;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use desktop_renderer::DesktopRendererBuilder;
 use prysm_capture::{Capturer, Frame, PrysmCapturer};
 use prysm_core::EdgeSpectra;
@@ -24,7 +24,6 @@ fn main() -> Result<()> {
     let dummy_frame = Frame::dummy(CAPTURE_WIDTH, CAPTURE_HEIGHT);
     let frames = stream::StreamWatcher::new(dummy_frame);
 
-    // Configure renderer layout with target FPS from core config
     let config = prysm_core::Config::default();
 
     // Spawn dedicated runtime thread for all async work
@@ -42,8 +41,7 @@ fn main() -> Result<()> {
                 .expect("Failed to build tokio runtime");
 
             rt.block_on(async move {
-                let capturer =
-                    Capturer::new(None, shutdown_token.clone()).expect("Failed to create capturer");
+                let capturer = Capturer::new(None, shutdown_token.clone())?;
                 let processor = PrysmProcessor::new(&config);
 
                 // Create async streams
@@ -63,15 +61,13 @@ fn main() -> Result<()> {
                     }
                 });
 
-                // Wait for shutdown signal
-                shutdown_token.cancelled().await;
-                tracing::info!("Runtime thread received shutdown signal");
-
-                // Graceful shutdown: wait for stream tasks to finish
-                let _ = tokio::join!(spectrum_task, frame_task);
-
+                let result = stream::wait_for_shutdown(&shutdown_token, frame_task).await;
+                let spectrum_result = spectrum_task.await.context("Spectrum watcher failed");
+                result?;
+                spectrum_result?;
                 tracing::info!("Runtime thread shutting down cleanly");
-            });
+                Ok::<(), anyhow::Error>(())
+            })
         }
     });
 
@@ -85,7 +81,9 @@ fn main() -> Result<()> {
 
     // Wait for runtime thread to finish
     tracing::info!("Waiting for runtime thread to finish");
-    runtime_handle.join().expect("Runtime thread panicked");
+    runtime_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("Runtime thread panicked"))??;
 
     tracing::info!("Application shutdown complete");
 

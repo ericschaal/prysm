@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 pub mod yuyv;
+pub use ::yuv::{YuvRange, YuvStandardMatrix};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -49,15 +50,23 @@ pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub format: PixelFormat,
+    /// YUYV color metadata; ignored for RGB and compressed formats.
+    pub yuv_range: YuvRange,
+    pub yuv_matrix: YuvStandardMatrix,
 }
 
 impl Frame {
     /// Creates a new frame with the given data, dimensions, and pixel format.
+    /// YUYV defaults to full-range BT.601; capturers set the negotiated metadata.
     ///
     /// # Panics
     /// Panics if the data size doesn't match the expected size for the given format and dimensions
-    /// (except for variable-size formats like MJPEG).
+    /// (except for variable-size formats like MJPEG), or if YUYV width is odd.
     pub fn new(data: Vec<u8>, width: u32, height: u32, format: PixelFormat) -> Self {
+        assert!(
+            format != PixelFormat::YUYV || width.is_multiple_of(2),
+            "YUYV width must be even"
+        );
         // Validate buffer size for fixed-size formats
         if let Some(expected) = format.expected_size(width, height) {
             assert_eq!(
@@ -77,6 +86,8 @@ impl Frame {
             width,
             height,
             format,
+            yuv_range: YuvRange::Full,
+            yuv_matrix: YuvStandardMatrix::Bt601,
         }
     }
 
@@ -136,6 +147,12 @@ async fn send_frame(
 mod tests {
     use super::*;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    #[should_panic(expected = "YUYV width must be even")]
+    fn odd_yuyv_width_is_rejected() {
+        Frame::new(vec![128; 6], 3, 1, PixelFormat::YUYV);
+    }
 
     #[tokio::test]
     async fn cancellation_unblocks_a_full_frame_channel() {
