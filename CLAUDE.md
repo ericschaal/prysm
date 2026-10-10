@@ -85,6 +85,11 @@ cargo build --release
 # Run main application
 cargo run -p prysm
 
+# Play the local Philips HDR test video (requires FFmpeg 9+ on PATH)
+cargo run -p prysm --bin video
+# Or supply another video path
+cargo run -p prysm --bin video -- "/path/to/video.mp4"
+
 # Run tests
 cargo test
 cargo test -p prysm-capture  # Run tests in specific crate
@@ -97,23 +102,33 @@ cargo clippy
 
 ## Key Configuration Points
 
-**Desktop demo binary (prysm/src/main.rs):**
+**Desktop visualizer setup (prysm/src/lib.rs):**
 
 - Capture resolution: 640x360 (intentionally low — the camera ISP's hardware downscale integrates every
   source pixel, which is both cheaper and more accurate than sampling a high-res frame)
-- LED count: 40
+- Displayed LED count: 300 (desktop renderer default)
 - Video device: `/dev/video2`
 - Note: This is specific to the desktop visualizer, not a global configuration
 
+`prysm/src/bin/video.rs` is the alternate entry point for video files. It defaults to the local
+Philips Ambilight test MP4, plays once at its original rate, and closes at EOF. FFmpeg 9+ decodes
+and scales frames to 640x360 sRGB, including HDR tone mapping; audio is not played. Both entry
+points share the visualizer pipeline in `prysm/src/lib.rs`. The camera remains the default binary.
+
+The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
+uses the sRGB transfer function and preview output is 8-bit RGB. BT.2020 YUV matrix support
+does not include PQ/HLG transfer decoding or an HDR display path, so file playback tone-maps first.
+
 **Default Config (prysm_core::Config):**
 
-Edit the Rust `Config` passed to `PrysmProcessor::new` (in `prysm/src/main.rs` for the demo).
+Edit the Rust `Config` passed to `PrysmProcessor::new` (in `prysm/src/lib.rs` for the demo).
 Start with `Config::default()` and override only what you want to change:
 
 ```rust
 let config = prysm_core::Config {
     brightness_percent: 60,
-    smoothing_percent: 70,
+    smoothing_seconds: 0.2,
+    sample_density: prysm_core::SampleDensity(150),
     ..prysm_core::Config::default()
 };
 ```
@@ -121,17 +136,21 @@ let config = prysm_core::Config {
 | Setting | Default | What it changes |
 | --- | --- | --- |
 | `brightness_percent` | 80 | 0 turns lights off; 100 is full brightness. |
-| `smoothing_percent` | 40 | 0 responds instantly; higher values reduce flicker but respond more slowly; 100 is slowest. |
+| `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
+| `sample_density` | `SampleDensity(60)` | Spectrum samples per 1000 pixels of cropped edge length, independent of LED count. |
 | `edge_depth_percent` | 15 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
-Brightness and smoothing are clamped to 0–100, edge depth to 1–50. Edge regions never overlap
-their opposite edge. Maximum smoothing still converges instead of freezing the lights.
-Every frame is sampled. Sample density (30 per 1000px) and black-bar detection tuning are internal.
+Brightness is clamped to 0–100, edge depth to 1–50. Edge regions never overlap their opposite
+edge. Negative and non-finite smoothing durations disable smoothing. Every frame is sampled;
+density changes how finely the edge bands are divided, with all region pixels still contributing.
+Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
+`process_frame` uses monotonic processing time; deterministic replay can use `process_frame_at`
+with a shared clock origin plus source timestamps.
 
-The old fractional `brightness`, `temporal_smoothing`, and `edge_depth` fields are replaced by
-integer percentages; `black_band_detection` is now `remove_black_bars`. Sampling density and
-detector tuning are no longer part of `Config`.
+The old fractional `brightness` and `edge_depth` fields are replaced by integer percentages;
+`black_band_detection` is now `remove_black_bars`. `smoothing_percent` is replaced by
+`smoothing_seconds`; `sample_density` is configurable again. Detector tuning stays internal.
 
 ## Testing Structure
 
@@ -178,7 +197,9 @@ Tests are minimal but focused:
 
 ## Critical Files
 
-- `prysm/src/main.rs` - Application orchestration and threading setup
+- `prysm/src/main.rs` - Camera entry point
+- `prysm/src/bin/video.rs` - Video file entry point and FFmpeg frame stream
+- `prysm/src/lib.rs` - Shared application orchestration and threading setup
 - `prysm/src/stream.rs` - StreamWatcher and stream_split patterns
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
 - `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
