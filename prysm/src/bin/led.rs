@@ -95,6 +95,7 @@ async fn main() -> Result<()> {
     let frames = match config.source {
         Source::Camera { device } => Capturer::new(device.as_deref(), shutdown.clone())?
             .into_stream(CAPTURE_WIDTH, CAPTURE_HEIGHT)
+            .map(|frame| frame.map_err(anyhow::Error::from))
             .boxed(),
         Source::Video { path } => video_feed(&path, shutdown.clone())?.boxed(),
     };

@@ -113,10 +113,10 @@ impl PrysmProcessor {
     ///
     /// # Returns
     /// Stream of `EdgeColors`, preserving source errors
-    pub fn into_stream(
+    pub fn into_stream<E: Send + 'static>(
         mut self,
-        input: impl Stream<Item = anyhow::Result<Frame>> + Send + 'static,
-    ) -> impl Stream<Item = anyhow::Result<EdgeColors>> + Send + 'static {
+        input: impl Stream<Item = Result<Frame, E>> + Send + 'static,
+    ) -> impl Stream<Item = Result<EdgeColors, E>> + Send + 'static {
         input.map(move |frame| frame.map(|frame| self.process_frame(frame)))
     }
 }

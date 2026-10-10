@@ -85,5 +85,6 @@ where
 
     tracing::info!("Application shutdown complete");
 
+    // shortcut: eframe errors can be non-Send; retain their text until the app supports local errors.
     result.map_err(|e| anyhow::anyhow!("Desktop renderer error: {e}"))
 }

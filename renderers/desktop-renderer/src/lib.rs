@@ -538,10 +538,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
 /// # Arguments
 /// * `app` - The configured PrysmApp instance
 /// * `shutdown_token` - Token to signal shutdown when window closes
-pub fn run(
-    app: DesktopRenderer,
-    shutdown_token: &CancellationToken,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1920.0, 1080.0])
@@ -562,7 +559,7 @@ pub fn run(
     tracing::info!("Window closed, signaling shutdown to runtime thread");
     shutdown_token.cancel();
 
-    result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    result
 }
 
 #[cfg(test)]

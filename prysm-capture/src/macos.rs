@@ -2,12 +2,13 @@ use std::slice;
 use std::sync::Mutex;
 use std::sync::mpsc as std_mpsc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
 use av_foundation::capture_input::AVCaptureDeviceInput;
 use av_foundation::capture_output_base::AVCaptureOutput;
 use av_foundation::capture_session::{
-    AVCaptureConnection, AVCaptureSession, AVCaptureSessionRuntimeErrorNotification,
+    AVCaptureConnection, AVCaptureSession, AVCaptureSessionErrorKey,
+    AVCaptureSessionRuntimeErrorNotification,
 };
 use av_foundation::capture_video_data_output::{
     AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate,
@@ -30,17 +31,17 @@ use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
 use objc2_foundation::{
-    NSDictionary, NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol,
-    NSString,
+    NSDictionary, NSError, NSNotification, NSNotificationCenter, NSNumber, NSObject,
+    NSObjectProtocol, NSString,
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{Frame, PixelFormat, PrysmCapturer, YuvRange, YuvStandardMatrix};
+use crate::{CaptureError, Frame, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix};
 
 struct DelegateIvars {
     sender: Mutex<Option<tokio::sync::watch::Sender<Option<Frame>>>>,
     failure: CancellationToken,
-    error: Mutex<Option<String>>,
+    error: Mutex<Option<CaptureError>>,
 }
 
 define_class!(
@@ -81,6 +82,19 @@ define_class!(
         #[unsafe(method(captureFailed:))]
         fn capture_failed(&self, notification: &NSNotification) {
             let error = format!("Capture failed: {} ({:?})", notification.name(), notification.userInfo());
+            // SAFETY: This notification name is a process-lifetime Foundation string.
+            let error = if &*notification.name() == unsafe { AVCaptureDeviceWasDisconnectedNotification } {
+                CaptureError::Disconnected { details: error }
+            } else {
+                // SAFETY: This dictionary key is a process-lifetime Foundation string.
+                let source = notification.userInfo()
+                    .and_then(|info| info.objectForKey(unsafe { AVCaptureSessionErrorKey }))
+                    .and_then(|value| value.downcast::<NSError>().ok());
+                CaptureError::Backend(match source {
+                    Some(source) => anyhow::Error::new(source).context(error),
+                    None => anyhow!(error),
+                })
+            };
             *self.ivars().error.lock().expect("capture error mutex poisoned") = Some(error);
             self.ivars().failure.cancel();
         }
@@ -245,13 +259,16 @@ fn start_session(
         Some(uid) => AVCaptureDevice::device_with_unique_id(&NSString::from_str(uid)),
         None => AVCaptureDevice::default_device_with_media_type(unsafe { AVMediaTypeVideo }),
     }
-    .context("No video capture device found")?;
+    .ok_or_else(|| CaptureError::DeviceNotFound {
+        device: device_uid.map(str::to_owned),
+        source: None,
+    })?;
 
     tracing::info!("Opening video device: {}", device.localized_name());
 
     let session = AVCaptureSession::new();
-    let input = AVCaptureDeviceInput::from_device(&device)
-        .map_err(|e| anyhow!("Failed to open device input: {e:?}"))?;
+    let input =
+        AVCaptureDeviceInput::from_device(&device).context("failed to open device input")?;
     let output = AVCaptureVideoDataOutput::new();
     let delegate = Delegate::new(sender);
     let queue = DispatchQueue::new("prysm.capture.video", DispatchQueueAttr::SERIAL);
@@ -268,12 +285,12 @@ fn start_session(
     session.begin_configuration();
     if !session.can_add_input(&input) {
         session.commit_configuration();
-        return Err(anyhow!("Cannot add capture input to session"));
+        return Err(anyhow!("cannot add capture input to session").into());
     }
     session.add_input(&input);
     if !session.can_add_output(&output) {
         session.commit_configuration();
-        return Err(anyhow!("Cannot add capture output to session"));
+        return Err(anyhow!("cannot add capture output to session").into());
     }
     session.add_output(&output);
     output.set_video_settings(&video_settings(width, height));
@@ -294,12 +311,11 @@ fn start_session(
         .expect("capture error mutex poisoned")
         .take()
     {
-        return Err(anyhow!(error));
+        return Err(error);
     }
-    anyhow::ensure!(
-        running.session.is_running() && !running.delegate.ivars().failure.is_cancelled(),
-        "Capture session failed to start"
-    );
+    if !running.session.is_running() || running.delegate.ivars().failure.is_cancelled() {
+        return Err(anyhow!("capture session failed to start").into());
+    }
     tracing::info!("Video format set to: YUYV {width}x{height}");
     Ok(running)
 }
@@ -365,7 +381,7 @@ impl PrysmCapturer for AVFoundationCapturer {
                     .expect("capture error mutex poisoned")
                     .take()
                 {
-                    return Err(anyhow!(error));
+                    return Err(error);
                 }
                 Ok(())
             })();
@@ -378,6 +394,36 @@ impl PrysmCapturer for AVFoundationCapturer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_notification_preserves_native_error() {
+        let object = NSObject::new();
+        let (sender, _receiver) = tokio::sync::watch::channel(None::<Frame>);
+        let delegate = Delegate::new(sender);
+        // SAFETY: Foundation keys/names are static; all notification objects are live.
+        unsafe {
+            delegate.observe_failure(AVCaptureSessionRuntimeErrorNotification, &object);
+            let source =
+                NSError::errorWithDomain_code_userInfo(&NSString::from_str("prysm-test"), 42, None);
+            let info = NSDictionary::from_retained_objects(
+                &[AVCaptureSessionErrorKey],
+                &[Retained::into_super(source)],
+            );
+            NSNotificationCenter::defaultCenter().postNotificationName_object_userInfo(
+                AVCaptureSessionRuntimeErrorNotification,
+                Some(&object),
+                Some(info.cast_unchecked()),
+            );
+        }
+        let error = delegate.ivars().error.lock().unwrap().take().unwrap();
+        let CaptureError::Backend(error) = error else {
+            panic!("expected backend error")
+        };
+        assert_eq!(
+            error.downcast_ref::<Retained<NSError>>().unwrap().code(),
+            42
+        );
+    }
 
     #[tokio::test]
     async fn capture_failure_notifications_stop_capture_and_close_the_stream() {
@@ -422,7 +468,11 @@ mod tests {
                 .unwrap();
             assert!(stop_rx.try_recv().is_ok());
             let error = delegate.ivars().error.lock().unwrap().take().unwrap();
-            assert!(error.contains(&name.to_string()));
+            assert!(error.to_string().contains(&name.to_string()));
+            assert_eq!(
+                matches!(error, CaptureError::Disconnected { .. }),
+                name == unsafe { AVCaptureDeviceWasDisconnectedNotification },
+            );
             drop(delegate);
             assert!(
                 tokio::time::timeout(std::time::Duration::from_secs(1), receiver.changed())
@@ -446,7 +496,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap_err();
-        assert!(error.to_string().contains("No video capture device found"));
+        assert!(matches!(error, CaptureError::DeviceNotFound { .. }));
         assert!(stream.next().await.is_none());
         assert!(!shutdown.is_cancelled());
     }

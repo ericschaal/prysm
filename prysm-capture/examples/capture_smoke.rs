@@ -1,6 +1,6 @@
 use anyhow::Context;
 use futures::{Stream, StreamExt};
-use prysm_capture::{Capturer, Frame, PrysmCapturer};
+use prysm_capture::{CaptureError, Capturer, Frame, PrysmCapturer};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -18,7 +18,9 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn check_capture(stream: impl Stream<Item = anyhow::Result<Frame>>) -> anyhow::Result<()> {
+async fn check_capture(
+    stream: impl Stream<Item = Result<Frame, CaptureError>>,
+) -> anyhow::Result<()> {
     futures::pin_mut!(stream);
     for i in 0..3 {
         let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())

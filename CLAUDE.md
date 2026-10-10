@@ -24,6 +24,8 @@ colors, and generates color gradients for LED strips.
 
 ## Architecture Overview
 
+Error handling policy: see [docs/error-handling.md](docs/error-handling.md).
+
 ### Workspace Structure
 
 **6 crates, with three application binaries in `prysm`**

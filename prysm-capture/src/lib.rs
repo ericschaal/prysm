@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -7,6 +6,43 @@ use tokio_util::sync::CancellationToken;
 
 pub mod yuyv;
 pub use ::yuv::{YuvRange, YuvStandardMatrix};
+
+/// Terminal capture failures. Cancellation closes the stream successfully.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CaptureError {
+    #[error("no video capture device found (requested: {device:?})")]
+    DeviceNotFound {
+        device: Option<String>,
+        #[source]
+        source: Option<std::io::Error>,
+    },
+    #[error("capture device disconnected: {details}")]
+    Disconnected { details: String },
+    #[error("unsupported capture format: {details}")]
+    UnsupportedFormat {
+        details: String,
+        #[source]
+        source: Option<std::io::Error>,
+    },
+    #[error("capture thread ended unexpectedly")]
+    WorkerStopped(#[source] oneshot::error::RecvError),
+    #[error(transparent)]
+    Backend(#[from] anyhow::Error),
+}
+
+type Result<T> = std::result::Result<T, CaptureError>;
+
+#[cfg(any(target_os = "linux", test))]
+fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
+    if error.kind() == std::io::ErrorKind::InvalidInput {
+        Ok(error)
+    } else {
+        Err(anyhow::Error::new(error)
+            .context("failed to set capture format")
+            .into())
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -189,9 +225,7 @@ fn capture_channel(
                     return Ok(Some((frame, (receiver, completion))));
                 }
             }
-            completion
-                .await
-                .context("Capture thread ended unexpectedly")??;
+            completion.await.map_err(CaptureError::WorkerStopped)??;
             Ok(None)
         },
     );
@@ -206,6 +240,63 @@ fn capture_channel(
 mod tests {
     use super::*;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn format_negotiation_only_falls_back_for_invalid_input() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(
+            check_format_rejection(Error::from(ErrorKind::InvalidInput))
+                .unwrap()
+                .kind(),
+            ErrorKind::InvalidInput,
+        );
+        for kind in [
+            ErrorKind::ResourceBusy,
+            ErrorKind::PermissionDenied,
+            ErrorKind::Other,
+        ] {
+            let error = check_format_rejection(Error::from(kind)).unwrap_err();
+            let CaptureError::Backend(error) = error else {
+                panic!("expected backend error for {kind:?}")
+            };
+            assert_eq!(error.downcast_ref::<Error>().unwrap().kind(), kind);
+            assert!(error.to_string().contains("failed to set capture format"));
+        }
+    }
+
+    #[test]
+    fn capture_errors_preserve_causes_at_the_application_boundary() {
+        let error = CaptureError::UnsupportedFormat {
+            details: "test format".into(),
+            source: Some(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
+        };
+        let error = anyhow::Error::new(error).context("starting camera");
+        assert!(matches!(
+            error.downcast_ref::<CaptureError>(),
+            Some(CaptureError::UnsupportedFormat { .. })
+        ));
+        assert_eq!(
+            error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+        let backend = CaptureError::Backend(
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                .context("opening camera"),
+        );
+        let backend = anyhow::Error::new(backend).context("starting camera");
+        assert_eq!(
+            backend
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
 
     #[test]
     fn strided_capture_rejects_corruption_and_short_payloads() {
@@ -243,15 +334,17 @@ mod tests {
                 .unwrap();
         }
         finished
-            .send(Err(anyhow::anyhow!("camera disconnected")))
+            .send(Err(CaptureError::Disconnected {
+                details: "test camera".into(),
+            }))
             .unwrap();
         drop(sender);
         futures::pin_mut!(frames);
         assert_eq!(frames.next().await.unwrap().unwrap().as_slice(), &[8; 6]);
-        assert_eq!(
-            frames.next().await.unwrap().unwrap_err().to_string(),
-            "camera disconnected"
-        );
+        assert!(matches!(
+            frames.next().await.unwrap().unwrap_err(),
+            CaptureError::Disconnected { .. }
+        ));
         assert!(frames.next().await.is_none());
     }
 
@@ -274,15 +367,10 @@ mod tests {
         drop(sender);
         drop(finished);
         futures::pin_mut!(frames);
-        assert!(
-            frames
-                .next()
-                .await
-                .unwrap()
-                .unwrap_err()
-                .to_string()
-                .contains("Capture thread ended unexpectedly")
-        );
+        assert!(matches!(
+            frames.next().await.unwrap().unwrap_err(),
+            CaptureError::WorkerStopped(_)
+        ));
     }
 }
 

@@ -7,7 +7,6 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-anyhow.workspace = true
 tracing.workspace = true
 futures.workspace = true
 prysm-capture = { path = "../prysm-capture" }

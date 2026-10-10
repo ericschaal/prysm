@@ -1,5 +1,5 @@
-use crate::{Frame, PixelFormat, PrysmCapturer, YuvRange, YuvStandardMatrix};
-use anyhow::{Context, Result};
+use crate::{CaptureError, Frame, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix};
+use anyhow::Context;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 use v4l::buffer::Type;
@@ -36,7 +36,12 @@ fn yuv_colorimetry(
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_709 => YuvStandardMatrix::Bt709,
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020 => YuvStandardMatrix::Bt2020,
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SMPTE240M => YuvStandardMatrix::Smpte240,
-        _ => anyhow::bail!("Unsupported YUYV encoding: {encoding}"),
+        _ => {
+            return Err(CaptureError::UnsupportedFormat {
+                details: format!("YUYV encoding {encoding}"),
+                source: None,
+            });
+        }
     };
     let range = match quantization {
         v4l2_quantization_V4L2_QUANTIZATION_FULL_RANGE => YuvRange::Full,
@@ -48,7 +53,12 @@ fn yuv_colorimetry(
                 YuvRange::Limited
             }
         }
-        _ => anyhow::bail!("Unsupported YUYV quantization: {quantization}"),
+        _ => {
+            return Err(CaptureError::UnsupportedFormat {
+                details: format!("YUYV quantization {quantization}"),
+                source: None,
+            });
+        }
     };
     Ok((range, matrix))
 }
@@ -65,7 +75,8 @@ fn negotiated_colorimetry(device: &Device) -> Result<(YuvRange, YuvStandardMatri
             device.handle().fd(),
             v4l::v4l2::vidioc::VIDIOC_G_FMT,
             std::ptr::from_mut(&mut format).cast(),
-        )?;
+        )
+        .context("failed to read negotiated capture colorimetry")?;
         format.fmt.pix
     };
     // SAFETY: ycbcr_enc is the active union member for a YUYV capture format.
@@ -96,7 +107,7 @@ impl V4lCapturer {
         width: u32,
         height: u32,
     ) -> Result<(MmapStream<'_>, Format, YuvRange, YuvStandardMatrix)> {
-        let mut fmt = device.format()?;
+        let mut fmt = device.format().context("failed to read capture format")?;
 
         fmt.width = width;
         fmt.height = height;
@@ -113,7 +124,9 @@ impl V4lCapturer {
             fmt.fourcc = fourcc;
             match device.set_format(&fmt) {
                 Ok(_) => {
-                    let format = device.format()?;
+                    let format = device
+                        .format()
+                        .context("failed to read negotiated capture format")?;
 
                     // Validate that a supported format was set
                     if format.fourcc == FourCC::new(b"YUYV") && !format.width.is_multiple_of(2) {
@@ -143,16 +156,16 @@ impl V4lCapturer {
                     }
                 }
                 Err(e) => {
-                    last_error = Some(e);
+                    last_error = Some(crate::check_format_rejection(e)?);
                     continue;
                 }
             }
         }
 
-        anyhow::bail!(
-            "Device does not support any of the required formats (YUYV, RGB3, BGR3). Last error: {:?}",
-            last_error
-        )
+        Err(CaptureError::UnsupportedFormat {
+            details: "device must support YUYV, RGB3 or BGR3 with valid dimensions".into(),
+            source: last_error,
+        })
     }
 }
 
@@ -166,8 +179,20 @@ impl PrysmCapturer for V4lCapturer {
         std::thread::spawn(move || {
             let result = (|| -> Result<()> {
                 tracing::info!("Opening video device: {}", self.device_path);
-                let mut device = Device::with_path(&self.device_path)
-                    .with_context(|| format!("Failed to open video device {}", self.device_path))?;
+                let mut device =
+                    Device::with_path(&self.device_path).map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::NotFound {
+                            CaptureError::DeviceNotFound {
+                                device: Some(self.device_path.clone()),
+                                source: Some(error),
+                            }
+                        } else {
+                            CaptureError::Backend(anyhow::Error::new(error).context(format!(
+                                "failed to open video device {}",
+                                self.device_path
+                            )))
+                        }
+                    })?;
                 let (mut input_stream, format, range, matrix) =
                     Self::create_stream(&mut device, width, height)?;
                 // Bound the wait so a stalled camera cannot prevent cancellation.
@@ -176,7 +201,12 @@ impl PrysmCapturer for V4lCapturer {
                     Ok("YUYV") => PixelFormat::YUYV,
                     Ok("RGB3") => PixelFormat::RGB24,
                     Ok("BGR3") => PixelFormat::BGR24,
-                    _ => anyhow::bail!("Unsupported format: {:?}", format.fourcc),
+                    _ => {
+                        return Err(CaptureError::UnsupportedFormat {
+                            details: format!("{:?}", format.fourcc),
+                            source: None,
+                        });
+                    }
                 };
                 tracing::info!("Stream started with format: {:?}", pixel_format);
                 loop {
@@ -212,7 +242,9 @@ impl PrysmCapturer for V4lCapturer {
                                 .stop()
                                 .context("Failed to stop stalled capture stream")?;
                         }
-                        Err(e) => return Err(e).context("Error capturing frame"),
+                        Err(e) => {
+                            return Err(e).context("Error capturing frame").map_err(Into::into);
+                        }
                     }
                 }
             })();
@@ -226,6 +258,28 @@ impl PrysmCapturer for V4lCapturer {
 mod tests {
     use super::*;
     use v4l::v4l_sys::*;
+
+    #[tokio::test]
+    async fn missing_device_preserves_its_io_cause() {
+        use futures::StreamExt;
+        let capturer = V4lCapturer::new(
+            Some("/dev/prysm-test-missing-device"),
+            CancellationToken::new(),
+        )
+        .unwrap();
+        let frames = capturer.into_stream(640, 360);
+        futures::pin_mut!(frames);
+        let error = frames.next().await.unwrap().unwrap_err();
+        let CaptureError::DeviceNotFound {
+            source: Some(source),
+            ..
+        } = error
+        else {
+            panic!("expected missing device error")
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(frames.next().await.is_none());
+    }
 
     #[test]
     fn default_and_explicit_color_metadata() {
@@ -250,8 +304,9 @@ mod tests {
             .unwrap(),
             (YuvRange::Full, YuvStandardMatrix::Bt601)
         );
-        assert!(
-            yuv_colorimetry(0, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020_CONST_LUM, 0).is_err()
-        );
+        assert!(matches!(
+            yuv_colorimetry(0, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020_CONST_LUM, 0),
+            Err(CaptureError::UnsupportedFormat { .. })
+        ));
     }
 }
