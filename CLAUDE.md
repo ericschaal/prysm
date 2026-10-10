@@ -13,7 +13,7 @@ colors, and generates color gradients for LED strips.
 
 - Desktop demo/visualizer binary (Linux/V4L) is working
 - Library components are modular and reusable
-- Future: Additional binaries for LED hardware control on different platforms
+- Headless WLED output supports camera capture and FFmpeg video input
 - Architecture supports multiple capture sources and rendering backends
 
 **Long-term Goal:** Move toward `no_std` compatibility for embedded/microcontroller targets
@@ -26,11 +26,11 @@ colors, and generates color gradients for LED strips.
 
 ### Workspace Structure
 
-**7 crates: 6 libraries + 1 desktop demo binary**
+**6 crates, with three application binaries in `prysm`**
 
 Libraries are reusable components for building different binaries:
 
-- Current binary (`prysm`): Desktop visualizer demo (Linux/V4L + egui GUI)
+- Current binaries: `prysm` (camera preview), `video` (video preview), `led` (WLED output)
 - Future binaries: LED hardware controllers for different platforms
 - Clean separation: capture → process → render
 - Trait-based extensibility (not plugin-based)
@@ -68,11 +68,12 @@ V4lCapturer → Frame Stream → split (broadcast)
 - `prysm-processor`: Video analysis → edge color strips (stateful with temporal smoothing)
 - `v4l-capturer`: Linux V4L2 video capture implementation
 - `desktop-renderer`: egui/eframe GUI for visualization
-- `led-renderer`: Stub for future hardware LED driver
+- `led-renderer`: WLED RGB output over DDP/UDP using `ddp-rs`
 
 **Binaries:**
 
 - `prysm`: Desktop demo/visualizer (V4L capture + desktop renderer)
+- `led`: Headless camera or FFmpeg video → processor → WLED via DDP/UDP
 - Future: Additional binaries for LED hardware on different platforms
 
 ## Common Development Commands
@@ -89,6 +90,13 @@ cargo run -p prysm
 cargo run -p prysm --bin video
 # Or supply another video path
 cargo run -p prysm --bin video -- "/path/to/video.mp4"
+
+# Send camera edge colors to WLED (top/right/bottom/left LED counts)
+cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54
+# Optional capture device: Linux path or macOS AVFoundation device UID
+cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 /dev/video2
+# Or the local Philips HDR test video (append a path for another file)
+cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 --video
 
 # Run tests
 cargo test
@@ -114,6 +122,14 @@ cargo clippy
 Philips Ambilight test MP4, plays once at its original rate, and closes at EOF. FFmpeg 9+ decodes
 and scales frames to 640x360 sRGB, including HDR tone mapping; audio is not played. Both entry
 points share the visualizer pipeline in `prysm/src/lib.rs`. The camera remains the default binary.
+
+`prysm/src/bin/led.rs` runs camera or video input headlessly through the default processor
+and `WledRenderer`. It takes a WLED host/IP with port (4048), four physical LED
+counts (top/right/bottom/left, clockwise from the top-left viewed from the front),
+and an optional capture device or `--video [PATH]`. Video input defaults to the same
+Philips clip as the desktop video binary and exits successfully at EOF. Both use
+the FFmpeg feed in `prysm/src/video.rs`. Ctrl+C cancels capture; capture and send
+failures exit with an error. WLED's realtime timeout restores its normal effect.
 
 The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
 uses the sRGB transfer function and preview output is 8-bit RGB. BT.2020 YUV matrix support
@@ -198,7 +214,8 @@ Tests are minimal but focused:
 ## Critical Files
 
 - `prysm/src/main.rs` - Camera entry point
-- `prysm/src/bin/video.rs` - Video file entry point and FFmpeg frame stream
+- `prysm/src/bin/video.rs` - Desktop video file entry point
+- `prysm/src/video.rs` - Shared FFmpeg frame stream
 - `prysm/src/lib.rs` - Shared application orchestration and threading setup
 - `prysm/src/stream.rs` - StreamWatcher and stream_split patterns
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition

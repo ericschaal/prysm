@@ -8,6 +8,7 @@ default-run = "prysm"
 workspace = true
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -18,4 +19,5 @@ prysm-capture = { path = "../prysm-capture" }
 prysm-core = { path = "../prysm-core" }
 prysm-processor = { path = "../prysm-processor" }
 desktop-renderer = { path = "../renderers/desktop-renderer" }
+led-renderer = { path = "../renderers/led-renderer" }
 tokio-util.workspace = true

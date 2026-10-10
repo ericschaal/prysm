@@ -1,4 +1,5 @@
 mod stream;
+pub mod video;
 
 use anyhow::{Context, Result};
 use desktop_renderer::DesktopRendererBuilder;
