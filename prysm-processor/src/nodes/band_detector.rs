@@ -1,6 +1,5 @@
 use crate::frames::{ViewFrame, Viewport, luma_at};
 use prysm_capture::Frame;
-use prysm_core::Config;
 
 /// Detects black bands using histogram projection algorithm.
 ///
@@ -8,7 +7,7 @@ use prysm_core::Config;
 /// so detection never requires decoding the frame to RGB.
 #[derive(Debug)]
 pub struct BandDetector {
-    // Config
+    // Internal tuning; callers only choose whether to remove black bars.
     brightness_percentile: u8,
     min_band_fraction: f32,
     detection_interval: u32,
@@ -34,14 +33,14 @@ pub struct BandDetector {
 }
 
 impl BandDetector {
-    pub fn new(config: &Config) -> Self {
+    pub fn new() -> Self {
         Self {
-            brightness_percentile: config.band_brightness_percentile,
-            min_band_fraction: config.min_band_fraction,
-            detection_interval: config.band_detection_interval.max(1),
-            confirm_frames: config.band_confirm_frames.max(1),
-            inconsistency_limit: config.band_inconsistency_limit,
-            sample_stride: config.band_sample_stride.max(1),
+            brightness_percentile: 4,
+            min_band_fraction: 0.04,
+            detection_interval: 4,
+            confirm_frames: 15,
+            inconsistency_limit: 5,
+            sample_stride: 8,
             frame_count: 0,
             current_viewport: None,
             candidate_viewport: None,
@@ -310,9 +309,10 @@ mod tests {
 
     #[test]
     fn test_percentile_threshold() {
-        let mut config = Config::default();
-        config.band_brightness_percentile = 15; // Use 15% for this test
-        let detector = BandDetector::new(&config);
+        let detector = BandDetector {
+            brightness_percentile: 15,
+            ..BandDetector::new()
+        };
 
         // Test with known distribution
         let brightness = vec![0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -353,8 +353,7 @@ mod tests {
 
     #[test]
     fn test_letterbox_detection() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         // Create 1920x1080 frame with 240px bands top/bottom (2.35:1 aspect ratio)
         let frame = create_letterboxed_frame(1920, 1080, 240, 240);
@@ -378,8 +377,7 @@ mod tests {
 
     #[test]
     fn test_letterbox_detection_low_res() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         // 640x360 capture with 2.35:1 content: 48px bands top/bottom
         let frame = create_letterboxed_frame(640, 360, 48, 48);
@@ -402,8 +400,7 @@ mod tests {
 
     #[test]
     fn test_pillarbox_detection() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         // Create frame with 240px bands left/right
         let frame = create_pillarboxed_frame(1920, 1080, 240, 240);
@@ -427,8 +424,7 @@ mod tests {
 
     #[test]
     fn test_subtitle_handling() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         // Frame with subtitle in bottom black band
         let frame = create_frame_with_subtitles(1920, 1080, 1000);
@@ -449,8 +445,7 @@ mod tests {
 
     #[test]
     fn test_no_letterbox() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         // Full frame of gray content
         let frame = yuyv_frame_from_luma(1920, 1080, |_, _| 128);
@@ -465,11 +460,25 @@ mod tests {
     }
 
     #[test]
+    fn one_scan_confirmation_applies_the_first_candidate() {
+        let mut detector = BandDetector {
+            confirm_frames: 1,
+            detection_interval: 1,
+            ..BandDetector::new()
+        };
+        let frame = create_letterboxed_frame(640, 360, 48, 48);
+        let output = detector.process(ViewFrame::new(frame));
+        assert_eq!(output.viewport.y, 48);
+        assert_eq!(output.viewport.height, 264);
+    }
+
+    #[test]
     fn test_debounce_transition() {
-        let mut config = Config::default();
-        config.band_confirm_frames = 5;
-        config.band_detection_interval = 1; // detect every frame for test simplicity
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector {
+            confirm_frames: 5,
+            detection_interval: 1,
+            ..BandDetector::new()
+        };
 
         let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
 
@@ -495,11 +504,12 @@ mod tests {
 
     #[test]
     fn test_debounce_noise_rejection() {
-        let mut config = Config::default();
-        config.band_confirm_frames = 5;
-        config.band_inconsistency_limit = 3;
-        config.band_detection_interval = 1;
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector {
+            confirm_frames: 5,
+            inconsistency_limit: 3,
+            detection_interval: 1,
+            ..BandDetector::new()
+        };
 
         let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
         let full_gray = yuyv_frame_from_luma(1920, 1080, |_, _| 128);
@@ -530,11 +540,12 @@ mod tests {
 
     #[test]
     fn test_debounce_resets_on_new_content() {
-        let mut config = Config::default();
-        config.band_confirm_frames = 5;
-        config.band_inconsistency_limit = 3;
-        config.band_detection_interval = 1;
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector {
+            confirm_frames: 5,
+            inconsistency_limit: 3,
+            detection_interval: 1,
+            ..BandDetector::new()
+        };
 
         let letterboxed = create_letterboxed_frame(1920, 1080, 240, 240);
         let full_gray = yuyv_frame_from_luma(1920, 1080, |_, _| 128);
@@ -565,8 +576,7 @@ mod tests {
 
     #[test]
     fn alternating_scans_do_not_confirm_a_crop() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
         let letterbox = create_letterboxed_frame(640, 360, 48, 48);
         let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
         for i in 0..120 {
@@ -587,8 +597,7 @@ mod tests {
 
     #[test]
     fn test_projection_building() {
-        let config = Config::default();
-        let mut detector = BandDetector::new(&config);
+        let mut detector = BandDetector::new();
 
         let frame = create_letterboxed_frame(1920, 1080, 100, 100);
 

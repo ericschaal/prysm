@@ -1,5 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::Config;
+use prysm_core::{Config, SampleDensity};
 use prysm_processor::PrysmProcessor;
 
 fn rgb(width: u32, height: u32, value: u8) -> Frame {
@@ -9,8 +9,8 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
 #[test]
 fn wide_black_bands_crop_each_axis_independently() {
     let config = Config {
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -26,11 +26,11 @@ fn wide_black_bands_crop_each_axis_independently() {
         let output = processor.process_frame(frame);
         assert_eq!(
             output.top.len(),
-            config.sample_density.samples_for_length(x_end - x_start)
+            SampleDensity::default().samples_for_length(x_end - x_start)
         );
         assert_eq!(
             output.left.len(),
-            config.sample_density.samples_for_length(y_end - y_start)
+            SampleDensity::default().samples_for_length(y_end - y_start)
         );
         for edge in [&output.top, &output.bottom, &output.left, &output.right] {
             assert!(edge.sample_at(0.5).r > 0.99);
@@ -42,8 +42,8 @@ fn wide_black_bands_crop_each_axis_independently() {
 fn slightly_noisy_black_bands_still_crop() {
     use prysm_capture::YuvRange;
     let config = Config {
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        smoothing_percent: 0,
         ..Config::default()
     };
     for (range, black, white) in [(YuvRange::Full, 0, 255), (YuvRange::Limited, 16, 235)] {
@@ -73,11 +73,11 @@ fn slightly_noisy_black_bands_still_crop() {
             let (width, height) = if horizontal { (640, 264) } else { (480, 360) };
             assert_eq!(
                 output.top.len(),
-                config.sample_density.samples_for_length(width)
+                SampleDensity::default().samples_for_length(width)
             );
             assert_eq!(
                 output.left.len(),
-                config.sample_density.samples_for_length(height)
+                SampleDensity::default().samples_for_length(height)
             );
             for edge in [&output.top, &output.bottom, &output.left, &output.right] {
                 assert!(
@@ -92,9 +92,9 @@ fn slightly_noisy_black_bands_still_crop() {
 #[test]
 fn edge_sampling_includes_the_last_row_and_column() {
     let config = Config {
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
-        black_band_detection: false,
+        brightness_percent: 100,
+        smoothing_percent: 0,
+        remove_black_bars: false,
         ..Config::default()
     };
     for (width, height) in [(636, 360), (360, 636)] {
@@ -124,24 +124,6 @@ fn edge_sampling_includes_the_last_row_and_column() {
 }
 
 #[test]
-fn one_scan_confirmation_applies_the_first_candidate() {
-    let config = Config {
-        band_confirm_frames: 1,
-        band_detection_interval: 1,
-        ..Config::default()
-    };
-    let mut data = vec![255; 640 * 360 * 3];
-    data[..640 * 48 * 3].fill(0);
-    data[640 * 312 * 3..].fill(0);
-    let output =
-        PrysmProcessor::new(&config).process_frame(Frame::new(data, 640, 360, PixelFormat::RGB24));
-    assert_eq!(
-        output.left.len(),
-        config.sample_density.samples_for_length(264)
-    );
-}
-
-#[test]
 fn dark_frames_must_not_panic() {
     let mut p = PrysmProcessor::default();
     for _ in 0..1900 {
@@ -153,9 +135,8 @@ fn dark_frames_must_not_panic() {
 #[test]
 fn smoothing_must_keep_converging_on_static_input() {
     let c = Config {
-        change_detection: true,
-        brightness: 1.0,
-        black_band_detection: false,
+        brightness_percent: 100,
+        remove_black_bars: false,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -170,10 +151,9 @@ fn smoothing_must_keep_converging_on_static_input() {
 #[test]
 fn color_change_must_update_output() {
     let c = Config {
-        change_detection: true,
-        brightness: 1.0,
-        black_band_detection: false,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        remove_black_bars: false,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -197,11 +177,10 @@ fn color_change_must_update_output() {
 }
 
 #[test]
-fn static_letterbox_confirms_after_configured_scans() {
+fn static_letterbox_confirms_with_default_tuning() {
     let c = Config {
-        change_detection: true,
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut data = vec![128; 640 * 360 * 3];
@@ -222,22 +201,25 @@ fn static_letterbox_confirms_after_configured_scans() {
 #[test]
 fn resize_must_update_sample_count() {
     let c = Config {
-        brightness: 1.0,
-        black_band_detection: false,
+        brightness_percent: 100,
+        remove_black_bars: false,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
     p.process_frame(rgb(640, 360, 128));
     p.process_frame(rgb(640, 360, 128));
     let actual = p.process_frame(rgb(320, 180, 128));
-    assert_eq!(actual.top.len(), c.sample_density.samples_for_length(320));
+    assert_eq!(
+        actual.top.len(),
+        SampleDensity::default().samples_for_length(320)
+    );
 }
 
 #[test]
 fn bgr_supported_by_capture_must_process() {
     let c = Config {
-        brightness: 1.0,
-        black_band_detection: false,
+        brightness_percent: 100,
+        remove_black_bars: false,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -257,8 +239,8 @@ fn bgr_supported_by_capture_must_process() {
 #[test]
 fn dark_scene_preserves_confirmed_crop() {
     let c = Config {
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -270,7 +252,10 @@ fn dark_scene_preserves_confirmed_crop() {
         p.process_frame(letterbox.clone());
     }
     let cropped = p.process_frame(letterbox);
-    assert_eq!(cropped.left.len(), c.sample_density.samples_for_length(264));
+    assert_eq!(
+        cropped.left.len(),
+        SampleDensity::default().samples_for_length(264)
+    );
     for _ in 0..60 {
         let dark = p.process_frame(rgb(640, 360, 20));
         assert_eq!(dark.left.len(), cropped.left.len());
@@ -300,12 +285,11 @@ fn empty_frames_return_black() {
 }
 
 #[test]
-fn equal_mean_rgb_colors_are_detected() {
+fn equal_mean_rgb_colors_update_output() {
     let c = Config {
-        change_detection: true,
-        brightness: 1.0,
-        black_band_detection: false,
-        temporal_smoothing: 0.0,
+        brightness_percent: 100,
+        remove_black_bars: false,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -322,27 +306,27 @@ fn equal_mean_rgb_colors_are_detected() {
 
 #[test]
 fn brightness_scales_output_once_after_smoothing() {
-    for brightness in [0.0, 0.5, 1.0] {
+    for brightness_percent in [0, 50, 100, 255] {
         let config = Config {
-            brightness,
-            black_band_detection: false,
+            brightness_percent,
+            remove_black_bars: false,
             ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
         for _ in 0..3 {
             let color = processor.process_frame(rgb(64, 36, 255)).top.sample_at(0.5);
             assert!(
-                (color.r - brightness).abs() < 1e-6,
-                "brightness {brightness}: {color:?}"
+                (color.r - f32::from(brightness_percent.min(100)) / 100.0).abs() < 1e-6,
+                "brightness {brightness_percent}%: {color:?}"
             );
         }
     }
 }
 
 #[test]
-fn default_processing_detects_narrow_edge_changes_immediately() {
+fn narrow_edge_changes_update_output_immediately() {
     let config = Config {
-        temporal_smoothing: 0.0,
+        smoothing_percent: 0,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -358,23 +342,47 @@ fn default_processing_detects_narrow_edge_changes_immediately() {
 }
 
 #[test]
-fn zero_band_scan_settings_are_clamped() {
-    let config = Config {
-        band_detection_interval: 0,
-        band_sample_stride: 0,
-        ..Config::default()
-    };
-    let actual = PrysmProcessor::new(&config).process_frame(rgb(64, 36, 128));
-    assert!(actual.top.sample_at(0.5).r > 0.0);
+fn shallow_dark_objects_dominate_the_default_edge_samples() {
+    for (width, height) in [(320, 180), (640, 360)] {
+        // An object entering the outer 2% should outweigh the bright background.
+        let depth = height / 50;
+        let regions = [
+            (width / 3, 0, width * 2 / 3, depth),
+            (width - depth, height / 3, width, height * 2 / 3),
+            (width / 3, height - depth, width * 2 / 3, height),
+            (0, height / 3, depth, height * 2 / 3),
+        ];
+        for (edge, (x_start, y_start, x_end, y_end)) in regions.into_iter().enumerate() {
+            let base = rgb(width, height, 210);
+            let mut data = base.data.as_ref().clone();
+            for y in y_start..y_end {
+                data[((y * width + x_start) * 3) as usize..((y * width + x_end) * 3) as usize]
+                    .fill(20);
+            }
+            let frame = Frame::new(data, width, height, PixelFormat::RGB24);
+            let mut processor = PrysmProcessor::default();
+            let background = processor.process_frame(base).top.sample_at(0.5).r;
+            let mut output = processor.process_frame(frame.clone());
+            for _ in 1..60 {
+                output = processor.process_frame(frame.clone());
+            }
+            let edges = [&output.top, &output.right, &output.bottom, &output.left];
+            let actual = edges[edge].sample_at(0.5).r;
+            assert!(
+                actual < background * 0.5,
+                "{width}x{height}, edge {edge}: background diluted the object ({actual})"
+            );
+            assert!((edges[(edge + 2) % 4].sample_at(0.5).r - background).abs() < 1e-6);
+        }
+    }
 }
 
 #[test]
 fn changing_yuv_metadata_resets_processing_history() {
     use prysm_capture::{YuvRange, YuvStandardMatrix};
     let config = Config {
-        brightness: 1.0,
-        change_detection: true,
-        black_band_detection: false,
+        brightness_percent: 100,
+        remove_black_bars: false,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -396,9 +404,9 @@ fn changing_yuv_metadata_resets_processing_history() {
 #[test]
 fn maximum_smoothing_converges_instead_of_freezing() {
     let config = Config {
-        brightness: 1.0,
-        temporal_smoothing: 1.0,
-        black_band_detection: false,
+        brightness_percent: 100,
+        smoothing_percent: 100,
+        remove_black_bars: false,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -413,32 +421,98 @@ fn maximum_smoothing_converges_instead_of_freezing() {
 }
 
 #[test]
-fn oversampling_a_white_frame_does_not_create_black_samples() {
+fn small_color_changes_are_sampled_on_every_frame() {
     let config = Config {
-        sample_density: prysm_core::SampleDensity(2000),
-        brightness: 1.0,
-        temporal_smoothing: 0.0,
-        black_band_detection: false,
+        smoothing_percent: 0,
+        remove_black_bars: false,
         ..Config::default()
     };
-    let output = PrysmProcessor::new(&config).process_frame(rgb(8, 8, 255));
-    for edge in [&output.top, &output.bottom, &output.left, &output.right] {
-        for color in edge.quantize(edge.len()) {
-            assert_eq!(color, prysm_core::LinearColor::new(1.0, 1.0, 1.0));
+    let mut processor = PrysmProcessor::new(&config);
+    let mut previous = processor.process_frame(rgb(64, 36, 128));
+    for value in 129..=135 {
+        let frame = rgb(64, 36, value);
+        let actual = processor.process_frame(frame.clone());
+        assert_ne!(actual, previous);
+        assert_eq!(actual, PrysmProcessor::new(&config).process_frame(frame));
+        previous = actual;
+    }
+}
+
+#[test]
+fn smoothing_percentage_controls_transition_speed() {
+    for (smoothing_percent, expected) in [(0, 0.0), (40, 0.4), (100, 0.99), (255, 0.99)] {
+        let config = Config {
+            brightness_percent: 100,
+            smoothing_percent,
+            remove_black_bars: false,
+            ..Config::default()
+        };
+        let mut processor = PrysmProcessor::new(&config);
+        processor.process_frame(rgb(64, 36, 255));
+        let actual = processor.process_frame(rgb(64, 36, 0)).top.sample_at(0.5).r;
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "smoothing {smoothing_percent}%: {actual}"
+        );
+    }
+}
+
+#[test]
+fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
+    let mut data = vec![0; 100 * 100 * 3];
+    data[..100 * 10 * 3].fill(255);
+    let frame = Frame::new(data, 100, 100, PixelFormat::RGB24);
+    for (edge_depth_percent, expected) in [(0, 1.0), (10, 1.0), (20, 0.5), (50, 0.2), (255, 0.2)] {
+        let config = Config {
+            brightness_percent: 100,
+            smoothing_percent: 0,
+            edge_depth_percent,
+            remove_black_bars: false,
+        };
+        let actual = PrysmProcessor::new(&config)
+            .process_frame(frame.clone())
+            .top
+            .sample_at(0.5)
+            .r;
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "edge depth {edge_depth_percent}%: {actual}"
+        );
+    }
+}
+
+#[test]
+fn black_bar_removal_can_be_disabled() {
+    let mut data = vec![255; 640 * 360 * 3];
+    data[..640 * 48 * 3].fill(0);
+    data[640 * 312 * 3..].fill(0);
+    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    for remove_black_bars in [false, true] {
+        let config = Config {
+            brightness_percent: 100,
+            smoothing_percent: 0,
+            remove_black_bars,
+            ..Config::default()
+        };
+        let mut processor = PrysmProcessor::new(&config);
+        for _ in 0..60 {
+            processor.process_frame(frame.clone());
         }
-        assert_eq!(edge.len(), 8);
+        let actual = processor.process_frame(frame.clone()).top.sample_at(0.5).r;
+        let expected = if remove_black_bars { 1.0 } else { 0.0 };
+        assert!((actual - expected).abs() < 1e-6);
     }
 }
 
 #[test]
 fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
     let config = Config {
-        brightness: 1.0,
+        brightness_percent: 100,
         ..Config::default()
     };
     let mut smoothed = PrysmProcessor::new(&config);
     let mut direct = PrysmProcessor::new(&Config {
-        temporal_smoothing: 0.0,
+        smoothing_percent: 0,
         ..config
     });
     let mut data = vec![128; 640 * 360 * 3];

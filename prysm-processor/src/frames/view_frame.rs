@@ -23,7 +23,7 @@ impl Viewport {
 
 /// Brightness (luma) of a pixel read directly from raw frame data.
 ///
-/// YUYV stores full-range luma at every even byte, so band/change detection
+/// YUYV stores luma at every even byte, so black-bar detection
 /// never needs a color conversion. Out-of-bounds coordinates read as black.
 pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     if x >= frame.width || y >= frame.height {
@@ -104,7 +104,7 @@ impl ViewFrame {
     }
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
-    pub(crate) fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
+    fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
         match self.frame.format {
             PixelFormat::YUYV => {
                 let (r, g, b) = prysm_capture::yuyv::yuyv_pixel_to_rgb(

@@ -1,8 +1,8 @@
 use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
-use nodes::{BandDetector, ChangeDetector, EdgeSampler, TemporalSmoothing};
+use nodes::{BandDetector, EdgeSampler, TemporalSmoothing};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Config, EdgeSpectra};
+use prysm_core::{Config, EdgeSpectra, SampleDensity};
 
 mod frames;
 mod nodes;
@@ -15,12 +15,9 @@ mod nodes;
 pub struct PrysmProcessor {
     config: Config,
     // Pipeline nodes (in order)
-    change_detector: Option<ChangeDetector>,
     band_detector: Option<BandDetector>,
     sampler: EdgeSampler,
     temporal_smoothing: Option<TemporalSmoothing>,
-    /// Last sampled target, before temporal smoothing
-    last_spectra: Option<EdgeSpectra>,
     last_viewport: Option<Viewport>,
     frame_layout: Option<(
         u32,
@@ -35,20 +32,13 @@ impl PrysmProcessor {
     pub fn new(config: &Config) -> Self {
         Self {
             config: config.clone(),
-            change_detector: if config.change_detection {
-                Some(ChangeDetector::new(config))
-            } else {
-                None
-            },
-            band_detector: if config.black_band_detection {
-                Some(BandDetector::new(config))
-            } else {
-                None
-            },
-            sampler: EdgeSampler::new(config.sample_density, config.edge_depth),
-            temporal_smoothing: (config.temporal_smoothing > 0.0)
-                .then(|| TemporalSmoothing::new(config.temporal_smoothing)),
-            last_spectra: None,
+            band_detector: config.remove_black_bars.then(BandDetector::new),
+            sampler: EdgeSampler::new(
+                SampleDensity::default(),
+                f32::from(config.edge_depth_percent.clamp(1, 50)) / 100.0,
+            ),
+            temporal_smoothing: (config.smoothing_percent > 0)
+                .then(|| TemporalSmoothing::new(f32::from(config.smoothing_percent) / 100.0)),
             last_viewport: None,
             frame_layout: None,
         }
@@ -78,14 +68,10 @@ impl PrysmProcessor {
             return EdgeSpectra::black(
                 frame.width as usize,
                 frame.height as usize,
-                self.config.sample_density,
+                SampleDensity::default(),
             );
         }
 
-        let changed = self
-            .change_detector
-            .as_mut()
-            .is_none_or(|detector| detector.has_changed(&frame));
         let mut view = ViewFrame::new(frame);
 
         if let Some(ref mut detector) = self.band_detector {
@@ -96,25 +82,17 @@ impl PrysmProcessor {
             && let Some(smoother) = &mut self.temporal_smoothing
         {
             // Old samples describe a different region of the image.
-            *smoother = TemporalSmoothing::new(self.config.temporal_smoothing);
+            *smoother = TemporalSmoothing::new(f32::from(self.config.smoothing_percent) / 100.0);
         }
 
-        // Crop confirmation and smoothing still advance on unchanged frames.
-        let mut spectra = match &self.last_spectra {
-            Some(target) if !changed && self.last_viewport == Some(view.viewport) => target.clone(),
-            _ => {
-                self.last_viewport = Some(view.viewport);
-                let target = self.sampler.process(&view);
-                self.last_spectra = Some(target.clone());
-                target
-            }
-        };
+        self.last_viewport = Some(view.viewport);
+        let mut spectra = self.sampler.process(&view);
 
         if let Some(ref mut smoother) = self.temporal_smoothing {
             spectra = smoother.process(spectra);
         }
 
-        spectra * self.config.brightness.clamp(0.0, 1.0)
+        spectra * (f32::from(self.config.brightness_percent.min(100)) / 100.0)
     }
 
     /// Convert into a stream processor

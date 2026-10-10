@@ -1,92 +1,46 @@
-/// Sample density representing samples per 1000 pixels of edge length
+/// Controls how the ambient lights look. Start with [`Config::default()`]
+/// and change only the settings you need; sampling and black-bar detection
+/// use built-in tuning.
 ///
-/// Example: `SampleDensity(50)` means 50 samples per 1000px, so a 1920px edge gets ~96 samples
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SampleDensity(pub usize);
-
-impl SampleDensity {
-    /// Calculate samples, capped at one per pixel (at least one for empty edges).
-    #[must_use]
-    pub fn samples_for_length(self, length_px: usize) -> usize {
-        (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
-    }
-
-    /// Get the raw density value (samples per 1000px)
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
+/// ```
+/// use prysm_core::Config;
+///
+/// let config = Config {
+///     brightness_percent: 60,
+///     smoothing_percent: 70,
+///     ..Config::default()
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Sample density per 1000 pixels of edge length
-    pub sample_density: SampleDensity,
+    /// Light output: 0 = off, 100 = full brightness. Default: 80.
+    /// Values above 100 are treated as 100.
+    pub brightness_percent: u8,
 
-    /// Brightness (0.0 to 1.0)
-    pub brightness: f32,
+    /// Smoothness of color transitions: 0 = instant, 100 = slowest.
+    /// Higher values reduce flicker but make the lights respond more slowly.
+    /// Default: 40. Values above 100 are treated as 100.
+    pub smoothing_percent: u8,
 
-    /// Previous-frame weight for color transitions: 0.0 disables smoothing;
-    /// values above 0.99 are capped at 0.99 so the output keeps converging.
-    pub temporal_smoothing: f32,
+    /// How far inward to read colors from each edge, as a percentage of the
+    /// picture height after black bars are removed. Default: 3.
+    /// Smaller values follow the outer edge; larger values mix in more of the
+    /// picture. Clamped to 1–50, and limited so opposite edges never overlap.
+    pub edge_depth_percent: u8,
 
-    /// Depth of the edge sampling region as a fraction of frame height.
-    /// Resolution-independent: 0.09 is ~100px at 1080p, ~32px at 360p.
-    pub edge_depth: f32,
-
-    /// Enable black band detection
-    pub black_band_detection: bool,
-
-    /// Brightness percentile threshold (0-100) for band detection
-    /// Example: 15 means use 15th percentile of row/col brightness as threshold
-    pub band_brightness_percentile: u8,
-
-    /// Minimum band size as a fraction of the frame dimension the band spans
-    pub min_band_fraction: f32,
-
-    /// Frames between detection scans (lower = faster detection)
-    pub band_detection_interval: u32,
-
-    /// Consecutive matching detection scans before applying a viewport (minimum one)
-    pub band_confirm_frames: u32,
-
-    /// Consecutive different detection scans tolerated before resetting the candidate
-    pub band_inconsistency_limit: u32,
-
-    /// Sample stride for projection calculation (pixels to skip)
-    pub band_sample_stride: u32,
-
-    /// Skip processing when the frame is unchanged from the last processed one
-    pub change_detection: bool,
-
-    /// Mean absolute RGB channel delta (0-255 scale) below which a frame counts as unchanged
-    pub change_threshold: f32,
-
-    /// Force reprocessing after this many consecutive skipped frames,
-    /// so slow fades below the threshold can never wedge the output
-    pub max_skipped_frames: u32,
+    /// Follow the picture inside black bars instead of making the lights dark.
+    /// Default: true. Cropping waits for stable bars to avoid flicker.
+    pub remove_black_bars: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // Per 1000px of edge: 30 gives 19 samples across a 640px edge,
-            // matching the gradient resolution 1080p capture had at density 10
-            sample_density: SampleDensity(30),
-            brightness: 0.8,
-            temporal_smoothing: 0.4,
-            edge_depth: 0.09,
-            black_band_detection: true,
-            band_brightness_percentile: 4,
-            min_band_fraction: 0.04,
-            band_detection_interval: 4,
-            band_confirm_frames: 15,
-            band_inconsistency_limit: 5,
-            band_sample_stride: 8,
-            // Sparse signatures can miss changes in the sampled edge regions.
-            change_detection: false,
-            change_threshold: 1.0,
-            max_skipped_frames: 30,
+            brightness_percent: 80,
+            smoothing_percent: 40,
+            // Keep objects near the border from being diluted by the interior.
+            edge_depth_percent: 3,
+            remove_black_bars: true,
         }
     }
 }

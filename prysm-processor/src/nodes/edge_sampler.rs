@@ -89,7 +89,10 @@ mod tests {
 
     fn sampler() -> EdgeSampler {
         let config = prysm_core::Config::default();
-        EdgeSampler::new(config.sample_density, config.edge_depth)
+        EdgeSampler::new(
+            SampleDensity::default(),
+            f32::from(config.edge_depth_percent) / 100.0,
+        )
     }
 
     #[test]
@@ -121,8 +124,20 @@ mod tests {
     }
 
     #[test]
+    fn oversampling_a_white_frame_does_not_create_black_samples() {
+        let frame = yuyv_frame_from_luma(8, 8, |_, _| 255);
+        let output = EdgeSampler::new(SampleDensity(2000), 0.03).process(&ViewFrame::new(frame));
+        for edge in [&output.top, &output.bottom, &output.left, &output.right] {
+            for color in edge.quantize(edge.len()) {
+                assert_eq!(color, LinearColor::new(1.0, 1.0, 1.0));
+            }
+            assert_eq!(edge.len(), 8);
+        }
+    }
+
+    #[test]
     fn depth_clamps_on_tiny_viewports() {
-        // 8x8 frame: requested depth (0.09 * 8 ~ 1px) must stay within bounds
+        // 8x8 frame: sub-pixel requested depth must clamp to one pixel.
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 200);
         let spectra = sampler().process(&ViewFrame::new(frame));
         assert!(spectra.top.sample_at(0.5).r > 0.0);

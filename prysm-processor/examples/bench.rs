@@ -20,7 +20,7 @@ fn bench(label: &str, width: u32, height: u32, vary: bool) {
         .map(|i| yuyv_frame(width, height, if vary { i } else { 0 }))
         .collect();
 
-    // Warm up (first frame always processes)
+    // Warm up
     processor.process_frame(frames[0].clone());
 
     let start = Instant::now();
