@@ -2821,7 +2821,6 @@ dependencies = [
  "prysm-processor",
  "serde",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "toml",
  "tracing",
@@ -3515,7 +3514,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

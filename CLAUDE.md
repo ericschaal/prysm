@@ -46,18 +46,20 @@ Libraries are reusable components for building different binaries:
 **Data Flow Pipeline:**
 
 ```
-V4lCapturer → Frame Stream → split (broadcast)
-                               ↓           ↓
-                          PrysmProcessor  Renderer (video display)
-                               ↓
-                          EdgeColors → Renderer (LED strips)
+Camera / FFmpeg → Frame Stream → owned desktop consumer
+                                  ↓                ↓
+                             PrysmProcessor   Frame watch
+                                  ↓                ↓
+                             Colors watch → DesktopRenderer
+
+Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 ```
 
 **Core Abstractions:**
 
 - `PrysmCapturer` trait: Extensible video capture interface
-- `StreamWatcher` pattern: Bridges async streams to sync watch channels
-- `stream_split()`: Broadcast channel for multi-consumer streams
+- `publish_frames()`: Owns desktop processing, watch publication, and cancellation
+- Desktop consumes each delivered frame once; capture queues retain their platform-specific overload behavior
 
 ### Crate Responsibilities
 
@@ -218,7 +220,7 @@ Tests are minimal but focused:
 - `prysm/src/bin/video.rs` - Desktop video file entry point
 - `prysm/src/video.rs` - Shared FFmpeg frame stream
 - `prysm/src/lib.rs` - Shared application orchestration and threading setup
-- `prysm/src/stream.rs` - StreamWatcher and stream_split patterns
+- `prysm/src/stream.rs` - Owned desktop stream consumer and lifecycle tests
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
 - `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
 - `prysm-processor/src/frames/view_frame.rs` - Raw-frame viewport with on-demand pixel decoding
