@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
@@ -9,35 +9,69 @@ use prysm::{CAPTURE_HEIGHT, CAPTURE_WIDTH};
 use prysm_capture::{Capturer, PrysmCapturer};
 use prysm_core::{Config, EdgeColors};
 use prysm_processor::PrysmProcessor;
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Parser)]
-#[command(about = "Stream camera or FFmpeg video colors to WLED over DDP")]
+#[command(
+    about = "Stream camera or FFmpeg video colors to WLED over DDP",
+    after_help = "Wiring starts at bottom-left: up the left edge, across the top, down the right, then back along the bottom (viewed from the front)."
+)]
 struct Args {
-    /// WLED hostname or IP with port (normally 4048)
-    #[arg(value_name = "WLED_ADDRESS")]
-    address: String,
-
-    /// Top edge LED count, left-to-right as viewed from the front
-    top: u16,
-    /// Right edge LED count, top-to-bottom
-    right: u16,
-    /// Bottom edge LED count, right-to-left
-    bottom: u16,
-    /// Left edge LED count, bottom-to-top
-    left: u16,
-
-    /// Linux video device path or macOS `AVFoundation` device UID
-    device: Option<String>,
-
-    /// Play a video with `FFmpeg` 9+ (defaults to the local Philips HDR test clip)
-    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = DEFAULT_VIDEO, conflicts_with = "device")]
-    video: Option<PathBuf>,
+    /// Runtime TOML configuration file
+    #[arg(long, default_value = "led.toml", value_name = "PATH")]
+    config: PathBuf,
 }
 
-impl Args {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeConfig {
+    wled_address: String,
+    leds: LedCounts,
+    source: Source,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LedCounts {
+    top: u16,
+    right: u16,
+    bottom: u16,
+    left: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+enum Source {
+    Camera {
+        device: Option<String>,
+    },
+    Video {
+        #[serde(default = "default_video_path")]
+        path: PathBuf,
+    },
+}
+
+fn default_video_path() -> PathBuf {
+    PathBuf::from(DEFAULT_VIDEO)
+}
+
+impl RuntimeConfig {
+    fn load(path: &Path) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)
+            .with_context(|| format!("Cannot read configuration {}", path.display()))?;
+        toml::from_str(&contents)
+            .with_context(|| format!("Invalid configuration {}", path.display()))
+    }
+
     fn led_counts(&self) -> Result<[usize; 4]> {
-        let led_counts = [self.top, self.right, self.bottom, self.left].map(usize::from);
+        let led_counts = [
+            self.leds.top,
+            self.leds.right,
+            self.leds.bottom,
+            self.leds.left,
+        ]
+        .map(usize::from);
         let total: usize = led_counts.iter().sum();
         ensure!(
             (1..=usize::from(u16::MAX)).contains(&total),
@@ -50,21 +84,22 @@ impl Args {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let led_counts = args.led_counts()?;
+    let config = RuntimeConfig::load(&args.config)?;
+    let led_counts = config.led_counts()?;
     tracing::subscriber::set_global_default(tracing_subscriber::FmtSubscriber::new())?;
 
-    let mut renderer = WledRenderer::new(args.address.as_str())
-        .with_context(|| format!("Failed to connect to WLED at {}", args.address))?;
+    let mut renderer = WledRenderer::new(config.wled_address.as_str())
+        .with_context(|| format!("Failed to connect to WLED at {}", config.wled_address))?;
     let shutdown = CancellationToken::new();
     let _shutdown_guard = shutdown.clone().drop_guard();
-    let frames = match args.video {
-        None => Capturer::new(args.device.as_deref(), shutdown.clone())?
+    let frames = match config.source {
+        Source::Camera { device } => Capturer::new(device.as_deref(), shutdown.clone())?
             .into_stream(CAPTURE_WIDTH, CAPTURE_HEIGHT)
             .boxed(),
-        Some(path) => video_feed(&path, shutdown.clone())?.boxed(),
+        Source::Video { path } => video_feed(&path, shutdown.clone())?.boxed(),
     };
     let colors = PrysmProcessor::new(&Config::default()).into_stream(frames);
-    tracing::info!(address = %args.address, ?led_counts, "Streaming to WLED");
+    tracing::info!(address = %config.wled_address, ?led_counts, "Streaming to WLED");
 
     tokio::select! {
         result = tokio::signal::ctrl_c() => {
@@ -105,25 +140,36 @@ mod tests {
     use std::net::UdpSocket;
     use std::time::Duration;
 
-    fn parse(args: &[&str]) -> Result<Args> {
-        let args = Args::try_parse_from(std::iter::once("led").chain(args.iter().copied()))?;
-        args.led_counts()?;
-        Ok(args)
+    const TEST_CONFIG: &str = r#"
+wled_address = "wled.local:4048"
+[leds]
+top = 96
+right = 54
+bottom = 96
+left = 54
+[source]
+type = "video"
+"#;
+
+    fn parse(contents: &str) -> Result<RuntimeConfig> {
+        let config: RuntimeConfig = toml::from_str(contents)?;
+        config.led_counts()?;
+        Ok(config)
     }
 
     #[test]
-    fn parses_layout_optional_device_and_help() {
-        let args = parse(&["wled.local:4048", "96", "54", "96", "0", "/dev/video2"]).unwrap();
-        assert_eq!(args.address, "wled.local:4048");
-        assert_eq!(args.led_counts().unwrap(), [96, 54, 96, 0]);
-        assert_eq!(args.device.as_deref(), Some("/dev/video2"));
-        assert!(args.video.is_none());
-        assert!(
-            parse(&["wled.local:4048", "1", "0", "0", "0"])
-                .unwrap()
-                .device
-                .is_none()
+    fn selects_default_or_custom_config_and_shows_help() {
+        assert_eq!(
+            Args::try_parse_from(["led"]).unwrap().config,
+            PathBuf::from("led.toml")
         );
+        assert_eq!(
+            Args::try_parse_from(["led", "--config", "/tmp/my LEDs.toml"])
+                .unwrap()
+                .config,
+            PathBuf::from("/tmp/my LEDs.toml")
+        );
+        assert!(Args::try_parse_from(["led", "--unknown"]).is_err());
         for flag in ["--help", "-h"] {
             assert_eq!(
                 Args::try_parse_from(["led", flag]).unwrap_err().kind(),
@@ -133,35 +179,61 @@ mod tests {
     }
 
     #[test]
-    fn parses_video_with_default_or_explicit_path() {
-        for (extra, expected) in [
-            (vec!["--video"], DEFAULT_VIDEO),
-            (vec!["--video", "/tmp/my video.mp4"], "/tmp/my video.mp4"),
-        ] {
-            let mut args = vec!["wled.local:4048", "96", "54", "96", "54"];
-            args.extend(extra);
-            assert_eq!(parse(&args).unwrap().video, Some(PathBuf::from(expected)));
-        }
-        assert!(parse(&["host", "1", "1", "1", "1", "--video", "clip.mp4", "device"]).is_err());
+    fn parses_shipped_video_config_and_camera_source() {
+        parse(include_str!("../../../led.toml")).unwrap();
+        let contents = TEST_CONFIG;
+        let config = parse(contents).unwrap();
+        assert_eq!(config.wled_address, "wled.local:4048");
+        assert_eq!(config.led_counts().unwrap(), [96, 54, 96, 54]);
+        assert!(
+            matches!(config.source, Source::Video { path } if path == Path::new(DEFAULT_VIDEO))
+        );
+
+        let config = parse(&contents.replace(
+            "type = \"video\"",
+            "type = \"camera\"\ndevice = \"/dev/video2\"",
+        ))
+        .unwrap();
+        assert!(
+            matches!(config.source, Source::Camera { device: Some(device) } if device == "/dev/video2")
+        );
+        let config = parse(&contents.replace("type = \"video\"", "type = \"camera\"")).unwrap();
+        assert!(matches!(config.source, Source::Camera { device: None }));
+        let config = parse(&contents.replace(
+            "type = \"video\"",
+            "type = \"video\"\npath = \"/tmp/my video.mp4\"",
+        ))
+        .unwrap();
+        assert!(
+            matches!(config.source, Source::Video { path } if path == Path::new("/tmp/my video.mp4"))
+        );
     }
 
     #[test]
-    fn rejects_bad_arguments_and_invalid_totals() {
-        for args in [
-            vec![],
-            vec!["wled.local:4048"],
-            vec!["host", "1", "1", "1", "1", "device", "extra"],
-            vec!["host", "0", "0", "0", "0"],
-            vec!["host", "65535", "1", "0", "0"],
-            vec!["host", "65536", "0", "0", "0"],
-            vec!["host", "-1", "0", "0", "0"],
-            vec!["host", "red", "0", "0", "0"],
-            vec!["host", "1", "1", "1", "1", "--unknown"],
-            vec!["host", "1", "1", "1", "1", "device", "--video"],
+    fn rejects_invalid_configurations_and_counts() {
+        let contents = TEST_CONFIG;
+        for invalid in [
+            String::new(),
+            contents.replace("top = 96", "top = -1"),
+            contents.replace("top = 96", "top = 65536"),
+            contents.replace("top = 96", "top = 65535"),
+            contents.replace("top = 96", "top = 'red'"),
+            contents.replace("top = 96", "tpo = 96"),
+            contents
+                .replace("top = 96", "top = 0")
+                .replace("right = 54", "right = 0")
+                .replace("bottom = 96", "bottom = 0")
+                .replace("left = 54", "left = 0"),
+            contents.replace("type = \"video\"", "type = \"unknown\""),
+            contents.replace(
+                "type = \"video\"",
+                "type = \"video\"\ndevice = \"/dev/video2\"",
+            ),
+            contents.replace("type = \"video\"", "type = \"camera\"\npath = \"clip.mp4\""),
+            contents.replace("wled_address =", "unknown ="),
         ] {
-            assert!(parse(&args).is_err(), "accepted {args:?}");
+            assert!(parse(&invalid).is_err(), "accepted {invalid:?}");
         }
-        assert!(parse(&["host", "65535", "0", "0", "0"]).is_ok());
     }
 
     #[tokio::test]

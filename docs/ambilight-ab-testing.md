@@ -23,9 +23,9 @@ Relevant code:
 - [Desktop rendering](../renderers/desktop-renderer/src/lib.rs)
 - [Existing pipeline regression tests](../prysm-processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the headless camera binary (`cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54`); the desktop/video demo does not call it. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the headless binary (`cargo run --release -p prysm --bin led`, configured in `led.toml`); the desktop/video demo does not call it. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
-The desktop video player and LED binary (`--video [PATH]`) share FFmpeg 9+ input delivering 640×360 sRGB RGB24 frames, playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
+The desktop video player and LED binary (`type = "video"` in `[source]`) share FFmpeg 9+ input delivering 640×360 sRGB RGB24 frames, playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 
 ## 1. Freeze the experiment
 

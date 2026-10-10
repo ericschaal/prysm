@@ -91,12 +91,10 @@ cargo run -p prysm --bin video
 # Or supply another video path
 cargo run -p prysm --bin video -- "/path/to/video.mp4"
 
-# Send camera edge colors to WLED (top/right/bottom/left LED counts)
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54
-# Optional capture device: Linux path or macOS AVFoundation device UID
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 /dev/video2
-# Or the local Philips HDR test video (append a path for another file)
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 --video
+# Send edge colors to WLED using led.toml (address, edge counts, source)
+cargo run --release -p prysm --bin led
+# Or select a different runtime configuration
+cargo run --release -p prysm --bin led -- --config /path/to/led.toml
 
 # Run tests
 cargo test
@@ -123,13 +121,16 @@ Philips Ambilight test MP4, plays once at its original rate, and closes at EOF. 
 and scales frames to 640x360 sRGB, including HDR tone mapping; audio is not played. Both entry
 points share the visualizer pipeline in `prysm/src/lib.rs`. The camera remains the default binary.
 
-`prysm/src/bin/led.rs` runs camera or video input headlessly through the default processor
-and `WledRenderer`. It takes a WLED host/IP with port (4048), four physical LED
-counts (top/right/bottom/left, clockwise from the top-left viewed from the front),
-and an optional capture device or `--video [PATH]`. Video input defaults to the same
-Philips clip as the desktop video binary and exits successfully at EOF. Both use
-the FFmpeg feed in `prysm/src/video.rs`. Ctrl+C cancels capture; capture and send
-failures exit with an error. WLED's realtime timeout restores its normal effect.
+`prysm/src/bin/led.rs` reads `led.toml` at startup (or a file selected with
+`--config`). It contains `wled_address` with port 4048, a `[leds]` table with
+named top/right/bottom/left counts, and a `[source]` table: `type = "camera"`
+with an optional `device`, or `type = "video"` with an optional `path`.
+Wiring starts at the bottom-left viewed from the front, running up the left edge,
+across the top, down the right, and back along the bottom. Video input defaults
+to the same Philips clip as the desktop video binary and exits successfully at
+EOF. Both use the FFmpeg feed in `prysm/src/video.rs`. Ctrl+C cancels capture;
+capture and send failures exit with an error. WLED's realtime timeout restores
+its normal effect.
 
 The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
 uses the sRGB transfer function and preview output is 8-bit RGB. BT.2020 YUV matrix support

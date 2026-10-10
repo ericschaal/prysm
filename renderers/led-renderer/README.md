@@ -18,8 +18,9 @@ renderer.render_edges(&EdgeColors::default(), [96, 54, 96, 54])?;
 
 `render` accepts colors in physical LED order. `render_edges` resamples the
 processor's linear gradients and encodes them as 8-bit sRGB. It starts at the
-top-left corner and runs clockwise as viewed from the front: top, right,
-bottom, left. Counts can be zero for absent edges. Bottom and left gradients
+bottom-left corner and runs clockwise as viewed from the front: left bottom-to-top,
+top left-to-right, right top-to-bottom, bottom right-to-left.
+Counts can be zero for absent edges. Bottom and left gradients
 are reversed because processor samples run left-to-right and top-to-bottom.
 For a different starting point or direction, assemble your colors and use `render`.
 
@@ -29,25 +30,51 @@ brightness, gamma, mapping, and timeout for your hardware. The renderer sends
 RGB channels; WLED handles the strip's physical color order. It does not change
 the device configuration.
 
-Run camera capture directly to WLED without a desktop window:
+Edit [`led.toml`](../../led.toml) to set the WLED address, four edge counts,
+and input source. Run from the workspace root:
 
 ```sh
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54
-# Optionally select a capture device (Linux path or macOS AVFoundation UID):
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 /dev/video2
-# Or play the local Philips HDR test clip with FFmpeg 9+:
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 --video
-# Or another video file:
-cargo run --release -p prysm --bin led -- wled.local:4048 96 54 96 54 --video "/path/to/video.mp4"
+cargo run --release -p prysm --bin led
+# Or select another configuration file:
+cargo run --release -p prysm --bin led -- --config "/path/to/led.toml"
 ```
 
-The four counts are top, right, bottom, left; the total must be 1–65535.
-Both the `led` and desktop `video` binaries use `clap`; run them with `--help`
-for usage. The optional camera device and `--video` are mutually exclusive.
-The binary uses the same 640×360 capture and default processor settings as the
-desktop app. Ctrl+C stops capture and transmission; capture or send failures
+Configuration is read at startup. The four counts are named top, right, bottom,
+left; their total must be 1–65535. LED zero is at the bottom-left corner; the
+first edge goes up the left side. For example:
+
+```toml
+wled_address = "wled.local:4048"
+
+[leds]
+top = 96
+right = 54
+bottom = 96
+left = 54
+
+[source]
+type = "video"
+path = "/path/to/video.mp4"
+```
+
+The supplied configuration selects video; omitting `path` uses the local Philips
+HDR test clip. Relative paths are resolved from the current working directory.
+For camera capture, replace `[source]` with:
+
+```toml
+[source]
+type = "camera"
+# Optional Linux device path or macOS AVFoundation device UID:
+# device = "/dev/video2"
+```
+
+Unknown fields, invalid counts, and fields belonging to the other source type
+are rejected. `led --help` describes the configuration option; the desktop
+`video` binary still takes an optional video path.
+The LED binary uses the same 640×360 capture and default processor settings as
+the desktop app. Ctrl+C stops capture and transmission; capture or send failures
 exit with an error. WLED restores its effect after its realtime timeout.
-Video input uses the same FFmpeg decoding and HDR-to-sRGB conversion as the
+Video input uses the same FFmpeg 9+ decoding and HDR-to-sRGB conversion as the
 desktop video player, runs at the source frame rate, and exits successfully at EOF.
 
 Frames are sent immediately on a nonblocking socket, with no queue or retries;

@@ -10,7 +10,7 @@
 //! # fn main() -> Result<(), ddp_rs::error::DDPError> {
 //! let mut renderer = WledRenderer::new("wled.local:4048")?;
 //! renderer.render(&[Color::new(255, 0, 0), Color::new(0, 0, 255)])?;
-//! // LED counts in top, right, bottom, left order; clockwise from top-left.
+//! // Counts: top, right, bottom, left. Wiring starts at bottom-left, going up.
 //! renderer.render_edges(&EdgeColors::default(), [96, 54, 96, 54])?;
 //! # Ok(())
 //! # }
@@ -82,9 +82,9 @@ impl WledRenderer {
 
     /// Resample linear edge gradients to the given top/right/bottom/left counts.
     ///
-    /// Output starts at the top-left corner and runs clockwise, as viewed from
-    /// the screen's front: top left-to-right, right top-to-bottom, bottom
-    /// right-to-left, left bottom-to-top. Zero skips an edge. Other wiring layouts
+    /// Output starts at the bottom-left corner and runs clockwise, as viewed from
+    /// the screen's front: left bottom-to-top, top left-to-right, right
+    /// top-to-bottom, bottom right-to-left. Zero skips an edge. Other wiring layouts
     /// can provide their own ordered colors through [`Self::render`].
     /// Interpolation happens in linear light, followed by conversion to 8-bit sRGB.
     pub fn render_edges(
@@ -98,10 +98,10 @@ impl WledRenderer {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "LED count overflow"))?;
         self.prepare(total)?;
         for (strip, count, reverse) in [
+            (&edges.left, led_counts[3], true),
             (&edges.top, led_counts[0], false),
             (&edges.right, led_counts[1], false),
             (&edges.bottom, led_counts[2], true),
-            (&edges.left, led_counts[3], true),
         ] {
             for i in 0..count {
                 let index = if reverse { count - 1 - i } else { i };
@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn resamples_edges_in_clockwise_order_and_encodes_srgb() {
+    fn starts_at_bottom_left_resamples_clockwise_and_encodes_srgb() {
         let (mut renderer, socket) = receiver();
         let gradient = ColorStrip::new(vec![
             LinearColor::new(0.0, 0.0, 0.0),
@@ -211,8 +211,8 @@ mod tests {
         let edges = EdgeColors::new(
             gradient.clone(),
             ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), 1),
-            gradient.clone(),
             gradient,
+            ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]),
         );
         renderer.render_edges(&edges, [3, 1, 2, 2]).unwrap();
         let bytes = receive(&socket);
@@ -220,10 +220,10 @@ mod tests {
         assert_eq!(
             packet.data,
             [
+                0, 0, 255, 0, 0, 0, // left bottom-to-top
                 0, 0, 0, 188, 188, 188, 255, 255, 255, // top
                 255, 0, 0, // right
                 255, 255, 255, 0, 0, 0, // bottom reversed
-                255, 255, 255, 0, 0, 0, // left reversed
             ]
         );
     }
