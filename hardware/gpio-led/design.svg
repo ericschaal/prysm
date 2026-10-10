@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1120" viewBox="0 0 1400 1120">
+<style>
+text{font-family:Arial,sans-serif;fill:#203047;font-size:19px}.title{font-size:32px;font-weight:bold}.sub{fill:#52657c}.small{font-size:16px}.label{font-weight:bold}.wire{fill:none;stroke:#146c94;stroke-width:3}.power{fill:none;stroke:#b94b35;stroke-width:3}.box{fill:#fff;stroke:#718298;stroke-width:2}.chip{fill:#e8f1fa;stroke:#146c94;stroke-width:3}
+</style>
+<rect width="1400" height="1120" fill="#f7f9fc"/>
+<text x="45" y="55" class="title">Prysm GPIO LED board · Revision A concept</text>
+<text x="45" y="87" class="sub">Pi 5 SPI → SN74AHCT125N → SK9822/APA102 · LED power stays external</text>
+<rect x="45" y="112" width="1310" height="45" rx="8" fill="#fff0ce"/>
+<text x="65" y="142" class="label">REVIEW DRAFT — illustrative placement; no routed PCB, ERC/DRC or manufacturing files</text>
+
+<rect x="55" y="200" width="270" height="280" rx="10" class="box"/>
+<text x="75" y="233" class="label">J1 · underside GPIO socket</text>
+<text x="75" y="261" class="small">2×20 female · physical pin numbers</text>
+<text x="75" y="312">19 · MOSI / GPIO10</text>
+<text x="75" y="402">23 · SCLK / GPIO11</text>
+<text x="75" y="456">6 · GND</text>
+
+<path class="wire" d="M325 305 H555 M325 395 H555"/>
+<circle cx="400" cy="305" r="5" fill="#146c94"/>
+<path class="wire" d="M400 305 V320 M400 368 V470"/>
+<rect x="390" y="320" width="20" height="48" class="box"/>
+<text x="425" y="344" class="small">R1 10k</text>
+<text x="380" y="496" class="small">GND</text>
+<circle cx="505" cy="395" r="5" fill="#146c94"/>
+<path class="wire" d="M505 395 V415 M505 463 V490"/>
+<rect x="495" y="415" width="20" height="48" class="box"/>
+<text x="530" y="445" class="small">R2 10k</text>
+<text x="485" y="516" class="small">GND</text>
+
+<rect x="555" y="255" width="260" height="195" rx="10" class="chip"/>
+<text x="575" y="285" class="label">U1 · SN74AHCT125N</text>
+<path d="M605 300 L650 325 L605 350 Z M605 365 L650 390 L605 415 Z" class="wire"/>
+<path class="wire" d="M555 305 H605 M650 325 H815 M555 395 H605 M650 390 H815"/>
+<text x="566" y="330" class="small">2 · 1A</text>
+<text x="704" y="316" class="small">3 · 1Y</text>
+<text x="566" y="425" class="small">5 · 2A</text>
+<text x="704" y="380" class="small">6 · 2Y</text>
+<text x="575" y="478" class="small">/OE pins 1, 4 → GND (enabled)</text>
+
+<path class="wire" d="M815 325 H865 M915 325 H1090 M815 390 H865 M915 390 H1090"/>
+<rect x="865" y="315" width="50" height="20" class="box"/>
+<rect x="865" y="380" width="50" height="20" class="box"/>
+<text x="852" y="300" class="small">R3 · 33Ω</text>
+<text x="852" y="435" class="small">R4 · 33Ω</text>
+<rect x="1090" y="265" width="255" height="205" rx="10" class="box"/>
+<text x="1110" y="295" class="label">J3 · signal output</text>
+<text x="1110" y="332">1 · DATA → strip DI</text>
+<text x="1110" y="397">2 · CLOCK → strip CI</text>
+<text x="1110" y="445">3 · GND → strip GND</text>
+<text x="1090" y="497" class="small">No +5V output / no LED current</text>
+
+<rect x="55" y="550" width="370" height="195" rx="10" class="box"/>
+<text x="75" y="582" class="label">J2 · buffer power input</text>
+<text x="75" y="615">1 · +5V_LED (same LED supply)</text>
+<text x="75" y="670">2 · GND (common with Pi)</text>
+<text x="75" y="709" class="small">Small protected branch; not strip power</text>
+<path class="power" d="M425 608 H780"/>
+<path class="wire" d="M425 663 H780"/>
+<text x="795" y="615">U1 pin 14 · VCC</text>
+<text x="795" y="670">U1 pin 7 · GND</text>
+<circle cx="615" cy="608" r="5" fill="#b94b35"/>
+<circle cx="615" cy="663" r="5" fill="#146c94"/>
+<path class="power" d="M615 608 V629 M598 629 H632"/>
+<path class="wire" d="M598 642 H632 M615 642 V663"/>
+<text x="635" y="638" class="small">C1 100nF</text>
+<text x="485" y="710" class="small">Mount C1 beside U1's power pin.</text>
+
+<rect x="1030" y="545" width="315" height="200" rx="10" class="box"/>
+<text x="1050" y="578" class="label">Remaining U1 pins</text>
+<text x="1050" y="615">10, 13 · /OE → +5V_LED</text>
+<text x="1050" y="650">9, 12 · inputs → GND</text>
+<text x="1050" y="685">8, 11 · outputs → NC</text>
+<text x="1050" y="719" class="small">Unused channels disabled.</text>
+
+<text x="55" y="790" class="label">Board placement concept · approximately 65 × 30mm</text>
+<rect x="55" y="820" width="650" height="270" rx="20" fill="#dcece5" stroke="#426857" stroke-width="3"/>
+<circle cx="90" cy="855" r="14" fill="#f7f9fc" stroke="#426857" stroke-width="3"/>
+<circle cx="670" cy="855" r="14" fill="#f7f9fc" stroke="#426857" stroke-width="3"/>
+<rect x="133" y="840" width="480" height="54" rx="4" fill="#d7dce5" stroke="#52657c" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="154" y="873" class="small">J1 · female socket UNDER board · mark pin 1</text>
+<rect x="270" y="937" width="210" height="97" rx="5" class="chip"/>
+<text x="282" y="977" class="label">U1 · PDIP-14</text>
+<text x="282" y="1005" class="small">10k pull-downs nearby</text>
+<rect x="510" y="925" width="42" height="22" class="box"/><text x="506" y="913" class="small">C1</text>
+<rect x="85" y="944" width="112" height="92" rx="5" class="box"/>
+<text x="100" y="977" class="label">J2</text><text x="100" y="1005" class="small">5V / GND</text>
+<rect x="573" y="939" width="106" height="111" rx="5" class="box"/>
+<text x="587" y="970" class="label">J3</text><text x="587" y="995" class="small">D / C / G</text>
+<text x="86" y="1071" class="small">Footprints, holes and cooler clearance must be fixed in CAD.</text>
+
+<text x="760" y="845" class="label">External power wiring</text>
+<text x="760" y="886">LED supply → distribution → strip power taps</text>
+<text x="760" y="922">LED supply → small branch → J2</text>
+<text x="760" y="958">Pi USB-C supply → Pi only</text>
+<text x="760" y="999" class="label">Pi power pins 1, 2, 4, 17: unconnected</text>
+<text x="760" y="1035" class="small">LED return current must bypass the PCB and Pi.</text>
+<text x="760" y="1068" class="small">No EEPROM; GPIO add-on, not HAT+ certification.</text>
+</svg>

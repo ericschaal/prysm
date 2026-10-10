@@ -1,0 +1,37 @@
+Assembly,References,Quantity,Manufacturer,Part number,Specification,Notes
+GPIO PCB,J1,1,Samtec,ESQ-120-23-G-D,2x20 female socket 2.54mm pitch 16.13mm body,Underside only; verify actual Pi cooler and tail clearance
+GPIO PCB,U1,1,Texas Instruments,ISO7720FDR,Default-LOW dual forward isolator SOIC8 D package,FD device; R is reel packaging; not ISO7721 or non-F version
+GPIO PCB,R1 R2,2,Generic,10k 1% 0.25W axial,Body <=6.3x2.5mm;7.62mm lead pitch,Pi-side input pulldowns
+GPIO PCB,R3 R4,2,Generic,33ohm 1% 0.25W axial,Body <=6.3x2.5mm;7.62mm lead pitch,Output source series resistors
+GPIO PCB,C1 C2,2,Generic,100nF ceramic radial >=16V,5mm pitch;body <=5mm diameter x2.5mm thick,Prefer X7R; one per isolated IC side
+GPIO PCB,J3,1,JST,B4P-VH,4-pin VH 3.96mm vertical header,1 local TOP+5;2 DATA;3 CLOCK;4 local TOP GND
+Corner PCB,U1,1,Texas Instruments,ISO7720FDR,Default-LOW dual forward isolator SOIC8 D package,Input side A;output side B; no A/B ground or power bridge
+Corner PCB,R1 R2,2,Generic,10k 1% 0.25W axial,Body <=6.3x2.5mm;7.62mm lead pitch,Group-A input pulldowns
+Corner PCB,R3 R4,2,Generic,33ohm 1% 0.25W axial,Body <=6.3x2.5mm;7.62mm lead pitch,Group-B output source series resistors
+Corner PCB,C1 C2,2,Generic,100nF ceramic radial >=16V,5mm pitch;body <=5mm diameter x2.5mm thick,Prefer X7R; one per local supply domain
+Corner PCB,J1 J2,2,JST,B4P-VH,4-pin VH 3.96mm vertical header,1 local+5;2 DATA;3 CLOCK;4 local GND;J1 RIGHT output;J2 BOTTOM input
+Distribution PCB,J1,1,AMASS,XT30UPB-M,Vertical through-hole XT30 5mm pitch,Pin1 GND;pin2 positive; verify molded polarity
+Distribution PCB,J2 J3,2,JST,B2P-VH,2-pin VH 3.96mm vertical header,10A manufacturer condition at16AWG;pin1+5;pin2GND
+Distribution PCB,F1 F2 F3,3,Keystone,3568,Through-hole MINI blade fuse holder,Not ATO or Micro2
+Distribution PCB,F1,1,Littelfuse,0297015,297 MINI 15A 32V,Distributor packaging suffix to select; not a12A current limiter
+Distribution PCB,F2 F3,2,Littelfuse,029707.5,297 MINI 7.5A 32V,Hiccup supply does not guarantee fuse clearing
+Distribution PCB,C1,1,Panasonic,EEU-FR1A102,1000uF10V D10xH16mm pitch5mm,Polarized; negative to GND
+Power harness,PSU main lead,1,AMASS,XT30U-F,Recessed energized-contact wire connector,14AWG copper cable;verify molded polarity
+Power harness,Branch board mates,2,JST,VHR-2N,2-pin VH housing,One per fused injection branch
+Power harness,Branch contacts,4,JST,SVH-41T-P1.1,20-16AWG VH crimp contact,Use16AWG copper power and ground
+Power harness,T power-arm connections,2,AMASS,XT30U-F + XT30U-M matched pair,Removable inline power connection,F on energized branch;M on blank power tongue
+Power harness,PSU cable fuse holder,1,Littelfuse,0FHM0001SXJ,Covered MINI holder20A58VDC;14AWG GXL black leads,Install in POSITIVE lead near PSU;mark black wires red;add15A297 fuse
+Power harness,PSU cable fuse,1,Littelfuse,0297015,297 MINI15A32V,Additional to PCB F1; no selective-clearing claim
+Power harness,Injection capacitors,2,Panasonic,EEU-FR1A102,1000uF10V D10xH16mm pitch5mm,Across each T power tongue+5/GND;insulate and anchor
+Signal harness,GPIO J3 and corner J1 J2 mates,3,JST,VHR-4N,4-pin VH housing,1 local+5;2 DATA;3 CLOCK;4 local GND
+Signal harness,Four-pin harness contacts,12,JST,SVH-41T-P1.1,20-16AWG VH crimp contact,16AWG power/GND;20AWG DATA/CLOCK
+Cable,PSU to distribution,As measured,Generic,14AWG stranded copper red/black,>=105C insulation;target<=0.5m including PSU leads,Verify wire ampacity and insulation diameter;not CCA
+Cable,Two injection feeds and local logic power leads,As measured,Generic,16AWG stranded copper red/black,>=105C insulation;target<=1m injection pair,Local logic leads come ONLY from adjacent strip pads
+Cable,DATA CLOCK,As measured,Generic,20AWG stranded copper,>=105C insulation;fits SVH-41T-P1.1 contacts,GPIO<=30cm;each corner lead<=10cm;route with local GND
+Mechanical,GPIO standoffs,2,Generic,M2.5 insulating spacers with screws,Height matched to actual socket engagement,Verify cooler and fan cable access
+Mechanical,Distribution and corner standoffs,8,Generic,M2.5 insulating spacers with screws,Four per board,Insulate underside;retain airflow and fuse access
+Assembly,Insulation and anchors,As needed,Generic,Adhesive-lined heat-shrink plus cable-tie anchors,Individual conductor insulation and external strain relief,No strip copper or component tails touching TV metal
+External,LED supply,1,Mean Well,LPV-100-5,5V12A60W;derates above40C for5V model,Already selected;no mains design in this package
+External,LED strip,1 reel,BTF-LIGHTING,Variant45759013650658,SK9822 5m60LED/m IP30 black PCB12mm,Install~2.8m168LED;max90per group;75%linear output cap
+Corner harness,Top-right and bottom-left,2,BTF-LIGHTING,T shape /4pin12mm,Exact T order variant must be selected manually,Mapping and current rating UNVERIFIED;old45648064020706 is L
+Corner harness,Two power-arm tongues,2,Matching strip PCB or verified custom blank,Passive12mm power tongue matching actual strip pads,ONLY+5 and GND leads;no active LED or DATA/CLOCK wiring,Provisional fabrication from sacrificial strip offcut;fit/current tests required
