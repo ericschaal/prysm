@@ -3,10 +3,12 @@ use std::sync::Mutex;
 use std::sync::mpsc as std_mpsc;
 
 use anyhow::{Context, Result, anyhow};
-use av_foundation::capture_device::AVCaptureDevice;
+use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
 use av_foundation::capture_input::AVCaptureDeviceInput;
 use av_foundation::capture_output_base::AVCaptureOutput;
-use av_foundation::capture_session::{AVCaptureConnection, AVCaptureSession};
+use av_foundation::capture_session::{
+    AVCaptureConnection, AVCaptureSession, AVCaptureSessionRuntimeErrorNotification,
+};
 use av_foundation::capture_video_data_output::{
     AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate,
 };
@@ -25,15 +27,19 @@ use core_video::r#return::kCVReturnSuccess;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use futures::Stream;
 use objc2::rc::{Allocated, Retained};
-use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass, define_class, msg_send};
-use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
+use objc2_foundation::{
+    NSDictionary, NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol,
+    NSString,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{Frame, PixelFormat, PrysmCapturer, YuvRange, YuvStandardMatrix};
 
 struct DelegateIvars {
     sender: Mutex<Option<tokio::sync::mpsc::Sender<Frame>>>,
+    failure: CancellationToken,
 }
 
 define_class!(
@@ -72,10 +78,17 @@ define_class!(
     }
 
     impl Delegate {
+        #[unsafe(method(captureFailed:))]
+        fn capture_failed(&self, notification: &NSNotification) {
+            tracing::error!("Capture failed: {}", notification.name());
+            self.ivars().failure.cancel();
+        }
+
         #[unsafe(method_id(init))]
         fn init(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(DelegateIvars {
                 sender: Mutex::new(None),
+                failure: CancellationToken::new(),
             });
             unsafe { msg_send![super(this), init] }
         }
@@ -87,6 +100,25 @@ impl Delegate {
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
         *this.ivars().sender.lock().expect("sender mutex poisoned") = Some(sender);
         this
+    }
+
+    fn observe_failure(&self, name: &NSString, object: &AnyObject) {
+        // SAFETY: captureFailed: accepts NSNotification; this observer is removed on drop.
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                self,
+                sel!(captureFailed:),
+                Some(name),
+                Some(object),
+            );
+        }
+    }
+}
+
+impl Drop for Delegate {
+    fn drop(&mut self) {
+        // SAFETY: self is the live observer registered by observe_failure.
+        unsafe { NSNotificationCenter::defaultCenter().removeObserver(self) };
     }
 }
 
@@ -191,7 +223,7 @@ fn video_settings(width: u32, height: u32) -> Retained<NSDictionary<NSString, NS
 struct RunningSession {
     session: Retained<AVCaptureSession>,
     _output: Retained<AVCaptureVideoDataOutput>,
-    _delegate: Retained<Delegate>,
+    delegate: Retained<Delegate>,
     _queue: DispatchRetained<DispatchQueue>,
 }
 
@@ -222,6 +254,12 @@ fn start_session(
     let delegate = Delegate::new(sender);
     let queue = DispatchQueue::new("prysm.capture.video", DispatchQueueAttr::SERIAL);
 
+    // SAFETY: These notification names are process-lifetime Foundation strings.
+    unsafe {
+        delegate.observe_failure(AVCaptureSessionRuntimeErrorNotification, &session);
+        delegate.observe_failure(AVCaptureDeviceWasDisconnectedNotification, &device);
+    }
+
     output.set_sample_buffer_delegate(ProtocolObject::from_ref(&*delegate), &queue);
     output.set_always_discards_late_video_frames(true);
 
@@ -239,15 +277,19 @@ fn start_session(
     output.set_video_settings(&video_settings(width, height));
     session.commit_configuration();
 
-    session.start_running();
-    tracing::info!("Video format set to: YUYV {width}x{height}");
-
-    Ok(RunningSession {
+    let running = RunningSession {
         session,
         _output: output,
-        _delegate: delegate,
+        delegate,
         _queue: queue,
-    })
+    };
+    running.session.start_running();
+    anyhow::ensure!(
+        running.session.is_running() && !running.delegate.ivars().failure.is_cancelled(),
+        "Capture session failed to start"
+    );
+    tracing::info!("Video format set to: YUYV {width}x{height}");
+    Ok(running)
 }
 
 pub struct AVFoundationCapturer {
@@ -258,11 +300,13 @@ pub struct AVFoundationCapturer {
 async fn stop_when_capture_closes(
     sender: tokio::sync::mpsc::Sender<Frame>,
     shutdown: CancellationToken,
+    failure: CancellationToken,
     stop: std_mpsc::Sender<()>,
 ) {
     tokio::select! {
         () = shutdown.cancelled() => {},
         () = sender.closed() => {},
+        () = failure.cancelled() => {},
     }
     let _ = stop.send(());
 }
@@ -301,11 +345,16 @@ impl PrysmCapturer for AVFoundationCapturer {
                 }
             };
 
-            runtime.spawn(stop_when_capture_closes(tx, self.shutdown_token, stop_tx));
+            runtime.spawn(stop_when_capture_closes(
+                tx,
+                self.shutdown_token,
+                session.delegate.ivars().failure.clone(),
+                stop_tx,
+            ));
 
-            // Block until shutdown is signalled (or the bridge task is gone).
+            // Block until shutdown, capture failure, or consumer drop.
             let _ = stop_rx.recv();
-            tracing::info!("Shutdown signal received, stopping AVFoundation capture");
+            tracing::info!("Stopping AVFoundation capture");
             drop(session);
         });
 
@@ -316,6 +365,58 @@ impl PrysmCapturer for AVFoundationCapturer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn capture_failure_notifications_stop_capture_and_close_the_stream() {
+        // SAFETY: These are process-lifetime notification names.
+        let names = unsafe {
+            [
+                AVCaptureSessionRuntimeErrorNotification,
+                AVCaptureDeviceWasDisconnectedNotification,
+            ]
+        };
+        for name in names {
+            let object = NSObject::new();
+            let unrelated = NSObject::new();
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            let delegate = Delegate::new(sender.clone());
+            delegate.observe_failure(name, &object);
+            let failure = delegate.ivars().failure.clone();
+            let (stop_tx, stop_rx) = std_mpsc::channel();
+            let bridge = stop_when_capture_closes(
+                sender,
+                CancellationToken::new(),
+                failure.clone(),
+                stop_tx,
+            );
+            futures::pin_mut!(bridge);
+            assert!(futures::poll!(&mut bridge).is_pending());
+
+            // SAFETY: These live NSObject instances identify the notification source;
+            // the observer only reads the notification name, not its object.
+            unsafe {
+                NSNotificationCenter::defaultCenter()
+                    .postNotificationName_object(name, Some(&unrelated));
+                assert!(
+                    !failure.is_cancelled(),
+                    "another capture must not stop this one"
+                );
+                NSNotificationCenter::defaultCenter()
+                    .postNotificationName_object(name, Some(&object));
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(1), bridge)
+                .await
+                .unwrap();
+            assert!(stop_rx.try_recv().is_ok());
+            drop(delegate);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
 
     #[tokio::test]
     async fn failed_startup_closes_frame_stream() {
@@ -339,7 +440,12 @@ mod tests {
             let (sender, receiver) = tokio::sync::mpsc::channel(1);
             let shutdown = CancellationToken::new();
             let (stop_tx, stop_rx) = std_mpsc::channel();
-            let stop = stop_when_capture_closes(sender, shutdown.clone(), stop_tx);
+            let stop = stop_when_capture_closes(
+                sender,
+                shutdown.clone(),
+                CancellationToken::new(),
+                stop_tx,
+            );
             futures::pin_mut!(stop);
             assert!(futures::poll!(&mut stop).is_pending());
             if cancel {

@@ -257,3 +257,79 @@ fn changing_yuv_metadata_resets_processing_history() {
     assert!(limited.top.sample_at(0.5).r > 0.99);
     assert_eq!(limited, PrysmProcessor::new(&config).process_frame(frame));
 }
+
+#[test]
+fn maximum_smoothing_converges_instead_of_freezing() {
+    let config = Config {
+        brightness: 1.0,
+        temporal_smoothing: 1.0,
+        black_band_detection: false,
+        ..Config::default()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    processor.process_frame(rgb(8, 8, 255));
+    let black = rgb(8, 8, 0);
+    let mut output = processor.process_frame(black.clone());
+    assert!(output.top.sample_at(0.5).r < 1.0);
+    for _ in 0..1000 {
+        output = processor.process_frame(black.clone());
+    }
+    assert!(output.top.sample_at(0.5).r < 0.001);
+}
+
+#[test]
+fn oversampling_a_white_frame_does_not_create_black_samples() {
+    let config = Config {
+        sample_density: prysm_core::SampleDensity(2000),
+        brightness: 1.0,
+        temporal_smoothing: 0.0,
+        black_band_detection: false,
+        ..Config::default()
+    };
+    let output = PrysmProcessor::new(&config).process_frame(rgb(8, 8, 255));
+    for edge in [&output.top, &output.bottom, &output.left, &output.right] {
+        for color in edge.quantize(edge.len()) {
+            assert_eq!(color, prysm_core::LinearColor::new(1.0, 1.0, 1.0));
+        }
+        assert_eq!(edge.len(), 8);
+    }
+}
+
+#[test]
+fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
+    let config = Config {
+        brightness: 1.0,
+        ..Config::default()
+    };
+    let mut smoothed = PrysmProcessor::new(&config);
+    let mut direct = PrysmProcessor::new(&Config {
+        temporal_smoothing: 0.0,
+        ..config
+    });
+    let mut data = vec![128; 640 * 360 * 3];
+    for y in 0..360 {
+        for x in 0..640 {
+            let value = if !(48..312).contains(&y) {
+                0
+            } else if x < 24 {
+                if ((y - 48) / 38) % 2 == 0 { 255 } else { 0 }
+            } else {
+                128
+            };
+            data[(y * 640 + x) * 3..(y * 640 + x + 1) * 3].fill(value);
+        }
+    }
+    let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    for _ in 0..80 {
+        let actual = smoothed.process_frame(letterbox.clone());
+        let expected = direct.process_frame(letterbox.clone());
+        assert_eq!(actual.left.len(), expected.left.len());
+        for i in 0u8..=100 {
+            let position = f32::from(i) / 100.0;
+            assert!(
+                (actual.left.sample_at(position).r - expected.left.sample_at(position).r).abs()
+                    < 0.001
+            );
+        }
+    }
+}

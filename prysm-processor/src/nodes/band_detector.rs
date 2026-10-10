@@ -220,6 +220,7 @@ impl Node<ViewFrame, ViewFrame> for BandDetector {
                     }
                 }
                 _ => {
+                    self.candidate_count = 0;
                     self.inconsistent_count += 1;
 
                     if self.candidate_viewport.is_none()
@@ -553,6 +554,28 @@ mod tests {
             result.viewport,
             Viewport::full_frame(1920, 1080),
             "Should snap to full frame after sustained change"
+        );
+    }
+
+    #[test]
+    fn alternating_scans_do_not_confirm_a_crop() {
+        let config = Config::default();
+        let mut detector = BandDetector::new(&config);
+        let letterbox = create_letterboxed_frame(640, 360, 48, 48);
+        let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
+        for i in 0..120 {
+            let frame = if (i / 4) % 2 == 0 { &letterbox } else { &full };
+            assert_eq!(
+                detector.process(ViewFrame::new(frame.clone())).viewport,
+                Viewport::full_frame(640, 360)
+            );
+        }
+        for _ in 0..60 {
+            detector.process(ViewFrame::new(letterbox.clone()));
+        }
+        assert_eq!(
+            detector.process(ViewFrame::new(letterbox)).viewport.height,
+            264
         );
     }
 

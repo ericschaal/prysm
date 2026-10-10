@@ -100,7 +100,7 @@ pub struct LayoutConfig {
     /// Size of individual LED squares in pixels
     pub led_size_px: f32,
 
-    /// Total LED count around entire perimeter (if None, use EdgeSpectrum sample counts directly)
+    /// Exact total LED count; zero hides all LEDs. None uses each spectrum's sample count.
     pub total_led_count: Option<usize>,
 }
 
@@ -236,18 +236,20 @@ pub struct DesktopRenderer {
 ///
 /// Distributes total LED count proportionally to edge lengths to achieve
 /// consistent spacing around the perimeter (like real LED strips).
-fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) -> (usize, usize) {
-    assert!(total_leds > 0, "Total LED count must be positive");
+fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) -> [usize; 4] {
+    let width = width.max(1) as f64;
+    let height = height.max(1) as f64;
+    let horizontal =
+        ((total_leds as f64 * width / (width + height)).round() as usize).min(total_leds);
+    let vertical = total_leds - horizontal;
 
-    let perimeter = 2.0 * (width as f32 + height as f32);
-    let horizontal_fraction = width as f32 / perimeter;
-    let vertical_fraction = height as f32 / perimeter;
-
-    let horizontal_leds = (total_leds as f32 * horizontal_fraction).round() as usize;
-    let vertical_leds = (total_leds as f32 * vertical_fraction).round() as usize;
-
-    // Ensure at least 1 LED per edge
-    (horizontal_leds.max(1), vertical_leds.max(1))
+    // Top, right, bottom, left; give odd remainders to top and right.
+    [
+        horizontal.div_ceil(2),
+        vertical.div_ceil(2),
+        horizontal / 2,
+        vertical / 2,
+    ]
 }
 
 fn frame_to_image(frame: &Frame, rgb_scratch: &mut Vec<u8>) -> Option<egui::ColorImage> {
@@ -325,7 +327,7 @@ impl eframe::App for DesktopRenderer {
             let layout = LayoutDimensions::calculate(available, &self.layout_config);
 
             // Determine LED counts per edge based on actual rendered dimensions
-            let (horizontal_display_leds, vertical_display_leds) =
+            let [top_leds, right_leds, bottom_leds, left_leds] =
                 if let Some(total_leds) = self.layout_config.total_led_count {
                     // Use uniform spacing distribution based on actual GUI window size
                     let render_width = available.width() as usize;
@@ -333,7 +335,12 @@ impl eframe::App for DesktopRenderer {
                     calculate_led_distribution(render_width, render_height, total_leds)
                 } else {
                     // Fall back to EdgeSpectrum sample counts (current behavior)
-                    (spectra.top.len(), spectra.left.len())
+                    [
+                        spectra.top.len(),
+                        spectra.right.len(),
+                        spectra.bottom.len(),
+                        spectra.left.len(),
+                    ]
                 };
 
             // Render LED strips (excluding corners)
@@ -342,28 +349,28 @@ impl eframe::App for DesktopRenderer {
                 &spectra.top,
                 layout.top_strip,
                 EdgePosition::Top,
-                horizontal_display_leds,
+                top_leds,
             );
             self.render_discrete_leds(
                 ui,
                 &spectra.bottom,
                 layout.bottom_strip,
                 EdgePosition::Bottom,
-                horizontal_display_leds,
+                bottom_leds,
             );
             self.render_discrete_leds(
                 ui,
                 &spectra.left,
                 layout.left_strip,
                 EdgePosition::Left,
-                vertical_display_leds,
+                left_leds,
             );
             self.render_discrete_leds(
                 ui,
                 &spectra.right,
                 layout.right_strip,
                 EdgePosition::Right,
-                vertical_display_leds,
+                right_leds,
             );
 
             // Corners use default background (no LEDs in corners)
@@ -409,10 +416,10 @@ impl DesktopRenderer {
         edge: EdgePosition,
         display_led_count: usize,
     ) {
+        if display_led_count == 0 {
+            return;
+        }
         let led_size = self.layout_config.led_size_px;
-
-        // Resample spectrum to display LED count for uniform spacing
-        let colors = spectrum.quantize(display_led_count);
 
         // Calculate spacing between LED centers along the edge
         let spacing = match edge {
@@ -421,7 +428,7 @@ impl DesktopRenderer {
         };
 
         for i in 0..display_led_count {
-            let color = colors[i].to_srgb();
+            let color = spectrum.color_at(i, display_led_count).to_srgb();
             let egui_color = color_to_egui(color);
 
             // Calculate LED center position based on edge
@@ -561,6 +568,44 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn led_distribution_preserves_total_including_small_and_odd_counts() {
+        assert_eq!(calculate_led_distribution(1920, 1080, 5), [2, 1, 1, 1]);
+        assert_eq!(
+            calculate_led_distribution(1920, 1080, 300),
+            [96, 54, 96, 54]
+        );
+        for (width, height) in [(1920, 1080), (1080, 1920), (1, 1), (0, 0), (1, 1000)] {
+            for total in 0..=301 {
+                let [top, right, bottom, left] = calculate_led_distribution(width, height, total);
+                assert_eq!(top + right + bottom + left, total);
+                assert!(top.abs_diff(bottom) <= 1);
+                assert!(right.abs_diff(left) <= 1);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_leds_draw_no_shapes() {
+        let (_, receiver) = tokio::sync::watch::channel(EdgeSpectra::default());
+        let app = DesktopRendererBuilder::new(receiver).build();
+        let context = egui::Context::default();
+        let _ = context.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let before = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+                app.render_discrete_leds(
+                    ui,
+                    &Spectrum::default(),
+                    ui.max_rect(),
+                    EdgePosition::Top,
+                    0,
+                );
+                let after = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+                assert_eq!(before, after);
+            });
+        });
+    }
 
     #[test]
     fn limited_range_preview_displays_black_and_white() {

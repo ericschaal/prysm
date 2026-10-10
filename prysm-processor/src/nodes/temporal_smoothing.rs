@@ -7,7 +7,7 @@ use prysm_core::EdgeSpectra;
 /// and create smoother color transitions over time.
 #[derive(Debug, Clone)]
 pub struct TemporalSmoothing {
-    /// Smoothing factor (0.0 = no smoothing, 1.0 = maximum smoothing)
+    /// Previous-frame weight, capped at 0.99 so new frames always contribute.
     smoothing: f32,
     /// Previous frame's spectra for blending
     previous_spectra: Option<EdgeSpectra>,
@@ -19,11 +19,11 @@ impl TemporalSmoothing {
     /// # Arguments
     /// * `smoothing` - Smoothing factor (0.0 to 1.0)
     ///   - 0.0 = no smoothing (current frame only)
-    ///   - 1.0 = maximum smoothing (heavy bias toward previous frames)
+    ///   - Values above 0.99 are capped at 0.99 to keep converging
     ///   - 0.7 = recommended default
     pub fn new(smoothing: f32) -> Self {
         Self {
-            smoothing: smoothing.clamp(0.0, 1.0),
+            smoothing: smoothing.clamp(0.0, 0.99),
             previous_spectra: None,
         }
     }

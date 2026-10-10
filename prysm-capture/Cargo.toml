@@ -29,4 +29,4 @@ core-media = { version = "0.8.1", default-features = false, features = ["objc"] 
 core-video = { version = "0.6.1", default-features = false, features = ["objc"] }
 dispatch2 = "0.3"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSObject", "NSString", "NSValue"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }

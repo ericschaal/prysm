@@ -186,10 +186,10 @@ impl PrysmCapturer for V4lCapturer {
             input_stream.set_timeout(std::time::Duration::from_secs(1));
 
             // Determine format
-            let (pixel_format, bytes_per_pixel) = match format.fourcc.str() {
-                Ok("YUYV") => (PixelFormat::YUYV, 2),
-                Ok("RGB3") => (PixelFormat::RGB24, 3),
-                Ok("BGR3") => (PixelFormat::BGR24, 3),
+            let pixel_format = match format.fourcc.str() {
+                Ok("YUYV") => PixelFormat::YUYV,
+                Ok("RGB3") => PixelFormat::RGB24,
+                Ok("BGR3") => PixelFormat::BGR24,
                 _ => {
                     tracing::error!("Unsupported format: {:?}", format.fourcc);
                     return;
@@ -206,20 +206,22 @@ impl PrysmCapturer for V4lCapturer {
                 }
 
                 match input_stream.next() {
-                    Ok((buffer, _metadata)) => {
-                        // Extract frame data (same as current code)
-                        let row_size = format.width as usize * bytes_per_pixel;
-                        let stride = format.stride as usize;
-                        let mut frame_data = Vec::with_capacity(format.height as usize * row_size);
-
-                        for row in 0..format.height as usize {
-                            let row_start = row * stride;
-                            let row_end = row_start + row_size;
-                            frame_data.extend_from_slice(&buffer[row_start..row_end]);
-                        }
-
-                        let mut frame =
-                            Frame::new(frame_data, format.width, format.height, pixel_format);
+                    Ok((buffer, metadata)) => {
+                        let Some(mut frame) =
+                            buffer.get(..metadata.bytesused as usize).and_then(|data| {
+                                Frame::from_strided_buffer(
+                                    data,
+                                    format.width,
+                                    format.height,
+                                    pixel_format,
+                                    format.stride as usize,
+                                    metadata.flags.contains(v4l::buffer::Flags::ERROR),
+                                )
+                            })
+                        else {
+                            tracing::warn!("Discarding corrupt or incomplete capture frame");
+                            continue;
+                        };
                         frame.yuv_range = range;
                         frame.yuv_matrix = matrix;
 

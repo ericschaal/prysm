@@ -94,6 +94,13 @@ impl PrysmProcessor {
             view = detector.process(view);
         }
 
+        if self.last_viewport != Some(view.viewport)
+            && let Some(smoother) = &mut self.temporal_smoothing
+        {
+            // Old samples describe a different region of the image.
+            *smoother = TemporalSmoothing::new(self.config.temporal_smoothing);
+        }
+
         // Crop confirmation and smoothing still advance on unchanged frames.
         let mut spectra = match &self.last_spectra {
             Some(target) if !changed && self.last_viewport == Some(view.viewport) => target.clone(),

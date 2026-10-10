@@ -56,6 +56,37 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Validate a capture payload and remove row padding before constructing a frame.
+    #[cfg(any(target_os = "linux", test))]
+    fn from_strided_buffer(
+        data: &[u8],
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        stride: usize,
+        corrupted: bool,
+    ) -> Option<Self> {
+        if corrupted
+            || width == 0
+            || height == 0
+            || (format == PixelFormat::YUYV && !width.is_multiple_of(2))
+        {
+            return None;
+        }
+        let row_size = (width as usize).checked_mul(format.bytes_per_pixel()?)?;
+        let required = stride
+            .checked_mul(height as usize - 1)?
+            .checked_add(row_size)?;
+        if stride < row_size || data.len() < required {
+            return None;
+        }
+        let mut packed = Vec::with_capacity(row_size.checked_mul(height as usize)?);
+        for row in 0..height as usize {
+            packed.extend_from_slice(&data[row * stride..row * stride + row_size]);
+        }
+        Some(Self::new(packed, width, height, format))
+    }
+
     /// Creates a new frame with the given data, dimensions, and pixel format.
     /// YUYV defaults to full-range BT.601; capturers set the negotiated metadata.
     ///
@@ -147,6 +178,26 @@ async fn send_frame(
 mod tests {
     use super::*;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn strided_capture_rejects_corruption_and_short_payloads() {
+        let bytes = [16, 128, 235, 128, 0, 0, 16, 128, 235, 128];
+        let frame = Frame::from_strided_buffer(&bytes, 2, 2, PixelFormat::YUYV, 6, false).unwrap();
+        assert_eq!(frame.as_slice(), [16, 128, 235, 128].repeat(2));
+        for (data, stride, corrupted) in [
+            (&bytes[..], 6, true),
+            (&bytes[..9], 6, false),
+            (&bytes[..], 3, false),
+            (&bytes[..], usize::MAX, false),
+        ] {
+            assert!(
+                Frame::from_strided_buffer(data, 2, 2, PixelFormat::YUYV, stride, corrupted)
+                    .is_none()
+            );
+        }
+        assert!(Frame::from_strided_buffer(&bytes, 1, 2, PixelFormat::YUYV, 6, false).is_none());
+        assert!(Frame::from_strided_buffer(&bytes, 2, 0, PixelFormat::YUYV, 6, false).is_none());
+    }
 
     #[test]
     #[should_panic(expected = "YUYV width must be even")]

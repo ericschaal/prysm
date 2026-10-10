@@ -5,10 +5,10 @@
 pub struct SampleDensity(pub usize);
 
 impl SampleDensity {
-    /// Calculate the number of samples for a given edge length in pixels
+    /// Calculate samples, capped at one per pixel (at least one for empty edges).
     #[must_use]
     pub fn samples_for_length(self, length_px: usize) -> usize {
-        ((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize
+        (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
     }
 
     /// Get the raw density value (samples per 1000px)
@@ -26,7 +26,8 @@ pub struct Config {
     /// Brightness (0.0 to 1.0)
     pub brightness: f32,
 
-    /// Smoothing factor for color transitions (0.0 = no smoothing, 1.0 = maximum smoothing)
+    /// Previous-frame weight for color transitions: 0.0 disables smoothing;
+    /// values above 0.99 are capped at 0.99 so the output keeps converging.
     pub temporal_smoothing: f32,
 
     /// Depth of the edge sampling region as a fraction of frame height.
