@@ -23,9 +23,9 @@ pub struct Config {
     pub smoothing_percent: u8,
 
     /// How far inward to read colors from each edge, as a percentage of the
-    /// picture height after black bars are removed. Default: 3.
-    /// Smaller values follow the outer edge; larger values mix in more of the
-    /// picture. Clamped to 1–50, and limited so opposite edges never overlap.
+    /// picture height after black bars are removed. Default: 15.
+    /// Colors have strongest influence at the edge, fading quadratically toward
+    /// the interior. Clamped to 1–50, with opposite edges never overlapping.
     pub edge_depth_percent: u8,
 
     /// Follow the picture inside black bars instead of making the lights dark.
@@ -38,8 +38,7 @@ impl Default for Config {
         Self {
             brightness_percent: 80,
             smoothing_percent: 40,
-            // Keep objects near the border from being diluted by the interior.
-            edge_depth_percent: 3,
+            edge_depth_percent: 15,
             remove_black_bars: true,
         }
     }

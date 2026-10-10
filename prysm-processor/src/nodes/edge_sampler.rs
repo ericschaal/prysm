@@ -3,9 +3,8 @@ use prysm_core::{Edge, EdgeSpectra, SampleDensity, Spectrum};
 
 /// Samples edge colors from a raw frame, decoding only the pixels it reads.
 ///
-/// Each LED sample is the linear-light average of its full edge segment,
-/// integrating every pixel in the region rather than point-sampling a
-/// sparse grid.
+/// Each LED sample integrates its full edge segment in linear light,
+/// with quadratic falloff from the screen edge toward the interior.
 #[derive(Debug)]
 pub struct EdgeSampler {
     sample_density: SampleDensity,
@@ -64,7 +63,7 @@ impl EdgeSampler {
                 Edge::Right => (width - depth, segment_start, width, segment_end),
             };
 
-            let color = view.average_linear(x_start, y_start, x_end, y_end);
+            let color = view.average_edge_linear(x_start, y_start, x_end, y_end, edge);
             samples.push(color);
         }
 
@@ -137,7 +136,7 @@ mod tests {
 
     #[test]
     fn depth_clamps_on_tiny_viewports() {
-        // 8x8 frame: sub-pixel requested depth must clamp to one pixel.
+        // 8x8 frame: the requested depth rounds to one pixel.
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 200);
         let spectra = sampler().process(&ViewFrame::new(frame));
         assert!(spectra.top.sample_at(0.5).r > 0.0);

@@ -342,37 +342,62 @@ fn narrow_edge_changes_update_output_immediately() {
 }
 
 #[test]
-fn shallow_dark_objects_dominate_the_default_edge_samples() {
+fn bright_objects_grow_stronger_as_they_approach_each_edge() {
+    let config = Config {
+        brightness_percent: 100,
+        smoothing_percent: 0,
+        remove_black_bars: false,
+        ..Config::default()
+    };
     for (width, height) in [(320, 180), (640, 360)] {
-        // An object entering the outer 2% should outweigh the bright background.
         let depth = height / 50;
-        let regions = [
-            (width / 3, 0, width * 2 / 3, depth),
-            (width - depth, height / 3, width, height * 2 / 3),
-            (width / 3, height - depth, width * 2 / 3, height),
-            (0, height / 3, depth, height * 2 / 3),
-        ];
-        for (edge, (x_start, y_start, x_end, y_end)) in regions.into_iter().enumerate() {
-            let base = rgb(width, height, 210);
-            let mut data = base.data.as_ref().clone();
-            for y in y_start..y_end {
-                data[((y * width + x_start) * 3) as usize..((y * width + x_end) * 3) as usize]
-                    .fill(20);
+        for edge in 0..4 {
+            let mut processor = PrysmProcessor::new(&config);
+            let mut previous = 0.0;
+            for inset_percent in [16, 14, 10, 5, 0] {
+                let inset = height * inset_percent / 100;
+                let (x_start, y_start, x_end, y_end) = match edge {
+                    0 => (width / 3, inset, width * 2 / 3, inset + depth),
+                    1 => (
+                        width - inset - depth,
+                        height / 3,
+                        width - inset,
+                        height * 2 / 3,
+                    ),
+                    2 => (
+                        width / 3,
+                        height - inset - depth,
+                        width * 2 / 3,
+                        height - inset,
+                    ),
+                    _ => (inset, height / 3, inset + depth, height * 2 / 3),
+                };
+                let mut data = vec![0; (width * height * 3) as usize];
+                for y in y_start..y_end {
+                    for x in x_start..x_end {
+                        data[((y * width + x) * 3) as usize] = 255;
+                    }
+                }
+                let output =
+                    processor.process_frame(Frame::new(data, width, height, PixelFormat::RGB24));
+                let edges = [&output.top, &output.right, &output.bottom, &output.left];
+                let actual = edges[edge].sample_at(0.5);
+                if inset_percent == 16 {
+                    assert_eq!(actual.r, 0.0);
+                } else {
+                    assert!(
+                        actual.r > previous,
+                        "{width}x{height}, edge {edge}, inset {inset_percent}%: {actual:?} <= {previous}"
+                    );
+                }
+                assert!(
+                    actual.r < 0.5,
+                    "a small bright object must not turn the whole sample fully on"
+                );
+                assert_eq!((actual.g, actual.b), (0.0, 0.0));
+                assert_eq!(edges[(edge + 2) % 4].sample_at(0.5).r, 0.0);
+                previous = actual.r;
             }
-            let frame = Frame::new(data, width, height, PixelFormat::RGB24);
-            let mut processor = PrysmProcessor::default();
-            let background = processor.process_frame(base).top.sample_at(0.5).r;
-            let mut output = processor.process_frame(frame.clone());
-            for _ in 1..60 {
-                output = processor.process_frame(frame.clone());
-            }
-            let edges = [&output.top, &output.right, &output.bottom, &output.left];
-            let actual = edges[edge].sample_at(0.5).r;
-            assert!(
-                actual < background * 0.5,
-                "{width}x{height}, edge {edge}: background diluted the object ({actual})"
-            );
-            assert!((edges[(edge + 2) % 4].sample_at(0.5).r - background).abs() < 1e-6);
         }
     }
 }
@@ -462,7 +487,10 @@ fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
     let mut data = vec![0; 100 * 100 * 3];
     data[..100 * 10 * 3].fill(255);
     let frame = Frame::new(data, 100, 100, PixelFormat::RGB24);
-    for (edge_depth_percent, expected) in [(0, 1.0), (10, 1.0), (20, 0.5), (50, 0.2), (255, 0.2)] {
+    // The outer fraction f contributes 1 - (1 - f)^3 with quadratic falloff.
+    for (edge_depth_percent, expected) in
+        [(0, 1.0), (10, 1.0), (20, 0.875), (50, 0.488), (255, 0.488)]
+    {
         let config = Config {
             brightness_percent: 100,
             smoothing_percent: 0,
@@ -475,7 +503,7 @@ fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
             .sample_at(0.5)
             .r;
         assert!(
-            (actual - expected).abs() < 1e-6,
+            (actual - expected).abs() < 0.001,
             "edge depth {edge_depth_percent}%: {actual}"
         );
     }
@@ -491,8 +519,8 @@ fn black_bar_removal_can_be_disabled() {
         let config = Config {
             brightness_percent: 100,
             smoothing_percent: 0,
+            edge_depth_percent: 10,
             remove_black_bars,
-            ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
         for _ in 0..60 {

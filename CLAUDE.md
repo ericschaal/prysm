@@ -122,7 +122,7 @@ let config = prysm_core::Config {
 | --- | --- | --- |
 | `brightness_percent` | 80 | 0 turns lights off; 100 is full brightness. |
 | `smoothing_percent` | 40 | 0 responds instantly; higher values reduce flicker but respond more slowly; 100 is slowest. |
-| `edge_depth_percent` | 3 | How far inward to read colors, as a percentage of picture height after cropping. Smaller values favor objects near the border. |
+| `edge_depth_percent` | 15 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
 Brightness and smoothing are clamped to 0–100, edge depth to 1–50. Edge regions never overlap
@@ -153,11 +153,11 @@ Tests are minimal but focused:
 ### When working with the processor:
 
 - `PrysmProcessor` chains typed nodes: `BandDetector` (letterbox/pillarbox viewport) → `EdgeSampler`
-  (linear-light region averaging on every frame) → `TemporalSmoothing`
+  (edge-weighted linear-light region averaging on every frame) → `TemporalSmoothing`
 - Frames carry their YUYV range and matrix from capture into both processing and preview.
 - Brightness scales the final spectra after smoothing.
 - Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
-  decodes only the pixels it reads (`ViewFrame::average_linear`). Band detection reads luma via
+  decodes only the pixels it reads (`ViewFrame::average_edge_linear`). Band detection reads luma via
   `frames::luma_at`.
 - The processor is stateful (smoothing history, band debounce)
 - Supports YUYV, RGB24, and BGR24; MJPEG currently returns black spectra
