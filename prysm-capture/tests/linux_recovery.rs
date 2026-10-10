@@ -42,7 +42,8 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
 
     let shutdown = CancellationToken::new();
     let _cancel_on_exit = shutdown.clone().drop_guard();
-    let mut frames = V4lCapturer::new(Some(&path), shutdown.clone())?.into_stream(64, 48);
+    let frames = V4lCapturer::new(Some(&path), shutdown.clone())?.into_stream(64, 48);
+    futures::pin_mut!(frames);
     for luma in [16, 235] {
         let pixels = [luma, 128, luma, 128].repeat(64 * 48 / 2);
         timeout(Duration::from_secs(5), async {
@@ -50,7 +51,7 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
             loop {
                 tokio::select! {
                     frame = frames.next() => {
-                        let frame = frame.context("Capture closed before the producer's new frame arrived")?;
+                        let frame = frame.context("Capture closed before the producer's new frame arrived")??;
                         if frame.as_slice() == pixels { return Ok::<_, anyhow::Error>(()); }
                     }
                     _ = tick.tick() => producer.write_all(&pixels)?,
@@ -60,7 +61,10 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
 
         // Drain queued frames while the producer pauses through two one-second capture timeouts.
         let ended = timeout(Duration::from_millis(2200), async {
-            while frames.next().await.is_some() {}
+            while let Some(frame) = frames.next().await {
+                frame?;
+            }
+            Ok::<_, anyhow::Error>(())
         })
         .await;
         ensure!(
@@ -70,9 +74,12 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
     }
     shutdown.cancel();
     timeout(Duration::from_secs(2), async {
-        while frames.next().await.is_some() {}
+        while let Some(frame) = frames.next().await {
+            frame?;
+        }
+        Ok::<_, anyhow::Error>(())
     })
     .await
-    .context("Cancellation did not close the stalled capture")?;
+    .context("Cancellation did not close the stalled capture")??;
     Ok(())
 }

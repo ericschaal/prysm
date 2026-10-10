@@ -19,12 +19,12 @@ const FRAME_BYTES: usize = CAPTURE_WIDTH as usize * CAPTURE_HEIGHT as usize * 3;
 
 /// Decode a video once at its source rate into 640×360 sRGB frames.
 ///
-/// Requires `FFmpeg` 9+ on PATH. Successful EOF cancels `shutdown`; decoding
-/// failures are logged and close the stream without cancelling it.
+/// Requires `FFmpeg` 9+ on PATH. Successful EOF closes the stream; decoding
+/// failures are yielded with their original error context. Cancellation stops playback.
 pub fn video_feed(
     path: &Path,
     shutdown: CancellationToken,
-) -> Result<impl Stream<Item = Frame> + Send + 'static + use<>> {
+) -> Result<impl Stream<Item = Result<Frame>> + Send + 'static + use<>> {
     std::fs::File::open(path).with_context(|| format!("Cannot open video {}", path.display()))?;
     // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and preview.
     let filter = format!(
@@ -48,26 +48,20 @@ pub fn video_feed(
         .context("FFmpeg stdout is unavailable")?;
     tracing::info!(path = %path.display(), "Playing video");
 
-    let frames = futures::stream::try_unfold(
-        (child, stdout, shutdown.clone()),
-        |(mut child, mut stdout, shutdown)| async move {
-            if let Some(frame) = read_frame(&mut stdout).await? {
-                return Ok(Some((frame, (child, stdout, shutdown))));
+    let frames =
+        futures::stream::try_unfold((child, stdout), |(mut child, mut stdout)| async move {
+            if let Some(frame) = read_frame(&mut stdout)
+                .await
+                .context("Failed to read FFmpeg frame")?
+            {
+                return Ok(Some((frame, (child, stdout))));
             }
             let status = child.wait().await.context("Failed to wait for FFmpeg")?;
             anyhow::ensure!(status.success(), "FFmpeg exited with {status}");
             tracing::info!("Video playback complete");
-            shutdown.cancel();
             Ok(None)
-        },
-    );
-    Ok(frames.take_until(shutdown.cancelled_owned()).filter_map(
-        |result: Result<Frame>| async move {
-            result
-                .inspect_err(|error| tracing::error!(%error, "Video playback failed"))
-                .ok()
-        },
-    ))
+        });
+    Ok(frames.take_until(shutdown.cancelled_owned()))
 }
 
 async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<Option<Frame>> {
@@ -110,6 +104,60 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires FFmpeg 9+ on PATH"]
+    async fn file_stream_preserves_ordered_eof_and_decoder_failure() {
+        let directory =
+            std::env::temp_dir().join(format!("prysm-video-stream-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("three-frames.mkv");
+        let status = Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=16x16:rate=10",
+            ])
+            .args(["-frames:v", "3", "-c:v", "ffv1"])
+            .arg(&path)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success());
+        let shutdown = CancellationToken::new();
+        let stream = video_feed(&path, shutdown.clone()).unwrap();
+        futures::pin_mut!(stream);
+        let mut count = 0;
+        while let Some(frame) =
+            tokio::time::timeout(std::time::Duration::from_secs(10), stream.next())
+                .await
+                .unwrap()
+        {
+            assert_eq!(frame.unwrap().len(), FRAME_BYTES);
+            count += 1;
+        }
+        assert_eq!(count, 3);
+        assert!(!shutdown.is_cancelled());
+        let invalid = directory.join("invalid.mkv");
+        std::fs::write(&invalid, b"invalid video data").unwrap();
+        let stream = video_feed(&invalid, shutdown.clone()).unwrap();
+        futures::pin_mut!(stream);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("FFmpeg exited"));
+        assert!(stream.next().await.is_none());
+        assert!(!shutdown.is_cancelled());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(invalid).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[tokio::test]
     #[ignore = "requires FFmpeg 9+ and the local default video"]
     async fn plays_default_video_and_stops_on_cancellation() {
         let shutdown = CancellationToken::new();
@@ -118,6 +166,7 @@ mod tests {
         for _ in 0..3 {
             let frame = tokio::time::timeout(std::time::Duration::from_secs(10), feed.next())
                 .await
+                .unwrap()
                 .unwrap()
                 .unwrap();
             assert_eq!(frame.len(), FRAME_BYTES);

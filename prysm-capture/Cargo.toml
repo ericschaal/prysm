@@ -16,7 +16,6 @@ yuv = { workspace = true, features = ["fast_mode"] }
 tracing.workspace = true
 anyhow.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
-tokio-stream.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]

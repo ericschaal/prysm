@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
 }
 
 async fn render_stream(
-    colors: impl Stream<Item = EdgeColors>,
+    colors: impl Stream<Item = Result<EdgeColors>>,
     renderer: &mut WledRenderer,
     led_counts: [usize; 4],
     shutdown: &CancellationToken,
@@ -124,9 +124,9 @@ async fn render_stream(
             () = shutdown.cancelled() => return Ok(()),
             colors = colors.next() => {
                 let Some(colors) = colors else {
-                    ensure!(shutdown.is_cancelled(), "Capture stream ended unexpectedly");
                     return Ok(());
                 };
+                let colors = colors?;
                 renderer.render_edges(&colors, led_counts).context("Failed to send WLED frame")?;
             }
         }
@@ -237,13 +237,13 @@ type = "video"
     }
 
     #[tokio::test]
-    async fn processes_a_frame_sends_colors_and_reports_capture_end() {
+    async fn processes_a_frame_sends_colors_and_completes_at_eof() {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         let mut renderer = WledRenderer::new(socket.local_addr().unwrap()).unwrap();
-        let frames = futures::stream::iter([Frame::fill(255, 2, 2, PixelFormat::RGB24)]);
+        let frames = futures::stream::iter([Ok(Frame::fill(255, 2, 2, PixelFormat::RGB24))]);
         let config = Config {
             brightness_percent: 100,
             smoothing_seconds: 0.0,
@@ -251,17 +251,27 @@ type = "video"
         };
         let colors = PrysmProcessor::new(&config).into_stream(frames);
         let result = render_stream(colors, &mut renderer, [1; 4], &CancellationToken::new()).await;
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Capture stream ended unexpectedly")
-        );
+        result.unwrap();
         let mut bytes = [0u8; 1500];
         let size = socket.recv(&mut bytes).unwrap();
         assert_eq!(size, 22);
         assert_eq!(&bytes[..4], &[0x41, 1, 0x0b, 1]);
         assert_eq!(&bytes[10..size], &[255; 12]);
+    }
+
+    #[tokio::test]
+    async fn source_error_survives_processing_and_wled_output() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut renderer = WledRenderer::new(socket.local_addr().unwrap()).unwrap();
+        let frames = futures::stream::iter([
+            Ok(Frame::fill(255, 2, 2, PixelFormat::RGB24)),
+            Err(anyhow::anyhow!("decoder failed").context("video input")),
+        ]);
+        let colors = PrysmProcessor::default().into_stream(frames);
+        let error = render_stream(colors, &mut renderer, [1; 4], &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), "video input: decoder failed");
     }
 
     #[tokio::test]

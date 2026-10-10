@@ -20,7 +20,7 @@ pub fn run<S>(
     create_feed: impl FnOnce(CancellationToken) -> Result<S> + Send + 'static,
 ) -> Result<()>
 where
-    S: Stream<Item = Frame> + Send + 'static,
+    S: Stream<Item = Result<Frame>> + Send + 'static,
 {
     let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber)?;

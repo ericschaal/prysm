@@ -38,8 +38,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{Frame, PixelFormat, PrysmCapturer, YuvRange, YuvStandardMatrix};
 
 struct DelegateIvars {
-    sender: Mutex<Option<tokio::sync::mpsc::Sender<Frame>>>,
+    sender: Mutex<Option<tokio::sync::watch::Sender<Option<Frame>>>>,
     failure: CancellationToken,
+    error: Mutex<Option<String>>,
 }
 
 define_class!(
@@ -71,8 +72,7 @@ define_class!(
             if let Ok(sender) = self.ivars().sender.lock()
                 && let Some(sender) = sender.as_ref()
             {
-                // Drop the frame if the consumer is falling behind.
-                let _ = sender.try_send(frame);
+                let _ = sender.send(Some(frame));
             }
         }
     }
@@ -80,7 +80,8 @@ define_class!(
     impl Delegate {
         #[unsafe(method(captureFailed:))]
         fn capture_failed(&self, notification: &NSNotification) {
-            tracing::error!("Capture failed: {}", notification.name());
+            let error = format!("Capture failed: {} ({:?})", notification.name(), notification.userInfo());
+            *self.ivars().error.lock().expect("capture error mutex poisoned") = Some(error);
             self.ivars().failure.cancel();
         }
 
@@ -89,6 +90,7 @@ define_class!(
             let this = this.set_ivars(DelegateIvars {
                 sender: Mutex::new(None),
                 failure: CancellationToken::new(),
+                error: Mutex::new(None),
             });
             unsafe { msg_send![super(this), init] }
         }
@@ -96,7 +98,7 @@ define_class!(
 );
 
 impl Delegate {
-    fn new(sender: tokio::sync::mpsc::Sender<Frame>) -> Retained<Self> {
+    fn new(sender: tokio::sync::watch::Sender<Option<Frame>>) -> Retained<Self> {
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
         *this.ivars().sender.lock().expect("sender mutex poisoned") = Some(sender);
         this
@@ -235,7 +237,7 @@ impl Drop for RunningSession {
 
 fn start_session(
     device_uid: Option<&str>,
-    sender: tokio::sync::mpsc::Sender<Frame>,
+    sender: tokio::sync::watch::Sender<Option<Frame>>,
     width: u32,
     height: u32,
 ) -> Result<RunningSession> {
@@ -284,6 +286,16 @@ fn start_session(
         _queue: queue,
     };
     running.session.start_running();
+    if let Some(error) = running
+        .delegate
+        .ivars()
+        .error
+        .lock()
+        .expect("capture error mutex poisoned")
+        .take()
+    {
+        return Err(anyhow!(error));
+    }
     anyhow::ensure!(
         running.session.is_running() && !running.delegate.ivars().failure.is_cancelled(),
         "Capture session failed to start"
@@ -298,7 +310,7 @@ pub struct AVFoundationCapturer {
 }
 
 async fn stop_when_capture_closes(
-    sender: tokio::sync::mpsc::Sender<Frame>,
+    sender: tokio::sync::watch::Sender<Option<Frame>>,
     shutdown: CancellationToken,
     failure: CancellationToken,
     stop: std_mpsc::Sender<()>,
@@ -323,42 +335,43 @@ impl AVFoundationCapturer {
 }
 
 impl PrysmCapturer for AVFoundationCapturer {
-    fn into_stream(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static {
-        use tokio_stream::wrappers::ReceiverStream;
-
-        // Frames flow delegate queue -> channel -> async stream. The capture
-        // session itself is owned by a dedicated OS thread because the
-        // AVFoundation objects are not Send.
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
-
-        // Bridge the async cancellation token to the blocking thread.
+    fn into_stream(
+        self,
+        width: u32,
+        height: u32,
+    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
+        let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
+        // AVFoundation objects stay on an OS thread because they are not Send.
         let (stop_tx, stop_rx) = std_mpsc::channel::<()>();
         let runtime = tokio::runtime::Handle::current();
-
         std::thread::spawn(move || {
-            let session = match start_session(self.device_uid.as_deref(), tx.clone(), width, height)
-            {
-                Ok(session) => session,
-                Err(e) => {
-                    tracing::error!("Failed to start capture session: {e}");
-                    return;
+            let result = (|| -> Result<()> {
+                let session = start_session(self.device_uid.as_deref(), tx.clone(), width, height)?;
+                runtime.spawn(stop_when_capture_closes(
+                    tx,
+                    self.shutdown_token,
+                    session.delegate.ivars().failure.clone(),
+                    stop_tx,
+                ));
+                stop_rx
+                    .recv()
+                    .context("Capture stop monitor ended unexpectedly")?;
+                tracing::info!("Stopping AVFoundation capture");
+                if let Some(error) = session
+                    .delegate
+                    .ivars()
+                    .error
+                    .lock()
+                    .expect("capture error mutex poisoned")
+                    .take()
+                {
+                    return Err(anyhow!(error));
                 }
-            };
-
-            runtime.spawn(stop_when_capture_closes(
-                tx,
-                self.shutdown_token,
-                session.delegate.ivars().failure.clone(),
-                stop_tx,
-            ));
-
-            // Block until shutdown, capture failure, or consumer drop.
-            let _ = stop_rx.recv();
-            tracing::info!("Stopping AVFoundation capture");
-            drop(session);
+                Ok(())
+            })();
+            let _ = finished.send(result);
         });
-
-        ReceiverStream::new(rx)
+        frames
     }
 }
 
@@ -378,7 +391,7 @@ mod tests {
         for name in names {
             let object = NSObject::new();
             let unrelated = NSObject::new();
-            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            let (sender, mut receiver) = tokio::sync::watch::channel(None::<Frame>);
             let delegate = Delegate::new(sender.clone());
             delegate.observe_failure(name, &object);
             let failure = delegate.ivars().failure.clone();
@@ -408,36 +421,40 @@ mod tests {
                 .await
                 .unwrap();
             assert!(stop_rx.try_recv().is_ok());
+            let error = delegate.ivars().error.lock().unwrap().take().unwrap();
+            assert!(error.contains(&name.to_string()));
             drop(delegate);
             assert!(
-                tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+                tokio::time::timeout(std::time::Duration::from_secs(1), receiver.changed())
                     .await
                     .unwrap()
-                    .is_none()
+                    .is_err()
             );
         }
     }
 
     #[tokio::test]
-    async fn failed_startup_closes_frame_stream() {
+    async fn failed_startup_preserves_capture_error() {
         use futures::StreamExt;
         let shutdown = CancellationToken::new();
         let capturer =
             AVFoundationCapturer::new(Some("prysm-test-missing-device"), shutdown.clone()).unwrap();
-        let mut stream = capturer.into_stream(640, 360);
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
-                .await
-                .unwrap()
-                .is_none()
-        );
+        let stream = capturer.into_stream(640, 360);
+        futures::pin_mut!(stream);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("No video capture device found"));
+        assert!(stream.next().await.is_none());
         assert!(!shutdown.is_cancelled());
     }
 
     #[tokio::test]
     async fn capture_stops_on_cancellation_or_consumer_drop() {
         for cancel in [false, true] {
-            let (sender, receiver) = tokio::sync::mpsc::channel(1);
+            let (sender, receiver) = tokio::sync::watch::channel(None::<Frame>);
             let shutdown = CancellationToken::new();
             let (stop_tx, stop_rx) = std_mpsc::channel();
             let stop = stop_when_capture_closes(

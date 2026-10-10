@@ -18,12 +18,13 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn check_capture(mut stream: impl Stream<Item = Frame> + Unpin) -> anyhow::Result<()> {
+async fn check_capture(stream: impl Stream<Item = anyhow::Result<Frame>>) -> anyhow::Result<()> {
+    futures::pin_mut!(stream);
     for i in 0..3 {
         let frame = tokio::time::timeout(Duration::from_secs(5), stream.next())
             .await
             .context("Timed out waiting for a capture frame")?
-            .context("Capture stream ended before three frames arrived")?;
+            .context("Capture stream ended before three frames arrived")??;
         println!(
             "frame {i}: {}x{} {} ({} bytes)",
             frame.width,
@@ -42,14 +43,14 @@ mod tests {
 
     #[tokio::test]
     async fn three_frames_succeed() {
-        let frames = futures::stream::iter(vec![Frame::dummy(2, 1); 3]);
+        let frames = futures::stream::iter((0..3).map(|_| Ok(Frame::dummy(2, 1))));
         assert!(check_capture(frames).await.is_ok());
     }
 
     #[tokio::test]
     async fn early_end_is_an_error() {
         for count in 0..3 {
-            let frames = futures::stream::iter(vec![Frame::dummy(2, 1); count]);
+            let frames = futures::stream::iter((0..count).map(|_| Ok(Frame::dummy(2, 1))));
             assert!(
                 check_capture(frames).await.is_err(),
                 "only {count} frames arrived"

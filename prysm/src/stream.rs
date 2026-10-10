@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use futures::{Stream, StreamExt};
 use prysm_capture::Frame;
 use prysm_core::EdgeColors;
@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Own processing and desktop publication for the lifetime of a frame source.
 pub(crate) async fn publish_frames(
-    source: impl Stream<Item = Frame>,
+    source: impl Stream<Item = Result<Frame>>,
     mut processor: PrysmProcessor,
     frames: watch::Sender<Frame>,
     edge_colors: watch::Sender<EdgeColors>,
@@ -22,9 +22,9 @@ pub(crate) async fn publish_frames(
             () = shutdown.cancelled() => return Ok(()),
             frame = source.next() => {
                 let Some(frame) = frame else {
-                    ensure!(shutdown.is_cancelled(), "Capture stream ended unexpectedly");
                     return Ok(());
                 };
+                let frame = frame?;
                 let colors = processor.process_frame(frame.clone());
                 let _ = frames.send(frame);
                 let _ = edge_colors.send(colors);
@@ -58,7 +58,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publishes_every_frame_in_a_burst_and_reports_unexpected_eof() {
+    async fn publishes_every_frame_in_a_burst_and_completes_at_eof() {
         let (frames, colors) = outputs();
         let frame_rx = frames.subscribe();
         let color_rx = colors.subscribe();
@@ -67,7 +67,7 @@ mod tests {
                 assert_eq!(frame_rx.borrow().as_slice(), &[value - 1; 12]);
                 assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, value - 1);
             }
-            Frame::fill(value, 2, 2, PixelFormat::RGB24)
+            Ok(Frame::fill(value, 2, 2, PixelFormat::RGB24))
         });
         let config = Config {
             brightness_percent: 100,
@@ -84,12 +84,7 @@ mod tests {
             &shutdown,
         )
         .await;
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Capture stream ended unexpectedly")
-        );
+        result.unwrap();
         assert!(shutdown.is_cancelled());
         assert_eq!(frame_rx.borrow().as_slice(), &[8; 12]);
         assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, 8);
@@ -138,16 +133,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_error_reaches_desktop_and_cancels_shutdown() {
+        let source = futures::stream::iter([
+            Ok(Frame::fill(42, 2, 2, PixelFormat::RGB24)),
+            Err(anyhow::anyhow!("camera disconnected").context("capture failed")),
+        ]);
+        let (frames, colors) = outputs();
+        let receiver = frames.subscribe();
+        let shutdown = CancellationToken::new();
+        let error = publish_frames(source, PrysmProcessor::default(), frames, colors, &shutdown)
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), "capture failed: camera disconnected");
+        assert_eq!(receiver.borrow().as_slice(), &[42; 12]);
+        assert!(shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
     async fn pipeline_panic_is_observed_and_cancels_shutdown() {
         let shutdown = CancellationToken::new();
         let token = shutdown.clone();
         let dropped = Arc::new(AtomicBool::new(false));
         let probe = DropProbe(dropped.clone());
         let task = tokio::spawn(async move {
-            let source = futures::stream::poll_fn(move |_| -> std::task::Poll<Option<Frame>> {
-                let _ = &probe;
-                panic!("pipeline failed");
-            });
+            let source =
+                futures::stream::poll_fn(move |_| -> std::task::Poll<Option<Result<Frame>>> {
+                    let _ = &probe;
+                    panic!("pipeline failed");
+                });
             let (frames, colors) = outputs();
             publish_frames(source, PrysmProcessor::default(), frames, colors, &token).await
         });

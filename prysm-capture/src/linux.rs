@@ -157,103 +157,68 @@ impl V4lCapturer {
 }
 
 impl PrysmCapturer for V4lCapturer {
-    fn into_stream(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static {
-        use tokio_stream::wrappers::ReceiverStream;
-
-        // Create channel for sending frames from blocking thread to async
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
-
-        // Spawn OS thread for blocking v4l I/O
+    fn into_stream(
+        self,
+        width: u32,
+        height: u32,
+    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
+        let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
         std::thread::spawn(move || {
-            tracing::info!("Opening video device: {}", self.device_path);
-            let mut device = match Device::with_path(&self.device_path) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::error!("Failed to open video device: {}", e);
-                    return;
-                }
-            };
-
-            let (mut input_stream, format, range, matrix) =
-                match Self::create_stream(&mut device, width, height) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::error!("Failed to create stream: {}", e);
-                        return;
-                    }
+            let result = (|| -> Result<()> {
+                tracing::info!("Opening video device: {}", self.device_path);
+                let mut device = Device::with_path(&self.device_path)
+                    .with_context(|| format!("Failed to open video device {}", self.device_path))?;
+                let (mut input_stream, format, range, matrix) =
+                    Self::create_stream(&mut device, width, height)?;
+                // Bound the wait so a stalled camera cannot prevent cancellation.
+                input_stream.set_timeout(std::time::Duration::from_secs(1));
+                let pixel_format = match format.fourcc.str() {
+                    Ok("YUYV") => PixelFormat::YUYV,
+                    Ok("RGB3") => PixelFormat::RGB24,
+                    Ok("BGR3") => PixelFormat::BGR24,
+                    _ => anyhow::bail!("Unsupported format: {:?}", format.fourcc),
                 };
-            // Bound the wait so a stalled camera cannot prevent cancellation.
-            input_stream.set_timeout(std::time::Duration::from_secs(1));
-
-            // Determine format
-            let pixel_format = match format.fourcc.str() {
-                Ok("YUYV") => PixelFormat::YUYV,
-                Ok("RGB3") => PixelFormat::RGB24,
-                Ok("BGR3") => PixelFormat::BGR24,
-                _ => {
-                    tracing::error!("Unsupported format: {:?}", format.fourcc);
-                    return;
-                }
-            };
-
-            tracing::info!("Stream started with format: {:?}", pixel_format);
-
-            // Blocking loop (appropriate for blocking I/O)
-            loop {
-                if self.shutdown_token.is_cancelled() || tx.is_closed() {
-                    tracing::info!("Shutdown signal received, stopping v4l capture");
-                    break;
-                }
-
-                match input_stream.next() {
-                    Ok((buffer, metadata)) => {
-                        let Some(mut frame) =
-                            buffer.get(..metadata.bytesused as usize).and_then(|data| {
-                                Frame::from_strided_buffer(
-                                    data,
-                                    format.width,
-                                    format.height,
-                                    pixel_format,
-                                    format.stride as usize,
-                                    metadata.flags.contains(v4l::buffer::Flags::ERROR),
-                                )
-                            })
-                        else {
-                            tracing::warn!("Discarding corrupt or incomplete capture frame");
-                            continue;
-                        };
-                        frame.yuv_range = range;
-                        frame.yuv_matrix = matrix;
-
-                        let sent = futures::executor::block_on(crate::send_frame(
-                            &tx,
-                            frame,
-                            &self.shutdown_token,
-                        ));
-                        if !sent {
-                            tracing::info!(
-                                "Capture cancelled or receiver dropped, stopping capture"
-                            );
-                            break;
+                tracing::info!("Stream started with format: {:?}", pixel_format);
+                loop {
+                    if self.shutdown_token.is_cancelled() || tx.is_closed() {
+                        return Ok(());
+                    }
+                    match input_stream.next() {
+                        Ok((buffer, metadata)) => {
+                            let Some(mut frame) =
+                                buffer.get(..metadata.bytesused as usize).and_then(|data| {
+                                    Frame::from_strided_buffer(
+                                        data,
+                                        format.width,
+                                        format.height,
+                                        pixel_format,
+                                        format.stride as usize,
+                                        metadata.flags.contains(v4l::buffer::Flags::ERROR),
+                                    )
+                                })
+                            else {
+                                tracing::warn!("Discarding corrupt or incomplete capture frame");
+                                continue;
+                            };
+                            frame.yuv_range = range;
+                            frame.yuv_matrix = matrix;
+                            if tx.send(Some(frame)).is_err() {
+                                return Ok(());
+                            }
                         }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                        // next() queues a buffer before waiting; restart to avoid queueing it twice.
-                        if let Err(e) = input_stream.stop() {
-                            tracing::error!("Failed to stop stalled capture stream: {e}");
-                            break;
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            // next() queues a buffer before waiting; restart to avoid queueing it twice.
+                            input_stream
+                                .stop()
+                                .context("Failed to stop stalled capture stream")?;
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error capturing frame: {}", e);
-                        break;
+                        Err(e) => return Err(e).context("Error capturing frame"),
                     }
                 }
-            }
+            })();
+            let _ = finished.send(result);
         });
-
-        // Return async stream backed by channel
-        ReceiverStream::new(rx)
+        frames
     }
 }
 

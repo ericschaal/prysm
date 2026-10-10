@@ -59,7 +59,9 @@ Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 
 - `PrysmCapturer` trait: Extensible video capture interface
 - `publish_frames()`: Owns desktop processing, watch publication, and cancellation
-- Desktop consumes each delivered frame once; capture queues retain their platform-specific overload behavior
+- Desktop consumes each delivered frame once; both camera adapters retain only the newest pending frame
+- Sources yield `Result<Frame>`: camera failures are terminal errors, successful file EOF is normal completion
+- Slow camera consumers skip intermediate frames; smoothing uses elapsed processing time, while black-bar confirmation still counts delivered frames
 
 ### Crate Responsibilities
 
@@ -131,7 +133,7 @@ Wiring starts at the bottom-left viewed from the front, running up the left edge
 across the top, down the right, and back along the bottom. Video input defaults
 to the same Philips clip as the desktop video binary and exits successfully at
 EOF. Both use the FFmpeg feed in `prysm/src/video.rs`. Ctrl+C cancels capture;
-capture and send failures exit with an error. WLED's realtime timeout restores
+capture and send failures exit with their original error context. WLED's realtime timeout restores
 its normal effect.
 
 The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
@@ -184,7 +186,8 @@ Tests are minimal but focused:
 ### When adding new capture sources:
 
 - Implement the `PrysmCapturer` trait
-- Return a stream of `Frame` objects
+- Return a stream of `Result<Frame>` objects; preserve startup/runtime failure context
+- Use the shared latest-frame capture channel; keep terminal results separate from replaceable frames
 - Handle blocking I/O by spawning OS threads (see v4l-capturer pattern)
 - Use Arc-wrapped frame data for zero-copy sharing
 
@@ -220,7 +223,7 @@ Tests are minimal but focused:
 - `prysm/src/bin/video.rs` - Desktop video file entry point
 - `prysm/src/video.rs` - Shared FFmpeg frame stream
 - `prysm/src/lib.rs` - Shared application orchestration and threading setup
-- `prysm/src/stream.rs` - Owned desktop stream consumer and lifecycle tests
+- `prysm/src/stream.rs` - Owned fallible desktop stream consumer and lifecycle tests
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
 - `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
 - `prysm-processor/src/frames/view_frame.rs` - Raw-frame viewport with on-demand pixel decoding

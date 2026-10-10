@@ -1,6 +1,9 @@
-use futures::Stream;
+use anyhow::{Context, Result};
+use futures::{Stream, StreamExt};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+use tokio::sync::{oneshot, watch};
+use tokio_util::sync::CancellationToken;
 
 pub mod yuyv;
 pub use ::yuv::{YuvRange, YuvStandardMatrix};
@@ -155,23 +158,48 @@ impl Frame {
     }
 }
 
+/// Live capture yields the newest available frame, or a terminal capture error.
+/// Intermediate frames may be skipped under load; cancellation closes the stream.
 pub trait PrysmCapturer {
-    fn into_stream(self, width: u32, height: u32) -> impl Stream<Item = Frame> + Send + 'static
+    fn into_stream(
+        self,
+        width: u32,
+        height: u32,
+    ) -> impl Stream<Item = Result<Frame>> + Send + 'static
     where
         Self: Sized + Send + 'static;
 }
 
-#[cfg(any(target_os = "linux", test))]
-async fn send_frame(
-    sender: &tokio::sync::mpsc::Sender<Frame>,
-    frame: Frame,
-    shutdown: &tokio_util::sync::CancellationToken,
-) -> bool {
-    tokio::select! {
-        biased;
-        () = shutdown.cancelled() => false,
-        result = sender.send(frame) => result.is_ok(),
-    }
+// Keep the terminal result separate so a final frame cannot overwrite a failure.
+fn capture_channel(
+    shutdown: CancellationToken,
+) -> (
+    watch::Sender<Option<Frame>>,
+    oneshot::Sender<Result<()>>,
+    impl Stream<Item = Result<Frame>> + Send,
+) {
+    let (sender, receiver) = watch::channel(None::<Frame>);
+    let (finished, completion) = oneshot::channel::<Result<()>>();
+    let frames = futures::stream::try_unfold(
+        (receiver, completion),
+        |(mut receiver, completion)| async move {
+            while receiver.changed().await.is_ok() {
+                let frame = receiver.borrow_and_update().clone();
+                if let Some(frame) = frame {
+                    return Ok(Some((frame, (receiver, completion))));
+                }
+            }
+            completion
+                .await
+                .context("Capture thread ended unexpectedly")??;
+            Ok(None)
+        },
+    );
+    (
+        sender,
+        finished,
+        frames.take_until(shutdown.cancelled_owned()),
+    )
 }
 
 #[cfg(test)]
@@ -206,17 +234,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_unblocks_a_full_frame_channel() {
-        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
-        sender.send(Frame::dummy(2, 1)).await.unwrap();
+    async fn slow_consumer_gets_latest_frame_before_terminal_error() {
+        let (sender, finished, frames) = capture_channel(CancellationToken::new());
+        // Simulate a consumer paused for eight capture intervals.
+        for value in 1..=8 {
+            sender
+                .send(Some(Frame::fill(value, 2, 1, PixelFormat::RGB24)))
+                .unwrap();
+        }
+        finished
+            .send(Err(anyhow::anyhow!("camera disconnected")))
+            .unwrap();
+        drop(sender);
+        futures::pin_mut!(frames);
+        assert_eq!(frames.next().await.unwrap().unwrap().as_slice(), &[8; 6]);
+        assert_eq!(
+            frames.next().await.unwrap().unwrap_err().to_string(),
+            "camera disconnected"
+        );
+        assert!(frames.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancellation_and_consumer_drop_stop_capture() {
         let shutdown = CancellationToken::new();
-        let sending = send_frame(&sender, Frame::dummy(2, 1), &shutdown);
-        futures::pin_mut!(sending);
-        assert!(futures::poll!(&mut sending).is_pending());
+        let (sender, _finished, frames) = capture_channel(shutdown.clone());
+        let mut frames = Box::pin(frames);
+        assert!(futures::poll!(frames.next()).is_pending());
         shutdown.cancel();
-        assert!(!sending.await);
-        assert!(receiver.try_recv().is_ok());
-        assert!(receiver.try_recv().is_err());
+        assert!(frames.next().await.is_none());
+        drop(frames);
+        assert!(sender.is_closed());
+        assert!(sender.send(Some(Frame::dummy(2, 1))).is_err());
+    }
+
+    #[tokio::test]
+    async fn unexpected_capture_thread_exit_is_an_error() {
+        let (sender, finished, frames) = capture_channel(CancellationToken::new());
+        drop(sender);
+        drop(finished);
+        futures::pin_mut!(frames);
+        assert!(
+            frames
+                .next()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("Capture thread ended unexpectedly")
+        );
     }
 }
 
