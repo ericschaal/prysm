@@ -88,7 +88,7 @@ mod tests {
     async fn ended_capture_closes_both_consumers_and_reports_failure() {
         let shutdown = CancellationToken::new();
         let (a, b) = stream_split(futures::stream::iter([1u8]));
-        let spectra = StreamWatcher::new(0).into_task(a);
+        let edge_colors = StreamWatcher::new(0).into_task(a);
         let frames = StreamWatcher::new(0).into_task(b);
         let result = wait_for_shutdown(&shutdown, frames).await;
         assert!(
@@ -98,7 +98,7 @@ mod tests {
                 .contains("Capture stream ended unexpectedly")
         );
         assert!(shutdown.is_cancelled());
-        spectra.await.unwrap();
+        edge_colors.await.unwrap();
     }
 
     #[tokio::test]

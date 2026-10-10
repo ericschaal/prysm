@@ -1,9 +1,9 @@
 use crate::frames::ViewFrame;
-use prysm_core::{Edge, EdgeSpectra, SampleDensity, Spectrum};
+use prysm_core::{ColorStrip, Edge, EdgeColors, SampleDensity};
 
 /// Samples edge colors from a raw frame, decoding only the pixels it reads.
 ///
-/// Each spectrum sample integrates its full edge segment in linear light,
+/// Each color sample integrates its full edge segment in linear light,
 /// with quadratic falloff from the screen edge toward the interior.
 #[derive(Debug)]
 pub struct EdgeSampler {
@@ -31,7 +31,7 @@ impl EdgeSampler {
             .min((view.viewport_width() / 2).max(1))
     }
 
-    fn extract_edge_spectrum(&self, view: &ViewFrame, edge: Edge) -> Spectrum {
+    fn sample_edge(&self, view: &ViewFrame, edge: Edge) -> ColorStrip {
         let width = view.viewport_width();
         let height = view.viewport_height();
         let depth = self.depth_px(view);
@@ -67,16 +67,16 @@ impl EdgeSampler {
             samples.push(color);
         }
 
-        Spectrum::new(samples)
+        ColorStrip::new(samples)
     }
 
-    pub fn process(&self, input: &ViewFrame) -> EdgeSpectra {
-        let top = self.extract_edge_spectrum(input, Edge::Top);
-        let right = self.extract_edge_spectrum(input, Edge::Right);
-        let bottom = self.extract_edge_spectrum(input, Edge::Bottom);
-        let left = self.extract_edge_spectrum(input, Edge::Left);
+    pub fn process(&self, input: &ViewFrame) -> EdgeColors {
+        let top = self.sample_edge(input, Edge::Top);
+        let right = self.sample_edge(input, Edge::Right);
+        let bottom = self.sample_edge(input, Edge::Bottom);
+        let left = self.sample_edge(input, Edge::Left);
 
-        EdgeSpectra::new(top, right, bottom, left)
+        EdgeColors::new(top, right, bottom, left)
     }
 }
 
@@ -95,31 +95,36 @@ mod tests {
     }
 
     #[test]
-    fn uniform_frame_yields_uniform_spectra() {
+    fn uniform_frame_yields_uniform_edge_colors() {
         let frame = yuyv_frame_from_luma(640, 360, |_, _| 128);
-        let spectra = sampler().process(&ViewFrame::new(frame));
+        let edge_colors = sampler().process(&ViewFrame::new(frame));
 
         let expected = LinearColor::from_srgb(Color::new(128, 128, 128));
-        for spectrum in [&spectra.top, &spectra.right, &spectra.bottom, &spectra.left] {
-            let color = spectrum.sample_at(0.5);
+        for strip in [
+            &edge_colors.top,
+            &edge_colors.right,
+            &edge_colors.bottom,
+            &edge_colors.left,
+        ] {
+            let color = strip.sample_at(0.5);
             assert!(
                 (color.r - expected.r).abs() < 0.01,
                 "expected uniform gray, got {color:?}"
             );
         }
         // Density 60/1000px: 640px edge -> 38 samples, 360px edge -> 21
-        assert_eq!(spectra.top.len(), 38);
-        assert_eq!(spectra.left.len(), 21);
+        assert_eq!(edge_colors.top.len(), 38);
+        assert_eq!(edge_colors.left.len(), 21);
     }
 
     #[test]
     fn top_and_bottom_edges_differ() {
         // Top half white, bottom half black
         let frame = yuyv_frame_from_luma(640, 360, |_, y| if y < 180 { 255 } else { 0 });
-        let spectra = sampler().process(&ViewFrame::new(frame));
+        let edge_colors = sampler().process(&ViewFrame::new(frame));
 
-        assert!(spectra.top.sample_at(0.5).r > 0.99);
-        assert!(spectra.bottom.sample_at(0.5).r < 0.01);
+        assert!(edge_colors.top.sample_at(0.5).r > 0.99);
+        assert!(edge_colors.bottom.sample_at(0.5).r < 0.01);
     }
 
     #[test]
@@ -127,7 +132,7 @@ mod tests {
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 255);
         let output = EdgeSampler::new(SampleDensity(2000), 0.03).process(&ViewFrame::new(frame));
         for edge in [&output.top, &output.bottom, &output.left, &output.right] {
-            for color in edge.quantize(edge.len()) {
+            for color in edge.resample(edge.len()) {
                 assert_eq!(color, LinearColor::new(1.0, 1.0, 1.0));
             }
             assert_eq!(edge.len(), 8);
@@ -138,7 +143,7 @@ mod tests {
     fn depth_clamps_on_tiny_viewports() {
         // 8x8 frame: the requested depth rounds to one pixel.
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 200);
-        let spectra = sampler().process(&ViewFrame::new(frame));
-        assert!(spectra.top.sample_at(0.5).r > 0.0);
+        let edge_colors = sampler().process(&ViewFrame::new(frame));
+        assert!(edge_colors.top.sample_at(0.5).r > 0.0);
     }
 }

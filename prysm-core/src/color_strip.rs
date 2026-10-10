@@ -31,43 +31,43 @@ impl Default for SampleDensity {
 
 /// Gradient of colors along an edge, in linear RGB space.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Spectrum {
+pub struct ColorStrip {
     samples: Arc<Vec<LinearColor>>,
 }
 
-impl Spectrum {
-    /// Create a new `Spectrum` from a vector of linear color samples
+impl ColorStrip {
+    /// Create a new `ColorStrip` from a vector of linear color samples
     pub fn new(samples: Vec<LinearColor>) -> Self {
         assert!(
             !samples.is_empty(),
-            "Spectrum must have at least one sample"
+            "ColorStrip must have at least one sample"
         );
         Self {
             samples: Arc::new(samples),
         }
     }
 
-    /// Create a `Spectrum` filled with the specified color
+    /// Create a `ColorStrip` filled with the specified color
     pub fn fill(color: LinearColor, count: usize) -> Self {
         Self::new(vec![color; count])
     }
 
-    /// Create a `Spectrum` with all black samples
+    /// Create a `ColorStrip` with all black samples
     pub fn black(count: usize) -> Self {
         Self::fill(LinearColor::black(), count)
     }
 
-    /// Get the number of samples in the spectrum
+    /// Get the number of samples in the strip
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
-    /// Check if the spectrum is empty (should never be true)
+    /// Check if the strip is empty (should never be true)
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
 
-    /// Sample the spectrum at a normalized position [0.0, 1.0] using linear interpolation
+    /// Sample the strip at a normalized position [0.0, 1.0] using linear interpolation
     pub fn sample_at(&self, position: f32) -> LinearColor {
         let position = position.clamp(0.0, 1.0);
 
@@ -94,13 +94,13 @@ impl Spectrum {
         self.sample_at(position)
     }
 
-    /// Quantize the spectrum into exactly N linear colors
-    pub fn quantize(&self, count: usize) -> Vec<LinearColor> {
+    /// Resample the strip into exactly N linear colors
+    pub fn resample(&self, count: usize) -> Vec<LinearColor> {
         (0..count).map(|i| self.color_at(i, count)).collect()
     }
 
-    /// Blend two spectra together with a ratio (0.0 = full self, 1.0 = full other)
-    pub fn blend(&self, other: &Spectrum, ratio: f32) -> Spectrum {
+    /// Blend two strips together with a ratio (0.0 = full self, 1.0 = full other)
+    pub fn blend(&self, other: &ColorStrip, ratio: f32) -> ColorStrip {
         let result_len = self.samples.len().max(other.samples.len());
         let blended: Vec<LinearColor> = (0..result_len)
             .map(|i| {
@@ -114,17 +114,17 @@ impl Spectrum {
                 color1.blend(&color2, ratio)
             })
             .collect();
-        Spectrum::new(blended)
+        ColorStrip::new(blended)
     }
 }
 
-impl Default for Spectrum {
+impl Default for ColorStrip {
     fn default() -> Self {
         Self::black(1)
     }
 }
 
-impl Add for Spectrum {
+impl Add for ColorStrip {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -143,7 +143,7 @@ impl Add for Spectrum {
     }
 }
 
-impl Mul<f32> for Spectrum {
+impl Mul<f32> for ColorStrip {
     type Output = Self;
 
     fn mul(self, scalar: f32) -> Self {
@@ -152,18 +152,18 @@ impl Mul<f32> for Spectrum {
     }
 }
 
-/// Color spectra for all four screen edges, in linear RGB space.
+/// Color strips for all four screen edges, in linear RGB space.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EdgeSpectra {
-    pub top: Spectrum,
-    pub right: Spectrum,
-    pub bottom: Spectrum,
-    pub left: Spectrum,
+pub struct EdgeColors {
+    pub top: ColorStrip,
+    pub right: ColorStrip,
+    pub bottom: ColorStrip,
+    pub left: ColorStrip,
 }
 
-impl EdgeSpectra {
-    /// Create new EdgeSpectra with the given spectra
-    pub fn new(top: Spectrum, right: Spectrum, bottom: Spectrum, left: Spectrum) -> Self {
+impl EdgeColors {
+    /// Create new EdgeColors with the given strips
+    pub fn new(top: ColorStrip, right: ColorStrip, bottom: ColorStrip, left: ColorStrip) -> Self {
         Self {
             top,
             right,
@@ -172,7 +172,7 @@ impl EdgeSpectra {
         }
     }
 
-    /// Create `EdgeSpectra` filled with the specified color
+    /// Create `EdgeColors` filled with the specified color
     #[must_use]
     pub fn fill(
         color: LinearColor,
@@ -186,23 +186,23 @@ impl EdgeSpectra {
         let right_samples = left_samples;
 
         Self {
-            top: Spectrum::fill(color, top_samples),
-            right: Spectrum::fill(color, right_samples),
-            bottom: Spectrum::fill(color, bottom_samples),
-            left: Spectrum::fill(color, left_samples),
+            top: ColorStrip::fill(color, top_samples),
+            right: ColorStrip::fill(color, right_samples),
+            bottom: ColorStrip::fill(color, bottom_samples),
+            left: ColorStrip::fill(color, left_samples),
         }
     }
 
-    /// Create `EdgeSpectra` with all black colors
+    /// Create `EdgeColors` with all black colors
     #[must_use]
     pub fn black(width: usize, height: usize, sample_density: crate::SampleDensity) -> Self {
         Self::fill(LinearColor::black(), width, height, sample_density)
     }
 
-    /// Blend two `EdgeSpectra` together with a ratio (0.0 = full self, 1.0 = full other)
+    /// Blend two `EdgeColors` together with a ratio (0.0 = full self, 1.0 = full other)
     #[must_use]
-    pub fn blend(&self, other: &EdgeSpectra, ratio: f32) -> EdgeSpectra {
-        EdgeSpectra {
+    pub fn blend(&self, other: &EdgeColors, ratio: f32) -> EdgeColors {
+        EdgeColors {
             top: self.top.blend(&other.top, ratio),
             right: self.right.blend(&other.right, ratio),
             bottom: self.bottom.blend(&other.bottom, ratio),
@@ -211,13 +211,13 @@ impl EdgeSpectra {
     }
 }
 
-impl Default for EdgeSpectra {
+impl Default for EdgeColors {
     fn default() -> Self {
         Self::black(1920, 1080, SampleDensity::default())
     }
 }
 
-impl Add for EdgeSpectra {
+impl Add for EdgeColors {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -230,7 +230,7 @@ impl Add for EdgeSpectra {
     }
 }
 
-impl Mul<f32> for EdgeSpectra {
+impl Mul<f32> for EdgeColors {
     type Output = Self;
 
     fn mul(self, scalar: f32) -> Self {

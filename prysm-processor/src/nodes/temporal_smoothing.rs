@@ -1,4 +1,4 @@
-use prysm_core::EdgeSpectra;
+use prysm_core::EdgeColors;
 use std::time::Instant;
 
 /// Temporal smoothing node
@@ -8,7 +8,7 @@ use std::time::Instant;
 pub struct TemporalSmoothing {
     /// Seconds to complete 95% of a transition.
     seconds: f32,
-    previous: Option<(EdgeSpectra, Instant)>,
+    previous: Option<(EdgeColors, Instant)>,
 }
 
 impl TemporalSmoothing {
@@ -20,7 +20,7 @@ impl TemporalSmoothing {
         }
     }
 
-    pub fn process(&mut self, input: EdgeSpectra, mut now: Instant) -> EdgeSpectra {
+    pub fn process(&mut self, input: EdgeColors, mut now: Instant) -> EdgeColors {
         let smoothed = if let Some((prev, previous_time)) = &self.previous {
             now = now.max(*previous_time);
             let elapsed = now.duration_since(*previous_time).as_secs_f64();

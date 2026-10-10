@@ -50,7 +50,7 @@ V4lCapturer → Frame Stream → split (broadcast)
                                ↓           ↓
                           PrysmProcessor  Renderer (video display)
                                ↓
-                          EdgeSpectra → Renderer (LED strips)
+                          EdgeColors → Renderer (LED strips)
 ```
 
 **Core Abstractions:**
@@ -63,9 +63,9 @@ V4lCapturer → Frame Stream → split (broadcast)
 
 **Libraries (reusable components):**
 
-- `prysm-core`: Data structures (Color, ColorSpectrum, EdgeSpectra, Config) - zero external dependencies
+- `prysm-core`: Data structures (Color, ColorStrip, EdgeColors, Config) - zero external dependencies
 - `prysm-capture`: Frame abstraction, PixelFormat enum, PrysmCapturer trait
-- `prysm-processor`: Video analysis → edge color spectra (stateful with temporal smoothing)
+- `prysm-processor`: Video analysis → edge color strips (stateful with temporal smoothing)
 - `v4l-capturer`: Linux V4L2 video capture implementation
 - `desktop-renderer`: egui/eframe GUI for visualization
 - `led-renderer`: Stub for future hardware LED driver
@@ -137,7 +137,7 @@ let config = prysm_core::Config {
 | --- | --- | --- |
 | `brightness_percent` | 80 | 0 turns lights off; 100 is full brightness. |
 | `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
-| `sample_density` | `SampleDensity(60)` | Spectrum samples per 1000 pixels of cropped edge length, independent of LED count. |
+| `sample_density` | `SampleDensity(60)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
 | `edge_depth_percent` | 15 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
@@ -174,12 +174,12 @@ Tests are minimal but focused:
 - `PrysmProcessor` chains typed nodes: `BandDetector` (letterbox/pillarbox viewport) → `EdgeSampler`
   (edge-weighted linear-light region averaging on every frame) → `TemporalSmoothing`
 - Frames carry their YUYV range and matrix from capture into both processing and preview.
-- Brightness scales the final spectra after smoothing.
+- Brightness scales the final edge colors after smoothing.
 - Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
   decodes only the pixels it reads (`ViewFrame::average_edge_linear`). Band detection reads luma via
   `frames::luma_at`.
 - The processor is stateful (smoothing history, band debounce)
-- Supports YUYV, RGB24, and BGR24; MJPEG currently returns black spectra
+- Supports YUYV, RGB24, and BGR24; MJPEG currently returns black edge colors
 - `cargo run --release -p prysm-processor --example bench` gives rough per-frame pipeline cost
 
 ### Threading considerations:

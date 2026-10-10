@@ -130,8 +130,8 @@ fn edge_sampling_includes_the_last_row_and_column() {
 fn dark_frames_must_not_panic() {
     let mut p = PrysmProcessor::default();
     for _ in 0..1900 {
-        let spectra = p.process_frame(rgb(64, 36, 20));
-        assert!(spectra.top.sample_at(0.5).r > 0.0);
+        let edge_colors = p.process_frame(rgb(64, 36, 20));
+        assert!(edge_colors.top.sample_at(0.5).r > 0.0);
     }
 }
 
@@ -288,8 +288,8 @@ fn format_change_clears_smoothing_history() {
 fn empty_frames_return_black() {
     let mut p = PrysmProcessor::default();
     for (width, height) in [(0, 36), (64, 0)] {
-        let spectra = p.process_frame(rgb(width, height, 128));
-        assert!(spectra.top.sample_at(0.5).r.abs() < f32::EPSILON);
+        let edge_colors = p.process_frame(rgb(width, height, 128));
+        assert!(edge_colors.top.sample_at(0.5).r.abs() < f32::EPSILON);
     }
 }
 
@@ -561,7 +561,7 @@ fn repeated_or_earlier_timestamps_do_not_advance_smoothing() {
 }
 
 #[test]
-fn configured_density_controls_valid_and_unsupported_frame_spectra() {
+fn configured_density_controls_valid_and_unsupported_frame_edge_colors() {
     for sample_density in [
         SampleDensity(0),
         SampleDensity(30),

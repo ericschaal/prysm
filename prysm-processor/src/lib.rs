@@ -2,7 +2,7 @@ use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BandDetector, EdgeSampler, TemporalSmoothing};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Config, EdgeSpectra};
+use prysm_core::{Config, EdgeColors};
 use std::time::Instant;
 
 mod frames;
@@ -47,14 +47,14 @@ impl PrysmProcessor {
     }
 
     /// Process a single frame using the current monotonic time for smoothing.
-    pub fn process_frame(&mut self, frame: Frame) -> EdgeSpectra {
+    pub fn process_frame(&mut self, frame: Frame) -> EdgeColors {
         self.process_frame_at(frame, Instant::now())
     }
 
     /// Process a frame at an explicit monotonic time, for deterministic replay.
     /// Use a shared clock origin plus source timestamps when replaying video.
     /// Repeated or earlier times do not advance smoothing.
-    pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeSpectra {
+    pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
         let layout = (
             frame.width,
             frame.height,
@@ -74,7 +74,7 @@ impl PrysmProcessor {
                 frame.width,
                 frame.height
             );
-            return EdgeSpectra::black(
+            return EdgeColors::black(
                 frame.width as usize,
                 frame.height as usize,
                 self.config.sample_density,
@@ -95,28 +95,28 @@ impl PrysmProcessor {
         }
 
         self.last_viewport = Some(view.viewport);
-        let mut spectra = self.sampler.process(&view);
+        let mut edge_colors = self.sampler.process(&view);
 
         if let Some(ref mut smoother) = self.temporal_smoothing {
-            spectra = smoother.process(spectra, now);
+            edge_colors = smoother.process(edge_colors, now);
         }
 
-        spectra * (f32::from(self.config.brightness_percent.min(100)) / 100.0)
+        edge_colors * (f32::from(self.config.brightness_percent.min(100)) / 100.0)
     }
 
     /// Convert into a stream processor
     ///
-    /// Consumes the processor and transforms a frame stream into an edge spectrum stream.
+    /// Consumes the processor and transforms a frame stream into an edge color stream.
     ///
     /// # Arguments
     /// * `input` - Input frame stream
     ///
     /// # Returns
-    /// Stream of `EdgeSpectra`
+    /// Stream of `EdgeColors`
     pub fn into_stream(
         mut self,
         input: impl Stream<Item = Frame> + Send + 'static,
-    ) -> impl Stream<Item = EdgeSpectra> + Send + 'static {
+    ) -> impl Stream<Item = EdgeColors> + Send + 'static {
         input.map(move |frame| self.process_frame(frame))
     }
 }

@@ -10,13 +10,13 @@ Run these as separate experiments. A change in sampling density must not be bund
 
 ## Current implementation and prerequisites
 
-The current processor uses quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the spectra.
+The current processor uses quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the edge colors.
 
 Relevant code:
 
 - [Region averaging](../prysm-processor/src/frames/view_frame.rs)
 - [Sampling geometry](../prysm-processor/src/nodes/edge_sampler.rs)
-- [Density and spectrum interpolation](../prysm-core/src/spectrum.rs)
+- [Density and color strip interpolation](../prysm-core/src/color_strip.rs)
 - [Processor configuration](../prysm-core/src/config.rs)
 - [Temporal smoothing](../prysm-processor/src/nodes/temporal_smoothing.rs)
 - [Video playback](../prysm/src/bin/video.rs)

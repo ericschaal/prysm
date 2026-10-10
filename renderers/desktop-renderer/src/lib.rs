@@ -1,11 +1,11 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, EdgeSpectra, Spectrum};
+use prysm_core::{Color, ColorStrip, EdgeColors};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
     layout_config: LayoutConfig,
     shutdown_token: Option<CancellationToken>,
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
+    edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
 }
 
@@ -13,7 +13,7 @@ impl std::fmt::Debug for DesktopRendererBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopRenderer")
             .field("shutdown_token", &"<CancellationToken>")
-            .field("spectrum_rx", &self.spectrum_rx)
+            .field("edge_colors_rx", &self.edge_colors_rx)
             .field("frame_rx", &self.frame_rx)
             .field("layout_config", &self.layout_config)
             .finish()
@@ -22,11 +22,11 @@ impl std::fmt::Debug for DesktopRendererBuilder {
 
 impl DesktopRendererBuilder {
     #[must_use]
-    pub fn new(spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>) -> Self {
+    pub fn new(edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>) -> Self {
         Self {
             frame_rx: None,
             shutdown_token: None,
-            spectrum_rx,
+            edge_colors_rx,
             layout_config: LayoutConfig::default(),
         }
     }
@@ -75,7 +75,7 @@ impl DesktopRendererBuilder {
     #[must_use]
     pub fn build(self) -> DesktopRenderer {
         DesktopRenderer {
-            spectrum_rx: self.spectrum_rx,
+            edge_colors_rx: self.edge_colors_rx,
             shutdown_token: self.shutdown_token,
             frame_rx: self.frame_rx,
             texture_handle: None,
@@ -100,7 +100,7 @@ pub struct LayoutConfig {
     /// Size of individual LED squares in pixels
     pub led_size_px: f32,
 
-    /// Exact total LED count; zero hides all LEDs. None uses each spectrum's sample count.
+    /// Exact total LED count; zero hides all LEDs. None uses each strip's sample count.
     pub total_led_count: Option<usize>,
 }
 
@@ -223,7 +223,7 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
+    edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
     shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
@@ -293,8 +293,8 @@ impl eframe::App for DesktopRenderer {
             return;
         }
 
-        // Poll for new spectra (non-blocking)
-        let spectra = self.spectrum_rx.borrow_and_update().clone();
+        // Poll for new edge colors (non-blocking)
+        let edge_colors = self.edge_colors_rx.borrow_and_update().clone();
 
         // Poll for new frames (non-blocking) and update texture when needed
         if let Some(frame_rx) = self.frame_rx.as_mut() {
@@ -334,40 +334,40 @@ impl eframe::App for DesktopRenderer {
                     let render_height = available.height() as usize;
                     calculate_led_distribution(render_width, render_height, total_leds)
                 } else {
-                    // Fall back to EdgeSpectrum sample counts (current behavior)
+                    // Fall back to ColorStrip sample counts (current behavior)
                     [
-                        spectra.top.len(),
-                        spectra.right.len(),
-                        spectra.bottom.len(),
-                        spectra.left.len(),
+                        edge_colors.top.len(),
+                        edge_colors.right.len(),
+                        edge_colors.bottom.len(),
+                        edge_colors.left.len(),
                     ]
                 };
 
             // Render LED strips (excluding corners)
             self.render_discrete_leds(
                 ui,
-                &spectra.top,
+                &edge_colors.top,
                 layout.top_strip,
                 EdgePosition::Top,
                 top_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.bottom,
+                &edge_colors.bottom,
                 layout.bottom_strip,
                 EdgePosition::Bottom,
                 bottom_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.left,
+                &edge_colors.left,
                 layout.left_strip,
                 EdgePosition::Left,
                 left_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.right,
+                &edge_colors.right,
                 layout.right_strip,
                 EdgePosition::Right,
                 right_leds,
@@ -400,7 +400,7 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Repaints are driven by the notifier thread when new frames/spectra
+        // Repaints are driven by the notifier thread when new frames or edge colors
         // arrive (see `spawn_repaint_notifier`). Keep a slow heartbeat as a safety net.
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
@@ -411,7 +411,7 @@ impl DesktopRenderer {
     fn render_discrete_leds(
         &self,
         ui: &mut egui::Ui,
-        spectrum: &Spectrum,
+        strip: &ColorStrip,
         rect: egui::Rect,
         edge: EdgePosition,
         display_led_count: usize,
@@ -428,7 +428,7 @@ impl DesktopRenderer {
         };
 
         for i in 0..display_led_count {
-            let color = spectrum.color_at(i, display_led_count).to_srgb();
+            let color = strip.color_at(i, display_led_count).to_srgb();
             let egui_color = color_to_egui(color);
 
             // Calculate LED center position based on edge
@@ -480,13 +480,13 @@ enum EdgePosition {
 /// Wake the GUI only when there is something new to draw.
 ///
 /// egui repaints on demand; instead of polling at a fixed FPS, a small
-/// thread waits on the spectra/frame watch channels and requests a repaint
+/// thread waits on the edge color and frame watch channels and requests a repaint
 /// per update. When no updates arrive, the GUI stays idle. Exits when the
-/// spectra channel closes or on
+/// edge colors channel closes or on
 /// shutdown; tokio watch futures work under any executor, so a lightweight
 /// `block_on` is enough — no runtime needed on this thread.
 fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
-    let mut spectrum_rx = app.spectrum_rx.clone();
+    let mut edge_colors_rx = app.edge_colors_rx.clone();
     let mut frame_rx = app.frame_rx.clone();
     let shutdown_token = app.shutdown_token.clone().unwrap_or_default();
 
@@ -494,7 +494,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
         futures::executor::block_on(async move {
             loop {
                 tokio::select! {
-                    changed = spectrum_rx.changed() => {
+                    changed = edge_colors_rx.changed() => {
                         if changed.is_err() {
                             break; // Sender dropped
                         }
@@ -507,7 +507,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
                         }
                     } => {
                         if changed.is_err() {
-                            frame_rx = None; // Sender dropped; keep watching spectra
+                            frame_rx = None; // Sender dropped; keep watching edge colors
                         } else {
                             ctx.request_repaint();
                         }
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn zero_leds_draw_no_shapes() {
-        let (_, receiver) = tokio::sync::watch::channel(EdgeSpectra::default());
+        let (_, receiver) = tokio::sync::watch::channel(EdgeColors::default());
         let app = DesktopRendererBuilder::new(receiver).build();
         let context = egui::Context::default();
         let _ = context.run(egui::RawInput::default(), |ctx| {
@@ -596,7 +596,7 @@ mod tests {
                 let before = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
                 app.render_discrete_leds(
                     ui,
-                    &Spectrum::default(),
+                    &ColorStrip::default(),
                     ui.max_rect(),
                     EdgePosition::Top,
                     0,

@@ -4,11 +4,11 @@ use anyhow::{Context, Result};
 use desktop_renderer::DesktopRendererBuilder;
 use futures::Stream;
 use prysm_capture::Frame;
-use prysm_core::EdgeSpectra;
+use prysm_core::EdgeColors;
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
 
-// Low capture resolution on purpose: the default spectrum has ~38 horizontal
+// Low capture resolution on purpose: the default strip has ~38 horizontal
 // samples, and the camera ISP's hardware downscale integrates every source pixel,
 // which is both cheaper and more accurate than sampling a high-res frame.
 pub const CAPTURE_WIDTH: u32 = 640;
@@ -28,7 +28,7 @@ where
     let shutdown_token = CancellationToken::new();
 
     let config = prysm_core::Config::default();
-    let spectra = stream::StreamWatcher::new(EdgeSpectra::black(
+    let edge_colors = stream::StreamWatcher::new(EdgeColors::black(
         CAPTURE_WIDTH as usize,
         CAPTURE_HEIGHT as usize,
         config.sample_density,
@@ -40,7 +40,7 @@ where
     let runtime_handle = std::thread::spawn({
         // Clone what we need for the async runtime
         let shutdown_token = shutdown_token.clone();
-        let spectra = spectra.clone();
+        let edge_colors = edge_colors.clone();
         let frames = frames.clone();
         let config = config.clone();
 
@@ -57,9 +57,9 @@ where
 
                 // Create async streams
                 let (frame_stream, frame_stream_bis) = stream::stream_split(video_feed);
-                let spectrum_stream = processor.into_stream(frame_stream);
+                let edge_colors_stream = processor.into_stream(frame_stream);
 
-                let spectrum_task = spectra.into_task(spectrum_stream);
+                let edge_colors_task = edge_colors.into_task(edge_colors_stream);
                 let frame_task = frames.into_task(frame_stream_bis);
 
                 // Spawn ctrl-C handler
@@ -72,16 +72,17 @@ where
                 });
 
                 let result = stream::wait_for_shutdown(&shutdown_token, frame_task).await;
-                let spectrum_result = spectrum_task.await.context("Spectrum watcher failed");
+                let edge_colors_result =
+                    edge_colors_task.await.context("Edge colors watcher failed");
                 result?;
-                spectrum_result?;
+                edge_colors_result?;
                 tracing::info!("Runtime thread shutting down cleanly");
                 Ok::<(), anyhow::Error>(())
             })
         }
     });
 
-    let app = DesktopRendererBuilder::new(spectra.receiver())
+    let app = DesktopRendererBuilder::new(edge_colors.receiver())
         .with_shutdown_token(&shutdown_token)
         .with_frame_rx(frames.receiver())
         .build();

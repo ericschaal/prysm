@@ -24,7 +24,7 @@ pub struct Config {
     /// Default: 0.1. Zero, negative, and non-finite values disable smoothing.
     pub smoothing_seconds: f32,
 
-    /// Spectrum samples per 1000 pixels of cropped edge length. Default: 60.
+    /// Color samples per 1000 pixels of cropped edge length. Default: 60.
     /// Controls spatial detail independently of LED count; all region pixels
     /// still contribute. Each edge has at least one sample and at most one per pixel.
     pub sample_density: SampleDensity,
