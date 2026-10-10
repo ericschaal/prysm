@@ -24,8 +24,8 @@ impl SampleDensity {
 
 impl Default for SampleDensity {
     fn default() -> Self {
-        // About 19 samples across a 640px edge, independent of the LED count.
-        Self(30)
+        // About 38 samples across a 640px edge, independent of the LED count.
+        Self(60)
     }
 }
 
@@ -178,7 +178,7 @@ impl EdgeSpectra {
         color: LinearColor,
         width: usize,
         height: usize,
-        sample_density: crate::SampleDensity,
+        sample_density: SampleDensity,
     ) -> Self {
         let top_samples = sample_density.samples_for_length(width);
         let bottom_samples = top_samples;
@@ -213,7 +213,7 @@ impl EdgeSpectra {
 
 impl Default for EdgeSpectra {
     fn default() -> Self {
-        Self::black(1920, 1080, crate::SampleDensity(50))
+        Self::black(1920, 1080, SampleDensity::default())
     }
 }
 

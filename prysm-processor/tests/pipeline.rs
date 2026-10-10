@@ -1,6 +1,7 @@
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::{Config, SampleDensity};
 use prysm_processor::PrysmProcessor;
+use std::time::{Duration, Instant};
 
 fn rgb(width: u32, height: u32, value: u8) -> Frame {
     Frame::fill(value, width, height, PixelFormat::RGB24)
@@ -10,7 +11,8 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
 fn wide_black_bands_crop_each_axis_independently() {
     let config = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
+        sample_density: SampleDensity(150),
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -26,11 +28,11 @@ fn wide_black_bands_crop_each_axis_independently() {
         let output = processor.process_frame(frame);
         assert_eq!(
             output.top.len(),
-            SampleDensity::default().samples_for_length(x_end - x_start)
+            config.sample_density.samples_for_length(x_end - x_start)
         );
         assert_eq!(
             output.left.len(),
-            SampleDensity::default().samples_for_length(y_end - y_start)
+            config.sample_density.samples_for_length(y_end - y_start)
         );
         for edge in [&output.top, &output.bottom, &output.left, &output.right] {
             assert!(edge.sample_at(0.5).r > 0.99);
@@ -43,7 +45,7 @@ fn slightly_noisy_black_bands_still_crop() {
     use prysm_capture::YuvRange;
     let config = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     for (range, black, white) in [(YuvRange::Full, 0, 255), (YuvRange::Limited, 16, 235)] {
@@ -93,7 +95,7 @@ fn slightly_noisy_black_bands_still_crop() {
 fn edge_sampling_includes_the_last_row_and_column() {
     let config = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         remove_black_bars: false,
         ..Config::default()
     };
@@ -118,7 +120,8 @@ fn edge_sampling_includes_the_last_row_and_column() {
             [&output.left, &output.right]
         };
         for edge in edges {
-            assert!((edge.sample_at(1.0).r - 1.0 / 34.0).abs() < 0.00001);
+            // At density 60, the last segment of this 636px edge spans 17 pixels.
+            assert!((edge.sample_at(1.0).r - 1.0 / 17.0).abs() < 0.00001);
         }
     }
 }
@@ -140,11 +143,19 @@ fn smoothing_must_keep_converging_on_static_input() {
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
-    p.process_frame(rgb(64, 36, 255));
+    let start = Instant::now();
+    p.process_frame_at(rgb(64, 36, 255), start);
     let black = rgb(64, 36, 0);
-    p.process_frame(black.clone());
-    let first = p.process_frame(black.clone()).top.sample_at(0.5).r;
-    let next = p.process_frame(black).top.sample_at(0.5).r;
+    let first = p
+        .process_frame_at(black.clone(), start + Duration::from_millis(10))
+        .top
+        .sample_at(0.5)
+        .r;
+    let next = p
+        .process_frame_at(black, start + Duration::from_millis(20))
+        .top
+        .sample_at(0.5)
+        .r;
     assert!(next < first, "smoothing stopped: {first} -> {next}");
 }
 
@@ -153,7 +164,7 @@ fn color_change_must_update_output() {
     let c = Config {
         brightness_percent: 100,
         remove_black_bars: false,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -180,7 +191,7 @@ fn color_change_must_update_output() {
 fn static_letterbox_confirms_with_default_tuning() {
     let c = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     let mut data = vec![128; 640 * 360 * 3];
@@ -203,16 +214,14 @@ fn resize_must_update_sample_count() {
     let c = Config {
         brightness_percent: 100,
         remove_black_bars: false,
+        sample_density: SampleDensity(150),
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
     p.process_frame(rgb(640, 360, 128));
     p.process_frame(rgb(640, 360, 128));
     let actual = p.process_frame(rgb(320, 180, 128));
-    assert_eq!(
-        actual.top.len(),
-        SampleDensity::default().samples_for_length(320)
-    );
+    assert_eq!(actual.top.len(), c.sample_density.samples_for_length(320));
 }
 
 #[test]
@@ -240,7 +249,7 @@ fn bgr_supported_by_capture_must_process() {
 fn dark_scene_preserves_confirmed_crop() {
     let c = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -289,7 +298,7 @@ fn equal_mean_rgb_colors_update_output() {
     let c = Config {
         brightness_percent: 100,
         remove_black_bars: false,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -326,7 +335,7 @@ fn brightness_scales_output_once_after_smoothing() {
 #[test]
 fn narrow_edge_changes_update_output_immediately() {
     let config = Config {
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -345,7 +354,7 @@ fn narrow_edge_changes_update_output_immediately() {
 fn bright_objects_grow_stronger_as_they_approach_each_edge() {
     let config = Config {
         brightness_percent: 100,
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         remove_black_bars: false,
         ..Config::default()
     };
@@ -427,20 +436,22 @@ fn changing_yuv_metadata_resets_processing_history() {
 }
 
 #[test]
-fn maximum_smoothing_converges_instead_of_freezing() {
+fn long_smoothing_duration_converges_instead_of_freezing() {
     let config = Config {
         brightness_percent: 100,
-        smoothing_percent: 100,
+        smoothing_seconds: 10.0,
         remove_black_bars: false,
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
-    processor.process_frame(rgb(8, 8, 255));
+    let start = Instant::now();
+    processor.process_frame_at(rgb(8, 8, 255), start);
     let black = rgb(8, 8, 0);
-    let mut output = processor.process_frame(black.clone());
+    let mut output = processor.process_frame_at(black.clone(), start + Duration::from_millis(10));
     assert!(output.top.sample_at(0.5).r < 1.0);
-    for _ in 0..1000 {
-        output = processor.process_frame(black.clone());
+    for step in 2..=3000 {
+        output =
+            processor.process_frame_at(black.clone(), start + Duration::from_millis(step * 10));
     }
     assert!(output.top.sample_at(0.5).r < 0.001);
 }
@@ -448,7 +459,7 @@ fn maximum_smoothing_converges_instead_of_freezing() {
 #[test]
 fn small_color_changes_are_sampled_on_every_frame() {
     let config = Config {
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         remove_black_bars: false,
         ..Config::default()
     };
@@ -464,21 +475,118 @@ fn small_color_changes_are_sampled_on_every_frame() {
 }
 
 #[test]
-fn smoothing_percentage_controls_transition_speed() {
-    for (smoothing_percent, expected) in [(0, 0.0), (40, 0.4), (100, 0.99), (255, 0.99)] {
+fn smoothing_seconds_controls_transition_speed() {
+    for (smoothing_seconds, expected) in [
+        (0.0, 0.0),
+        (0.1, 0.05),
+        (0.2, 0.05_f32.sqrt()),
+        (1.0, 0.05_f32.powf(0.1)),
+        (-1.0, 0.0),
+        (f32::NAN, 0.0),
+        (f32::INFINITY, 0.0),
+        (f32::NEG_INFINITY, 0.0),
+    ] {
         let config = Config {
             brightness_percent: 100,
-            smoothing_percent,
+            smoothing_seconds,
             remove_black_bars: false,
             ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
-        processor.process_frame(rgb(64, 36, 255));
-        let actual = processor.process_frame(rgb(64, 36, 0)).top.sample_at(0.5).r;
+        let start = Instant::now();
+        processor.process_frame_at(rgb(64, 36, 255), start);
+        let actual = processor
+            .process_frame_at(rgb(64, 36, 0), start + Duration::from_millis(100))
+            .top
+            .sample_at(0.5)
+            .r;
         assert!(
             (actual - expected).abs() < 1e-6,
-            "smoothing {smoothing_percent}%: {actual}"
+            "smoothing {smoothing_seconds}s: {actual}"
         );
+    }
+}
+
+#[test]
+fn smoothing_duration_is_independent_of_frame_rate_and_dropped_frames() {
+    let config = Config {
+        brightness_percent: 100,
+        smoothing_seconds: 1.0,
+        remove_black_bars: false,
+        ..Config::default()
+    };
+    let start = Instant::now();
+    let schedules = [24, 30, 60, 120].map(|fps| {
+        (1..=fps)
+            .map(|i| Duration::from_secs_f64(f64::from(i) / f64::from(fps)))
+            .collect::<Vec<_>>()
+    });
+    let dropped = [50, 200, 700, 1000].map(Duration::from_millis);
+    for schedule in schedules
+        .iter()
+        .map(Vec::as_slice)
+        .chain([dropped.as_slice()])
+    {
+        let mut processor = PrysmProcessor::new(&config);
+        processor.process_frame_at(rgb(8, 8, 255), start);
+        let mut output = None;
+        for &elapsed in schedule {
+            output = Some(processor.process_frame_at(rgb(8, 8, 0), start + elapsed));
+        }
+        let actual = output.unwrap().top.sample_at(0.5).r;
+        assert!(
+            (actual - 0.05).abs() < 1e-6,
+            "{} frames: {actual}",
+            schedule.len()
+        );
+    }
+}
+
+#[test]
+fn repeated_or_earlier_timestamps_do_not_advance_smoothing() {
+    let config = Config {
+        brightness_percent: 100,
+        smoothing_seconds: 1.0,
+        remove_black_bars: false,
+        ..Config::default()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    let start = Instant::now();
+    let white = processor.process_frame_at(rgb(8, 8, 255), start);
+    for now in [start, start - Duration::from_millis(100)] {
+        assert_eq!(processor.process_frame_at(rgb(8, 8, 0), now), white);
+    }
+    let output = processor.process_frame_at(rgb(8, 8, 0), start + Duration::from_secs(1));
+    assert!((output.top.sample_at(0.5).r - 0.05).abs() < 1e-6);
+}
+
+#[test]
+fn configured_density_controls_valid_and_unsupported_frame_spectra() {
+    for sample_density in [
+        SampleDensity(0),
+        SampleDensity(30),
+        SampleDensity(150),
+        SampleDensity(2000),
+    ] {
+        let config = Config {
+            sample_density,
+            remove_black_bars: false,
+            ..Config::default()
+        };
+        let mut processor = PrysmProcessor::new(&config);
+        for frame in [
+            rgb(640, 360, 255),
+            Frame::new(vec![], 640, 360, PixelFormat::MJPEG),
+            rgb(0, 360, 128),
+        ] {
+            let width = frame.width as usize;
+            let height = frame.height as usize;
+            let output = processor.process_frame(frame);
+            assert_eq!(output.top.len(), sample_density.samples_for_length(width));
+            assert_eq!(output.bottom.len(), output.top.len());
+            assert_eq!(output.left.len(), sample_density.samples_for_length(height));
+            assert_eq!(output.right.len(), output.left.len());
+        }
     }
 }
 
@@ -493,9 +601,10 @@ fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
     {
         let config = Config {
             brightness_percent: 100,
-            smoothing_percent: 0,
+            smoothing_seconds: 0.0,
             edge_depth_percent,
             remove_black_bars: false,
+            ..Config::default()
         };
         let actual = PrysmProcessor::new(&config)
             .process_frame(frame.clone())
@@ -518,9 +627,10 @@ fn black_bar_removal_can_be_disabled() {
     for remove_black_bars in [false, true] {
         let config = Config {
             brightness_percent: 100,
-            smoothing_percent: 0,
+            smoothing_seconds: 0.0,
             edge_depth_percent: 10,
             remove_black_bars,
+            ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
         for _ in 0..60 {
@@ -540,7 +650,7 @@ fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
     };
     let mut smoothed = PrysmProcessor::new(&config);
     let mut direct = PrysmProcessor::new(&Config {
-        smoothing_percent: 0,
+        smoothing_seconds: 0.0,
         ..config
     });
     let mut data = vec![128; 640 * 360 * 3];

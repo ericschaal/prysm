@@ -2,7 +2,8 @@ use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BandDetector, EdgeSampler, TemporalSmoothing};
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Config, EdgeSpectra, SampleDensity};
+use prysm_core::{Config, EdgeSpectra};
+use std::time::Instant;
 
 mod frames;
 mod nodes;
@@ -34,18 +35,26 @@ impl PrysmProcessor {
             config: config.clone(),
             band_detector: config.remove_black_bars.then(BandDetector::new),
             sampler: EdgeSampler::new(
-                SampleDensity::default(),
+                config.sample_density,
                 f32::from(config.edge_depth_percent.clamp(1, 50)) / 100.0,
             ),
-            temporal_smoothing: (config.smoothing_percent > 0)
-                .then(|| TemporalSmoothing::new(f32::from(config.smoothing_percent) / 100.0)),
+            temporal_smoothing: (config.smoothing_seconds.is_finite()
+                && config.smoothing_seconds > 0.0)
+                .then(|| TemporalSmoothing::new(config.smoothing_seconds)),
             last_viewport: None,
             frame_layout: None,
         }
     }
 
-    /// Process a single frame through the pipeline
+    /// Process a single frame using the current monotonic time for smoothing.
     pub fn process_frame(&mut self, frame: Frame) -> EdgeSpectra {
+        self.process_frame_at(frame, Instant::now())
+    }
+
+    /// Process a frame at an explicit monotonic time, for deterministic replay.
+    /// Use a shared clock origin plus source timestamps when replaying video.
+    /// Repeated or earlier times do not advance smoothing.
+    pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeSpectra {
         let layout = (
             frame.width,
             frame.height,
@@ -68,7 +77,7 @@ impl PrysmProcessor {
             return EdgeSpectra::black(
                 frame.width as usize,
                 frame.height as usize,
-                SampleDensity::default(),
+                self.config.sample_density,
             );
         }
 
@@ -82,14 +91,14 @@ impl PrysmProcessor {
             && let Some(smoother) = &mut self.temporal_smoothing
         {
             // Old samples describe a different region of the image.
-            *smoother = TemporalSmoothing::new(f32::from(self.config.smoothing_percent) / 100.0);
+            *smoother = TemporalSmoothing::new(self.config.smoothing_seconds);
         }
 
         self.last_viewport = Some(view.viewport);
         let mut spectra = self.sampler.process(&view);
 
         if let Some(ref mut smoother) = self.temporal_smoothing {
-            spectra = smoother.process(spectra);
+            spectra = smoother.process(spectra, now);
         }
 
         spectra * (f32::from(self.config.brightness_percent.min(100)) / 100.0)

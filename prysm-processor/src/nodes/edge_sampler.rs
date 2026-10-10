@@ -3,7 +3,7 @@ use prysm_core::{Edge, EdgeSpectra, SampleDensity, Spectrum};
 
 /// Samples edge colors from a raw frame, decoding only the pixels it reads.
 ///
-/// Each LED sample integrates its full edge segment in linear light,
+/// Each spectrum sample integrates its full edge segment in linear light,
 /// with quadratic falloff from the screen edge toward the interior.
 #[derive(Debug)]
 pub struct EdgeSampler {
@@ -89,7 +89,7 @@ mod tests {
     fn sampler() -> EdgeSampler {
         let config = prysm_core::Config::default();
         EdgeSampler::new(
-            SampleDensity::default(),
+            config.sample_density,
             f32::from(config.edge_depth_percent) / 100.0,
         )
     }
@@ -107,9 +107,9 @@ mod tests {
                 "expected uniform gray, got {color:?}"
             );
         }
-        // Density 30/1000px: 640px edge -> 19 samples, 360px edge -> 10
-        assert_eq!(spectra.top.len(), 19);
-        assert_eq!(spectra.left.len(), 10);
+        // Density 60/1000px: 640px edge -> 38 samples, 360px edge -> 21
+        assert_eq!(spectra.top.len(), 38);
+        assert_eq!(spectra.left.len(), 21);
     }
 
     #[test]
