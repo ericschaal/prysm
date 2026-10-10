@@ -47,10 +47,10 @@ pub struct Config {
     /// Frames between detection scans (lower = faster detection)
     pub band_detection_interval: u32,
 
-    /// Frames of consistent detection before applying new viewport
+    /// Consecutive matching detection scans before applying a viewport (minimum one)
     pub band_confirm_frames: u32,
 
-    /// Frames of different detection before resetting candidate
+    /// Consecutive different detection scans tolerated before resetting the candidate
     pub band_inconsistency_limit: u32,
 
     /// Sample stride for projection calculation (pixels to skip)

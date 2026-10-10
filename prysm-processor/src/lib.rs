@@ -1,15 +1,13 @@
 use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BandDetector, ChangeDetector, EdgeSampler, TemporalSmoothing};
-use pipeline::Node;
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::{Config, EdgeSpectra};
 
 mod frames;
 mod nodes;
-mod pipeline;
 
-/// Processor using typed pipeline architecture.
+/// Stateful frame processor.
 ///
 /// Frames stay in their raw capture format end-to-end; each node decodes
 /// only the pixels it actually reads.
@@ -106,7 +104,7 @@ impl PrysmProcessor {
             Some(target) if !changed && self.last_viewport == Some(view.viewport) => target.clone(),
             _ => {
                 self.last_viewport = Some(view.viewport);
-                let target = self.sampler.process(view);
+                let target = self.sampler.process(&view);
                 self.last_spectra = Some(target.clone());
                 target
             }

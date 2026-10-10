@@ -1,5 +1,4 @@
 use crate::frames::{ViewFrame, Viewport, luma_at};
-use crate::pipeline::Node;
 use prysm_capture::Frame;
 use prysm_core::Config;
 
@@ -23,9 +22,9 @@ pub struct BandDetector {
     current_viewport: Option<Viewport>,
     /// Candidate viewport being validated
     candidate_viewport: Option<Viewport>,
-    /// How many consecutive frames the candidate has been detected
+    /// How many consecutive scans the candidate has been detected
     candidate_count: u32,
-    /// How many consecutive frames have differed from candidate
+    /// How many consecutive scans have differed from candidate
     inconsistent_count: u32,
 
     /// Scratch buffer for per-row/per-column luma samples, reused across scans
@@ -40,7 +39,7 @@ impl BandDetector {
             brightness_percentile: config.band_brightness_percentile,
             min_band_fraction: config.min_band_fraction,
             detection_interval: config.band_detection_interval.max(1),
-            confirm_frames: config.band_confirm_frames,
+            confirm_frames: config.band_confirm_frames.max(1),
             inconsistency_limit: config.band_inconsistency_limit,
             sample_stride: config.band_sample_stride.max(1),
             frame_count: 0,
@@ -73,17 +72,26 @@ impl BandDetector {
         let left = find_band_from_start(&col_brightness, col_threshold, min_col_band);
         let right = find_band_from_end(&col_brightness, col_threshold, min_col_band);
 
-        let viewport = Viewport {
+        let mut viewport = Viewport {
             x: left,
             y: top,
             width: frame.width.saturating_sub(left + right),
             height: frame.height.saturating_sub(top + bottom),
         };
         // A dark scene provides no crop boundary; keep the last valid crop.
-        if viewport.width == 0 || viewport.height == 0 {
+        if viewport.width == 0 && viewport.height == 0 {
             self.current_viewport
                 .unwrap_or_else(|| Viewport::full_frame(frame.width, frame.height))
         } else {
+            // Wide bars can darken an entire projection on the other axis.
+            if viewport.width == 0 {
+                viewport.x = 0;
+                viewport.width = frame.width;
+            }
+            if viewport.height == 0 {
+                viewport.y = 0;
+                viewport.height = frame.height;
+            }
             viewport
         }
     }
@@ -147,9 +155,8 @@ impl BandDetector {
             ((brightness.len() as f32 * self.brightness_percentile as f32) / 100.0) as usize;
         let percentile_value = sorted[index.min(sorted.len() - 1)];
 
-        // Cap threshold at 50 to prevent uniform content from being detected as bands
-        // This ensures only genuinely dark regions are considered as bands
-        percentile_value.min(50)
+        // Allow two luma levels of capture noise while keeping the darkness cap.
+        percentile_value.saturating_add(2).min(50)
     }
 }
 
@@ -203,21 +210,17 @@ fn viewports_match(a: &Viewport, b: &Viewport, tolerance: u32) -> bool {
         && a.height.abs_diff(b.height) <= tolerance
 }
 
-impl Node<ViewFrame, ViewFrame> for BandDetector {
-    fn process(&mut self, mut input: ViewFrame) -> ViewFrame {
+impl BandDetector {
+    pub fn process(&mut self, mut input: ViewFrame) -> ViewFrame {
         self.frame_count += 1;
 
-        if self.frame_count % self.detection_interval == 0 {
+        if self.frame_count.is_multiple_of(self.detection_interval) {
             let detected = self.detect_viewport(&input.frame);
 
             match &self.candidate_viewport {
                 Some(candidate) if viewports_match(candidate, &detected, 5) => {
                     self.candidate_count += 1;
                     self.inconsistent_count = 0;
-
-                    if self.candidate_count >= self.confirm_frames {
-                        self.current_viewport = self.candidate_viewport;
-                    }
                 }
                 _ => {
                     self.candidate_count = 0;
@@ -231,6 +234,9 @@ impl Node<ViewFrame, ViewFrame> for BandDetector {
                         self.inconsistent_count = 0;
                     }
                 }
+            }
+            if self.candidate_count >= self.confirm_frames {
+                self.current_viewport = self.candidate_viewport;
             }
         }
 
@@ -317,7 +323,7 @@ mod tests {
 
         // All black
         let brightness = vec![0; 100];
-        assert_eq!(detector.calculate_percentile_threshold(&brightness), 0);
+        assert_eq!(detector.calculate_percentile_threshold(&brightness), 2);
 
         // All white (should be capped at 50)
         let brightness = vec![255; 100];

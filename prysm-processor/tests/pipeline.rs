@@ -7,6 +7,141 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
 }
 
 #[test]
+fn wide_black_bands_crop_each_axis_independently() {
+    let config = Config {
+        brightness: 1.0,
+        temporal_smoothing: 0.0,
+        ..Config::default()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    for (x_start, x_end, y_start, y_end) in [(219, 421, 0, 360), (0, 640, 130, 230)] {
+        let mut data = vec![0; 640 * 360 * 3];
+        for y in y_start..y_end {
+            data[(y * 640 + x_start) * 3..(y * 640 + x_end) * 3].fill(255);
+        }
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        for _ in 0..120 {
+            processor.process_frame(frame.clone());
+        }
+        let output = processor.process_frame(frame);
+        assert_eq!(
+            output.top.len(),
+            config.sample_density.samples_for_length(x_end - x_start)
+        );
+        assert_eq!(
+            output.left.len(),
+            config.sample_density.samples_for_length(y_end - y_start)
+        );
+        for edge in [&output.top, &output.bottom, &output.left, &output.right] {
+            assert!(edge.sample_at(0.5).r > 0.99);
+        }
+    }
+}
+
+#[test]
+fn slightly_noisy_black_bands_still_crop() {
+    use prysm_capture::YuvRange;
+    let config = Config {
+        brightness: 1.0,
+        temporal_smoothing: 0.0,
+        ..Config::default()
+    };
+    for (range, black, white) in [(YuvRange::Full, 0, 255), (YuvRange::Limited, 16, 235)] {
+        for horizontal in [true, false] {
+            let mut data = vec![128; 640 * 360 * 2];
+            for y in 0..360 {
+                for x in 0..640 {
+                    let (position, start, end) = if horizontal {
+                        (y, 48, 312)
+                    } else {
+                        (x, 80, 560)
+                    };
+                    data[(y * 640 + x) * 2] = if (start..end).contains(&position) {
+                        white
+                    } else {
+                        black + (position % 2) as u8
+                    };
+                }
+            }
+            let mut frame = Frame::new(data, 640, 360, PixelFormat::YUYV);
+            frame.yuv_range = range;
+            let mut processor = PrysmProcessor::new(&config);
+            for _ in 0..60 {
+                processor.process_frame(frame.clone());
+            }
+            let output = processor.process_frame(frame);
+            let (width, height) = if horizontal { (640, 264) } else { (480, 360) };
+            assert_eq!(
+                output.top.len(),
+                config.sample_density.samples_for_length(width)
+            );
+            assert_eq!(
+                output.left.len(),
+                config.sample_density.samples_for_length(height)
+            );
+            for edge in [&output.top, &output.bottom, &output.left, &output.right] {
+                assert!(
+                    edge.sample_at(0.5).r > 0.99,
+                    "{range:?}, horizontal={horizontal}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn edge_sampling_includes_the_last_row_and_column() {
+    let config = Config {
+        brightness: 1.0,
+        temporal_smoothing: 0.0,
+        black_band_detection: false,
+        ..Config::default()
+    };
+    for (width, height) in [(636, 360), (360, 636)] {
+        let mut data = vec![0; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                if (width == 636 && x == width - 1) || (height == 636 && y == height - 1) {
+                    data[(y * width + x) * 3..(y * width + x + 1) * 3].fill(255);
+                }
+            }
+        }
+        let output = PrysmProcessor::new(&config).process_frame(Frame::new(
+            data,
+            width as u32,
+            height as u32,
+            PixelFormat::RGB24,
+        ));
+        let edges = if width == 636 {
+            [&output.top, &output.bottom]
+        } else {
+            [&output.left, &output.right]
+        };
+        for edge in edges {
+            assert!((edge.sample_at(1.0).r - 1.0 / 34.0).abs() < 0.00001);
+        }
+    }
+}
+
+#[test]
+fn one_scan_confirmation_applies_the_first_candidate() {
+    let config = Config {
+        band_confirm_frames: 1,
+        band_detection_interval: 1,
+        ..Config::default()
+    };
+    let mut data = vec![255; 640 * 360 * 3];
+    data[..640 * 48 * 3].fill(0);
+    data[640 * 312 * 3..].fill(0);
+    let output =
+        PrysmProcessor::new(&config).process_frame(Frame::new(data, 640, 360, PixelFormat::RGB24));
+    assert_eq!(
+        output.left.len(),
+        config.sample_density.samples_for_length(264)
+    );
+}
+
+#[test]
 fn dark_frames_must_not_panic() {
     let mut p = PrysmProcessor::default();
     for _ in 0..1900 {

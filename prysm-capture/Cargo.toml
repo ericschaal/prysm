@@ -6,6 +6,10 @@ edition = "2024"
 [lints]
 workspace = true
 
+[[example]]
+name = "capture_smoke"
+test = true
+
 [dependencies]
 futures.workspace = true
 yuv = { workspace = true, features = ["fast_mode"] }

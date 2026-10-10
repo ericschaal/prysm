@@ -12,6 +12,7 @@
       <sourceFolder url="file://$MODULE_DIR$/renderers/led-renderer/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/prysm-capture/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/prysm-processor/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/prysm-capture/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/prysm-processor/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>

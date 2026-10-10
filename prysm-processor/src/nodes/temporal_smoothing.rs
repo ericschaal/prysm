@@ -1,4 +1,3 @@
-use crate::pipeline::Node;
 use prysm_core::EdgeSpectra;
 
 /// Temporal smoothing node
@@ -27,17 +26,15 @@ impl TemporalSmoothing {
             previous_spectra: None,
         }
     }
-}
 
-impl Node<EdgeSpectra, EdgeSpectra> for TemporalSmoothing {
-    fn process(&mut self, input: EdgeSpectra) -> EdgeSpectra {
+    pub fn process(&mut self, input: EdgeSpectra) -> EdgeSpectra {
         // Apply temporal smoothing by blending with previous frame
         let smoothed = if let Some(ref prev) = self.previous_spectra {
             // Blend: ratio=1.0-smoothing means higher smoothing gives more weight to previous
             prev.blend(&input, 1.0 - self.smoothing)
         } else {
             // First frame - no previous data to blend with
-            input.clone()
+            input
         };
 
         // Store current smoothed result for next frame
