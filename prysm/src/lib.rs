@@ -12,8 +12,8 @@ use tokio_util::sync::CancellationToken;
 // Low capture resolution on purpose: the default strip has ~38 horizontal
 // samples, and the camera ISP's hardware downscale integrates every source pixel,
 // which is both cheaper and more accurate than sampling a high-res frame.
-pub const CAPTURE_WIDTH: u32 = 640;
-pub const CAPTURE_HEIGHT: u32 = 360;
+pub const CAPTURE_WIDTH: u32 = 1280;
+pub const CAPTURE_HEIGHT: u32 = 720;
 
 /// Run the desktop visualizer with a frame source created on the async runtime.
 pub fn run<S>(
