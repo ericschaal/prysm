@@ -22,17 +22,22 @@ use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
+use std::time::{Duration, Instant};
+
+const FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
 /// A nonblocking RGB renderer for one WLED instance.
 ///
-/// Each call sends immediately, without a frame queue or retransmission. Errors
-/// are returned to the caller, including `WouldBlock` if the send buffer is full.
+/// Sends at most 30 frames per second, dropping calls that arrive too soon without
+/// a frame queue or retransmission. The first nonempty frame sends immediately.
+/// Errors are returned to the caller, including `WouldBlock` if the send buffer is full.
 /// UDP delivery is not acknowledged. Keep sending frames before WLED's realtime
 /// timeout expires, even for a static picture. Stopping lets WLED resume its effect.
 #[derive(Debug)]
 pub struct WledRenderer {
     connection: DDPConnection,
     rgb: Vec<u8>,
+    last_sent: Option<Instant>,
 }
 
 impl WledRenderer {
@@ -63,6 +68,7 @@ impl WledRenderer {
         Ok(Self {
             connection,
             rgb: Vec::new(),
+            last_sent: None,
         })
     }
 
@@ -72,11 +78,14 @@ impl WledRenderer {
     /// trailing LEDs at their previous colors. WLED uses 16-bit LED indices, so
     /// frames with more than 65535 colors are rejected before sending.
     pub fn render(&mut self, colors: &[Color]) -> Result<(), DDPError> {
-        self.prepare(colors.len())?;
+        if !self.prepare(colors.len())? {
+            return Ok(());
+        }
         for color in colors {
             self.rgb.extend_from_slice(&[color.r, color.g, color.b]);
         }
         self.connection.write(&self.rgb)?;
+        self.last_sent = Some(Instant::now());
         Ok(())
     }
 
@@ -96,7 +105,9 @@ impl WledRenderer {
             .into_iter()
             .try_fold(0usize, usize::checked_add)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "LED count overflow"))?;
-        self.prepare(total)?;
+        if !self.prepare(total)? {
+            return Ok(());
+        }
         for (strip, count, reverse) in [
             (&edges.left, led_counts[3], true),
             (&edges.top, led_counts[0], false),
@@ -110,10 +121,11 @@ impl WledRenderer {
             }
         }
         self.connection.write(&self.rgb)?;
+        self.last_sent = Some(Instant::now());
         Ok(())
     }
 
-    fn prepare(&mut self, count: usize) -> Result<(), DDPError> {
+    fn prepare(&mut self, count: usize) -> Result<bool, DDPError> {
         if count > usize::from(u16::MAX) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -121,9 +133,16 @@ impl WledRenderer {
             )
             .into());
         }
+        if count == 0
+            || self
+                .last_sent
+                .is_some_and(|last| last.elapsed() < FRAME_INTERVAL)
+        {
+            return Ok(false);
+        }
         self.rgb.clear();
         self.rgb.reserve(count * 3);
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -133,7 +152,6 @@ mod tests {
     use ddp_rs::packet::PacketRef;
     use ddp_rs::protocol::DataType;
     use prysm_core::{ColorStrip, LinearColor};
-    use std::time::Duration;
 
     fn receiver() -> (WledRenderer, UdpSocket) {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -247,6 +265,46 @@ mod tests {
         renderer
             .render_edges(&EdgeColors::default(), [0; 4])
             .unwrap();
+        assert_no_packet(&socket);
+        assert!(renderer.last_sent.is_none());
+    }
+
+    #[test]
+    fn shares_30_fps_limit_and_sends_current_frame_after_interval() {
+        let (mut renderer, socket) = receiver();
+        renderer.render(&[Color::new(255, 0, 0)]).unwrap();
+        receive(&socket);
+        assert!(renderer.last_sent.is_some());
+
+        // Keep the throttle active regardless of test scheduling delays.
+        let last_sent = Instant::now() + Duration::from_secs(60);
+        renderer.last_sent = Some(last_sent);
+        renderer.render(&[Color::new(0, 255, 0)]).unwrap();
+        renderer
+            .render_edges(&EdgeColors::default(), [1; 4])
+            .unwrap();
+        assert_eq!(renderer.last_sent, Some(last_sent));
+        assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
+        assert!(
+            renderer
+                .render_edges(&EdgeColors::default(), [65536, 0, 0, 0])
+                .is_err()
+        );
+        assert_no_packet(&socket);
+        socket.set_nonblocking(false).unwrap();
+
+        renderer.last_sent = Some(Instant::now().checked_sub(FRAME_INTERVAL).unwrap());
+        renderer
+            .render_edges(&EdgeColors::default(), [1; 4])
+            .unwrap();
+        let bytes = receive(&socket);
+        assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
+        assert_ne!(renderer.last_sent, Some(last_sent));
+
+        renderer.last_sent = Some(Instant::now().checked_sub(FRAME_INTERVAL).unwrap());
+        renderer.render(&[Color::new(0, 0, 255)]).unwrap();
+        let bytes = receive(&socket);
+        assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0, 0, 255]);
         assert_no_packet(&socket);
     }
 

@@ -30,6 +30,12 @@ brightness, gamma, mapping, and timeout for your hardware. The renderer sends
 RGB channels; WLED handles the strip's physical color order. It does not change
 the device configuration.
 
+Prysm sends sRGB, so enable **Use Gamma for color** in **LED Preferences** and
+leave **Disable realtime gamma correction** unchecked in **Sync Interfaces**.
+Bypassing gamma drives LEDs with sRGB values as raw brightness, lifting dark
+channels and making dark blues look cyan or washed out. Gamma correction belongs
+in WLED; do not add a second correction in Prysm.
+
 Edit [`led.toml`](../../led.toml) to set the WLED address, brightness, four edge counts,
 and input source. Run from the workspace root:
 
@@ -82,8 +88,11 @@ exit with an error. WLED restores its effect after its realtime timeout.
 Video input uses the same FFmpeg 9+ decoding and HDR-to-sRGB conversion as the
 desktop video player, runs at the source frame rate, and exits successfully at EOF.
 
-Frames are sent immediately on a nonblocking socket, with no queue or retries;
-the RGB buffer is reused. DNS resolution happens in the constructor and can
+Frames are capped at 30 fps across `render` and `render_edges` to reduce Wi-Fi
+traffic. The first nonempty frame sends immediately; calls within about 33.3 ms of
+the previous successful send are skipped and return success. Frames use a
+nonblocking socket with no queue or retries; the RGB buffer is reused.
+DNS resolution happens in the constructor and can
 block. Render errors are returned as `ddp_rs::error::DDPError` (including an I/O
 `WouldBlock` if the send buffer fills). A failed multi-packet send can leave a
 partial update; send the next full frame. UDP does not acknowledge delivery.
