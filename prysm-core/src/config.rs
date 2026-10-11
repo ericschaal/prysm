@@ -44,9 +44,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             brightness_percent: 80,
-            smoothing_seconds: 0.3,
+            smoothing_seconds: 0.150,
             sample_density: SampleDensity::default(),
-            edge_depth_percent: 15,
+            edge_depth_percent: 20,
             remove_black_bars: true,
         }
     }
