@@ -24,7 +24,7 @@ impl SampleDensity {
 
 impl Default for SampleDensity {
     fn default() -> Self {
-        Self(256)
+        Self(128)
     }
 }
 
