@@ -1,12 +1,12 @@
 mod color;
+mod color_strip;
 mod config;
 mod linear;
-mod spectrum;
 
 pub use color::Color;
-pub use config::{Config, SampleDensity};
+pub use color_strip::{ColorStrip, EdgeColors, SampleDensity};
+pub use config::Config;
 pub use linear::LinearColor;
-pub use spectrum::{EdgeSpectra, Spectrum};
 
 /// Edge represents one of the four edges of the screen
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

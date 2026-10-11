@@ -1,0 +1,35 @@
+Review revision C of the Prysm LED hardware read-only using actual CAD and
+harness topology, not only passing ERC/DRC reports. Read README.txt, bom.csv,
+build.py, verify.py, all THREE KiCad projects and their fabrication exports.
+
+This is a personal hobby prototype. The Pi5 is separately USB-C powered.
+Strip: BTF SK9822 variant45759013650658,5m60LED/m,12mm black PCB IP30;
+about168 LEDs installed. Supply: Mean Well LPV-100-5,5V12A60W. User will cap
+final linear LED output at75%; this is not a hardware current/fault limit.
+
+Two BTF T4pin12mm corners at top-right/bottom-left are intentionally retained.
+Their mapping/current/fit remain unverified commissioning blockers. Each third
+arm receives ONLY+5/GND using a removable passive power tongue and XT30 lead.
+No DATA/CLOCK wires or active LED on that arm; verify DO->DI and CO->CI through
+the adjacent arms. Do not infer digital pad order from analog RGB markings.
+
+Signal chain: GPIO->TOP->top-right T->RIGHT->active bottom-right corner PCB
+->BOTTOM->bottom-left T->LEFT. TOP and RIGHT are fused A; BOTTOM and LEFT are
+fused B. Top-left start/end gap stays open. User approved the active corner
+instead of the old passive L. No passive power/ground/signal bypass there.
+
+GPIO and corner use ISO7720FD (D8 SOIC,default LOW,two forward channels),
+not AHCT125. Pi side powers from header3.3V; GPIO output side from local TOP
+power/GND. Corner input side powers from RIGHT(A); output side from BOTTOM(B).
+No separate logic cable from distribution. Test actual absence of parallel
+LED return paths through Pi/USB/HDMI, signal wires and the opposite strip.
+Independently check partial supply loss and missing branch returns, local
+input rails, decoupling, output waveform and the actual KiCad D8 pinout.
+
+Check 2oz distribution copper,1oz logic planes/stubs/vias, fuse versus LPV
+hiccup behavior, current and temperature at every clip/tongue/connector,
+removability, insulation/strain relief, GPIO underside orientation and Pi
+cooler fit. Verify BOM mating parts and wire/contact ratings with manufacturer
+sources. Verify generator reproducibility and fresh export/ZIP consistency.
+Separate CAD-confirmed corrections from unmeasured physical risks. Conclude
+whether bare-board prototyping and behind-TV operation are ready separately.

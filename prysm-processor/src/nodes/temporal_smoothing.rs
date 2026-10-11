@@ -1,53 +1,43 @@
-use crate::pipeline::Node;
-use prysm_core::EdgeSpectra;
+use prysm_core::EdgeColors;
+use std::time::Instant;
 
 /// Temporal smoothing node
 ///
-/// Blends current frame with previous frame to reduce color flickering
-/// and create smoother color transitions over time.
+/// Blends in linear light using elapsed time, independent of frame rate.
 #[derive(Debug, Clone)]
 pub struct TemporalSmoothing {
-    /// Smoothing factor (0.0 = no smoothing, 1.0 = maximum smoothing)
-    smoothing: f32,
-    /// Previous frame's spectra for blending
-    previous_spectra: Option<EdgeSpectra>,
+    /// Seconds to complete 95% of a transition.
+    seconds: f32,
+    previous: Option<(EdgeColors, Instant)>,
 }
 
 impl TemporalSmoothing {
-    /// Create new temporal smoothing node
-    ///
-    /// # Arguments
-    /// * `smoothing` - Smoothing factor (0.0 to 1.0)
-    ///   - 0.0 = no smoothing (current frame only)
-    ///   - 1.0 = maximum smoothing (heavy bias toward previous frames)
-    ///   - 0.7 = recommended default
-    pub fn new(smoothing: f32) -> Self {
+    /// The processor only constructs this node for finite, positive durations.
+    pub fn new(seconds: f32) -> Self {
         Self {
-            smoothing: smoothing.clamp(0.0, 1.0),
-            previous_spectra: None,
+            seconds,
+            previous: None,
         }
     }
-}
 
-impl Node<EdgeSpectra, EdgeSpectra> for TemporalSmoothing {
-    fn process(&mut self, input: EdgeSpectra) -> EdgeSpectra {
-        // Apply temporal smoothing by blending with previous frame
-        let smoothed = if let Some(ref prev) = self.previous_spectra {
-            // Blend: ratio=1.0-smoothing means higher smoothing gives more weight to previous
-            prev.blend(&input, 1.0 - self.smoothing)
+    pub fn process(&mut self, input: EdgeColors, mut now: Instant) -> EdgeColors {
+        let smoothed = if let Some((prev, previous_time)) = &self.previous {
+            now = now.max(*previous_time);
+            let elapsed = now.duration_since(*previous_time).as_secs_f64();
+            // exp_m1 preserves small contributions when frames arrive close together.
+            let ratio = -(-20.0_f64.ln() * elapsed / f64::from(self.seconds)).exp_m1();
+            prev.blend(&input, ratio as f32)
         } else {
-            // First frame - no previous data to blend with
-            input.clone()
+            input
         };
 
-        // Store current smoothed result for next frame
-        self.previous_spectra = Some(smoothed.clone());
+        self.previous = Some((smoothed.clone(), now));
         smoothed
     }
 }
 
 impl Default for TemporalSmoothing {
     fn default() -> Self {
-        Self::new(0.7)
+        Self::new(prysm_core::Config::default().smoothing_seconds)
     }
 }

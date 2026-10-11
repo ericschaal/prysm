@@ -1,0 +1,1 @@
+(sym_lib_table (lib (name "Prysm") (type "KiCad") (uri "${KIPRJMOD}/Prysm.kicad_sym") (options "") (descr "Prysm prototype symbols")))

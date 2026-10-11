@@ -6,13 +6,17 @@ edition = "2024"
 [lints]
 workspace = true
 
+[[example]]
+name = "capture_smoke"
+test = true
+
 [dependencies]
 futures.workspace = true
 yuv = { workspace = true, features = ["fast_mode"] }
 tracing.workspace = true
 anyhow.workspace = true
-tokio = { workspace = true, features = ["sync", "rt"] }
-tokio-stream.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
@@ -29,4 +33,4 @@ core-media = { version = "0.8.1", default-features = false, features = ["objc"] 
 core-video = { version = "0.6.1", default-features = false, features = ["objc"] }
 dispatch2 = "0.3"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSObject", "NSString", "NSValue"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }

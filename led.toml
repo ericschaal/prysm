@@ -1,0 +1,17 @@
+# DDP uses UDP port 4048. Set this to your WLED instance.
+wled_address = "192.168.18.36:4048"
+
+# Counts by screen edge, viewed from the front.
+# Wiring: bottom-left -> top-left -> top-right -> bottom-right -> bottom-left.
+[leds]
+top = 90
+right = 60
+bottom = 90
+left = 60
+
+[source]
+type = "video"
+# Without a path, video uses the local Philips HDR test clip.
+# path = "/path/to/video.mp4"
+# For camera capture, use type = "camera" and optionally:
+# device = "/dev/video2" # Linux path or macOS AVFoundation device UID

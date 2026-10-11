@@ -1,11 +1,11 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, EdgeSpectra, Spectrum};
+use prysm_core::{Color, ColorStrip, EdgeColors};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
     layout_config: LayoutConfig,
     shutdown_token: Option<CancellationToken>,
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
+    edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
 }
 
@@ -13,7 +13,7 @@ impl std::fmt::Debug for DesktopRendererBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopRenderer")
             .field("shutdown_token", &"<CancellationToken>")
-            .field("spectrum_rx", &self.spectrum_rx)
+            .field("edge_colors_rx", &self.edge_colors_rx)
             .field("frame_rx", &self.frame_rx)
             .field("layout_config", &self.layout_config)
             .finish()
@@ -22,11 +22,11 @@ impl std::fmt::Debug for DesktopRendererBuilder {
 
 impl DesktopRendererBuilder {
     #[must_use]
-    pub fn new(spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>) -> Self {
+    pub fn new(edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>) -> Self {
         Self {
             frame_rx: None,
             shutdown_token: None,
-            spectrum_rx,
+            edge_colors_rx,
             layout_config: LayoutConfig::default(),
         }
     }
@@ -75,7 +75,7 @@ impl DesktopRendererBuilder {
     #[must_use]
     pub fn build(self) -> DesktopRenderer {
         DesktopRenderer {
-            spectrum_rx: self.spectrum_rx,
+            edge_colors_rx: self.edge_colors_rx,
             shutdown_token: self.shutdown_token,
             frame_rx: self.frame_rx,
             texture_handle: None,
@@ -100,7 +100,7 @@ pub struct LayoutConfig {
     /// Size of individual LED squares in pixels
     pub led_size_px: f32,
 
-    /// Total LED count around entire perimeter (if None, use EdgeSpectrum sample counts directly)
+    /// Exact total LED count; zero hides all LEDs. None uses each strip's sample count.
     pub total_led_count: Option<usize>,
 }
 
@@ -223,7 +223,7 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
-    spectrum_rx: tokio::sync::watch::Receiver<EdgeSpectra>,
+    edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
     shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
@@ -236,18 +236,49 @@ pub struct DesktopRenderer {
 ///
 /// Distributes total LED count proportionally to edge lengths to achieve
 /// consistent spacing around the perimeter (like real LED strips).
-fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) -> (usize, usize) {
-    assert!(total_leds > 0, "Total LED count must be positive");
+fn calculate_led_distribution(width: usize, height: usize, total_leds: usize) -> [usize; 4] {
+    let width = width.max(1) as f64;
+    let height = height.max(1) as f64;
+    let horizontal =
+        ((total_leds as f64 * width / (width + height)).round() as usize).min(total_leds);
+    let vertical = total_leds - horizontal;
 
-    let perimeter = 2.0 * (width as f32 + height as f32);
-    let horizontal_fraction = width as f32 / perimeter;
-    let vertical_fraction = height as f32 / perimeter;
+    // Top, right, bottom, left; give odd remainders to top and right.
+    [
+        horizontal.div_ceil(2),
+        vertical.div_ceil(2),
+        horizontal / 2,
+        vertical / 2,
+    ]
+}
 
-    let horizontal_leds = (total_leds as f32 * horizontal_fraction).round() as usize;
-    let vertical_leds = (total_leds as f32 * vertical_fraction).round() as usize;
-
-    // Ensure at least 1 LED per edge
-    (horizontal_leds.max(1), vertical_leds.max(1))
+fn frame_to_image(frame: &Frame, rgb_scratch: &mut Vec<u8>) -> Option<egui::ColorImage> {
+    let rgb_data: &[u8] = match frame.format {
+        PixelFormat::RGB24 => &frame.data,
+        PixelFormat::BGR24 => {
+            rgb_scratch.clone_from(&frame.data);
+            for pixel in rgb_scratch.chunks_exact_mut(3) {
+                pixel.swap(0, 2);
+            }
+            rgb_scratch
+        }
+        PixelFormat::YUYV => {
+            prysm_capture::yuyv::yuyv_to_rgb_into(
+                &frame.data,
+                rgb_scratch,
+                frame.width as usize,
+                frame.height as usize,
+                frame.yuv_range,
+                frame.yuv_matrix,
+            );
+            rgb_scratch
+        }
+        PixelFormat::MJPEG => return None,
+    };
+    Some(egui::ColorImage::from_rgb(
+        [frame.width as usize, frame.height as usize],
+        rgb_data,
+    ))
 }
 
 impl eframe::App for DesktopRenderer {
@@ -262,8 +293,8 @@ impl eframe::App for DesktopRenderer {
             return;
         }
 
-        // Poll for new spectra (non-blocking)
-        let spectra = self.spectrum_rx.borrow_and_update().clone();
+        // Poll for new edge colors (non-blocking)
+        let edge_colors = self.edge_colors_rx.borrow_and_update().clone();
 
         // Poll for new frames (non-blocking) and update texture when needed
         if let Some(frame_rx) = self.frame_rx.as_mut() {
@@ -274,27 +305,7 @@ impl eframe::App for DesktopRenderer {
                 // Clone is cheap (Arc'd data) and releases the watch lock
                 // before the conversion below, so the sender is never blocked.
                 let frame = frame_rx.borrow_and_update().clone();
-                let rgb_data: Option<&[u8]> = match frame.format {
-                    PixelFormat::RGB24 => Some(&frame.data),
-                    PixelFormat::YUYV => {
-                        prysm_capture::yuyv::yuyv_to_rgb_into(
-                            &frame.data,
-                            &mut self.rgb_scratch,
-                            frame.width as usize,
-                            frame.height as usize,
-                        );
-                        Some(&self.rgb_scratch)
-                    }
-                    PixelFormat::MJPEG | PixelFormat::BGR24 => None,
-                };
-
-                // Convert RGB data to ColorImage and update texture
-                if let Some(rgb_data) = rgb_data {
-                    let color_image = egui::ColorImage::from_rgb(
-                        [frame.width as usize, frame.height as usize],
-                        rgb_data,
-                    );
-
+                if let Some(color_image) = frame_to_image(&frame, &mut self.rgb_scratch) {
                     if let Some(texture) = &mut self.texture_handle {
                         texture.set(color_image, egui::TextureOptions::LINEAR);
                     } else {
@@ -316,45 +327,50 @@ impl eframe::App for DesktopRenderer {
             let layout = LayoutDimensions::calculate(available, &self.layout_config);
 
             // Determine LED counts per edge based on actual rendered dimensions
-            let (horizontal_display_leds, vertical_display_leds) =
+            let [top_leds, right_leds, bottom_leds, left_leds] =
                 if let Some(total_leds) = self.layout_config.total_led_count {
                     // Use uniform spacing distribution based on actual GUI window size
                     let render_width = available.width() as usize;
                     let render_height = available.height() as usize;
                     calculate_led_distribution(render_width, render_height, total_leds)
                 } else {
-                    // Fall back to EdgeSpectrum sample counts (current behavior)
-                    (spectra.top.len(), spectra.left.len())
+                    // Fall back to ColorStrip sample counts (current behavior)
+                    [
+                        edge_colors.top.len(),
+                        edge_colors.right.len(),
+                        edge_colors.bottom.len(),
+                        edge_colors.left.len(),
+                    ]
                 };
 
             // Render LED strips (excluding corners)
             self.render_discrete_leds(
                 ui,
-                &spectra.top,
+                &edge_colors.top,
                 layout.top_strip,
                 EdgePosition::Top,
-                horizontal_display_leds,
+                top_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.bottom,
+                &edge_colors.bottom,
                 layout.bottom_strip,
                 EdgePosition::Bottom,
-                horizontal_display_leds,
+                bottom_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.left,
+                &edge_colors.left,
                 layout.left_strip,
                 EdgePosition::Left,
-                vertical_display_leds,
+                left_leds,
             );
             self.render_discrete_leds(
                 ui,
-                &spectra.right,
+                &edge_colors.right,
                 layout.right_strip,
                 EdgePosition::Right,
-                vertical_display_leds,
+                right_leds,
             );
 
             // Corners use default background (no LEDs in corners)
@@ -384,9 +400,8 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Repaints are driven by the notifier thread when new frames/spectra
-        // arrive (see `spawn_repaint_notifier`), so a static source leaves the
-        // GUI idle. Keep a slow heartbeat as a safety net.
+        // Repaints are driven by the notifier thread when new frames or edge colors
+        // arrive (see `spawn_repaint_notifier`). Keep a slow heartbeat as a safety net.
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
 }
@@ -396,15 +411,15 @@ impl DesktopRenderer {
     fn render_discrete_leds(
         &self,
         ui: &mut egui::Ui,
-        spectrum: &Spectrum,
+        strip: &ColorStrip,
         rect: egui::Rect,
         edge: EdgePosition,
         display_led_count: usize,
     ) {
+        if display_led_count == 0 {
+            return;
+        }
         let led_size = self.layout_config.led_size_px;
-
-        // Resample spectrum to display LED count for uniform spacing
-        let colors = spectrum.quantize(display_led_count);
 
         // Calculate spacing between LED centers along the edge
         let spacing = match edge {
@@ -413,7 +428,7 @@ impl DesktopRenderer {
         };
 
         for i in 0..display_led_count {
-            let color = colors[i].to_srgb();
+            let color = strip.color_at(i, display_led_count).to_srgb();
             let egui_color = color_to_egui(color);
 
             // Calculate LED center position based on edge
@@ -465,13 +480,13 @@ enum EdgePosition {
 /// Wake the GUI only when there is something new to draw.
 ///
 /// egui repaints on demand; instead of polling at a fixed FPS, a small
-/// thread waits on the spectra/frame watch channels and requests a repaint
-/// per update. When the source is static (and the processor is skipping
-/// frames), the GUI stays idle. Exits when both channels close or on
+/// thread waits on the edge color and frame watch channels and requests a repaint
+/// per update. When no updates arrive, the GUI stays idle. Exits when the
+/// edge colors channel closes or on
 /// shutdown; tokio watch futures work under any executor, so a lightweight
 /// `block_on` is enough — no runtime needed on this thread.
 fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
-    let mut spectrum_rx = app.spectrum_rx.clone();
+    let mut edge_colors_rx = app.edge_colors_rx.clone();
     let mut frame_rx = app.frame_rx.clone();
     let shutdown_token = app.shutdown_token.clone().unwrap_or_default();
 
@@ -479,7 +494,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
         futures::executor::block_on(async move {
             loop {
                 tokio::select! {
-                    changed = spectrum_rx.changed() => {
+                    changed = edge_colors_rx.changed() => {
                         if changed.is_err() {
                             break; // Sender dropped
                         }
@@ -492,7 +507,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
                         }
                     } => {
                         if changed.is_err() {
-                            frame_rx = None; // Sender dropped; keep watching spectra
+                            frame_rx = None; // Sender dropped; keep watching edge colors
                         } else {
                             ctx.request_repaint();
                         }
@@ -523,10 +538,7 @@ fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
 /// # Arguments
 /// * `app` - The configured PrysmApp instance
 /// * `shutdown_token` - Token to signal shutdown when window closes
-pub fn run(
-    app: DesktopRenderer,
-    shutdown_token: &CancellationToken,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1920.0, 1080.0])
@@ -547,5 +559,68 @@ pub fn run(
     tracing::info!("Window closed, signaling shutdown to runtime thread");
     shutdown_token.cancel();
 
-    result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn led_distribution_preserves_total_including_small_and_odd_counts() {
+        assert_eq!(calculate_led_distribution(1920, 1080, 5), [2, 1, 1, 1]);
+        assert_eq!(
+            calculate_led_distribution(1920, 1080, 300),
+            [96, 54, 96, 54]
+        );
+        for (width, height) in [(1920, 1080), (1080, 1920), (1, 1), (0, 0), (1, 1000)] {
+            for total in 0..=301 {
+                let [top, right, bottom, left] = calculate_led_distribution(width, height, total);
+                assert_eq!(top + right + bottom + left, total);
+                assert!(top.abs_diff(bottom) <= 1);
+                assert!(right.abs_diff(left) <= 1);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_leds_draw_no_shapes() {
+        let (_, receiver) = tokio::sync::watch::channel(EdgeColors::default());
+        let app = DesktopRendererBuilder::new(receiver).build();
+        let context = egui::Context::default();
+        let _ = context.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let before = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+                app.render_discrete_leds(
+                    ui,
+                    &ColorStrip::default(),
+                    ui.max_rect(),
+                    EdgePosition::Top,
+                    0,
+                );
+                let after = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+                assert_eq!(before, after);
+            });
+        });
+    }
+
+    #[test]
+    fn limited_range_preview_displays_black_and_white() {
+        let mut frame = Frame::new(vec![16, 128, 235, 128], 2, 1, PixelFormat::YUYV);
+        frame.yuv_range = prysm_capture::YuvRange::Limited;
+        frame.yuv_matrix = prysm_capture::YuvStandardMatrix::Bt709;
+        let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
+        assert_eq!(image.pixels, [egui::Color32::BLACK, egui::Color32::WHITE]);
+    }
+
+    #[test]
+    fn bgr_frames_display_in_rgb_order() {
+        let frame = Frame::new(vec![10, 20, 200, 255, 0, 0], 2, 1, PixelFormat::BGR24);
+        let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
+        assert_eq!(image.size, [2, 1]);
+        assert_eq!(
+            image.pixels,
+            [egui::Color32::from_rgb(200, 20, 10), egui::Color32::BLUE]
+        );
+    }
 }

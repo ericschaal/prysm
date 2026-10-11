@@ -1,0 +1,15 @@
+Reference,Pin,Net
+J1,1,GND
+J1,2,+5V_IN
+F1,1,+5V_IN
+F1,2,+5V_BUS
+F2,1,+5V_BUS
+F2,2,+5V_A
+F3,1,+5V_BUS
+F3,2,+5V_B
+J2,1,+5V_A
+J2,2,GND
+J3,1,+5V_B
+J3,2,GND
+C1,1,+5V_BUS
+C1,2,GND

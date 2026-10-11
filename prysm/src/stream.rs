@@ -1,163 +1,171 @@
+use anyhow::Result;
 use futures::{Stream, StreamExt};
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
-use tokio::sync::broadcast;
-use tokio::task::JoinHandle;
-use tokio_stream::wrappers::BroadcastStream;
+use prysm_capture::Frame;
+use prysm_core::EdgeColors;
+use prysm_processor::PrysmProcessor;
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
-/// State shared between two tee'd streams
-struct TeeState<S, T> {
-    source: Pin<Box<S>>,
-    /// Item cached for the consumer that hasn't read it yet
-    cache: Option<T>,
-    /// Source stream is exhausted
-    done: bool,
-}
-
-/// A stream that shares items with its sibling
-#[allow(dead_code)]
-struct TeeStream<S: Stream> {
-    state: Arc<Mutex<TeeState<S, S::Item>>>,
-}
-
-impl<S> Stream for TeeStream<S>
-where
-    S: Stream,
-    S::Item: Clone,
-{
-    type Item = S::Item;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Ok(mut state) = self.state.try_lock() else {
-            // Other consumer is polling, wake us up to try again
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
-        };
-
-        // If we have a cached item, take it
-        if let Some(item) = state.cache.take() {
-            return Poll::Ready(Some(item));
-        }
-
-        // If source is done, we're done
-        if state.done {
-            return Poll::Ready(None);
-        }
-
-        // Poll the source stream
-        match state.source.as_mut().poll_next(cx) {
-            Poll::Ready(Some(item)) => {
-                // Clone item: one for us, one for cache
-                let item_clone = item.clone();
-                state.cache = Some(item);
-                Poll::Ready(Some(item_clone))
+/// Own processing and desktop publication for the lifetime of a frame source.
+pub(crate) async fn publish_frames(
+    source: impl Stream<Item = Result<Frame>>,
+    mut processor: PrysmProcessor,
+    frames: watch::Sender<Frame>,
+    edge_colors: watch::Sender<EdgeColors>,
+    shutdown: &CancellationToken,
+) -> Result<()> {
+    let _shutdown_guard = shutdown.clone().drop_guard();
+    futures::pin_mut!(source);
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(()),
+            frame = source.next() => {
+                let Some(frame) = frame else {
+                    return Ok(());
+                };
+                let frame = frame?;
+                let colors = processor.process_frame(frame.clone());
+                let _ = frames.send(frame);
+                let _ = edge_colors.send(colors);
             }
-            Poll::Ready(None) => {
-                state.done = true;
-                Poll::Ready(None)
-            }
-            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-/// Split a stream into two independent streams that both receive all items.
-/// Items are cloned (cheap with Arc<Vec<u8>> in Frame).
-#[allow(dead_code)]
-pub fn stream_tee<S>(source: S) -> (impl Stream<Item = S::Item>, impl Stream<Item = S::Item>)
-where
-    S: Stream + 'static,
-    S::Item: Clone,
-{
-    let state = Arc::new(Mutex::new(TeeState {
-        source: Box::pin(source),
-        cache: None,
-        done: false,
-    }));
-
-    let stream1 = TeeStream {
-        state: Arc::clone(&state),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prysm_capture::PixelFormat;
+    use prysm_core::Config;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
     };
 
-    let stream2 = TeeStream { state };
+    struct DropProbe(Arc<AtomicBool>);
 
-    (stream1, stream2)
-}
-
-pub fn stream_split<S>(source: S) -> (impl Stream<Item = S::Item>, impl Stream<Item = S::Item>)
-where
-    S: Stream + Send + 'static,
-    S::Item: Clone + Send,
-{
-    // Create broadcast channel for frame distribution
-    let (frame_tx, processor_rx) = broadcast::channel::<S::Item>(3);
-
-    // Subscribe to broadcast for renderer
-    let renderer_rx = frame_tx.subscribe();
-
-    // Spawn task to broadcast frames
-    tokio::spawn(async move {
-        futures::pin_mut!(source);
-        while let Some(frame) = source.next().await {
-            let _ = frame_tx.send(frame);
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
         }
-    });
-
-    // Convert broadcast receiver to stream for processor
-    let processor_stream =
-        BroadcastStream::new(processor_rx).filter_map(|result| async move { result.ok() });
-    let renderer_stream =
-        BroadcastStream::new(renderer_rx).filter_map(|result| async move { result.ok() });
-
-    (processor_stream, renderer_stream)
-}
-
-#[derive(Debug, Clone)]
-pub struct StreamWatcher<T: Clone + Send + Sync + 'static> {
-    tx: tokio::sync::watch::Sender<T>,
-    rx: tokio::sync::watch::Receiver<T>,
-}
-
-impl<T: Clone + Send + Sync + 'static> StreamWatcher<T> {
-    #[must_use]
-    pub fn new(init: T) -> StreamWatcher<T> {
-        let (tx, rx) = tokio::sync::watch::channel(init);
-        StreamWatcher { tx, rx }
     }
-    pub fn into_task<S>(self, stream: S) -> JoinHandle<()>
-    where
-        S: Stream<Item = T> + Send + 'static,
-    {
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            futures::pin_mut!(stream);
-            while let Some(item) = stream.next().await {
-                let _ = tx.send(item);
+
+    fn outputs() -> (watch::Sender<Frame>, watch::Sender<EdgeColors>) {
+        let (frames, _) = watch::channel(Frame::fill(0, 2, 2, PixelFormat::RGB24));
+        let (colors, _) = watch::channel(EdgeColors::default());
+        (frames, colors)
+    }
+
+    #[tokio::test]
+    async fn publishes_every_frame_in_a_burst_and_completes_at_eof() {
+        let (frames, colors) = outputs();
+        let frame_rx = frames.subscribe();
+        let color_rx = colors.subscribe();
+        let source = futures::stream::iter(1..=8).map(|value| {
+            if value > 1 {
+                assert_eq!(frame_rx.borrow().as_slice(), &[value - 1; 12]);
+                assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, value - 1);
             }
-        })
+            Ok(Frame::fill(value, 2, 2, PixelFormat::RGB24))
+        });
+        let config = Config {
+            brightness_percent: 100,
+            smoothing_seconds: 0.0,
+            remove_black_bars: false,
+            ..Config::default()
+        };
+        let shutdown = CancellationToken::new();
+        let result = publish_frames(
+            source,
+            PrysmProcessor::new(&config),
+            frames,
+            colors,
+            &shutdown,
+        )
+        .await;
+        result.unwrap();
+        assert!(shutdown.is_cancelled());
+        assert_eq!(frame_rx.borrow().as_slice(), &[8; 12]);
+        assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, 8);
+        assert!(frame_rx.has_changed().is_err());
+        assert!(color_rx.has_changed().is_err());
     }
 
-    pub fn receiver(&self) -> tokio::sync::watch::Receiver<T> {
-        self.rx.clone()
+    #[tokio::test]
+    async fn cancellation_drops_a_pending_source_and_closes_outputs() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let probe = DropProbe(dropped.clone());
+        let source = futures::stream::poll_fn(move |_| {
+            let _ = &probe;
+            std::task::Poll::Pending
+        });
+        let (frames, colors) = outputs();
+        let frame_rx = frames.subscribe();
+        let color_rx = colors.subscribe();
+        let shutdown = CancellationToken::new();
+        let mut publishing = Box::pin(publish_frames(
+            source,
+            PrysmProcessor::default(),
+            frames,
+            colors,
+            &shutdown,
+        ));
+        assert!(futures::poll!(&mut publishing).is_pending());
+        shutdown.cancel();
+        publishing.await.unwrap();
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(frame_rx.has_changed().is_err());
+        assert!(color_rx.has_changed().is_err());
     }
-}
 
-#[allow(dead_code)]
-pub fn stream_watcher<S>(init: S::Item, stream: S) -> tokio::sync::watch::Receiver<S::Item>
-where
-    S: Stream + Send + 'static,
-    S::Item: Clone + Send + Sync,
-{
-    let (tx, rx) = tokio::sync::watch::channel(init);
+    #[tokio::test]
+    async fn cancellation_during_eof_poll_is_successful() {
+        let shutdown = CancellationToken::new();
+        let source = futures::stream::poll_fn(|_| {
+            shutdown.cancel();
+            std::task::Poll::Ready(None)
+        });
+        let (frames, colors) = outputs();
+        publish_frames(source, PrysmProcessor::default(), frames, colors, &shutdown)
+            .await
+            .unwrap();
+    }
 
-    tokio::spawn(async move {
-        futures::pin_mut!(stream);
-        while let Some(spectra) = stream.next().await {
-            let _ = tx.send(spectra);
-        }
-        tracing::info!("Spectrum stream ended");
-    });
+    #[tokio::test]
+    async fn source_error_reaches_desktop_and_cancels_shutdown() {
+        let source = futures::stream::iter([
+            Ok(Frame::fill(42, 2, 2, PixelFormat::RGB24)),
+            Err(anyhow::anyhow!("camera disconnected").context("capture failed")),
+        ]);
+        let (frames, colors) = outputs();
+        let receiver = frames.subscribe();
+        let shutdown = CancellationToken::new();
+        let error = publish_frames(source, PrysmProcessor::default(), frames, colors, &shutdown)
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), "capture failed: camera disconnected");
+        assert_eq!(receiver.borrow().as_slice(), &[42; 12]);
+        assert!(shutdown.is_cancelled());
+    }
 
-    rx
+    #[tokio::test]
+    async fn pipeline_panic_is_observed_and_cancels_shutdown() {
+        let shutdown = CancellationToken::new();
+        let token = shutdown.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let probe = DropProbe(dropped.clone());
+        let task = tokio::spawn(async move {
+            let source =
+                futures::stream::poll_fn(move |_| -> std::task::Poll<Option<Result<Frame>>> {
+                    let _ = &probe;
+                    panic!("pipeline failed");
+                });
+            let (frames, colors) = outputs();
+            publish_frames(source, PrysmProcessor::default(), frames, colors, &token).await
+        });
+        assert!(task.await.unwrap_err().is_panic());
+        assert!(shutdown.is_cancelled());
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 }

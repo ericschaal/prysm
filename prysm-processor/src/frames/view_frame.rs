@@ -1,5 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, LinearColor};
+use prysm_core::{Color, Edge, LinearColor};
 
 /// Viewport within a frame
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl Viewport {
 
 /// Brightness (luma) of a pixel read directly from raw frame data.
 ///
-/// YUYV stores full-range luma at every even byte, so band/change detection
+/// YUYV stores luma at every even byte, so black-bar detection
 /// never needs a color conversion. Out-of-bounds coordinates read as black.
 pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     if x >= frame.width || y >= frame.height {
@@ -68,17 +68,23 @@ impl ViewFrame {
         self.viewport.height
     }
 
-    /// Average a viewport-relative region in linear RGB space, integrating
-    /// every pixel in the region. Decodes only the pixels it visits.
-    pub fn average_linear(
+    /// Average a viewport-relative edge region in linear RGB, with quadratic
+    /// falloff toward the interior. Decodes every pixel in the region.
+    pub fn average_edge_linear(
         &self,
         x_start: u32,
         y_start: u32,
         x_end: u32,
         y_end: u32,
+        edge: Edge,
     ) -> LinearColor {
         let mut sum = LinearColor::black();
-        let mut count: u32 = 0;
+        let mut total_weight = 0.0;
+        let depth = match edge {
+            Edge::Top | Edge::Bottom => y_end - y_start,
+            Edge::Left | Edge::Right => x_end - x_start,
+        };
+        let inverse_depth = 1.0 / depth.max(1) as f32;
 
         for y in y_start..y_end {
             let abs_y = self.viewport.y + y;
@@ -91,16 +97,26 @@ impl ViewFrame {
                     break;
                 }
                 if let Some(color) = self.pixel_srgb(abs_x, abs_y) {
-                    sum += LinearColor::from_srgb(color);
-                    count += 1;
+                    let distance = match edge {
+                        Edge::Top => y - y_start,
+                        Edge::Bottom => y_end - 1 - y,
+                        Edge::Left => x - x_start,
+                        Edge::Right => x_end - 1 - x,
+                    };
+                    // Pixel centers keep even a one-pixel-deep region weighted.
+                    let falloff = 1.0 - (distance as f32 + 0.5) * inverse_depth;
+                    let weight = falloff * falloff;
+                    sum += LinearColor::from_srgb(color) * weight;
+                    // Include black pixels so small highlights do not fill the whole sample.
+                    total_weight += weight;
                 }
             }
         }
 
-        if count == 0 {
+        if total_weight == 0.0 {
             return LinearColor::black();
         }
-        sum * (1.0 / count as f32)
+        sum * (1.0 / total_weight)
     }
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
@@ -112,15 +128,21 @@ impl ViewFrame {
                     x,
                     y,
                     self.frame.width,
+                    self.frame.yuv_range,
+                    self.frame.yuv_matrix,
                 );
                 Some(Color::new(r, g, b))
             }
-            PixelFormat::RGB24 => {
+            PixelFormat::RGB24 | PixelFormat::BGR24 => {
                 let idx = ((y * self.frame.width + x) * 3) as usize;
                 let px = self.frame.data.get(idx..idx + 3)?;
-                Some(Color::new(px[0], px[1], px[2]))
+                Some(if self.frame.format == PixelFormat::BGR24 {
+                    Color::new(px[2], px[1], px[0])
+                } else {
+                    Color::new(px[0], px[1], px[2])
+                })
             }
-            PixelFormat::BGR24 | PixelFormat::MJPEG => None,
+            PixelFormat::MJPEG => None,
         }
     }
 }
@@ -155,10 +177,10 @@ pub mod tests {
     }
 
     #[test]
-    fn average_linear_uniform_region() {
+    fn average_edge_linear_uniform_region() {
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 128);
         let view = ViewFrame::new(frame);
-        let avg = view.average_linear(0, 0, 8, 8);
+        let avg = view.average_edge_linear(0, 0, 8, 8, Edge::Top);
         let expected = LinearColor::from_srgb(Color::new(128, 128, 128));
         assert!((avg.r - expected.r).abs() < 0.01, "r = {}", avg.r);
         assert!((avg.g - expected.g).abs() < 0.01);
@@ -166,17 +188,27 @@ pub mod tests {
     }
 
     #[test]
-    fn average_linear_respects_viewport_offset() {
-        // Left half black, right half white; viewport covers only the right half
-        let frame = yuyv_frame_from_luma(8, 4, |x, _| if x < 4 { 0 } else { 255 });
+    fn average_edge_linear_respects_viewport_offset_and_keeps_black_in_the_average() {
+        let frame = yuyv_frame_from_luma(8, 8, |x, y| {
+            if (2..6).contains(&x) && y == 2 {
+                255
+            } else {
+                0
+            }
+        });
         let mut view = ViewFrame::new(frame);
         view.viewport = Viewport {
-            x: 4,
-            y: 0,
+            x: 2,
+            y: 2,
             width: 4,
             height: 4,
         };
-        let avg = view.average_linear(0, 0, 4, 4);
-        assert!(avg.r > 0.99, "expected white, got {}", avg.r);
+        let avg = view.average_edge_linear(0, 0, 4, 2, Edge::Top);
+        // The white outer row and black inner row have weights in a 9:1 ratio.
+        assert!(
+            (avg.r - 0.9).abs() < 1e-6,
+            "expected 90% white, got {}",
+            avg.r
+        );
     }
 }
