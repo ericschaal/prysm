@@ -112,9 +112,9 @@ mod tests {
                 "expected uniform gray, got {color:?}"
             );
         }
-        // Density 60/1000px: 640px edge -> 38 samples, 360px edge -> 21
-        assert_eq!(edge_colors.top.len(), 38);
-        assert_eq!(edge_colors.left.len(), 21);
+        let density = prysm_core::Config::default().sample_density;
+        assert_eq!(edge_colors.top.len(), density.samples_for_length(640));
+        assert_eq!(edge_colors.left.len(), density.samples_for_length(360));
     }
 
     #[test]
@@ -125,6 +125,44 @@ mod tests {
 
         assert!(edge_colors.top.sample_at(0.5).r > 0.99);
         assert!(edge_colors.bottom.sample_at(0.5).r < 0.01);
+    }
+
+    #[test]
+    fn moving_highlight_fades_smoothly_through_sampling_boundary_on_every_edge() {
+        // Default 15% depth on a 100px picture gives a 15px sampling band.
+        let sampler = sampler();
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            let mut influence = Vec::new();
+            for distance in 0..=15 {
+                let frame = yuyv_frame_from_luma(100, 100, |x, y| {
+                    let pixel_distance = match edge {
+                        Edge::Top => y,
+                        Edge::Bottom => 99 - y,
+                        Edge::Left => x,
+                        Edge::Right => 99 - x,
+                    };
+                    if pixel_distance == distance { 255 } else { 0 }
+                });
+                let colors = sampler.process(&ViewFrame::new(frame));
+                let strip = match edge {
+                    Edge::Top => colors.top,
+                    Edge::Bottom => colors.bottom,
+                    Edge::Left => colors.left,
+                    Edge::Right => colors.right,
+                };
+                influence.push(strip.sample_at(0.5).r);
+            }
+
+            assert!(
+                influence.windows(2).all(|pair| pair[0] > pair[1]),
+                "{edge:?}: influence must decrease at every step: {influence:?}"
+            );
+            // Halfway inward, the pixel has about a quarter of its outer influence.
+            assert!((influence[7] / influence[0] - 225.0 / 841.0).abs() < 1e-5);
+            // The last sampled pixel is already negligible before leaving the band.
+            assert!(influence[14] < 0.001, "{edge:?}: {influence:?}");
+            assert_eq!(influence[15], 0.0);
+        }
     }
 
     #[test]

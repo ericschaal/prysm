@@ -113,6 +113,7 @@ fn slightly_noisy_black_bands_still_crop() {
 #[test]
 fn edge_sampling_includes_the_last_row_and_column() {
     let config = Config {
+        sample_density: SampleDensity(60),
         brightness_percent: 100,
         smoothing_seconds: 0.0,
         remove_black_bars: false,
