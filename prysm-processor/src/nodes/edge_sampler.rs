@@ -88,10 +88,7 @@ mod tests {
 
     fn sampler() -> EdgeSampler {
         let config = prysm_core::Config::default();
-        EdgeSampler::new(
-            config.sample_density,
-            f32::from(config.edge_depth_percent) / 100.0,
-        )
+        EdgeSampler::new(config.sample_density, config.edge_depth_percent.as_ratio())
     }
 
     #[test]
@@ -129,8 +126,8 @@ mod tests {
 
     #[test]
     fn moving_highlight_fades_smoothly_through_sampling_boundary_on_every_edge() {
-        // Default 15% depth on a 100px picture gives a 15px sampling band.
-        let sampler = sampler();
+        // A 15px band makes the expected quadratic weights explicit.
+        let sampler = EdgeSampler::new(SampleDensity::default(), 0.15);
         for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
             let mut influence = Vec::new();
             for distance in 0..=15 {

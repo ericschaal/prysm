@@ -24,7 +24,7 @@ impl SampleDensity {
 
 impl Default for SampleDensity {
     fn default() -> Self {
-        Self(128)
+        crate::Config::default().sample_density
     }
 }
 

@@ -1,34 +1,31 @@
-//! `FFmpeg` video-file input shared by the desktop and WLED binaries.
+//! `FFmpeg` file input shared by the egui and WLED outputs.
 
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{CAPTURE_HEIGHT, CAPTURE_WIDTH};
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use prysm_capture::{Frame, PixelFormat};
+use prysm_core::CaptureResolution;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-/// Local Philips HDR test clip used when no video path is supplied.
-pub const DEFAULT_VIDEO: &str =
-    "/Users/eschaal/Ambilight 4K HDR Test by Philips [e1QD2dBkESE].f701.mp4";
-const FRAME_BYTES: usize = CAPTURE_WIDTH as usize * CAPTURE_HEIGHT as usize * 3;
-
-/// Decode a video once at its source rate into 640×360 sRGB frames.
+/// Decode a video once at its source rate into sRGB frames at the requested resolution.
 ///
 /// Requires `FFmpeg` 9+ on PATH. Successful EOF closes the stream; decoding
 /// failures are yielded with their original error context. Cancellation stops playback.
 pub fn video_feed(
     path: &Path,
+    resolution: CaptureResolution,
     shutdown: CancellationToken,
 ) -> Result<impl Stream<Item = Result<Frame>> + Send + 'static + use<>> {
+    let [width, height] = resolution.dimensions();
     std::fs::File::open(path).with_context(|| format!("Cannot open video {}", path.display()))?;
     // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and preview.
     let filter = format!(
-        "scale={CAPTURE_WIDTH}:{CAPTURE_HEIGHT}:flags=area:intent=perceptual:\
+        "scale={width}:{height}:flags=area:intent=perceptual:\
          out_primaries=bt709:out_transfer=srgb:out_range=full"
     );
     let mut child = Command::new("ffmpeg")
@@ -49,8 +46,8 @@ pub fn video_feed(
     tracing::info!(path = %path.display(), "Playing video");
 
     let frames =
-        futures::stream::try_unfold((child, stdout), |(mut child, mut stdout)| async move {
-            if let Some(frame) = read_frame(&mut stdout)
+        futures::stream::try_unfold((child, stdout), move |(mut child, mut stdout)| async move {
+            if let Some(frame) = read_frame(&mut stdout, resolution)
                 .await
                 .context("Failed to read FFmpeg frame")?
             {
@@ -64,18 +61,17 @@ pub fn video_feed(
     Ok(frames.take_until(shutdown.cancelled_owned()))
 }
 
-async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<Option<Frame>> {
-    let mut data = vec![0; FRAME_BYTES];
+async fn read_frame(
+    reader: &mut (impl AsyncRead + Unpin),
+    resolution: CaptureResolution,
+) -> io::Result<Option<Frame>> {
+    let [width, height] = resolution.dimensions();
+    let mut data = vec![0; resolution.rgb24_bytes()];
     if reader.read(&mut data[..1]).await? == 0 {
         return Ok(None);
     }
     reader.read_exact(&mut data[1..]).await?;
-    Ok(Some(Frame::new(
-        data,
-        CAPTURE_WIDTH,
-        CAPTURE_HEIGHT,
-        PixelFormat::RGB24,
-    )))
+    Ok(Some(Frame::new(data, width, height, PixelFormat::RGB24)))
 }
 
 #[cfg(test)]
@@ -84,22 +80,32 @@ mod tests {
 
     #[tokio::test]
     async fn reads_complete_frames_and_clean_eof() {
-        let mut bytes = vec![42; FRAME_BYTES];
-        bytes.extend(vec![123; FRAME_BYTES]);
+        let mut bytes = vec![42; 96];
+        bytes.extend(vec![123; 96]);
         let mut reader = bytes.as_slice();
         for expected in [42, 123] {
-            let frame = read_frame(&mut reader).await.unwrap().unwrap();
-            assert_eq!((frame.width, frame.height), (CAPTURE_WIDTH, CAPTURE_HEIGHT));
+            let frame = read_frame(&mut reader, CaptureResolution::new(8, 4).unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!((frame.width, frame.height), (8, 4));
             assert_eq!(frame.format, PixelFormat::RGB24);
             assert!(frame.as_slice().iter().all(|&byte| byte == expected));
         }
-        assert!(read_frame(&mut reader).await.unwrap().is_none());
+        assert!(
+            read_frame(&mut reader, CaptureResolution::new(8, 4).unwrap())
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn truncated_frame_is_an_error() {
-        let bytes = vec![0; FRAME_BYTES - 1];
-        let error = read_frame(&mut bytes.as_slice()).await.unwrap_err();
+        let bytes = vec![0; CaptureResolution::default().rgb24_bytes() - 1];
+        let error = read_frame(&mut bytes.as_slice(), CaptureResolution::default())
+            .await
+            .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 
@@ -127,7 +133,12 @@ mod tests {
             .unwrap();
         assert!(status.success());
         let shutdown = CancellationToken::new();
-        let stream = video_feed(&path, shutdown.clone()).unwrap();
+        let stream = video_feed(
+            &path,
+            CaptureResolution::new(32, 18).unwrap(),
+            shutdown.clone(),
+        )
+        .unwrap();
         futures::pin_mut!(stream);
         let mut count = 0;
         while let Some(frame) =
@@ -135,14 +146,36 @@ mod tests {
                 .await
                 .unwrap()
         {
-            assert_eq!(frame.unwrap().len(), FRAME_BYTES);
+            let frame = frame.unwrap();
+            assert_eq!((frame.width, frame.height), (32, 18));
+            assert_eq!(frame.len(), 32 * 18 * 3);
             count += 1;
         }
         assert_eq!(count, 3);
         assert!(!shutdown.is_cancelled());
+        let cancellation = CancellationToken::new();
+        let playback = video_feed(
+            &path,
+            CaptureResolution::new(32, 18).unwrap(),
+            cancellation.clone(),
+        )
+        .unwrap();
+        futures::pin_mut!(playback);
+        tokio::time::timeout(std::time::Duration::from_secs(10), playback.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        cancellation.cancel();
+        assert!(playback.next().await.is_none());
         let invalid = directory.join("invalid.mkv");
         std::fs::write(&invalid, b"invalid video data").unwrap();
-        let stream = video_feed(&invalid, shutdown.clone()).unwrap();
+        let stream = video_feed(
+            &invalid,
+            CaptureResolution::new(32, 18).unwrap(),
+            shutdown.clone(),
+        )
+        .unwrap();
         futures::pin_mut!(stream);
         let error = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next())
             .await
@@ -155,29 +188,5 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         std::fs::remove_file(invalid).unwrap();
         std::fs::remove_dir(directory).unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "requires FFmpeg 9+ and the local default video"]
-    async fn plays_default_video_and_stops_on_cancellation() {
-        let shutdown = CancellationToken::new();
-        let feed = video_feed(Path::new(DEFAULT_VIDEO), shutdown.clone()).unwrap();
-        futures::pin_mut!(feed);
-        for _ in 0..3 {
-            let frame = tokio::time::timeout(std::time::Duration::from_secs(10), feed.next())
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
-            assert_eq!(frame.len(), FRAME_BYTES);
-        }
-        assert!(!shutdown.is_cancelled());
-        shutdown.cancel();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), feed.next())
-                .await
-                .unwrap()
-                .is_none()
-        );
     }
 }

@@ -32,14 +32,12 @@ pub struct PrysmProcessor {
 impl PrysmProcessor {
     pub fn new(config: &Config) -> Self {
         Self {
-            config: config.clone(),
+            config: *config,
             band_detector: config.remove_black_bars.then(BandDetector::new),
-            sampler: EdgeSampler::new(
-                config.sample_density,
-                f32::from(config.edge_depth_percent.clamp(1, 50)) / 100.0,
-            ),
-            temporal_smoothing: (config.smoothing_seconds.is_finite()
-                && config.smoothing_seconds > 0.0)
+            sampler: EdgeSampler::new(config.sample_density, config.edge_depth_percent.as_ratio()),
+            temporal_smoothing: config
+                .smoothing_seconds
+                .is_enabled()
                 .then(|| TemporalSmoothing::new(config.smoothing_seconds)),
             last_viewport: None,
             frame_layout: None,
@@ -101,7 +99,7 @@ impl PrysmProcessor {
             edge_colors = smoother.process(edge_colors, now);
         }
 
-        edge_colors * (f32::from(self.config.brightness_percent.min(100)) / 100.0)
+        edge_colors * self.config.brightness_percent.as_ratio()
     }
 
     /// Convert into a stream processor

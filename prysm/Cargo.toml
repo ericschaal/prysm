@@ -3,7 +3,7 @@ name = "prysm"
 version = "0.1.0"
 edition = "2024"
 default-run = "prysm"
-description = "Stream capture-device colors to WLED over DDP"
+description = "Process device or file video for WLED or an on-screen preview"
 
 [package.metadata.deb]
 name = "prysm-led"
@@ -13,8 +13,8 @@ section = "video"
 priority = "optional"
 maintainer-scripts = "debian"
 assets = [
-    ["target/release/led", "usr/bin/prysm-led", "755"],
-    ["debian/led.toml", "etc/prysm/led.toml", "644"],
+    ["target/release/prysm", "usr/bin/prysm", "755"],
+    ["debian/prysm.toml", "etc/prysm/prysm.toml", "644"],
     ["debian/README.md", "usr/share/doc/prysm-led/README.md", "644"],
 ]
 

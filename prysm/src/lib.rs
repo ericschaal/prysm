@@ -5,36 +5,28 @@ use anyhow::{Context, Result};
 use desktop_renderer::DesktopRendererBuilder;
 use futures::Stream;
 use prysm_capture::Frame;
-use prysm_core::EdgeColors;
+use prysm_core::{Config, EdgeColors};
 use prysm_processor::PrysmProcessor;
 use tokio_util::sync::CancellationToken;
 
-// Low capture resolution on purpose: the default strip has ~38 horizontal
-// samples, and the camera ISP's hardware downscale integrates every source pixel,
-// which is both cheaper and more accurate than sampling a high-res frame.
-pub const CAPTURE_WIDTH: u32 = 640;
-pub const CAPTURE_HEIGHT: u32 = 360;
-
 /// Run the desktop visualizer with a frame source created on the async runtime.
 pub fn run<S>(
+    config: Config,
     create_feed: impl FnOnce(CancellationToken) -> Result<S> + Send + 'static,
 ) -> Result<()>
 where
     S: Stream<Item = Result<Frame>> + Send + 'static,
 {
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
-    tracing::subscriber::set_global_default(subscriber)?;
-
+    let [width, height] = config.capture_resolution.dimensions();
     // Create shutdown token
     let shutdown_token = CancellationToken::new();
 
-    let config = prysm_core::Config::default();
     let (edge_colors_tx, edge_colors_rx) = tokio::sync::watch::channel(EdgeColors::black(
-        CAPTURE_WIDTH as usize,
-        CAPTURE_HEIGHT as usize,
+        width as usize,
+        height as usize,
         config.sample_density,
     ));
-    let dummy_frame = Frame::dummy(CAPTURE_WIDTH, CAPTURE_HEIGHT);
+    let dummy_frame = Frame::dummy(width, height);
     let (frames_tx, frames_rx) = tokio::sync::watch::channel(dummy_frame);
 
     // Spawn dedicated runtime thread for all async work

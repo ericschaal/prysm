@@ -28,12 +28,11 @@ Error handling policy: see [docs/error-handling.md](docs/error-handling.md).
 
 ### Workspace Structure
 
-**6 crates, with three application binaries in `prysm`**
+**6 crates, with one application binary in `prysm`**
 
-Libraries are reusable components for building different binaries:
+Libraries are reusable components for capture, processing and rendering:
 
-- Current binaries: `prysm` (camera preview), `video` (video preview), `led` (WLED output)
-- Future binaries: LED hardware controllers for different platforms
+- `prysm` selects device/file input and WLED/egui output through TOML configuration
 - Clean separation: capture → process → render
 - Trait-based extensibility (not plugin-based)
 
@@ -76,11 +75,9 @@ Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 - `desktop-renderer`: egui/eframe GUI for visualization
 - `led-renderer`: WLED RGB output over DDP/UDP using `ddp-rs`
 
-**Binaries:**
+**Binary:**
 
-- `prysm`: Desktop demo/visualizer (V4L capture + desktop renderer)
-- `led`: Headless camera or FFmpeg video → processor → WLED via DDP/UDP
-- Future: Additional binaries for LED hardware on different platforms
+- `prysm`: Device or file input → processor → WLED or egui, selected by TOML.
 
 ## Common Development Commands
 
@@ -89,18 +86,10 @@ Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 cargo build
 cargo build --release
 
-# Run main application
+# Run the configured input and output from prysm.toml
 cargo run -p prysm
-
-# Play the local Philips HDR test video (requires FFmpeg 9+ on PATH)
-cargo run -p prysm --bin video
-# Or supply another video path
-cargo run -p prysm --bin video -- "/path/to/video.mp4"
-
-# Send edge colors to WLED using led.toml (address, edge counts, source)
-cargo run --release -p prysm --bin led
-# Or select a different runtime configuration
-cargo run --release -p prysm --bin led -- --config /path/to/led.toml
+# Or select another configuration
+cargo run --release -p prysm -- --config /path/to/prysm.toml
 
 # Run tests
 cargo test
@@ -114,30 +103,26 @@ cargo clippy
 
 ## Key Configuration Points
 
-**Desktop visualizer setup (prysm/src/lib.rs):**
+**Application setup (`prysm/src/config.rs`):**
 
-- Capture resolution: 640x360 (intentionally low — the camera ISP's hardware downscale integrates every
-  source pixel, which is both cheaper and more accurate than sampling a high-res frame)
-- Displayed LED count: 300 (desktop renderer default)
-- Video device: `/dev/video2`
-- Note: This is specific to the desktop visualizer, not a global configuration
+The single `prysm` binary reads `prysm.toml` at startup (or `--config PATH`).
+Top-level `brightness_percent`, `sample_density`, and `capture_resolution` default
+respectively to 100, 128 samples per 1000 edge pixels, and `[640, 360]`.
+These processor settings apply to both outputs.
 
-`prysm/src/bin/video.rs` is the alternate entry point for video files. It defaults to the local
-Philips Ambilight test MP4, plays once at its original rate, and closes at EOF. FFmpeg 9+ decodes
-and scales frames to 640x360 sRGB, including HDR tone mapping; audio is not played. Both entry
-points share the visualizer pipeline in `prysm/src/lib.rs`. The camera remains the default binary.
+`[input]` selects `type = "device"` with a required `device` (Linux device path
+or macOS AVFoundation UID), or `type = "file"` with a required `path`.
+File input uses FFmpeg 9+ for HDR-to-sRGB conversion, plays at the source rate,
+and exits successfully at EOF. Relative paths use the current working directory.
 
-`prysm/src/bin/led.rs` reads `led.toml` at startup (or a file selected with
-`--config`). It contains `wled_address` with port 4048, an optional top-level
-`brightness_percent` (defaults to 80, supplied config uses 100), a `[leds]` table with
-named top/right/bottom/left counts, and a `[source]` table: `type = "camera"`
-with an optional `device`, or `type = "video"` with an optional `path`.
-Wiring starts at the bottom-left viewed from the front, running up the left edge,
-across the top, down the right, and back along the bottom. Video input defaults
-to the same Philips clip as the desktop video binary and exits successfully at
-EOF. Both use the FFmpeg feed in `prysm/src/video.rs`. Ctrl+C cancels capture;
-capture and send failures exit with their original error context. WLED's realtime timeout restores
-its normal effect.
+`[output]` selects `type = "wled"` with an `address` (DDP port 4048) and
+`[output.leds]` counts for top/right/bottom/left, or `type = "egui"` for an
+on-screen preview. WLED counts total 1–65535; wiring starts at bottom-left viewed
+from the front, up the left, across the top, down the right, and back along the bottom.
+The desktop output retains the main-thread egui / runtime-thread arrangement in
+`prysm/src/lib.rs`; WLED runs headlessly on a single Tokio runtime.
+Ctrl+C cancels either output; closing egui also stops capture. Source and renderer
+failures preserve their error context. WLED's realtime timeout restores its normal effect.
 
 The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
 uses the sRGB transfer function and preview output is 8-bit RGB. BT.2020 YUV matrix support
@@ -145,13 +130,20 @@ does not include PQ/HLG transfer decoding or an HDR display path, so file playba
 
 **Default Config (prysm_core::Config):**
 
-Edit the Rust `Config` passed to `PrysmProcessor::new` (in `prysm/src/lib.rs` for the demo).
+Application settings are parsed into one core `Config` in `prysm/src/config.rs`.
+That config owns capture resolution and processing settings; egui and input creation
+read the same resolution from it.
+All numeric defaults live in `prysm-core/src/config.rs`; the TOML parser uses the
+domain types’ `Default` implementations. Brightness, edge depth, smoothing duration,
+and capture resolution use distinct newtypes. Resolution, input identifiers/paths
+and WLED layouts are validated when parsed.
+Library callers can pass a `Config` directly to `PrysmProcessor::new`.
 Start with `Config::default()` and override only what you want to change:
 
 ```rust
 let config = prysm_core::Config {
-    brightness_percent: 60,
-    smoothing_seconds: 0.2,
+    brightness_percent: prysm_core::BrightnessPercent(60),
+    smoothing_seconds: prysm_core::SmoothingSeconds(0.2),
     sample_density: prysm_core::SampleDensity(150),
     ..prysm_core::Config::default()
 };
@@ -159,10 +151,11 @@ let config = prysm_core::Config {
 
 | Setting | Default | What it changes |
 | --- | --- | --- |
-| `brightness_percent` | 80 | 0 turns lights off; 100 is full brightness. |
+| `capture_resolution` | `CaptureResolution::new(640, 360)` | Requested device capture or decoded file dimensions. |
+| `brightness_percent` | 100 | 0 turns lights off; 100 is full brightness. |
 | `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
-| `sample_density` | `SampleDensity(60)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
-| `edge_depth_percent` | 15 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
+| `sample_density` | `SampleDensity(128)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
+| `edge_depth_percent` | 10 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
 Brightness is clamped to 0–100, edge depth to 1–50. Edge regions never overlap their opposite
@@ -222,8 +215,9 @@ Tests are minimal but focused:
 
 ## Critical Files
 
-- `prysm/src/main.rs` - Camera entry point
-- `prysm/src/bin/video.rs` - Desktop video file entry point
+- `prysm/src/main.rs` - Single TOML-driven entry point, input/output selection
+- `prysm/src/config.rs` - TOML parsing and validated application configuration
+- `prysm-core/src/config.rs` - Domain settings, capture resolution and numeric defaults
 - `prysm/src/video.rs` - Shared FFmpeg frame stream
 - `prysm/src/lib.rs` - Shared application orchestration and threading setup
 - `prysm/src/stream.rs` - Owned fallible desktop stream consumer and lifecycle tests

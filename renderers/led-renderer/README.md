@@ -36,59 +36,69 @@ Bypassing gamma drives LEDs with sRGB values as raw brightness, lifting dark
 channels and making dark blues look cyan or washed out. Gamma correction belongs
 in WLED; do not add a second correction in Prysm.
 
-Edit [`led.toml`](../../led.toml) to set the WLED address, brightness, four edge counts,
-and input source. Run from the workspace root:
+Edit [`prysm.toml`](../../prysm.toml) and run from the workspace root:
 
 ```sh
-cargo run --release -p prysm --bin led
+cargo run --release -p prysm
 # Or select another configuration file:
-cargo run --release -p prysm --bin led -- --config "/path/to/led.toml"
+cargo run --release -p prysm -- --config "/path/to/prysm.toml"
 ```
 
 For Raspberry Pi OS arm64, see the [Debian package and systemd service instructions](../../prysm/debian/README.md).
 
-Configuration is read at startup. The four counts are named top, right, bottom,
-left; their total must be 1–65535. LED zero is at the bottom-left corner; the
-first edge goes up the left side. For example:
+Configuration is read at startup. For file input and WLED output:
 
 ```toml
-wled_address = "wled.local:4048"
 brightness_percent = 100
+sample_density = 128
+capture_resolution = [640, 360]
 
-[leds]
+[input]
+type = "file"
+path = "/path/to/video.mp4"
+
+[output]
+type = "wled"
+address = "wled.local:4048"
+
+[output.leds]
 top = 96
 right = 54
 bottom = 96
 left = 54
-
-[source]
-type = "video"
-path = "/path/to/video.mp4"
 ```
 
-The supplied configuration selects video; omitting `path` uses the local Philips
-HDR test clip. Relative paths are resolved from the current working directory.
-For camera capture, replace `[source]` with:
+For device input, replace `[input]` with:
 
 ```toml
-[source]
-type = "camera"
-# Optional Linux device path or macOS AVFoundation device UID:
-# device = "/dev/video2"
+[input]
+type = "device"
+device = "/dev/video2" # Linux device path, or a macOS AVFoundation device UID
 ```
 
-Unknown fields, invalid counts, and fields belonging to the other source type
-are rejected. `led --help` describes the configuration option; the desktop
-`video` binary still takes an optional video path.
-The LED binary uses the same 640×360 capture and default processor settings as
-the desktop app, except for the configured brightness. The top-level
-`brightness_percent` setting defaults to 80 when omitted; 0 turns the lights off,
-100 uses the full output range, and values above 100 are treated as 100.
-The supplied configuration sets it to 100. Restart the app after changing it.
-Ctrl+C stops capture and transmission; capture or send failures
-exit with an error. WLED restores its effect after its realtime timeout.
-Video input uses the same FFmpeg 9+ decoding and HDR-to-sRGB conversion as the
-desktop video player, runs at the source frame rate, and exits successfully at EOF.
+Both the file path and device value are required for their respective input types.
+Relative file paths are resolved from the current working directory.
+For an on-screen egui preview, replace the entire output configuration with:
+
+```toml
+[output]
+type = "egui"
+```
+
+Both outputs use the configured brightness, sample density and capture resolution.
+Brightness defaults to 100 and is clamped to 0–100. Sample density defaults to 128
+samples per 1000 pixels of cropped edge length. Resolution defaults to `[640, 360]`;
+devices must support the requested size. The four WLED edge counts may be zero,
+but their total must be 1–65535. Wiring starts at bottom-left viewed from the front,
+going up the left, across the top, down the right, and back along the bottom.
+Unknown fields, missing required fields, empty paths/devices, invalid counts and
+fields belonging to the other input/output type are rejected.
+
+`prysm --help` describes the configuration option. Restart the app after changing
+configuration. Ctrl+C stops processing; device, decoder and send failures exit
+with an error. Closing the egui window also stops capture.
+WLED restores its effect after its realtime timeout. File input requires FFmpeg
+9+, converts HDR to sRGB, runs at the source frame rate, and exits successfully at EOF.
 
 Frames are capped at 30 fps across `render` and `render_edges` to reduce Wi-Fi
 traffic. The first nonempty frame sends immediately; calls within about 33.3 ms of

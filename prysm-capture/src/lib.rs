@@ -169,10 +169,10 @@ impl Frame {
         Self::new(data, width, height, format)
     }
 
-    /// Create a dummy frame (zero-filled, which appears green in YUYV)
+    /// Create a black RGB24 placeholder, including for odd-width video input.
     #[must_use]
     pub fn dummy(width: u32, height: u32) -> Self {
-        Self::fill(0, width, height, PixelFormat::YUYV)
+        Self::fill(0, width, height, PixelFormat::RGB24)
     }
 
     /// Returns a slice view of the frame data.
@@ -240,6 +240,16 @@ fn capture_channel(
 mod tests {
     use super::*;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn dummy_frame_supports_odd_rgb_dimensions() {
+        let frame = Frame::dummy(3, 2);
+        assert_eq!(
+            (frame.width, frame.height, frame.format),
+            (3, 2, PixelFormat::RGB24)
+        );
+        assert_eq!(frame.as_slice(), &[0; 18]);
+    }
 
     #[test]
     fn format_negotiation_only_falls_back_for_invalid_input() {

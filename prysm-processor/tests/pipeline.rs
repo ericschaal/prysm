@@ -1,4 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
+use prysm_core::{BrightnessPercent, EdgeDepthPercent, SmoothingSeconds};
 use prysm_core::{Config, SampleDensity};
 use prysm_processor::PrysmProcessor;
 use std::time::{Duration, Instant};
@@ -29,8 +30,8 @@ fn stream_preserves_typed_source_errors() {
 #[test]
 fn wide_black_bands_crop_each_axis_independently() {
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         sample_density: SampleDensity(150),
         ..Config::default()
     };
@@ -63,8 +64,8 @@ fn wide_black_bands_crop_each_axis_independently() {
 fn slightly_noisy_black_bands_still_crop() {
     use prysm_capture::YuvRange;
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     for (range, black, white) in [(YuvRange::Full, 0, 255), (YuvRange::Limited, 16, 235)] {
@@ -114,8 +115,8 @@ fn slightly_noisy_black_bands_still_crop() {
 fn edge_sampling_includes_the_last_row_and_column() {
     let config = Config {
         sample_density: SampleDensity(60),
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -158,7 +159,7 @@ fn dark_frames_must_not_panic() {
 #[test]
 fn smoothing_must_keep_converging_on_static_input() {
     let c = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -182,9 +183,9 @@ fn smoothing_must_keep_converging_on_static_input() {
 #[test]
 fn color_change_must_update_output() {
     let c = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
-        smoothing_seconds: 0.0,
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -210,8 +211,8 @@ fn color_change_must_update_output() {
 #[test]
 fn static_letterbox_confirms_with_default_tuning() {
     let c = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     let mut data = vec![128; 640 * 360 * 3];
@@ -232,7 +233,7 @@ fn static_letterbox_confirms_with_default_tuning() {
 #[test]
 fn resize_must_update_sample_count() {
     let c = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
         sample_density: SampleDensity(150),
         ..Config::default()
@@ -247,7 +248,7 @@ fn resize_must_update_sample_count() {
 #[test]
 fn bgr_supported_by_capture_must_process() {
     let c = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -268,8 +269,8 @@ fn bgr_supported_by_capture_must_process() {
 #[test]
 fn dark_scene_preserves_confirmed_crop() {
     let c = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -316,9 +317,9 @@ fn empty_frames_return_black() {
 #[test]
 fn equal_mean_rgb_colors_update_output() {
     let c = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
-        smoothing_seconds: 0.0,
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
@@ -337,7 +338,7 @@ fn equal_mean_rgb_colors_update_output() {
 fn brightness_scales_output_once_after_smoothing() {
     for brightness_percent in [0, 50, 100, 255] {
         let config = Config {
-            brightness_percent,
+            brightness_percent: BrightnessPercent(brightness_percent),
             remove_black_bars: false,
             ..Config::default()
         };
@@ -355,7 +356,7 @@ fn brightness_scales_output_once_after_smoothing() {
 #[test]
 fn narrow_edge_changes_update_output_immediately() {
     let config = Config {
-        smoothing_seconds: 0.0,
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
@@ -373,9 +374,10 @@ fn narrow_edge_changes_update_output_immediately() {
 #[test]
 fn bright_objects_grow_stronger_as_they_approach_each_edge() {
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 0.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(0.0),
         remove_black_bars: false,
+        edge_depth_percent: EdgeDepthPercent(15),
         ..Config::default()
     };
     for (width, height) in [(320, 180), (640, 360)] {
@@ -435,7 +437,7 @@ fn bright_objects_grow_stronger_as_they_approach_each_edge() {
 fn changing_yuv_metadata_resets_processing_history() {
     use prysm_capture::{YuvRange, YuvStandardMatrix};
     let config = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -458,8 +460,8 @@ fn changing_yuv_metadata_resets_processing_history() {
 #[test]
 fn long_smoothing_duration_converges_instead_of_freezing() {
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 10.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(10.0),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -479,7 +481,7 @@ fn long_smoothing_duration_converges_instead_of_freezing() {
 #[test]
 fn small_color_changes_are_sampled_on_every_frame() {
     let config = Config {
-        smoothing_seconds: 0.0,
+        smoothing_seconds: SmoothingSeconds(0.0),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -507,8 +509,8 @@ fn smoothing_seconds_controls_transition_speed() {
         (f32::NEG_INFINITY, 0.0),
     ] {
         let config = Config {
-            brightness_percent: 100,
-            smoothing_seconds,
+            brightness_percent: BrightnessPercent(100),
+            smoothing_seconds: SmoothingSeconds(smoothing_seconds),
             remove_black_bars: false,
             ..Config::default()
         };
@@ -530,8 +532,8 @@ fn smoothing_seconds_controls_transition_speed() {
 #[test]
 fn smoothing_duration_is_independent_of_frame_rate_and_dropped_frames() {
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 1.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(1.0),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -565,8 +567,8 @@ fn smoothing_duration_is_independent_of_frame_rate_and_dropped_frames() {
 #[test]
 fn repeated_or_earlier_timestamps_do_not_advance_smoothing() {
     let config = Config {
-        brightness_percent: 100,
-        smoothing_seconds: 1.0,
+        brightness_percent: BrightnessPercent(100),
+        smoothing_seconds: SmoothingSeconds(1.0),
         remove_black_bars: false,
         ..Config::default()
     };
@@ -620,9 +622,9 @@ fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
         [(0, 1.0), (10, 1.0), (20, 0.875), (50, 0.488), (255, 0.488)]
     {
         let config = Config {
-            brightness_percent: 100,
-            smoothing_seconds: 0.0,
-            edge_depth_percent,
+            brightness_percent: BrightnessPercent(100),
+            smoothing_seconds: SmoothingSeconds(0.0),
+            edge_depth_percent: EdgeDepthPercent(edge_depth_percent),
             remove_black_bars: false,
             ..Config::default()
         };
@@ -646,9 +648,9 @@ fn black_bar_removal_can_be_disabled() {
     let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
     for remove_black_bars in [false, true] {
         let config = Config {
-            brightness_percent: 100,
-            smoothing_seconds: 0.0,
-            edge_depth_percent: 10,
+            brightness_percent: BrightnessPercent(100),
+            smoothing_seconds: SmoothingSeconds(0.0),
+            edge_depth_percent: EdgeDepthPercent(10),
             remove_black_bars,
             ..Config::default()
         };
@@ -665,12 +667,12 @@ fn black_bar_removal_can_be_disabled() {
 #[test]
 fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
     let config = Config {
-        brightness_percent: 100,
+        brightness_percent: BrightnessPercent(100),
         ..Config::default()
     };
     let mut smoothed = PrysmProcessor::new(&config);
     let mut direct = PrysmProcessor::new(&Config {
-        smoothing_seconds: 0.0,
+        smoothing_seconds: SmoothingSeconds(0.0),
         ..config
     });
     let mut data = vec![128; 640 * 360 * 3];

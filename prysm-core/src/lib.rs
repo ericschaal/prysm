@@ -5,7 +5,9 @@ mod linear;
 
 pub use color::Color;
 pub use color_strip::{ColorStrip, EdgeColors, SampleDensity};
-pub use config::Config;
+pub use config::{
+    BrightnessPercent, CaptureResolution, Config, EdgeDepthPercent, SmoothingSeconds,
+};
 pub use linear::LinearColor;
 
 /// Edge represents one of the four edges of the screen

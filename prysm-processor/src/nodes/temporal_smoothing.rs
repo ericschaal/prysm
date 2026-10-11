@@ -1,4 +1,4 @@
-use prysm_core::EdgeColors;
+use prysm_core::{EdgeColors, SmoothingSeconds};
 use std::time::Instant;
 
 /// Temporal smoothing node
@@ -7,13 +7,13 @@ use std::time::Instant;
 #[derive(Debug, Clone)]
 pub struct TemporalSmoothing {
     /// Seconds to complete 95% of a transition.
-    seconds: f32,
+    seconds: SmoothingSeconds,
     previous: Option<(EdgeColors, Instant)>,
 }
 
 impl TemporalSmoothing {
     /// The processor only constructs this node for finite, positive durations.
-    pub fn new(seconds: f32) -> Self {
+    pub fn new(seconds: SmoothingSeconds) -> Self {
         Self {
             seconds,
             previous: None,
@@ -25,7 +25,7 @@ impl TemporalSmoothing {
             now = now.max(*previous_time);
             let elapsed = now.duration_since(*previous_time).as_secs_f64();
             // exp_m1 preserves small contributions when frames arrive close together.
-            let ratio = -(-20.0_f64.ln() * elapsed / f64::from(self.seconds)).exp_m1();
+            let ratio = -(-20.0_f64.ln() * elapsed / f64::from(self.seconds.0)).exp_m1();
             prev.blend(&input, ratio as f32)
         } else {
             input

@@ -18,12 +18,13 @@ cargo install cargo-deb --version 3.8.0 --locked
 From the repository root:
 
 ```sh
-cargo build --locked --release -p prysm --bin led
+cargo build --locked --release -p prysm --bin prysm
 cargo deb -p prysm --no-build
 ```
 
 The package is written to `target/debian/prysm-led_0.1.0-1_arm64.deb`.
-Only the LED binary is installed, renamed to `/usr/bin/prysm-led`.
+The single application binary is installed as `/usr/bin/prysm`.
+The package and systemd service retain the name `prysm-led`.
 The current crate also compiles desktop dependencies, hence the graphics build
 headers above. Cargo-deb detects shared-library runtime dependencies automatically.
 
@@ -38,15 +39,23 @@ Install and configure on the Pi:
 
 ```sh
 sudo apt install ./target/debian/prysm-led_0.1.0-1_arm64.deb
-sudo nano /etc/prysm/led.toml
+sudo nano /etc/prysm/prysm.toml
 sudo systemctl enable --now prysm-led
 journalctl -u prysm-led -f
 ```
 
 Installation creates a `prysm` system account using systemd-sysusers and leaves
 the service disabled and stopped. Set the WLED address, LED counts, brightness,
-and capture device before enabling it. `/etc/prysm/led.toml` is a Debian conffile,
+and input device before enabling it. Keep `output.type = "wled"` for the headless
+service; `output.type = "egui"` requires a desktop session.
+`/etc/prysm/prysm.toml` is a Debian conffile,
 so package upgrades preserve local edits.
+When upgrading from the separate `led` binary, migrate your customized
+`/etc/prysm/led.toml` to `/etc/prysm/prysm.toml` before starting the service:
+`[source]` becomes `[input]`, `camera` becomes `device`, `video` becomes `file`,
+and file input requires a `path`. Move `wled_address` to `output.address`, set
+`output.type = "wled"`, and move `[leds]` to `[output.leds]`.
+
 Package upgrades stop the service; start it again with
 `sudo systemctl start prysm-led` after the upgrade.
 
@@ -65,8 +74,8 @@ Logs go to the journal. Capture and transmission errors trigger a restart after
 five seconds. Stop sends SIGINT, matching the binary's graceful shutdown handler.
 WLED restores its normal effect after its realtime timeout.
 
-For video-file input, set `source.type = "video"`, remove `source.device`, and set
-`source.path` to an absolute path readable by `prysm`. That mode requires FFmpeg
+For file input, set `input.type = "file"`, replace `input.device` with
+`input.path` set to an absolute path readable by `prysm`. That mode requires FFmpeg
 9+ on the service's PATH; it is not installed by this camera-oriented package.
 The service stops successfully at video EOF.
 

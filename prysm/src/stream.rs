@@ -37,7 +37,7 @@ pub(crate) async fn publish_frames(
 mod tests {
     use super::*;
     use prysm_capture::PixelFormat;
-    use prysm_core::Config;
+    use prysm_core::{BrightnessPercent, Config, SmoothingSeconds};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -70,8 +70,8 @@ mod tests {
             Ok(Frame::fill(value, 2, 2, PixelFormat::RGB24))
         });
         let config = Config {
-            brightness_percent: 100,
-            smoothing_seconds: 0.0,
+            brightness_percent: BrightnessPercent(100),
+            smoothing_seconds: SmoothingSeconds(0.0),
             remove_black_bars: false,
             ..Config::default()
         };

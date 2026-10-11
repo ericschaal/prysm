@@ -19,13 +19,13 @@ Relevant code:
 - [Density and color strip interpolation](../prysm-core/src/color_strip.rs)
 - [Processor configuration](../prysm-core/src/config.rs)
 - [Temporal smoothing](../prysm-processor/src/nodes/temporal_smoothing.rs)
-- [Video playback](../prysm/src/bin/video.rs)
+- [Video playback](../prysm/src/video.rs)
 - [Desktop rendering](../renderers/desktop-renderer/src/lib.rs)
 - [Existing pipeline regression tests](../prysm-processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the headless binary (`cargo run --release -p prysm --bin led`, configured in `led.toml`); the desktop/video demo does not call it. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
-The desktop video player and LED binary (`type = "video"` in `[source]`) share FFmpeg 9+ input delivering 640×360 sRGB RGB24 frames, playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
+Both outputs use FFmpeg 9+ for file input (`type = "file"` with a required `path` in `[input]`), delivering sRGB RGB24 frames at the configured capture resolution (default 640×360), playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 
 ## 1. Freeze the experiment
 
@@ -212,7 +212,9 @@ Existing checks and inspection entry points, run from the repository root:
 ```sh
 cargo test -p prysm-core -p prysm-processor
 cargo run --release -p prysm-processor --example bench
-cargo run --release -p prysm --bin video -- "/absolute/path/to/clip.mp4"
+# Set input.type = "file", input.path = "/absolute/path/to/clip.mp4",
+# and output.type = "egui" in prysm.toml.
+cargo run --release -p prysm
 ```
 
 The existing benchmark prints rough mean pipeline cost. It does not produce the required percentiles, candidate comparisons, timestamps, or viewing randomization. The existing video command does not accept algorithm-selection flags; do not assume a nonexistent CLI.
