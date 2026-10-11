@@ -1,0 +1,15 @@
+# Set the WLED address and counts for your installation before starting the service.
+wled_address = "wled.local:4048"
+brightness_percent = 80
+
+# Screen edges viewed from the front; wiring starts at bottom-left and goes up.
+[leds]
+top = 51
+right = 31
+bottom = 49
+left = 31
+
+[source]
+type = "camera"
+# Prefer a stable /dev/v4l/by-id/... path if the capture device provides one.
+device = "/dev/video0"

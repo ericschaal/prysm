@@ -45,6 +45,8 @@ cargo run --release -p prysm --bin led
 cargo run --release -p prysm --bin led -- --config "/path/to/led.toml"
 ```
 
+For Raspberry Pi OS arm64, see the [Debian package and systemd service instructions](../../prysm/debian/README.md).
+
 Configuration is read at startup. The four counts are named top, right, bottom,
 left; their total must be 1–65535. LED zero is at the bottom-left corner; the
 first edge goes up the left side. For example:
