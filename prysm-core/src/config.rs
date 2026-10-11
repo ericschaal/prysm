@@ -43,10 +43,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            brightness_percent: 80,
+            brightness_percent: 100,
             smoothing_seconds: 0.150,
             sample_density: SampleDensity::default(),
-            edge_depth_percent: 20,
+            edge_depth_percent: 10,
             remove_black_bars: true,
         }
     }
