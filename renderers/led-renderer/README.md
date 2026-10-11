@@ -30,7 +30,7 @@ brightness, gamma, mapping, and timeout for your hardware. The renderer sends
 RGB channels; WLED handles the strip's physical color order. It does not change
 the device configuration.
 
-Edit [`led.toml`](../../led.toml) to set the WLED address, four edge counts,
+Edit [`led.toml`](../../led.toml) to set the WLED address, brightness, four edge counts,
 and input source. Run from the workspace root:
 
 ```sh
@@ -45,6 +45,7 @@ first edge goes up the left side. For example:
 
 ```toml
 wled_address = "wled.local:4048"
+brightness_percent = 100
 
 [leds]
 top = 96
@@ -72,7 +73,11 @@ Unknown fields, invalid counts, and fields belonging to the other source type
 are rejected. `led --help` describes the configuration option; the desktop
 `video` binary still takes an optional video path.
 The LED binary uses the same 640×360 capture and default processor settings as
-the desktop app. Ctrl+C stops capture and transmission; capture or send failures
+the desktop app, except for the configured brightness. The top-level
+`brightness_percent` setting defaults to 80 when omitted; 0 turns the lights off,
+100 uses the full output range, and values above 100 are treated as 100.
+The supplied configuration sets it to 100. Restart the app after changing it.
+Ctrl+C stops capture and transmission; capture or send failures
 exit with an error. WLED restores its effect after its realtime timeout.
 Video input uses the same FFmpeg 9+ decoding and HDR-to-sRGB conversion as the
 desktop video player, runs at the source frame rate, and exits successfully at EOF.

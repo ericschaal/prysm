@@ -27,6 +27,8 @@ struct Args {
 #[serde(deny_unknown_fields)]
 struct RuntimeConfig {
     wled_address: String,
+    #[serde(default = "default_brightness_percent")]
+    brightness_percent: u8,
     leds: LedCounts,
     source: Source,
 }
@@ -54,6 +56,10 @@ enum Source {
 
 fn default_video_path() -> PathBuf {
     PathBuf::from(DEFAULT_VIDEO)
+}
+
+fn default_brightness_percent() -> u8 {
+    Config::default().brightness_percent
 }
 
 impl RuntimeConfig {
@@ -99,7 +105,11 @@ async fn main() -> Result<()> {
             .boxed(),
         Source::Video { path } => video_feed(&path, shutdown.clone())?.boxed(),
     };
-    let colors = PrysmProcessor::new(&Config::default()).into_stream(frames);
+    let processor_config = Config {
+        brightness_percent: config.brightness_percent,
+        ..Config::default()
+    };
+    let colors = PrysmProcessor::new(&processor_config).into_stream(frames);
     tracing::info!(address = %config.wled_address, ?led_counts, "Streaming to WLED");
 
     tokio::select! {
@@ -181,10 +191,19 @@ type = "video"
 
     #[test]
     fn parses_shipped_video_config_and_camera_source() {
-        parse(include_str!("../../../led.toml")).unwrap();
+        assert_eq!(
+            parse(include_str!("../../../led.toml"))
+                .unwrap()
+                .brightness_percent,
+            100
+        );
         let contents = TEST_CONFIG;
         let config = parse(contents).unwrap();
         assert_eq!(config.wled_address, "wled.local:4048");
+        assert_eq!(
+            config.brightness_percent,
+            Config::default().brightness_percent
+        );
         assert_eq!(config.led_counts().unwrap(), [96, 54, 96, 54]);
         assert!(
             matches!(config.source, Source::Video { path } if path == Path::new(DEFAULT_VIDEO))
@@ -232,6 +251,9 @@ type = "video"
             ),
             contents.replace("type = \"video\"", "type = \"camera\"\npath = \"clip.mp4\""),
             contents.replace("wled_address =", "unknown ="),
+            format!("brightness_percent = -1\n{contents}"),
+            format!("brightness_percent = 256\n{contents}"),
+            format!("brightness_percent = 'bright'\n{contents}"),
         ] {
             assert!(parse(&invalid).is_err(), "accepted {invalid:?}");
         }
@@ -245,8 +267,9 @@ type = "video"
             .unwrap();
         let mut renderer = WledRenderer::new(socket.local_addr().unwrap()).unwrap();
         let frames = futures::stream::iter([Ok(Frame::fill(255, 2, 2, PixelFormat::RGB24))]);
+        let runtime_config = parse(&format!("brightness_percent = 100\n{TEST_CONFIG}")).unwrap();
         let config = Config {
-            brightness_percent: 100,
+            brightness_percent: runtime_config.brightness_percent,
             smoothing_seconds: 0.0,
             ..Config::default()
         };

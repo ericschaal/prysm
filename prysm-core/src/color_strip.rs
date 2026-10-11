@@ -24,8 +24,7 @@ impl SampleDensity {
 
 impl Default for SampleDensity {
     fn default() -> Self {
-        // About 38 samples across a 640px edge, independent of the LED count.
-        Self(60)
+        Self(256)
     }
 }
 

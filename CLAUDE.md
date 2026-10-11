@@ -128,7 +128,8 @@ and scales frames to 640x360 sRGB, including HDR tone mapping; audio is not play
 points share the visualizer pipeline in `prysm/src/lib.rs`. The camera remains the default binary.
 
 `prysm/src/bin/led.rs` reads `led.toml` at startup (or a file selected with
-`--config`). It contains `wled_address` with port 4048, a `[leds]` table with
+`--config`). It contains `wled_address` with port 4048, an optional top-level
+`brightness_percent` (defaults to 80, supplied config uses 100), a `[leds]` table with
 named top/right/bottom/left counts, and a `[source]` table: `type = "camera"`
 with an optional `device`, or `type = "video"` with an optional `path`.
 Wiring starts at the bottom-left viewed from the front, running up the left edge,
