@@ -1,0 +1,22 @@
+[Unit]
+Description=Prysm mobile control panel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prysm-control
+ExecStart=/usr/bin/prysm-control /etc/prysm/control.toml
+StateDirectory=prysm-control
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

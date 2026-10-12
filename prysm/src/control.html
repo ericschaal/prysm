@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Prysm lights</title>
+  <style>
+    [hidden] { display: none !important; }
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #121720; color: #f4f6fa; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 440px; margin: 5vh auto; }
+    h1 { font-size: 2rem; }
+    button, input, a { font: inherit; min-height: 48px; border-radius: 12px; }
+    button, input { border: 1px solid #69778c; padding: 12px; background: #232d3d; color: inherit; }
+    button { cursor: pointer; }
+    button[aria-pressed=true] { background: #b7dfaf; color: #101b14; border-color: #b7dfaf; }
+    button:disabled { opacity: .55; cursor: wait; }
+    :focus-visible { outline: 3px solid #9bc5ff; outline-offset: 3px; }
+    fieldset { border: 0; padding: 0; margin: 24px 0; }
+    legend { margin-bottom: 12px; }
+    #power { width: 100%; font-size: 1.4rem; min-height: 80px; }
+    .sources { display: flex; gap: 12px; }
+    .sources button { flex: 1; }
+    input { box-sizing: border-box; width: 100%; margin: 12px 0; }
+    a { display: flex; align-items: center; color: #b5cfff; }
+    #status { min-height: 3em; color: #c7d1df; }
+    small { color: #bac6d6; }
+    form button { width: 100%; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Prysm lights</h1>
+  <form id="login">
+    <label for="token">Panel access token</label>
+    <input id="token" type="password" autocomplete="off" required minlength="32">
+    <button>Connect</button>
+    <p><small>Remembered for this browser session.</small></p>
+  </form>
+  <section id="panel" hidden>
+    <button id="power" role="switch" aria-checked="false" disabled>Lights: Unknown</button>
+    <fieldset id="sources" disabled>
+      <legend>Color source</legend>
+      <div class="sources">
+        <button data-source="prysm" aria-pressed="false">Prysm</button>
+        <button data-source="wled" aria-pressed="false">WLED effects</button>
+      </div>
+    </fieldset>
+    <button id="off" disabled>Turn lights off / Stop Prysm</button>
+    <button id="retry" hidden>Retry selected state</button>
+    <a id="wled" target="_blank" rel="noopener noreferrer" hidden>Open WLED effects ↗</a>
+    <button id="logout">Disconnect</button>
+  </section>
+  <p id="status" role="status" aria-live="polite">Connect to see the current lights.</p>
+  <small>Power switches the lights off. The selected source is remembered.</small>
+</main>
+<script>
+  let token = sessionStorage.getItem('prysm-token') || '';
+  let current = null, busy = false, requested = null, requestError = '', awaiting = null;
+  const byId = id => document.getElementById(id);
+  const status = byId('status');
+
+  function enabled(apiAvailable, observed, pending) {
+    byId('power').disabled = !apiAvailable || !observed || pending;
+    byId('sources').disabled = !apiAvailable || !observed || pending;
+    byId('off').disabled = !apiAvailable || pending;
+    byId('retry').disabled = !apiAvailable || pending;
+  }
+
+  function login() {
+    byId('login').hidden = !!token;
+    byId('panel').hidden = !token;
+  }
+
+  async function api(method = 'GET', body) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch('/api/state', {
+        method,
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: body && JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (response.status === 401) {
+        token = '';
+        sessionStorage.removeItem('prysm-token');
+        login();
+        throw Error('Access token rejected.');
+      }
+      if (!response.ok) throw Error('Request failed (' + response.status + '). Please retry.');
+      return await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function confirmed(observed, source) {
+    if (!observed.power) {
+      return !observed.realtime && observed.live_override === 2 && observed.service === 'inactive';
+    }
+    return source === 'prysm'
+      ? observed.realtime && observed.live_override === 0 && observed.service === 'active'
+      : !observed.realtime && observed.live_override === 2 && observed.service === 'inactive';
+  }
+
+  function render(data) {
+    current = data;
+    const observed = data.observed, pending = data.pending || busy;
+    if (awaiting !== null && !data.pending && data.operation_id >= awaiting) {
+      awaiting = null;
+      requestError = '';
+    }
+    const mismatch = !!observed && !confirmed(observed, data.source);
+    enabled(true, !!observed, pending);
+    const powerLabel = observed?.power ? 'On' : observed && !mismatch ? 'Off' : 'Unknown';
+    byId('power').textContent = 'Lights: ' + powerLabel;
+    byId('power').setAttribute('aria-checked', String(!!observed?.power));
+    document.querySelectorAll('[data-source]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.source === data.source));
+    });
+    byId('retry').hidden = !(data.error || data.observation_error || requestError || mismatch);
+    byId('wled').href = data.wled_url;
+    byId('wled').hidden = false;
+    if (pending) status.textContent = 'Applying change…';
+    else if (requestError || data.observation_error) status.textContent = 'Unknown: ' + (requestError || data.observation_error);
+    else if (data.error) status.textContent = 'Change failed: ' + data.error;
+    else if (observed.substate === 'auto-restart') status.textContent = 'Prysm is restarting…';
+    else if (mismatch) status.textContent = 'Selected state is not confirmed. WLED or capture changed; retry or turn lights off.';
+    else if (!observed.power) status.textContent = 'Lights are off.';
+    else status.textContent = data.source === 'prysm' ? 'Prysm is sending live colors.' : 'WLED effects are on.';
+  }
+
+  async function poll() {
+    if (!token || document.hidden || busy) return;
+    try {
+      render(await api());
+    } catch (error) {
+      enabled(false, false, false);
+      byId('power').textContent = 'Lights: Unknown';
+      status.textContent = error.message;
+    }
+  }
+
+  async function setState(target) {
+    if (busy) return;
+    requested = target;
+    requestError = '';
+    busy = true;
+    enabled(true, !!current?.observed, true);
+    status.textContent = 'Applying change…';
+    try {
+      const accepted = await api('PUT', target);
+      awaiting = accepted.operation_id;
+    } catch (error) {
+      requestError = error.message + ' The change may have been accepted. Check status or retry.';
+      byId('retry').hidden = false;
+    } finally {
+      busy = false;
+      await poll();
+    }
+  }
+
+  byId('login').onsubmit = event => {
+    event.preventDefault();
+    token = byId('token').value.trim();
+    sessionStorage.setItem('prysm-token', token);
+    byId('token').value = '';
+    login();
+    poll();
+  };
+  byId('power').onclick = () => setState({ power: !current.observed.power, source: current.source });
+  document.querySelectorAll('[data-source]').forEach(button => {
+    button.onclick = () => setState({ power: current.observed.power, source: button.dataset.source });
+  });
+  byId('off').onclick = () => setState({ power: false, source: current.source });
+  byId('retry').onclick = () => setState(requested || { power: !!current?.observed?.power, source: current.source });
+  byId('logout').onclick = () => {
+    token = '';
+    sessionStorage.removeItem('prysm-token');
+    current = null;
+    login();
+    status.textContent = 'Disconnected.';
+  };
+  document.addEventListener('visibilitychange', poll);
+  login();
+  poll();
+  setInterval(poll, 2000);
+</script>
+</body>
+</html>
