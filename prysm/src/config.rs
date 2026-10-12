@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -63,9 +63,15 @@ pub(super) enum Input {
 pub(super) enum Output {
     Wled {
         address: WledAddress,
+        #[serde(default = "default_refresh_rate_hz")]
+        refresh_rate_hz: NonZeroU32,
         leds: LedCounts,
     },
     Egui {},
+}
+
+fn default_refresh_rate_hz() -> NonZeroU32 {
+    NonZeroU32::new(30).unwrap()
 }
 
 /// Linux device path or macOS `AVFoundation` device UID.

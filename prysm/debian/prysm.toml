@@ -11,6 +11,8 @@ capture_resolution = [640, 360]
 [output]
 type = "wled"
 address = "wled.local:4048"
+# Maximum WLED sends per second; positive integer, defaults to 30.
+refresh_rate_hz = 50
 
 [output.leds]
 top = 51

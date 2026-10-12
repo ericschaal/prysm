@@ -60,6 +60,7 @@ path = "/path/to/video.mp4"
 [output]
 type = "wled"
 address = "wled.local:4048"
+refresh_rate_hz = 30
 
 [output.leds]
 top = 96
@@ -100,9 +101,12 @@ with an error. Closing the egui window also stops capture.
 WLED restores its effect after its realtime timeout. File input requires FFmpeg
 9+, converts HDR to sRGB, runs at the source frame rate, and exits successfully at EOF.
 
-Frames are capped at 30 fps across `render` and `render_edges` to reduce Wi-Fi
-traffic. The first nonempty frame sends immediately; calls within about 33.3 ms of
-the previous successful send are skipped and return success. Frames use a
+`output.refresh_rate_hz` caps WLED sends per second (positive integer, default 30).
+Library callers can use `set_refresh_rate_hz(NonZeroU32)` to change the same cap,
+shared by `render` and `render_edges`. The source frame rate limits actual output;
+skipped frames are not queued. The first nonempty frame sends immediately; calls
+within the configured interval of the previous successful send are skipped and
+return success. Frames use a
 nonblocking socket with no queue or retries; the RGB buffer is reused.
 DNS resolution happens in the constructor and can
 block. Render errors are returned as `ddp_rs::error::DDPError` (including an I/O

@@ -48,7 +48,11 @@ fn main() -> Result<()> {
         Output::Egui {} => prysm::run(settings, move |shutdown| {
             config.input.into_stream(resolution, shutdown)
         }),
-        Output::Wled { address, leds } => {
+        Output::Wled {
+            address,
+            refresh_rate_hz,
+            leds,
+        } => {
             let counts = leds.counts();
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -58,6 +62,7 @@ fn main() -> Result<()> {
                 let mut renderer = WledRenderer::new(address.as_str()).with_context(|| {
                     format!("Failed to connect to WLED at {}", address.as_str())
                 })?;
+                renderer.set_refresh_rate_hz(refresh_rate_hz);
                 let shutdown = CancellationToken::new();
                 let _shutdown_guard = shutdown.clone().drop_guard();
                 let frames = config.input.into_stream(resolution, shutdown.clone())?;
@@ -165,10 +170,31 @@ left = 54
             matches!(config.input, Input::File { path } if path.as_path() == Path::new("/tmp/my video.mp4"))
         );
         assert!(
-            matches!(config.output, Output::Wled { address, leds } if address.as_str() == "wled.local:4048" && leds.counts() == [96, 54, 96, 54])
+            matches!(config.output, Output::Wled { address, refresh_rate_hz, leds } if address.as_str() == "wled.local:4048" && refresh_rate_hz.get() == 30 && leds.counts() == [96, 54, 96, 54])
         );
         parse(include_str!("../../prysm.toml")).unwrap();
         parse(include_str!("../debian/prysm.toml")).unwrap();
+    }
+
+    #[test]
+    fn parses_custom_wled_refresh_rate_and_rejects_invalid_rates() {
+        let config =
+            parse(&TEST_CONFIG.replace("[output.leds]", "refresh_rate_hz = 60\n[output.leds]"))
+                .unwrap();
+        assert!(
+            matches!(config.output, Output::Wled { refresh_rate_hz, .. } if refresh_rate_hz.get() == 60)
+        );
+        for value in ["0", "-1", "1.5", "'fast'", "4294967296"] {
+            let contents = TEST_CONFIG.replace(
+                "[output.leds]",
+                &format!("refresh_rate_hz = {value}\n[output.leds]"),
+            );
+            assert!(
+                parse(&contents).is_err(),
+                "accepted refresh_rate_hz = {value}"
+            );
+        }
+        assert!(parse("[input]\ntype = 'device'\ndevice = '/dev/video0'\n[output]\ntype = 'egui'\nrefresh_rate_hz = 60").is_err());
     }
 
     #[test]

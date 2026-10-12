@@ -22,13 +22,14 @@ use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
+use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 const FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
 /// A nonblocking RGB renderer for one WLED instance.
 ///
-/// Sends at most 30 frames per second, dropping calls that arrive too soon without
+/// Sends at most 30 frames per second by default, dropping calls that arrive too soon without
 /// a frame queue or retransmission. The first nonempty frame sends immediately.
 /// Errors are returned to the caller, including `WouldBlock` if the send buffer is full.
 /// UDP delivery is not acknowledged. Keep sending frames before WLED's realtime
@@ -38,6 +39,7 @@ pub struct WledRenderer {
     connection: DDPConnection,
     rgb: Vec<u8>,
     last_sent: Option<Instant>,
+    frame_interval: Duration,
 }
 
 impl WledRenderer {
@@ -69,7 +71,14 @@ impl WledRenderer {
             connection,
             rgb: Vec::new(),
             last_sent: None,
+            frame_interval: FRAME_INTERVAL,
         })
+    }
+
+    /// Set the maximum sends per second, shared by `render` and `render_edges`.
+    pub fn set_refresh_rate_hz(&mut self, refresh_rate_hz: NonZeroU32) {
+        self.frame_interval =
+            Duration::from_nanos(1_000_000_000u64.div_ceil(u64::from(refresh_rate_hz.get())));
     }
 
     /// Send 8-bit RGB colors in physical LED order, starting at LED zero.
@@ -136,7 +145,7 @@ impl WledRenderer {
         if count == 0
             || self
                 .last_sent
-                .is_some_and(|last| last.elapsed() < FRAME_INTERVAL)
+                .is_some_and(|last| last.elapsed() < self.frame_interval)
         {
             return Ok(false);
         }
@@ -270,42 +279,52 @@ mod tests {
     }
 
     #[test]
-    fn shares_30_fps_limit_and_sends_current_frame_after_interval() {
-        let (mut renderer, socket) = receiver();
-        renderer.render(&[Color::new(255, 0, 0)]).unwrap();
-        receive(&socket);
-        assert!(renderer.last_sent.is_some());
+    fn shares_configured_limit_and_sends_current_frame_after_interval() {
+        for (rate, nanos) in [
+            (30, 33_333_334),
+            (2, 500_000_000),
+            (60, 16_666_667),
+            (u32::MAX, 1),
+        ] {
+            let (mut renderer, socket) = receiver();
+            assert_eq!(renderer.frame_interval, FRAME_INTERVAL);
+            renderer.set_refresh_rate_hz(NonZeroU32::new(rate).unwrap());
+            assert_eq!(renderer.frame_interval, Duration::from_nanos(nanos));
+            renderer.render(&[Color::new(255, 0, 0)]).unwrap();
+            receive(&socket);
+            assert!(renderer.last_sent.is_some());
 
-        // Keep the throttle active regardless of test scheduling delays.
-        let last_sent = Instant::now() + Duration::from_secs(60);
-        renderer.last_sent = Some(last_sent);
-        renderer.render(&[Color::new(0, 255, 0)]).unwrap();
-        renderer
-            .render_edges(&EdgeColors::default(), [1; 4])
-            .unwrap();
-        assert_eq!(renderer.last_sent, Some(last_sent));
-        assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
-        assert!(
+            // Keep the throttle active regardless of test scheduling delays.
+            let last_sent = Instant::now() + Duration::from_secs(60);
+            renderer.last_sent = Some(last_sent);
+            renderer.render(&[Color::new(0, 255, 0)]).unwrap();
             renderer
-                .render_edges(&EdgeColors::default(), [65536, 0, 0, 0])
-                .is_err()
-        );
-        assert_no_packet(&socket);
-        socket.set_nonblocking(false).unwrap();
+                .render_edges(&EdgeColors::default(), [1; 4])
+                .unwrap();
+            assert_eq!(renderer.last_sent, Some(last_sent));
+            assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
+            assert!(
+                renderer
+                    .render_edges(&EdgeColors::default(), [65536, 0, 0, 0])
+                    .is_err()
+            );
+            assert_no_packet(&socket);
+            socket.set_nonblocking(false).unwrap();
 
-        renderer.last_sent = Some(Instant::now().checked_sub(FRAME_INTERVAL).unwrap());
-        renderer
-            .render_edges(&EdgeColors::default(), [1; 4])
-            .unwrap();
-        let bytes = receive(&socket);
-        assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
-        assert_ne!(renderer.last_sent, Some(last_sent));
+            renderer.last_sent = Some(Instant::now().checked_sub(renderer.frame_interval).unwrap());
+            renderer
+                .render_edges(&EdgeColors::default(), [1; 4])
+                .unwrap();
+            let bytes = receive(&socket);
+            assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
+            assert_ne!(renderer.last_sent, Some(last_sent));
 
-        renderer.last_sent = Some(Instant::now().checked_sub(FRAME_INTERVAL).unwrap());
-        renderer.render(&[Color::new(0, 0, 255)]).unwrap();
-        let bytes = receive(&socket);
-        assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0, 0, 255]);
-        assert_no_packet(&socket);
+            renderer.last_sent = Some(Instant::now().checked_sub(renderer.frame_interval).unwrap());
+            renderer.render(&[Color::new(0, 0, 255)]).unwrap();
+            let bytes = receive(&socket);
+            assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0, 0, 255]);
+            assert_no_packet(&socket);
+        }
     }
 
     #[test]
