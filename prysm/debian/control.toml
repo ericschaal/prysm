@@ -1,6 +1,5 @@
 listen = "0.0.0.0:8787"
 wled_url = "http://192.168.18.39/"
-# Exact browser host (including port). Add your Pi IP here if accessing by IP.
-allowed_hosts = ["prysm.local:8787", "localhost:8787", "127.0.0.1:8787"]
-token_file = "/etc/prysm/control.token"
+# "*" allows any browser host; use exact host:port entries to restrict access.
+allowed_hosts = ["*"]
 state_dir = "/var/lib/prysm-control"

@@ -10,8 +10,8 @@
     body { margin: 0; padding: 24px; }
     main { max-width: 440px; margin: 5vh auto; }
     h1 { font-size: 2rem; }
-    button, input, a { font: inherit; min-height: 48px; border-radius: 12px; }
-    button, input { border: 1px solid #69778c; padding: 12px; background: #232d3d; color: inherit; }
+    button, a { font: inherit; min-height: 48px; border-radius: 12px; }
+    button { border: 1px solid #69778c; padding: 12px; background: #232d3d; color: inherit; }
     button { cursor: pointer; }
     button[aria-pressed=true] { background: #b7dfaf; color: #101b14; border-color: #b7dfaf; }
     button:disabled { opacity: .55; cursor: wait; }
@@ -21,23 +21,15 @@
     #power { width: 100%; font-size: 1.4rem; min-height: 80px; }
     .sources { display: flex; gap: 12px; }
     .sources button { flex: 1; }
-    input { box-sizing: border-box; width: 100%; margin: 12px 0; }
     a { display: flex; align-items: center; color: #b5cfff; }
     #status { min-height: 3em; color: #c7d1df; }
     small { color: #bac6d6; }
-    form button { width: 100%; }
   </style>
 </head>
 <body>
 <main>
   <h1>Prysm lights</h1>
-  <form id="login">
-    <label for="token">Panel access token</label>
-    <input id="token" type="password" autocomplete="off" required minlength="32">
-    <button>Connect</button>
-    <p><small>Remembered for this browser session.</small></p>
-  </form>
-  <section id="panel" hidden>
+  <section id="panel">
     <button id="power" role="switch" aria-checked="false" disabled>Lights: Unknown</button>
     <fieldset id="sources" disabled>
       <legend>Color source</legend>
@@ -49,13 +41,11 @@
     <button id="off" disabled>Turn lights off / Stop Prysm</button>
     <button id="retry" hidden>Retry selected state</button>
     <a id="wled" target="_blank" rel="noopener noreferrer" hidden>Open WLED effects ↗</a>
-    <button id="logout">Disconnect</button>
   </section>
-  <p id="status" role="status" aria-live="polite">Connect to see the current lights.</p>
+  <p id="status" role="status" aria-live="polite">Loading light status…</p>
   <small>Power switches the lights off. The selected source is remembered.</small>
 </main>
 <script>
-  let token = sessionStorage.getItem('prysm-token') || '';
   let current = null, busy = false, requested = null, requestError = '', awaiting = null;
   const byId = id => document.getElementById(id);
   const status = byId('status');
@@ -67,27 +57,16 @@
     byId('retry').disabled = !apiAvailable || pending;
   }
 
-  function login() {
-    byId('login').hidden = !!token;
-    byId('panel').hidden = !token;
-  }
-
   async function api(method = 'GET', body) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     try {
       const response = await fetch('/api/state', {
         method,
-        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: body && JSON.stringify(body),
         signal: controller.signal,
       });
-      if (response.status === 401) {
-        token = '';
-        sessionStorage.removeItem('prysm-token');
-        login();
-        throw Error('Access token rejected.');
-      }
       if (!response.ok) throw Error('Request failed (' + response.status + '). Please retry.');
       return await response.json();
     } finally {
@@ -132,7 +111,7 @@
   }
 
   async function poll() {
-    if (!token || document.hidden || busy) return;
+    if (document.hidden || busy) return;
     try {
       render(await api());
     } catch (error) {
@@ -161,29 +140,13 @@
     }
   }
 
-  byId('login').onsubmit = event => {
-    event.preventDefault();
-    token = byId('token').value.trim();
-    sessionStorage.setItem('prysm-token', token);
-    byId('token').value = '';
-    login();
-    poll();
-  };
   byId('power').onclick = () => setState({ power: !current.observed.power, source: current.source });
   document.querySelectorAll('[data-source]').forEach(button => {
     button.onclick = () => setState({ power: current.observed.power, source: button.dataset.source });
   });
   byId('off').onclick = () => setState({ power: false, source: current.source });
   byId('retry').onclick = () => setState(requested || { power: !!current?.observed?.power, source: current.source });
-  byId('logout').onclick = () => {
-    token = '';
-    sessionStorage.removeItem('prysm-token');
-    current = null;
-    login();
-    status.textContent = 'Disconnected.';
-  };
   document.addEventListener('visibilitychange', poll);
-  login();
   poll();
   setInterval(poll, 2000);
 </script>

@@ -92,23 +92,27 @@ but leaves it disabled. Its polkit rule permits only start/stop of
 
 For panel ownership, disable automatic capture startup, configure WLED's boot
 preset to Off, and edit the controller configuration. Set `wled_url` to WLED's
-HTTP address, not the DDP port. Add each exact browser host plus port to
-`allowed_hosts` (for example `192.168.1.20:8787`).
+HTTP address, not the DDP port. `allowed_hosts = ["*"]` accepts any browser host
+and is the shipped default. To restrict it, list exact browser hosts plus ports
+(for example `allowed_hosts = ["192.168.1.20:8787"]`). Same-origin checks remain
+enforced with the wildcard. The panel requires no login.
 
 ```sh
 sudo systemctl disable --now prysm-led
 sudo nano /etc/prysm/control.toml
-sudo install -o root -g prysm-control -m 0640 /dev/null /etc/prysm/control.token
-openssl rand -hex 32 | sudo tee /etc/prysm/control.token >/dev/null
 sudo systemctl enable --now prysm-control
 journalctl -u prysm-control -f
 ```
 
-Read the token locally with `sudo cat /etc/prysm/control.token`, open
-`http://prysm.local:8787` on your phone, and enter it once per browser session.
-Do not put the token in a URL. Use a trusted LAN, or TLS/private VPN; HTTP exposes
-the token to anyone who can intercept that network. Never forward the panel's
-port from the internet. The controller deliberately has no CORS access.
+Open `http://YOUR_DEBIAN_IP:8787` on your phone. Anyone who can reach the panel
+can control the lights; use a trusted LAN or a private VPN and do not forward
+its port from the internet. The controller deliberately has no CORS access.
+An existing `token_file` configuration entry is accepted but ignored after
+upgrading; no token file is needed.
+
+If the page is blank after changing `allowed_hosts` to `["*"]`, rebuild and
+reinstall the updated binary: older binaries treat `"*"` as a literal host.
+Then restart with `sudo systemctl restart prysm-control`.
 
 The page provides Lights On/Off, a Prysm/WLED effects source choice remembered
 while Off, an observed status, and a link to WLED's own effects editor. Off stops
@@ -124,9 +128,8 @@ state stops controller startup and is reported in the journal.
 
 Upgrades stop the controller; start it again with `sudo systemctl start
 prysm-control` after checking configuration. Its account is created at install,
-and systemd is reloaded on install/removal. The package never generates or
-replaces an access token. Removing the package stops the controller but does
-not alter lights, WLED effects, or the saved selector/token.
+and systemd is reloaded on install/removal. Removing the package stops the
+controller but does not alter lights, WLED effects, or the saved selector.
 
 Before relying on Off, verify on the installed WLED firmware while video/DDP is
 active: switch Off, back to Prysm, and then to effects. Check that Off is dark,

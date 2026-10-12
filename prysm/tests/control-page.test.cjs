@@ -15,7 +15,6 @@ const offline = { source: 'prysm', observed: null, pending: false, operation_id:
 const requests = [];
 const context = vm.createContext({
   document: { hidden: false, getElementById: element, querySelectorAll: () => buttons, addEventListener() {} },
-  sessionStorage: { getItem: () => '', setItem() {}, removeItem() {} },
   AbortController, setTimeout: () => 0, clearTimeout() {}, setInterval() {},
   fetch: async (_, options) => {
     requests.push(options);
@@ -37,9 +36,10 @@ assert.equal(element('power').textContent, 'Lights: Unknown');
 context.render({ ...offline, observed, pending: true });
 assert.equal(element('off').disabled, true);
 context.render(offline);
-vm.runInContext("token = 'a'.repeat(32)", context);
 (async () => {
+  requests.length = 0;
   await element('off').onclick();
+  assert.equal(requests[0].headers.Authorization, undefined);
   assert.deepEqual(JSON.parse(requests[0].body), { power: false, source: 'prysm' });
   assert.equal(element('off').disabled, false);
   console.log('Control page state checks passed');

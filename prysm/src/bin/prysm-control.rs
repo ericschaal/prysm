@@ -27,7 +27,9 @@ struct Config {
     #[serde(deserialize_with = "deserialize_url")]
     wled_url: reqwest::Url,
     allowed_hosts: Vec<String>,
-    token_file: PathBuf,
+    // Accept the former token setting when upgrading existing installations.
+    #[serde(default, rename = "token_file")]
+    _token_file: Option<serde::de::IgnoredAny>,
     state_dir: PathBuf,
 }
 
@@ -251,7 +253,6 @@ struct Operation {
 }
 struct App {
     config: Config,
-    token: String,
     backend: System,
     selected: Mutex<Source>,
     operation: Mutex<Operation>,
@@ -263,23 +264,22 @@ async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Res
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let allowed = app.config.allowed_hosts.iter().any(|h| h == host);
+    let allowed = !host.is_empty()
+        && app
+            .config
+            .allowed_hosts
+            .iter()
+            .any(|h| h == "*" || h == host);
     let origin_ok = headers.get(header::ORIGIN).is_none_or(|origin| {
         origin.to_str().is_ok_and(|origin| {
             origin == format!("http://{host}") || origin == format!("https://{host}")
         })
     });
     if !allowed || !origin_ok {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if request.uri().path().starts_with("/api/") {
-        let bearer = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "));
-        if bearer != Some(app.token.as_str()) {
-            return StatusCode::UNAUTHORIZED.into_response();
-        }
+        return (
+            StatusCode::FORBIDDEN,
+            "This panel address or request origin is not allowed. Open the panel using an allowed host configured in /etc/prysm/control.toml.",
+        ).into_response();
     }
     let mut response = next.run(request).await;
     response
@@ -357,13 +357,6 @@ async fn main() -> Result<()> {
     {
         bail!("configure a WLED HTTP base URL and allowed panel hosts");
     }
-    let token = tokio::fs::read_to_string(&config.token_file)
-        .await?
-        .trim()
-        .to_owned();
-    if token.len() < 32 || !token.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        bail!("access token must contain at least 32 ASCII letters/digits");
-    }
     tokio::fs::create_dir_all(&config.state_dir).await?;
     let selected = match tokio::fs::read(config.state_dir.join("source.json")).await {
         Ok(value) => serde_json::from_slice(&value).context("invalid saved source")?,
@@ -381,7 +374,6 @@ async fn main() -> Result<()> {
     };
     let app = Arc::new(App {
         config,
-        token,
         backend,
         selected: Mutex::new(selected),
         operation: Mutex::new(Operation::default()),
@@ -614,131 +606,181 @@ mod tests {
         assert_eq!(backend.calls.lock().await[0], "stop");
         assert_eq!(backend.calls.lock().await[1], r#"{"live":false}"#);
     }
-    #[tokio::test]
-    async fn http_boundary_rejects_untrusted_requests_and_conflicts() {
-        use axum::body::Body;
-        use tower::ServiceExt;
-        let address = "127.0.0.1:8787".parse().unwrap();
-        let token = "a".repeat(32);
-        let app = Arc::new(App {
-            config: Config {
-                listen: address,
-                wled_url: "http://127.0.0.1/".parse().unwrap(),
-                allowed_hosts: vec![address.to_string()],
-                token_file: PathBuf::new(),
-                state_dir: PathBuf::new(),
-            },
-            token: token.clone(),
-            backend: System {
-                client: reqwest::Client::new(),
-                url: "http://127.0.0.1/".parse().unwrap(),
-            },
-            selected: Mutex::new(Source::Prysm),
-            operation: Mutex::new(Operation {
-                pending: true,
-                ..Operation::default()
-            }),
-        });
-        let router = Router::new()
-            .route("/", get(|| async { Html(PAGE) }))
-            .route("/api/state", get(state).put(update))
-            .layer(DefaultBodyLimit::max(1024))
-            .layer(middleware::from_fn_with_state(app.clone(), guard))
-            .with_state(app);
-        let request = |method: &str,
-                       host: &str,
-                       origin: Option<&str>,
-                       bearer: bool,
-                       content_type: Option<&str>,
-                       body: String| {
-            let mut request = Request::builder()
-                .method(method)
-                .uri("/api/state")
-                .header("Host", host);
-            if let Some(origin) = origin {
-                request = request.header("Origin", origin);
-            }
-            if bearer {
-                request = request.header("Authorization", format!("Bearer {token}"));
-            }
-            if let Some(content_type) = content_type {
-                request = request.header("Content-Type", content_type);
-            }
-            request.body(Body::from(body)).unwrap()
-        };
-        let host = address.to_string();
-        for (request, status) in [
-            (
-                request("GET", &host, None, false, None, String::new()),
-                StatusCode::UNAUTHORIZED,
-            ),
-            (
-                request("GET", "attacker.example", None, true, None, String::new()),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                request(
-                    "PUT",
-                    &host,
-                    Some("http://attacker.example"),
-                    true,
-                    Some("application/json"),
-                    r#"{"power":false,"source":"prysm"}"#.into(),
-                ),
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                request(
-                    "PUT",
-                    &host,
-                    None,
-                    true,
-                    Some("application/json"),
-                    r#"{"power":false,"source":"prysm","unknown":1}"#.into(),
-                ),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                request(
-                    "PUT",
-                    &host,
-                    None,
-                    true,
-                    Some("application/json"),
-                    "{}".repeat(1024),
-                ),
-                StatusCode::PAYLOAD_TOO_LARGE,
-            ),
-            (
-                request("PUT", &host, None, true, None, "{}".into()),
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            ),
-            (
-                request(
-                    "PUT",
-                    &host,
-                    None,
-                    true,
-                    Some("application/json"),
-                    "{".into(),
-                ),
-                StatusCode::BAD_REQUEST,
-            ),
-            (
-                request(
-                    "PUT",
-                    &host,
-                    Some("http://127.0.0.1:8787"),
-                    true,
-                    Some("application/json"),
-                    r#"{"power":false,"source":"prysm"}"#.into(),
-                ),
-                StatusCode::CONFLICT,
-            ),
+    #[test]
+    fn controller_config_accepts_legacy_token_setting_or_omission() {
+        let base = r#"
+listen = "127.0.0.1:8787"
+wled_url = "http://127.0.0.1/"
+allowed_hosts = ["*"]
+state_dir = "/var/lib/prysm-control"
+"#;
+        for config in [
+            base.to_owned(),
+            format!("{base}token_file = \"/missing/legacy.token\"\n"),
         ] {
+            assert!(toml::from_str::<Config>(&config).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn http_boundary_allows_unauthenticated_access_and_rejects_untrusted_requests() {
+        use axum::body::{Body, to_bytes};
+        use tower::ServiceExt;
+        for wildcard in [false, true] {
+            let address = "127.0.0.1:8787".parse().unwrap();
+            let app = Arc::new(App {
+                config: Config {
+                    listen: address,
+                    wled_url: "http://127.0.0.1/".parse().unwrap(),
+                    allowed_hosts: vec![if wildcard {
+                        "*".into()
+                    } else {
+                        address.to_string()
+                    }],
+                    _token_file: None,
+                    state_dir: PathBuf::new(),
+                },
+                backend: System {
+                    client: reqwest::Client::new(),
+                    url: "http://127.0.0.1/".parse().unwrap(),
+                },
+                selected: Mutex::new(Source::Prysm),
+                operation: Mutex::new(Operation {
+                    pending: true,
+                    ..Operation::default()
+                }),
+            });
+            let router = Router::new()
+                .route("/", get(|| async { Html(PAGE) }))
+                .route(
+                    "/api/state",
+                    get(|| async { Json(json!({"source":"prysm"})) }).put(update),
+                )
+                .route(
+                    "/api/accept",
+                    axum::routing::put(|Json(_target): Json<Target>| async {
+                        StatusCode::ACCEPTED
+                    }),
+                )
+                .layer(DefaultBodyLimit::max(1024))
+                .layer(middleware::from_fn_with_state(app.clone(), guard))
+                .with_state(app);
+            let request = |method: &str,
+                           host: &str,
+                           origin: Option<&str>,
+                           content_type: Option<&str>,
+                           body: String| {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri("/api/state")
+                    .header("Host", host);
+                if let Some(origin) = origin {
+                    request = request.header("Origin", origin);
+                }
+                if let Some(content_type) = content_type {
+                    request = request.header("Content-Type", content_type);
+                }
+                request.body(Body::from(body)).unwrap()
+            };
+            let host = address.to_string();
+            for (request, status) in [
+                (
+                    request("GET", &host, None, None, String::new()),
+                    StatusCode::OK,
+                ),
+                (
+                    request(
+                        "PUT",
+                        "other.example",
+                        Some("http://other.example"),
+                        Some("application/json"),
+                        r#"{"power":false,"source":"prysm"}"#.into(),
+                    ),
+                    if wildcard {
+                        StatusCode::CONFLICT
+                    } else {
+                        StatusCode::FORBIDDEN
+                    },
+                ),
+                (
+                    request("GET", "other.example", None, None, String::new()),
+                    if wildcard {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    },
+                ),
+                (
+                    request("GET", "", None, None, String::new()),
+                    StatusCode::FORBIDDEN,
+                ),
+                (
+                    request(
+                        "PUT",
+                        &host,
+                        Some("http://attacker.example"),
+                        Some("application/json"),
+                        r#"{"power":false,"source":"prysm"}"#.into(),
+                    ),
+                    StatusCode::FORBIDDEN,
+                ),
+                (
+                    request(
+                        "PUT",
+                        &host,
+                        None,
+                        Some("application/json"),
+                        r#"{"power":false,"source":"prysm","unknown":1}"#.into(),
+                    ),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    request(
+                        "PUT",
+                        &host,
+                        None,
+                        Some("application/json"),
+                        "{}".repeat(1024),
+                    ),
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                ),
+                (
+                    request("PUT", &host, None, None, "{}".into()),
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                ),
+                (
+                    request("PUT", &host, None, Some("application/json"), "{".into()),
+                    StatusCode::BAD_REQUEST,
+                ),
+                (
+                    request(
+                        "PUT",
+                        &host,
+                        Some("http://127.0.0.1:8787"),
+                        Some("application/json"),
+                        r#"{"power":false,"source":"prysm"}"#.into(),
+                    ),
+                    StatusCode::CONFLICT,
+                ),
+            ] {
+                let response = router.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), status);
+                if status == StatusCode::FORBIDDEN {
+                    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                    assert!(std::str::from_utf8(&body).unwrap().contains("not allowed"));
+                }
+            }
+            let mut accepted = request(
+                "PUT",
+                &host,
+                Some("http://127.0.0.1:8787"),
+                Some("application/json"),
+                r#"{"power":false,"source":"prysm"}"#.into(),
+            );
+            *accepted.uri_mut() = "/api/accept".parse().unwrap();
             assert_eq!(
-                router.clone().oneshot(request).await.unwrap().status(),
-                status
+                router.oneshot(accepted).await.unwrap().status(),
+                StatusCode::ACCEPTED
             );
         }
     }

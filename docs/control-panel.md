@@ -116,14 +116,15 @@ request must never supply a unit name, command, destination URL, or filesystem
 path. The controller needs no video-group membership.
 
 Keep controller configuration separate from `prysm.toml`: listen address, WLED
-HTTP base URL, and access-token file. HTTP and DDP may use different ports on
+HTTP base URL. HTTP and DDP may use different ports on
 the same WLED host; do not construct the HTTP URL by reusing port 4048.
 
-Protect API reads and writes with a generated bearer token, entered once per
-browser session. Validate Host/Origin against configured panel addresses,
+The panel has no authentication, by user preference. Accept any Host with
+`allowed_hosts = ["*"]`, or restrict it
+to configured panel addresses. Validate Origin against the request Host,
 require JSON for writes, and leave CORS disabled. Serve on the local network;
-use TLS or a private VPN when the network is not trusted. Do not expose this
-controller through router port forwarding.
+use a private VPN when the network is not trusted. Anyone who can reach the
+panel can control the lights. Do not expose it through router port forwarding.
 
 Persist only the selected source, atomically, in the controller's state
 directory. On controller restart, inspect existing systemd/WLED state without
@@ -148,7 +149,7 @@ processor, renderer, and desktop interfaces remain unchanged.
   controller restart, Pi reboot, and independent WLED reboot.
 - Installed WLED firmware: Off while DDP is arriving, release of realtime mode,
   preservation of effect settings, and resuming DDP after clearing override.
-- Invalid/unauthenticated/cross-origin API requests; phone-size layout,
+- Invalid/cross-origin API requests; phone-size layout,
   keyboard operation, pending/error announcements, and stale status.
 
 Use a fake service-command/WLED implementation for transition tests, then one
@@ -165,7 +166,7 @@ Deferred: brightness slider, preset browser, configuration editing, live preview
 remote hosting, multi-device control, and automatic power restoration at boot.
 
 Implementation checks: transition/failure/main-segment ordering and HTTP
-authentication/Host/Origin/body-validation tests run with
+Host/Origin/body-validation tests run with
 `cargo test -p prysm --bin prysm-control`. UI state checks run with
 `node prysm/tests/control-page.test.cjs`. A read-only check on 2026-10-12 confirmed
 WLED 16.0.1 at `http://192.168.18.39/` exposes the required fields and receives
