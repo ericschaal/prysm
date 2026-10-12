@@ -40,7 +40,7 @@ function App() {
   const [awaiting, setAwaiting] = useState(null);
   const [connectionError, setConnectionError] = useState('');
   const [requestError, setRequestError] = useState('');
-  const operation = useRef({ busy: false, polling: false, revision: 0, awaiting: null, requested: null });
+  const operation = useRef({ busy: false, polling: false, revision: 0, awaiting: null, requested: null, action: null });
 
   const poll = useCallback(async () => {
     const current = operation.current;
@@ -58,6 +58,7 @@ function App() {
         setRequestError('');
         if (!next.error) current.requested = null;
       }
+      if (!next.pending && current.awaiting === null) current.action = null;
     } catch (error) {
       if (revision === current.revision) setConnectionError(error.message);
     } finally {
@@ -82,6 +83,7 @@ function App() {
     current.busy = true;
     current.revision += 1;
     current.requested = target;
+    current.action = target.power === data?.observed?.power ? 'source' : 'power';
     setBusy(true);
     setRequestError('');
     try {
@@ -105,16 +107,16 @@ function App() {
   const needsAttention = !!error || mismatch;
   const power = observed?.power ? 'On' : observed && !mismatch ? 'Off' : 'Unknown';
   const source = data?.source || 'prysm';
-  let message = 'Connecting to your lights…';
+  const powerPending = pending && operation.current.action === 'power';
+  const sourcePending = pending && operation.current.action === 'source' ? operation.current.requested?.source : null;
+  let message = data ? '' : 'Connecting to your lights…';
   if (connectionError) message = 'Connection lost. Checking again automatically.';
-  else if (pending) message = 'Applying your change…';
+  else if (pending) message = '';
   else if (requestError) message = 'Change not confirmed. Check status or retry.';
   else if (data?.observation_error || (data && !observed)) message = 'Light status unknown. Check the WLED connection.';
   else if (data?.error) message = 'Couldn’t apply the change. Try again.';
   else if (observed?.substate === 'auto-restart') message = 'Prysm is restarting. Screen sync will resume when ready.';
   else if (mismatch) message = 'Selected state is not confirmed. Retry or turn the lights off.';
-  else if (observed) message = !observed.power ? 'Ready when you are. Your source is remembered.' :
-    source === 'prysm' ? 'Following the colors on your screen.' : 'Playing your WLED effect.';
 
   const retryTarget = operation.current.requested || (observed ? { power: observed.power, source } : null);
   const disabled = !available || !observed || pending;
@@ -125,20 +127,23 @@ function App() {
         <svg className="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m16 3 13 24H3L16 3Z" stroke="currentColor" strokeWidth="2" /><path d="m16 3 4 24M3 27l15-12 11 12" stroke="currentColor" strokeWidth="1.5" /></svg>
         <span>prysm<span className="brand-dot">.</span></span>
       </a>
-      <span className={`connection ${connectionError || needsAttention ? 'attention' : available ? 'ready' : ''}`}><i />{connectionError ? 'Offline' : pending ? 'Updating' : needsAttention ? 'Check status' : available ? 'Connected' : 'Connecting'}</span>
+      <span className={`connection ${pending ? 'is-pending' : ''} ${connectionError || needsAttention ? 'attention' : available ? 'ready' : ''}`}><i />{connectionError ? 'Offline' : needsAttention ? 'Check status' : available ? 'Connected' : 'Connecting'}</span>
     </header>
 
-    <div className="intro"><p className="eyebrow">LIGHT CONTROL</p><h1>Set the mood.</h1><p>Your screen. Your space. Your light.</p></div>
+    <div className="intro"><h1>Set the mood.</h1></div>
 
-    <section className={`power-panel ${power === 'On' ? 'is-on' : ''}`} aria-label="Light power" aria-busy={pending}>
-      <div className="power-heading"><p className="eyebrow">YOUR LIGHTS</p>
+    <section className={`power-panel ${power === 'On' ? 'is-on' : ''}`} aria-label="Light power" aria-busy={powerPending}>
+      <div className="power-heading">
+        <div className="power-copy"><p className="eyebrow">LIGHTS</p>
+          <h2 aria-live="polite"><span key={power}>{power}</span></h2>
+        </div>
         <button id="power" className="power-button" disabled={disabled}
-          onClick={() => setState({ power: !observed.power, source })}><Icon name="power" />
-          {power === 'Unknown' ? 'Power unavailable' : observed.power ? 'Turn lights off' : 'Turn lights on'}</button>
+          aria-label={power === 'Unknown' ? 'Power unavailable' : observed.power ? 'Turn lights off' : 'Turn lights on'}
+          aria-pressed={power === 'On'}
+          onClick={() => setState({ power: !observed.power, source })}><Icon name="power" /></button>
       </div>
-      <h2>{power === 'Unknown' ? 'Status unknown' : `Lights are ${power.toLowerCase()}`}</h2>
-      <p className="power-hint">{power === 'On' ? 'A little atmosphere, all around.' : power === 'Off' ? 'A quiet moment. Switch on when you’re ready.' : 'Waiting for a confirmed light status.'}</p>
-      <div id="status" className={`status ${needsAttention ? 'warning' : ''}`} role="status" aria-live="polite"><i />{message}</div>
+      <div className="light-spectrum" aria-hidden="true"><span /><span /><span /><span /><span /></div>
+      <div id="status" className={`status ${message ? 'visible' : ''} ${needsAttention ? 'warning' : ''}`} role="status" aria-live="polite">{message ? <><i />{message}</> : null}</div>
     </section>
 
     {needsAttention ? <section className="recovery" aria-label="Connection and recovery">
@@ -149,22 +154,20 @@ function App() {
       {error ? <details><summary>Technical details</summary><p>{error}</p></details> : null}
     </section> : null}
 
-    <fieldset disabled={disabled} className="sources">
+    {power === 'On' ? <fieldset disabled={disabled} className="sources" aria-busy={pending && !powerPending}>
       <legend>Color source</legend>
-      <p className="section-hint">{power === 'Off' ? 'Choose what plays when you switch on.' : 'Choose what brings your lights to life.'}</p>
       <div className="source-options">{[
-        { value: 'prysm', icon: 'screen', title: 'Screen sync', description: 'Match your lights to what you’re watching.', label: 'PRYSM' },
-        { value: 'wled', icon: 'spark', title: 'WLED effects', description: 'Let your favorite colors and effects play.' },
-      ].map(option => <button key={option.value} data-source={option.value} className="source" aria-pressed={source === option.value}
-        onClick={() => setState({ power: observed.power, source: option.value })}>
+        { value: 'prysm', icon: 'screen', title: 'Screen sync' },
+        { value: 'wled', icon: 'spark', title: 'WLED effects' },
+      ].map(option => <button key={option.value} data-source={option.value} className="source" aria-pressed={source === option.value} aria-busy={sourcePending === option.value}
+        onClick={() => source !== option.value && setState({ power: observed.power, source: option.value })}>
         <span className="source-icon"><Icon name={option.icon} /></span>
-        <span className="source-copy"><span className="source-title">{option.title}{option.label ? <small>{option.label}</small> : null}</span><span className="source-description">{option.description}</span></span>
-        <span className="selection" aria-hidden="true">{source === option.value ? '✓' : ''}</span>
+        <span className="source-title">{option.title}</span>
+        <span className="selection" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m4 8 2.5 2.5L12 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
       </button>)}</div>
-    </fieldset>
+    </fieldset> : null}
 
-    {data?.wled_url ? <a id="wled" className="wled-link" href={data.wled_url} target="_blank" rel="noopener noreferrer"><span><strong>Make it your own</strong><span>Choose colors & effects in WLED</span></span><Icon name="arrow" /></a> : null}
-    <footer><span className="footer-mark" aria-hidden="true">✳</span> A little light makes a big difference.</footer>
+    {data?.wled_url ? <a id="wled" className="wled-link" href={data.wled_url} target="_blank" rel="noopener noreferrer"><span>Customize in WLED</span><Icon name="arrow" /></a> : null}
   </main>;
 }
 

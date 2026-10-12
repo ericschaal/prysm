@@ -9,6 +9,7 @@ const off = { source: 'prysm', observed: { power: false, realtime: false, live_o
   observation_error: null, error: null, wled_url: 'http://192.168.18.39/' };
 const on = { ...off, observed: { ...off.observed, power: true, realtime: true,
   live_override: 0, service: 'active', substate: 'running' } };
+const wledOn = { ...off, source: 'wled', observed: { ...off.observed, power: true } };
 const offline = { ...off, observed: null, observation_error: 'WLED offline' };
 const delay = () => new Promise(resolve => setTimeout(resolve, 5));
 async function until(check) {
@@ -51,7 +52,7 @@ function page(initial = off) {
     await state.poll();
     await delay();
   };
-  state.ready = () => until(() => state.element('#status') && !state.element('#status').textContent.includes('Connecting'));
+  state.ready = () => until(() => state.element('.connection') && !state.element('.connection').textContent.includes('Connecting'));
   return state;
 }
 
@@ -63,27 +64,52 @@ async function check(initial, test) {
 
 (async () => {
   await check(off, async p => {
-    assert.match(p.element('h2').textContent, /Lights are off/);
+    assert.match(p.element('h2').textContent, /^Off$/);
     assert.equal(p.element('.power-panel').classList.contains('is-on'), false);
-    assert.match(p.element('#power').textContent, /Turn lights on/);
+    assert.match(p.element('#power').getAttribute('aria-label'), /Turn lights on/);
     assert.equal(p.element('#off'), null, 'Normal controls have a single power action');
+    assert.equal(p.element('#status').classList.contains('visible'), false);
+    assert.equal(p.element('#power').getAttribute('aria-pressed'), 'false');
+    assert.equal(p.element('.sources'), null, 'Sources are hidden while Off');
     assert.equal(p.element('#wled').href, off.wled_url);
     assert.match(p.element('#wled').rel, /noopener/);
-    p.element('[data-source="wled"]').click();
+    await p.refresh({ ...off, source: 'wled' });
+    p.element('#power').click();
     await until(() => p.requests.some(r => r.method === 'PUT'));
-    const request = p.requests.find(r => r.method === 'PUT');
-    assert.deepEqual(JSON.parse(request.body), { power: false, source: 'wled' });
-    assert.equal(request.headers.Authorization, undefined);
-    await until(() => p.element('#power').disabled);
-    await p.refresh({ ...off, source: 'wled', operation_id: 1 });
-    await until(() => p.element('[data-source="wled"]').getAttribute('aria-pressed') === 'true');
-    assert.equal(p.element('#power').disabled, false);
-    assert.match(p.element('h2').textContent, /off/);
+    assert.deepEqual(JSON.parse(p.requests.find(r => r.method === 'PUT').body), { power: true, source: 'wled' });
+    assert.equal(p.element('.sources'), null, 'Sources wait for confirmed On');
+    await p.refresh({ ...wledOn, operation_id: 1 });
+    await until(() => p.element('.sources'));
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-pressed'), 'true', 'Power restores the remembered source');
   });
 
   await check(on, async p => {
-    assert.match(p.element('#status').textContent, /Following the colors/);
-    assert.match(p.element('#power').textContent, /Turn lights off/);
+    p.element('[data-source="prysm"]').click();
+    await delay();
+    assert.equal(p.requests.filter(r => r.method === 'PUT').length, 0, 'The selected source does not resubmit a change');
+    p.element('[data-source="wled"]').click();
+    await until(() => p.requests.some(r => r.method === 'PUT'));
+    const request = p.requests.find(r => r.method === 'PUT');
+    assert.deepEqual(JSON.parse(request.body), { power: true, source: 'wled' });
+    assert.equal(request.headers.Authorization, undefined);
+    await until(() => p.element('#power').disabled);
+    assert.equal(p.element('#status').textContent, '', 'Pending changes use the power animation');
+    assert.equal(p.element('#status').classList.contains('visible'), false);
+    assert.equal(p.element('.power-panel').getAttribute('aria-busy'), 'false', 'Source changes do not animate power');
+    assert.equal(p.element('.sources').getAttribute('aria-busy'), 'true');
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-busy'), 'true');
+    assert.equal(p.element('[data-source="prysm"]').getAttribute('aria-busy'), 'false');
+    await p.refresh({ ...wledOn, operation_id: 1 });
+    await until(() => p.element('[data-source="wled"]').getAttribute('aria-pressed') === 'true');
+    assert.equal(p.element('#power').disabled, false);
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-busy'), 'false');
+    assert.match(p.element('h2').textContent, /^On$/);
+  });
+
+  await check(on, async p => {
+    assert.equal(p.element('#status').textContent, '', 'Healthy state has no redundant status message');
+    assert.equal(p.element('#power').getAttribute('aria-pressed'), 'true');
+    assert.match(p.element('#power').getAttribute('aria-label'), /Turn lights off/);
     assert.equal(p.element('.power-panel').classList.contains('is-on'), true);
     p.element('#power').click();
     p.element('#power').click();
@@ -91,20 +117,25 @@ async function check(initial, test) {
     assert.equal(p.requests.filter(r => r.method === 'PUT').length, 1, 'Double clicks submit one change');
     assert.deepEqual(JSON.parse(p.requests.find(r => r.method === 'PUT').body), { power: false, source: 'prysm' });
     await until(() => p.element('#power').disabled);
+    assert.equal(p.element('#status').textContent, '', 'Power transitions add no status copy');
+    assert.equal(p.element('.power-panel').getAttribute('aria-busy'), 'true');
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-busy'), 'false', 'Power changes do not animate sources');
     assert.equal(p.element('[data-source="wled"]').matches(':disabled'), true);
     // An old GET must not unlock controls before the accepted operation is observed.
     await p.refresh(on);
     assert.equal(p.element('#power').disabled, true);
     await p.refresh({ ...off, operation_id: 1 });
     await until(() => !p.element('#power').disabled);
+    assert.equal(p.element('.power-panel').getAttribute('aria-busy'), 'false');
     assert.equal(p.element('.power-panel').classList.contains('is-on'), false, 'Card darkens when Off is confirmed');
-    assert.match(p.element('#power').textContent, /Turn lights on/);
+    assert.equal(p.element('.sources'), null, 'Confirmed Off removes the source controls');
+    assert.match(p.element('#power').getAttribute('aria-label'), /Turn lights on/);
   });
 
   await check(offline, async p => {
     assert.match(p.element('#status').textContent, /unknown/i);
     assert.equal(p.element('#power').disabled, true);
-    assert.equal(p.element('[data-source="prysm"]').matches(':disabled'), true);
+    assert.equal(p.element('.sources'), null, 'Sources are hidden when status is unknown');
     assert.equal(p.element('#off').disabled, false, 'Off works without a WLED observation');
     assert.equal(p.element('#retry').textContent, 'Check connection');
     p.element('#retry').click();
@@ -131,6 +162,7 @@ async function check(initial, test) {
     assert.match(p.element('h2').textContent, /unknown/i);
     assert.match(p.element('#status').textContent, /Connection lost/);
     assert.equal(p.element('#power').disabled, true);
+    assert.equal(p.element('.sources'), null, 'Connection loss hides the source controls');
     assert.equal(p.element('#off'), null, 'No unsafe action when the controller is unreachable');
     assert.equal(p.element('#retry').disabled, false);
     p.failure = null;
@@ -146,7 +178,7 @@ async function check(initial, test) {
     await until(() => p.requests.length > count);
   });
 
-  await check(off, async p => {
+  await check(on, async p => {
     p.put = async () => { throw Error('Connection interrupted'); };
     p.element('[data-source="wled"]').click();
     await until(() => p.element('#retry'));
@@ -154,30 +186,30 @@ async function check(initial, test) {
     p.put = null;
     p.element('#retry').click();
     await until(() => p.requests.filter(r => r.method === 'PUT').length === 2);
-    assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[1].body), { power: false, source: 'wled' });
+    assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[1].body), { power: true, source: 'wled' });
     await until(() => p.element('#power').disabled);
-    await p.refresh({ ...off, source: 'wled', operation_id: 1 });
+    await p.refresh({ ...wledOn, operation_id: 1 });
     await until(() => !p.element('#power').disabled);
     // Completed requests must not remain the retry target for later external changes.
-    await p.refresh({ ...on, source: 'wled', operation_id: 1 });
+    await p.refresh({ ...wledOn, source: 'prysm', operation_id: 1 });
     p.element('#retry').click();
     await until(() => p.requests.filter(r => r.method === 'PUT').length === 3);
-    assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[2].body), { power: true, source: 'wled' });
+    assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[2].body), { power: true, source: 'prysm' });
   });
 
-  await check(off, async p => {
+  await check(on, async p => {
     let resolveGet;
     p.get = () => new Promise(resolve => { resolveGet = resolve; });
     const stalePoll = p.poll();
     p.element('#power').click();
     await until(() => p.requests.some(r => r.method === 'PUT'));
-    resolveGet({ ok: true, json: async () => ({ ...off, source: 'wled' }) });
+    resolveGet({ ok: true, json: async () => ({ ...on, source: 'wled' }) });
     await stalePoll;
     await delay();
     assert.equal(p.element('[data-source="prysm"]').getAttribute('aria-pressed'), 'true', 'Pre-change GET cannot overwrite the newer request');
     assert.equal(p.element('#power').disabled, true);
     p.get = null;
-    await p.refresh({ ...on, operation_id: 1 });
+    await p.refresh({ ...off, operation_id: 1 });
     await until(() => !p.element('#power').disabled);
   });
   console.log('Control page checks passed: power, sources, pending, recovery, polling, and stale responses.');

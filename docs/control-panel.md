@@ -9,19 +9,28 @@ only when selected.
 
 - **Lights:** On / Off. Off means dark, not merely capture stopped. This is a
   software light control, not a physical power disconnect.
-- **Source:** Prysm / WLED effects. Keep the selected source when switching Off;
-  selecting another source while Off changes the next On action only.
+- **Source:** Prysm / WLED effects. Show the source controls only while lights
+  are On. Keep the selected source when switching Off and restore it on the next On.
 - **Open WLED:** link to WLED's existing interface to choose effects and presets.
   Do not reproduce its effect editor in this panel.
 
-Use a single-column React page, one explicit Turn lights on/off button, two large source cards
-(Screen sync / WLED effects), and a status line. Show retry and explicit Off
-controls only when the observed state needs attention. The power card fades
-between a dark Off state and an RGB glow when On, respecting reduced motion.
-Controls need text labels, keyboard support, visible focus,
-and at least 44px touch targets. Show pending operations and disable conflicting
-inputs while applying them. Loss of connectivity displays Unknown rather than
-Off. Poll status every two seconds while the page is visible.
+Use a compact React page with an accessible power icon button, a clear On/Off
+readout, and two source tiles (Screen sync / WLED effects). Show status copy,
+retry, and explicit Off controls when the observed state needs attention.
+The power card fades between a dark Off state and an RGB glow when On.
+Controls need accessible labels, keyboard support, visible focus,
+and at least 44px touch targets. Show pending power changes with a continuous ring
+around the power button; source changes use the requested tile's selection ring.
+Disable conflicting inputs during either operation. Loss of connectivity
+displays Unknown rather than Off. Poll status every two seconds while visible.
+
+### Motion guideline
+
+Prysm controls should feel like physical buttons: a short downward press with
+an inset shadow, then a quick release. Selected sources sit slightly recessed.
+Do not grow, bounce, or lift controls on hover or selection. Use restrained
+crossfades for state changes and continuous motion only for progress or the
+ambient light glow. Respect reduced motion throughout.
 
 ## Ownership
 
