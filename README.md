@@ -144,7 +144,7 @@ Prysm is a Rust workspace with a straightforward **capture → process → rende
 | [`desktop-renderer`](renderers/desktop-renderer/) | On-screen egui preview for debugging. |
 | [`led-renderer`](renderers/led-renderer/) | WLED output over DDP/UDP with a configurable send-rate cap. |
 
-The repository also contains [hardware designs](hardware/) for the LED system. Processing settings such as smoothing and sampling depth are available through the core library; the application's TOML exposes brightness, sample density, capture resolution, and input/output settings.
+Processing settings such as smoothing and sampling depth are available through the core library; the application's TOML exposes brightness, sample density, capture resolution, and input/output settings.
 
 ### Development
 
