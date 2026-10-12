@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680" role="img" aria-labelledby="title desc">
+  <title id="title">Prysm — beyond the screen</title>
+  <desc id="desc">A twilight landscape on a television casts pink, violet, blue, and teal light onto the surrounding wall. Soft lavender and the geometric Prysm mark echo the control panel.</desc>
+  <defs>
+    <linearGradient id="wall" x2="1" y2="1"><stop stop-color="#f4f1fa"/><stop offset="1" stop-color="#edeef7"/></linearGradient>
+    <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#667db6"/><stop offset=".52" stop-color="#bca1d2"/><stop offset="1" stop-color="#f0a6b5"/></linearGradient>
+    <linearGradient id="water" x2="0" y2="1"><stop stop-color="#b097c3"/><stop offset="1" stop-color="#536d91"/></linearGradient>
+    <linearGradient id="spectrum"><stop stop-color="#ff91b2"/><stop offset=".28" stop-color="#c8a4ff"/><stop offset=".65" stop-color="#8db5ff"/><stop offset="1" stop-color="#85dfd7"/></linearGradient>
+    <radialGradient id="pink"><stop stop-color="#f25398" stop-opacity=".9"/><stop offset="1" stop-color="#f25398" stop-opacity="0"/></radialGradient>
+    <radialGradient id="blue"><stop stop-color="#3985ff" stop-opacity=".9"/><stop offset="1" stop-color="#3985ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="violet"><stop stop-color="#9566ff" stop-opacity=".85"/><stop offset="1" stop-color="#9566ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="teal"><stop stop-color="#25cfc4" stop-opacity=".8"/><stop offset="1" stop-color="#25cfc4" stop-opacity="0"/></radialGradient>
+    <linearGradient id="halo"><stop stop-color="#ff4e98"/><stop offset=".35" stop-color="#a56aff"/><stop offset=".7" stop-color="#458bff"/><stop offset="1" stop-color="#33d8ce"/></linearGradient>
+    <filter id="glow" x="-.5" y="-.5" width="2" height="2"><feGaussianBlur stdDeviation="18"/></filter>
+    <clipPath id="picture"><rect x="600" y="190" width="556" height="326" rx="8"/></clipPath>
+  </defs>
+  <rect width="1280" height="680" rx="28" fill="#f7f7fb"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(64 57)" fill="none" stroke="#292c38" stroke-linejoin="round">
+      <path d="m16 3 13 24H3L16 3Z" stroke-width="2"/><path d="m16 3 4 24M3 27l15-12 11 12" stroke-width="1.5"/>
+    </g>
+    <text x="109" y="84" fill="#262838" font-size="32" font-weight="700" letter-spacing="-1.6">prysm<tspan fill="#8f72d8">.</tspan></text>
+    <text x="64" y="177" fill="#706782" font-size="12" font-weight="600" letter-spacing="2.6">AMBIENT LIGHTING, IN SYNC</text>
+    <text x="59" y="270" fill="#292c38" font-size="76" font-weight="500" letter-spacing="-4">Beyond</text>
+    <text x="59" y="354" fill="#292c38" font-size="76" font-weight="500" letter-spacing="-4">the <tspan fill="#8873af">screen.</tspan></text>
+    <text x="64" y="409" fill="#616577" font-size="20">Bring the colors you watch</text>
+    <text x="64" y="439" fill="#616577" font-size="20">into the room around you.</text>
+    <rect x="64" y="496" width="106" height="34" rx="17" fill="#f0edf8" stroke="#e2dced"/>
+    <text x="117" y="518" text-anchor="middle" fill="#706094" font-size="12">Screen sync</text>
+    <rect x="180" y="496" width="116" height="34" rx="17" fill="#f0edf8" stroke="#e2dced"/>
+    <text x="238" y="518" text-anchor="middle" fill="#706094" font-size="12">WLED effects</text>
+    <rect x="306" y="496" width="100" height="34" rx="17" fill="#f0edf8" stroke="#e2dced"/>
+    <text x="356" y="518" text-anchor="middle" fill="#706094" font-size="12">Local control</text>
+    <rect x="536" y="64" width="696" height="552" rx="28" fill="url(#wall)"/>
+    <ellipse cx="722" cy="345" rx="195" ry="258" fill="url(#pink)"/>
+    <ellipse cx="905" cy="235" rx="310" ry="173" fill="url(#violet)"/>
+    <ellipse cx="1095" cy="349" rx="152" ry="253" fill="url(#blue)"/>
+    <ellipse cx="958" cy="490" rx="263" ry="123" fill="url(#teal)"/>
+    <rect x="586" y="176" width="584" height="354" rx="18" fill="none" stroke="url(#halo)" stroke-width="38" filter="url(#glow)"/>
+    <ellipse cx="878" cy="571" rx="236" ry="13" fill="#292c38" opacity=".06"/>
+    <path d="m693 510-24 51h19l22-47M1061 510l24 51h-19l-22-47" fill="#343749"/>
+    <rect x="588" y="178" width="580" height="350" rx="16" fill="#262838"/>
+    <rect x="594" y="184" width="568" height="338" rx="11" fill="none" stroke="url(#spectrum)" opacity=".4"/>
+    <g clip-path="url(#picture)">
+      <rect x="600" y="190" width="556" height="326" fill="url(#sky)"/>
+      <circle cx="953" cy="285" r="33" fill="#ffe0ce" opacity=".85"/>
+      <path d="m600 340 83-84 72 79 57-41 86 54 60-32 102 35 96-73v238H600Z" fill="#7d76a5"/>
+      <path d="m600 353 112-40 107 64 75-48 130 64 132-60v183H600Z" fill="#545c85"/>
+      <path d="M600 395q128-13 267 3t289-3v121H600Z" fill="url(#water)"/>
+      <g fill="none" stroke="#ead1df" stroke-linecap="round" opacity=".4">
+        <path d="M916 408h69m-94 12h122m-78 14h45m-63 17h82m-121 18h55m-183-50h48m303 23h51m-399 47h67"/>
+      </g>
+      <path d="m600 450 58 14 39 52h-97Zm556-30-48 39-95 57h143Z" fill="#343e5c"/>
+    </g>
+    <circle cx="878" cy="523" r="2" fill="#c8a4ff"/>
+    <path d="M64 594h72" stroke="#ff91b2" stroke-width="3" stroke-linecap="round"/>
+    <path d="M145 594h72" stroke="#edb48b" stroke-width="3" stroke-linecap="round"/>
+    <path d="M226 594h72" stroke="#c8a4ff" stroke-width="3" stroke-linecap="round"/>
+    <path d="M307 594h72" stroke="#8db5ff" stroke-width="3" stroke-linecap="round"/>
+    <path d="M388 594h72" stroke="#85dfd7" stroke-width="3" stroke-linecap="round"/>
+    <text x="884" y="646" text-anchor="middle" fill="#717488" font-size="11" letter-spacing="2">YOUR PICTURE. YOUR ATMOSPHERE.</text>
+  </g>
+</svg>
