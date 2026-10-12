@@ -137,8 +137,15 @@ effects remain unchanged, and DDP resumes after override clears. Status reflects
 software state; it cannot confirm wiring or physical LEDs. The transition
 logic is covered by fake-backend tests; hardware verification is still required.
 
+The React UI is bundled into the binary; the Pi needs no frontend runtime or
+internet connection. To edit it, run `npm ci --prefix prysm/control-ui`, edit
+`prysm/control-ui/app.jsx` or `style.css`, then run
+`npm run build --prefix prysm/control-ui` before rebuilding the Rust binary.
+Commit the generated `prysm/src/control.html` with its source changes.
+
 Development checks: `cargo test -p prysm --bin prysm-control` and
-`node prysm/tests/control-page.test.cjs` (Node is only needed for the UI test).
+`npm test --prefix prysm/control-ui` (Node 20.19+ is only needed for UI development;
+the test renders the bundled page and checks that it matches the source).
 A read-only check on 2026-10-12 confirmed the configured device at
 `http://192.168.18.39/` runs WLED 16.0.1 on ESP32 Ethernet and reports the required
 power/realtime/override fields. It was receiving full-strip DDP while `on` was

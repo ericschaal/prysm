@@ -14,8 +14,11 @@ only when selected.
 - **Open WLED:** link to WLED's existing interface to choose effects and presets.
   Do not reproduce its effect editor in this panel.
 
-Use a single-column page, a prominent power switch, two large source buttons,
-and a status line. Controls need text labels, keyboard support, visible focus,
+Use a single-column React page, one explicit Turn lights on/off button, two large source cards
+(Screen sync / WLED effects), and a status line. Show retry and explicit Off
+controls only when the observed state needs attention. The power card fades
+between a dark Off state and an RGB glow when On, respecting reduced motion.
+Controls need text labels, keyboard support, visible focus,
 and at least 44px touch targets. Show pending operations and disable conflicting
 inputs while applying them. Loss of connectivity displays Unknown rather than
 Off. Poll status every two seconds while the page is visible.
@@ -107,7 +110,10 @@ Retain backend error context in logs and show short actionable errors in the UI.
 
 Add a Linux-only `prysm-control` binary to the existing application crate, using
 Tokio, Axum, and reqwest for WLED.
-Embed one static page; no frontend build system is required. Use fixed-argument
+Embed one static page. React source and CSS live in `prysm/control-ui`; esbuild
+bundles React into the checked-in `prysm/src/control.html`. Run `npm ci` and
+`npm run build` in that directory after UI edits, before building the Rust binary.
+The Pi needs neither Node nor internet access to serve the page. Use fixed-argument
 `systemctl` invocations without a shell instead of adding a D-Bus abstraction.
 
 Run a dedicated `prysm-control.service` as an unprivileged account. Grant only
@@ -168,6 +174,8 @@ remote hosting, multi-device control, and automatic power restoration at boot.
 Implementation checks: transition/failure/main-segment ordering and HTTP
 Host/Origin/body-validation tests run with
 `cargo test -p prysm --bin prysm-control`. UI state checks run with
-`node prysm/tests/control-page.test.cjs`. A read-only check on 2026-10-12 confirmed
+`npm test --prefix prysm/control-ui` after `npm ci --prefix prysm/control-ui`.
+The tests check the built React page and reject stale generated HTML.
+A read-only check on 2026-10-12 confirmed
 WLED 16.0.1 at `http://192.168.18.39/` exposes the required fields and receives
 full-strip DDP. It did not verify state transitions or physical light behavior.
