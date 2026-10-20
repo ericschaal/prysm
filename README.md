@@ -9,10 +9,23 @@
 </p>
 
 <p align="center">
+  <a href="#in-action">In action</a> ·
   <a href="#what-it-does">What it does</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#set-the-mood">Control panel</a> ·
   <a href="#under-the-hood">Under the hood</a>
+</p>
+
+## In action
+
+<p align="center">
+  <img src="docs/images/ambilight-action.webp" alt="Prysm lighting the wall around a television in red and blue as the colors move across an action scene." width="768">
+  <br><sub>Red and blue light follows the action across the screen.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/ambilight-music.webp" alt="Prysm lighting the wall around a television as a music video shifts between cool stadium lighting and warm outdoor scenes." width="768">
+  <br><sub>Cool stadium light shifts to warm colors with the music video.</sub>
 </p>
 
 ## What it does
