@@ -3,8 +3,8 @@ use prysm_capture::{Frame, PixelFormat, YuvRange};
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-const SCAN_INTERVAL: Duration = Duration::from_millis(100);
-const CONFIRM_DURATION: Duration = Duration::from_secs(1);
+const SCAN_INTERVAL: Duration = Duration::from_millis(50);
+const CONFIRM_DURATION: Duration = Duration::from_millis(200);
 const SAMPLE_STRIDE: usize = 8;
 
 type Bands = (u32, u32);
@@ -275,34 +275,37 @@ mod tests {
         let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
         for fps in [24, 30, 60, 120] {
             let mut detector = BandDetector::new();
-            for i in 0..=fps {
-                let now = start + Duration::from_secs_f64(f64::from(i) / f64::from(fps));
-                let output = detector.process(ViewFrame::new(boxed.clone()), now);
-                assert_eq!(
-                    output.viewport.y,
-                    if i == fps { 48 } else { 0 },
-                    "{fps} fps, frame {i}"
-                );
-            }
-            for i in 0..=fps {
-                let now = start
-                    + Duration::from_secs(2)
-                    + Duration::from_secs_f64(f64::from(i) / f64::from(fps));
-                let output = detector.process(ViewFrame::new(full.clone()), now);
-                assert_eq!(
-                    output.viewport.y,
-                    if i == fps { 0 } else { 48 },
-                    "{fps} fps, frame {i}"
+            for (frame, offset, before, after) in [
+                (&boxed, Duration::ZERO, 0, 48),
+                (&full, Duration::from_secs(2), 48, 0),
+            ] {
+                let mut first_change = None;
+                for i in 0..=fps {
+                    let elapsed = Duration::from_secs_f64(f64::from(i) / f64::from(fps));
+                    let output =
+                        detector.process(ViewFrame::new(frame.clone()), start + offset + elapsed);
+                    if elapsed < CONFIRM_DURATION {
+                        assert_eq!(output.viewport.y, before, "{fps} fps confirmed too early");
+                    }
+                    if output.viewport.y == after && first_change.is_none() {
+                        first_change = Some(elapsed);
+                    }
+                }
+                let elapsed = first_change.expect("crop must converge within one second");
+                let frame_period = Duration::from_secs_f64(1.0 / f64::from(fps));
+                assert!(
+                    elapsed <= CONFIRM_DURATION + SCAN_INTERVAL + frame_period,
+                    "{fps} fps took {elapsed:?} to converge"
                 );
             }
         }
         let mut detector = BandDetector::new();
-        for millis in [0, 200, 550, 900, 1100] {
+        for millis in [0, 70, 150, 230] {
             let output = detector.process(
                 ViewFrame::new(boxed.clone()),
                 start + Duration::from_millis(millis),
             );
-            assert_eq!(output.viewport.y, if millis >= 1000 { 48 } else { 0 });
+            assert_eq!(output.viewport.y, if millis >= 200 { 48 } else { 0 });
         }
     }
 
@@ -312,7 +315,7 @@ mod tests {
         let mut detector = BandDetector::new();
         let boxed = create_letterboxed_frame(640, 360, 48, 48);
         let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
-        for millis in [0, 500] {
+        for millis in [0, 100] {
             detector.process(
                 ViewFrame::new(boxed.clone()),
                 start + Duration::from_millis(millis),
@@ -321,7 +324,7 @@ mod tests {
         for now in [
             start.checked_sub(Duration::from_secs(1)).unwrap(),
             start,
-            start + Duration::from_millis(500),
+            start + Duration::from_millis(100),
         ] {
             assert_eq!(
                 detector
@@ -404,7 +407,7 @@ mod tests {
                 start + Duration::from_millis(i * 100),
             );
             assert_eq!(output.viewport.y, 0);
-            assert_eq!(output.viewport.x, if i == 10 { 80 } else { 0 });
+            assert_eq!(output.viewport.x, if i >= 2 { 80 } else { 0 });
         }
         let frame = yuyv_frame_from_luma(640, 360, |x, y| {
             if (80..560).contains(&x) && (48..312).contains(&y) {

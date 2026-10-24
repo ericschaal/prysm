@@ -18,10 +18,10 @@ fn a_static_letterboxed_picture_does_not_bypass_smoothing_when_crop_confirms() {
     let mut processor = PrysmProcessor::new(&config);
     let start = Instant::now();
     let before = processor.process_frame_at(frame.clone(), start);
-    for millis in (10..1000).step_by(10) {
+    for millis in (10..200).step_by(10) {
         processor.process_frame_at(frame.clone(), start + Duration::from_millis(millis));
     }
-    let after = processor.process_frame_at(frame, start + Duration::from_secs(1));
+    let after = processor.process_frame_at(frame, start + Duration::from_millis(200));
     let old = before.top.sample_at(0.5).r;
     let target = prysm_core::LinearColor::from_srgb(prysm_core::Color::new(128, 128, 128)).r;
     let actual = after.top.sample_at(0.5).r;

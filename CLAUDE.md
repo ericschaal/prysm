@@ -163,7 +163,7 @@ Brightness is clamped to 0–100, spatial reach to 1–100. Negative and non-fin
 disable smoothing. Every frame is sampled; density sets output positions and the area-average grid
 resolution, capped at 128 cells on its longest side. All picture pixels contribute.
 Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
-The detector scans at most every 100 ms and confirms each axis independently after one second
+The detector scans at most every 50 ms and confirms each axis independently after 200 ms
 of stable evidence. It handles thin and combined bars, checks the capture's black level, and
 preserves the confirmed crop through dark scenes. Row and column scans use the 98th percentile
 so a bar must be almost entirely black; visible minority detail stops the crop. Cross-axis passes
