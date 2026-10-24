@@ -161,9 +161,27 @@ Processing settings such as smoothing and sampling depth are available through t
 
 ### Development
 
+Start in `prysm/src/main.rs`: it parses CLI arguments, configures logging, and
+calls `prysm::run_from_config`. Application setup is split by responsibility:
+
+| File in `prysm/src/` | Responsibility |
+| :--- | :--- |
+| [`app.rs`](prysm/src/app.rs) | Load configuration and select desktop or WLED output. |
+| [`config.rs`](prysm/src/config.rs) | Parse TOML and validate settings, input identifiers, and LED counts. |
+| [`input.rs`](prysm/src/input.rs) | Open a device or file as a fallible frame stream. |
+| [`desktop.rs`](prysm/src/desktop.rs) | Keep the GUI on the main thread and async processing on a worker thread. |
+| [`wled.rs`](prysm/src/wled.rs) | Run headless processing, WLED output, and Ctrl+C handling. |
+| [`stream.rs`](prysm/src/stream.rs) | Publish processed frames and colors to the desktop watch channels. |
+| [`video.rs`](prysm/src/video.rs) | Decode file input with FFmpeg. |
+
+Tests live beside the code they cover. Output runners own runtime and shutdown
+handling; input adapters preserve source errors. The existing `prysm::run` API
+runs a desktop preview with a caller-provided frame source.
+
 ```sh
 cargo test --workspace --locked
 cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked
 ```
 
 For control-panel changes, use Node 20.19+ and the existing frontend tooling:

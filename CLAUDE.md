@@ -120,7 +120,8 @@ and exits successfully at EOF. Relative paths use the current working directory.
 on-screen preview. WLED counts total 1–65535; wiring starts at bottom-left viewed
 from the front, up the left, across the top, down the right, and back along the bottom.
 The desktop output retains the main-thread egui / runtime-thread arrangement in
-`prysm/src/lib.rs`; WLED runs headlessly on a single Tokio runtime.
+`prysm/src/desktop.rs`; WLED runs headlessly on a single Tokio runtime in
+`prysm/src/wled.rs`.
 Ctrl+C cancels either output; closing egui also stops capture. Source and renderer
 failures preserve their error context. WLED's realtime timeout restores its normal effect.
 
@@ -215,11 +216,15 @@ Tests are minimal but focused:
 
 ## Critical Files
 
-- `prysm/src/main.rs` - Single TOML-driven entry point, input/output selection
+- `prysm/src/main.rs` - CLI arguments and logging setup
+- `prysm/src/app.rs` - TOML-driven application setup and output selection
 - `prysm/src/config.rs` - TOML parsing and validated application configuration
 - `prysm-core/src/config.rs` - Domain settings, capture resolution and numeric defaults
 - `prysm/src/video.rs` - Shared FFmpeg frame stream
-- `prysm/src/lib.rs` - Shared application orchestration and threading setup
+- `prysm/src/lib.rs` - Public application entry points
+- `prysm/src/input.rs` - Device/file adaptation to a fallible frame stream
+- `prysm/src/desktop.rs` - Desktop runtime and threading setup
+- `prysm/src/wled.rs` - Headless runtime, WLED streaming, and shutdown
 - `prysm/src/stream.rs` - Owned fallible desktop stream consumer and lifecycle tests
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
 - `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
