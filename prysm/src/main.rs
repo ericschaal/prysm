@@ -45,9 +45,11 @@ fn main() -> Result<()> {
     let settings = config.settings;
     let resolution = settings.capture_resolution;
     match config.output {
-        Output::Egui {} => prysm::run(settings, move |shutdown| {
-            config.input.into_stream(resolution, shutdown)
-        }),
+        Output::Egui { refresh_rate_hz } => {
+            prysm::run(settings, refresh_rate_hz, move |shutdown| {
+                config.input.into_stream(resolution, shutdown)
+            })
+        }
         Output::Wled {
             address,
             refresh_rate_hz,
@@ -194,7 +196,26 @@ left = 54
                 "accepted refresh_rate_hz = {value}"
             );
         }
-        assert!(parse("[input]\ntype = 'device'\ndevice = '/dev/video0'\n[output]\ntype = 'egui'\nrefresh_rate_hz = 60").is_err());
+    }
+
+    #[test]
+    fn parses_egui_refresh_rate_and_rejects_invalid_rates() {
+        let contents =
+            "[input]\ntype = 'device'\ndevice = '/dev/video0'\n[output]\ntype = 'egui'\n";
+        let config = parse(contents).unwrap();
+        assert!(
+            matches!(config.output, Output::Egui { refresh_rate_hz } if refresh_rate_hz.get() == 30)
+        );
+        let config = parse(&format!("{contents}refresh_rate_hz = 60")).unwrap();
+        assert!(
+            matches!(config.output, Output::Egui { refresh_rate_hz } if refresh_rate_hz.get() == 60)
+        );
+        for value in ["0", "-1", "1.5", "'fast'", "4294967296"] {
+            assert!(
+                parse(&format!("{contents}refresh_rate_hz = {value}")).is_err(),
+                "accepted refresh_rate_hz = {value}"
+            );
+        }
     }
 
     #[test]

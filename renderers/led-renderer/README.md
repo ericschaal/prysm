@@ -84,7 +84,11 @@ For an on-screen egui preview, replace the entire output configuration with:
 ```toml
 [output]
 type = "egui"
+refresh_rate_hz = 30
 ```
+
+For egui, `output.refresh_rate_hz` sets the preview refresh rate (positive integer,
+default 30). Each refresh uses the latest frame and colors, skipping intermediate updates.
 
 Both outputs use the configured brightness, sample density and capture resolution.
 Brightness defaults to 100 and is clamped to 0–100. Sample density defaults to 128

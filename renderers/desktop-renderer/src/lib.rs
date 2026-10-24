@@ -1,9 +1,11 @@
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::{Color, ColorStrip, EdgeColors};
+use std::{num::NonZeroU32, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
     layout_config: LayoutConfig,
+    refresh_rate_hz: NonZeroU32,
     shutdown_token: Option<CancellationToken>,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
@@ -16,6 +18,7 @@ impl std::fmt::Debug for DesktopRendererBuilder {
             .field("edge_colors_rx", &self.edge_colors_rx)
             .field("frame_rx", &self.frame_rx)
             .field("layout_config", &self.layout_config)
+            .field("refresh_rate_hz", &self.refresh_rate_hz)
             .finish()
     }
 }
@@ -28,12 +31,20 @@ impl DesktopRendererBuilder {
             shutdown_token: None,
             edge_colors_rx,
             layout_config: LayoutConfig::default(),
+            refresh_rate_hz: NonZeroU32::new(30).unwrap(),
         }
     }
 
     #[must_use]
     pub fn with_frame_rx(mut self, frame_rx: tokio::sync::watch::Receiver<Frame>) -> Self {
         self.frame_rx = Some(frame_rx);
+        self
+    }
+
+    /// Set the preview refresh rate (default: 30 Hz).
+    #[must_use]
+    pub fn with_refresh_rate_hz(mut self, refresh_rate_hz: NonZeroU32) -> Self {
+        self.refresh_rate_hz = refresh_rate_hz;
         self
     }
 
@@ -81,6 +92,9 @@ impl DesktopRendererBuilder {
             texture_handle: None,
             layout_config: self.layout_config,
             rgb_scratch: Vec::new(),
+            refresh_interval: Duration::from_nanos(
+                1_000_000_000u64.div_ceil(u64::from(self.refresh_rate_hz.get())),
+            ),
         }
     }
 }
@@ -223,6 +237,7 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
+    refresh_interval: Duration,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
     shutdown_token: Option<CancellationToken>,
@@ -400,9 +415,7 @@ impl eframe::App for DesktopRenderer {
             }
         });
 
-        // Repaints are driven by the notifier thread when new frames or edge colors
-        // arrive (see `spawn_repaint_notifier`). Keep a slow heartbeat as a safety net.
-        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        ctx.request_repaint_after(self.refresh_interval);
     }
 }
 
@@ -477,50 +490,16 @@ enum EdgePosition {
     Right,
 }
 
-/// Wake the GUI only when there is something new to draw.
-///
-/// egui repaints on demand; instead of polling at a fixed FPS, a small
-/// thread waits on the edge color and frame watch channels and requests a repaint
-/// per update. When no updates arrive, the GUI stays idle. Exits when the
-/// edge colors channel closes or on
-/// shutdown; tokio watch futures work under any executor, so a lightweight
-/// `block_on` is enough — no runtime needed on this thread.
-fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
-    let mut edge_colors_rx = app.edge_colors_rx.clone();
-    let mut frame_rx = app.frame_rx.clone();
-    let shutdown_token = app.shutdown_token.clone().unwrap_or_default();
+/// Wake the GUI immediately on shutdown, even at low refresh rates.
+fn spawn_shutdown_notifier(app: &DesktopRenderer, ctx: egui::Context) {
+    let Some(shutdown_token) = app.shutdown_token.clone() else {
+        return;
+    };
 
     std::thread::spawn(move || {
         futures::executor::block_on(async move {
-            loop {
-                tokio::select! {
-                    changed = edge_colors_rx.changed() => {
-                        if changed.is_err() {
-                            break; // Sender dropped
-                        }
-                        ctx.request_repaint();
-                    }
-                    changed = async {
-                        match frame_rx.as_mut() {
-                            Some(rx) => rx.changed().await,
-                            None => std::future::pending().await,
-                        }
-                    } => {
-                        if changed.is_err() {
-                            frame_rx = None; // Sender dropped; keep watching edge colors
-                        } else {
-                            ctx.request_repaint();
-                        }
-                    }
-                    () = shutdown_token.cancelled() => {
-                        // One last repaint so update() observes the
-                        // cancellation and closes the window
-                        ctx.request_repaint();
-                        break;
-                    }
-                }
-            }
-            tracing::debug!("Repaint notifier thread exiting");
+            shutdown_token.cancelled().await;
+            ctx.request_repaint();
         });
     });
 }
@@ -550,7 +529,7 @@ pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::
         "Prysm",
         options,
         Box::new(move |cc| {
-            spawn_repaint_notifier(&app, cc.egui_ctx.clone());
+            spawn_shutdown_notifier(&app, cc.egui_ctx.clone());
             Ok(Box::new(app))
         }),
     );
@@ -565,6 +544,61 @@ pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::App;
+
+    #[test]
+    fn schedules_preview_refreshes_at_default_and_configured_rates() {
+        for (rate, nanos) in [
+            (None, 33_333_334),
+            (Some(2), 500_000_000),
+            (Some(60), 16_666_667),
+            (Some(u32::MAX), 1),
+        ] {
+            let (_sender, receiver) = tokio::sync::watch::channel(EdgeColors::default());
+            let mut builder = DesktopRendererBuilder::new(receiver);
+            if let Some(rate) = rate {
+                builder = builder.with_refresh_rate_hz(NonZeroU32::new(rate).unwrap());
+            }
+            let mut app = builder.build();
+            let context = egui::Context::default();
+            let mut frame = eframe::Frame::_new_kittest();
+            let mut output = egui::FullOutput::default();
+            // Let egui's initial layout repaints settle before checking the timer.
+            for _ in 0..3 {
+                output = context.run(
+                    egui::RawInput {
+                        predicted_dt: 0.0,
+                        ..Default::default()
+                    },
+                    |ctx| app.update(ctx, &mut frame),
+                );
+            }
+            assert_eq!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                Duration::from_nanos(nanos)
+            );
+        }
+    }
+
+    #[test]
+    fn shutdown_requests_an_immediate_repaint() {
+        let (_sender, receiver) = tokio::sync::watch::channel(EdgeColors::default());
+        let shutdown = CancellationToken::new();
+        let app = DesktopRendererBuilder::new(receiver)
+            .with_shutdown_token(&shutdown)
+            .build();
+        let context = egui::Context::default();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        context.set_request_repaint_callback(move |info| {
+            sender.send(info.delay).unwrap();
+        });
+        spawn_shutdown_notifier(&app, context);
+        shutdown.cancel();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Duration::ZERO
+        );
+    }
 
     #[test]
     fn led_distribution_preserves_total_including_small_and_odd_counts() {

@@ -190,7 +190,11 @@ path = "/path/to/video.mp4"
 
 [output]
 type = "egui"
+refresh_rate_hz = 30
 ```
+
+`refresh_rate_hz` sets the preview refresh rate (positive integer, default 30).
+Each refresh displays the latest available frame and colors; intermediate updates are skipped.
 
 Run `cargo run --locked --release -p prysm`. File input requires **FFmpeg 9+** on your `PATH` and a readable video file. Playback runs at the source frame rate, converts HDR to sRGB, and stops at the end of the video. Relative file paths resolve from your working directory. To inspect live capture instead, keep your device input and use the same egui output.
 

@@ -7,11 +7,13 @@ use futures::Stream;
 use prysm_capture::Frame;
 use prysm_core::{Config, EdgeColors};
 use prysm_processor::PrysmProcessor;
+use std::num::NonZeroU32;
 use tokio_util::sync::CancellationToken;
 
 /// Run the desktop visualizer with a frame source created on the async runtime.
 pub fn run<S>(
     config: Config,
+    refresh_rate_hz: NonZeroU32,
     create_feed: impl FnOnce(CancellationToken) -> Result<S> + Send + 'static,
 ) -> Result<()>
 where
@@ -62,6 +64,7 @@ where
     });
 
     let app = DesktopRendererBuilder::new(edge_colors_rx)
+        .with_refresh_rate_hz(refresh_rate_hz)
         .with_shutdown_token(&shutdown_token)
         .with_frame_rx(frames_rx)
         .build();

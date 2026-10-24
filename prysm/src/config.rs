@@ -67,7 +67,10 @@ pub(super) enum Output {
         refresh_rate_hz: NonZeroU32,
         leds: LedCounts,
     },
-    Egui {},
+    Egui {
+        #[serde(default = "default_refresh_rate_hz")]
+        refresh_rate_hz: NonZeroU32,
+    },
 }
 
 fn default_refresh_rate_hz() -> NonZeroU32 {
