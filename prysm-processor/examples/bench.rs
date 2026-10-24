@@ -3,7 +3,7 @@
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::Config;
 use prysm_processor::PrysmProcessor;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 fn yuyv_frame(width: u32, height: u32, seed: u8) -> Frame {
     let mut data = vec![128u8; (width * height * 2) as usize];
@@ -21,11 +21,13 @@ fn bench(label: &str, width: u32, height: u32, vary: bool) {
         .collect();
 
     // Warm up
-    processor.process_frame(frames[0].clone());
+    let clock = Instant::now();
+    processor.process_frame_at(frames[0].clone(), clock);
 
     let start = Instant::now();
-    for frame in &frames {
-        processor.process_frame(frame.clone());
+    for (frame, step) in frames.iter().zip(1..) {
+        let now = clock + Duration::from_secs_f64(f64::from(step) / 30.0);
+        processor.process_frame_at(frame.clone(), now);
     }
     let per_frame = start.elapsed() / frames.len() as u32;
     println!("{label}: {per_frame:?}/frame");

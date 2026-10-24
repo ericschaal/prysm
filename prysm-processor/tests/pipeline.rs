@@ -8,6 +8,121 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
     Frame::fill(value, width, height, PixelFormat::RGB24)
 }
 
+fn settle(processor: &mut PrysmProcessor, frame: &Frame, start: Instant) -> prysm_core::EdgeColors {
+    (0..=60)
+        .map(|i| processor.process_frame_at(frame.clone(), start + Duration::from_millis(i * 50)))
+        .last()
+        .unwrap()
+}
+
+#[test]
+fn combined_and_thin_black_bars_follow_the_picture() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        ..Config::default()
+    };
+    for (x, y, width, height) in [
+        (219, 48, 202, 264),
+        (240, 130, 160, 100),
+        (80, 130, 480, 100),
+        (12, 7, 601, 340),
+        (12, 0, 616, 360),
+        (0, 7, 640, 346),
+    ] {
+        let mut data = vec![0; 640 * 360 * 3];
+        for row in y..y + height {
+            data[(row * 640 + x) * 3..(row * 640 + x + width) * 3].fill(255);
+        }
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        let output = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
+        assert_eq!(
+            output.top.len(),
+            config.sample_density.samples_for_length(width)
+        );
+        assert_eq!(
+            output.left.len(),
+            config.sample_density.samples_for_length(height)
+        );
+        for edge in [&output.top, &output.right, &output.bottom, &output.left] {
+            assert!(
+                edge.sample_at(0.5).r > 0.99,
+                "picture {x},{y} {width}x{height}"
+            );
+        }
+    }
+}
+
+#[test]
+fn combined_bars_keep_dark_centers_and_bright_corners_inside_the_picture() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        ..Config::default()
+    };
+    for pattern in 0..5 {
+        let mut data = vec![0; 640 * 360 * 3];
+        let mut picture = vec![0; 160 * 100 * 3];
+        for y in 0..100 {
+            for x in 0..160 {
+                let bright = match pattern {
+                    0 => !(72..88).contains(&x),
+                    1 => !(42..58).contains(&y),
+                    2 => !(72..88).contains(&x) && !(42..58).contains(&y),
+                    _ => {
+                        let corner_width = if pattern == 4 { 30 } else { 40 };
+                        (!(corner_width..160 - corner_width).contains(&x) && !(30..70).contains(&y))
+                            || ((40..120).contains(&x) && (30..70).contains(&y))
+                    }
+                };
+                let value = if bright { 128 } else { 0 };
+                let frame_index = ((y + 130) * 640 + x + 240) * 3;
+                data[frame_index..frame_index + 3].fill(value);
+                let picture_index = (y * 160 + x) * 3;
+                picture[picture_index..picture_index + 3].fill(value);
+            }
+        }
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        let actual = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
+        // Conflicting bounds must keep the full frame instead of cutting off the corners.
+        let expected_frame = if pattern == 4 {
+            frame
+        } else {
+            Frame::new(picture, 160, 100, PixelFormat::RGB24)
+        };
+        let expected = PrysmProcessor::new(&Config {
+            remove_black_bars: false,
+            ..config
+        })
+        .process_frame(expected_frame);
+        assert_eq!(actual.top.len(), expected.top.len(), "pattern {pattern}");
+        assert_eq!(actual.left.len(), expected.left.len(), "pattern {pattern}");
+        assert!(actual == expected, "pattern {pattern} lost picture content");
+    }
+}
+
+#[test]
+fn dim_gray_and_colored_edges_are_picture_not_black_bars() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        ..Config::default()
+    };
+    for format in [PixelFormat::RGB24, PixelFormat::BGR24] {
+        for edge_color in [[40, 40, 40], [0, 0, 24]] {
+            let mut data = edge_color.repeat(640 * 360);
+            for row in 0..360 {
+                data[(row * 640 + 80) * 3..(row * 640 + 560) * 3].fill(128);
+            }
+            let frame = Frame::new(data, 640, 360, format);
+            let output = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
+            let expected = PrysmProcessor::new(&Config {
+                remove_black_bars: false,
+                ..config
+            })
+            .process_frame(frame);
+            assert!(output == expected, "{format:?}, edges {edge_color:?}");
+        }
+    }
+}
+
 #[test]
 fn stream_preserves_typed_source_errors() {
     use futures::StreamExt;
@@ -36,16 +151,15 @@ fn wide_black_bands_crop_each_axis_independently() {
         ..Config::default()
     };
     let mut processor = PrysmProcessor::new(&config);
+    let mut start = Instant::now();
     for (x_start, x_end, y_start, y_end) in [(219, 421, 0, 360), (0, 640, 130, 230)] {
         let mut data = vec![0; 640 * 360 * 3];
         for y in y_start..y_end {
             data[(y * 640 + x_start) * 3..(y * 640 + x_end) * 3].fill(255);
         }
         let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
-        for _ in 0..120 {
-            processor.process_frame(frame.clone());
-        }
-        let output = processor.process_frame(frame);
+        let output = settle(&mut processor, &frame, start);
+        start += Duration::from_secs(4);
         assert_eq!(
             output.top.len(),
             config.sample_density.samples_for_length(x_end - x_start)
@@ -88,10 +202,7 @@ fn slightly_noisy_black_bands_still_crop() {
             let mut frame = Frame::new(data, 640, 360, PixelFormat::YUYV);
             frame.yuv_range = range;
             let mut processor = PrysmProcessor::new(&config);
-            for _ in 0..60 {
-                processor.process_frame(frame.clone());
-            }
-            let output = processor.process_frame(frame);
+            let output = settle(&mut processor, &frame, Instant::now());
             let (width, height) = if horizontal { (640, 264) } else { (480, 360) };
             assert_eq!(
                 output.top.len(),
@@ -220,13 +331,10 @@ fn static_letterbox_confirms_with_default_tuning() {
     data[640 * 312 * 3..].fill(0);
     let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
     let mut p = PrysmProcessor::new(&c);
-    let mut actual = p.process_frame(frame.clone());
-    for _ in 1..60 {
-        actual = p.process_frame(frame.clone());
-    }
+    let actual = settle(&mut p, &frame, Instant::now());
     assert!(
         actual.top.sample_at(0.5).r > 0.1,
-        "letterbox still unconfirmed after 60 frames"
+        "letterbox still unconfirmed after three seconds"
     );
 }
 
@@ -278,16 +386,14 @@ fn dark_scene_preserves_confirmed_crop() {
     data[..640 * 48 * 3].fill(0);
     data[640 * 312 * 3..].fill(0);
     let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
-    for _ in 0..60 {
-        p.process_frame(letterbox.clone());
-    }
-    let cropped = p.process_frame(letterbox);
+    let start = Instant::now();
+    let cropped = settle(&mut p, &letterbox, start);
     assert_eq!(
         cropped.left.len(),
         SampleDensity::default().samples_for_length(264)
     );
-    for _ in 0..60 {
-        let dark = p.process_frame(rgb(640, 360, 20));
+    for i in 0..60 {
+        let dark = p.process_frame_at(rgb(640, 360, 20), start + Duration::from_secs(4 + i));
         assert_eq!(dark.left.len(), cropped.left.len());
     }
     let resized = p.process_frame(rgb(320, 180, 128));
@@ -655,10 +761,10 @@ fn black_bar_removal_can_be_disabled() {
             ..Config::default()
         };
         let mut processor = PrysmProcessor::new(&config);
-        for _ in 0..60 {
-            processor.process_frame(frame.clone());
-        }
-        let actual = processor.process_frame(frame.clone()).top.sample_at(0.5).r;
+        let actual = settle(&mut processor, &frame, Instant::now())
+            .top
+            .sample_at(0.5)
+            .r;
         let expected = if remove_black_bars { 1.0 } else { 0.0 };
         assert!((actual - expected).abs() < 1e-6);
     }
@@ -689,9 +795,11 @@ fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
         }
     }
     let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
-    for _ in 0..80 {
-        let actual = smoothed.process_frame(letterbox.clone());
-        let expected = direct.process_frame(letterbox.clone());
+    let start = Instant::now();
+    for step in 0..80 {
+        let now = start + Duration::from_millis(step * 50);
+        let actual = smoothed.process_frame_at(letterbox.clone(), now);
+        let expected = direct.process_frame_at(letterbox.clone(), now);
         assert_eq!(actual.left.len(), expected.left.len());
         for i in 0u8..=100 {
             let position = f32::from(i) / 100.0;

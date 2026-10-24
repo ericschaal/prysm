@@ -21,10 +21,11 @@ impl Viewport {
     }
 }
 
-/// Brightness (luma) of a pixel read directly from raw frame data.
+/// Brightness for black-bar detection, read directly from raw frame data.
 ///
 /// YUYV stores luma at every even byte, so black-bar detection
 /// never needs a color conversion. Out-of-bounds coordinates read as black.
+/// RGB uses the brightest channel so dark colored pixels are not treated as black.
 pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     if x >= frame.width || y >= frame.height {
         return 0;
@@ -37,7 +38,7 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
         PixelFormat::RGB24 | PixelFormat::BGR24 => {
             let idx = ((y * frame.width + x) * 3) as usize;
             match frame.data.get(idx..idx + 3) {
-                Some(px) => ((px[0] as u16 + px[1] as u16 + px[2] as u16) / 3) as u8,
+                Some(px) => px[0].max(px[1]).max(px[2]),
                 None => 0,
             }
         }

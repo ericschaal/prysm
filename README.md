@@ -36,7 +36,7 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 | :--- | :--- |
 | **Colors matched to each edge** | Each section of the LED strip follows the corresponding part of the picture. |
 | **Smooth transitions** | Color changes are softened over time to reduce flicker. |
-| **Black-bar detection** | Letterboxed video is sampled inside the black bars, so the lights follow the image. |
+| **Black-bar detection** | Follows the picture inside top/bottom and left/right bars, including thin and combined bars. |
 | **Screen sync or WLED effects** | Use the phone panel to switch sources or turn the lights off. |
 | **Local control** | The panel runs on your Pi and works over your local network without a cloud account. |
 

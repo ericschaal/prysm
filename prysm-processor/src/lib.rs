@@ -50,6 +50,7 @@ impl PrysmProcessor {
     }
 
     /// Process a frame at an explicit monotonic time, for deterministic replay.
+    /// Both black-bar confirmation and smoothing use this clock.
     /// Use a shared clock origin plus source timestamps when replaying video.
     /// Repeated or earlier times do not advance smoothing.
     pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
@@ -82,7 +83,7 @@ impl PrysmProcessor {
         let mut view = ViewFrame::new(frame);
 
         if let Some(ref mut detector) = self.band_detector {
-            view = detector.process(view);
+            view = detector.process(view, now);
         }
 
         if self.last_viewport != Some(view.viewport)

@@ -62,7 +62,7 @@ Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 - `publish_frames()`: Owns desktop processing, watch publication, and cancellation
 - Desktop consumes each delivered frame once; both camera adapters retain only the newest pending frame
 - Sources yield `Result<Frame>`: camera failures are terminal errors, successful file EOF is normal completion
-- Slow camera consumers skip intermediate frames; smoothing uses elapsed processing time, while black-bar confirmation still counts delivered frames
+- Slow camera consumers skip intermediate frames; smoothing and black-bar confirmation use elapsed processing time
 
 ### Crate Responsibilities
 
@@ -163,6 +163,11 @@ Brightness is clamped to 0–100, edge depth to 1–50. Edge regions never overl
 edge. Negative and non-finite smoothing durations disable smoothing. Every frame is sampled;
 density changes how finely the edge bands are divided, with all region pixels still contributing.
 Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
+The detector scans at most every 100 ms and confirms each axis independently after one second
+of stable evidence. It handles thin and combined bars, checks the capture's black level, and
+preserves the confirmed crop through dark scenes. A brighter percentile across the full frame
+recovers pictures hidden by wide bars, then median passes validate the crop. Pictures spanning
+less than 10% of either dimension or with sparse bright content may remain undetected.
 `process_frame` uses monotonic processing time; deterministic replay can use `process_frame_at`
 with a shared clock origin plus source timestamps.
 
