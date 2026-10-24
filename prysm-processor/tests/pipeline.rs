@@ -8,6 +8,55 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
     Frame::fill(value, width, height, PixelFormat::RGB24)
 }
 
+#[test]
+fn edge_highlights_keep_local_contrast_and_interior_lights_still_contribute() {
+    let config = Config {
+        remove_black_bars: false,
+        smoothing_seconds: SmoothingSeconds(0.0),
+        ..Config::default()
+    };
+    for edge in 0..5 {
+        let mut data = vec![0; 640 * 360 * 3];
+        for y in 0..360 {
+            for x in 0..640 {
+                let lit = match edge {
+                    0 => (308..332).contains(&x) && y < 24,
+                    1 => x >= 616 && (168..192).contains(&y),
+                    2 => (308..332).contains(&x) && y >= 336,
+                    3 => x < 24 && (168..192).contains(&y),
+                    _ => (308..332).contains(&x) && (168..192).contains(&y),
+                };
+                if lit {
+                    data[(y * 640 + x) * 3] = 255;
+                }
+            }
+        }
+        let colors = PrysmProcessor::new(&config).process_frame(Frame::new(
+            data,
+            640,
+            360,
+            PixelFormat::RGB24,
+        ));
+        let edges = [&colors.top, &colors.right, &colors.bottom, &colors.left];
+        if edge < 4 {
+            let nearby = edges[edge].sample_at(0.5).r;
+            // A 24px highlight should retain useful contrast, not become a faint room wash.
+            assert!(nearby > 0.25, "edge {edge}: highlight reduced to {nearby}");
+            assert!(
+                nearby < 0.8,
+                "edge {edge}: highlight overamplified to {nearby}"
+            );
+            assert!(nearby > edges[edge].sample_at(0.0).r * 10.0);
+        } else {
+            // Keep a measurable scene contribution, not just a mathematically nonzero tail.
+            assert!(colors.top.sample_at(0.5).r > 0.001);
+            assert!(colors.bottom.sample_at(0.5).r > 0.001);
+            assert!(colors.left.sample_at(0.5).r > 0.0003);
+            assert!(colors.right.sample_at(0.5).r > 0.0003);
+        }
+    }
+}
+
 fn settle(processor: &mut PrysmProcessor, frame: &Frame, start: Instant) -> prysm_core::EdgeColors {
     (0..=60)
         .map(|i| processor.process_frame_at(frame.clone(), start + Duration::from_millis(i * 50)))

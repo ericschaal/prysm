@@ -156,7 +156,7 @@ let config = prysm_core::Config {
 | `brightness_percent` | 100 | 0 turns lights off; 100 is full brightness. |
 | `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
 | `sample_density` | `SampleDensity(128)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
-| `spatial_reach_percent` | 10 | Radius where influence falls to half its peak, as a percentage of cropped picture height. All picture pixels contribute with a smooth distance falloff. |
+| `spatial_reach_percent` | 10 | Broad influence radius as a percentage of cropped picture height, with a stronger local peak at one quarter of that radius. All picture pixels contribute. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
 Brightness is clamped to 0–100, spatial reach to 1–100. Negative and non-finite smoothing durations

@@ -40,8 +40,8 @@ pub struct Config {
     /// still contribute. Each edge has at least one sample and at most one per pixel.
     pub sample_density: SampleDensity,
 
-    /// Distance where spatial influence falls to half its peak, as a percentage
-    /// of picture height after cropping. Default: 10; clamped to 1–100.
+    /// Broad spatial influence radius, as a percentage of picture height after
+    /// cropping. A local peak uses one quarter of this radius. Default: 10; clamped to 1–100.
     /// Higher values spread colors farther. Every picture pixel contributes.
     pub spatial_reach_percent: SpatialReachPercent,
 

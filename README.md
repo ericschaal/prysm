@@ -160,13 +160,16 @@ Prysm is a Rust workspace with a straightforward **capture → process → rende
 
 The sampler uses the entire active picture: nearby colors affect an output position strongly,
 while interior and distant content contribute a softer, broader glow. It area-averages pixels
-in linear light into a grid, then applies normalized weights `1 / (1 + (distance / radius)²)`.
+in linear light into a grid, then applies a narrow local peak plus a broad distance tail.
+With `q = (distance / radius)²`, the normalized weights are proportional to
+`1 / (1 + q) + 64 / (1 + 16q)²`. The local peak uses one quarter of the broad radius,
+so highlights near an edge retain contrast while the rest of the scene still contributes.
 Black pixels remain in the average, so small highlights stay dim and black frames fade to black.
 The grid follows output density, with a longest side of 64–128 cells (or fewer for small pictures).
 All pixels contribute; the grid approximates their positions. Distance weights are cached until
 picture dimensions change. Existing smoothing and brightness apply after sampling.
 
-`spatial_reach_percent` sets the radius as a percentage of cropped picture height: default 10,
+`spatial_reach_percent` sets the broad radius as a percentage of cropped picture height: default 10,
 clamped to 1–100. Higher values spread colors farther; lower values preserve more local detail.
 It is available in TOML and the core library. Library callers should replace
 `edge_depth_percent: EdgeDepthPercent(...)` with `spatial_reach_percent: SpatialReachPercent(...)`;
