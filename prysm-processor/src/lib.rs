@@ -1,6 +1,6 @@
 use frames::{ViewFrame, Viewport};
 use futures::{Stream, StreamExt};
-use nodes::{BandDetector, EdgeSampler, TemporalSmoothing};
+use nodes::{BandDetector, SpatialSampler, TemporalSmoothing};
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::{Config, EdgeColors};
 use std::time::Instant;
@@ -10,14 +10,14 @@ mod nodes;
 
 /// Stateful frame processor.
 ///
-/// Frames stay in their raw capture format end-to-end; each node decodes
-/// only the pixels it actually reads.
+/// Frames stay in their raw capture format; the sampler reduces the active
+/// picture directly to a small linear RGB grid before projecting onto the perimeter.
 #[derive(Debug)]
 pub struct PrysmProcessor {
     config: Config,
     // Pipeline nodes (in order)
     band_detector: Option<BandDetector>,
-    sampler: EdgeSampler,
+    sampler: SpatialSampler,
     temporal_smoothing: Option<TemporalSmoothing>,
     last_viewport: Option<Viewport>,
     frame_layout: Option<(
@@ -34,7 +34,10 @@ impl PrysmProcessor {
         Self {
             config: *config,
             band_detector: config.remove_black_bars.then(BandDetector::new),
-            sampler: EdgeSampler::new(config.sample_density, config.edge_depth_percent.as_ratio()),
+            sampler: SpatialSampler::new(
+                config.sample_density,
+                config.spatial_reach_percent.as_ratio(),
+            ),
             temporal_smoothing: config
                 .smoothing_seconds
                 .is_enabled()

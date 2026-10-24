@@ -106,8 +106,8 @@ cargo clippy
 **Application setup (`prysm/src/config.rs`):**
 
 The single `prysm` binary reads `prysm.toml` at startup (or `--config PATH`).
-Top-level `brightness_percent`, `sample_density`, and `capture_resolution` default
-respectively to 100, 128 samples per 1000 edge pixels, and `[640, 360]`.
+Top-level `brightness_percent`, `sample_density`, `spatial_reach_percent`, and `capture_resolution` default
+respectively to 100, 128 samples per 1000 edge pixels, 10% of picture height, and `[640, 360]`.
 These processor settings apply to both outputs.
 
 `[input]` selects `type = "device"` with a required `device` (Linux device path
@@ -135,7 +135,7 @@ Application settings are parsed into one core `Config` in `prysm/src/config.rs`.
 That config owns capture resolution and processing settings; egui and input creation
 read the same resolution from it.
 All numeric defaults live in `prysm-core/src/config.rs`; the TOML parser uses the
-domain types’ `Default` implementations. Brightness, edge depth, smoothing duration,
+domain types’ `Default` implementations. Brightness, spatial reach, smoothing duration,
 and capture resolution use distinct newtypes. Resolution, input identifiers/paths
 and WLED layouts are validated when parsed.
 Library callers can pass a `Config` directly to `PrysmProcessor::new`.
@@ -156,12 +156,12 @@ let config = prysm_core::Config {
 | `brightness_percent` | 100 | 0 turns lights off; 100 is full brightness. |
 | `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
 | `sample_density` | `SampleDensity(128)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
-| `edge_depth_percent` | 10 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
+| `spatial_reach_percent` | 10 | Radius where influence falls to half its peak, as a percentage of cropped picture height. All picture pixels contribute with a smooth distance falloff. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
-Brightness is clamped to 0–100, edge depth to 1–50. Edge regions never overlap their opposite
-edge. Negative and non-finite smoothing durations disable smoothing. Every frame is sampled;
-density changes how finely the edge bands are divided, with all region pixels still contributing.
+Brightness is clamped to 0–100, spatial reach to 1–100. Negative and non-finite smoothing durations
+disable smoothing. Every frame is sampled; density sets output positions and the area-average grid
+resolution, capped at 128 cells on its longest side. All picture pixels contribute.
 Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
 The detector scans at most every 100 ms and confirms each axis independently after one second
 of stable evidence. It handles thin and combined bars, checks the capture's black level, and
@@ -171,7 +171,9 @@ less than 10% of either dimension or with sparse bright content may remain undet
 `process_frame` uses monotonic processing time; deterministic replay can use `process_frame_at`
 with a shared clock origin plus source timestamps.
 
-The old fractional `brightness` and `edge_depth` fields are replaced by integer percentages;
+`edge_depth_percent: EdgeDepthPercent` is replaced by `spatial_reach_percent: SpatialReachPercent`.
+Reach controls continuous falloff rather than an edge-band cutoff.
+The old fractional `brightness` field is replaced by an integer percentage;
 `black_band_detection` is now `remove_black_bars`. `smoothing_percent` is replaced by
 `smoothing_seconds`; `sample_density` is configurable again. Detector tuning stays internal.
 
@@ -195,12 +197,13 @@ Tests are minimal but focused:
 
 ### When working with the processor:
 
-- `PrysmProcessor` chains typed nodes: `BandDetector` (letterbox/pillarbox viewport) → `EdgeSampler`
-  (edge-weighted linear-light region averaging on every frame) → `TemporalSmoothing`
+- `PrysmProcessor` chains typed nodes: `BandDetector` (letterbox/pillarbox viewport) → `SpatialSampler`
+  (whole-picture area averaging and distance-weighted projection onto the perimeter) → `TemporalSmoothing`
 - Frames carry their YUYV range and matrix from capture into both processing and preview.
 - Brightness scales the final edge colors after smoothing.
 - Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
-  decodes only the pixels it reads (`ViewFrame::average_edge_linear`). Band detection reads luma via
+  area-averages raw pixels directly into a small linear RGB grid (`ViewFrame::average_linear`).
+  Spatial weights are cached by viewport dimensions. Band detection reads luma via
   `frames::luma_at`.
 - The processor is stateful (smoothing history, band debounce)
 - Supports YUYV, RGB24, and BGR24; MJPEG currently returns black edge colors
@@ -232,7 +235,7 @@ Tests are minimal but focused:
 - `prysm/src/wled.rs` - Headless runtime, WLED streaming, and shutdown
 - `prysm/src/stream.rs` - Owned fallible desktop stream consumer and lifecycle tests
 - `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
-- `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
+- `prysm-processor/src/nodes/` - Pipeline nodes (band detection, spatial sampling, smoothing)
 - `prysm-processor/src/frames/view_frame.rs` - Raw-frame viewport with on-demand pixel decoding
 - `prysm-core/src/lib.rs` - Core types and configuration
 - `renderers/desktop-renderer/src/lib.rs` - GUI implementation

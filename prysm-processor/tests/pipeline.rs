@@ -1,5 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{BrightnessPercent, EdgeDepthPercent, SmoothingSeconds};
+use prysm_core::{BrightnessPercent, SmoothingSeconds, SpatialReachPercent};
 use prysm_core::{Config, SampleDensity};
 use prysm_processor::PrysmProcessor;
 use std::time::{Duration, Instant};
@@ -252,8 +252,8 @@ fn edge_sampling_includes_the_last_row_and_column() {
             [&output.left, &output.right]
         };
         for edge in edges {
-            // At density 60, the last segment of this 636px edge spans 17 pixels.
-            assert!((edge.sample_at(1.0).r - 1.0 / 17.0).abs() < 0.00001);
+            assert!(edge.sample_at(0.0).r > 0.0);
+            assert!(edge.sample_at(1.0).r > edge.sample_at(0.0).r);
         }
     }
 }
@@ -483,7 +483,7 @@ fn bright_objects_grow_stronger_as_they_approach_each_edge() {
         brightness_percent: BrightnessPercent(100),
         smoothing_seconds: SmoothingSeconds(0.0),
         remove_black_bars: false,
-        edge_depth_percent: EdgeDepthPercent(15),
+        spatial_reach_percent: SpatialReachPercent(15),
         ..Config::default()
     };
     for (width, height) in [(320, 180), (640, 360)] {
@@ -519,20 +519,14 @@ fn bright_objects_grow_stronger_as_they_approach_each_edge() {
                     processor.process_frame(Frame::new(data, width, height, PixelFormat::RGB24));
                 let edges = [&output.top, &output.right, &output.bottom, &output.left];
                 let actual = edges[edge].sample_at(0.5);
-                if inset_percent == 16 {
-                    assert_eq!(actual.r, 0.0);
-                } else {
-                    assert!(
-                        actual.r > previous,
-                        "{width}x{height}, edge {edge}, inset {inset_percent}%: {actual:?} <= {previous}"
-                    );
-                }
                 assert!(
-                    actual.r < 0.5,
-                    "a small bright object must not turn the whole sample fully on"
+                    actual.r > previous,
+                    "{width}x{height}, edge {edge}, inset {inset_percent}%: {actual:?} <= {previous}"
                 );
+                assert!(actual.r < 0.5, "small highlights must stay dim: {actual:?}");
                 assert_eq!((actual.g, actual.b), (0.0, 0.0));
-                assert_eq!(edges[(edge + 2) % 4].sample_at(0.5).r, 0.0);
+                let opposite = edges[(edge + 2) % 4].sample_at(0.5).r;
+                assert!(opposite > 0.0 && opposite < actual.r);
                 previous = actual.r;
             }
         }
@@ -719,31 +713,34 @@ fn configured_density_controls_valid_and_unsupported_frame_edge_colors() {
 }
 
 #[test]
-fn edge_depth_percentage_controls_how_much_picture_is_sampled() {
+fn spatial_reach_controls_interior_influence_and_clamps_extremes() {
     let mut data = vec![0; 100 * 100 * 3];
-    data[..100 * 10 * 3].fill(255);
+    for y in 40..60 {
+        for x in 40..60 {
+            data[(y * 100 + x) * 3] = 255;
+        }
+    }
     let frame = Frame::new(data, 100, 100, PixelFormat::RGB24);
-    // The outer fraction f contributes 1 - (1 - f)^3 with quadratic falloff.
-    for (edge_depth_percent, expected) in
-        [(0, 1.0), (10, 1.0), (20, 0.875), (50, 0.488), (255, 0.488)]
-    {
-        let config = Config {
-            brightness_percent: BrightnessPercent(100),
+    let sample = |reach| {
+        PrysmProcessor::new(&Config {
             smoothing_seconds: SmoothingSeconds(0.0),
-            edge_depth_percent: EdgeDepthPercent(edge_depth_percent),
+            spatial_reach_percent: SpatialReachPercent(reach),
             remove_black_bars: false,
             ..Config::default()
-        };
-        let actual = PrysmProcessor::new(&config)
-            .process_frame(frame.clone())
-            .top
-            .sample_at(0.5)
-            .r;
-        assert!(
-            (actual - expected).abs() < 0.001,
-            "edge depth {edge_depth_percent}%: {actual}"
-        );
-    }
+        })
+        .process_frame(frame.clone())
+        .top
+        .sample_at(0.5)
+        .r
+    };
+    let values = [1, 10, 30, 100].map(sample);
+    assert!(values[0] > 0.0);
+    assert!(
+        values.windows(2).all(|pair| pair[1] > pair[0]),
+        "{values:?}"
+    );
+    assert_eq!(sample(0), sample(1));
+    assert_eq!(sample(255), sample(100));
 }
 
 #[test]
@@ -756,7 +753,7 @@ fn black_bar_removal_can_be_disabled() {
         let config = Config {
             brightness_percent: BrightnessPercent(100),
             smoothing_seconds: SmoothingSeconds(0.0),
-            edge_depth_percent: EdgeDepthPercent(10),
+            spatial_reach_percent: SpatialReachPercent(10),
             remove_black_bars,
             ..Config::default()
         };
@@ -765,8 +762,11 @@ fn black_bar_removal_can_be_disabled() {
             .top
             .sample_at(0.5)
             .r;
-        let expected = if remove_black_bars { 1.0 } else { 0.0 };
-        assert!((actual - expected).abs() < 1e-6);
+        if remove_black_bars {
+            assert!((actual - 1.0).abs() < 1e-6);
+        } else {
+            assert!(actual > 0.0 && actual < 0.9, "uncropped bars: {actual}");
+        }
     }
 }
 

@@ -1,6 +1,11 @@
 # Prysm sampling A/B testing protocol
 
-Date: 2026-10-10. Status: protocol; experiments have not been run.
+Date: 2026-10-10. Status: historical edge-sampling protocol; experiments have not been run.
+
+As of 2026-10-24, Prysm uses whole-picture spatial sampling instead of edge bands.
+The baseline, candidate geometry, and edge-reference acceptance criteria below describe the
+previous sampler and must be revised before using this protocol for the spatial sampler.
+Current behavior and the `spatial_reach_percent` setting are documented in the README.
 
 ## Decision to make
 
@@ -8,14 +13,14 @@ Determine whether higher spatial sampling density improves faithful edge extensi
 
 Run these as separate experiments. A change in sampling density must not be bundled with a change in color selection or temporal smoothing. The numerical thresholds below are engineering acceptance criteria chosen for this experiment, not published perceptual thresholds.
 
-## Current implementation and prerequisites
+## Original baseline and prerequisites
 
-The current processor uses quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the edge colors.
+The original baseline used quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the edge colors.
 
 Relevant code:
 
 - [Region averaging](../prysm-processor/src/frames/view_frame.rs)
-- [Sampling geometry](../prysm-processor/src/nodes/edge_sampler.rs)
+- [Sampling geometry](../prysm-processor/src/nodes/spatial_sampler.rs)
 - [Density and color strip interpolation](../prysm-core/src/color_strip.rs)
 - [Processor configuration](../prysm-core/src/config.rs)
 - [Temporal smoothing](../prysm-processor/src/nodes/temporal_smoothing.rs)

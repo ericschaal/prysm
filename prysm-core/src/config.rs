@@ -17,7 +17,7 @@ use crate::SampleDensity;
 ///
 /// ```compile_fail
 /// let config = prysm_core::Config {
-///     brightness_percent: prysm_core::EdgeDepthPercent(60),
+///     brightness_percent: prysm_core::SpatialReachPercent(60),
 ///     ..prysm_core::Config::default()
 /// };
 /// ```
@@ -36,15 +36,14 @@ pub struct Config {
     pub smoothing_seconds: SmoothingSeconds,
 
     /// Color samples per 1000 pixels of cropped edge length. Default: 128.
-    /// Controls spatial detail independently of LED count; all region pixels
+    /// Controls spatial detail independently of LED count; all picture pixels
     /// still contribute. Each edge has at least one sample and at most one per pixel.
     pub sample_density: SampleDensity,
 
-    /// How far inward to read colors from each edge, as a percentage of the
-    /// picture height after black bars are removed. Default: 10.
-    /// Colors have strongest influence at the edge, fading quadratically toward
-    /// the interior. Clamped to 1–50, with opposite edges never overlapping.
-    pub edge_depth_percent: EdgeDepthPercent,
+    /// Distance where spatial influence falls to half its peak, as a percentage
+    /// of picture height after cropping. Default: 10; clamped to 1–100.
+    /// Higher values spread colors farther. Every picture pixel contributes.
+    pub spatial_reach_percent: SpatialReachPercent,
 
     /// Follow the picture inside black bars instead of making the lights dark.
     /// Default: true. Cropping waits for stable bars to avoid flicker.
@@ -58,7 +57,7 @@ impl Default for Config {
             brightness_percent: BrightnessPercent(100),
             smoothing_seconds: SmoothingSeconds(0.1),
             sample_density: SampleDensity(128),
-            edge_depth_percent: EdgeDepthPercent(10),
+            spatial_reach_percent: SpatialReachPercent(10),
             remove_black_bars: true,
         }
     }
@@ -81,14 +80,20 @@ impl Default for BrightnessPercent {
     }
 }
 
-/// Sampling depth in percent of picture height, clamped to 1–50.
+/// Spatial influence radius in percent of picture height, clamped to 1–100.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EdgeDepthPercent(pub u8);
+pub struct SpatialReachPercent(pub u8);
 
-impl EdgeDepthPercent {
+impl SpatialReachPercent {
     #[must_use]
     pub fn as_ratio(self) -> f32 {
-        f32::from(self.0.clamp(1, 50)) / 100.0
+        f32::from(self.0.clamp(1, 100)) / 100.0
+    }
+}
+
+impl Default for SpatialReachPercent {
+    fn default() -> Self {
+        Config::default().spatial_reach_percent
     }
 }
 

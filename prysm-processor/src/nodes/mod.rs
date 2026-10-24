@@ -1,7 +1,7 @@
 mod band_detector;
-mod edge_sampler;
+mod spatial_sampler;
 mod temporal_smoothing;
 
 pub use band_detector::BandDetector;
-pub use edge_sampler::EdgeSampler;
+pub use spatial_sampler::SpatialSampler;
 pub use temporal_smoothing::TemporalSmoothing;

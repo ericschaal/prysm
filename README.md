@@ -96,6 +96,7 @@ Edit [`prysm.toml`](prysm.toml). The checked-in values describe a specific setup
 ```toml
 brightness_percent = 100
 sample_density = 128
+spatial_reach_percent = 10
 capture_resolution = [640, 360]
 
 [input]
@@ -153,11 +154,25 @@ Prysm is a Rust workspace with a straightforward **capture → process → rende
 | [`prysm`](prysm/) | Configuration, application, web controller, and file input for debugging. |
 | [`prysm-capture`](prysm-capture/) | Linux V4L2 and macOS AVFoundation capture. |
 | [`prysm-core`](prysm-core/) | Colors, gradients, and processing settings; no external dependencies. |
-| [`prysm-processor`](prysm-processor/) | Black-bar detection, edge sampling, and temporal smoothing. |
+| [`prysm-processor`](prysm-processor/) | Black-bar detection, whole-picture spatial sampling, and temporal smoothing. |
 | [`desktop-renderer`](renderers/desktop-renderer/) | On-screen egui preview for debugging. |
 | [`led-renderer`](renderers/led-renderer/) | WLED output over DDP/UDP with a configurable send-rate cap. |
 
-Processing settings such as smoothing and sampling depth are available through the core library; the application's TOML exposes brightness, sample density, capture resolution, and input/output settings.
+The sampler uses the entire active picture: nearby colors affect an output position strongly,
+while interior and distant content contribute a softer, broader glow. It area-averages pixels
+in linear light into a grid, then applies normalized weights `1 / (1 + (distance / radius)²)`.
+Black pixels remain in the average, so small highlights stay dim and black frames fade to black.
+The grid follows output density, with a longest side of 64–128 cells (or fewer for small pictures).
+All pixels contribute; the grid approximates their positions. Distance weights are cached until
+picture dimensions change. Existing smoothing and brightness apply after sampling.
+
+`spatial_reach_percent` sets the radius as a percentage of cropped picture height: default 10,
+clamped to 1–100. Higher values spread colors farther; lower values preserve more local detail.
+It is available in TOML and the core library. Library callers should replace
+`edge_depth_percent: EdgeDepthPercent(...)` with `spatial_reach_percent: SpatialReachPercent(...)`;
+reach has no hard cutoff and is not equivalent to the old band depth.
+Smoothing remains available through the core library; TOML also exposes brightness, sample density,
+capture resolution, and input/output settings.
 
 ### Development
 

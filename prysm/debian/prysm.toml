@@ -4,6 +4,9 @@ brightness_percent = 80
 # Color samples per 1000 pixels of cropped edge length. Defaults to 128.
 sample_density = 128
 
+# Spatial influence radius as % of picture height (1–100). Higher spreads colors farther.
+spatial_reach_percent = 10
+
 # Camera capture / decoded video size [width, height]. Defaults to [640, 360].
 capture_resolution = [640, 360]
 

@@ -1,5 +1,5 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, Edge, LinearColor};
+use prysm_core::{Color, LinearColor};
 
 /// Viewport within a frame
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,23 +69,16 @@ impl ViewFrame {
         self.viewport.height
     }
 
-    /// Average a viewport-relative edge region in linear RGB, with quadratic
-    /// falloff toward the interior. Decodes every pixel in the region.
-    pub fn average_edge_linear(
+    /// Area-average a viewport-relative region in linear RGB, including black pixels.
+    pub fn average_linear(
         &self,
         x_start: u32,
         y_start: u32,
         x_end: u32,
         y_end: u32,
-        edge: Edge,
     ) -> LinearColor {
-        let mut sum = LinearColor::black();
-        let mut total_weight = 0.0;
-        let depth = match edge {
-            Edge::Top | Edge::Bottom => y_end - y_start,
-            Edge::Left | Edge::Right => x_end - x_start,
-        };
-        let inverse_depth = 1.0 / depth.max(1) as f32;
+        let mut sum = [0.0f64; 3];
+        let mut count = 0u64;
 
         for y in y_start..y_end {
             let abs_y = self.viewport.y + y;
@@ -98,26 +91,20 @@ impl ViewFrame {
                     break;
                 }
                 if let Some(color) = self.pixel_srgb(abs_x, abs_y) {
-                    let distance = match edge {
-                        Edge::Top => y - y_start,
-                        Edge::Bottom => y_end - 1 - y,
-                        Edge::Left => x - x_start,
-                        Edge::Right => x_end - 1 - x,
-                    };
-                    // Pixel centers keep even a one-pixel-deep region weighted.
-                    let falloff = 1.0 - (distance as f32 + 0.5) * inverse_depth;
-                    let weight = falloff * falloff;
-                    sum += LinearColor::from_srgb(color) * weight;
-                    // Include black pixels so small highlights do not fill the whole sample.
-                    total_weight += weight;
+                    let color = LinearColor::from_srgb(color);
+                    for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b]) {
+                        *channel += f64::from(value);
+                    }
+                    count += 1;
                 }
             }
         }
 
-        if total_weight == 0.0 {
+        if count == 0 {
             return LinearColor::black();
         }
-        sum * (1.0 / total_weight)
+        let [r, g, b] = sum.map(|channel| (channel / count as f64) as f32);
+        LinearColor::new(r, g, b)
     }
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
@@ -178,10 +165,10 @@ pub mod tests {
     }
 
     #[test]
-    fn average_edge_linear_uniform_region() {
+    fn average_linear_uniform_region() {
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 128);
         let view = ViewFrame::new(frame);
-        let avg = view.average_edge_linear(0, 0, 8, 8, Edge::Top);
+        let avg = view.average_linear(0, 0, 8, 8);
         let expected = LinearColor::from_srgb(Color::new(128, 128, 128));
         assert!((avg.r - expected.r).abs() < 0.01, "r = {}", avg.r);
         assert!((avg.g - expected.g).abs() < 0.01);
@@ -189,7 +176,7 @@ pub mod tests {
     }
 
     #[test]
-    fn average_edge_linear_respects_viewport_offset_and_keeps_black_in_the_average() {
+    fn average_linear_respects_viewport_offset_and_keeps_black_in_the_average() {
         let frame = yuyv_frame_from_luma(8, 8, |x, y| {
             if (2..6).contains(&x) && y == 2 {
                 255
@@ -204,11 +191,11 @@ pub mod tests {
             width: 4,
             height: 4,
         };
-        let avg = view.average_edge_linear(0, 0, 4, 2, Edge::Top);
-        // The white outer row and black inner row have weights in a 9:1 ratio.
+        let avg = view.average_linear(0, 0, 4, 2);
+        // Both rows count equally, including black pixels.
         assert!(
-            (avg.r - 0.9).abs() < 1e-6,
-            "expected 90% white, got {}",
+            (avg.r - 0.5).abs() < 1e-6,
+            "expected 50% white, got {}",
             avg.r
         );
     }

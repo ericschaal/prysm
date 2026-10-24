@@ -4,7 +4,9 @@ use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use prysm_core::{BrightnessPercent, CaptureResolution, Config, SampleDensity};
+use prysm_core::{
+    BrightnessPercent, CaptureResolution, Config, SampleDensity, SpatialReachPercent,
+};
 use serde::{Deserialize, Deserializer, de::Error};
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +27,8 @@ struct RawConfig {
     sample_density: SampleDensity,
     #[serde(default, deserialize_with = "deserialize_resolution")]
     capture_resolution: CaptureResolution,
+    #[serde(default, deserialize_with = "deserialize_spatial_reach")]
+    spatial_reach_percent: SpatialReachPercent,
     input: Input,
     output: Output,
 }
@@ -45,6 +49,7 @@ impl From<RawConfig> for RuntimeConfig {
                 capture_resolution: raw.capture_resolution,
                 brightness_percent: raw.brightness_percent,
                 sample_density: raw.sample_density,
+                spatial_reach_percent: raw.spatial_reach_percent,
                 ..Config::default()
             },
             input: raw.input,
@@ -183,6 +188,12 @@ fn deserialize_brightness<'de, D: Deserializer<'de>>(
     u8::deserialize(deserializer).map(BrightnessPercent)
 }
 
+fn deserialize_spatial_reach<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<SpatialReachPercent, D::Error> {
+    u8::deserialize(deserializer).map(SpatialReachPercent)
+}
+
 fn deserialize_sample_density<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<SampleDensity, D::Error> {
@@ -287,11 +298,12 @@ left = 54
 
     #[test]
     fn applies_custom_processor_settings_and_capture_resolution() {
-        let config = parse(&format!("brightness_percent = 60\nsample_density = 200\ncapture_resolution = [1280, 720]\n{TEST_CONFIG}")).unwrap();
+        let config = parse(&format!("brightness_percent = 60\nsample_density = 200\nspatial_reach_percent = 25\ncapture_resolution = [1280, 720]\n{TEST_CONFIG}")).unwrap();
         assert_eq!(config.settings.capture_resolution.dimensions(), [1280, 720]);
         let settings = config.settings;
         assert_eq!(settings.brightness_percent, BrightnessPercent(60));
         assert_eq!(settings.sample_density, SampleDensity(200));
+        assert_eq!(settings.spatial_reach_percent, SpatialReachPercent(25));
     }
 
     #[test]
@@ -301,6 +313,9 @@ left = 54
             String::new(),
             format!("sample_density = 0\n{contents}"),
             format!("sample_density = -1\n{contents}"),
+            format!("spatial_reach_percent = -1\n{contents}"),
+            format!("spatial_reach_percent = 256\n{contents}"),
+            format!("spatial_reach_percent = 'wide'\n{contents}"),
             format!("capture_resolution = [0, 360]\n{contents}"),
             format!("capture_resolution = [640, 0]\n{contents}"),
             format!("capture_resolution = [4294967295, 4294967295]\n{contents}"),

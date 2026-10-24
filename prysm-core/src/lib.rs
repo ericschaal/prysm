@@ -6,7 +6,7 @@ mod linear;
 pub use color::Color;
 pub use color_strip::{ColorStrip, EdgeColors, SampleDensity};
 pub use config::{
-    BrightnessPercent, CaptureResolution, Config, EdgeDepthPercent, SmoothingSeconds,
+    BrightnessPercent, CaptureResolution, Config, SmoothingSeconds, SpatialReachPercent,
 };
 pub use linear::LinearColor;
 
