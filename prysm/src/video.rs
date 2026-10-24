@@ -26,14 +26,16 @@ pub fn video_feed(
     // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and preview.
     let filter = format!(
         "scale={width}:{height}:flags=area:intent=perceptual:\
-         out_primaries=bt709:out_transfer=srgb:out_range=full"
+         out_primaries=bt709:out_transfer=srgb:out_range=full,realtime"
     );
     let mut child = Command::new("ffmpeg")
         .args(["-nostdin", "-v", "error", "-xerror"])
-        .args(["-re", "-readrate_initial_burst", "0", "-i"])
+        .arg("-i")
         .arg(path)
         .args(["-map", "0:v:0", "-vf", &filter])
         .args(["-fps_mode", "passthrough", "-pix_fmt", "rgb24"])
+        // Pace decoded frames by PTS; rawvideo frame threading would buffer them again.
+        .args(["-threads:v", "1"])
         .args(["-f", "rawvideo", "pipe:1"])
         .stdout(Stdio::piped())
         .kill_on_drop(true)
@@ -141,6 +143,7 @@ mod tests {
         .unwrap();
         futures::pin_mut!(stream);
         let mut count = 0;
+        let mut first_frame_at = None;
         while let Some(frame) =
             tokio::time::timeout(std::time::Duration::from_secs(10), stream.next())
                 .await
@@ -149,9 +152,11 @@ mod tests {
             let frame = frame.unwrap();
             assert_eq!((frame.width, frame.height), (32, 18));
             assert_eq!(frame.len(), 32 * 18 * 3);
+            first_frame_at.get_or_insert_with(std::time::Instant::now);
             count += 1;
         }
         assert_eq!(count, 3);
+        let playback_span = first_frame_at.unwrap().elapsed();
         assert!(!shutdown.is_cancelled());
         let cancellation = CancellationToken::new();
         let playback = video_feed(
@@ -188,5 +193,9 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         std::fs::remove_file(invalid).unwrap();
         std::fs::remove_dir(directory).unwrap();
+        assert!(
+            playback_span >= std::time::Duration::from_millis(150),
+            "10 fps frames arrived in a burst instead of spanning 200 ms"
+        );
     }
 }
