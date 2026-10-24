@@ -160,6 +160,10 @@ fn detect_axis(brightness: &[u8], threshold: u8, min_band_size: u32) -> Option<B
     }
     let start = find_band_from_start(brightness, threshold, min_band_size);
     let end = find_band_from_end(brightness, threshold, min_band_size);
+    // Letterboxing and pillarboxing require a pair, even for thin margins.
+    if start == 0 || end == 0 {
+        return Some((0, 0));
+    }
     // shortcut: require 10% picture extent to reject isolated highlights;
     // revisit this limit if tiny inset videos need support.
     if brightness.len() - start as usize - (end as usize) < brightness.len().div_ceil(10) {
@@ -202,6 +206,59 @@ fn percentile(samples: &mut [u8], percent: usize) -> u8 {
 mod tests {
     use super::*;
     use crate::frames::yuyv_frame_from_luma;
+
+    #[test]
+    fn a_missing_bar_prevents_and_releases_cropping_on_its_axis() {
+        for thickness in [6, 48] {
+            for missing_edge in 0..4 {
+                let make_frame = |missing| {
+                    yuyv_frame_from_luma(640, 360, |x, y| {
+                        if (missing != 0 && y < thickness)
+                            || (missing != 1 && x >= 640 - thickness)
+                            || (missing != 2 && y >= 360 - thickness)
+                            || (missing != 3 && x < thickness)
+                        {
+                            0
+                        } else {
+                            128
+                        }
+                    })
+                };
+                let unpaired = make_frame(missing_edge);
+                let paired = make_frame(4);
+                let horizontal = missing_edge == 0 || missing_edge == 2;
+                let expected = Viewport {
+                    x: if horizontal { thickness } else { 0 },
+                    y: if horizontal { 0 } else { thickness },
+                    width: if horizontal { 640 - 2 * thickness } else { 640 },
+                    height: if horizontal { 360 } else { 360 - 2 * thickness },
+                };
+                let mut detector = BandDetector::new();
+                let start = Instant::now();
+                for (frame, seconds) in [(&unpaired, 0), (&paired, 1), (&unpaired, 2)] {
+                    let now = start + Duration::from_secs(seconds);
+                    detector.process(ViewFrame::new(frame.clone()), now);
+                    let actual = detector
+                        .process(ViewFrame::new(frame.clone()), now + CONFIRM_DURATION)
+                        .viewport;
+                    let target = if seconds == 1 {
+                        Viewport {
+                            x: thickness,
+                            y: thickness,
+                            width: 640 - 2 * thickness,
+                            height: 360 - 2 * thickness,
+                        }
+                    } else {
+                        expected
+                    };
+                    assert_eq!(
+                        actual, target,
+                        "missing edge {missing_edge}, thickness {thickness}, phase {seconds}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn dark_foreground_does_not_extend_one_bar_into_the_picture() {

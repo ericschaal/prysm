@@ -167,7 +167,8 @@ The detector scans at most every 50 ms and confirms each axis independently afte
 of stable evidence. It handles thin and combined bars, checks the capture's black level, and
 preserves the confirmed crop through dark scenes. Row and column scans use the 98th percentile
 so a bar must be almost entirely black; visible minority detail stops the crop. Cross-axis passes
-exclude the other bars when inspecting narrow content. Opposing margins differing by more than
+exclude the other bars when inspecting narrow content. Cropping requires both opposing bars;
+if either is absent, that axis returns to the full picture after confirmation. Opposing margins differing by more than
 2.5% of the axis use their shared depth, favoring picture retention over removal of strongly
 asymmetric bars. Pictures spanning less than 10% of either dimension or with sparse bright
 content may remain undetected. Crop changes retain temporal smoothing, resampling its history
