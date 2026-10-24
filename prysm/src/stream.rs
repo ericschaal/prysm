@@ -1,4 +1,5 @@
 use anyhow::Result;
+use desktop_renderer::PreviewFrame;
 use futures::{Stream, StreamExt};
 use prysm_capture::Frame;
 use prysm_core::EdgeColors;
@@ -10,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) async fn publish_frames(
     source: impl Stream<Item = Result<Frame>>,
     mut processor: PrysmProcessor,
-    frames: watch::Sender<Frame>,
+    frames: watch::Sender<PreviewFrame>,
     edge_colors: watch::Sender<EdgeColors>,
     shutdown: &CancellationToken,
 ) -> Result<()> {
@@ -26,7 +27,7 @@ pub(crate) async fn publish_frames(
                 };
                 let frame = frame?;
                 let colors = processor.process_frame(frame.clone());
-                let _ = frames.send(frame);
+                let _ = frames.send(PreviewFrame { frame, viewport: processor.viewport() });
                 let _ = edge_colors.send(colors);
             }
         }
@@ -51,8 +52,11 @@ mod tests {
         }
     }
 
-    fn outputs() -> (watch::Sender<Frame>, watch::Sender<EdgeColors>) {
-        let (frames, _) = watch::channel(Frame::fill(0, 2, 2, PixelFormat::RGB24));
+    fn outputs() -> (watch::Sender<PreviewFrame>, watch::Sender<EdgeColors>) {
+        let (frames, _) = watch::channel(PreviewFrame {
+            frame: Frame::fill(0, 2, 2, PixelFormat::RGB24),
+            viewport: None,
+        });
         let (colors, _) = watch::channel(EdgeColors::default());
         (frames, colors)
     }
@@ -64,7 +68,7 @@ mod tests {
         let color_rx = colors.subscribe();
         let source = futures::stream::iter(1..=8).map(|value| {
             if value > 1 {
-                assert_eq!(frame_rx.borrow().as_slice(), &[value - 1; 12]);
+                assert_eq!(frame_rx.borrow().frame.as_slice(), &[value - 1; 12]);
                 assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, value - 1);
             }
             Ok(Frame::fill(value, 2, 2, PixelFormat::RGB24))
@@ -86,7 +90,11 @@ mod tests {
         .await;
         result.unwrap();
         assert!(shutdown.is_cancelled());
-        assert_eq!(frame_rx.borrow().as_slice(), &[8; 12]);
+        assert_eq!(frame_rx.borrow().frame.as_slice(), &[8; 12]);
+        assert_eq!(
+            frame_rx.borrow().viewport,
+            Some(prysm_core::Viewport::full_frame(2, 2))
+        );
         assert_eq!(color_rx.borrow().top.sample_at(0.5).to_srgb().r, 8);
         assert!(frame_rx.has_changed().is_err());
         assert!(color_rx.has_changed().is_err());
@@ -145,7 +153,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(format!("{error:#}"), "capture failed: camera disconnected");
-        assert_eq!(receiver.borrow().as_slice(), &[42; 12]);
+        assert_eq!(receiver.borrow().frame.as_slice(), &[42; 12]);
         assert!(shutdown.is_cancelled());
     }
 

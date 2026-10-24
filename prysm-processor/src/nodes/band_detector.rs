@@ -71,43 +71,23 @@ impl BandDetector {
         };
         let min_row_band = (frame.height / 200).max(2);
         let min_col_band = (frame.width / 200).max(2);
-        let rows = self.build_row_projection(frame, 0..frame.width, 50);
-        let cols = self.build_col_projection(frame, 0..frame.height, 50);
+        // A bar must be almost entirely black; a median can discard half the picture.
+        let rows = self.build_row_projection(frame, 0..frame.width, 98);
+        let cols = self.build_col_projection(frame, 0..frame.height, 98);
         let mut horizontal = detect_axis(&rows, threshold, min_row_band);
         let mut vertical = detect_axis(&cols, threshold, min_col_band);
 
-        if horizontal.is_none() && vertical.is_none() && frame.width > 0 && frame.height > 0 {
-            // Look across the frame so a dark center or bright inner patch cannot choose the crop.
-            let rows = self.build_row_projection(frame, 0..frame.width, 90);
-            let cols = self.build_col_projection(frame, 0..frame.height, 90);
-            if let (Some(h), Some(v)) = (
-                detect_axis(&rows, threshold, min_row_band),
-                detect_axis(&cols, threshold, min_col_band),
-            ) {
-                let rows = self.build_row_projection(frame, v.0..frame.width - v.1, 50);
-                let cols = self.build_col_projection(frame, h.0..frame.height - h.1, 50);
-                if let (Some(checked_h), Some(checked_v)) = (
-                    detect_axis(&rows, threshold, min_row_band),
-                    detect_axis(&cols, threshold, min_col_band),
-                ) && bands_match(h, checked_h)
-                    && bands_match(v, checked_v)
-                {
-                    return (Some(checked_h), Some(checked_v));
-                }
-            }
-        }
-
-        // Exclude the other axis's bars before taking medians of narrow content.
+        // Exclude the other axis's bars before inspecting narrow content.
         if let Some((left, right)) = vertical
             && left + right > 0
         {
-            let rows = self.build_row_projection(frame, left..frame.width - right, 50);
+            let rows = self.build_row_projection(frame, left..frame.width - right, 98);
             horizontal = detect_axis(&rows, threshold, min_row_band);
         }
         if let Some((top, bottom)) = horizontal
             && top + bottom > 0
         {
-            let cols = self.build_col_projection(frame, top..frame.height - bottom, 50);
+            let cols = self.build_col_projection(frame, top..frame.height - bottom, 98);
             vertical = detect_axis(&cols, threshold, min_col_band);
         }
         (horizontal, vertical)
@@ -130,7 +110,7 @@ impl BandDetector {
         projection
     }
 
-    /// Read strided rows sequentially before taking each column's median.
+    /// Read strided rows sequentially before taking each column's percentile.
     fn build_col_projection(&mut self, frame: &Frame, rows: Range<u32>, percent: usize) -> Vec<u8> {
         let width = frame.width as usize;
         let n_rows = rows.clone().step_by(SAMPLE_STRIDE).count();
@@ -185,6 +165,11 @@ fn detect_axis(brightness: &[u8], threshold: u8, min_band_size: u32) -> Option<B
     if brightness.len() - start as usize - (end as usize) < brightness.len().div_ceil(10) {
         return None;
     }
+    // Strongly unequal margins are often dark scenery; keep only their shared depth.
+    // shortcut: allow 2.5% framing offset; larger offsets retain some real black border.
+    if start.abs_diff(end) as usize > (brightness.len() / 40).max(2) {
+        return Some((start.min(end), start.min(end)));
+    }
     Some((start, end))
 }
 
@@ -217,6 +202,50 @@ fn percentile(samples: &mut [u8], percent: usize) -> u8 {
 mod tests {
     use super::*;
     use crate::frames::yuyv_frame_from_luma;
+
+    #[test]
+    fn dark_foreground_does_not_extend_one_bar_into_the_picture() {
+        let frame = create_letterboxed_frame(640, 360, 6, 100);
+        let (horizontal, _) = BandDetector::new().detect_bands(&frame);
+        assert_eq!(horizontal, Some((6, 6)));
+    }
+
+    #[test]
+    fn dark_scene_regions_with_visible_content_are_not_black_bars() {
+        for edge in 0..4 {
+            let frame = yuyv_frame_from_luma(640, 360, |x, y| {
+                let (distance, cross, center) = match edge {
+                    0 => (y, x, 320),
+                    1 => (639 - x, y, 180),
+                    2 => (359 - y, x, 320),
+                    _ => (x, y, 180),
+                };
+                if distance >= 120 {
+                    128
+                } else if (20..80).contains(&distance) && cross.abs_diff(center) < 12 {
+                    12 // Dim detail occupies less than 5% of the row or column.
+                } else {
+                    0
+                }
+            });
+            let mut detector = BandDetector::new();
+            let start = Instant::now();
+            detector.process(ViewFrame::new(frame.clone()), start);
+            let viewport = detector
+                .process(ViewFrame::new(frame), start + CONFIRM_DURATION)
+                .viewport;
+            let removed = match edge {
+                0 => viewport.y,
+                1 => 640 - viewport.x - viewport.width,
+                2 => 360 - viewport.y - viewport.height,
+                _ => viewport.x,
+            };
+            assert!(
+                removed <= 20,
+                "edge {edge} cropped visible detail: {viewport:?}"
+            );
+        }
+    }
 
     #[test]
     fn isolated_highlights_do_not_seed_a_crop() {

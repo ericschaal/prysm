@@ -165,9 +165,13 @@ resolution, capped at 128 cells on its longest side. All picture pixels contribu
 Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
 The detector scans at most every 100 ms and confirms each axis independently after one second
 of stable evidence. It handles thin and combined bars, checks the capture's black level, and
-preserves the confirmed crop through dark scenes. A brighter percentile across the full frame
-recovers pictures hidden by wide bars, then median passes validate the crop. Pictures spanning
-less than 10% of either dimension or with sparse bright content may remain undetected.
+preserves the confirmed crop through dark scenes. Row and column scans use the 98th percentile
+so a bar must be almost entirely black; visible minority detail stops the crop. Cross-axis passes
+exclude the other bars when inspecting narrow content. Opposing margins differing by more than
+2.5% of the axis use their shared depth, favoring picture retention over removal of strongly
+asymmetric bars. Pictures spanning less than 10% of either dimension or with sparse bright
+content may remain undetected. Crop changes retain temporal smoothing, resampling its history
+to the new edge sample counts.
 `process_frame` uses monotonic processing time; deterministic replay can use `process_frame_at`
 with a shared clock origin plus source timestamps.
 

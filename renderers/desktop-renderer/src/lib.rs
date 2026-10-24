@@ -1,14 +1,21 @@
 use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, ColorStrip, EdgeColors};
+use prysm_core::{Color, ColorStrip, EdgeColors, Viewport};
 use std::{num::NonZeroU32, time::Duration};
 use tokio_util::sync::CancellationToken;
+
+/// Keep the detected crop paired with the frame it describes.
+#[derive(Debug, Clone)]
+pub struct PreviewFrame {
+    pub frame: Frame,
+    pub viewport: Option<Viewport>,
+}
 
 pub struct DesktopRendererBuilder {
     layout_config: LayoutConfig,
     refresh_rate_hz: NonZeroU32,
     shutdown_token: Option<CancellationToken>,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
-    frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
+    frame_rx: Option<tokio::sync::watch::Receiver<PreviewFrame>>,
 }
 
 impl std::fmt::Debug for DesktopRendererBuilder {
@@ -36,7 +43,7 @@ impl DesktopRendererBuilder {
     }
 
     #[must_use]
-    pub fn with_frame_rx(mut self, frame_rx: tokio::sync::watch::Receiver<Frame>) -> Self {
+    pub fn with_frame_rx(mut self, frame_rx: tokio::sync::watch::Receiver<PreviewFrame>) -> Self {
         self.frame_rx = Some(frame_rx);
         self
     }
@@ -90,6 +97,7 @@ impl DesktopRendererBuilder {
             shutdown_token: self.shutdown_token,
             frame_rx: self.frame_rx,
             texture_handle: None,
+            crop_rect: None,
             layout_config: self.layout_config,
             rgb_scratch: Vec::new(),
             refresh_interval: Duration::from_nanos(
@@ -239,9 +247,10 @@ fn color_to_egui(color: Color) -> egui::Color32 {
 pub struct DesktopRenderer {
     refresh_interval: Duration,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
-    frame_rx: Option<tokio::sync::watch::Receiver<Frame>>,
+    frame_rx: Option<tokio::sync::watch::Receiver<PreviewFrame>>,
     shutdown_token: Option<CancellationToken>,
     texture_handle: Option<egui::TextureHandle>,
+    crop_rect: Option<egui::Rect>,
     layout_config: LayoutConfig,
     /// Scratch buffer reused across frames to avoid a large per-frame allocation
     rgb_scratch: Vec<u8>,
@@ -319,8 +328,21 @@ impl eframe::App for DesktopRenderer {
             if has_changed || needs_initial_texture {
                 // Clone is cheap (Arc'd data) and releases the watch lock
                 // before the conversion below, so the sender is never blocked.
-                let frame = frame_rx.borrow_and_update().clone();
+                let preview = frame_rx.borrow_and_update().clone();
+                let frame = preview.frame;
                 if let Some(color_image) = frame_to_image(&frame, &mut self.rgb_scratch) {
+                    self.crop_rect = preview.viewport.map(|crop| {
+                        egui::Rect::from_min_max(
+                            egui::pos2(
+                                crop.x as f32 / frame.width as f32,
+                                crop.y as f32 / frame.height as f32,
+                            ),
+                            egui::pos2(
+                                (crop.x + crop.width) as f32 / frame.width as f32,
+                                (crop.y + crop.height) as f32 / frame.height as f32,
+                            ),
+                        )
+                    });
                     if let Some(texture) = &mut self.texture_handle {
                         texture.set(color_image, egui::TextureOptions::LINEAR);
                     } else {
@@ -412,6 +434,24 @@ impl eframe::App for DesktopRenderer {
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     egui::Color32::WHITE,
                 );
+                if let Some(crop) = self.crop_rect {
+                    let transform = egui::emath::RectTransform::from_to(
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        layout.video_rect,
+                    );
+                    let rect = transform.transform_rect(crop);
+                    for (width, color) in [
+                        (5.0, egui::Color32::BLACK),
+                        (3.0, egui::Color32::from_rgb(57, 255, 20)),
+                    ] {
+                        ui.painter().rect_stroke(
+                            rect,
+                            0.0,
+                            (width, color),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                }
             }
         });
 
@@ -545,6 +585,77 @@ pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::
 mod tests {
     use super::*;
     use eframe::App;
+
+    #[test]
+    fn crop_outline_tracks_the_displayed_frame_and_window_size() {
+        let (_colors, colors_rx) = tokio::sync::watch::channel(EdgeColors::default());
+        let (frames, frames_rx) = tokio::sync::watch::channel(PreviewFrame {
+            frame: Frame::dummy(640, 360),
+            viewport: None,
+        });
+        let mut app = DesktopRendererBuilder::new(colors_rx)
+            .with_frame_rx(frames_rx)
+            .build();
+        let context = egui::Context::default();
+        let mut frame = eframe::Frame::_new_kittest();
+        for (size, viewport) in [
+            (
+                [960.0, 540.0],
+                Viewport {
+                    x: 64,
+                    y: 36,
+                    width: 512,
+                    height: 288,
+                },
+            ),
+            ([1280.0, 720.0], Viewport::full_frame(640, 360)),
+        ] {
+            frames
+                .send(PreviewFrame {
+                    frame: Frame::dummy(640, 360),
+                    viewport: Some(viewport),
+                })
+                .unwrap();
+            let output = context.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut frame),
+            );
+            let video = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                        Some(mesh.calc_bounds())
+                    }
+                    _ => None,
+                })
+                .expect("video texture");
+            let outline = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect)
+                        if rect.stroke.color == egui::Color32::from_rgb(57, 255, 20) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .expect("neon crop outline");
+            let expected_min = video.min
+                + video.size() * egui::vec2(viewport.x as f32 / 640.0, viewport.y as f32 / 360.0);
+            let expected_size = video.size()
+                * egui::vec2(
+                    viewport.width as f32 / 640.0,
+                    viewport.height as f32 / 360.0,
+                );
+            assert!(outline.min.distance(expected_min) < 0.01);
+            assert!((outline.size() - expected_size).length() < 0.01);
+        }
+    }
 
     #[test]
     fn schedules_preview_refreshes_at_default_and_configured_rates() {

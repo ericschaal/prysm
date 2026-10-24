@@ -47,6 +47,11 @@ impl PrysmProcessor {
         }
     }
 
+    /// Confirmed sampling area of the last supported frame, in source pixels.
+    pub fn viewport(&self) -> Option<Viewport> {
+        self.last_viewport
+    }
+
     /// Process a single frame using the current monotonic time for smoothing.
     pub fn process_frame(&mut self, frame: Frame) -> EdgeColors {
         self.process_frame_at(frame, Instant::now())
@@ -87,13 +92,6 @@ impl PrysmProcessor {
 
         if let Some(ref mut detector) = self.band_detector {
             view = detector.process(view, now);
-        }
-
-        if self.last_viewport != Some(view.viewport)
-            && let Some(smoother) = &mut self.temporal_smoothing
-        {
-            // Old samples describe a different region of the image.
-            *smoother = TemporalSmoothing::new(self.config.smoothing_seconds);
         }
 
         self.last_viewport = Some(view.viewport);

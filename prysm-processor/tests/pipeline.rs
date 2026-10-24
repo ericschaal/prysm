@@ -9,6 +9,30 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
 }
 
 #[test]
+fn a_static_letterboxed_picture_does_not_bypass_smoothing_when_crop_confirms() {
+    let config = Config::default();
+    let mut data = vec![128; 640 * 360 * 3];
+    data[..640 * 48 * 3].fill(0);
+    data[640 * 312 * 3..].fill(0);
+    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let mut processor = PrysmProcessor::new(&config);
+    let start = Instant::now();
+    let before = processor.process_frame_at(frame.clone(), start);
+    for millis in (10..1000).step_by(10) {
+        processor.process_frame_at(frame.clone(), start + Duration::from_millis(millis));
+    }
+    let after = processor.process_frame_at(frame, start + Duration::from_secs(1));
+    let old = before.top.sample_at(0.5).r;
+    let target = prysm_core::LinearColor::from_srgb(prysm_core::Color::new(128, 128, 128)).r;
+    let actual = after.top.sample_at(0.5).r;
+    let expected = old + (target - old) * (1.0 - 0.05_f32.powf(0.01 / 0.1));
+    assert!(
+        (actual - expected).abs() < 1e-5,
+        "unchanged frame: top {old:.4} -> {actual:.4}; expected smoothed {expected:.4}, target {target:.4}"
+    );
+}
+
+#[test]
 fn edge_highlights_keep_local_contrast_and_interior_lights_still_contribute() {
     let config = Config {
         remove_black_bars: false,
@@ -131,12 +155,7 @@ fn combined_bars_keep_dark_centers_and_bright_corners_inside_the_picture() {
         }
         let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
         let actual = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
-        // Conflicting bounds must keep the full frame instead of cutting off the corners.
-        let expected_frame = if pattern == 4 {
-            frame
-        } else {
-            Frame::new(picture, 160, 100, PixelFormat::RGB24)
-        };
+        let expected_frame = Frame::new(picture, 160, 100, PixelFormat::RGB24);
         let expected = PrysmProcessor::new(&Config {
             remove_black_bars: false,
             ..config
@@ -380,7 +399,17 @@ fn static_letterbox_confirms_with_default_tuning() {
     data[640 * 312 * 3..].fill(0);
     let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
     let mut p = PrysmProcessor::new(&c);
+    assert_eq!(p.viewport(), None);
     let actual = settle(&mut p, &frame, Instant::now());
+    assert_eq!(
+        p.viewport(),
+        Some(prysm_core::Viewport {
+            x: 0,
+            y: 48,
+            width: 640,
+            height: 264,
+        })
+    );
     assert!(
         actual.top.sample_at(0.5).r > 0.1,
         "letterbox still unconfirmed after three seconds"
@@ -820,7 +849,7 @@ fn black_bar_removal_can_be_disabled() {
 }
 
 #[test]
-fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
+fn crop_changes_preserve_smoothing_and_adopt_the_new_sample_grid() {
     let config = Config {
         brightness_percent: BrightnessPercent(100),
         ..Config::default()
@@ -844,18 +873,44 @@ fn confirmed_crop_resets_smoothing_to_the_new_sample_grid() {
         }
     }
     let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let full = rgb(640, 360, 128);
     let start = Instant::now();
-    for step in 0..80 {
+    let mut previous: Option<prysm_core::EdgeColors> = None;
+    let ratio = 1.0 - 0.05_f32.powf(0.05 / config.smoothing_seconds.0);
+    for step in 0..160 {
+        let frame = if step < 80 { &letterbox } else { &full };
         let now = start + Duration::from_millis(step * 50);
-        let actual = smoothed.process_frame_at(letterbox.clone(), now);
-        let expected = direct.process_frame_at(letterbox.clone(), now);
-        assert_eq!(actual.left.len(), expected.left.len());
-        for i in 0u8..=100 {
-            let position = f32::from(i) / 100.0;
-            assert!(
-                (actual.left.sample_at(position).r - expected.left.sample_at(position).r).abs()
-                    < 0.001
+        let actual = smoothed.process_frame_at(frame.clone(), now);
+        let target = direct.process_frame_at(frame.clone(), now);
+        for (actual, target, previous) in [
+            (&actual.top, &target.top, previous.as_ref().map(|p| &p.top)),
+            (
+                &actual.left,
+                &target.left,
+                previous.as_ref().map(|p| &p.left),
+            ),
+        ] {
+            assert_eq!(actual.len(), target.len());
+            for index in 0..actual.len() {
+                let goal = target.color_at(index, actual.len()).r;
+                let expected = previous.map_or(goal, |old| {
+                    let old = old.color_at(index, actual.len()).r;
+                    old + (goal - old) * ratio
+                });
+                assert!(
+                    (actual.color_at(index, actual.len()).r - expected).abs() < 1e-5,
+                    "frame {step}, sample {index}: crop transition bypassed smoothing"
+                );
+            }
+        }
+        if step == 79 {
+            assert!(actual.left.len() < config.sample_density.samples_for_length(360));
+        } else if step == 159 {
+            assert_eq!(
+                actual.left.len(),
+                config.sample_density.samples_for_length(360)
             );
         }
+        previous = Some(actual);
     }
 }

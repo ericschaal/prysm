@@ -2,7 +2,7 @@
 
 use crate::stream;
 use anyhow::{Context, Result};
-use desktop_renderer::DesktopRendererBuilder;
+use desktop_renderer::{DesktopRendererBuilder, PreviewFrame};
 use futures::Stream;
 use prysm_capture::Frame;
 use prysm_core::{Config, EdgeColors};
@@ -28,7 +28,10 @@ where
         config.sample_density,
     ));
     let dummy_frame = Frame::dummy(width, height);
-    let (frames_tx, frames_rx) = tokio::sync::watch::channel(dummy_frame);
+    let (frames_tx, frames_rx) = tokio::sync::watch::channel(PreviewFrame {
+        frame: dummy_frame,
+        viewport: None,
+    });
 
     let runtime_handle = std::thread::spawn({
         let shutdown_token = shutdown_token.clone();
