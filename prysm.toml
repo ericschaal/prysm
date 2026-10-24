@@ -4,7 +4,7 @@ brightness_percent = 100
 # Color samples per 1000 pixels of cropped edge length. Defaults to 128.
 sample_density = 128
 
-# Camera capture / decoded video size [width, height]. Defaults to [640, 360].
+# capture / decoded video size [width, height]. Defaults to [640, 360].
 capture_resolution = [640, 360]
 
 # Counts by screen edge, viewed from the front.

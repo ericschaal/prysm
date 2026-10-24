@@ -1,0 +1,16 @@
+# Choose device/file input and wled/egui output.
+brightness_percent = 100
+
+# Color samples per 1000 pixels of cropped edge length. Defaults to 128.
+sample_density = 128
+
+# capture / decoded video size [width, height]. Defaults to [640, 360].
+capture_resolution = [640, 360]
+
+[output]
+type = "egui"
+refresh_rate_hz = 50
+
+[input]
+type = "file"
+path = "/Users/eschaal/Ambilight 4K HDR Test by Philips [e1QD2dBkESE].f701.mp4"
