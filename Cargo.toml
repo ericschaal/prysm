@@ -1,6 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "renderers/desktop-renderer", "renderers/led-renderer"]
+members = [
+    "apps/prysm",
+    "apps/prysm-web",
+    "crates/capture/prysm-capture",
+    "crates/processing/prysm-processor",
+    "crates/common/prysm-core",
+    "crates/common/prysm-contract",
+    "crates/common/prysm-api",
+    "crates/rendering/prysm-renderer-desktop",
+    "crates/rendering/prysm-renderer-wled",
+]
 
 # The video pipeline does per-pixel work on full HD frames; unoptimized dev
 # builds make it burn >100% CPU. Lightly optimize workspace code and fully
@@ -17,6 +27,7 @@ cargo = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
 
 [workspace.dependencies]
+actix = "0.13"
 tokio = { version = "1" }
 tokio-util = { version = "0.7" }
 tracing = { version = "0.1" }

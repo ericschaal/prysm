@@ -1,0 +1,38 @@
+# Prysm engine configuration, owned and persisted by Prysm.
+revision = "0"
+source = "prysm"
+capture_resolution = [640, 360]
+
+[web]
+listen = "127.0.0.1:8787"
+# Restrict this to exact host:port entries for your installation if desired.
+allowed_hosts = ["127.0.0.1:8787", "localhost:8787"]
+
+[wled]
+url = "http://wled.local/"
+
+[input]
+type = "device"
+# Prefer /dev/v4l/by-id/... when available.
+device = "/dev/video0"
+
+[output]
+type = "wled"
+address = "wled.local:4048"
+refresh_rate_hz = 50
+
+# Viewed from the front; wiring starts at bottom-left and goes up.
+[output.leds]
+top = 51
+right = 31
+bottom = 49
+left = 31
+
+# All settings are saved together in the runtime TOML by Prysm.
+[processing]
+brightness_percent = 80
+shadow_lift_percent = 0
+sample_density = 128
+spatial_reach_percent = 10
+smoothing_seconds = 0.1
+remove_black_bars = true

@@ -1,0 +1,29 @@
+revision = "19"
+source = "prysm"
+capture_resolution = [
+    640,
+    360,
+]
+
+[web]
+listen = "127.0.0.1:8787"
+allowed_hosts = [
+    "localhost:8787",
+    "127.0.0.1:8787",
+]
+
+[input]
+type = "file"
+path = "video.mp4"
+
+[output]
+type = "egui"
+refresh_rate_hz = 30
+
+[processing]
+brightness_percent = 100
+shadow_lift_percent = 0
+smoothing_seconds = 0.1
+sample_density = 128
+spatial_reach_percent = 10
+remove_black_bars = true

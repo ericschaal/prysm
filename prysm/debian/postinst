@@ -1,9 +1,0 @@
-#!/bin/sh
-set -e
-if [ "$1" = configure ]; then
-    systemd-sysusers /usr/lib/sysusers.d/prysm-control.conf
-    if [ -d /run/systemd/system ]; then
-        systemctl daemon-reload
-    fi
-fi
-#DEBHELPER#

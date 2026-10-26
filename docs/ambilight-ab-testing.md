@@ -19,16 +19,16 @@ The original baseline used quadratic inward weighting, linear-light region avera
 
 Relevant code:
 
-- [Region averaging](../prysm-processor/src/frames/view_frame.rs)
-- [Sampling geometry](../prysm-processor/src/nodes/spatial_sampler.rs)
-- [Density and color strip interpolation](../prysm-core/src/color_strip.rs)
-- [Processor configuration](../prysm-core/src/config.rs)
-- [Temporal smoothing](../prysm-processor/src/nodes/temporal_smoothing.rs)
-- [Video playback](../prysm/src/video.rs)
-- [Desktop rendering](../renderers/desktop-renderer/src/lib.rs)
-- [Existing pipeline regression tests](../prysm-processor/tests/pipeline.rs)
+- [Region averaging](../crates/processing/prysm-processor/src/frames/frame_view.rs)
+- [Sampling geometry](../crates/processing/prysm-processor/src/nodes/spatial_sampler.rs)
+- [Density and color strip interpolation](../crates/common/prysm-core/src/color_strip.rs)
+- [Processor configuration](../crates/common/prysm-core/src/config.rs)
+- [Temporal smoothing](../crates/processing/prysm-processor/src/nodes/temporal_smoother.rs)
+- [Video playback](../apps/prysm/src/video.rs)
+- [Desktop rendering](../crates/rendering/prysm-renderer-desktop/src/lib.rs)
+- [Existing pipeline regression tests](../crates/processing/prysm-processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../crates/rendering/prysm-renderer-wled/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
 Both outputs use FFmpeg 9+ for file input (`type = "file"` with a required `path` in `[input]`), delivering sRGB RGB24 frames at the configured capture resolution (default 640×360), playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 

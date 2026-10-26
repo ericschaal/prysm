@@ -1,0 +1,41 @@
+[package]
+name = "prysm"
+version = "0.1.0"
+edition = "2024"
+description = "Capture and process video for egui or WLED output"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+desktop = ["dep:prysm-renderer-desktop"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+actix.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+prysm-capture = { path = "../../crates/capture/prysm-capture" }
+prysm-core = { path = "../../crates/common/prysm-core" }
+prysm-processor = { path = "../../crates/processing/prysm-processor" }
+prysm-renderer-wled = { path = "../../crates/rendering/prysm-renderer-wled" }
+prysm-renderer-desktop = { path = "../../crates/rendering/prysm-renderer-desktop", optional = true }
+tokio-util.workspace = true
+
+prysm-contract = { path = "../../crates/common/prysm-contract" }
+
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+prysm-api = { path = "../../crates/common/prysm-api" }
+atomic-write-file = "0.3"
+tempfile = "3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

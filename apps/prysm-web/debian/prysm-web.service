@@ -1,0 +1,19 @@
+[Unit]
+Description=Prysm browser controller
+Wants=network-online.target prysm-control.service
+After=network-online.target prysm-control.service
+
+[Service]
+Type=simple
+User=prysm-control
+ExecStart=/usr/bin/prysm-web --listen 0.0.0.0:8788 --allowed-host *
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

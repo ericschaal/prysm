@@ -1,0 +1,774 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Prysm",
+    "description": "Ambient lighting controller",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/config": {
+      "get": {
+        "operationId": "getConfig",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateConfig",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/state": {
+      "get": {
+        "operationId": "getState",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setState",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Target"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "BrightnessPercent": {
+        "type": "integer",
+        "maximum": 100,
+        "minimum": 0
+      },
+      "CaptureResolution": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "maxItems": 2,
+        "minItems": 2
+      },
+      "Config": {
+        "type": "object",
+        "description": "The complete saved configuration. Runtime observations and power are never saved.",
+        "required": [
+          "revision",
+          "source",
+          "web",
+          "input",
+          "capture_resolution",
+          "output",
+          "processing"
+        ],
+        "properties": {
+          "capture_resolution": {
+            "$ref": "#/components/schemas/CaptureResolution"
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          },
+          "processing": {
+            "$ref": "#/components/schemas/ProcessingSettings"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ConfigRevision"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "web": {
+            "$ref": "#/components/schemas/WebConfig"
+          },
+          "wled": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WledConfig"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConfigRevision": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
+      "DeviceId": {
+        "type": "string"
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "conflict",
+          "persistence",
+          "backend",
+          "unavailable"
+        ]
+      },
+      "Input": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "device",
+              "type"
+            ],
+            "properties": {
+              "device": {
+                "$ref": "#/components/schemas/DeviceId"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "device"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "path",
+              "type"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/components/schemas/VideoPath"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "file"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "listen",
+              "type"
+            ],
+            "properties": {
+              "listen": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "webos"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "LedCounts": {
+        "type": "object",
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "properties": {
+          "bottom": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "left": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "right": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "top": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Observation": {
+        "type": "object",
+        "required": [
+          "pipeline_phase",
+          "power",
+          "realtime",
+          "live_override"
+        ],
+        "properties": {
+          "live_override": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pipeline_phase": {
+            "$ref": "#/components/schemas/PipelinePhase"
+          },
+          "power": {
+            "type": "boolean"
+          },
+          "realtime": {
+            "type": "boolean"
+          },
+          "realtime_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OperationId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "OperationResponse": {
+        "type": "object",
+        "required": [
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "$ref": "#/components/schemas/OperationId"
+          }
+        }
+      },
+      "OperationStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "idle"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/OperationId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pending"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/OperationId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "succeeded"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "error",
+              "kind"
+            ],
+            "properties": {
+              "error": {
+                "$ref": "#/components/schemas/ApiError"
+              },
+              "id": {
+                "$ref": "#/components/schemas/OperationId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Output": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "address",
+              "refresh_rate_hz",
+              "leds",
+              "type"
+            ],
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/WledAddress"
+              },
+              "leds": {
+                "$ref": "#/components/schemas/LedCounts"
+              },
+              "refresh_rate_hz": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "wled"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "refresh_rate_hz",
+              "type"
+            ],
+            "properties": {
+              "refresh_rate_hz": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "egui"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PipelinePhase": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "starting",
+          "running",
+          "failed",
+          "completed"
+        ]
+      },
+      "PipelineStatus": {
+        "type": "object",
+        "required": [
+          "phase",
+          "frames_processed"
+        ],
+        "properties": {
+          "applied_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConfigRevision"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "frames_processed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "phase": {
+            "$ref": "#/components/schemas/PipelinePhase"
+          }
+        }
+      },
+      "ProcessingSettings": {
+        "type": "object",
+        "required": [
+          "brightness_percent",
+          "shadow_lift_percent",
+          "smoothing_seconds",
+          "sample_density",
+          "spatial_reach_percent",
+          "remove_black_bars"
+        ],
+        "properties": {
+          "brightness_percent": {
+            "$ref": "#/components/schemas/BrightnessPercent"
+          },
+          "remove_black_bars": {
+            "type": "boolean"
+          },
+          "sample_density": {
+            "$ref": "#/components/schemas/SampleDensity"
+          },
+          "shadow_lift_percent": {
+            "$ref": "#/components/schemas/ShadowLiftPercent"
+          },
+          "smoothing_seconds": {
+            "$ref": "#/components/schemas/SmoothingSeconds"
+          },
+          "spatial_reach_percent": {
+            "$ref": "#/components/schemas/SpatialReachPercent"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SampleDensity": {
+        "type": "integer",
+        "maximum": 4294967295,
+        "minimum": 1
+      },
+      "ShadowLiftPercent": {
+        "type": "integer",
+        "maximum": 100,
+        "minimum": 0
+      },
+      "SmoothingSeconds": {
+        "type": "number",
+        "maximum": 3.4028234663852886e+38,
+        "minimum": 0
+      },
+      "Source": {
+        "type": "string",
+        "enum": [
+          "prysm",
+          "wled"
+        ]
+      },
+      "SpatialReachPercent": {
+        "type": "integer",
+        "maximum": 100,
+        "minimum": 1
+      },
+      "StateResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "operation",
+          "wled_url",
+          "config_revision",
+          "pipeline",
+          "restart_required"
+        ],
+        "properties": {
+          "applied_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConfigRevision"
+              }
+            ]
+          },
+          "config_revision": {
+            "$ref": "#/components/schemas/ConfigRevision"
+          },
+          "observation_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Observation"
+              }
+            ]
+          },
+          "operation": {
+            "$ref": "#/components/schemas/OperationStatus"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/PipelineStatus"
+          },
+          "restart_required": {
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "wled_url": {
+            "type": "string"
+          }
+        }
+      },
+      "Target": {
+        "type": "object",
+        "required": [
+          "power",
+          "source"
+        ],
+        "properties": {
+          "power": {
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateConfig": {
+        "type": "object",
+        "required": [
+          "expected_revision",
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/Config"
+          },
+          "expected_revision": {
+            "$ref": "#/components/schemas/ConfigRevision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VideoPath": {
+        "type": "string"
+      },
+      "WebConfig": {
+        "type": "object",
+        "required": [
+          "listen",
+          "allowed_hosts"
+        ],
+        "properties": {
+          "allowed_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "listen": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WledAddress": {
+        "type": "string"
+      },
+      "WledConfig": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+[package]
+name = "prysm-web"
+version = "0.1.0"
+edition = "2024"
+description = "Browser controller for the Prysm REST API"
+
+[package.metadata.deb]
+name = "prysm-led"
+maintainer = "Eric Schaal <eric@schaal.dev>"
+depends = "$auto, systemd, init-system-helpers"
+section = "video"
+priority = "optional"
+maintainer-scripts = "debian"
+assets = [
+    ["target/release/prysm-web", "usr/bin/prysm-web", "755"],
+    ["target/release/prysm", "usr/bin/prysm", "755"],
+    ["debian/prysm-control.sysusers", "usr/lib/sysusers.d/prysm-control.conf", "644"],
+    ["debian/prysm.toml", "usr/share/prysm/prysm.toml", "644"],
+    ["debian/README.md", "usr/share/doc/prysm-led/README.md", "644"],
+]
+
+[[package.metadata.deb.systemd-units]]
+unit-name = "prysm-control"
+enable = false
+start = false
+stop-on-upgrade = true
+restart-after-upgrade = false
+
+[[package.metadata.deb.systemd-units]]
+unit-name = "prysm-web"
+enable = false
+start = false
+stop-on-upgrade = true
+restart-after-upgrade = false
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tower-http = { version = "0.7", features = ["csrf", "set-header", "validate-request"] }
+rust-embed = { version = "8", features = ["debug-embed"] }
+mime_guess = "2"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

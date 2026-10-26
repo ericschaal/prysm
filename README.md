@@ -56,7 +56,7 @@ One power button. Two color sources. A quiet status indicator.
 
 The panel remembers your selected source while the lights are off. It stays available when capture stops, and shows connection problems with retry controls. Keyboard navigation, visible focus, generous touch targets, and reduced-motion support are built in.
 
-The controller requires Linux with systemd and a compatible WLED JSON API. See the [control-panel guide](docs/control-panel.md) for behavior and configuration.
+Prysm and its independent browser controller run on macOS and Linux. Debian uses systemd to start the two services. See the [control-panel guide](docs/control-panel.md) for behavior and configuration.
 
 ## How it connects
 
@@ -75,172 +75,157 @@ Prysm handles capture and color processing. WLED drives the physical LEDs. The p
 - A WLED controller, addressable LED strips, a suitable power supply, and a local network connection.
 - For building: a Rust toolchain supporting edition 2024.
 
-Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The browser controller is Linux-only.
+Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The browser controller runs natively on both platforms.
+
+For a rooted LG TV, the experimental [minimal webOS sender](crates/capture/webos-capture/README.md)
+captures on the TV and streams RGB frames directly to Prysm's `webos` input.
+The initial webOS 25 target still requires hardware validation.
 
 ## Get started
 
-### 1. Build
+Prysm owns capture, processing, rendering, its TOML configuration, and its REST
+API. `prysm-web` is an independent browser controller that calls that API.
+
+Edit [prysm.toml](prysm.toml) for your hardware, then start Prysm:
 
 ```sh
-git clone https://github.com/ericschaal/prysm.git
-cd prysm
-cargo build --locked --release -p prysm --bins
+cargo run -p prysm -- --config prysm.toml
 ```
 
-On Linux, install the native capture and graphics build dependencies first; the [Raspberry Pi / Debian guide](prysm/debian/README.md) lists them. Desktop dependencies are currently compiled for the headless application too.
+The API listens on port 8787. Startup leaves capture stopped. Start it through
+`PUT /api/state` or the browser controller; processing and configuration work
+without a browser connected.
 
-### 2. Configure your setup
-
-Edit [`prysm.toml`](prysm.toml). The checked-in values describe a specific setup; replace the device, WLED address, and LED counts with yours. For example:
-
-```toml
-brightness_percent = 100
-sample_density = 128
-spatial_reach_percent = 10
-capture_resolution = [640, 360]
-
-[input]
-type = "device"
-device = "/dev/video0" # On macOS, use the AVFoundation device UID.
-
-[output]
-type = "wled"
-address = "wled.local:4048"
-refresh_rate_hz = 30
-
-[output.leds]
-top = 96
-right = 54
-bottom = 96
-left = 54
-```
-
-LED counts refer to the screen viewed from the front. Wiring starts at **bottom-left**, then runs up the left, across the top, down the right, and back along the bottom. Set an absent edge to `0`.
-
-In WLED, enable DDP input under **Config → Sync Interfaces** and match the LED count to your strip. Prysm sends sRGB colors: enable **Use Gamma for color** and leave **Disable realtime gamma correction** unchecked. The [WLED setup guide](renderers/led-renderer/README.md) covers mapping, brightness, and transport details.
-
-### 3. Turn it on
+For frontend development, run this in another terminal:
 
 ```sh
-cargo run --locked --release -p prysm
-# Or load another configuration:
-cargo run --locked --release -p prysm -- --config /path/to/prysm.toml
+cd apps/prysm-web/control-ui
+npm ci
+npm run dev
 ```
 
-Configuration is read at startup; restart after editing it. `Ctrl+C` stops processing. Once live input times out, WLED returns to its normal effect.
+Open http://localhost:5173. Vite forwards API requests to Prysm. Its Host must
+appear in Prysm's `[web].allowed_hosts` (the sample accepts all hosts).
 
-## Put it on a Raspberry Pi
-
-The Debian package installs the capture application, the independent web controller, and their systemd units. Follow the [build and installation guide](prysm/debian/README.md) first; services are disabled on installation so you can configure your hardware.
-
-To let the panel manage screen sync after installing and configuring the package:
+To use the standalone controller (requires Node.js 24 and npm at build time):
 
 ```sh
-sudo systemctl disable --now prysm-led
-sudo nano /etc/prysm/control.toml
-sudo systemctl enable --now prysm-control
+cargo run -p prysm-web -- --backend http://127.0.0.1:8787
 ```
 
-Set `wled_url` to WLED's **HTTP address**, such as `http://wled.local/`; the capture output separately uses DDP port `4048`. Configure WLED's boot preset to Off, then open `http://YOUR_PI_IP:8787` on your phone.
+`prysm-web` automatically installs locked npm dependencies, builds the frontend,
+and embeds it. Open http://localhost:8788. The controller can run on another machine; set
+`--backend` to Prysm's URL, `--listen` to the controller's bind address, and
+repeat `--allowed-host host:port` for accepted browser hosts. Prysm must allow
+the backend URL's Host. Stopping or restarting the controller leaves Prysm and
+its configuration intact. Only Prysm reads and writes the configuration file.
 
-The panel has no login: use a trusted LAN or private VPN and keep its port off the public internet. Off is a software lighting command, not a physical power disconnect. Verify power and source switching on your installed WLED firmware before relying on it.
+Validate configuration without starting capture:
 
-## Under the hood
+```sh
+cargo run -p prysm -- --config prysm.toml check
+```
 
-Prysm is a Rust workspace with a straightforward **capture → process → render** pipeline.
+## Inputs and outputs
 
-| Component | Responsibility |
-| :--- | :--- |
-| [`prysm`](prysm/) | Configuration, application, web controller, and file input for debugging. |
-| [`prysm-capture`](prysm-capture/) | Linux V4L2 and macOS AVFoundation capture. |
-| [`prysm-core`](prysm-core/) | Colors, gradients, and processing settings; no external dependencies. |
-| [`prysm-processor`](prysm-processor/) | Black-bar detection, whole-picture spatial sampling, and temporal smoothing. |
-| [`desktop-renderer`](renderers/desktop-renderer/) | On-screen egui preview for debugging. |
-| [`led-renderer`](renderers/led-renderer/) | WLED output over DDP/UDP with a configurable send-rate cap. |
+Input and output are independent:
 
-The sampler uses the entire active picture: nearby colors affect an output position strongly,
-while interior and distant content contribute a softer, broader glow. It area-averages pixels
-in linear light into a grid, then applies a narrow local peak plus a broad distance tail.
-With `q = (distance / radius)²`, the normalized weights are proportional to
-`1 / (1 + q) + 64 / (1 + 16q)²`. The local peak uses one quarter of the broad radius,
-so highlights near an edge retain contrast while the rest of the scene still contributes.
-Black pixels remain in the average, so small highlights stay dim and black frames fade to black.
-The grid follows output density, with a longest side of 64–128 cells (or fewer for small pictures).
-All pixels contribute; the grid approximates their positions. Distance weights are cached until
-picture dimensions change. Existing smoothing and brightness apply after sampling.
+| Input | egui output | WLED DDP output |
+| :--- | :---: | :---: |
+| Local video file (`file`) | ✓ | ✓ |
+| Local capture device (`device`, AVFoundation on macOS / V4L2 on Linux) | ✓ | ✓ |
+| Remote TV capture (`webos`) | ✓ | ✓ |
 
-`spatial_reach_percent` sets the broad radius as a percentage of cropped picture height: default 10,
-clamped to 1–100. Higher values spread colors farther; lower values preserve more local detail.
-It is available in TOML and the core library. Library callers should replace
-`edge_depth_percent: EdgeDepthPercent(...)` with `spatial_reach_percent: SpatialReachPercent(...)`;
-reach has no hard cutoff and is not equivalent to the old band depth.
-Smoothing remains available through the core library; TOML also exposes brightness, sample density,
-capture resolution, and input/output settings.
+Set `[input]` to `type = "file"` with `path`, `type = "device"` with `device`,
+or `type = "webos"` with a TCP `listen` address. Files require FFmpeg 9+ on PATH.
+Capture devices provide video feeds; this does not directly record the desktop.
+See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.
 
-### Development
+Set `[output]` to `type = "wled"` with a DDP address, refresh rate, and
+`[output.leds]` layout, or `type = "egui"` with a refresh rate. egui is a renderer
+and requires `--features desktop`:
 
-Start in `prysm/src/main.rs`: it parses CLI arguments, configures logging, and
-calls `prysm::run_from_config`. Application setup is split by responsibility:
+```sh
+# Edit the file path in prysm-egui.toml first.
+cargo run -p prysm --features desktop -- --config prysm-egui.toml
+```
 
-| File in `prysm/src/` | Responsibility |
-| :--- | :--- |
-| [`app.rs`](prysm/src/app.rs) | Load configuration and select desktop or WLED output. |
-| [`config.rs`](prysm/src/config.rs) | Parse TOML and validate settings, input identifiers, and LED counts. |
-| [`input.rs`](prysm/src/input.rs) | Open a device or file as a fallible frame stream. |
-| [`desktop.rs`](prysm/src/desktop.rs) | Keep the GUI on the main thread and async processing on a worker thread. |
-| [`wled.rs`](prysm/src/wled.rs) | Run headless processing, WLED output, and Ctrl+C handling. |
-| [`stream.rs`](prysm/src/stream.rs) | Publish processed frames and colors to the desktop watch channels. |
-| [`video.rs`](prysm/src/video.rs) | Decode file input with FFmpeg. |
+The egui window displays video, detected crop, and edge colors. Start/stop and
+processing settings use the same REST API for every input/output pair. At EOF,
+the last egui frame stays visible and the API remains available. Stop/start
+replays a file. Closing the window stops Prysm; the independent browser
+controller remains available and reports a lost connection.
 
-Tests live beside the code they cover. Output runners own runtime and shutdown
-handling; input adapters preserve source errors. The existing `prysm::run` API
-runs a desktop preview with a caller-provided frame source.
+## Configuration
+
+Prysm owns one TOML file with `[web]` (REST listen address and allowed hosts),
+`[input]`, `[output]`, `[processing]`, `capture_resolution`, source, and revision.
+The optional `[wled]` HTTP endpoint enables WLED power/effect management for WLED
+output. Without it, start/stop controls the pipeline directly, for either renderer.
+`source = "prysm"` selects captured colors; `source = "wled"` selects WLED's
+own effects and requires WLED output with an HTTP endpoint.
+
+REST configuration updates save this file atomically with revision checks.
+Processing changes apply live; input, resolution, and DDP settings recreate an
+active session. Changing output kind, egui refresh rate, or REST listen/access
+policy requires restarting Prysm. Output configuration requires an explicit `type`. No controller preferences or duplicate pipeline config are stored.
+
+LED counts are viewed from the front. Wiring starts at bottom-left, then runs
+up the left, across the top, down the right, and back along the bottom. An absent
+edge has count zero. Enable DDP input in WLED and configure its physical LED count.
+See the [WLED renderer guide](crates/rendering/prysm-renderer-wled/README.md) for color handling.
+File input requires FFmpeg 9+ on PATH.
+
+The panel has no login: use a trusted LAN/private VPN and configure allowed hosts.
+See the [controller guide](docs/control-panel.md) for HTTP/configuration behavior.
+
+## Architecture
+
+`prysm-web` serves the UI and forwards same-origin REST requests to a configured
+Prysm URL. It has no dependency on the engine crate and owns no configuration or
+pipeline. `prysm` exposes REST handlers through typed actor messages and owns
+configuration persistence, operations, and the capture lifecycle.
+
+Each pipeline session runs on a dedicated Arbiter thread. Capture, processing,
+and rendering use bounded mailboxes; incoming frames are dropped when busy.
+Shutdown stops capture, drains accepted output, and joins the thread. egui stays
+on the OS main thread, as required on macOS.
+
+The workspace groups applications and reusable libraries by responsibility. Keep
+platform capture code under capture, output backends under rendering, and shared
+data types and HTTP contracts under common. Crate names are independent of paths;
+run Cargo commands from the repository root with `-p <crate-name>`.
+
+| Directory | Crates / components | Responsibility |
+| :--- | :--- | :--- |
+| `apps/` | `prysm`, `prysm-web` | Engine/REST service and independent browser controller |
+| `crates/capture/` | `prysm-capture`, `webos-capture` | Frame streams and the standalone C webOS sender |
+| `crates/processing/` | `prysm-processor` | Sampling, black-bar detection, smoothing, brightness |
+| `crates/rendering/` | `prysm-renderer-wled`, `prysm-renderer-desktop` | WLED DDP and optional native egui output |
+| `crates/common/` | `prysm-core`, `prysm-contract`, `prysm-api` | Shared color/config types, validated REST DTOs, handlers and OpenAPI |
+
+`prysm-contract` owns configuration data and validation. The engine’s
+`apps/prysm/src/config.rs` owns file loading and pipeline restart decisions.
+
+See [actor runtime](docs/actor-runtime.md) for lifecycle and delivery policies.
+
+## Development
 
 ```sh
 cargo test --workspace --locked
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked
+cargo run --locked -p prysm-api --bin export-openapi # print the router’s OpenAPI schema
 ```
 
-For control-panel changes, use Node 20.19+ and the existing frontend tooling:
+From `apps/prysm-web/control-ui`, run `npm run generate-api` after API changes. It runs
+the `prysm-api` schema exporter and regenerates TypeScript. `npm test` verifies both
+against Rust, then checks types, bundling, and UI behavior.
+See [frontend tooling](apps/prysm-web/control-ui/README.md).
 
-```sh
-npm ci --prefix prysm/control-ui
-# Edit prysm/control-ui/app.jsx or style.css, then:
-npm run build --prefix prysm/control-ui
-npm test --prefix prysm/control-ui
-```
+## Debian deployment
 
-Commit the generated `prysm/src/control.html` alongside its source changes. The deployed panel needs no Node runtime.
-
-### Desktop debugging
-
-The egui renderer shows the captured video and sampled colors so you can inspect the processing pipeline. File input is a debugging tool, usually paired with this renderer to replay recorded footage.
-
-For a recorded-video preview, replace `[input]` and the entire `[output]` configuration, including `[output.leds]`, with:
-
-```toml
-[input]
-type = "file"
-path = "/path/to/video.mp4"
-
-[output]
-type = "egui"
-refresh_rate_hz = 30
-```
-
-`refresh_rate_hz` sets the preview refresh rate (positive integer, default 30).
-Each refresh displays the latest available frame and colors; intermediate updates are skipped.
-
-Run `cargo run --locked --release -p prysm`. File input requires **FFmpeg 9+** on your `PATH` and a readable video file. Playback runs at the source frame rate, converts HDR to sRGB, and stops at the end of the video. Relative file paths resolve from your working directory. To inspect live capture instead, keep your device input and use the same egui output.
-
-## If something looks off
-
-| Symptom | Check |
-| :--- | :--- |
-| Capture won't start | Device path/UID, permissions, and support for the configured resolution. On Linux, `/dev/v4l/by-id/` provides stable device paths. |
-| LEDs stay dark | WLED address, DDP input, LED counts, power, and the selected source. |
-| Colors look washed out | WLED's gamma settings described above; avoid applying gamma twice. |
-| Panel shows Unknown | WLED connectivity and controller logs: `journalctl -u prysm-control -f`. |
-
-For more detail: [WLED output](renderers/led-renderer/README.md) · [Pi deployment](prysm/debian/README.md) · [Control panel](docs/control-panel.md) · [Visual A/B testing](docs/ambilight-ab-testing.md) · [Error handling](docs/error-handling.md).
+Build with `./scripts/build-deb.sh`. The package contains `prysm`, `prysm-web` with its bundled UI,
+and separate systemd services. Installation seeds a writable configuration under
+`/var/lib/prysm-control/prysm.toml`; the service is disabled until configured.
+See the [Debian guide](apps/prysm-web/debian/README.md).

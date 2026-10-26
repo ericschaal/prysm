@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    systemd-sysusers /usr/lib/sysusers.d/prysm-control.conf
+    install -d -m 0700 -o prysm-control -g prysm-control /var/lib/prysm-control
+    if [ ! -e /var/lib/prysm-control/prysm.toml ] && [ ! -L /var/lib/prysm-control/prysm.toml ]; then
+        install -m 0600 -o prysm-control -g prysm-control \
+            /usr/share/prysm/prysm.toml /var/lib/prysm-control/prysm.toml
+    fi
+fi
+#DEBHELPER#

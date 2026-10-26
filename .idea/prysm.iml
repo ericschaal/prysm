@@ -2,19 +2,21 @@
 <module type="EMPTY_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
-      <sourceFolder url="file://$MODULE_DIR$/capturers/v4l-capturer/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-capture/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-core/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-processor/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-render/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/renderers/desktop-renderer/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/renderers/led-renderer/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-capture/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-processor/examples" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-capture/tests" isTestSource="true" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm-processor/tests" isTestSource="true" />
-      <sourceFolder url="file://$MODULE_DIR$/prysm/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-capture/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/common/prysm-core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/processing/prysm-processor/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/rendering/prysm-renderer-desktop/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/rendering/prysm-renderer-wled/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-capture/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/processing/prysm-processor/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-capture/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/processing/prysm-processor/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/common/prysm-contract/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/common/prysm-api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm-web/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm-web/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

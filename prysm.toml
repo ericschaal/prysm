@@ -1,21 +1,21 @@
-# Choose device/file input and wled/egui output.
-brightness_percent = 100
+revision = "2"
+source = "prysm"
+capture_resolution = [
+    640,
+    360,
+]
 
-# Color samples per 1000 pixels of cropped edge length. Defaults to 128.
-sample_density = 128
+[web]
+listen = "127.0.0.1:8787"
+allowed_hosts = ["*"]
 
-# Spatial influence radius as % of picture height (1–100). Higher spreads colors farther.
-spatial_reach_percent = 10
+[input]
+type = "device"
+device = "0x2200000345f2131"
 
-# capture / decoded video size [width, height]. Defaults to [640, 360].
-capture_resolution = [640, 360]
-
-# Counts by screen edge, viewed from the front.
-# Wiring: bottom-left -> top-left -> top-right -> bottom-right -> bottom-left.
 [output]
 type = "wled"
-address = "192.168.18.37:4048"
-# Maximum WLED sends per second; positive integer, defaults to 30.
+address = "192.168.18.39:4048"
 refresh_rate_hz = 50
 
 [output.leds]
@@ -24,6 +24,13 @@ right = 31
 bottom = 49
 left = 31
 
-[input]
-type = "device"
-device = "0x2200000345f2131" # Linux path or macOS AVFoundation device UID
+[wled]
+url = "http://192.168.18.39/"
+
+[processing]
+brightness_percent = 80
+shadow_lift_percent = 0
+smoothing_seconds = 0.1
+sample_density = 128
+spatial_reach_percent = 10
+remove_black_bars = true

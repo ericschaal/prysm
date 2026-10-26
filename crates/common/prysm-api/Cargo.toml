@@ -1,0 +1,16 @@
+[package]
+name = "prysm-api"
+version = "0.1.0"
+edition = "2024"
+description = "Prysm HTTP handlers and their generated OpenAPI contract"
+
+[lints]
+workspace = true
+
+[dependencies]
+actix.workspace = true
+axum = "0.8"
+prysm-contract = { path = "../prysm-contract" }
+tokio = { workspace = true, features = ["sync"] }
+utoipa = "5"
+utoipa-axum = "0.2"
