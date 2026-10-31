@@ -1,5 +1,5 @@
 //! Validated application configuration and HTTP update types.
-use crate::{CaptureResolution, ConfigRevision, Input, Output, ProcessingSettings, Source};
+use crate::{ConfigRevision, Input, Output, ProcessingSettings, Source};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use utoipa::ToSchema;
@@ -12,7 +12,6 @@ pub struct Config {
     pub source: Source,
     pub web: WebConfig,
     pub input: Input,
-    pub capture_resolution: CaptureResolution,
     pub output: Output,
     pub wled: Option<WledConfig>,
     pub processing: ProcessingSettings,
@@ -72,9 +71,19 @@ impl Config {
             "WLED effects require WLED output and a [wled] HTTP endpoint"
         );
         if let Input::Webos {
-            refresh_rate_hz, ..
+            refresh_rate_hz,
+            capture_resolution,
+            ..
         } = self.input
         {
+            let [width, height] = capture_resolution.dimensions();
+            anyhow::ensure!(
+                (2..=1920).contains(&width)
+                    && width.is_multiple_of(2)
+                    && (2..=1080).contains(&height)
+                    && height.is_multiple_of(2),
+                "webOS capture_resolution must have even dimensions within 2–1920 × 2–1080"
+            );
             anyhow::ensure!(
                 refresh_rate_hz.get() <= 60,
                 "webOS refresh_rate_hz must be between 1 and 60"

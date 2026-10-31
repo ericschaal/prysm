@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 /// A session-scoped listener. TV disconnects return to accepting a connection.
 ///
 /// This protocol has no authentication: bind on a trusted LAN interface only.
-/// Incoming dimensions are authoritative; `into_stream` dimensions are unused.
+/// Input dimensions and refresh rate are sent to the TV before capture starts.
 pub struct WebosCapturer {
     listener: std::net::TcpListener,
     shutdown: CancellationToken,
@@ -52,8 +52,8 @@ impl WebosCapturer {
 impl PrysmCapturer for WebosCapturer {
     fn into_stream(
         self,
-        _: u32,
-        _: u32,
+        width: u32,
+        height: u32,
         refresh_rate_hz: NonZeroU32,
     ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
         let (sender, finished, frames) = capture_channel(self.shutdown.clone());
@@ -62,6 +62,7 @@ impl PrysmCapturer for WebosCapturer {
             let result = async {
                 let settings = ControlMessage::CaptureSettings {
                     refresh_rate_hz: refresh_rate_hz.get(),
+                    capture_resolution: [width, height],
                 }
                 .validate()?;
                 let listener = TcpListener::from_std(self.listener)?;
@@ -530,7 +531,8 @@ mod tests {
             assert_eq!(
                 ControlMessage::decode(&settings).unwrap(),
                 ControlMessage::CaptureSettings {
-                    refresh_rate_hz: rate
+                    refresh_rate_hz: rate,
+                    capture_resolution: [640, 360],
                 }
             );
             client.write_all(&packet(1, 1, &[1, 2, 3])).await.unwrap();

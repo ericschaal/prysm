@@ -128,11 +128,7 @@ where
     arbiter.spawn(async move {
         let mut ready = Some(ready_tx);
         let result = async {
-            let frames = crate::input::into_stream(
-                config.input.clone(),
-                config.resolution.to_core(),
-                worker_shutdown.clone(),
-            )?;
+            let frames = crate::input::into_stream(config.input.clone(), worker_shutdown.clone())?;
             run_session(
                 config,
                 frames,
@@ -268,13 +264,13 @@ mod tests {
         PipelineConfig {
             revision: ConfigRevision::default(),
             input: prysm_contract::Input::File {
+                capture_resolution: [4, 4].try_into().unwrap(),
                 refresh_rate_hz: 30.try_into().unwrap(),
                 path: "/missing/prysm-pipeline-test.mp4"
                     .to_owned()
                     .try_into()
                     .unwrap(),
             },
-            resolution: [4, 4].try_into().unwrap(),
             processing: ProcessingSettings {
                 smoothing_seconds: 0.0.try_into().unwrap(),
                 remove_black_bars: false,

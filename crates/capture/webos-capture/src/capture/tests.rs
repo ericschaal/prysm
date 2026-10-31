@@ -3,17 +3,10 @@ use clap::Parser;
 use prysm_webos_protocol::PixelFormat;
 
 fn config(source: &str) -> Cli {
-    Cli::try_parse_from([
-        "capture",
-        "127.0.0.1:19400",
-        "--source",
-        source,
-        "--width",
-        "2",
-        "--height",
-        "2",
-    ])
-    .unwrap()
+    let mut cli = Cli::try_parse_from(["capture", "127.0.0.1:19400", "--source", source]).unwrap();
+    cli.capture.width = 2;
+    cli.capture.height = 2;
+    cli
 }
 
 #[test]
@@ -88,14 +81,14 @@ fn a_new_rate_retries_video_immediately_with_the_negotiated_options() {
     let mut capture = Capture::new(&config("video"));
     let mut ui = None::<fn(u32, u32, &mut Bgra8Pixels) -> Result<()>>;
     capture.video_retry = Instant::now() + Duration::from_secs(60);
-    capture.configure_rate(30);
+    capture.configure(30, [2, 2], &mut ui).unwrap();
     assert!(
         capture
             .capture(&mut |_| panic!("same rate reset backoff"), &mut ui)
             .unwrap()
             .is_none()
     );
-    capture.configure_rate(15);
+    capture.configure(15, [2, 2], &mut ui).unwrap();
     let mut rates = Vec::new();
     let mut open_video = |options: &CaptureOptions| {
         rates.push(options.fps);
@@ -103,4 +96,42 @@ fn a_new_rate_retries_video_immediately_with_the_negotiated_options() {
     };
     assert!(capture.capture(&mut open_video, &mut ui).unwrap().is_none());
     assert_eq!(rates, [15]);
+}
+
+#[test]
+fn resolution_changes_reconfigure_ui_and_retry_video_without_changing_rate() {
+    struct RecordingUi {
+        configured: Vec<[u32; 2]>,
+    }
+    impl UiCapture for RecordingUi {
+        fn configure(&mut self, options: &CaptureOptions) -> Result<()> {
+            self.configured.push([options.width, options.height]);
+            Ok(())
+        }
+        fn capture(&mut self, width: u32, height: u32, output: &mut Bgra8Pixels) -> Result<bool> {
+            assert_eq!(self.configured.last(), Some(&[width, height]));
+            *output.bytes_mut() = [0, 0, 255, 255].repeat((width * height) as usize);
+            Ok(true)
+        }
+    }
+    let mut capture = Capture::new(&config("both"));
+    let mut ui = Some(RecordingUi {
+        configured: Vec::new(),
+    });
+    let mut attempts = Vec::new();
+    let mut open_video = |options: &CaptureOptions| {
+        attempts.push([options.width, options.height]);
+        anyhow::bail!("test video unavailable")
+    };
+    capture.configure(30, [2, 2], &mut ui).unwrap();
+    let first = capture.capture(&mut open_video, &mut ui).unwrap().unwrap();
+    assert_eq!((first.header.width, first.header.height), (2, 2));
+    capture.video_retry = Instant::now() + Duration::from_secs(60);
+    capture.configure(30, [4, 2], &mut ui).unwrap();
+    let next = capture.capture(&mut open_video, &mut ui).unwrap().unwrap();
+    assert_eq!((next.header.width, next.header.height), (4, 2));
+    assert_eq!(next.pixels.len(), 4 * 2 * 3);
+    capture.configure(15, [4, 2], &mut ui).unwrap();
+    assert_eq!(ui.unwrap().configured, [[2, 2], [4, 2]]);
+    assert_eq!(attempts, [[2, 2], [4, 2]]);
 }

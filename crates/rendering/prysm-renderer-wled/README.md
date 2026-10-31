@@ -54,10 +54,11 @@ All settings are owned by the controller's single TOML file. File input uses:
 type = "file"
 path = "/path/to/video.mp4"
 refresh_rate_hz = 30
+capture_resolution = [640, 360]
 ```
 
 Device input uses `type = "device"` with a Linux device path or macOS AVFoundation
-UID in `device`. Each input requires a positive `refresh_rate_hz`.
+UID in `device`. Each input requires a positive `refresh_rate_hz` and a `capture_resolution`.
 Select `[output] type = "wled"` and configure its `address` and
 top/right/bottom/left LED counts. Alternatively, select
 `type = "egui"` with `--features desktop` for a native output without WLED.

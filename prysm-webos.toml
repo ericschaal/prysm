@@ -1,9 +1,5 @@
 revision = "21"
 source = "prysm"
-capture_resolution = [
-    640,
-    360,
-]
 
 [web]
 listen = "127.0.0.1:8787"
@@ -13,6 +9,10 @@ allowed_hosts = [
 ]
 
 [input]
+capture_resolution = [
+    640,
+    360,
+]
 refresh_rate_hz = 30
 type = "webos"
 listen = "0.0.0.0:19400"

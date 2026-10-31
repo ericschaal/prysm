@@ -1,9 +1,8 @@
 //! Coordinate connection negotiation, frame capture, transmission, and pacing.
 use crate::{
-    capture::{self, Capture},
+    capture::{Capture, NativeUi, UiCapture},
     cli::{CaptureOptions, Cli, Compression},
     native::Video,
-    pixels::Bgra8Pixels,
     transport::Sender,
 };
 use anyhow::Result;
@@ -14,14 +13,11 @@ use std::{
 };
 
 pub fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
-    let mut ui = capture::open_ui(cli)?;
     capture_loop(
         cli,
         stop,
         Video::open,
-        ui.as_mut().map(|ui| {
-            move |width, height, output: &mut Bgra8Pixels| ui.capture(width, height, output)
-        }),
+        cli.source.includes_ui().then(|| NativeUi::new(cli.source)),
     )
 }
 
@@ -29,7 +25,7 @@ pub(crate) fn capture_loop(
     cli: &Cli,
     stop: &AtomicBool,
     mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
-    mut capture_ui: Option<impl FnMut(u32, u32, &mut Bgra8Pixels) -> Result<()>>,
+    mut capture_ui: Option<impl UiCapture>,
 ) -> Result<()> {
     let mut capture = Capture::new(cli);
     let mut sender = Sender::new(cli.receiver, cli.compression);
@@ -58,9 +54,9 @@ pub(crate) fn capture_loop(
             }
         }
         if !was_connected {
-            capture.configure_rate(sender.fps);
+            capture.configure(sender.fps, sender.capture_resolution, &mut capture_ui)?;
             next = Instant::now();
-            record_capture_settings(cli, sender.fps);
+            record_capture_settings(cli, sender.fps, sender.capture_resolution);
         }
         let work = prysm_metrics::timer(Stage::CaptureIteration);
         if let Some(frame) = capture.capture(&mut open_video, &mut capture_ui)?
@@ -75,13 +71,13 @@ pub(crate) fn capture_loop(
     Ok(())
 }
 
-fn record_capture_settings(cli: &Cli, fps: u8) {
-    tracing::info!(fps, "capture settings negotiated");
+fn record_capture_settings(cli: &Cli, fps: u8, [width, height]: [u32; 2]) {
+    tracing::info!(fps, width, height, "capture settings negotiated");
     prysm_metrics::capture_info(
         cli.source.into(),
         cli.compression.into(),
-        cli.capture.width,
-        cli.capture.height,
+        width,
+        height,
         fps,
         prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
         if cli.compression == Compression::H264 {

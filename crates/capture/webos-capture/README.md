@@ -73,14 +73,15 @@ prysm-webos-capture 192.168.1.10:19400 --source ui --ui-backend halgal
 prysm-webos-capture --help
 ```
 
-Defaults are 320×180, both layers, automatic backend selection, and no
-compression. `--width` and `--height` are checked before any native library is
-opened. Dimensions must be even and within 2–1920 × 2–1080. Prysm owns the
-frame rate: set `input.refresh_rate_hz` to 1–60 on the receiver. The sender
-negotiates this rate before opening video capture and configuring H.264.
-There is no `--fps` option. The receiver's `capture_resolution` does not configure
-the TV dimensions. VTCapture receives the native FPS; DILE uses its frame divisor
-plus the sender loop's cadence to avoid capturing or sending excess frames.
+The receiver owns capture dimensions and frame rate. Set
+`input.capture_resolution = [width, height]` and `input.refresh_rate_hz` in Prysm's
+configuration. Dimensions must be even and within 2–1920 × 2–1080; FPS must be
+1–60. The sender negotiates both before opening native capture and configuring
+H.264, and recreates video capture and UI surfaces when resolution changes.
+There are no `--width`, `--height`, or `--fps` options on the sender. Other defaults
+remain both layers, automatic backend selection, and no compression. VTCapture
+receives the native FPS; DILE uses its frame divisor plus the sender loop's cadence
+to avoid capturing or sending excess frames.
 
 | Option | Choices / purpose |
 | --- | --- |
@@ -103,11 +104,12 @@ back to video. Explicit UI-only capture reports UI initialization failures.
 
 ## Low-latency H.264
 
-Rebuild both Prysm and the TV distribution, then run on the TV:
+Set `input.capture_resolution = [640, 240]` on the receiver, rebuild both Prysm
+and the TV distribution, then run on the TV:
 
 ```sh
 ./prysm-webos-capture 192.168.18.18:19400 --source both \
-  --compression h264 --h264-bitrate 2000000 --width 640 --height 240 \
+  --compression h264 --h264-bitrate 2000000 \
   --metrics-listen 0.0.0.0:9101
 ```
 
@@ -148,7 +150,7 @@ Apply the temporary Luna setup below if needed. On the TV:
 ```sh
 cd /media/developer/prysm-capture
 ./prysm-webos-capture PRYSM_MACHINE_IPV4:19400 \
-  --source video --video-backend vtcapture --width 320 --height 180
+  --source video --video-backend vtcapture
 ```
 
 Ctrl+C and SIGTERM request shutdown and resource cleanup. Native driver calls
@@ -268,22 +270,24 @@ synthetic encoding took roughly 9–11 µs per frame; these are host measurement
 
 There is no frame queue. Connect and complete-frame writes each have a 100 ms
 deadline; partial writes close the connection and retry after one second. During
-network backoff, video polling continues but UI capture and composition are skipped.
+network backoff, capture and composition are paused.
 Safe `nix` polling preserves one deadline across every partial write. TCP buffers can
 still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
 Each TCP connection begins with a control handshake. Both control messages are
 Serde JSON, prefixed by a four-byte unsigned big-endian payload length (1–128
-bytes). The sender sends `{"type":"hello","version":1}`; Prysm replies with
-`{"type":"capture_settings","refresh_rate_hz":30}` using its configured rate.
-Unknown versions, message types, fields, invalid rates, and oversized messages
+bytes). The sender sends `{"type":"hello","version":2}`; Prysm replies with
+`{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[640,360]}`
+using its configured input settings. Unknown versions, message types, fields,
+invalid rates/dimensions, and oversized messages
 are rejected. The handshake has a one-second deadline. Old senders/receivers
 without this handshake are incompatible; upgrade both together.
 
 The sender connects before acquiring video/UI frames. On connection failure it
 backs off without capturing; on reconnect it negotiates again, recreates video
-capture when the rate changes, and initializes a fresh H.264 encoder. Changing
-Prysm's input rate recreates its receiver session, causing this reconnect.
+capture when the rate or resolution changes, reopens UI surfaces when resized,
+and initializes a fresh H.264 encoder. Changing Prysm's input rate or resolution
+recreates its receiver session, causing this reconnect.
 
 After the handshake, frames retain their 24-byte binary header and payload:
 

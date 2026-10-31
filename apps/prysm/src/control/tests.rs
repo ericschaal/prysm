@@ -31,13 +31,19 @@ impl EguiController {
         let mut config: Config =
             toml::from_str(include_str!("../../../../prysm-egui.toml")).unwrap();
         config.input = Input::File {
+            capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
             path: "/missing/prysm-egui-test.mkv"
                 .to_owned()
                 .try_into()
                 .unwrap(),
         };
-        config.capture_resolution = [16, 16].try_into().unwrap();
+        if let prysm_contract::Input::File {
+            capture_resolution, ..
+        } = &mut config.input
+        {
+            *capture_resolution = [16, 16].try_into().unwrap();
+        }
         config.processing.smoothing_seconds = 0.0.try_into().unwrap();
         config.processing.remove_black_bars = false;
         std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
@@ -258,6 +264,7 @@ async fn egui_controller_processes_file_applies_settings_restarts_and_replays_af
     );
     let mut config = egui.app.config.borrow().clone();
     config.input = Input::File {
+        capture_resolution: [16, 16].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),
         path: video.to_str().unwrap().to_owned().try_into().unwrap(),
     };
@@ -295,7 +302,12 @@ async fn egui_controller_processes_file_applies_settings_restarts_and_replays_af
     );
 
     let mut config = egui.app.config.borrow().clone();
-    config.capture_resolution = [8, 8].try_into().unwrap();
+    if let prysm_contract::Input::File {
+        capture_resolution, ..
+    } = &mut config.input
+    {
+        *capture_resolution = [8, 8].try_into().unwrap();
+    }
     assert!(matches!(
         egui.save(config).await.operation,
         OperationStatus::Succeeded { .. }

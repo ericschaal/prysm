@@ -46,10 +46,12 @@ fn loads_current_config_and_rejects_invalid_output() {
     std::fs::write(&path, saved).unwrap();
     assert_eq!(prysm::config::load(&path).unwrap(), config);
 
+    let mut invalid_rate = toml::Value::try_from(&config).unwrap();
+    invalid_rate["input"]["refresh_rate_hz"] = toml::Value::Integer(0);
     for invalid in [
         tagged.replace("type = \"wled\"\n", ""),
         tagged.replace("type = \"wled\"", "type = \"unknown\""),
-        tagged.replace("refresh_rate_hz = 50", "refresh_rate_hz = 0"),
+        toml::to_string(&invalid_rate).unwrap(),
         tagged.replace("[output]\n", "[output]\ntypo = true\n"),
     ] {
         std::fs::write(&path, invalid).unwrap();

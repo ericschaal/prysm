@@ -15,11 +15,11 @@ pub struct CapturedFrame<'a> {
     pub content: Content,
 }
 
-pub fn open_ui(cli: &Cli) -> Result<Option<Ui>> {
-    let ui = if cli.source.includes_ui() {
-        match Ui::open(&cli.capture) {
+fn open_ui(source: Source, options: &CaptureOptions) -> Result<Option<Ui>> {
+    let ui = if source.includes_ui() {
+        match Ui::open(options) {
             Ok(ui) => Some(ui),
-            Err(error) if cli.source == Source::Ui => return Err(error),
+            Err(error) if source == Source::Ui => return Err(error),
             Err(error) => {
                 tracing::warn!(error = %format!("{error:#}"), "UI unavailable; video only");
                 None
@@ -36,6 +36,46 @@ pub fn open_ui(cli: &Cli) -> Result<Option<Ui>> {
     Ok(ui)
 }
 
+/// A UI source can recreate size-dependent resources before acquiring frames.
+pub trait UiCapture {
+    fn configure(&mut self, _options: &CaptureOptions) -> Result<()> {
+        Ok(())
+    }
+    fn capture(&mut self, width: u32, height: u32, output: &mut Bgra8Pixels) -> Result<bool>;
+}
+
+impl<F: FnMut(u32, u32, &mut Bgra8Pixels) -> Result<()>> UiCapture for F {
+    fn capture(&mut self, width: u32, height: u32, output: &mut Bgra8Pixels) -> Result<bool> {
+        self(width, height, output).map(|()| true)
+    }
+}
+
+pub struct NativeUi {
+    source: Source,
+    ui: Option<Ui>,
+}
+
+impl NativeUi {
+    pub fn new(source: Source) -> Self {
+        Self { source, ui: None }
+    }
+}
+
+impl UiCapture for NativeUi {
+    fn configure(&mut self, options: &CaptureOptions) -> Result<()> {
+        self.ui = None;
+        self.ui = open_ui(self.source, options)?;
+        Ok(())
+    }
+
+    fn capture(&mut self, width: u32, height: u32, output: &mut Bgra8Pixels) -> Result<bool> {
+        match self.ui.as_mut() {
+            Some(ui) => ui.capture(width, height, output).map(|()| true),
+            None => Ok(false),
+        }
+    }
+}
+
 pub struct Capture {
     options: CaptureOptions,
     source: Source,
@@ -46,6 +86,7 @@ pub struct Capture {
     composition: CompositionBuffer,
     bgra: Bgra8Pixels,
     ui_warning: Instant,
+    configured: bool,
 }
 
 impl Capture {
@@ -64,15 +105,30 @@ impl Capture {
             composition: CompositionBuffer::default(),
             bgra: Bgra8Pixels::default(),
             ui_warning: Instant::now(),
+            configured: false,
         }
     }
 
-    pub fn configure_rate(&mut self, fps: u8) {
-        if self.options.fps != fps {
+    pub fn configure(
+        &mut self,
+        fps: u8,
+        resolution: [u32; 2],
+        ui: &mut Option<impl UiCapture>,
+    ) -> Result<()> {
+        let resized = [self.options.width, self.options.height] != resolution;
+        if self.options.fps != fps || resized {
             self.release_video();
             self.options.fps = fps;
+            [self.options.width, self.options.height] = resolution;
             self.video_retry = Instant::now();
         }
+        if !self.configured || resized {
+            if let Some(ui) = ui {
+                ui.configure(&self.options)?;
+            }
+            self.configured = true;
+        }
+        Ok(())
     }
 
     pub fn release_video(&mut self) {
@@ -82,7 +138,7 @@ impl Capture {
     pub fn capture(
         &mut self,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
-        capture_ui: &mut Option<impl FnMut(u32, u32, &mut Bgra8Pixels) -> Result<()>>,
+        capture_ui: &mut Option<impl UiCapture>,
     ) -> Result<Option<CapturedFrame<'_>>> {
         let video = if self.source.includes_video() {
             self.capture_video(open_video)
@@ -94,13 +150,13 @@ impl Capture {
                 (h.width, h.height)
             });
             let ui_time = prysm_metrics::timer(Stage::UiAcquire);
-            let result = capture_ui(width, height, &mut self.bgra);
+            let result = capture_ui.capture(width, height, &mut self.bgra);
             drop(ui_time);
             if result.is_err() {
                 prysm_metrics::event(UiCaptureEvent::AcquireFailed);
             }
             match result {
-                Ok(()) => {
+                Ok(true) => {
                     prysm_metrics::frame(FrameStage::UiCaptured, (&self.bgra).into());
                     let content = if video.is_some() {
                         Content::Blended
@@ -127,7 +183,7 @@ impl Capture {
                     tracing::warn!(error = %format!("{error:#}"), "UI frame skipped");
                     self.ui_warning = Instant::now() + Duration::from_secs(1);
                 }
-                Err(_) => {}
+                Ok(false) | Err(_) => {}
             }
         }
         Ok(video.map(|header| CapturedFrame {

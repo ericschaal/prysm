@@ -32,10 +32,16 @@ async fn file_egui_keeps_final_frame_and_shuts_down_on_signal() {
     let mut config: Config = toml::from_str(include_str!("../../../prysm-egui.toml")).unwrap();
     assert!(config.wled.is_none());
     config.input = Input::File {
+        capture_resolution: [640, 360].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),
         path: video.to_str().unwrap().to_owned().try_into().unwrap(),
     };
-    config.capture_resolution = [16, 16].try_into().unwrap();
+    if let prysm_contract::Input::File {
+        capture_resolution, ..
+    } = &mut config.input
+    {
+        *capture_resolution = [16, 16].try_into().unwrap();
+    }
     let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = available.local_addr().unwrap();
     drop(available);

@@ -138,10 +138,14 @@ Input and output are independent:
 
 Set `[input]` to `type = "file"` with `path`, `type = "device"` with `device`,
 or `type = "webos"` with a TCP `listen` address. Each input requires a positive
-`refresh_rate_hz`, which configures the capture source directly. FFmpeg caps file
-output at the lower of the source and configured rate; devices must support the
-requested rate. webOS negotiates its rate (1–60 Hz) with the TV sender over TCP
-before capture starts and again on reconnect.
+`refresh_rate_hz` and `capture_resolution = [width, height]`, which configure the
+capture source directly. FFmpeg caps file output at the lower of the source and
+configured rate; devices must support the
+requested native resolution and rate. AVFoundation selects a matching device
+format; V4L2 verifies the negotiated dimensions. webOS negotiates its rate
+(1–60 Hz) and resolution with the TV sender over TCP before capture starts and
+again on reconnect. webOS dimensions must be even and
+within 2–1920 × 2–1080.
 Files require FFmpeg 9+ on PATH.
 Capture devices provide video feeds; this does not directly record the desktop.
 See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.
@@ -177,7 +181,8 @@ web UI remains available and reports a lost connection.
 ## Configuration
 
 Prysm owns one TOML file with `[web]` (REST listen address and allowed hosts),
-`[input]`, `[output]`, `[processing]`, `capture_resolution`, source, and revision.
+`[input]` (including `capture_resolution` and `refresh_rate_hz`), `[output]`,
+`[processing]`, source, and revision.
 The optional `[wled]` HTTP endpoint enables WLED power/effect management for WLED
 output. Without it, start/stop controls the pipeline directly, for either renderer.
 `source = "prysm"` selects captured colors; `source = "wled"` selects WLED's

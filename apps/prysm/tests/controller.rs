@@ -127,7 +127,6 @@ async fn exercise_controller(video: Option<PathBuf>) {
             r#"
 revision = "0"
 source = "prysm"
-capture_resolution = [4, 4]
 [processing]
 brightness_percent = 100
 shadow_lift_percent = 0
@@ -141,6 +140,7 @@ allowed_hosts = ["{address}"]
 [wled]
 url = "http://{wled_address}/"
 [input]
+capture_resolution = [4, 4]
 refresh_rate_hz = 30
 type = "file"
 path = "/missing/prysm-local-controller-test.mp4"
@@ -357,10 +357,16 @@ left = 1
             .await
             .unwrap();
         settings.input = prysm_contract::Input::File {
+            capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
             path: video.to_str().unwrap().to_owned().try_into().unwrap(),
         };
-        settings.capture_resolution = [16, 16].try_into().unwrap();
+        if let prysm_contract::Input::File {
+            capture_resolution, ..
+        } = &mut settings.input
+        {
+            *capture_resolution = [16, 16].try_into().unwrap();
+        }
         // A source saved while effects are on must start screen sync too.
         settings.source = Source::Prysm;
         save_config(&client, &config_endpoint, &endpoint, settings).await;

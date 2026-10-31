@@ -48,7 +48,6 @@ export interface components {
         CaptureResolution: number[];
         /** @description The complete saved configuration. Runtime observations and power are never saved. */
         Config: {
-            capture_resolution: components["schemas"]["CaptureResolution"];
             input: components["schemas"]["Input"];
             output: components["schemas"]["Output"];
             processing: components["schemas"]["ProcessingSettings"];
@@ -62,18 +61,21 @@ export interface components {
         /** @enum {string} */
         ErrorCode: "invalid_request" | "conflict" | "persistence" | "backend" | "unavailable";
         Input: {
+            capture_resolution: components["schemas"]["CaptureResolution"];
             device: components["schemas"]["DeviceId"];
             /** Format: int32 */
             refresh_rate_hz: number;
             /** @enum {string} */
             type: "device";
         } | {
+            capture_resolution: components["schemas"]["CaptureResolution"];
             path: components["schemas"]["VideoPath"];
             /** Format: int32 */
             refresh_rate_hz: number;
             /** @enum {string} */
             type: "file";
         } | {
+            capture_resolution: components["schemas"]["CaptureResolution"];
             listen: string;
             /** Format: int32 */
             refresh_rate_hz: number;

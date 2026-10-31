@@ -174,19 +174,39 @@ pub enum Input {
         device: DeviceId,
         #[schema(value_type = u32, minimum = 1)]
         refresh_rate_hz: NonZeroU32,
+        capture_resolution: CaptureResolution,
     },
     File {
         path: VideoPath,
         #[schema(value_type = u32, minimum = 1)]
         refresh_rate_hz: NonZeroU32,
+        capture_resolution: CaptureResolution,
     },
     Webos {
         #[schema(value_type = String)]
         listen: std::net::SocketAddr,
         #[schema(value_type = u32, minimum = 1, maximum = 60)]
         refresh_rate_hz: NonZeroU32,
+        capture_resolution: CaptureResolution,
     },
 }
+impl Input {
+    #[must_use]
+    pub const fn capture_resolution(&self) -> CaptureResolution {
+        match self {
+            Self::Device {
+                capture_resolution, ..
+            }
+            | Self::File {
+                capture_resolution, ..
+            }
+            | Self::Webos {
+                capture_resolution, ..
+            } => *capture_resolution,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Output {

@@ -17,6 +17,7 @@ use av_foundation::capture_video_data_output::{
 use av_foundation::media_format::AVMediaTypeVideo;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
+use core_media::format_description::CMVideoFormatDescription;
 use core_media::sample_buffer::{CMSampleBuffer, CMSampleBufferRef};
 use core_media::time::CMTime;
 use core_video::buffer::TCVBuffer;
@@ -251,25 +252,46 @@ impl Drop for RunningSession {
     }
 }
 
-fn configure_frame_rate(
+fn configure_capture(
     device: &AVCaptureDevice,
+    width: u32,
+    height: u32,
     refresh_rate_hz: NonZeroU32,
 ) -> anyhow::Result<()> {
     let timescale = i32::try_from(refresh_rate_hz.get())
         .context("capture rate exceeds AVFoundation's timescale")?;
-    let ranges = device
-        .get_active_format()
-        .video_supported_frame_rate_ranges();
-    anyhow::ensure!(
-        ranges.iter().any(|range| {
-            range.min_frame_rate() <= f64::from(refresh_rate_hz.get())
-                && f64::from(refresh_rate_hz.get()) <= range.max_frame_rate()
-        }),
-        "capture device's active format does not support {refresh_rate_hz} Hz"
-    );
+    let requested_width =
+        i32::try_from(width).context("capture width exceeds AVFoundation's dimensions")?;
+    let requested_height =
+        i32::try_from(height).context("capture height exceeds AVFoundation's dimensions")?;
+    let formats = device.formats();
+    let format = formats
+        .iter()
+        .find(|format| {
+            let Some(description) = format
+                .format_description()
+                .downcast::<CMVideoFormatDescription>()
+            else {
+                return false;
+            };
+            let dimensions = description.get_dimensions();
+            dimensions.width == requested_width
+                && dimensions.height == requested_height
+                && format
+                    .video_supported_frame_rate_ranges()
+                    .iter()
+                    .any(|range| {
+                        range.min_frame_rate() <= f64::from(refresh_rate_hz.get())
+                            && f64::from(refresh_rate_hz.get()) <= range.max_frame_rate()
+                    })
+        })
+        .with_context(|| {
+            format!("capture device does not support {width}x{height} at {refresh_rate_hz} Hz")
+        })?;
     device
         .lock_for_configuration()
-        .context("cannot lock capture device to set frame rate")?;
+        .context("cannot lock capture device to set format and frame rate")?;
+    device.set_active_format(&format);
     let duration = CMTime::make(1, timescale);
     device.set_active_video_min_frame_duration(duration);
     device.set_active_video_max_frame_duration(duration);
@@ -323,9 +345,9 @@ fn start_session(
     }
     session.add_output(&output);
     output.set_video_settings(&video_settings(width, height));
+    let configured = configure_capture(&device, width, height, refresh_rate_hz);
     session.commit_configuration();
-
-    configure_frame_rate(&device, refresh_rate_hz)?;
+    configured?;
 
     let running = RunningSession {
         session,
@@ -334,6 +356,21 @@ fn start_session(
         _queue: queue,
     };
     running.session.start_running();
+    let actual = device
+        .get_active_format()
+        .format_description()
+        .downcast::<CMVideoFormatDescription>()
+        .context("capture device did not retain a video format")?
+        .get_dimensions();
+    if i64::from(actual.width) != i64::from(width) || i64::from(actual.height) != i64::from(height)
+    {
+        return Err(anyhow!(
+            "capture device changed resolution to {}x{}; requested {width}x{height}",
+            actual.width,
+            actual.height
+        )
+        .into());
+    }
     if let Some(error) = running
         .delegate
         .ivars()

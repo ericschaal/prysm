@@ -27,7 +27,7 @@ fn run_with_window(path: &Path, config: Config) -> Result<()> {
     use tokio::sync::watch;
     use tokio_util::sync::CancellationToken;
 
-    let [width, height] = config.capture_resolution.dimensions();
+    let [width, height] = config.input.capture_resolution().dimensions();
     let shutdown = CancellationToken::new();
     let (colors, colors_rx) = watch::channel(EdgeColors::default());
     let (frames, frames_rx) = watch::channel(DisplayFrame {

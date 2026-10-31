@@ -162,7 +162,10 @@ impl V4lCapturer {
                         .format()
                         .context("failed to read negotiated capture format")?;
 
-                    // Validate that a supported format was set
+                    // Drivers may substitute dimensions; require the configured native size.
+                    if format.width != width || format.height != height {
+                        continue;
+                    }
                     if format.fourcc == FourCC::new(b"YUYV") && !format.width.is_multiple_of(2) {
                         continue;
                     }
@@ -198,7 +201,7 @@ impl V4lCapturer {
         }
 
         Err(CaptureError::UnsupportedFormat {
-            details: "device must support YUYV, RGB3 or BGR3 with valid dimensions".into(),
+            details: format!("device must support {width}x{height} capture in YUYV, RGB3 or BGR3"),
             source: last_error,
         })
     }

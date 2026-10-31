@@ -5,13 +5,13 @@ use utoipa::PartialSchema;
 const CONFIG: &str = r#"
 revision = "0"
 source = "prysm"
-capture_resolution = [640, 360]
 [web]
 listen = "127.0.0.1:8787"
 allowed_hosts = ["localhost:8787"]
 [wled]
 url = "http://wled.local/"
 [input]
+capture_resolution = [640, 360]
 refresh_rate_hz = 30
 type = "device"
 device = "/dev/video0"
@@ -120,6 +120,7 @@ fn webos_input_round_trips() {
     let config: Config = toml::from_str(CONFIG).unwrap();
     let mut next = config.clone();
     next.input = Input::Webos {
+        capture_resolution: [640, 360].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),
         listen: "0.0.0.0:19400".parse().unwrap(),
     };
@@ -129,10 +130,11 @@ fn webos_input_round_trips() {
     );
     assert_eq!(
         serde_json::from_value::<Input>(
-            json!({"type":"webos", "refresh_rate_hz":30, "listen":"127.0.0.1:19400"})
+            json!({"type":"webos", "capture_resolution":[640,360], "refresh_rate_hz":30, "listen":"127.0.0.1:19400"})
         )
         .unwrap(),
         Input::Webos {
+            capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
             listen: "127.0.0.1:19400".parse().unwrap()
         }
@@ -140,7 +142,7 @@ fn webos_input_round_trips() {
     for invalid in ["tv.local:19400", "0.0.0.0", "bad"] {
         assert!(
             serde_json::from_value::<Input>(
-                json!({"type":"webos", "refresh_rate_hz":30, "listen":invalid})
+                json!({"type":"webos", "capture_resolution":[640,360], "refresh_rate_hz":30, "listen":invalid})
             )
             .is_err()
         );
@@ -171,9 +173,9 @@ fn schema_matches_serialized_values() {
 fn every_input_output_pair_is_valid_without_wled_http_control() {
     let base: Config = toml::from_str(CONFIG).unwrap();
     let inputs = [
-        json!({"type":"device", "refresh_rate_hz":30, "device":"/dev/video0"}),
-        json!({"type":"file", "refresh_rate_hz":30, "path":"/tmp/video.mkv"}),
-        json!({"type":"webos", "refresh_rate_hz":30, "listen":"127.0.0.1:19400"}),
+        json!({"type":"device", "capture_resolution":[640,360], "refresh_rate_hz":30, "device":"/dev/video0"}),
+        json!({"type":"file", "capture_resolution":[640,360], "refresh_rate_hz":30, "path":"/tmp/video.mkv"}),
+        json!({"type":"webos", "capture_resolution":[640,360], "refresh_rate_hz":30, "listen":"127.0.0.1:19400"}),
     ];
     let outputs = [
         serde_json::to_value(&base.output).unwrap(),
@@ -199,9 +201,9 @@ fn every_input_output_pair_is_valid_without_wled_http_control() {
 #[test]
 fn input_rates_are_required_positive_and_output_rates_are_rejected() {
     for input in [
-        json!({"type":"device", "device":"/dev/video0"}),
-        json!({"type":"file", "path":"video.mkv"}),
-        json!({"type":"webos", "listen":"127.0.0.1:19400"}),
+        json!({"type":"device", "capture_resolution":[640,360], "device":"/dev/video0"}),
+        json!({"type":"file", "capture_resolution":[640,360], "path":"video.mkv"}),
+        json!({"type":"webos", "capture_resolution":[640,360], "listen":"127.0.0.1:19400"}),
     ] {
         assert!(serde_json::from_value::<Input>(input.clone()).is_err());
         for rate in [json!(0), json!(-1), json!(1.5), json!("30")] {
@@ -229,8 +231,38 @@ fn webos_capture_rate_cannot_exceed_native_limit() {
     for rate in [1, 60, 61] {
         config.input = Input::Webos {
             listen: "127.0.0.1:19400".parse().unwrap(),
+            capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: rate.try_into().unwrap(),
         };
         assert_eq!(config.validate().is_ok(), rate <= 60);
+    }
+}
+
+#[test]
+fn capture_resolution_belongs_to_input_and_webos_dimensions_are_validated() {
+    let base: Config = toml::from_str(CONFIG).unwrap();
+    for mut input in [
+        json!({"type":"device", "device":"/dev/video0", "refresh_rate_hz":30}),
+        json!({"type":"file", "path":"video.mkv", "refresh_rate_hz":30}),
+        json!({"type":"webos", "listen":"127.0.0.1:19400", "refresh_rate_hz":30}),
+    ] {
+        assert!(serde_json::from_value::<Input>(input.clone()).is_err());
+        input["capture_resolution"] = json!([640, 360]);
+        assert!(serde_json::from_value::<Input>(input).is_ok());
+    }
+    let mut old_config = serde_json::to_value(&base).unwrap();
+    old_config["capture_resolution"] = json!([640, 360]);
+    assert!(serde_json::from_value::<Config>(old_config).is_err());
+    for resolution in [[2, 2], [1920, 1080], [3, 360], [640, 1082], [1922, 360]] {
+        let mut config = base.clone();
+        config.input = Input::Webos {
+            listen: "127.0.0.1:19400".parse().unwrap(),
+            refresh_rate_hz: 30.try_into().unwrap(),
+            capture_resolution: resolution.try_into().unwrap(),
+        };
+        assert_eq!(
+            config.validate().is_ok(),
+            resolution == [2, 2] || resolution == [1920, 1080]
+        );
     }
 }

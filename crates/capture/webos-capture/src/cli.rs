@@ -35,12 +35,12 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Args)]
 pub struct CaptureOptions {
-    /// Capture width (even, 2–1920)
-    #[arg(long, default_value_t = 320, value_parser = dimension::<1920>)]
+    /// Negotiated with Prysm before capture starts
+    #[arg(skip = 320u32)]
     pub width: u32,
 
-    /// Capture height (even, 2–1080)
-    #[arg(long, default_value_t = 180, value_parser = dimension::<1080>)]
+    /// Negotiated with Prysm before capture starts
+    #[arg(skip = 180u32)]
     pub height: u32,
 
     /// Negotiated with Prysm before capture starts
@@ -130,15 +130,6 @@ pub enum CapturePoint {
     Blended = 3,
     Osd = 4,
     Histogram = 5,
-}
-
-fn dimension<const MAX: u32>(value: &str) -> Result<u32, String> {
-    let dimension = value.parse::<u32>().map_err(|error| error.to_string())?;
-    if (2..=MAX).contains(&dimension) && dimension.is_multiple_of(2) {
-        Ok(dimension)
-    } else {
-        Err(format!("must be an even number from 2 to {MAX}"))
-    }
 }
 
 fn receiver(value: &str) -> Result<SocketAddr, String> {

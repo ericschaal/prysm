@@ -1,7 +1,5 @@
 //! Configuration file loading and pipeline reconfiguration policy.
-use prysm_contract::{
-    CaptureResolution, Config, ConfigRevision, Input, Output, ProcessingSettings,
-};
+use prysm_contract::{Config, ConfigRevision, Input, Output, ProcessingSettings};
 use std::path::Path;
 
 pub fn load(path: &Path) -> anyhow::Result<Config> {
@@ -20,13 +18,12 @@ pub struct PipelineConfig {
     pub revision: ConfigRevision,
     pub input: Input,
     pub output: Output,
-    pub resolution: CaptureResolution,
     pub processing: ProcessingSettings,
 }
 impl PipelineConfig {
     #[must_use]
     pub fn requires_restart(&self, next: &Self) -> bool {
-        self.input != next.input || self.output != next.output || self.resolution != next.resolution
+        self.input != next.input || self.output != next.output
     }
 }
 
@@ -36,7 +33,6 @@ impl From<&Config> for PipelineConfig {
             revision: config.revision,
             input: config.input.clone(),
             output: config.output.clone(),
-            resolution: config.capture_resolution,
             processing: config.processing,
         }
     }
@@ -63,10 +59,16 @@ mod tests {
             *refresh_rate_hz = 15.try_into().unwrap();
         }
         assert!(current.requires_restart(&rate_change));
-        next.resolution = CaptureResolution::new(1280, 720).unwrap();
+        if let Input::Device {
+            capture_resolution, ..
+        } = &mut next.input
+        {
+            *capture_resolution = prysm_contract::CaptureResolution::new(1280, 720).unwrap();
+        }
         assert!(current.requires_restart(&next));
         let mut next = current.clone();
         next.input = Input::Webos {
+            capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
             listen: "0.0.0.0:19400".parse().unwrap(),
         };

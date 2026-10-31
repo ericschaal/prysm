@@ -368,10 +368,6 @@ mod tests {
         let cli = crate::cli::Cli::try_parse_from([
             "capture",
             &listener.local_addr().unwrap().to_string(),
-            "--width",
-            "2",
-            "--height",
-            "2",
         ])
         .unwrap();
         let mut driver = Driver {

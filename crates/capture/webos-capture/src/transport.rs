@@ -34,6 +34,7 @@ pub struct Sender {
     encoder: Option<prysm_webos_protocol::h264::Encoder>,
     pub h264_bitrate: u32,
     pub fps: u8,
+    pub capture_resolution: [u32; 2],
 }
 
 impl Sender {
@@ -48,6 +49,7 @@ impl Sender {
             encoder: None,
             h264_bitrate: 2_000_000,
             fps: 30,
+            capture_resolution: [320, 180],
         }
     }
 
@@ -88,10 +90,15 @@ impl Sender {
                 .context("cannot send webOS hello")?;
             let message =
                 read_settings(&mut connected).context("cannot read webOS capture settings")?;
-            let ControlMessage::CaptureSettings { refresh_rate_hz } = message else {
+            let ControlMessage::CaptureSettings {
+                refresh_rate_hz,
+                capture_resolution,
+            } = message
+            else {
                 anyhow::bail!("expected webOS capture settings");
             };
             self.fps = u8::try_from(refresh_rate_hz)?;
+            self.capture_resolution = capture_resolution;
             self.socket = Some(connected);
             prysm_metrics::event(if self.has_connected {
                 FrameSenderEvent::Reconnected
@@ -316,6 +323,14 @@ pub(crate) mod tests {
     use std::{io::Read, net::TcpListener, thread};
 
     pub(crate) fn accept(listener: &TcpListener, rate: u32) -> TcpStream {
+        accept_resolution(listener, rate, [2, 2])
+    }
+
+    pub(crate) fn accept_resolution(
+        listener: &TcpListener,
+        rate: u32,
+        capture_resolution: [u32; 2],
+    ) -> TcpStream {
         let (mut socket, _) = listener.accept().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -323,6 +338,7 @@ pub(crate) mod tests {
         read_hello(&mut socket);
         for byte in (ControlMessage::CaptureSettings {
             refresh_rate_hz: rate,
+            capture_resolution,
         })
         .encode()
         .unwrap()
@@ -441,8 +457,8 @@ pub(crate) mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::H264);
         let receiver = thread::spawn(move || {
-            for rate in [30, 15] {
-                let mut socket = accept(&listener, rate);
+            for (rate, resolution) in [(30, [64, 32]), (15, [32, 16])] {
+                let mut socket = accept_resolution(&listener, rate, resolution);
                 let mut bytes = [0; HEADER_LEN];
                 socket.read_exact(&mut bytes).unwrap();
                 let header = Header::decode(&bytes).unwrap();
@@ -450,7 +466,11 @@ pub(crate) mod tests {
                 let mut payload = vec![0; header.payload_len];
                 socket.read_exact(&mut payload).unwrap();
                 let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
-                assert_eq!(decoder.decode(header, &payload).unwrap().len(), 64 * 32 * 3);
+                assert_eq!([header.width, header.height], resolution);
+                assert_eq!(
+                    decoder.decode(header, &payload).unwrap().len(),
+                    (resolution[0] * resolution[1] * 3) as usize
+                );
             }
         });
         let header = Header {
@@ -476,6 +496,14 @@ pub(crate) mod tests {
         assert!(sender.encoder.is_none());
         sender.retry_after = Instant::now();
         assert!(sender.connect().unwrap());
+        assert_eq!(sender.capture_resolution, [32, 16]);
+        let header = Header {
+            width: 32,
+            height: 16,
+            payload_len: 32 * 16 * 3,
+            ..header
+        };
+        let pixels = [255, 0, 0].repeat(32 * 16);
         assert_eq!(
             sender.send(header, &pixels, Content::Blended).unwrap(),
             SendOutcome::Sent
@@ -594,8 +622,9 @@ pub(crate) mod tests {
         for json in [
             r#"{"type":"hello","version":1}"#,
             r#"{"type":"hello","version":2}"#,
-            r#"{"type":"capture_settings","refresh_rate_hz":0}"#,
-            r#"{"type":"capture_settings","refresh_rate_hz":61}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[3,360]}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":0,"capture_resolution":[640,360]}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":61,"capture_resolution":[640,360]}"#,
         ] {
             let mut bytes = u32::try_from(json.len()).unwrap().to_be_bytes().to_vec();
             bytes.extend_from_slice(json.as_bytes());

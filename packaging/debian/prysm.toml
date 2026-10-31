@@ -1,7 +1,6 @@
 # Prysm engine configuration, owned and persisted by Prysm.
 revision = "0"
 source = "prysm"
-capture_resolution = [640, 360]
 
 [web]
 listen = "127.0.0.1:8787"
@@ -12,6 +11,7 @@ allowed_hosts = ["127.0.0.1:8787", "localhost:8787"]
 url = "http://wled.local/"
 
 [input]
+capture_resolution = [640, 360]
 refresh_rate_hz = 50
 type = "device"
 # Prefer /dev/v4l/by-id/... when available.

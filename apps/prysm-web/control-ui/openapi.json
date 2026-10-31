@@ -208,14 +208,10 @@
           "source",
           "web",
           "input",
-          "capture_resolution",
           "output",
           "processing"
         ],
         "properties": {
-          "capture_resolution": {
-            "$ref": "#/components/schemas/CaptureResolution"
-          },
           "input": {
             "$ref": "#/components/schemas/Input"
           },
@@ -271,9 +267,13 @@
             "required": [
               "device",
               "refresh_rate_hz",
+              "capture_resolution",
               "type"
             ],
             "properties": {
+              "capture_resolution": {
+                "$ref": "#/components/schemas/CaptureResolution"
+              },
               "device": {
                 "$ref": "#/components/schemas/DeviceId"
               },
@@ -295,9 +295,13 @@
             "required": [
               "path",
               "refresh_rate_hz",
+              "capture_resolution",
               "type"
             ],
             "properties": {
+              "capture_resolution": {
+                "$ref": "#/components/schemas/CaptureResolution"
+              },
               "path": {
                 "$ref": "#/components/schemas/VideoPath"
               },
@@ -319,9 +323,13 @@
             "required": [
               "listen",
               "refresh_rate_hz",
+              "capture_resolution",
               "type"
             ],
             "properties": {
+              "capture_resolution": {
+                "$ref": "#/components/schemas/CaptureResolution"
+              },
               "listen": {
                 "type": "string"
               },

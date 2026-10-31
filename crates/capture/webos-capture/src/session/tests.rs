@@ -13,17 +13,15 @@ fn nv12_composition_reaches_the_socket_with_raw_or_lz4_payload() {
             &listener.local_addr().unwrap().to_string(),
             "--source",
             "ui",
-            "--width",
-            "16",
-            "--height",
-            "8",
             "--composition-format",
             "nv12",
             "--compression",
             compression,
         ])
         .unwrap();
-        let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 15));
+        let receiver = std::thread::spawn(move || {
+            crate::transport::tests::accept_resolution(&listener, 15, [16, 8])
+        });
         let stop = AtomicBool::new(false);
         capture_loop(
             &cli,
@@ -70,15 +68,8 @@ fn nv12_composition_reaches_the_socket_with_raw_or_lz4_payload() {
 #[test]
 fn startup_retries_while_ui_frames_continue() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let cli = Cli::try_parse_from([
-        "capture",
-        &listener.local_addr().unwrap().to_string(),
-        "--width",
-        "2",
-        "--height",
-        "2",
-    ])
-    .unwrap();
+    let cli =
+        Cli::try_parse_from(["capture", &listener.local_addr().unwrap().to_string()]).unwrap();
     let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 15));
     let stop = AtomicBool::new(false);
     let mut attempts = 0;
@@ -121,15 +112,8 @@ fn startup_retries_while_ui_frames_continue() {
 #[test]
 fn reconnect_reconfigures_capture_before_acquiring_frames() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let cli = Cli::try_parse_from([
-        "capture",
-        &listener.local_addr().unwrap().to_string(),
-        "--width",
-        "2",
-        "--height",
-        "2",
-    ])
-    .unwrap();
+    let cli =
+        Cli::try_parse_from(["capture", &listener.local_addr().unwrap().to_string()]).unwrap();
     let receiver = std::thread::spawn(move || {
         for rate in [15, 20] {
             let mut socket = crate::transport::tests::accept(&listener, rate);
@@ -172,10 +156,6 @@ fn network_backoff_skips_ui_capture_and_composition() {
         &listener.local_addr().unwrap().to_string(),
         "--source",
         "ui",
-        "--width",
-        "2",
-        "--height",
-        "2",
     ])
     .unwrap();
     drop(listener);
@@ -199,4 +179,45 @@ fn network_backoff_skips_ui_capture_and_composition() {
         .unwrap();
     });
     assert_eq!(ui_frames, 0);
+}
+
+#[test]
+fn reconnect_applies_a_new_resolution_before_video_and_ui_capture() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let cli =
+        Cli::try_parse_from(["capture", &listener.local_addr().unwrap().to_string()]).unwrap();
+    let receiver = std::thread::spawn(move || {
+        for resolution in [[2, 2], [4, 2]] {
+            let mut socket = crate::transport::tests::accept_resolution(&listener, 30, resolution);
+            let mut header = [0; HEADER_LEN];
+            socket.read_exact(&mut header).unwrap();
+            let header = Header::decode(&header).unwrap();
+            assert_eq!([header.width, header.height], resolution);
+            socket.read_exact(&mut vec![0; header.payload_len]).unwrap();
+            socket.shutdown(std::net::Shutdown::Both).unwrap();
+        }
+    });
+    let stop = AtomicBool::new(false);
+    let mut resolutions = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    capture_loop(
+        &cli,
+        &stop,
+        |options| {
+            resolutions.push([options.width, options.height]);
+            assert_eq!(options.fps, 30);
+            anyhow::bail!("test video unavailable")
+        },
+        Some(|width, height, bgra: &mut pixels::Bgra8Pixels| {
+            assert!(Instant::now() < deadline, "sender did not reconnect");
+            if width == 4 {
+                stop.store(true, Ordering::Relaxed);
+            }
+            *bgra.bytes_mut() = [0, 0, 255, 255].repeat((width * height) as usize);
+            Ok(())
+        }),
+    )
+    .unwrap();
+    assert_eq!(resolutions, [[2, 2], [4, 2]]);
+    receiver.join().unwrap();
 }
