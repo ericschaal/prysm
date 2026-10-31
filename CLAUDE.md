@@ -249,7 +249,7 @@ Tests are minimal but focused:
 
 ## Controller architecture and development
 
-See [actor runtime](docs/actor-runtime.md) and [controller guide](docs/control-panel.md).
+See [actor runtime](docs/actor-runtime.md) and [web UI guide](docs/control-panel.md).
 Keep lifecycle commands separate from best-effort frame traffic. Do not introduce
 worker binaries, private IPC, or service-manager APIs. `AtomicResponse` is used
 only to serialize lifecycle commands across awaits; frame handlers are synchronous.
@@ -266,6 +266,6 @@ Run `cargo run -p prysm-web`, then open port 8788 (Prysm REST stays on 8787).
 Building `prysm-web` or the workspace requires Node.js 24 and npm; building
 `prysm` alone requires neither.
 
-Debian seeds `/var/lib/prysm-control/prysm.toml` from a packaged template and runs
-as the `prysm-control` service user. The writable runtime file is authoritative.
+Debian seeds `/etc/prysm/prysm.toml` from a packaged template and runs
+as the `prysm` service user. The writable runtime file is authoritative.
 Preserve WLED ordering, post-stop Off, compensation, and clean shutdown tests.

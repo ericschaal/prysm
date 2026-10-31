@@ -1,8 +1,8 @@
-# Controller
+# Web UI
 
 `prysm` owns configuration, the REST API, and capture → processing → rendering.
-`prysm-web` serves the React controller and forwards requests to Prysm. They run
-independently and can live on separate machines. The controller never reads or
+`prysm-web` serves the React web UI and forwards requests to Prysm. They run
+independently and can live on separate machines. The web UI never reads or
 writes Prysm's TOML file or starts a pipeline in its own process.
 
 ## Run locally
@@ -25,14 +25,14 @@ Open http://localhost:5173. Vite refreshes React and proxies `/api/` to port 878
 For production, run `cargo run -p prysm-web --
 --backend http://127.0.0.1:8787`. The Rust build installs npm dependencies and builds/embeds the UI; Node.js 24
 and npm are required. Open http://localhost:8788.
-Use `--listen` and `--allowed-host` to expose the controller on your LAN.
-Prysm must allow the Host from the backend URL; the controller validates browser
+Use `--listen` and `--allowed-host` to expose the web UI on your LAN.
+Prysm must allow the Host from the backend URL; the web UI validates browser
 Host and uses Tower’s CSRF middleware before forwarding. Cross-site writes are
 rejected using `Sec-Fetch-Site` or an Origin/Host comparison; requests without
 browser metadata remain supported for CLI clients. Safe methods such as GET are
 permitted after Host validation. The JSON proxy forwards only content-type,
 uses a 64 KiB request limit and a 65-second timeout, and does not follow redirects.
-Tower also applies the controller’s security and cache headers to error responses.
+Tower also applies the web UI’s security and cache headers to error responses.
 Startup observes existing lights and never restores saved On intent.
 
 ## Configuration and HTTP
@@ -87,4 +87,4 @@ rejected while an operation is pending. Capture failures remain visible without
 stopping HTTP. Ctrl+C or SIGTERM drains the pipeline before application exit.
 
 The panel has no login. Restrict allowed hosts and use a trusted LAN/private VPN.
-See [actor runtime](actor-runtime.md) and [Debian deployment](../apps/prysm-web/debian/README.md).
+See [actor runtime](actor-runtime.md) and [Debian deployment](../packaging/debian/README.md).

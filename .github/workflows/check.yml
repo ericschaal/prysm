@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck scripts/build-deb.sh apps/prysm-web/debian/postinst apps/prysm-web/debian/postrm apps/prysm-web/debian/prerm crates/capture/prysm-capture/video_test.sh
+          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -133,12 +133,23 @@ jobs:
       - name: Generated contracts must be committed
         # The container user differs from the checkout owner; trust only this workspace.
         run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code HEAD -- apps/prysm-web/control-ui/openapi.json apps/prysm-web/control-ui/api.generated.ts
-      - name: Inspect package and validate installation config
+      - name: Inspect package and verify configuration lifecycle
         run: |
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
           apt-get install -y ./target/debian/*.deb
-          prysm --config /var/lib/prysm-control/prysm.toml check
+          runuser -u prysm -- prysm --config /etc/prysm/prysm.toml check
+          test "$(stat -c '%U:%G %a' /etc/prysm)" = "prysm:prysm 700"
+          test "$(stat -c '%U:%G %a' /etc/prysm/prysm.toml)" = "prysm:prysm 600"
+          echo '# Package upgrade must preserve local settings' >> /etc/prysm/prysm.toml
+          sha256sum /etc/prysm/prysm.toml > /tmp/prysm-config.sha256
+          apt-get install -y --reinstall ./target/debian/*.deb
+          sha256sum --check /tmp/prysm-config.sha256
+          apt-get remove -y prysm-led
+          sha256sum --check /tmp/prysm-config.sha256
+          apt-get purge -y prysm-led
+          test ! -e /etc/prysm/prysm.toml
+          test ! -d /etc/prysm
       - uses: actions/upload-artifact@v4
         with:
           name: prysm-debian-arm64

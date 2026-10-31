@@ -3,7 +3,7 @@ use clap::Parser;
 use std::net::SocketAddr;
 
 #[derive(Parser)]
-#[command(about = "Browser controller for the Prysm REST API")]
+#[command(about = "Web UI for the Prysm REST API")]
 struct Args {
     #[arg(long, default_value = "127.0.0.1:8788")]
     listen: SocketAddr,
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     }
     let router = prysm_web::router(&args.backend, args.allowed_hosts)?;
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
-    tracing::info!(address = %args.listen, backend = %args.backend, "Prysm web controller listening");
+    tracing::info!(address = %args.listen, backend = %args.backend, "Prysm web UI listening");
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             #[cfg(unix)]

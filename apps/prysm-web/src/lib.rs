@@ -1,4 +1,4 @@
-//! Serve the browser controller and forward its requests to Prysm's REST API.
+//! Serve the web UI and forward its requests to Prysm's REST API.
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -20,7 +20,7 @@ struct Backend {
     url: reqwest::Url,
 }
 
-/// Build a controller with a fixed backend; configuration remains owned by Prysm.
+/// Build a web UI with a fixed backend; configuration remains owned by Prysm.
 pub fn router(backend: &str, allowed_hosts: Vec<String>) -> Result<Router> {
     let url = reqwest::Url::parse(backend).context("invalid Prysm API URL")?;
     anyhow::ensure!(
@@ -35,7 +35,7 @@ pub fn router(backend: &str, allowed_hosts: Vec<String>) -> Result<Router> {
     );
     anyhow::ensure!(
         !allowed_hosts.is_empty(),
-        "configure an allowed controller host"
+        "configure an allowed web UI host"
     );
     let backend = Backend {
         client: reqwest::Client::builder()

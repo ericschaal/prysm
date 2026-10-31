@@ -5,11 +5,10 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=prysm-control
+User=prysm
 SupplementaryGroups=video
-ExecStart=/usr/bin/prysm --config /var/lib/prysm-control/prysm.toml
-StateDirectory=prysm-control
-StateDirectoryMode=0700
+ExecStart=/usr/bin/prysm --config /etc/prysm/prysm.toml
+ReadWritePaths=/etc/prysm
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT

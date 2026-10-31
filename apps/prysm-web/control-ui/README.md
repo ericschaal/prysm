@@ -1,4 +1,4 @@
-# Controller UI
+# Web UI
 
 React + TypeScript, bundled with Vite. Node 24 is required for building; production needs `prysm` and the independent `prysm-web` executable.
 
@@ -35,14 +35,14 @@ API crate and its dependencies. It stays separate from `npm run build` so the we
 application’s build script never invokes Cargo recursively. Building the engine
 alone requires no Node or frontend assets.
 
-`npm run build` type-checks the controller and writes production HTML, JavaScript
+`npm run build` type-checks the web UI and writes production HTML, JavaScript
 and CSS to `dist/`. When building `prysm-web`, its `build.rs` runs `npm ci` and
 `npm run build` automatically when frontend inputs change. Node.js 24 and npm are
 required for workspace builds. Both debug and release builds embed the assets.
 
 `npm test` checks generated client drift, type-checks, builds, then runs DOM behavior and development-proxy tests. HTTP calls use `openapi-fetch` and the generated schema to check paths, methods, requests and responses. The UI loads coherent configuration and status revisions, and saves the complete configuration with its expected revision so concurrent changes cannot overwrite one another.
 
-For a standalone production controller, run `cargo run -p prysm-web
+For a standalone production web UI, run `cargo run -p prysm-web
 -- --backend http://127.0.0.1:8787` from the repository root. Open http://localhost:8788. This process forwards API calls; Prysm alone
 owns and persists configuration. Vite can also connect directly to Prysm during
 development; allow its Host in Prysm's configuration.

@@ -45,7 +45,7 @@ cargo run --release -p prysm
 cargo run --release -p prysm -- --config "/path/to/prysm.toml"
 ```
 
-For Raspberry Pi OS arm64, see the [Debian package and systemd service instructions](../../../apps/prysm-web/debian/README.md).
+For Raspberry Pi OS arm64, see the [Debian package and systemd service instructions](../../../packaging/debian/README.md).
 
 Start the controller, select Screen sync, and turn the lights on in the panel.
 All settings are owned by the controller's single TOML file. File input uses:

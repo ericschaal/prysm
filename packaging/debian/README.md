@@ -1,0 +1,99 @@
+# Debian arm64
+
+One `prysm-led` package installs `prysm` (REST API and pipeline) and `prysm-web`
+(embedded React web UI and API forwarding), with separate `prysm.service` and
+`prysm-web.service` systemd units. No Node runtime is needed after building.
+
+## Build
+
+On Debian arm64, install the Rust toolchain, Node 24, and native capture dependencies:
+
+```sh
+sudo apt install build-essential pkg-config clang libclang-dev libudev-dev dpkg-dev
+cargo install cargo-deb --version 3.8.0 --locked
+./scripts/build-deb.sh
+```
+
+The script exports/checks the generated API client, builds/tests the frontend and
+Rust application, and creates the package under `target/debian/`. Shared package
+files live in `packaging/debian/`; Debian metadata belongs to `apps/prysm/Cargo.toml`.
+
+## Remove an older installation
+
+Older packages used `prysm-led.service` or `prysm-control.service`, stored settings
+under `/etc/prysm` or `/var/lib/prysm-control`, and could leave processes running
+on removal. These versions require a clean reinstall; settings and service
+customizations are deliberately discarded. Skip this section for a fresh install.
+
+```sh
+# Stop existing units before removing their binaries. Missing units are harmless.
+sudo systemctl stop prysm-led.service prysm-control.service prysm.service prysm-web.service
+sudo systemctl disable prysm-led.service prysm-control.service prysm.service prysm-web.service
+sudo apt purge prysm-led
+sudo rm -rf /etc/prysm /var/lib/prysm-control
+# Remove overrides from previous installations too.
+sudo rm -f /etc/systemd/system/prysm-led.service /etc/systemd/system/prysm-control.service /etc/systemd/system/prysm.service /etc/systemd/system/prysm-web.service
+sudo rm -rf /etc/systemd/system/prysm-led.service.d /etc/systemd/system/prysm-control.service.d /etc/systemd/system/prysm.service.d /etc/systemd/system/prysm-web.service.d
+sudo systemctl daemon-reload
+```
+
+Files owned by the old Debian package, including its binaries, units, and polkit
+rule, are removed by `apt purge`. The unused `prysm-control` system account can
+remain; the new services do not use it.
+
+## Install and run
+
+```sh
+sudo apt install ./prysm-led_0.1.0-1_arm64.deb
+sudoedit /etc/prysm/prysm.toml
+sudo -u prysm prysm --config /etc/prysm/prysm.toml check
+sudo systemctl enable --now prysm prysm-web
+journalctl -u prysm -f
+```
+
+Set `[wled].url` to WLED's HTTP endpoint and `[output].address` to its DDP address
+(port 4048). Configure input and LED counts. Prefer stable `/dev/v4l/by-id/...`
+device paths. The engine API listens on `127.0.0.1:8787`; the web UI listens on
+`127.0.0.1:8788`. Open http://localhost:8788 on the host, or configure LAN access below.
+
+Both services are initially disabled and stopped. The engine runs as `prysm`
+with video-group access. Installation seeds `/etc/prysm/prysm.toml` from
+`/usr/share/prysm/prysm.toml` only if no configuration exists. The directory is
+owned by `prysm` with mode `0700`, and the file starts with mode `0600`. Prysm
+needs directory write access because UI saves atomically replace the file.
+This is application-managed configuration, not a dpkg conffile. Upgrades preserve it.
+
+The web UI uses a separate dynamic systemd user and cannot access the engine's
+configuration or capture devices. It forwards API calls to `http://127.0.0.1:8787`.
+The TOML `[web]` settings configure the engine API, not the web UI.
+
+## LAN access
+
+Run `sudo systemctl edit prysm-web` and add an override, replacing `YOUR_PI` with
+the hostname you will use in the browser:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/prysm-web --listen 0.0.0.0:8788 --backend http://127.0.0.1:8787 --allowed-host YOUR_PI:8788
+```
+
+Then run `sudo systemctl restart prysm-web` and open `http://YOUR_PI:8788`.
+Repeat `--allowed-host` for additional browser hostnames or IP addresses, including
+the port. If you change the engine API address, update `--backend` and ensure
+that its Host is accepted by the engine's `[web].allowed_hosts`.
+The unauthenticated web UI belongs on a trusted LAN/private VPN.
+
+## Lifecycle
+
+Upgrades restart services that were running and leave stopped services stopped.
+Service enablement and local systemd overrides are preserved. A service restart
+never restores saved On intent; starting capture remains explicit.
+
+SIGINT/TERM drains the actor pipeline and joins its thread. Normal capture errors
+leave the web UI running; retry is explicit. systemd restarts a crashed application.
+File input requires FFmpeg 9+ on PATH.
+
+Removal stops both services and preserves `/etc/prysm/prysm.toml`. Purging deletes
+that file and removes `/etc/prysm` if empty. Stopping Prysm lets WLED resume its
+own effect after realtime timeout; it does not issue a lighting Off command.

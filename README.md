@@ -56,7 +56,7 @@ One power button. Two color sources. A quiet status indicator.
 
 The panel remembers your selected source while the lights are off. It stays available when capture stops, and shows connection problems with retry controls. Keyboard navigation, visible focus, generous touch targets, and reduced-motion support are built in.
 
-Prysm and its independent browser controller run on macOS and Linux. Debian uses systemd to start the two services. See the [control-panel guide](docs/control-panel.md) for behavior and configuration.
+Prysm and its independent web UI run on macOS and Linux. Debian uses systemd to start the two services. See the [control-panel guide](docs/control-panel.md) for behavior and configuration.
 
 ## How it connects
 
@@ -75,7 +75,7 @@ Prysm handles capture and color processing. WLED drives the physical LEDs. The p
 - A WLED controller, addressable LED strips, a suitable power supply, and a local network connection.
 - For building: a Rust toolchain supporting edition 2024.
 
-Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The browser controller runs natively on both platforms.
+Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The web UI runs natively on both platforms.
 
 For a rooted LG TV, the experimental [minimal webOS sender](crates/capture/webos-capture/README.md)
 captures on the TV and streams RGB frames directly to Prysm's `webos` input.
@@ -84,7 +84,7 @@ The initial webOS 25 target still requires hardware validation.
 ## Get started
 
 Prysm owns capture, processing, rendering, its TOML configuration, and its REST
-API. `prysm-web` is an independent browser controller that calls that API.
+API. `prysm-web` is an independent web UI that calls that API.
 
 Edit [prysm.toml](prysm.toml) for your hardware, then start Prysm:
 
@@ -93,7 +93,7 @@ cargo run -p prysm -- --config prysm.toml
 ```
 
 The API listens on port 8787. Startup leaves capture stopped. Start it through
-`PUT /api/state` or the browser controller; processing and configuration work
+`PUT /api/state` or the web UI; processing and configuration work
 without a browser connected.
 
 For frontend development, run this in another terminal:
@@ -107,17 +107,17 @@ npm run dev
 Open http://localhost:5173. Vite forwards API requests to Prysm. Its Host must
 appear in Prysm's `[web].allowed_hosts` (the sample accepts all hosts).
 
-To use the standalone controller (requires Node.js 24 and npm at build time):
+To use the standalone web UI (requires Node.js 24 and npm at build time):
 
 ```sh
 cargo run -p prysm-web -- --backend http://127.0.0.1:8787
 ```
 
 `prysm-web` automatically installs locked npm dependencies, builds the frontend,
-and embeds it. Open http://localhost:8788. The controller can run on another machine; set
-`--backend` to Prysm's URL, `--listen` to the controller's bind address, and
+and embeds it. Open http://localhost:8788. The web UI can run on another machine; set
+`--backend` to Prysm's URL, `--listen` to the web UI's bind address, and
 repeat `--allowed-host host:port` for accepted browser hosts. Prysm must allow
-the backend URL's Host. Stopping or restarting the controller leaves Prysm and
+the backend URL's Host. Stopping or restarting the web UI leaves Prysm and
 its configuration intact. Only Prysm reads and writes the configuration file.
 
 Validate configuration without starting capture:
@@ -164,8 +164,8 @@ curl -X PUT http://127.0.0.1:8787/api/state \
 ```
 
 At EOF, the last egui frame stays visible and the API remains available. **Start capture**
-replays the file. Closing the window stops Prysm; the independent browser
-controller remains available and reports a lost connection.
+replays the file. Closing the window stops Prysm; the independent
+web UI remains available and reports a lost connection.
 
 ## Configuration
 
@@ -179,7 +179,7 @@ own effects and requires WLED output with an HTTP endpoint.
 REST configuration updates save this file atomically with revision checks.
 Processing changes apply live; input, resolution, and DDP settings recreate an
 active session. Changing output kind, egui refresh rate, or REST listen/access
-policy requires restarting Prysm. Output configuration requires an explicit `type`. No controller preferences or duplicate pipeline config are stored.
+policy requires restarting Prysm. Output configuration requires an explicit `type`. No web UI preferences or duplicate pipeline config are stored.
 
 LED counts are viewed from the front. Wiring starts at bottom-left, then runs
 up the left, across the top, down the right, and back along the bottom. An absent
@@ -188,7 +188,7 @@ See the [WLED renderer guide](crates/rendering/prysm-renderer-wled/README.md) fo
 File input requires FFmpeg 9+ on PATH.
 
 The panel has no login: use a trusted LAN/private VPN and configure allowed hosts.
-See the [controller guide](docs/control-panel.md) for HTTP/configuration behavior.
+See the [web UI guide](docs/control-panel.md) for HTTP/configuration behavior.
 
 ## Architecture
 
@@ -209,7 +209,7 @@ run Cargo commands from the repository root with `-p <crate-name>`.
 
 | Directory | Crates / components | Responsibility |
 | :--- | :--- | :--- |
-| `apps/` | `prysm`, `prysm-web` | Engine/REST service and independent browser controller |
+| `apps/` | `prysm`, `prysm-web` | Engine/REST service and independent web UI |
 | `crates/capture/` | `prysm-capture`, `webos-capture` | Frame streams and the standalone C webOS sender |
 | `crates/processing/` | `prysm-processor` | Sampling, black-bar detection, smoothing, brightness |
 | `crates/rendering/` | `prysm-renderer-wled`, `prysm-renderer-desktop` | WLED DDP and optional native egui output |
@@ -254,5 +254,5 @@ remain manual; the headless transport, renderer logic, and controller tests run 
 
 Build with `./scripts/build-deb.sh`. The package contains `prysm`, `prysm-web` with its bundled UI,
 and separate systemd services. Installation seeds a writable configuration under
-`/var/lib/prysm-control/prysm.toml`; the service is disabled until configured.
-See the [Debian guide](apps/prysm-web/debian/README.md).
+`/etc/prysm/prysm.toml`; the service is disabled until configured.
+See the [Debian guide](packaging/debian/README.md).

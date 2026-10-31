@@ -1,12 +1,12 @@
 [Unit]
-Description=Prysm browser controller
-Wants=network-online.target prysm-control.service
-After=network-online.target prysm-control.service
+Description=Prysm web UI
+Wants=network-online.target prysm.service
+After=network-online.target prysm.service
 
 [Service]
 Type=simple
-User=prysm-control
-ExecStart=/usr/bin/prysm-web --listen 0.0.0.0:8788 --allowed-host *
+DynamicUser=true
+ExecStart=/usr/bin/prysm-web
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
