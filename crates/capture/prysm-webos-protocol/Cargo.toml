@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 license.workspace = true
 
+[features]
+h264 = ["dep:openh264", "dep:yuv", "dep:h264-reader"]
+
 [dependencies]
 anyhow.workspace = true
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+h264-reader = { version = "0.8", optional = true }
+openh264 = { version = "0.9.9", optional = true }
+yuv = { version = "0.8", default-features = false, features = ["fast_mode"], optional = true }
 
 [lints]
 workspace = true

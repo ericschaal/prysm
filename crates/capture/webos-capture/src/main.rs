@@ -50,6 +50,11 @@ fn main() -> Result<()> {
         cli.capture.height,
         cli.capture.fps,
         prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
+        if cli.compression == cli::Compression::H264 {
+            cli.h264_bitrate
+        } else {
+            0
+        },
     );
     run(&cli, &stop)
 }
@@ -96,6 +101,8 @@ fn capture_loop(
     );
     let mut video = None;
     let mut sender = transport::Sender::new(cli.receiver, cli.compression);
+    sender.h264_bitrate = cli.h264_bitrate;
+    sender.fps = cli.capture.fps;
     let mut native = Vec::new();
     let mut composition = pixels::CompositionBuffer::default();
     let mut bgra = pixels::Bgra8Pixels::default();
@@ -260,10 +267,13 @@ mod tests {
             let header = Header::decode(&bytes).unwrap();
             assert_eq!(header.format, PixelFormat::Nv12);
             assert_eq!(header.raw_len().unwrap(), 16 * 8 * 3 / 2);
-            assert_eq!(header.compressed, compression == "lz4");
+            assert_eq!(
+                header.codec == prysm_webos_protocol::Codec::Lz4,
+                compression == "lz4"
+            );
             let mut payload = vec![0; header.payload_len];
             socket.read_exact(&mut payload).unwrap();
-            let raw = if header.compressed {
+            let raw = if header.codec == prysm_webos_protocol::Codec::Lz4 {
                 let mut decoded = vec![0; header.raw_len().unwrap()];
                 prysm_webos_protocol::decompress(&payload, &mut decoded).unwrap();
                 decoded

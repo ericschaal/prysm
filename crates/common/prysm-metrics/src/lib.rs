@@ -258,6 +258,7 @@ pub fn capture_info(
     height: u32,
     fps: u8,
     composition_format: Format,
+    target_bitrate_bps: u32,
 ) {
     if let Some(metrics) = METRICS.get() {
         metrics
@@ -269,6 +270,7 @@ pub fn capture_info(
                 height,
                 fps,
                 composition_format,
+                target_bitrate_bps,
             })
             .set(1);
     }

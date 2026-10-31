@@ -37,6 +37,7 @@ pub enum Operation {
     Blend,
     ConvertToNv12,
     Compress,
+    EncodeH264,
     PreparePayload,
     ValidateInput,
     EncodeHeader,
@@ -50,6 +51,7 @@ pub enum Operation {
     ReadPayload,
     ReadFrame,
     Decompress,
+    DecodeH264,
     FrameArrival,
     DispatchProcessor,
     DispatchRenderer,
@@ -70,8 +72,12 @@ pub enum Outcome {
     SkippedDuplicate,
     SkippedBackoff,
     SkippedDeadline,
+    SkippedRateControl,
     SkippedMailboxFull,
     RawFallback,
+    IdrEncoded,
+    IntraFrameEncoded,
+    PredictedFrameEncoded,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +94,12 @@ pub enum FrameSenderEvent {
 }
 #[derive(Clone, Copy, Debug)]
 pub enum EncoderEvent {
+    H264RateControlSkipped,
+    H264EncodeFailed,
+    InitializationFailed,
+    H264IdrEncoded,
+    H264IntraFrameEncoded,
+    H264PredictedFrameEncoded,
     InputRejected,
     CompressionFailed,
     HeaderRejected,
@@ -105,6 +117,8 @@ pub enum FrameReceiverEvent {
 }
 #[derive(Clone, Copy, Debug)]
 pub enum DecoderEvent {
+    InitializationFailed,
+    H264DecodeFailed,
     DecompressionFailed,
     ConversionFailed,
 }
@@ -163,6 +177,18 @@ impl From<FrameSenderEvent> for Event {
 impl From<EncoderEvent> for Event {
     fn from(event: EncoderEvent) -> Self {
         let (operation, outcome) = match event {
+            EncoderEvent::H264RateControlSkipped => {
+                (Operation::EncodeH264, Outcome::SkippedRateControl)
+            }
+            EncoderEvent::H264EncodeFailed => (Operation::EncodeH264, Outcome::Failed),
+            EncoderEvent::InitializationFailed => (Operation::Initialize, Outcome::Failed),
+            EncoderEvent::H264IntraFrameEncoded => {
+                (Operation::EncodeH264, Outcome::IntraFrameEncoded)
+            }
+            EncoderEvent::H264IdrEncoded => (Operation::EncodeH264, Outcome::IdrEncoded),
+            EncoderEvent::H264PredictedFrameEncoded => {
+                (Operation::EncodeH264, Outcome::PredictedFrameEncoded)
+            }
             EncoderEvent::InputRejected => (Operation::ValidateInput, Outcome::Rejected),
             EncoderEvent::CompressionFailed => (Operation::Compress, Outcome::Failed),
             EncoderEvent::HeaderRejected => (Operation::EncodeHeader, Outcome::Rejected),
@@ -201,6 +227,8 @@ impl From<DecoderEvent> for Event {
             flow: Flow::CaptureFrames,
             component: Component::FrameDecoder,
             operation: match event {
+                DecoderEvent::InitializationFailed => Operation::Initialize,
+                DecoderEvent::H264DecodeFailed => Operation::DecodeH264,
                 DecoderEvent::DecompressionFailed => Operation::Decompress,
                 DecoderEvent::ConversionFailed => Operation::Convert,
             },
@@ -296,6 +324,7 @@ pub enum Stage {
     FrameReadPayload,
     FrameReadHeader,
     FrameDecompress,
+    FrameDecodeH264,
     FrameConvert,
     ReceiverFrameGap,
     FrameProcess,
@@ -363,6 +392,11 @@ impl From<Stage> for StageLabels {
                 Flow::CaptureFrames,
                 Component::FrameReceiver,
                 Operation::ReadHeader,
+            ),
+            Stage::FrameDecodeH264 => (
+                Flow::CaptureFrames,
+                Component::FrameDecoder,
+                Operation::DecodeH264,
             ),
             Stage::FrameDecompress => (
                 Flow::CaptureFrames,
@@ -498,10 +532,10 @@ impl From<prysm_webos_protocol::PixelFormat> for Format {
 }
 impl From<&prysm_webos_protocol::Header> for Codec {
     fn from(header: &prysm_webos_protocol::Header) -> Self {
-        if header.compressed {
-            Self::Lz4
-        } else {
-            Self::None
+        match header.codec {
+            prysm_webos_protocol::Codec::Raw => Self::None,
+            prysm_webos_protocol::Codec::Lz4 => Self::Lz4,
+            prysm_webos_protocol::Codec::H264 => Self::H264,
         }
     }
 }
@@ -582,6 +616,7 @@ pub enum Codec {
     Unspecified,
     None,
     Lz4,
+    H264,
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum Layer {
@@ -613,4 +648,5 @@ pub(crate) struct CaptureInfo {
     pub height: u32,
     pub fps: u8,
     pub composition_format: Format,
+    pub target_bitrate_bps: u32,
 }

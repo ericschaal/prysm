@@ -106,7 +106,7 @@ pub fn header(width: u32, height: u32, format: PixelFormat) -> Result<Header> {
         width,
         height,
         format,
-        compressed: false,
+        codec: prysm_webos_protocol::Codec::Raw,
         payload_len: 0,
     };
     header.payload_len = header.raw_len()?;

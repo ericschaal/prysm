@@ -1,4 +1,6 @@
-//! Bounded, independently decodable webOS frames. No native codec dependency.
+//! Bounded webOS frames with an explicit wire codec.
+#[cfg(feature = "h264")]
+pub mod h264;
 use anyhow::{Result, bail, ensure};
 
 pub const HEADER_LEN: usize = 24;
@@ -11,12 +13,20 @@ pub enum PixelFormat {
     Nv16 = 2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Codec {
+    Raw = 0,
+    Lz4 = 1,
+    H264 = 2,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Header {
     pub width: u32,
     pub height: u32,
     pub format: PixelFormat,
-    pub compressed: bool,
+    pub codec: Codec,
     pub payload_len: usize,
 }
 
@@ -44,10 +54,14 @@ impl Header {
     pub fn validate(self) -> Result<Self> {
         let raw_len = self.raw_len()?;
         ensure!(
-            if self.compressed {
-                self.payload_len > 0 && self.payload_len < raw_len
-            } else {
-                self.payload_len == raw_len
+            match self.codec {
+                Codec::Raw => self.payload_len == raw_len,
+                Codec::Lz4 => self.payload_len > 0 && self.payload_len < raw_len,
+                Codec::H264 =>
+                    self.format == PixelFormat::Rgb
+                        && self.width.is_multiple_of(2)
+                        && self.height.is_multiple_of(2)
+                        && (1..=8_388_608).contains(&self.payload_len),
             },
             "invalid webOS payload length"
         );
@@ -62,7 +76,7 @@ impl Header {
             (4, self.width),
             (8, self.height),
             (12, self.format as u32),
-            (16, u32::from(self.compressed)),
+            (16, self.codec as u32),
             (20, u32::try_from(self.payload_len)?),
         ] {
             bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
@@ -86,16 +100,17 @@ impl Header {
             2 => PixelFormat::Nv16,
             _ => bail!("unsupported webOS pixel format"),
         };
-        let compressed = match field(16) {
-            0 => false,
-            1 => true,
+        let codec = match field(16) {
+            0 => Codec::Raw,
+            1 => Codec::Lz4,
+            2 => Codec::H264,
             _ => bail!("unsupported webOS compression"),
         };
         Self {
             width: field(4),
             height: field(8),
             format,
-            compressed,
+            codec,
             payload_len: field(20) as usize,
         }
         .validate()
@@ -130,7 +145,7 @@ mod tests {
                 width: 4,
                 height: 2,
                 format,
-                compressed: false,
+                codec: Codec::Raw,
                 payload_len: 0,
             };
             header.payload_len = header.raw_len().unwrap();
@@ -144,6 +159,41 @@ mod tests {
             assert!(header.raw_len().is_err());
         }
         assert!(Header::decode(&[255; HEADER_LEN]).is_err());
+    }
+
+    #[test]
+    fn h264_headers_bound_access_units_and_allow_keyframe_overhead() {
+        let header = Header {
+            width: 16,
+            height: 16,
+            format: PixelFormat::Rgb,
+            codec: Codec::H264,
+            payload_len: 2048,
+        };
+        assert_eq!(
+            Header::decode(&header.encode().unwrap()).unwrap().codec,
+            Codec::H264
+        );
+        for invalid in [
+            Header {
+                payload_len: 0,
+                ..header
+            },
+            Header {
+                payload_len: 8_388_609,
+                ..header
+            },
+            Header {
+                width: 15,
+                ..header
+            },
+            Header {
+                format: PixelFormat::Nv12,
+                ..header
+            },
+        ] {
+            assert!(invalid.validate().is_err());
+        }
     }
 
     #[test]

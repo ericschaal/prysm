@@ -17,13 +17,17 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Source::Both)]
     pub source: Source,
 
-    /// Lossless wire compression; incompressible frames are sent raw
+    /// Wire codec; H.264 is lossy and uses a persistent low-latency encoder
     #[arg(long, value_enum, default_value_t = Compression::None)]
     pub compression: Compression,
 
     /// Output format after UI composition; native video-only frames pass through
     #[arg(long, value_enum, default_value_t = CompositionFormat::Rgb)]
     pub composition_format: CompositionFormat,
+
+    /// H.264 target bitrate in bits per second
+    #[arg(long, default_value_t = 2_000_000, value_parser = clap::value_parser!(u32).range(64_000..=100_000_000))]
+    pub h264_bitrate: u32,
 
     #[command(flatten)]
     pub capture: CaptureOptions,
@@ -85,6 +89,7 @@ impl Source {
 pub enum Compression {
     None,
     Lz4,
+    H264,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -161,6 +166,9 @@ mod tests {
         Cli::command().debug_assert();
         let cli = parse("[::1]:19400 --source ui --ui-backend halgal --compression lz4").unwrap();
         assert_eq!(cli.compression, Compression::Lz4);
+        let h264 = parse("127.0.0.1:19400 --compression h264 --h264-bitrate 1500000").unwrap();
+        assert_eq!(h264.compression, Compression::H264);
+        assert_eq!(h264.h264_bitrate, 1_500_000);
         assert!(!cli.source.includes_video());
         assert!(cli.source.includes_ui());
         assert_eq!(cli.capture.ui_backend, UiBackend::Halgal);
@@ -194,6 +202,7 @@ mod tests {
             "127.0.0.1:19400 --width 3",
             "127.0.0.1:19400 --height 1082",
             "127.0.0.1:19400 --fps 0",
+            "127.0.0.1:19400 --h264-bitrate 0",
             "127.0.0.1:19400 --fps 61",
             "127.0.0.1:19400 --video-backend unknown",
             "127.0.0.1:19400 --quirks 4",
@@ -219,6 +228,7 @@ impl From<Compression> for prysm_metrics::Codec {
         match codec {
             Compression::None => Self::None,
             Compression::Lz4 => Self::Lz4,
+            Compression::H264 => Self::H264,
         }
     }
 }

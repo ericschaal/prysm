@@ -66,6 +66,8 @@ WLED rate-limited and empty calls do not count as transmitted frames.
 | FrameSender | ConfigureSocket | Failed if TCP_NODELAY/nonblocking setup fails after connecting |
 | FrameSender | WriteFrame | Failed or TimedOut from the actual frame write; closes partial stream and enters normal retry backoff |
 | FrameSender | SendFrame | SkippedBackoff when send is called during reconnect delay |
+| FrameEncoder | Initialize | Failed if the H.264 encoder cannot initialize |
+| FrameEncoder | EncodeH264 | SkippedRateControl when OpenH264 skips an input to meet its bitrate budget (no packet or reconnect); Failed at H.264 conversion/encoding failure; IdrEncoded, IntraFrameEncoded or PredictedFrameEncoded after native encoding, before header validation/write; not delivery |
 | FrameEncoder | ValidateInput | Rejected before networking if header geometry/raw buffer length is invalid |
 | FrameEncoder | Compress | Failed at compressor failure; RawFallback when LZ4 would not shrink input |
 | FrameEncoder | EncodeHeader | Rejected if final header cannot be encoded |
@@ -74,7 +76,9 @@ WLED rate-limited and empty calls do not count as transmitted frames.
 | FrameReceiver | ValidateHeader | Rejected at protocol header validation |
 | FrameReceiver | ReadPayload | Truncated on payload EOF; Failed for other payload I/O errors |
 | FrameReceiver | ReadFrame | TimedOut when whole header+payload+decode operation exceeds five seconds; cancelled suboperation does not add a Failed event |
-| FrameDecoder | Decompress / Convert | Failed at the corresponding payload decompressor/color converter |
+| FrameDecoder | Initialize | Failed if the H.264 decoder cannot initialize |
+| FrameDecoder | DecodeH264 | Failed at H.264 validation, decoding or output color conversion |
+| FrameDecoder | Decompress / Convert | Failed at the corresponding LZ4 decompressor/color converter |
 | VideoCapture | Initialize | Attempted and Failed for native video initialization/retry |
 | VideoCapture | Acquire | Failed for native acquisition errors; SkippedDuplicate when native backend has no new video frame |
 | UiCapture | Acquire | Failed at native UI acquisition |
@@ -127,7 +131,7 @@ seconds land in +Inf. FrameArrival measures decoded continuity, not transport de
 
 | Component / boundary | Meaning |
 |---|---|
-| FrameEncoder / EncoderInput | Raw bytes of successfully prepared frames (header encoding succeeded) |
+| FrameEncoder / EncoderInput | Raw bytes of successfully prepared frames (header encoding succeeded); excludes encoder-skipped inputs so compression ratios do not count dropped frames as savings |
 | FrameEncoder / EncoderOutput | Matching encoded payload bytes, including raw fallback; excludes header |
 | FrameSender / SocketAccepted | Every successful local write, including protocol headers and bytes of a frame whose later write fails |
 | FrameReceiver / CompletePayload | Complete validated-header payload bytes, even if subsequent decoding fails; excludes header and incomplete reads |
@@ -161,3 +165,10 @@ do not sum them. This is the actual macOS host or TV OS, not Docker's Linux VM.
 Availability is coarse: it does not prove every network interface or OS statistic
 is supported. Native webOS statistics need hardware validation. No extra service,
 privileged container or unsupported GPU/thermal sensor assumption is introduced.
+
+H.264 payload preparation uses FrameEncoder/PreparePayload (including I420
+conversion). Receiver H.264 validation, decoding and RGB conversion use
+FrameDecoder/DecodeH264. Codec labels derive from the packet enum and include H264.
+For H.264 the wire format denotes decoded Rgb24, while the encoder's I420 surface
+is internal. Capture info includes target_bitrate_bps (zero for raw/LZ4); compare
+actual bytes and frame rates, since bitrate targets are not instantaneous caps.

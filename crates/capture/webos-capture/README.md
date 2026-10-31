@@ -4,15 +4,15 @@ Rust CLI for capturing video, TV UI, or both on a **rooted LG TV**, and streamin
 frames directly to Prysm. Capture scheduling, pixel processing, recovery, CLI,
 and transport are Rust. The four native backends load LG's system libraries
 directly. There is no Hyperion daemon, C sender, CMake build, or backend plugin
-ABI. The receiver implements one bounded raw/LZ4 protocol.
+ABI. The receiver implements one bounded raw/LZ4/H.264 protocol.
 
 The native adapters derive from MIT-licensed [hyperion-webos](https://github.com/webosbrew/hyperion-webos)
 revision `00c932f092084b234b3f619b060a98fa134c12bd`; retain the supplied license
-notices. C/C++ is limited to vendor API headers, a typed exception trampoline
+notices. Project-owned C/C++ is limited to vendor API headers, a typed exception trampoline
 for LG's C video API, and an ABI/exception test fixture. LG can throw C++
 exceptions through its C API, so a C++ boundary is necessary to contain them.
 No type-erased calls, numeric operation dispatcher, or function-pointer casts
-are used. All unsafe Rust is confined to `src/native`; the rest of the sender
+are used. H.264 uses the `openh264` crate with its bundled native codec. All project-owned unsafe Rust is confined to `src/native`; the rest of the sender
 denies unsafe code at compile time.
 
 The Luna setup and native video startup were previously verified on an LG
@@ -81,7 +81,8 @@ fps must be 1–60. The receiver's `capture_resolution` does not configure the T
 | Option | Choices / purpose |
 | --- | --- |
 | `--source` | `video`, `ui`, `both` |
-| `--compression` | `none`, `lz4` (lossless, raw fallback) |
+| `--compression` | `none`, `lz4` (lossless, raw fallback), `h264` (lossy, low latency) |
+| `--h264-bitrate` | H.264 target bits/sec; default `2000000` |
 | `--composition-format` | `rgb` (default), `nv12`; applies after UI composition, including UI-only fallback |
 | `--video-backend` | `auto`, `vtcapture`, `dile` |
 | `--ui-backend` | `auto`, `gm`, `halgal` |
@@ -95,6 +96,38 @@ settings verified for your TV. DILE supports `display` and `scaler-output` and
 rejects dimensions below its reported minimum. Backend flags are relevant only
 when their layer is selected. With both layers selected, unavailable UI falls
 back to video. Explicit UI-only capture reports UI initialization failures.
+
+## Low-latency H.264
+
+Rebuild both Prysm and the TV distribution, then run on the TV:
+
+```sh
+./prysm-webos-capture 192.168.18.18:19400 --source both \
+  --compression h264 --h264-bitrate 2000000 --width 640 --height 240 \
+  --metrics-listen 0.0.0.0:9101
+```
+
+OpenH264 runs in software with ARM NEON, baseline IP frames, one encoder thread,
+low complexity, rate-control frame skipping, and a keyframe every configured second
+of frames. Bitrate is a target, not a strict per-frame or instantaneous limit.
+When the bitrate budget is exhausted, the encoder can skip an input without
+sending a packet or resetting the connection. Metrics report this as
+FrameEncoder/EncodeH264/SkippedRateControl. The receiver retains its last frame
+until the next encoded frame arrives.
+The default RGB composition converts directly to limited-range BT.601 I420 for
+encoding; leave `--composition-format` at its default to avoid an extra NV12
+conversion. Native NV12/NV16 video converts to I420 without an RGB round trip.
+H.264 carries chroma subsampling and lossy quantization, so compare LED colors
+and dark scenes as well as bitrate, frame rate, encoder time, receiver DecodeH264
+time and both machines' CPU use. Hardware encoding is not used.
+
+Each TCP connection owns fresh codec state and begins with SPS/PPS plus an IDR.
+The receiver decodes every access unit before publishing the latest frame; it
+never drops reference packets to catch up. A write failure closes the connection,
+discards encoder state, and reconnects using the existing backoff. Slow networking
+can still cause TCP head-of-line delay; there is no frame queue in the sender.
+The new binary has been cross-built with the webOS SDK; H.264 performance and
+thermal behavior still need validation on the TV.
 
 ## First TV run
 
@@ -243,11 +276,15 @@ The sole wire format is a 24-byte header followed by its payload:
 | 4 | 4 | Width, unsigned big-endian |
 | 8 | 4 | Height, unsigned big-endian |
 | 12 | 4 | Format: `0` RGB24, `1` NV12, `2` NV16 |
-| 16 | 4 | Codec: `0` raw, `1` LZ4 block without a size prefix |
+| 16 | 4 | Codec: `0` raw, `1` LZ4 block without a size prefix, `2` H.264 Annex B access unit |
 | 20 | 4 | Payload byte length, unsigned big-endian |
-| 24 | length | Tightly packed pixels or their LZ4 block |
+| 24 | length | Tightly packed pixels, their LZ4 block, or one complete H.264 access unit |
 
 NV12 is Y followed by interleaved UV at half height; NV16 uses full-height UV.
+For H.264, format `0` describes the decoded RGB24 output, not the internal I420
+encoder surface. H.264 payloads are capped at 8 MiB; SPS coded/cropped geometry
+and baseline profile are validated before native decoding. Malformed or delayed
+access units disconnect, rather than allowing reference-state corruption.
 Native padding is omitted. Maximum dimensions are 1920×1080. NV12 requires
 even width/height and NV16 requires even width. Allocation bounds and decoded
 length come from validated dimensions, never a compressed size prefix. Unknown
