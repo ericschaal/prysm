@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::slice;
 use std::sync::Mutex;
 use std::sync::mpsc as std_mpsc;
@@ -17,6 +18,7 @@ use av_foundation::media_format::AVMediaTypeVideo;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_media::sample_buffer::{CMSampleBuffer, CMSampleBufferRef};
+use core_media::time::CMTime;
 use core_video::buffer::TCVBuffer;
 use core_video::image_buffer::{CVImageBufferKeys, ycbcr_matrix_get_integer_code_point_for_string};
 use core_video::pixel_buffer::{
@@ -249,11 +251,38 @@ impl Drop for RunningSession {
     }
 }
 
+fn configure_frame_rate(
+    device: &AVCaptureDevice,
+    refresh_rate_hz: NonZeroU32,
+) -> anyhow::Result<()> {
+    let timescale = i32::try_from(refresh_rate_hz.get())
+        .context("capture rate exceeds AVFoundation's timescale")?;
+    let ranges = device
+        .get_active_format()
+        .video_supported_frame_rate_ranges();
+    anyhow::ensure!(
+        ranges.iter().any(|range| {
+            range.min_frame_rate() <= f64::from(refresh_rate_hz.get())
+                && f64::from(refresh_rate_hz.get()) <= range.max_frame_rate()
+        }),
+        "capture device's active format does not support {refresh_rate_hz} Hz"
+    );
+    device
+        .lock_for_configuration()
+        .context("cannot lock capture device to set frame rate")?;
+    let duration = CMTime::make(1, timescale);
+    device.set_active_video_min_frame_duration(duration);
+    device.set_active_video_max_frame_duration(duration);
+    device.unlock_for_configuration();
+    Ok(())
+}
+
 fn start_session(
     device_uid: Option<&str>,
     sender: tokio::sync::watch::Sender<Option<Frame>>,
     width: u32,
     height: u32,
+    refresh_rate_hz: NonZeroU32,
 ) -> Result<RunningSession> {
     let device = match device_uid {
         Some(uid) => AVCaptureDevice::device_with_unique_id(&NSString::from_str(uid)),
@@ -295,6 +324,8 @@ fn start_session(
     session.add_output(&output);
     output.set_video_settings(&video_settings(width, height));
     session.commit_configuration();
+
+    configure_frame_rate(&device, refresh_rate_hz)?;
 
     let running = RunningSession {
         session,
@@ -363,6 +394,7 @@ impl PrysmCapturer for AVFoundationCapturer {
         self,
         width: u32,
         height: u32,
+        refresh_rate_hz: NonZeroU32,
     ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
         let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
         // AVFoundation objects stay on an OS thread because they are not Send.
@@ -372,7 +404,13 @@ impl PrysmCapturer for AVFoundationCapturer {
         std::thread::spawn(move || {
             let _completed = completed;
             let result = (|| -> Result<()> {
-                let session = start_session(self.device_uid.as_deref(), tx.clone(), width, height)?;
+                let session = start_session(
+                    self.device_uid.as_deref(),
+                    tx.clone(),
+                    width,
+                    height,
+                    refresh_rate_hz,
+                )?;
                 runtime.spawn(stop_when_capture_closes(
                     tx,
                     self.shutdown_token,
@@ -500,7 +538,7 @@ mod tests {
         let capturer =
             AVFoundationCapturer::new(Some("prysm-test-missing-device"), shutdown.clone()).unwrap();
         let completed = capturer.completion();
-        let stream = capturer.into_stream(640, 360);
+        let stream = capturer.into_stream(640, 360, 30.try_into().unwrap());
         futures::pin_mut!(stream);
         let error = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
             .await

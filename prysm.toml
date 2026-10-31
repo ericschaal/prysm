@@ -10,7 +10,7 @@ listen = "127.0.0.1:8787"
 allowed_hosts = ["*"]
 
 [input]
-refresh_rate_hz = 50
+refresh_rate_hz = 30
 type = "device"
 device = "0x2200000345f2131"
 

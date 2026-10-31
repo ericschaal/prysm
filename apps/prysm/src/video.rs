@@ -1,8 +1,8 @@
 //! `FFmpeg` file input shared by the egui and WLED outputs.
 
-use std::io;
 use std::path::Path;
 use std::process::Stdio;
+use std::{io, num::NonZeroU32};
 
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
@@ -12,20 +12,21 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-/// Decode a video once at its source rate into sRGB frames at the requested resolution.
+/// Decode a video once at up to the requested rate into sRGB frames at the requested resolution.
 ///
 /// Requires `FFmpeg` 9+ on PATH. Successful EOF closes the stream; decoding
 /// failures are yielded with their original error context. Cancellation stops playback.
 pub fn video_feed(
     path: &Path,
     resolution: CaptureResolution,
+    refresh_rate_hz: NonZeroU32,
     shutdown: CancellationToken,
 ) -> Result<impl Stream<Item = Result<Frame>> + Send + 'static + use<>> {
     let [width, height] = resolution.dimensions();
     std::fs::File::open(path).with_context(|| format!("Cannot open video {}", path.display()))?;
     // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and egui.
     let filter = format!(
-        "scale={width}:{height}:flags=area:intent=perceptual:\
+        "fps='min(source_fps,{refresh_rate_hz})',scale={width}:{height}:flags=area:intent=perceptual:\
          out_primaries=bt709:out_transfer=srgb:out_range=full,realtime"
     );
     let mut child = Command::new("ffmpeg")
@@ -138,6 +139,7 @@ mod tests {
         let stream = video_feed(
             &path,
             CaptureResolution::new(32, 18).unwrap(),
+            30.try_into().unwrap(),
             shutdown.clone(),
         )
         .unwrap();
@@ -158,10 +160,29 @@ mod tests {
         assert_eq!(count, 3);
         let playback_span = first_frame_at.unwrap().elapsed();
         assert!(!shutdown.is_cancelled());
+        let capped = video_feed(
+            &path,
+            CaptureResolution::new(32, 18).unwrap(),
+            5.try_into().unwrap(),
+            CancellationToken::new(),
+        )
+        .unwrap();
+        futures::pin_mut!(capped);
+        let mut capped_count = 0;
+        while let Some(frame) =
+            tokio::time::timeout(std::time::Duration::from_secs(10), capped.next())
+                .await
+                .unwrap()
+        {
+            frame.unwrap();
+            capped_count += 1;
+        }
+        assert_eq!(capped_count, 2, "FFmpeg must cap the 10 Hz source at 5 Hz");
         let cancellation = CancellationToken::new();
         let playback = video_feed(
             &path,
             CaptureResolution::new(32, 18).unwrap(),
+            30.try_into().unwrap(),
             cancellation.clone(),
         )
         .unwrap();
@@ -178,6 +199,7 @@ mod tests {
         let stream = video_feed(
             &invalid,
             CaptureResolution::new(32, 18).unwrap(),
+            30.try_into().unwrap(),
             shutdown.clone(),
         )
         .unwrap();

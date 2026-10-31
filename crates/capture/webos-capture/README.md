@@ -73,10 +73,14 @@ prysm-webos-capture 192.168.1.10:19400 --source ui --ui-backend halgal
 prysm-webos-capture --help
 ```
 
-Defaults are 320×180 at up to 30 fps, both layers, automatic backend selection,
-and no compression. `--width`, `--height`, and `--fps` are checked before any
-native library is opened. Dimensions must be even and within 2–1920 × 2–1080;
-fps must be 1–60. The receiver's `capture_resolution` does not configure the TV.
+Defaults are 320×180, both layers, automatic backend selection, and no
+compression. `--width` and `--height` are checked before any native library is
+opened. Dimensions must be even and within 2–1920 × 2–1080. Prysm owns the
+frame rate: set `input.refresh_rate_hz` to 1–60 on the receiver. The sender
+negotiates this rate before opening video capture and configuring H.264.
+There is no `--fps` option. The receiver's `capture_resolution` does not configure
+the TV dimensions. VTCapture receives the native FPS; DILE uses its frame divisor
+plus the sender loop's cadence to avoid capturing or sending excess frames.
 
 | Option | Choices / purpose |
 | --- | --- |
@@ -268,7 +272,20 @@ network backoff, video polling continues but UI capture and composition are skip
 Safe `nix` polling preserves one deadline across every partial write. TCP buffers can
 still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
-The sole wire format is a 24-byte header followed by its payload:
+Each TCP connection begins with a control handshake. Both control messages are
+Serde JSON, prefixed by a four-byte unsigned big-endian payload length (1–128
+bytes). The sender sends `{"type":"hello","version":1}`; Prysm replies with
+`{"type":"capture_settings","refresh_rate_hz":30}` using its configured rate.
+Unknown versions, message types, fields, invalid rates, and oversized messages
+are rejected. The handshake has a one-second deadline. Old senders/receivers
+without this handshake are incompatible; upgrade both together.
+
+The sender connects before acquiring video/UI frames. On connection failure it
+backs off without capturing; on reconnect it negotiates again, recreates video
+capture when the rate changes, and initializes a fresh H.264 encoder. Changing
+Prysm's input rate recreates its receiver session, causing this reconnect.
+
+After the handshake, frames retain their 24-byte binary header and payload:
 
 | Offset | Bytes | Value |
 | --- | --- | --- |

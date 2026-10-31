@@ -69,11 +69,11 @@ Settings saved through HTTP are persisted atomically. Processing changes apply
 live; input, resolution, and output changes recreate a running actor session.
 File EOF completes capture, while capture/decoder/send failures leave HTTP alive
 for inspection and retry. Ctrl+C drains the pipeline and exits. File input needs
-FFmpeg 9+, converts HDR to sRGB, and runs at the source frame rate.
+FFmpeg 9+, converts HDR to sRGB, and preserves playback speed while capping output FPS.
 
-`input.refresh_rate_hz` caps frames delivered to processing for file, device,
-and webOS inputs. Excess frames are dropped; the source rate limits actual output.
-Device capture and webOS transmission still run at their source rates.
+`input.refresh_rate_hz` configures the source: FFmpeg caps file output, V4L2 and
+AVFoundation configure their native frame interval, and webOS negotiates its rate
+with the TV sender before capture. Unsupported device rates fail capture startup.
 The renderer sends every nonempty frame immediately. Frames use a
 nonblocking socket with no queue or retries; the RGB buffer is reused.
 DNS resolution happens in the constructor and can

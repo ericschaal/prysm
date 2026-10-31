@@ -328,6 +328,7 @@
               "refresh_rate_hz": {
                 "type": "integer",
                 "format": "int32",
+                "maximum": 60,
                 "minimum": 1
               },
               "type": {

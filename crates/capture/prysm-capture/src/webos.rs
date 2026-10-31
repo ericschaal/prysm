@@ -5,12 +5,17 @@ use futures::Stream;
 use prysm_metrics::{
     BytesKind, Codec, DecoderEvent, FrameReceiverEvent, FrameStage, Stage, WireBoundary,
 };
-use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat as WireFormat};
+use prysm_webos_protocol::{ControlMessage, HEADER_LEN, HELLO, Header, PixelFormat as WireFormat};
 use std::{
     net::SocketAddr,
+    num::NonZeroU32,
     time::{Duration, Instant},
 };
-use tokio::{io::AsyncReadExt, net::TcpListener, sync::watch};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+    sync::watch,
+};
 use tokio_util::sync::CancellationToken;
 
 /// A session-scoped listener. TV disconnects return to accepting a connection.
@@ -45,16 +50,25 @@ impl WebosCapturer {
 }
 
 impl PrysmCapturer for WebosCapturer {
-    fn into_stream(self, _: u32, _: u32) -> impl Stream<Item = Result<Frame>> + Send + 'static {
+    fn into_stream(
+        self,
+        _: u32,
+        _: u32,
+        refresh_rate_hz: NonZeroU32,
+    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
         let (sender, finished, frames) = capture_channel(self.shutdown.clone());
         tokio::spawn(async move {
             let _completed = self.completed.drop_guard();
             let result = async {
+                let settings = ControlMessage::CaptureSettings {
+                    refresh_rate_hz: refresh_rate_hz.get(),
+                }
+                .validate()?;
                 let listener = TcpListener::from_std(self.listener)?;
                 tokio::select! {
                     () = self.shutdown.cancelled() => Ok(()),
                     () = sender.closed() => Ok(()),
-                    result = receive(&listener, &sender) => result,
+                    result = receive(&listener, &sender, settings) => result,
                 }
             }
             .await;
@@ -67,12 +81,39 @@ impl PrysmCapturer for WebosCapturer {
 async fn receive(
     listener: &TcpListener,
     sender: &watch::Sender<Option<Frame>>,
+    settings: ControlMessage,
 ) -> anyhow::Result<()> {
     let mut last_decoded = None;
     loop {
         let (mut socket, peer) = listener.accept().await.context("webOS accept failed")?;
         tracing::info!(%peer, "webOS capture connected");
         prysm_metrics::event(FrameReceiverEvent::ConnectionAccepted);
+        let handshake = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut prefix = [0; 4];
+            socket
+                .read_exact(&mut prefix)
+                .await
+                .context("cannot read webOS hello length")?;
+            let length = ControlMessage::decode_length(prefix)?;
+            let mut hello = vec![0; length];
+            socket
+                .read_exact(&mut hello)
+                .await
+                .context("cannot read webOS hello")?;
+            anyhow::ensure!(
+                ControlMessage::decode(&hello)? == HELLO,
+                "expected webOS hello"
+            );
+            socket
+                .write_all(&settings.encode()?)
+                .await
+                .context("cannot send webOS capture settings")
+        })
+        .await;
+        if !matches!(handshake, Ok(Ok(()))) {
+            tracing::warn!(%peer, ?handshake, "webOS handshake failed");
+            continue;
+        }
         let mut scratch = [Vec::new(), Vec::new()];
         let mut decoder = None;
         loop {
@@ -467,17 +508,31 @@ mod tests {
 
     #[tokio::test]
     async fn reconnects_after_bad_client_and_releases_listener_on_stop_or_drop() {
-        for stop in [true, false] {
+        for (stop, rate) in [(true, 15), (false, 60)] {
             let shutdown = CancellationToken::new();
             let capturer =
                 WebosCapturer::new("127.0.0.1:0".parse().unwrap(), shutdown.clone()).unwrap();
             let address = capturer.listener.local_addr().unwrap();
             let completed = capturer.completion();
-            let mut frames = Box::pin(capturer.into_stream(640, 360));
+            let mut frames = Box::pin(capturer.into_stream(640, 360, rate.try_into().unwrap()));
             let mut bad = TcpStream::connect(address).await.unwrap();
             bad.write_all(&[0; 16]).await.unwrap();
             drop(bad);
             let mut client = TcpStream::connect(address).await.unwrap();
+            for byte in HELLO.encode().unwrap() {
+                client.write_all(&[byte]).await.unwrap();
+            }
+            let mut prefix = [0; 4];
+            client.read_exact(&mut prefix).await.unwrap();
+            let length = ControlMessage::decode_length(prefix).unwrap();
+            let mut settings = vec![0; length];
+            client.read_exact(&mut settings).await.unwrap();
+            assert_eq!(
+                ControlMessage::decode(&settings).unwrap(),
+                ControlMessage::CaptureSettings {
+                    refresh_rate_hz: rate
+                }
+            );
             client.write_all(&packet(1, 1, &[1, 2, 3])).await.unwrap();
             let frame = tokio::time::timeout(Duration::from_secs(1), frames.next())
                 .await
@@ -500,6 +555,24 @@ mod tests {
                 .unwrap();
             assert!(std::net::TcpListener::bind(address).is_ok());
         }
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_a_stalled_handshake() {
+        let shutdown = CancellationToken::new();
+        let capturer =
+            WebosCapturer::new("127.0.0.1:0".parse().unwrap(), shutdown.clone()).unwrap();
+        let address = capturer.listener.local_addr().unwrap();
+        let completed = capturer.completion();
+        let mut frames = Box::pin(capturer.into_stream(2, 2, 30.try_into().unwrap()));
+        let _client = TcpStream::connect(address).await.unwrap();
+        shutdown.cancel();
+        assert!(frames.next().await.is_none());
+        drop(frames);
+        tokio::time::timeout(Duration::from_secs(1), completed.cancelled())
+            .await
+            .unwrap();
+        assert!(std::net::TcpListener::bind(address).is_ok());
     }
 
     #[tokio::test]

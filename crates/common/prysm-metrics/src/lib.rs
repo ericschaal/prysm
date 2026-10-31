@@ -261,6 +261,7 @@ pub fn capture_info(
     target_bitrate_bps: u32,
 ) {
     if let Some(metrics) = METRICS.get() {
+        metrics.capture.clear();
         metrics
             .capture
             .get_or_create(&CaptureInfo {

@@ -47,19 +47,6 @@ fn main() -> Result<()> {
             }
         }
     });
-    prysm_metrics::capture_info(
-        cli.source.into(),
-        cli.compression.into(),
-        cli.capture.width,
-        cli.capture.height,
-        cli.capture.fps,
-        prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
-        if cli.compression == cli::Compression::H264 {
-            cli.h264_bitrate
-        } else {
-            0
-        },
-    );
     run(&cli, &stop)
 }
 
@@ -98,7 +85,7 @@ fn capture_loop(
     mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
     mut capture_ui: Option<impl FnMut(u32, u32, &mut pixels::Bgra8Pixels) -> Result<()>>,
 ) -> Result<()> {
-    let options = &cli.capture;
+    let mut options = cli.capture.clone();
     prysm_metrics::backend_info(
         prysm_metrics::Layer::Video,
         prysm_metrics::Backend::Disabled,
@@ -106,28 +93,61 @@ fn capture_loop(
     let mut video = None;
     let mut sender = transport::Sender::new(cli.receiver, cli.compression);
     sender.h264_bitrate = cli.h264_bitrate;
-    sender.fps = cli.capture.fps;
     let mut native = Vec::new();
     let mut composition = pixels::CompositionBuffer::default();
     let mut bgra = pixels::Bgra8Pixels::default();
-    let period = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut next = Instant::now();
     let mut retry = next;
     let mut ui_warning = next;
     tracing::info!(
         width = options.width,
         height = options.height,
-        fps = options.fps,
         receiver = %cli.receiver,
         compression = ?cli.compression,
         composition_format = ?cli.composition_format,
-        "starting capture"
+        "waiting for receiver capture settings"
     );
     while !stop.load(Ordering::Relaxed) {
+        let was_connected = sender.connected();
+        match sender.connect() {
+            Ok(true) => {}
+            Ok(false) => {
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "capture handshake failed");
+                video = None;
+                continue;
+            }
+        }
+        if !was_connected {
+            if options.fps != sender.fps {
+                video = None;
+                options.fps = sender.fps;
+                retry = Instant::now();
+            }
+            next = Instant::now();
+            tracing::info!(fps = options.fps, "capture settings negotiated");
+            prysm_metrics::capture_info(
+                cli.source.into(),
+                cli.compression.into(),
+                cli.capture.width,
+                cli.capture.height,
+                options.fps,
+                prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
+                if cli.compression == cli::Compression::H264 {
+                    cli.h264_bitrate
+                } else {
+                    0
+                },
+            );
+        }
+        let period = Duration::from_secs_f64(1.0 / f64::from(options.fps));
         let work = prysm_metrics::timer(Stage::CaptureIteration);
         let mut frame = if cli.source.includes_video() {
             capture_video(
-                options,
+                &options,
                 &mut video,
                 &mut retry,
                 &mut native,
@@ -138,9 +158,7 @@ fn capture_loop(
         };
         let mut payload = native.as_slice();
         let mut content = prysm_metrics::Content::Video;
-        if sender.ready()
-            && let Some(capture_ui) = &mut capture_ui
-        {
+        if let Some(capture_ui) = &mut capture_ui {
             let (width, height) =
                 frame.map_or((options.width, options.height), |h| (h.width, h.height));
             let ui_time = prysm_metrics::timer(Stage::UiAcquire);
@@ -177,10 +195,11 @@ fn capture_loop(
                 Err(_) => {}
             }
         }
-        if let Some(header) = frame {
-            if let Err(error) = sender.send(header, payload, content) {
-                tracing::warn!(error = %format!("{error:#}"), "frame send failed");
-            }
+        if let Some(header) = frame
+            && let Err(error) = sender.send(header, payload, content)
+        {
+            tracing::warn!(error = %format!("{error:#}"), "frame send failed");
+            video = None;
         }
         drop(work);
         // Skip missed ticks instead of building up latency or sending bursts.
@@ -269,6 +288,8 @@ mod tests {
                 compression,
             ])
             .unwrap();
+            let receiver =
+                std::thread::spawn(move || crate::transport::tests::accept(&listener, 15));
             let stop = AtomicBool::new(false);
             capture_loop(
                 &cli,
@@ -281,7 +302,7 @@ mod tests {
                 }),
             )
             .unwrap();
-            let (mut socket, _) = listener.accept().unwrap();
+            let mut socket = receiver.join().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(1)))
                 .unwrap();
@@ -324,6 +345,7 @@ mod tests {
             "2",
         ])
         .unwrap();
+        let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 15));
         let stop = AtomicBool::new(false);
         let mut attempts = 0;
         let ui_frames = Cell::new(0);
@@ -331,7 +353,8 @@ mod tests {
         capture_loop(
             &cli,
             &stop,
-            |_| {
+            |options| {
+                assert_eq!(options.fps, 15);
                 attempts += 1;
                 if attempts == 2 {
                     assert!(ui_frames.get() > 0);
@@ -348,7 +371,7 @@ mod tests {
         .unwrap();
         assert_eq!(attempts, 2);
         assert!(start.elapsed() >= Duration::from_secs(1));
-        let (mut socket, _) = listener.accept().unwrap();
+        let mut socket = receiver.join().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -359,6 +382,52 @@ mod tests {
         let mut pixels = vec![0; header.payload_len];
         socket.read_exact(&mut pixels).unwrap();
         assert_eq!(pixels, [255, 0, 0].repeat(4));
+    }
+
+    #[test]
+    fn reconnect_reconfigures_capture_before_acquiring_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cli = Cli::try_parse_from([
+            "capture",
+            &listener.local_addr().unwrap().to_string(),
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ])
+        .unwrap();
+        let receiver = std::thread::spawn(move || {
+            for rate in [15, 20] {
+                let mut socket = crate::transport::tests::accept(&listener, rate);
+                let mut header = [0; HEADER_LEN];
+                socket.read_exact(&mut header).unwrap();
+                let header = Header::decode(&header).unwrap();
+                socket.read_exact(&mut vec![0; header.payload_len]).unwrap();
+                socket.shutdown(std::net::Shutdown::Both).unwrap();
+            }
+        });
+        let stop = AtomicBool::new(false);
+        let mut rates = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        capture_loop(
+            &cli,
+            &stop,
+            |options| {
+                rates.push(options.fps);
+                if options.fps == 20 {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                anyhow::bail!("test video unavailable")
+            },
+            Some(|_, _, bgra: &mut pixels::Bgra8Pixels| {
+                assert!(Instant::now() < deadline, "sender did not reconnect");
+                *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
+                Ok(())
+            }),
+        )
+        .unwrap();
+        assert_eq!(rates, [15, 20]);
+        receiver.join().unwrap();
     }
 
     #[test]
@@ -395,6 +464,6 @@ mod tests {
             )
             .unwrap();
         });
-        assert_eq!(ui_frames, 1);
+        assert_eq!(ui_frames, 0);
     }
 }

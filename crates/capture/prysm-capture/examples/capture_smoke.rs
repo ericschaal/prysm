@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown_token = CancellationToken::new();
     let capturer = Capturer::new(None, shutdown_token.clone())?;
-    let stream = capturer.into_stream(800, 600);
+    let stream = capturer.into_stream(800, 600, 30.try_into().unwrap());
 
     let result = check_capture(stream).await;
     shutdown_token.cancel();

@@ -33,7 +33,7 @@ pub struct Cli {
     pub capture: CaptureOptions,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct CaptureOptions {
     /// Capture width (even, 2–1920)
     #[arg(long, default_value_t = 320, value_parser = dimension::<1920>)]
@@ -43,8 +43,8 @@ pub struct CaptureOptions {
     #[arg(long, default_value_t = 180, value_parser = dimension::<1080>)]
     pub height: u32,
 
-    /// Maximum frames per second
-    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u8).range(1..=60))]
+    /// Negotiated with Prysm before capture starts
+    #[arg(skip = 30)]
     pub fps: u8,
 
     #[arg(long, value_enum, default_value_t = VideoBackend::Auto)]
@@ -201,9 +201,8 @@ mod tests {
             "127.0.0.1:0",
             "127.0.0.1:19400 --width 3",
             "127.0.0.1:19400 --height 1082",
-            "127.0.0.1:19400 --fps 0",
+            "127.0.0.1:19400 --fps 30",
             "127.0.0.1:19400 --h264-bitrate 0",
-            "127.0.0.1:19400 --fps 61",
             "127.0.0.1:19400 --video-backend unknown",
             "127.0.0.1:19400 --quirks 4",
             "127.0.0.1:19400 --ui-backend none",

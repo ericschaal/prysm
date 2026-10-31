@@ -9,6 +9,8 @@ h264 = ["dep:openh264", "dep:yuv", "dep:h264-reader"]
 
 [dependencies]
 anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 lz4_flex = { workspace = true, features = ["std", "safe-encode", "safe-decode"] }
 h264-reader = { workspace = true, optional = true }
 openh264 = { workspace = true, optional = true }

@@ -222,3 +222,15 @@ fn input_rates_are_required_positive_and_output_rates_are_rejected() {
         assert!(serde_json::from_value::<Output>(output).is_err());
     }
 }
+
+#[test]
+fn webos_capture_rate_cannot_exceed_native_limit() {
+    let mut config: Config = toml::from_str(CONFIG).unwrap();
+    for rate in [1, 60, 61] {
+        config.input = Input::Webos {
+            listen: "127.0.0.1:19400".parse().unwrap(),
+            refresh_rate_hz: rate.try_into().unwrap(),
+        };
+        assert_eq!(config.validate().is_ok(), rate <= 60);
+    }
+}

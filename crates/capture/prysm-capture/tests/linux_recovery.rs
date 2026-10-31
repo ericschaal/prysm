@@ -44,7 +44,7 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
     let _cancel_on_exit = shutdown.clone().drop_guard();
     let capturer = V4lCapturer::new(Some(&path), shutdown.clone())?;
     let completed = capturer.completion();
-    let frames = capturer.into_stream(64, 48);
+    let frames = capturer.into_stream(64, 48, 30.try_into().unwrap());
     futures::pin_mut!(frames);
     for luma in [16, 235] {
         let pixels = [luma, 128, luma, 128].repeat(64 * 48 / 2);

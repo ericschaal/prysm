@@ -138,9 +138,10 @@ Input and output are independent:
 
 Set `[input]` to `type = "file"` with `path`, `type = "device"` with `device`,
 or `type = "webos"` with a TCP `listen` address. Each input requires a positive
-`refresh_rate_hz`, which caps frames delivered to processing and either output.
-Excess frames are dropped without slowing file playback or duplicating frames.
-Device capture and webOS transmission still run at their source rates.
+`refresh_rate_hz`, which configures the capture source directly. FFmpeg caps file
+output at the lower of the source and configured rate; devices must support the
+requested rate. webOS negotiates its rate (1–60 Hz) with the TV sender over TCP
+before capture starts and again on reconnect.
 Files require FFmpeg 9+ on PATH.
 Capture devices provide video feeds; this does not directly record the desktop.
 See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.

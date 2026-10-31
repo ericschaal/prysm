@@ -5,6 +5,57 @@ use anyhow::{Result, bail, ensure};
 
 pub const HEADER_LEN: usize = 24;
 
+pub const MAX_CONTROL_LEN: usize = 128;
+pub const HELLO: ControlMessage = ControlMessage::Hello { version: 1 };
+
+/// Connection control uses bounded, length-prefixed JSON; frame payloads stay binary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ControlMessage {
+    Hello { version: u32 },
+    CaptureSettings { refresh_rate_hz: u32 },
+}
+
+impl ControlMessage {
+    pub fn validate(self) -> Result<Self> {
+        match self {
+            Self::Hello { version } => ensure!(version == 1, "unsupported webOS handshake version"),
+            Self::CaptureSettings { refresh_rate_hz } => ensure!(
+                (1..=60).contains(&refresh_rate_hz),
+                "webOS refresh_rate_hz must be between 1 and 60"
+            ),
+        }
+        Ok(self)
+    }
+
+    pub fn encode(self) -> Result<Vec<u8>> {
+        let payload = serde_json::to_vec(&self.validate()?)?;
+        let mut bytes = u32::try_from(payload.len())?.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&payload);
+        Ok(bytes)
+        
+    }
+
+    /// Validate the prefix before allocating a control payload.
+    pub fn decode_length(prefix: [u8; 4]) -> Result<usize> {
+        let length = u32::from_be_bytes(prefix) as usize;
+        ensure!(
+            (1..=MAX_CONTROL_LEN).contains(&length),
+            "invalid webOS control message length"
+        );
+        Ok(length)
+    }
+
+    /// Decode the JSON payload, after removing its four-byte length prefix.
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        ensure!(
+            (1..=MAX_CONTROL_LEN).contains(&payload.len()),
+            "invalid webOS control message length"
+        );
+        serde_json::from_slice::<Self>(payload)?.validate()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PixelFormat {
@@ -137,6 +188,40 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_messages_are_versioned_bounded_and_validate_fields() {
+        for message in [
+            HELLO,
+            ControlMessage::CaptureSettings { refresh_rate_hz: 1 },
+            ControlMessage::CaptureSettings {
+                refresh_rate_hz: 60,
+            },
+        ] {
+            let bytes = message.encode().unwrap();
+            assert_eq!(
+                ControlMessage::decode_length(bytes[..4].try_into().unwrap()).unwrap(),
+                bytes.len() - 4
+            );
+            assert_eq!(ControlMessage::decode(&bytes[4..]).unwrap(), message);
+        }
+        for json in [
+            r#"{"type":"hello","version":2}"#,
+            r#"{"type":"hello","version":1,"extra":true}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":0}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":61}"#,
+            r#"{"type":"capture_settings","refresh_rate_hz":"30"}"#,
+            r#"{"type":"capture_settings"}"#,
+            r#"{"type":"unknown"}"#,
+            "{",
+        ] {
+            assert!(ControlMessage::decode(json.as_bytes()).is_err());
+        }
+        for length in [0u32, 129, u32::MAX] {
+            assert!(ControlMessage::decode_length(length.to_be_bytes()).is_err());
+        }
+        assert!(ControlMessage::decode(&[b' '; MAX_CONTROL_LEN + 1]).is_err());
+    }
 
     #[test]
     fn round_trip_all_formats_and_reject_unbounded_headers() {

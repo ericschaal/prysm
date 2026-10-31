@@ -3792,6 +3792,8 @@ dependencies = [
  "h264-reader",
  "lz4_flex",
  "openh264",
+ "serde",
+ "serde_json",
  "yuv",
 ]
 

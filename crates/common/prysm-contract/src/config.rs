@@ -71,6 +71,15 @@ impl Config {
             self.source == Source::Prysm || (!self.output.is_egui() && self.wled.is_some()),
             "WLED effects require WLED output and a [wled] HTTP endpoint"
         );
+        if let Input::Webos {
+            refresh_rate_hz, ..
+        } = self.input
+        {
+            anyhow::ensure!(
+                refresh_rate_hz.get() <= 60,
+                "webOS refresh_rate_hz must be between 1 and 60"
+            );
+        }
         // Revalidate programmatically constructed URLs as well as deserialized URLs.
         if let Some(wled) = &self.wled {
             let url = &wled.url;

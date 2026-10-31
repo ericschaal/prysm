@@ -382,6 +382,7 @@ mod tests {
             cleanup: Vec::new(),
         };
         let mut capture = Some(fake_capture(&mut driver));
+        let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 30));
         let stop = AtomicBool::new(false);
         let mut ui_frames = 0;
         crate::capture_loop(
@@ -402,7 +403,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let (mut socket, _) = listener.accept().unwrap();
+        let mut socket = receiver.join().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();

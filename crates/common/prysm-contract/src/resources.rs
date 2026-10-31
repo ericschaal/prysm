@@ -183,7 +183,7 @@ pub enum Input {
     Webos {
         #[schema(value_type = String)]
         listen: std::net::SocketAddr,
-        #[schema(value_type = u32, minimum = 1)]
+        #[schema(value_type = u32, minimum = 1, maximum = 60)]
         refresh_rate_hz: NonZeroU32,
     },
 }

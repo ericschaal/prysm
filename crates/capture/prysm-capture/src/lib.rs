@@ -5,6 +5,7 @@ mod webos;
 pub use webos::WebosCapturer;
 
 use futures::{Stream, StreamExt};
+use std::num::NonZeroU32;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -50,11 +51,13 @@ fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
 
 /// Live capture yields the newest available frame, or a terminal capture error.
 /// Intermediate frames may be skipped under load; cancellation closes the stream.
+/// The requested rate configures the device or remote sender; unsupported device rates fail.
 pub trait PrysmCapturer {
     fn into_stream(
         self,
         width: u32,
         height: u32,
+        refresh_rate_hz: NonZeroU32,
     ) -> impl Stream<Item = Result<Frame>> + Send + 'static
     where
         Self: Sized + Send + 'static;

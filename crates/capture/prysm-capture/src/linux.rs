@@ -1,6 +1,7 @@
 use crate::{CaptureError, Frame, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix};
 use anyhow::Context;
 use futures::Stream;
+use std::num::NonZeroU32;
 use tokio_util::sync::CancellationToken;
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, Stream as _};
@@ -87,6 +88,30 @@ fn negotiated_colorimetry(device: &Device) -> Result<(YuvRange, YuvStandardMatri
     )
 }
 
+fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow::Result<()> {
+    let mut params = device
+        .params()
+        .context("failed to read capture frame interval")?;
+    anyhow::ensure!(
+        params
+            .capabilities
+            .contains(v4l::parameters::Capabilities::TIME_PER_FRAME),
+        "capture device does not support configuring its frame interval"
+    );
+    params.interval = v4l::Fraction::new(1, refresh_rate_hz.get());
+    let actual = device
+        .set_params(&params)
+        .context("failed to set capture frame interval")?;
+    anyhow::ensure!(
+        actual.interval.numerator != 0
+            && u64::from(actual.interval.numerator) * u64::from(refresh_rate_hz.get())
+                == u64::from(actual.interval.denominator),
+        "capture device cannot provide {refresh_rate_hz} Hz (negotiated interval: {})",
+        actual.interval
+    );
+    Ok(())
+}
+
 pub struct V4lCapturer {
     device_path: String,
     shutdown_token: CancellationToken,
@@ -114,6 +139,7 @@ impl V4lCapturer {
         device: &mut Device,
         width: u32,
         height: u32,
+        refresh_rate_hz: NonZeroU32,
     ) -> Result<(MmapStream<'_>, Format, YuvRange, YuvStandardMatrix)> {
         let mut fmt = device.format().context("failed to read capture format")?;
 
@@ -157,6 +183,7 @@ impl V4lCapturer {
                         } else {
                             (YuvRange::Full, YuvStandardMatrix::Bt601)
                         };
+                        configure_frame_rate(device, refresh_rate_hz)?;
                         let mmap_stream = MmapStream::with_buffers(device, Type::VideoCapture, 4)
                             .context("Failed to create stream")?;
 
@@ -182,6 +209,7 @@ impl PrysmCapturer for V4lCapturer {
         self,
         width: u32,
         height: u32,
+        refresh_rate_hz: NonZeroU32,
     ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
         let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
         let completed = self.completed.clone().drop_guard();
@@ -204,9 +232,12 @@ impl PrysmCapturer for V4lCapturer {
                         }
                     })?;
                 let (mut input_stream, format, range, matrix) =
-                    Self::create_stream(&mut device, width, height)?;
+                    Self::create_stream(&mut device, width, height, refresh_rate_hz)?;
                 // Bound the wait so a stalled camera cannot prevent cancellation.
-                input_stream.set_timeout(std::time::Duration::from_secs(1));
+                input_stream.set_timeout(
+                    std::time::Duration::from_secs(1)
+                        + std::time::Duration::from_secs(1) / refresh_rate_hz.get(),
+                );
                 let pixel_format = match format.fourcc.str() {
                     Ok("YUYV") => PixelFormat::YUYV,
                     Ok("RGB3") => PixelFormat::RGB24,
@@ -278,7 +309,7 @@ mod tests {
         )
         .unwrap();
         let completed = capturer.completion();
-        let frames = capturer.into_stream(640, 360);
+        let frames = capturer.into_stream(640, 360, 30.try_into().unwrap());
         futures::pin_mut!(frames);
         let error = frames.next().await.unwrap().unwrap_err();
         let CaptureError::DeviceNotFound {
