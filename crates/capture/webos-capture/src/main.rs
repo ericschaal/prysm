@@ -11,7 +11,6 @@ use clap::Parser;
 use cli::{CaptureOptions, Cli, Source};
 use native::{Ui, Video};
 use prysm_metrics::{FrameStage, PipelineEvent, Stage, UiCaptureEvent, VideoCaptureEvent};
-use prysm_webos_protocol::PixelFormat;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use std::{
     sync::{
@@ -50,6 +49,7 @@ fn main() -> Result<()> {
         cli.capture.width,
         cli.capture.height,
         cli.capture.fps,
+        prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
     );
     run(&cli, &stop)
 }
@@ -96,14 +96,21 @@ fn capture_loop(
     );
     let mut video = None;
     let mut sender = transport::Sender::new(cli.receiver, cli.compression);
-    let (mut native, mut rgb, mut bgra) = (Vec::new(), Vec::new(), pixels::Bgra8Pixels::default());
+    let mut native = Vec::new();
+    let mut composition = pixels::CompositionBuffer::default();
+    let mut bgra = pixels::Bgra8Pixels::default();
     let period = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut next = Instant::now();
     let mut retry = next;
     let mut ui_warning = next;
     eprintln!(
-        "Capturing {}x{} at {} fps for {} (compression: {:?})",
-        options.width, options.height, options.fps, cli.receiver, cli.compression
+        "Capturing {}x{} at {} fps for {} (compression: {:?}, composition format: {:?})",
+        options.width,
+        options.height,
+        options.fps,
+        cli.receiver,
+        cli.compression,
+        cli.composition_format
     );
     while !stop.load(Ordering::Relaxed) {
         let work = prysm_metrics::timer(Stage::CaptureIteration);
@@ -147,7 +154,7 @@ fn capture_loop(
                 }
             }
         }
-        let mut converted = false;
+        let mut payload = native.as_slice();
         let mut content = prysm_metrics::Content::Video;
         if sender.ready()
             && let Some(capture_ui) = &mut capture_ui
@@ -168,26 +175,18 @@ fn capture_loop(
                     } else {
                         prysm_metrics::Content::Ui
                     };
-                    if let Some(header) = frame {
-                        {
-                            let _time = prysm_metrics::timer(Stage::CompositionConvert);
-                            pixels::to_rgb(header, &native, &mut rgb)?;
-                        }
-                        {
-                            let _time = prysm_metrics::timer(Stage::CompositionBlend);
-                            bgra.blend_into(&mut rgb)?;
-                        }
-                    } else {
-                        // Keep menus visible while the video backend recovers.
-                        let _time = prysm_metrics::timer(Stage::CompositionConvert);
-                        bgra.to_rgb(width, height, &mut rgb)?;
-                    }
-                    let composed = pixels::header(width, height, PixelFormat::Rgb)?;
+                    let composed = composition.compose(
+                        width,
+                        height,
+                        frame.map(|header| (header, native.as_slice())),
+                        &bgra,
+                        cli.composition_format,
+                    )?;
                     if content == prysm_metrics::Content::Blended {
-                        prysm_metrics::frame(FrameStage::Composited, composed.format.into());
+                        prysm_metrics::frame(FrameStage::Composited, composed.header.format.into());
                     }
-                    frame = Some(composed);
-                    converted = true;
+                    frame = Some(composed.header);
+                    payload = composed.pixels;
                 }
                 Err(error) if Instant::now() >= ui_warning => {
                     eprintln!("UI frame skipped: {error:#}");
@@ -197,7 +196,6 @@ fn capture_loop(
             }
         }
         if let Some(header) = frame {
-            let payload = if converted { &rgb } else { &native };
             if let Err(error) = sender.send(header, payload, content) {
                 eprintln!("{error:#}");
             }
@@ -219,8 +217,67 @@ fn capture_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_protocol::{HEADER_LEN, Header};
+    use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat};
     use std::{cell::Cell, io::Read, net::TcpListener};
+
+    #[test]
+    fn nv12_composition_reaches_the_socket_with_raw_or_lz4_payload() {
+        for compression in ["none", "lz4"] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let cli = Cli::try_parse_from([
+                "capture",
+                &listener.local_addr().unwrap().to_string(),
+                "--source",
+                "ui",
+                "--width",
+                "16",
+                "--height",
+                "8",
+                "--composition-format",
+                "nv12",
+                "--compression",
+                compression,
+            ])
+            .unwrap();
+            let stop = AtomicBool::new(false);
+            capture_loop(
+                &cli,
+                &stop,
+                |_| panic!("UI-only opened video"),
+                Some(|_, _, bgra: &mut pixels::Bgra8Pixels| {
+                    *bgra.bytes_mut() = [0, 0, 255, 255].repeat(16 * 8);
+                    stop.store(true, Ordering::Relaxed);
+                    Ok(())
+                }),
+            )
+            .unwrap();
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut bytes = [0; HEADER_LEN];
+            socket.read_exact(&mut bytes).unwrap();
+            let header = Header::decode(&bytes).unwrap();
+            assert_eq!(header.format, PixelFormat::Nv12);
+            assert_eq!(header.raw_len().unwrap(), 16 * 8 * 3 / 2);
+            assert_eq!(header.compressed, compression == "lz4");
+            let mut payload = vec![0; header.payload_len];
+            socket.read_exact(&mut payload).unwrap();
+            let raw = if header.compressed {
+                let mut decoded = vec![0; header.raw_len().unwrap()];
+                prysm_webos_protocol::decompress(&payload, &mut decoded).unwrap();
+                decoded
+            } else {
+                payload
+            };
+            let mut rgb = Vec::new();
+            pixels::to_rgb(header, &raw, &mut rgb).unwrap();
+            assert!(
+                rgb.chunks_exact(3)
+                    .all(|p| p[0] >= 250 && p[1] <= 4 && p[2] <= 4)
+            );
+        }
+    }
 
     #[test]
     fn startup_retries_while_ui_frames_continue() {

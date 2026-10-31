@@ -57,7 +57,7 @@ a new Grafana data volume; it does not reset an existing account.
 
 The datasource and **Prysm — systems and stream** dashboard are provisioned from
 this directory. Select nodes at the top. Capture configuration and codec-specific
-panels also support requested codec, capture mode, width and height filters. Machine/pipeline
+panels also support requested codec, composition format, capture mode, width and height filters. Machine/pipeline
 overview panels remain visible so that host-side bottlenecks stay in context.
 
 [Prometheus targets](http://localhost:9090/targets) shows scrape errors. Check the
@@ -112,3 +112,14 @@ The exporter uses maintained `prometheus-client`, `tiny_http`, and `sysinfo`
 crates. It contains no unsafe Rust. Bounded label families and histograms (which use brief library locks)
 are updated in process; sampling, encoding exposition, and HTTP I/O run on a
 separate thread. Prometheus/Grafana outages therefore do not block capture.
+
+## Compare RGB and blended NV12
+
+Add `--composition-format nv12` to the TV command for NV12 after composition,
+or use `--composition-format rgb` for the baseline (default). Keep the clip,
+resolution and frame rate fixed. Select the requested composition format in
+Grafana, inspect actual `Encoded` / `SocketAccepted` format and content, and
+compare bandwidth, frame gaps and `Composer / ConvertToNv12` plus total loop
+time. RGB→NV12 subsamples chroma: LZ4 round trips exactly, but NV12 output is not
+pixel-identical to the RGB baseline. Sender restart resets counters; avoid rate
+windows spanning the switch, and compare separate steady-state time ranges.

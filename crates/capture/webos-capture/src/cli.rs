@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Compression::None)]
     pub compression: Compression,
 
+    /// Output format after UI composition; native video-only frames pass through
+    #[arg(long, value_enum, default_value_t = CompositionFormat::Rgb)]
+    pub composition_format: CompositionFormat,
+
     #[command(flatten)]
     pub capture: CaptureOptions,
 }
@@ -81,6 +85,21 @@ impl Source {
 pub enum Compression {
     None,
     Lz4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum CompositionFormat {
+    Rgb,
+    Nv12,
+}
+
+impl From<CompositionFormat> for prysm_webos_protocol::PixelFormat {
+    fn from(format: CompositionFormat) -> Self {
+        match format {
+            CompositionFormat::Rgb => Self::Rgb,
+            CompositionFormat::Nv12 => Self::Nv12,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -145,6 +164,13 @@ mod tests {
         assert!(!cli.source.includes_video());
         assert!(cli.source.includes_ui());
         assert_eq!(cli.capture.ui_backend, UiBackend::Halgal);
+        assert_eq!(cli.composition_format, CompositionFormat::Rgb);
+        assert_eq!(
+            parse("127.0.0.1:19400 --composition-format nv12")
+                .unwrap()
+                .composition_format,
+            CompositionFormat::Nv12
+        );
         assert_eq!(
             parse("127.0.0.1:19400 --capture-point osd --force-capture")
                 .unwrap()
@@ -172,6 +198,7 @@ mod tests {
             "127.0.0.1:19400 --video-backend unknown",
             "127.0.0.1:19400 --quirks 4",
             "127.0.0.1:19400 --ui-backend none",
+            "127.0.0.1:19400 --composition-format nv16",
         ] {
             assert!(parse(args).is_err(), "{args}");
         }

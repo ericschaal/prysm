@@ -1,6 +1,80 @@
+use crate::cli::CompositionFormat;
 use anyhow::{Result, ensure};
+use prysm_metrics::Stage;
 use prysm_webos_protocol::{Header, PixelFormat};
 use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
+
+/// Owned reusable composition storage; returned bytes retain their wire metadata.
+#[derive(Default)]
+pub struct CompositionBuffer {
+    rgb: Vec<u8>,
+    nv12: Vec<u8>,
+}
+
+pub struct ComposedFrame<'a> {
+    pub header: Header,
+    pub pixels: &'a [u8],
+}
+
+impl CompositionBuffer {
+    pub fn compose(
+        &mut self,
+        width: u32,
+        height: u32,
+        video: Option<(Header, &[u8])>,
+        ui: &Bgra8Pixels,
+        format: CompositionFormat,
+    ) -> Result<ComposedFrame<'_>> {
+        // Validate subsampling constraints before modifying the composition.
+        let output_header = header(width, height, format.into())?;
+        {
+            let _time = prysm_metrics::timer(Stage::CompositionConvert);
+            if let Some((video_header, pixels)) = video {
+                ensure!(
+                    video_header.width == width && video_header.height == height,
+                    "UI and video dimensions differ"
+                );
+                to_rgb(video_header, pixels, &mut self.rgb)?;
+            } else {
+                ui.to_rgb(width, height, &mut self.rgb)?;
+            }
+        }
+        if video.is_some() {
+            let _time = prysm_metrics::timer(Stage::CompositionBlend);
+            ui.blend_into(&mut self.rgb)?;
+        }
+        let pixels = match format {
+            CompositionFormat::Rgb => self.rgb.as_slice(),
+            CompositionFormat::Nv12 => {
+                let _time = prysm_metrics::timer(Stage::CompositionToNv12);
+                self.nv12.resize(output_header.payload_len, 0);
+                let (y, uv) = self.nv12.split_at_mut(width as usize * height as usize);
+                let mut image = yuv::YuvBiPlanarImageMut {
+                    y_plane: yuv::BufferStoreMut::Borrowed(y),
+                    y_stride: width,
+                    uv_plane: yuv::BufferStoreMut::Borrowed(uv),
+                    uv_stride: width,
+                    width,
+                    height,
+                };
+                // Match the receiver's limited-range BT.601 interpretation.
+                yuv::rgb_to_yuv_nv12(
+                    &mut image,
+                    &self.rgb,
+                    width * 3,
+                    YuvRange::Limited,
+                    YuvStandardMatrix::Bt601,
+                    YuvConversionMode::Fast,
+                )?;
+                self.nv12.as_slice()
+            }
+        };
+        Ok(ComposedFrame {
+            header: output_header,
+            pixels,
+        })
+    }
+}
 
 /// LG's packed, premultiplied BGRA8 UI surface. The type retains the
 /// capture/conversion contract even when its byte allocation is reused.
@@ -123,6 +197,131 @@ pub fn blend(rgb: &mut [u8], bgra: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nv12_blend_matches_rgb_for_uniform_chroma_and_reuses_storage() {
+        let width = 4;
+        let height = 2;
+        let video = [0, 0, 255].repeat(8);
+        let mut ui = Bgra8Pixels::default();
+        *ui.bytes_mut() = [0, 0, 128, 128].repeat(8);
+        let mut buffer = CompositionBuffer::default();
+        let video_header = header(width, height, PixelFormat::Rgb).unwrap();
+        let expected = buffer
+            .compose(
+                width,
+                height,
+                Some((video_header, &video)),
+                &ui,
+                CompositionFormat::Rgb,
+            )
+            .unwrap()
+            .pixels
+            .to_vec();
+        assert_eq!(expected, [128, 0, 127].repeat(8));
+        let composed = buffer
+            .compose(
+                width,
+                height,
+                Some((video_header, &video)),
+                &ui,
+                CompositionFormat::Nv12,
+            )
+            .unwrap();
+        assert_eq!(composed.header.format, PixelFormat::Nv12);
+        assert_eq!(composed.pixels.len() * 2, expected.len());
+        let allocation = composed.pixels.as_ptr();
+        let mut decoded = Vec::new();
+        to_rgb(composed.header, composed.pixels, &mut decoded).unwrap();
+        assert!(
+            decoded
+                .iter()
+                .zip(&expected)
+                .all(|(a, b)| a.abs_diff(*b) <= 4)
+        );
+        let composed = buffer
+            .compose(
+                width,
+                height,
+                Some((video_header, &video)),
+                &ui,
+                CompositionFormat::Nv12,
+            )
+            .unwrap();
+        assert_eq!(composed.pixels.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn nv12_keeps_uv_order_and_black_white_levels() {
+        let mut ui = Bgra8Pixels::default();
+        *ui.bytes_mut() = [0; 4].repeat(8);
+        let mut buffer = CompositionBuffer::default();
+        for row in [
+            [255, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255],
+            [0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255],
+        ] {
+            let video = row.repeat(2);
+            let composed = buffer
+                .compose(
+                    4,
+                    2,
+                    Some((header(4, 2, PixelFormat::Rgb).unwrap(), &video)),
+                    &ui,
+                    CompositionFormat::Nv12,
+                )
+                .unwrap();
+            let mut rgb = Vec::new();
+            to_rgb(composed.header, composed.pixels, &mut rgb).unwrap();
+            assert!(
+                rgb.iter().zip(&video).all(|(a, b)| a.abs_diff(*b) <= 4),
+                "{rgb:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn composition_rejects_invalid_geometry_and_short_planes() {
+        let mut buffer = CompositionBuffer::default();
+        let mut ui = Bgra8Pixels::default();
+        assert!(
+            buffer
+                .compose(3, 2, None, &ui, CompositionFormat::Nv12)
+                .is_err()
+        );
+        assert!(
+            buffer
+                .compose(2, 3, None, &ui, CompositionFormat::Nv12)
+                .is_err()
+        );
+        assert!(
+            buffer
+                .compose(2, 2, None, &ui, CompositionFormat::Nv12)
+                .is_err()
+        );
+        *ui.bytes_mut() = [0; 4].repeat(4);
+        assert!(
+            buffer
+                .compose(
+                    2,
+                    2,
+                    Some((header(4, 2, PixelFormat::Rgb).unwrap(), &[0; 24])),
+                    &ui,
+                    CompositionFormat::Nv12
+                )
+                .is_err()
+        );
+        assert!(
+            buffer
+                .compose(
+                    2,
+                    2,
+                    Some((header(2, 2, PixelFormat::Rgb).unwrap(), &[0; 3])),
+                    &ui,
+                    CompositionFormat::Nv12
+                )
+                .is_err()
+        );
+    }
 
     #[test]
     fn ui_payload_keeps_bgra_contract_through_conversion() {

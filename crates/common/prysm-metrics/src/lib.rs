@@ -251,7 +251,14 @@ impl Drop for Timer {
     }
 }
 
-pub fn capture_info(source: CaptureSource, compression: Codec, width: u32, height: u32, fps: u8) {
+pub fn capture_info(
+    source: CaptureSource,
+    compression: Codec,
+    width: u32,
+    height: u32,
+    fps: u8,
+    composition_format: Format,
+) {
     if let Some(metrics) = METRICS.get() {
         metrics
             .capture
@@ -261,6 +268,7 @@ pub fn capture_info(source: CaptureSource, compression: Codec, width: u32, heigh
                 width,
                 height,
                 fps,
+                composition_format,
             })
             .set(1);
     }
@@ -429,12 +437,17 @@ mod tests {
             .get_or_create(&Stage::FrameEncode.into())
             .observe(0.002);
         metrics
+            .durations
+            .get_or_create(&Stage::CompositionToNv12.into())
+            .observe(0.003);
+        metrics
             .events
             .get_or_create(&FrameSenderEvent::FrameWriteTimedOut.into())
             .inc();
         let text = metrics.render().unwrap();
         assert!(text.contains("component=\"FrameSender\",boundary=\"SocketAccepted\",format=\"Rgb24\",codec=\"Unspecified\",content=\"Unspecified\",width=\"0\",height=\"0\"} 3"));
         assert!(text.contains("component=\"FrameEncoder\",operation=\"PreparePayload\"} 1"));
+        assert!(text.contains("component=\"Composer\",operation=\"ConvertToNv12\"} 1"));
         assert!(text.contains(
             "component=\"FrameSender\",operation=\"WriteFrame\",outcome=\"TimedOut\"} 1"
         ));

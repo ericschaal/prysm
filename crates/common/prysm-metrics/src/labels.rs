@@ -35,6 +35,7 @@ pub enum Operation {
     Acquire,
     Convert,
     Blend,
+    ConvertToNv12,
     Compress,
     PreparePayload,
     ValidateInput,
@@ -286,6 +287,7 @@ pub enum Stage {
     UiAcquire,
     CompositionConvert,
     CompositionBlend,
+    CompositionToNv12,
     FrameEncode,
     FrameWrite,
     FrameWriteWait,
@@ -322,6 +324,11 @@ impl From<Stage> for StageLabels {
                 (Flow::CaptureFrames, Component::Composer, Operation::Convert)
             }
             Stage::CompositionBlend => (Flow::CaptureFrames, Component::Composer, Operation::Blend),
+            Stage::CompositionToNv12 => (
+                Flow::CaptureFrames,
+                Component::Composer,
+                Operation::ConvertToNv12,
+            ),
             Stage::FrameEncode => (
                 Flow::CaptureFrames,
                 Component::FrameEncoder,
@@ -605,4 +612,5 @@ pub(crate) struct CaptureInfo {
     pub width: u32,
     pub height: u32,
     pub fps: u8,
+    pub composition_format: Format,
 }

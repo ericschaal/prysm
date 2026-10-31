@@ -58,6 +58,27 @@
         }
       },
       {
+        "name": "composition_format",
+        "label": "Requested composition format",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(prysm_capture_requested_info{node=~\"$node\"}, composition_format)",
+          "refId": "composition_format"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
         "name": "source",
         "label": "Requested capture mode",
         "type": "query",
@@ -573,7 +594,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_pipeline_frames_total{node=~\"$node\",boundary=\"Encoded\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "expr": "(sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_pipeline_frames_total{node=~\"$node\",boundary=\"Encoded\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",composition_format=~\"$composition_format\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
           "legendFormat": "{{node}}",
           "instant": false,
           "format": "time_series"
@@ -621,7 +642,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(1 - sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderInput\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "expr": "(1 - sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderInput\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",composition_format=~\"$composition_format\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
           "legendFormat": "{{node}}",
           "instant": false,
           "format": "time_series"
@@ -900,7 +921,7 @@
       "id": 17,
       "type": "table",
       "title": "Requested capture configuration",
-      "description": "Configured source, compression and dimensions. Filter or inspect historical ranges to compare runs; settings change when the sender restarts.",
+      "description": "Configured source, compression, composition format and dimensions. Native video-only frames pass through unchanged. Filter or inspect historical ranges to compare runs; settings change when the sender restarts.",
       "datasource": {
         "type": "prometheus",
         "uid": "prysm-prometheus"
@@ -914,7 +935,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "expr": "(prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",composition_format=~\"$composition_format\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
           "legendFormat": "{{node}}",
           "instant": true,
           "format": "table"

@@ -63,6 +63,10 @@ prysm-webos-capture 192.168.1.10:19400 --source video
 # Composite the TV's UI onto video; this is the default capture mode.
 prysm-webos-capture 192.168.1.10:19400 --source both --compression lz4
 
+# Reduce composed payload size with NV12 before LZ4.
+prysm-webos-capture 192.168.1.10:19400 --source both \
+  --composition-format nv12 --compression lz4
+
 # UI capture works independently, without opening a video driver.
 prysm-webos-capture 192.168.1.10:19400 --source ui --ui-backend halgal
 
@@ -78,6 +82,7 @@ fps must be 1–60. The receiver's `capture_resolution` does not configure the T
 | --- | --- |
 | `--source` | `video`, `ui`, `both` |
 | `--compression` | `none`, `lz4` (lossless, raw fallback) |
+| `--composition-format` | `rgb` (default), `nv12`; applies after UI composition, including UI-only fallback |
 | `--video-backend` | `auto`, `vtcapture`, `dile` |
 | `--ui-backend` | `auto`, `gm`, `halgal` |
 | `--capture-point` | `display`, `scaler-input`, `scaler-output`, `blended`, `osd`, `histogram` |
@@ -187,6 +192,20 @@ runs on the Prysm host. NV12 uses half the bandwidth of RGB24: at 640×360/30 fp
 raw pixels need 83 Mbit/s instead of 166 Mbit/s, before network overhead.
 320×180 NV12 needs about 21 Mbit/s. UI blending converts video directly to RGB
 and blends premultiplied BGRA in place, without an ARGB intermediate frame.
+`--composition-format nv12` converts the composed RGB image to packed NV12
+(limited-range BT.601, matching the receiver) before compression. It reuses the
+RGB and NV12 allocations, requires no receiver or protocol changes, and halves
+the raw payload. At 640×240/30 fps this is 55.3 Mbit/s instead of 110.6 Mbit/s,
+before compression and network overhead. UI-only output also uses the selected
+composition format; native video-only frames and UI-failure fallback pass through
+unchanged. RGB remains the default for controlled comparisons.
+
+NV12 subsamples chroma over 2×2 pixels, so this conversion is lossy even though
+LZ4 is lossless. Colored UI edges can soften and RGB/YUV rounding can change
+colors slightly. Compare decoded colors and black-bar behavior on your TV.
+The extra conversion is measured separately as `Composer / ConvertToNv12`;
+actual wire frame counters carry the NV12 header format.
+
 The Rust `yuv` dependency uses a scalar ARMv7 conversion path; measure UI-enabled
 CPU usage on the TV before increasing resolution.
 
