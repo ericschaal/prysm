@@ -385,7 +385,7 @@ mod tests {
         let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 30));
         let stop = AtomicBool::new(false);
         let mut ui_frames = 0;
-        crate::capture_loop(
+        crate::session::capture_loop(
             &cli,
             &stop,
             |_| {
