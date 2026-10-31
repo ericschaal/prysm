@@ -1,0 +1,4 @@
+[
+  {"targets": ["host.docker.internal:9102"], "labels": {"node": "computer"}},
+  {"targets": ["192.168.18.10:9101"], "labels": {"node": "tv"}}
+]

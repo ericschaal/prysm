@@ -2,6 +2,31 @@ use anyhow::{Result, ensure};
 use prysm_webos_protocol::{Header, PixelFormat};
 use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
+/// LG's packed, premultiplied BGRA8 UI surface. The type retains the
+/// capture/conversion contract even when its byte allocation is reused.
+#[derive(Default)]
+pub struct Bgra8Pixels {
+    bytes: Vec<u8>,
+}
+impl Bgra8Pixels {
+    pub fn bytes_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
+    }
+    pub fn blend_into(&self, rgb: &mut [u8]) -> Result<()> {
+        blend(rgb, &self.bytes)
+    }
+    pub fn to_rgb(&self, width: u32, height: u32, rgb: &mut Vec<u8>) -> Result<()> {
+        rgb.resize(width as usize * height as usize * 3, 0);
+        yuv::bgra_to_rgb(&self.bytes, width * 4, rgb, width * 3, width, height)?;
+        Ok(())
+    }
+}
+impl From<&Bgra8Pixels> for prysm_metrics::Format {
+    fn from(_: &Bgra8Pixels) -> Self {
+        Self::Bgra
+    }
+}
+
 pub fn header(width: u32, height: u32, format: PixelFormat) -> Result<Header> {
     let mut header = Header {
         width,
@@ -98,6 +123,19 @@ pub fn blend(rgb: &mut [u8], bgra: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_payload_keeps_bgra_contract_through_conversion() {
+        let mut ui = Bgra8Pixels::default();
+        ui.bytes_mut().extend_from_slice(&[0, 0, 255, 255]);
+        assert_eq!(
+            prysm_metrics::Format::from(&ui),
+            prysm_metrics::Format::Bgra
+        );
+        let mut rgb = Vec::new();
+        ui.to_rgb(1, 1, &mut rgb).unwrap();
+        assert_eq!(rgb, [255, 0, 0]);
+    }
 
     #[test]
     fn copies_padded_rows_and_rejects_invalid_planes() {

@@ -392,9 +392,9 @@ mod tests {
                     .take()
                     .expect("status 2 must not restart the driver"))
             },
-            Some(|_, _, bgra: &mut Vec<u8>| {
+            Some(|_, _, bgra: &mut crate::pixels::Bgra8Pixels| {
                 ui_frames += 1;
-                bgra.resize(16, 0);
+                bgra.bytes_mut().resize(16, 0);
                 if ui_frames == 3 {
                     stop.store(true, Ordering::Relaxed);
                 }

@@ -10,6 +10,7 @@ members = [
     "crates/common/prysm-core",
     "crates/common/prysm-contract",
     "crates/common/prysm-api",
+    "crates/common/prysm-metrics",
     "crates/rendering/prysm-renderer-desktop",
     "crates/rendering/prysm-renderer-wled",
 ]

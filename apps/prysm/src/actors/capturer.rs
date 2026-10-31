@@ -7,6 +7,7 @@ use actix::{
 use anyhow::Result;
 use futures::Stream;
 use prysm_capture::Frame;
+use prysm_metrics::{FrameStage, PipelineEvent};
 
 /// One capture session. Its context owns and drops the input stream.
 pub struct Capturer {
@@ -52,13 +53,16 @@ impl StreamHandler<Result<Frame>> for Capturer {
         let frame = match result {
             Ok(frame) => frame,
             Err(error) => {
+                prysm_metrics::event(PipelineEvent::InputFailed);
                 tracing::error!(error = %format!("{error:#}"), "capture session failed");
                 self.finish(Err(error), ctx);
                 return;
             }
         };
+        prysm_metrics::frame(FrameStage::InputDelivered, frame.format.into());
         match self.processor.try_send(FrameUpdate(frame)) {
-            Ok(()) | Err(SendError::Full(_)) => (),
+            Ok(()) => (),
+            Err(SendError::Full(_)) => prysm_metrics::event(PipelineEvent::ProcessorMailboxFull),
             Err(SendError::Closed(_)) => {
                 tracing::error!("processor actor unavailable");
                 self.finish(Err(anyhow::anyhow!("processor actor unavailable")), ctx);

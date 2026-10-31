@@ -5,6 +5,7 @@ use actix::{Actor, ActorContext, Context, Handler, Message, Recipient, prelude::
 use anyhow::anyhow;
 use prysm_capture::Frame;
 use prysm_contract::{ConfigRevision, PipelinePhase, PipelineStatus, ProcessingSettings};
+use prysm_metrics::{FrameStage, PipelineEvent, Stage};
 use prysm_processor::PrysmProcessor;
 use tokio::sync::watch;
 
@@ -53,18 +54,25 @@ impl Handler<FrameUpdate> for Processor {
     type Result = ();
 
     fn handle(&mut self, msg: FrameUpdate, ctx: &mut Self::Context) {
+        let process_time = prysm_metrics::timer(Stage::FrameProcess);
         let colors = self.frame_processor.process_frame(msg.0.clone());
+        drop(process_time);
+        prysm_metrics::frame(FrameStage::Processed, msg.0.format.into());
         let rendered = RenderFrame {
             frame: msg.0,
             viewport: self.frame_processor.viewport(),
             colors,
         };
-        if let Err(SendError::Closed(_)) = self.renderer.try_send(rendered) {
-            let _ = self
-                .completion
-                .try_send(Err(anyhow!("renderer actor unavailable")));
-            ctx.stop();
-            return;
+        match self.renderer.try_send(rendered) {
+            Ok(()) => {}
+            Err(SendError::Full(_)) => prysm_metrics::event(PipelineEvent::RendererMailboxFull),
+            Err(SendError::Closed(_)) => {
+                let _ = self
+                    .completion
+                    .try_send(Err(anyhow!("renderer actor unavailable")));
+                ctx.stop();
+                return;
+            }
         }
         self.status.send_modify(|status| {
             status.phase = PipelinePhase::Running;

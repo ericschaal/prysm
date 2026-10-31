@@ -10,6 +10,7 @@ use anyhow::{Result, ensure};
 use clap::Parser;
 use cli::{CaptureOptions, Cli, Source};
 use native::{Ui, Video};
+use prysm_metrics::{FrameStage, PipelineEvent, Stage, UiCaptureEvent, VideoCaptureEvent};
 use prysm_webos_protocol::PixelFormat;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use std::{
@@ -31,6 +32,25 @@ fn main() -> Result<()> {
     for signal in [SIGINT, SIGTERM] {
         signal_hook::flag::register(signal, Arc::clone(&stop))?;
     }
+    let _metrics = cli.metrics_listen.and_then(|address| {
+        match prysm_metrics::start(address, prysm_metrics::Role::Capturer) {
+            Ok(exporter) => {
+                eprintln!("Metrics listening on {}", exporter.address());
+                Some(exporter)
+            }
+            Err(error) => {
+                eprintln!("Metrics disabled: {error:#}");
+                None
+            }
+        }
+    });
+    prysm_metrics::capture_info(
+        cli.source.into(),
+        cli.compression.into(),
+        cli.capture.width,
+        cli.capture.height,
+        cli.capture.fps,
+    );
     run(&cli, &stop)
 }
 
@@ -48,12 +68,18 @@ fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
     } else {
         None
     };
+    prysm_metrics::backend_info(
+        prysm_metrics::Layer::Ui,
+        ui.as_ref()
+            .map_or(prysm_metrics::Backend::Disabled, Ui::metrics_backend),
+    );
     capture_loop(
         cli,
         stop,
         Video::open,
-        ui.as_mut()
-            .map(|ui| move |width, height, output: &mut Vec<u8>| ui.capture(width, height, output)),
+        ui.as_mut().map(|ui| {
+            move |width, height, output: &mut pixels::Bgra8Pixels| ui.capture(width, height, output)
+        }),
     )
 }
 
@@ -61,12 +87,16 @@ fn capture_loop(
     cli: &Cli,
     stop: &AtomicBool,
     mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
-    mut capture_ui: Option<impl FnMut(u32, u32, &mut Vec<u8>) -> Result<()>>,
+    mut capture_ui: Option<impl FnMut(u32, u32, &mut pixels::Bgra8Pixels) -> Result<()>>,
 ) -> Result<()> {
     let options = &cli.capture;
+    prysm_metrics::backend_info(
+        prysm_metrics::Layer::Video,
+        prysm_metrics::Backend::Disabled,
+    );
     let mut video = None;
     let mut sender = transport::Sender::new(cli.receiver, cli.compression);
-    let (mut native, mut rgb, mut bgra) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut native, mut rgb, mut bgra) = (Vec::new(), Vec::new(), pixels::Bgra8Pixels::default());
     let period = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut next = Instant::now();
     let mut retry = next;
@@ -76,10 +106,19 @@ fn capture_loop(
         options.width, options.height, options.fps, cli.receiver, cli.compression
     );
     while !stop.load(Ordering::Relaxed) {
+        let work = prysm_metrics::timer(Stage::CaptureIteration);
         if cli.source.includes_video() && video.is_none() && Instant::now() >= retry {
+            prysm_metrics::event(VideoCaptureEvent::InitAttempt);
             match open_video(options) {
-                Ok(capture) => video = Some(capture),
+                Ok(capture) => {
+                    prysm_metrics::backend_info(
+                        prysm_metrics::Layer::Video,
+                        capture.metrics_backend(),
+                    );
+                    video = Some(capture);
+                }
                 Err(error) => {
+                    prysm_metrics::event(VideoCaptureEvent::InitFailed);
                     eprintln!("video unavailable; retrying: {error:#}");
                     retry = Instant::now() + Duration::from_secs(1);
                 }
@@ -87,32 +126,67 @@ fn capture_loop(
         }
         let mut frame = None;
         if let Some(capture) = &mut video {
-            match capture.capture(&mut native) {
-                Ok(header) => frame = header,
+            let capture_time = prysm_metrics::timer(Stage::VideoAcquire);
+            let result = capture.capture(&mut native);
+            drop(capture_time);
+            match result {
+                Ok(Some(header)) => {
+                    prysm_metrics::frame(FrameStage::VideoCaptured, header.format.into());
+                    frame = Some(header);
+                }
+                Ok(None) => prysm_metrics::event(VideoCaptureEvent::Duplicate),
                 Err(error) => {
+                    prysm_metrics::event(VideoCaptureEvent::AcquireFailed);
                     eprintln!("video interrupted; restarting: {error:#}");
                     video = None;
+                    prysm_metrics::backend_info(
+                        prysm_metrics::Layer::Video,
+                        prysm_metrics::Backend::Disabled,
+                    );
                     retry = Instant::now() + Duration::from_secs(1);
                 }
             }
         }
         let mut converted = false;
+        let mut content = prysm_metrics::Content::Video;
         if sender.ready()
             && let Some(capture_ui) = &mut capture_ui
         {
             let (width, height) =
                 frame.map_or((options.width, options.height), |h| (h.width, h.height));
-            match capture_ui(width, height, &mut bgra) {
+            let ui_time = prysm_metrics::timer(Stage::UiAcquire);
+            let result = capture_ui(width, height, &mut bgra);
+            drop(ui_time);
+            if result.is_err() {
+                prysm_metrics::event(UiCaptureEvent::AcquireFailed);
+            }
+            match result {
                 Ok(()) => {
+                    prysm_metrics::frame(FrameStage::UiCaptured, (&bgra).into());
+                    content = if frame.is_some() {
+                        prysm_metrics::Content::Blended
+                    } else {
+                        prysm_metrics::Content::Ui
+                    };
                     if let Some(header) = frame {
-                        pixels::to_rgb(header, &native, &mut rgb)?;
-                        pixels::blend(&mut rgb, &bgra)?;
+                        {
+                            let _time = prysm_metrics::timer(Stage::CompositionConvert);
+                            pixels::to_rgb(header, &native, &mut rgb)?;
+                        }
+                        {
+                            let _time = prysm_metrics::timer(Stage::CompositionBlend);
+                            bgra.blend_into(&mut rgb)?;
+                        }
                     } else {
                         // Keep menus visible while the video backend recovers.
-                        rgb.resize(width as usize * height as usize * 3, 0);
-                        yuv::bgra_to_rgb(&bgra, width * 4, &mut rgb, width * 3, width, height)?;
+                        let _time = prysm_metrics::timer(Stage::CompositionConvert);
+                        bgra.to_rgb(width, height, &mut rgb)?;
                     }
-                    frame = Some(pixels::header(width, height, PixelFormat::Rgb)?);
+                    let composed = pixels::header(width, height, PixelFormat::Rgb)?;
+                    if content == prysm_metrics::Content::Blended {
+                        prysm_metrics::frame(FrameStage::Composited, composed.format.into());
+                    }
+                    frame = Some(composed);
                     converted = true;
                 }
                 Err(error) if Instant::now() >= ui_warning => {
@@ -124,16 +198,18 @@ fn capture_loop(
         }
         if let Some(header) = frame {
             let payload = if converted { &rgb } else { &native };
-            if let Err(error) = sender.send(header, payload) {
+            if let Err(error) = sender.send(header, payload, content) {
                 eprintln!("{error:#}");
             }
         }
+        drop(work);
         // Skip missed ticks instead of building up latency or sending bursts.
         next += period;
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);
         } else {
+            prysm_metrics::event(PipelineEvent::MissedTick);
             next = now;
         }
     }
@@ -173,9 +249,9 @@ mod tests {
                 }
                 anyhow::bail!("driver not ready")
             },
-            Some(|_, _, bgra: &mut Vec<u8>| {
+            Some(|_, _, bgra: &mut pixels::Bgra8Pixels| {
                 ui_frames.set(ui_frames.get() + 1);
-                *bgra = [0, 0, 255, 255].repeat(4);
+                *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
                 Ok(())
             }),
         )
@@ -221,9 +297,9 @@ mod tests {
                 &cli,
                 &stop,
                 |_| panic!("UI-only opened video"),
-                Some(|_, _, bgra: &mut Vec<u8>| {
+                Some(|_, _, bgra: &mut pixels::Bgra8Pixels| {
                     ui_frames += 1;
-                    *bgra = [0, 0, 255, 255].repeat(4);
+                    *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
                     Ok(())
                 }),
             )

@@ -1,0 +1,996 @@
+{
+  "uid": "prysm-overview",
+  "title": "Prysm \u2014 systems and stream",
+  "tags": [
+    "prysm"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(up{job=\"prysm-nodes\"}, node)",
+          "refId": "node"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "compression",
+        "label": "Requested codec",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(prysm_capture_requested_info{node=~\"$node\"}, compression)",
+          "refId": "compression"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "source",
+        "label": "Requested capture mode",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(prysm_capture_requested_info{node=~\"$node\"}, source)",
+          "refId": "source"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "width",
+        "label": "Width",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(prysm_capture_requested_info{node=~\"$node\"}, width)",
+          "refId": "width"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "height",
+        "label": "Height",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prysm-prometheus"
+        },
+        "query": {
+          "query": "label_values(prysm_capture_requested_info{node=~\"$node\"}, height)",
+          "refId": "height"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Node availability",
+      "description": "1 = exporter reachable. Monitoring failure does not stop capture.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"prysm-nodes\",node=~\"$node\"}",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "System collector availability",
+      "description": "1 = process and machine statistics available. Initial CPU sample needs a warmup.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_system_collector_success{node=~\"$node\"}",
+          "legendFormat": "{{node}} \u00b7 {{role}}",
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Whole-machine CPU",
+      "description": "All CPU cores normalized to 0\u2013100%. Includes TV playback and other applications.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_system_cpu_ratio{node=~\"$node\"}",
+          "legendFormat": "{{node}} \u00b7 {{role}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Application process CPU",
+      "description": "CPU cores used by this process, including native worker threads. 1 = one full core; values may exceed 1.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_process_cpu_cores{node=~\"$node\"}",
+          "legendFormat": "{{node}} \u00b7 {{role}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Process resident memory",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_process_resident_memory_bytes{node=~\"$node\"}",
+          "legendFormat": "{{node}} \u00b7 {{role}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Whole-machine memory used",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_system_memory_used_bytes{node=~\"$node\"}",
+          "legendFormat": "{{node}} \u00b7 {{role}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Machine network traffic per interface",
+      "description": "Whole-machine interface traffic, including other applications. Avoid summing bridged interfaces: traffic can be counted twice.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "8 * rate({__name__=~\"prysm_system_network_(receive|transmit)_bytes_total\",node=~\"$node\",device!~\"lo|lo0\"}[$__rate_interval])",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{device}} / {{__name__}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Application stream bandwidth",
+      "description": "raw/encoded = codec input/output payload; sent = bytes accepted by the TCP socket, including headers and failed partial frames. TCP/IP overhead and retransmissions are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "8 * sum by (node,role, flow, component, boundary) (rate(prysm_stream_bytes_total{node=~\"$node\",flow=\"CaptureFrames\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{boundary}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Pipeline frame rates",
+      "description": "Frames at explicit component boundaries. These are distinct populations: video/UI acquisition, composition, encoder output, complete local TCP acceptance, complete remote payload, decoded RGB, input dispatch, processed frame, preview publication and WLED DDP write.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node,role, flow, component, boundary) (rate(prysm_pipeline_frames_total{node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{boundary}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "fps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Encoded payload bytes per prepared frame",
+      "description": "Prepared payload bytes / successfully encoded frames on this TV. Requested-setting filters select runs; inspect actual wire format/content/codec before comparing. Excludes protocol headers and failed preparation.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_pipeline_frames_total{node=~\"$node\",boundary=\"Encoded\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "legendFormat": "{{node}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Compression saving",
+      "description": "1 \u2212 encoded payload / matching encoder input bytes, including raw fallback. It is byte reduction, not a visual quality score or network delivery ratio.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderOutput\"}[$__rate_interval])) / sum by (node) (rate(prysm_stream_bytes_total{node=~\"$node\",boundary=\"EncoderInput\"}[$__rate_interval]))) and on(node) (prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "legendFormat": "{{node}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Operation outcomes by owning component",
+      "description": "Outcomes attributed at the actual operation boundary. TimedOut is a failure classification, not an additional Failed event. Attempts, successes, retries, intentional skips and errors are distinct.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 37,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node,role,flow,component,operation,outcome) (rate(prysm_operation_events_total{node=~\"$node\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}} \u2192 {{outcome}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Local operation duration p95",
+      "description": "Local wall time, including waits, by owning component/operation. Nested operations overlap; do not add them. FrameArrival is displayed separately. No synchronized cross-host latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation!=\"FrameArrival\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Local operation duration p99",
+      "description": "Local wall time, including waits, by owning component/operation. Nested operations overlap; do not add them. FrameArrival is displayed separately. No synchronized cross-host latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 45,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation!=\"FrameArrival\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Receiver frame gaps p99",
+      "description": "Time between complete decoded frames, including reconnect stalls. Not capture-to-host or screen-to-light latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le,node) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=\"FrameArrival\"}[$__rate_interval])))",
+          "legendFormat": "{{node}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Actual wire encoding and content",
+      "description": "Actual Header encoding and actual available content on TV encoder output. None can occur during requested LZ4 when compression would expand the frame. Receiver payload counts use Unspecified content because the wire protocol carries no layer provenance.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node,format,codec,content,width,height) (rate(prysm_pipeline_frames_total{node=~\"$node\",boundary=\"Encoded\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 {{content}} {{format}} {{codec}} {{width}}\u00d7{{height}}",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (node,format,codec,content,width,height) (rate(prysm_pipeline_frames_total{node=~\"$node\",boundary=\"PayloadReceived\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 received {{format}} {{codec}} {{width}}\u00d7{{height}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "fps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Requested capture configuration",
+      "description": "Configured source, compression and dimensions. Filter or inspect historical ranges to compare runs; settings change when the sender restarts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(prysm_capture_requested_info{node=~\"$node\",compression=~\"$compression\",source=~\"$source\",width=~\"$width\",height=~\"$height\"} == 1)",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "table",
+      "title": "Selected native backends",
+      "description": "Actual currently selected native backend by layer; Disabled means no open capture backend.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "prysm_capture_backend_info{node=~\"$node\"} == 1",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

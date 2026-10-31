@@ -2,6 +2,7 @@
 use super::{RenderFrame, Stop};
 use actix::{Actor, ActorContext, Context, Handler};
 use prysm_core::EdgeColors;
+use prysm_metrics::FrameStage;
 use prysm_renderer_desktop::DisplayFrame;
 use tokio::sync::watch;
 
@@ -23,6 +24,7 @@ impl Handler<RenderFrame> for Egui {
     type Result = ();
 
     fn handle(&mut self, msg: RenderFrame, _: &mut Self::Context) {
+        prysm_metrics::frame(FrameStage::PreviewPublished, msg.frame.format.into());
         self.frames.send_replace(DisplayFrame {
             frame: msg.frame,
             viewport: msg.viewport,

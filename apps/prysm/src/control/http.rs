@@ -54,6 +54,12 @@ pub(super) fn router(app: App, web: WebConfig) -> Router {
     prysm_api::router()
         .split_for_parts()
         .0
+        .fallback(async || {
+            (
+                StatusCode::NOT_FOUND,
+                "404 Not Found\n\nThis is the Prysm REST API. Available endpoints: /api/state and /api/config.\nFor the web UI, open prysm-web (port 8788 by default).\n",
+            )
+        })
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn_with_state(web, guard))
         .with_state(app)

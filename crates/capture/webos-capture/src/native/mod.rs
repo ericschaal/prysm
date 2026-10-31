@@ -94,6 +94,13 @@ pub enum Video {
     Dile(DileCapture),
 }
 impl Video {
+    pub fn metrics_backend(&self) -> prysm_metrics::Backend {
+        match self {
+            Self::Vt(_) => prysm_metrics::Backend::Vtcapture,
+            Self::Dile(_) => prysm_metrics::Backend::Dile,
+        }
+    }
+
     pub fn open(options: &CaptureOptions) -> Result<Self> {
         match options.video_backend {
             VideoBackend::Auto => match VtCapture::open(options) {

@@ -256,3 +256,9 @@ raw/LZ4 boundaries, malformed input, retry/backoff, complete-frame deadlines,
 and receiver cancellation. CI also runs sender/protocol tests as ARM32 soft-float
 executables under QEMU. Cross-build separately with the actual SDK script.
 These checks do not load LG drivers or establish hardware performance or colors.
+
+## Centralized metrics
+
+Add `--metrics-listen 0.0.0.0:9101` to expose opt-in Prometheus metrics.
+See [centralized monitoring](../../../observability/README.md) for the computer
+Docker Compose stack, dashboard, node setup and measurement catalog.

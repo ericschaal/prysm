@@ -36,6 +36,13 @@ pub struct HalCapture {
 }
 
 impl Ui {
+    pub fn metrics_backend(&self) -> prysm_metrics::Backend {
+        match self {
+            Self::Gm(_) => prysm_metrics::Backend::Gm,
+            Self::Hal(_) => prysm_metrics::Backend::Halgal,
+        }
+    }
+
     pub fn open(options: &CaptureOptions) -> Result<Self> {
         match options.ui_backend {
             UiBackend::Auto => match GmCapture::open(options) {
@@ -50,7 +57,13 @@ impl Ui {
         }
     }
 
-    pub fn capture(&mut self, width: u32, height: u32, output: &mut Vec<u8>) -> Result<()> {
+    pub fn capture(
+        &mut self,
+        width: u32,
+        height: u32,
+        output: &mut pixels::Bgra8Pixels,
+    ) -> Result<()> {
+        let output = output.bytes_mut();
         output.clear();
         match self {
             Self::Gm(gm) => {

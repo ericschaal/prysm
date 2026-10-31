@@ -7,6 +7,9 @@ use std::path::PathBuf;
 struct Args {
     #[arg(long, global = true, default_value = "prysm.toml")]
     config: PathBuf,
+    /// Opt-in Prometheus endpoint, separate from the REST API
+    #[arg(long, global = true, value_name = "IP:PORT")]
+    metrics_listen: Option<std::net::SocketAddr>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -28,6 +31,20 @@ fn main() -> Result<()> {
             println!("Configuration is valid");
             Ok(())
         }
-        None => prysm::run(&args.config, config),
+        None => {
+            let _metrics = args.metrics_listen.and_then(|address| {
+                match prysm_metrics::start(address, prysm_metrics::Role::Prysm) {
+                    Ok(exporter) => {
+                        tracing::info!(address=%exporter.address(), "metrics listening");
+                        Some(exporter)
+                    }
+                    Err(error) => {
+                        tracing::warn!(error=%format!("{error:#}"), "metrics disabled");
+                        None
+                    }
+                }
+            });
+            prysm::run(&args.config, config)
+        }
     }
 }

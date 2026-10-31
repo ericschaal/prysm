@@ -12,6 +12,7 @@ name = "capture_smoke"
 test = true
 
 [dependencies]
+prysm-metrics = { path = "../../common/prysm-metrics" }
 futures.workspace = true
 yuv = { workspace = true, features = ["fast_mode"] }
 tracing.workspace = true

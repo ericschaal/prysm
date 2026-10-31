@@ -140,6 +140,8 @@ Set `[input]` to `type = "file"` with `path`, `type = "device"` with `device`,
 or `type = "webos"` with a TCP `listen` address. Files require FFmpeg 9+ on PATH.
 Capture devices provide video feeds; this does not directly record the desktop.
 See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.
+See [centralized monitoring](observability/README.md) for opt-in process, system and
+stream metrics with a provisioned Prometheus/Grafana Docker Compose stack.
 
 Set `[output]` to `type = "wled"` with a DDP address, refresh rate, and
 `[output.leds]` layout, or `type = "egui"` with a refresh rate. egui is a renderer

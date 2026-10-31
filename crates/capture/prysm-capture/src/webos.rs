@@ -2,8 +2,14 @@
 use crate::{Frame, PixelFormat, PrysmCapturer, Result, capture_channel};
 use anyhow::Context;
 use futures::Stream;
+use prysm_metrics::{
+    BytesKind, Codec, DecoderEvent, FrameReceiverEvent, FrameStage, Stage, WireBoundary,
+};
 use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat as WireFormat};
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 use tokio::{io::AsyncReadExt, net::TcpListener, sync::watch};
 use tokio_util::sync::CancellationToken;
 
@@ -62,9 +68,11 @@ async fn receive(
     listener: &TcpListener,
     sender: &watch::Sender<Option<Frame>>,
 ) -> anyhow::Result<()> {
+    let mut last_decoded = None;
     loop {
         let (mut socket, peer) = listener.accept().await.context("webOS accept failed")?;
         tracing::info!(%peer, "webOS capture connected");
+        prysm_metrics::event(FrameReceiverEvent::ConnectionAccepted);
         let mut scratch = [Vec::new(), Vec::new()];
         loop {
             // A stalled or partial frame must not hold the only TV connection forever.
@@ -75,6 +83,16 @@ async fn receive(
             .await
             {
                 Ok(Ok(frame)) => {
+                    if prysm_metrics::enabled() {
+                        let now = Instant::now();
+                        if let Some(last) = last_decoded.replace(now) {
+                            prysm_metrics::observe(
+                                Stage::ReceiverFrameGap,
+                                now.duration_since(last),
+                            );
+                        }
+                    }
+                    prysm_metrics::frame(FrameStage::Decoded, frame.format.into());
                     if sender.send(Some(frame)).is_err() {
                         return Ok(());
                     }
@@ -84,6 +102,7 @@ async fn receive(
                     break;
                 }
                 Err(_) => {
+                    prysm_metrics::event(FrameReceiverEvent::FrameTimedOut);
                     tracing::warn!(%peer, "webOS frame timed out");
                     break;
                 }
@@ -102,11 +121,52 @@ async fn read_frame_into(
     scratch: &mut [Vec<u8>; 2],
 ) -> anyhow::Result<Frame> {
     let mut header = [0; HEADER_LEN];
+    {
+        let _time = prysm_metrics::timer(Stage::FrameReadHeader);
+        reader
+            .read_exact(&mut header)
+            .await
+            .inspect_err(|error| {
+                prysm_metrics::event(if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    FrameReceiverEvent::HeaderClosed
+                } else {
+                    FrameReceiverEvent::HeaderReadFailed
+                });
+            })
+            .context("reading webOS frame header")?;
+    }
+    let header = Header::decode(&header)
+        .inspect_err(|_| prysm_metrics::event(FrameReceiverEvent::HeaderRejected))?;
+    read_pixels(reader, header, scratch).await
+}
+
+async fn read_payload(
+    reader: &mut (impl tokio::io::AsyncRead + Unpin),
+    payload: &mut [u8],
+    header: Header,
+) -> anyhow::Result<()> {
+    let _time = prysm_metrics::timer(Stage::FrameReadPayload);
     reader
-        .read_exact(&mut header)
+        .read_exact(payload)
         .await
-        .context("reading webOS frame header")?;
-    read_pixels(reader, Header::decode(&header)?, scratch).await
+        .inspect_err(|error| {
+            prysm_metrics::event(if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                FrameReceiverEvent::PayloadTruncated
+            } else {
+                FrameReceiverEvent::PayloadReadFailed
+            });
+        })
+        .context("reading webOS frame payload")?;
+    prysm_metrics::wire_frame(
+        WireBoundary::PayloadReceived,
+        header.format.into(),
+        Codec::from(&header),
+        prysm_metrics::Content::Unspecified,
+        header.width,
+        header.height,
+    );
+    prysm_metrics::bytes(BytesKind::ReceiverPayload, payload.len());
+    Ok(())
 }
 
 async fn read_pixels(
@@ -118,16 +178,12 @@ async fn read_pixels(
         let mut data = vec![0; header.raw_len()?];
         if header.compressed {
             scratch[0].resize(header.payload_len, 0);
-            reader
-                .read_exact(&mut scratch[0])
-                .await
-                .context("reading webOS LZ4 pixels")?;
-            prysm_webos_protocol::decompress(&scratch[0], &mut data)?;
+            read_payload(reader, &mut scratch[0], header).await?;
+            let _time = prysm_metrics::timer(Stage::FrameDecompress);
+            prysm_webos_protocol::decompress(&scratch[0], &mut data)
+                .inspect_err(|_| prysm_metrics::event(DecoderEvent::DecompressionFailed))?;
         } else {
-            reader
-                .read_exact(&mut data)
-                .await
-                .context("reading webOS RGB pixels")?;
+            read_payload(reader, &mut data, header).await?;
         }
         return Ok(Frame::new(
             data,
@@ -138,18 +194,18 @@ async fn read_pixels(
     }
     let [payload, decoded] = scratch;
     payload.resize(header.payload_len, 0);
-    reader
-        .read_exact(payload)
-        .await
-        .context("reading webOS v2 pixels")?;
+    read_payload(reader, payload, header).await?;
     let raw = if header.compressed {
         decoded.resize(header.raw_len()?, 0);
-        prysm_webos_protocol::decompress(payload, decoded)?;
+        let _time = prysm_metrics::timer(Stage::FrameDecompress);
+        prysm_webos_protocol::decompress(payload, decoded)
+            .inspect_err(|_| prysm_metrics::event(DecoderEvent::DecompressionFailed))?;
         decoded.as_slice()
     } else {
         payload.as_slice()
     };
     let data = {
+        let _time = prysm_metrics::timer(Stage::FrameConvert);
         let (y, uv) = raw.split_at(header.width as usize * header.height as usize);
         let image = yuv::YuvBiPlanarImage {
             y_plane: y,
@@ -172,7 +228,8 @@ async fn read_pixels(
             yuv::YuvRange::Limited,
             yuv::YuvStandardMatrix::Bt601,
             yuv::YuvConversionMode::Fast,
-        )?;
+        )
+        .inspect_err(|_| prysm_metrics::event(DecoderEvent::ConversionFailed))?;
         rgb
     };
     Ok(Frame::new(
@@ -225,6 +282,43 @@ mod tests {
         .to_vec();
         packet.extend_from_slice(payload);
         packet
+    }
+
+    #[tokio::test]
+    async fn telemetry_separates_header_payload_and_decoder_failures() {
+        let exporter =
+            prysm_metrics::start("127.0.0.1:0".parse().unwrap(), prysm_metrics::Role::Prysm)
+                .unwrap();
+        let mut malformed = v2_packet(WireFormat::Rgb, true);
+        malformed[HEADER_LEN] = 0xff;
+        assert!(read_frame(&mut malformed.as_slice()).await.is_err());
+        let mut rejected = v2_packet(WireFormat::Rgb, false);
+        rejected[0] = 0;
+        assert!(read_frame(&mut rejected.as_slice()).await.is_err());
+        let truncated = &v2_packet(WireFormat::Rgb, false)[..HEADER_LEN + 1];
+        assert!(read_frame(&mut &truncated[..]).await.is_err());
+        let address = exporter.address();
+        let text = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut socket = std::net::TcpStream::connect(address).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            socket.write_all(b"GET /metrics HTTP/1.0\r\n\r\n").unwrap();
+            let mut text = String::new();
+            socket.read_to_string(&mut text).unwrap();
+            text
+        })
+        .await
+        .unwrap();
+        for labels in [
+            "component=\"FrameReceiver\",operation=\"ValidateHeader\",outcome=\"Rejected\"",
+            "component=\"FrameReceiver\",operation=\"ReadPayload\",outcome=\"Truncated\"",
+            "component=\"FrameDecoder\",operation=\"Decompress\",outcome=\"Failed\"",
+            "component=\"FrameReceiver\",boundary=\"PayloadReceived\",format=\"Rgb24\",codec=\"Lz4\"",
+        ] {
+            assert!(text.contains(labels), "missing {labels}: {text}");
+        }
     }
 
     #[tokio::test]

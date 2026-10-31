@@ -187,15 +187,24 @@ left = 1
     })
     .await
     .unwrap();
-    assert_eq!(
-        client
-            .get(format!("http://{address}/"))
+    for path in ["/", "/missing", "/api/missing"] {
+        let response = client
+            .get(format!("http://{address}{path}"))
             .send()
             .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::NOT_FOUND
-    );
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        let message = response.text().await.unwrap();
+        assert!(message.contains("Prysm REST API"));
+        assert!(message.contains("/api/state"));
+        assert!(message.contains("/api/config"));
+        assert!(message.contains("8788"));
+    }
     let initial = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = wait(&client, &endpoint).await;

@@ -14,6 +14,17 @@ pub enum PixelFormat {
     MJPEG, // Variable size (future support)
 }
 
+impl From<PixelFormat> for prysm_metrics::Format {
+    fn from(format: PixelFormat) -> Self {
+        match format {
+            PixelFormat::RGB24 => Self::Rgb24,
+            PixelFormat::BGR24 => Self::Bgr24,
+            PixelFormat::YUYV => Self::Yuyv,
+            PixelFormat::MJPEG => Self::Mjpeg,
+        }
+    }
+}
+
 impl Display for PixelFormat {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

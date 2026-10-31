@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: Prysm
+    orgId: 1
+    folder: Prysm
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

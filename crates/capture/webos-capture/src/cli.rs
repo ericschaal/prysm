@@ -9,6 +9,10 @@ pub struct Cli {
     #[arg(value_name = "IP:PORT", value_parser = receiver)]
     pub receiver: SocketAddr,
 
+    /// Opt-in Prometheus endpoint on a trusted LAN interface, e.g. 0.0.0.0:9101
+    #[arg(long, value_name = "IP:PORT")]
+    pub metrics_listen: Option<SocketAddr>,
+
     /// Layers to capture; video avoids color conversion on the TV
     #[arg(long, value_enum, default_value_t = Source::Both)]
     pub source: Source,
@@ -170,6 +174,24 @@ mod tests {
             "127.0.0.1:19400 --ui-backend none",
         ] {
             assert!(parse(args).is_err(), "{args}");
+        }
+    }
+}
+
+impl From<Source> for prysm_metrics::CaptureSource {
+    fn from(source: Source) -> Self {
+        match source {
+            Source::Video => Self::Video,
+            Source::Ui => Self::Ui,
+            Source::Both => Self::Both,
+        }
+    }
+}
+impl From<Compression> for prysm_metrics::Codec {
+    fn from(codec: Compression) -> Self {
+        match codec {
+            Compression::None => Self::None,
+            Compression::Lz4 => Self::Lz4,
         }
     }
 }

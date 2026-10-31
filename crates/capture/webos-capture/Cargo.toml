@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+prysm-metrics = { path = "../../common/prysm-metrics" }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"

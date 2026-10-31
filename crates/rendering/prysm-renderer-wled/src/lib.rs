@@ -21,10 +21,37 @@ use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors};
+use prysm_metrics::{BytesKind, Format, FrameStage, Stage, WledEvent};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
+
+/// Packed 8-bit RGB channels, including the DDP encoding contract.
+/// Keeping this alongside the allocation prevents raw bytes losing their format.
+#[derive(Debug, Default)]
+struct Rgb8Payload(Vec<u8>);
+impl Rgb8Payload {
+    fn config() -> PixelConfig {
+        PixelConfig {
+            data_type: ddp_rs::protocol::DataType::RGB,
+            data_size: PixelFormat::Pixel8Bits,
+            customer_defined: false,
+        }
+    }
+    fn push(&mut self, color: Color) {
+        self.0.extend_from_slice(&[color.r, color.g, color.b]);
+    }
+    fn clear_reserve(&mut self, pixels: usize) {
+        self.0.clear();
+        self.0.reserve(pixels * 3);
+    }
+}
+impl From<&Rgb8Payload> for Format {
+    fn from(_: &Rgb8Payload) -> Self {
+        Self::Rgb24
+    }
+}
 
 /// A nonblocking RGB renderer for one WLED instance.
 ///
@@ -36,7 +63,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct WledRenderer {
     connection: DDPConnection,
-    rgb: Vec<u8>,
+    rgb: Rgb8Payload,
     last_sent: Option<Instant>,
     frame_interval: Duration,
 }
@@ -57,18 +84,12 @@ impl WledRenderer {
             "[::]:0"
         })?;
         socket.set_nonblocking(true)?;
-        let connection = DDPConnection::try_new(
-            destination,
-            PixelConfig {
-                data_size: PixelFormat::Pixel8Bits,
-                ..PixelConfig::default()
-            },
-            ID::Default,
-            socket,
-        )?;
+        let rgb = Rgb8Payload::default();
+        let connection =
+            DDPConnection::try_new(destination, Rgb8Payload::config(), ID::Default, socket)?;
         Ok(Self {
             connection,
-            rgb: Vec::new(),
+            rgb,
             last_sent: None,
             frame_interval: Duration::from_nanos(
                 1_000_000_000u64.div_ceil(u64::from(refresh_rate_hz.get())),
@@ -85,10 +106,15 @@ impl WledRenderer {
         if !self.prepare(colors.len())? {
             return Ok(());
         }
-        for color in colors {
-            self.rgb.extend_from_slice(&[color.r, color.g, color.b]);
+        for &color in colors {
+            self.rgb.push(color);
         }
-        self.connection.write(&self.rgb)?;
+        let _time = prysm_metrics::timer(Stage::WledWrite);
+        self.connection
+            .write(&self.rgb.0)
+            .inspect_err(|_| prysm_metrics::event(WledEvent::WriteFailed))?;
+        prysm_metrics::frame(FrameStage::WledTransmitted, (&self.rgb).into());
+        prysm_metrics::bytes(BytesKind::WledPayload, self.rgb.0.len());
         self.last_sent = Some(Instant::now());
         Ok(())
     }
@@ -121,10 +147,15 @@ impl WledRenderer {
             for i in 0..count {
                 let index = if reverse { count - 1 - i } else { i };
                 let color = strip.color_at(index, count).to_srgb();
-                self.rgb.extend_from_slice(&[color.r, color.g, color.b]);
+                self.rgb.push(color);
             }
         }
-        self.connection.write(&self.rgb)?;
+        let _time = prysm_metrics::timer(Stage::WledWrite);
+        self.connection
+            .write(&self.rgb.0)
+            .inspect_err(|_| prysm_metrics::event(WledEvent::WriteFailed))?;
+        prysm_metrics::frame(FrameStage::WledTransmitted, (&self.rgb).into());
+        prysm_metrics::bytes(BytesKind::WledPayload, self.rgb.0.len());
         self.last_sent = Some(Instant::now());
         Ok(())
     }
@@ -144,8 +175,7 @@ impl WledRenderer {
         {
             return Ok(false);
         }
-        self.rgb.clear();
-        self.rgb.reserve(count * 3);
+        self.rgb.clear_reserve(count);
         Ok(true)
     }
 }
@@ -192,6 +222,8 @@ mod tests {
             [0x41, 1, 0x0b, 1, 0, 0, 0, 0, 0, 6, 12, 34, 56, 78, 90, 123]
         );
         let packet = PacketRef::from_bytes(&bytes).unwrap();
+        assert_eq!(packet.header.pixel_config, Rgb8Payload::config());
+        assert_eq!(Format::from(&renderer.rgb), Format::Rgb24);
         assert_eq!(packet.header.pixel_config.data_type, DataType::RGB);
         assert_eq!(
             packet.header.pixel_config.data_size,
