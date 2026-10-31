@@ -131,7 +131,8 @@ jobs:
       - name: Verify and build package
         run: ./scripts/build-deb.sh
       - name: Generated contracts must be committed
-        run: git diff --exit-code -- apps/prysm-web/control-ui/openapi.json apps/prysm-web/control-ui/api.generated.ts
+        # The container user differs from the checkout owner; trust only this workspace.
+        run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code HEAD -- apps/prysm-web/control-ui/openapi.json apps/prysm-web/control-ui/api.generated.ts
       - name: Inspect package and validate installation config
         run: |
           dpkg-deb --info target/debian/*.deb
