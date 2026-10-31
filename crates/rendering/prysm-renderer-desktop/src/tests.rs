@@ -4,6 +4,21 @@ use prysm_capture::PixelFormat;
 use std::num::NonZeroU32;
 
 #[test]
+fn draws_application_toolbar_above_video() {
+    let (_colors, colors_rx) = tokio::sync::watch::channel(EdgeColors::default());
+    let mut app = DesktopRendererBuilder::new(colors_rx)
+        .with_toolbar(|ui| {
+            ui.label("Start capture");
+        })
+        .build();
+    let context = egui::Context::default();
+    let mut frame = eframe::Frame::_new_kittest();
+    let output = context.run(Default::default(), |ctx| app.update(ctx, &mut frame));
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Text(text) if text.galley.text() == "Start capture")));
+}
+
+#[test]
 fn output_draws_each_edge_color_in_its_strip() {
     use prysm_core::LinearColor;
 

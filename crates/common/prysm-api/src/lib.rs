@@ -1,4 +1,7 @@
 //! The real HTTP handlers and the OpenAPI document generated from their router.
+#[cfg(feature = "client")]
+pub mod client;
+
 use actix::{Message, Recipient};
 use axum::{
     Json,

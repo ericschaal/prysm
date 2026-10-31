@@ -4,6 +4,7 @@ mod image;
 mod layout;
 
 pub use builder::DesktopRendererBuilder;
+pub use eframe::egui;
 pub use layout::LayoutConfig;
 
 use image::frame_to_image;
@@ -20,8 +21,11 @@ pub struct DisplayFrame {
     pub viewport: Option<Viewport>,
 }
 
+type Toolbar = Box<dyn FnMut(&mut egui::Ui) + Send>;
+
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
+    toolbar: Option<Toolbar>,
     refresh_interval: Duration,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<DisplayFrame>>,
@@ -48,6 +52,9 @@ impl eframe::App for DesktopRenderer {
         let edge_colors = self.edge_colors_rx.borrow_and_update().clone();
 
         self.update_video_texture(ctx);
+        if let Some(toolbar) = self.toolbar.as_mut() {
+            egui::TopBottomPanel::top("capture_controls").show(ctx, |ui| toolbar(ui));
+        }
         egui::CentralPanel::default().show(ctx, |ui| self.draw_output(ui, &edge_colors));
 
         ctx.request_repaint_after(self.refresh_interval);
@@ -273,7 +280,7 @@ fn spawn_shutdown_notifier(app: &DesktopRenderer, ctx: egui::Context) {
 pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1920.0, 1080.0])
+            .with_inner_size([960.0, 600.0])
             .with_title("Prysm - Ambient Lighting"),
         ..Default::default()
     };

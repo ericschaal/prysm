@@ -16,7 +16,14 @@ use tokio_util::sync::CancellationToken;
 
 /// Serve the controller on the application Actix runtime.
 pub async fn run(path: &Path, config: Config) -> Result<()> {
-    serve(path, config, Renderers::default(), CancellationToken::new()).await
+    serve(
+        path,
+        config,
+        Renderers::default(),
+        CancellationToken::new(),
+        |_| {},
+    )
+    .await
 }
 
 pub(crate) async fn serve(
@@ -24,6 +31,7 @@ pub(crate) async fn serve(
     config: Config,
     renderers: Renderers,
     shutdown: CancellationToken,
+    ready: impl FnOnce(std::net::SocketAddr),
 ) -> Result<()> {
     crate::validate_config(&config)?;
     let listener = tokio::net::TcpListener::bind(config.web.listen).await?;
@@ -31,6 +39,7 @@ pub(crate) async fn serve(
     let lighting = Arc::new(LightingService::new(config_rx, renderers)?);
     let (controller, app) =
         Controller::spawn(path.to_path_buf(), &config, lighting.clone(), config_tx);
+    ready(listener.local_addr()?);
     let router = http::router(app, config.web.clone());
     tracing::info!(address=%config.web.listen,"Prysm listening");
     let result = axum::serve(listener, router)

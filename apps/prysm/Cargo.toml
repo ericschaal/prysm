@@ -9,7 +9,7 @@ workspace = true
 
 [features]
 default = []
-desktop = ["dep:prysm-renderer-desktop"]
+desktop = ["dep:prysm-renderer-desktop", "prysm-api/client"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

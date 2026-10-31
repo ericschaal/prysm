@@ -151,17 +151,20 @@ cargo run -p prysm --features desktop -- --config prysm-egui.toml
 ```
 
 The egui window displays video, detected crop, and edge colors. Start/stop and
-processing settings use the same REST API for every input/output pair. It starts
-idle with a black preview; click **Start output** in the web panel to begin playback.
-Alternatively, run this in another terminal:
+processing settings use the same REST API for every input/output pair. egui uses
+the typed `prysm-api` client and `prysm-contract` types, polling state in the background.
+It starts idle with a preview prompt; click **Start capture** to begin capture or
+file playback and **Stop capture** to stop it, or press **Space** to toggle.
+The toolbar shows playback status and errors, and stays in sync with the web panel.
+You can also use **Start output** in the web panel or run:
 
 ```sh
 curl -X PUT http://127.0.0.1:8787/api/state \
   -H 'Content-Type: application/json' -d '{"power":true,"source":"prysm"}'
 ```
 
-At EOF, the last egui frame stays visible and the API remains available. Stop/start
-replays a file. Closing the window stops Prysm; the independent browser
+At EOF, the last egui frame stays visible and the API remains available. **Start capture**
+replays the file. Closing the window stops Prysm; the independent browser
 controller remains available and reports a lost connection.
 
 ## Configuration

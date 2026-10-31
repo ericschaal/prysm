@@ -7,6 +7,9 @@ description = "Prysm HTTP handlers and their generated OpenAPI contract"
 [lints]
 workspace = true
 
+[features]
+client = ["dep:reqwest", "dep:serde"]
+
 [dependencies]
 actix.workspace = true
 axum = "0.8"
@@ -14,3 +17,8 @@ prysm-contract = { path = "../prysm-contract" }
 tokio = { workspace = true, features = ["sync"] }
 utoipa = "5"
 utoipa-axum = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "net"] }

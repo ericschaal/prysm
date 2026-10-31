@@ -3,6 +3,9 @@ use anyhow::Result;
 use prysm_contract::Config;
 use std::path::Path;
 
+#[cfg(feature = "desktop")]
+mod controls;
+
 pub fn run(path: &Path, config: Config) -> Result<()> {
     crate::validate_config(&config)?;
     if config.output.is_egui() {
@@ -35,7 +38,9 @@ fn run_with_window(path: &Path, config: Config) -> Result<()> {
         frame: Frame::dummy(width, height),
         viewport: None,
     });
+    let (mut controls, connect) = controls::Controls::new(&config.web, shutdown.clone())?;
     let app = DesktopRendererBuilder::new(colors_rx)
+        .with_toolbar(move |ui| controls.show(ui))
         .with_frame_rx(frames_rx)
         .with_refresh_rate_hz(refresh_rate_hz)
         .with_shutdown_token(&shutdown)
@@ -55,6 +60,7 @@ fn run_with_window(path: &Path, config: Config) -> Result<()> {
                 config,
                 renderers,
                 worker_shutdown,
+                connect,
             ))
         })
         .context("cannot start API runtime")?;

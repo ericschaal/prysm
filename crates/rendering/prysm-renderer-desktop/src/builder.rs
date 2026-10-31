@@ -1,10 +1,11 @@
 //! Desktop renderer configuration and construction.
-use super::{DesktopRenderer, DisplayFrame, LayoutConfig};
+use super::{DesktopRenderer, DisplayFrame, LayoutConfig, Toolbar};
 use prysm_core::EdgeColors;
 use std::{num::NonZeroU32, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub struct DesktopRendererBuilder {
+    toolbar: Option<Toolbar>,
     layout_config: LayoutConfig,
     refresh_rate_hz: NonZeroU32,
     shutdown_token: Option<CancellationToken>,
@@ -15,6 +16,7 @@ pub struct DesktopRendererBuilder {
 impl std::fmt::Debug for DesktopRendererBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopRenderer")
+            .field("toolbar", &self.toolbar.is_some())
             .field("shutdown_token", &"<CancellationToken>")
             .field("edge_colors_rx", &self.edge_colors_rx)
             .field("frame_rx", &self.frame_rx)
@@ -28,12 +30,20 @@ impl DesktopRendererBuilder {
     #[must_use]
     pub fn new(edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>) -> Self {
         Self {
+            toolbar: None,
             frame_rx: None,
             shutdown_token: None,
             edge_colors_rx,
             layout_config: LayoutConfig::default(),
             refresh_rate_hz: NonZeroU32::new(30).unwrap(),
         }
+    }
+
+    /// Draw application controls above the video preview.
+    #[must_use]
+    pub fn with_toolbar(mut self, toolbar: impl FnMut(&mut egui::Ui) + Send + 'static) -> Self {
+        self.toolbar = Some(Box::new(toolbar));
+        self
     }
 
     #[must_use]
@@ -87,6 +97,7 @@ impl DesktopRendererBuilder {
     #[must_use]
     pub fn build(self) -> DesktopRenderer {
         DesktopRenderer {
+            toolbar: self.toolbar,
             edge_colors_rx: self.edge_colors_rx,
             shutdown_token: self.shutdown_token,
             frame_rx: self.frame_rx,
