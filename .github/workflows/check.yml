@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh
+          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh crates/capture/webos-capture/build-webos.sh crates/capture/webos-capture/webos-linker.sh
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -54,17 +54,26 @@ jobs:
       - name: Generated API, TypeScript, production bundle, UI and proxy tests
         run: npm test --prefix apps/prysm-web/control-ui
 
-  webos-transport:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+  webos-arm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_LINKER: arm-linux-gnueabi-gcc
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_RUNNER: qemu-arm -L /usr/arm-linux-gnueabi
+      CXX_armv7_unknown_linux_gnueabi: arm-linux-gnueabi-g++
     steps:
       - uses: actions/checkout@v4
-      - name: Compile C sender and test wire protocol, retry and write deadline
-        run: python3 crates/capture/webos-capture/tests/test_transport.py
+      - name: ARM soft-float toolchain and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabi qemu-user
+          rustup update stable --no-self-update
+          rustup target add armv7-unknown-linux-gnueabi --toolchain stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: webos-arm
+      - name: ARM32 native ABI, exception boundary, pixels and transport tests
+        run: cargo +stable test --locked -p prysm-webos-capture -p prysm-webos-protocol --target armv7-unknown-linux-gnueabi
 
   rust:
     strategy:

@@ -4,6 +4,8 @@ members = [
     "apps/prysm",
     "apps/prysm-web",
     "crates/capture/prysm-capture",
+    "crates/capture/prysm-webos-protocol",
+    "crates/capture/webos-capture",
     "crates/processing/prysm-processor",
     "crates/common/prysm-core",
     "crates/common/prysm-contract",
@@ -23,6 +25,12 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.webos]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

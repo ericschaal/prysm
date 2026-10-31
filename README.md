@@ -78,7 +78,7 @@ Prysm handles capture and color processing. WLED drives the physical LEDs. The p
 Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The web UI runs natively on both platforms.
 
 For a rooted LG TV, the experimental [minimal webOS sender](crates/capture/webos-capture/README.md)
-captures on the TV and streams RGB frames directly to Prysm's `webos` input.
+captures on the TV and streams raw or LZ4-compressed frames directly to Prysm's `webos` input.
 The initial webOS 25 target still requires hardware validation.
 
 ## Get started
@@ -210,7 +210,7 @@ run Cargo commands from the repository root with `-p <crate-name>`.
 | Directory | Crates / components | Responsibility |
 | :--- | :--- | :--- |
 | `apps/` | `prysm`, `prysm-web` | Engine/REST service and independent web UI |
-| `crates/capture/` | `prysm-capture`, `webos-capture` | Frame streams and the standalone C webOS sender |
+| `crates/capture/` | `prysm-capture`, `prysm-webos-protocol`, `webos-capture` | Frame streams, wire protocol, and standalone Rust webOS sender |
 | `crates/processing/` | `prysm-processor` | Sampling, black-bar detection, smoothing, brightness |
 | `crates/rendering/` | `prysm-renderer-wled`, `prysm-renderer-desktop` | WLED DDP and optional native egui output |
 | `crates/common/` | `prysm-core`, `prysm-contract`, `prysm-api` | Shared color/config types, validated REST DTOs, handlers and OpenAPI |
@@ -241,7 +241,7 @@ GitHub Actions runs these checks on every push and pull request:
   Clippy across all targets/examples, and API documentation link checks.
   Clippy correctness and suspicious lints fail CI; existing style and metadata warnings remain advisory.
 - Generated API freshness, TypeScript checks, production bundling, and UI/proxy tests.
-- C webOS transport tests on Linux and macOS, with no TV SDK required.
+- Rust webOS CLI, ABI, exception, pixel and transport tests, including ARM32 under QEMU.
 - Real FFmpeg playback/controller tests on macOS and ARM64 Debian package build,
   installation, and installed configuration validation.
 

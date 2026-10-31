@@ -1,0 +1,21 @@
+{
+  "exeName": "/media/developer/prysm-capture/prysm-webos-capture",
+  "type": "regular",
+  "allowedNames": [
+    "com.webos.service.capture.client*",
+    "com.webos.rm.client.*"
+  ],
+  "permissions": [
+    {
+      "service": "com.webos.service.capture.client*",
+      "outbound": [
+        "com.webos.service.capture",
+        "com.webos.service.capturepermission"
+      ]
+    },
+    {
+      "service": "com.webos.rm.client.*",
+      "outbound": ["com.webos.media"]
+    }
+  ]
+}

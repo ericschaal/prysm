@@ -2386,6 +2386,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2568,6 +2574,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -3205,6 +3212,7 @@ dependencies = [
  "futures",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "prysm-webos-protocol",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
@@ -3279,6 +3287,30 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "prysm-webos-capture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "clap",
+ "libc",
+ "libloading",
+ "memmap2",
+ "nix",
+ "prysm-webos-protocol",
+ "signal-hook",
+ "yuv",
+]
+
+[[package]]
+name = "prysm-webos-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lz4_flex",
 ]
 
 [[package]]
@@ -3817,6 +3849,16 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
 
 [[package]]
 name = "signal-hook-registry"

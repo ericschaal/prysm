@@ -1,35 +1,52 @@
 # Prysm webOS capture
 
-Minimal native sender for a **rooted LG TV**. Captures video and, when available,
-the TV UI, then sends RGB24 frames to Prysm. No Hyperion/HyperHDR server, Luna
-service, TV settings UI, HDR switching, or video encoder is involved.
+Rust CLI for capturing video, TV UI, or both on a **rooted LG TV**, and streaming
+frames directly to Prysm. Capture scheduling, pixel processing, recovery, CLI,
+and transport are Rust. The four native backends load LG's system libraries
+directly. There is no Hyperion daemon, C sender, CMake build, or backend plugin
+ABI. The receiver implements one bounded raw/LZ4 protocol.
 
-The initial target is webOS 25 (10.x), **not yet verified on hardware**. Capture
-uses `unicapture` and the model-specific backends from MIT-licensed
-`webosbrew/hyperion-webos`, pinned to the same revision as `resources/piccap`:
-`00c932f092084b234b3f619b060a98fa134c12bd`. Native API definitions and libyuv
-remain upstream dependencies. Root access does not guarantee capture support.
+The native adapters derive from MIT-licensed [hyperion-webos](https://github.com/webosbrew/hyperion-webos)
+revision `00c932f092084b234b3f619b060a98fa134c12bd`; retain the supplied license
+notices. C/C++ is limited to vendor API headers, a typed exception trampoline
+for LG's C video API, and an ABI/exception test fixture. LG can throw C++
+exceptions through its C API, so a C++ boundary is necessary to contain them.
+No type-erased calls, numeric operation dispatcher, or function-pointer casts
+are used. All unsafe Rust is confined to `src/native`; the rest of the sender
+denies unsafe code at compile time.
 
-## Build
+The Luna setup and native video startup were previously verified on an LG
+43QNED87A6D.BEUFLJP running webOS 25 (10.3.2-34), with UI disabled. **This Rust
+sender has cross-built but has not run on the TV yet.** Root access does not
+guarantee driver compatibility, successful capture, or correct colors.
 
-Install the [buildroot-nc4 webOS SDK](https://github.com/openlgtv/buildroot-nc4)
-and run its `relocate-sdk.sh`. Configure with its ARM toolchain:
+## Build for webOS
+
+Install and relocate the [buildroot-nc4 webOS SDK](https://github.com/openlgtv/buildroot-nc4),
+then from the repository root:
 
 ```sh
-cmake -S crates/capture/webos-capture -B crates/capture/webos-capture/build \
-  -DCMAKE_TOOLCHAIN_FILE=/path/to/sdk/share/buildroot/toolchainfile.cmake \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build crates/capture/webos-capture/build --parallel
-cmake --install crates/capture/webos-capture/build --prefix "$PWD/crates/capture/webos-capture/dist"
+rustup target add armv7-unknown-linux-gnueabi
+WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
+  ./crates/capture/webos-capture/build-webos.sh
 ```
 
-The first configure/build fetches pinned upstream sources. `dist` contains the
-sender, four backend shared libraries, and license notices. This is a native
-executable for initial SSH testing, **not an installable IPK yet**.
+The script builds the standalone sender with the SDK C++ compiler and linker,
+an explicit sysroot, Cortex-A9 code generation, and the **soft-float ABI**
+(`gnueabi`, not `gnueabihf`). The `webos` Cargo profile enables optimization, LTO,
+one codegen unit, and stripped symbols. The executable uses `/lib/ld-linux.so.3`.
+Rust normally targets glibc 2.17+, while this SDK supplies glibc 2.12; the linker
+explicitly includes the SDK's `libglibc_polyfills.a` for `getauxval`. This is a
+webOS compatibility build; runtime behavior still needs hardware validation.
 
-## Prysm configuration
+`dist` contains the executable, permissions, and license notices. LG's capture
+libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV. No Hyperion
+libraries or upstream checkout is required. IPK packaging, autostart, and
+standby/wake integration are not implemented.
 
-Replace the `[input]` table in your existing Prysm TOML:
+## Usage
+
+Start Prysm with this input and enable Screen sync to open the receiver:
 
 ```toml
 [input]
@@ -37,85 +54,194 @@ type = "webos"
 listen = "0.0.0.0:19400"
 ```
 
-Keep your existing output and processing settings. Enable Screen sync in the
-Prysm panel to open the listener. Stopping Screen sync closes it; the TV sender
-will retry until it is enabled again. Incoming dimensions are authoritative;
-`capture_resolution` does not resize or configure the TV. Set it to `[320, 180]`
-for a matching initial preview placeholder, if desired.
+The sender takes one receiver IP address and port (IPv4 or bracketed IPv6):
 
-This input uses a Prysm-specific protocol; stock PicCap cannot send to it.
-There is no authentication or encryption. Use a trusted LAN and restrict port
-19400 to your TV with the host firewall.
+```sh
+# Lowest TV CPU cost: stream the video planes without color conversion.
+prysm-webos-capture 192.168.1.10:19400 --source video
 
-## First TV test
+# Composite the TV's UI onto video; this is the default capture mode.
+prysm-webos-capture 192.168.1.10:19400 --source both --compression lz4
 
-Stop PicCap or any other TV capture process before starting this executable.
-Copy the distribution into a directory writable by root:
+# UI capture works independently, without opening a video driver.
+prysm-webos-capture 192.168.1.10:19400 --source ui --ui-backend halgal
+
+prysm-webos-capture --help
+```
+
+Defaults are 320×180 at up to 30 fps, both layers, automatic backend selection,
+and no compression. `--width`, `--height`, and `--fps` are checked before any
+native library is opened. Dimensions must be even and within 2–1920 × 2–1080;
+fps must be 1–60. The receiver's `capture_resolution` does not configure the TV.
+
+| Option | Choices / purpose |
+| --- | --- |
+| `--source` | `video`, `ui`, `both` |
+| `--compression` | `none`, `lz4` (lossless, raw fallback) |
+| `--video-backend` | `auto`, `vtcapture`, `dile` |
+| `--ui-backend` | `auto`, `gm`, `halgal` |
+| `--capture-point` | `display`, `scaler-input`, `scaler-output`, `blended`, `osd`, `histogram` |
+| `--force-capture` | Use an installed `/dev/forcecapture` kernel module when vtcapture is not ready |
+| `--dile-create-ex` | Use the alternate DILE constructor on TVs that need it |
+| `--no-freeze` | Skip DILE buffer freezing; may produce tearing |
+
+Hardware settings are named and typed; there is no numeric quirk mask. Use only
+settings verified for your TV. DILE supports `display` and `scaler-output` and
+rejects dimensions below its reported minimum. Backend flags are relevant only
+when their layer is selected. With both layers selected, unavailable UI falls
+back to video. Explicit UI-only capture reports UI initialization failures.
+
+## First TV run
+
+Stop PicCap or any other capture process. Copy the distribution:
 
 ```sh
 ssh root@TV_IP 'mkdir -p /media/developer/prysm-capture'
 scp -r crates/capture/webos-capture/dist/. root@TV_IP:/media/developer/prysm-capture/
 ssh -t root@TV_IP
-cd /media/developer/prysm-capture
-chmod +x prysm-webos-capture
-LD_LIBRARY_PATH="$PWD${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ./prysm-webos-capture -a PRYSM_MACHINE_IPV4
 ```
 
-Leave it in the foreground to read errors. Ctrl+C requests shutdown and releases
-capture. Test an HDMI source and ordinary TV menus first, using Prysm's egui
-output if you want to inspect received pixels. Protected internal-app video may
-be unavailable. Captured HDR pixels are not automatically tone-mapped.
+Apply the temporary Luna setup below if needed. On the TV:
 
-Defaults are 320×180 at 30 fps with video/UI backend auto-detection. Options:
+```sh
+cd /media/developer/prysm-capture
+./prysm-webos-capture PRYSM_MACHINE_IPV4:19400 \
+  --source video --video-backend vtcapture --width 320 --height 180
+```
 
-| Option | Meaning |
-| --- | --- |
-| `-a IPV4` | Required Prysm receiver IPv4 address |
-| `-p PORT` | TCP port, default 19400 |
-| `-w WIDTH -h HEIGHT` | Even dimensions, 2–1920 × 2–1080 |
-| `-f FPS` | 1–60, default 30 |
-| `-b FILE.so` | Explicit video backend instead of auto-detection |
-| `-u FILE.so` | Explicit UI backend; `none` disables UI capture |
-| `-q MASK` | Upstream model quirk bitmask, decimal or `0x…` |
+Ctrl+C and SIGTERM request shutdown and resource cleanup. Native driver calls
+can block, so shutdown latency must be measured on hardware. Test HDMI and
+ordinary menus with Prysm's desktop preview first. Protected video may be
+unavailable. Captured HDR pixels are not automatically tone-mapped.
 
-Use quirks verified for your TV; they change native capture behavior. Start at
-the default resolution before trying 192×108 to reduce network traffic.
+## Temporary Luna capture permissions
 
-Autostart, standby/wake integration, and IPK packaging are deliberately deferred
-until capture has been validated on the target TV. The upstream capture workers
-can block inside native APIs; shutdown timing needs hardware verification.
+`vtcapture exception: LSRegisterPubPriv FAILED` can mean Luna denies
+registration of the executable's capture-client identity, even when run as root.
+The supplied `permissions/role.json` grants capture-client and media resource
+manager access to exactly `/media/developer/prysm-capture/prysm-webos-capture`.
+Moving the executable requires updating `exeName` in that role.
 
-## Wire protocol v1
+This is the setup verified on the model/firmware above. It overlays a manifest
+using a bind mount; the original system file is not overwritten. Reloading
+permissions affects the shared Luna configuration. Review the files first;
+this is not an automatic installer or a persistent boot setup.
 
-Each TCP frame is a 16-byte header followed by tightly packed RGB24 pixels:
+On the TV, prepare temporary copies (stop if this directory already exists):
+
+```sh
+mkdir -m 700 /tmp/prysm-luna-test &&
+cp /media/developer/prysm-capture/permissions/role.json \
+   /media/developer/prysm-capture/permissions/screen-capture-webos.manifest.json \
+   /tmp/prysm-luna-test/
+```
+
+Compare the proposed manifest with your TV's original:
+
+```sh
+diff -u /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json \
+        /tmp/prysm-luna-test/screen-capture-webos.manifest.json
+```
+
+The only substantive change must be adding `/tmp/prysm-luna-test/role.json`
+to `roleFiles`. If any existing entries differ, stop and adapt the template to
+preserve your TV's entries. Also stop if the manifest is already bind-mounted;
+check with `mount | grep screen-capture-webos.manifest.json`.
+
+After reviewing the diff, apply it:
+
+```sh
+mount --bind \
+  /tmp/prysm-luna-test/screen-capture-webos.manifest.json \
+  /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json &&
+ls-control scan-services
+```
+
+This does not start capture. Run the foreground video-only test above afterward.
+The mount and `/tmp` files do not survive a normal reboot; no autostart hook is
+installed. Do not delete the role file while the overlay is active.
+
+To roll back, stop Prysm capture with Ctrl+C, then restore the original manifest
+view, reload permissions, and remove only the files added here:
+
+```sh
+umount /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json &&
+ls-control scan-services &&
+rm /tmp/prysm-luna-test/role.json \
+   /tmp/prysm-luna-test/screen-capture-webos.manifest.json &&
+rmdir /tmp/prysm-luna-test
+```
+
+The rollback sequence has not yet been verified on the target TV. Do not replace
+`scan-services` with `scan-volatile-dirs`: the latter only adds manifests and
+does not reliably remove previously loaded permissions.
+
+Once the log reaches `Capturing …`, `Connection refused` refers to
+the receiver: start Prysm with the webOS input and enable Screen sync (or
+**Start capture** in the desktop preview) to open TCP port 19400.
+
+## Performance and protocol
+
+Video-only capture packs NV12/NV16 directly from the driver. Color conversion
+runs on the Prysm host. NV12 uses half the bandwidth of RGB24: at 640×360/30 fps,
+raw pixels need 83 Mbit/s instead of 166 Mbit/s, before network overhead.
+320×180 NV12 needs about 21 Mbit/s. UI blending converts video directly to RGB
+and blends premultiplied BGRA in place, without an ARGB intermediate frame.
+The Rust `yuv` dependency uses a scalar ARMv7 conversion path; measure UI-enabled
+CPU usage on the TV before increasing resolution.
+
+Buffers are reused. Checked slice copies omit native stride padding, avoid
+zero-filling, and release frozen native frames before network writes. Failed
+acquisition does not send stale pixels. Missed ticks and duplicate vtcapture
+buffers are skipped; errors or two seconds without a new buffer restart video
+with a one-second retry delay. UI frames continue during video recovery.
+
+`--compression lz4` independently compresses each frame using a pure Rust block
+codec and reusable storage. Expanded frames are sent raw. Compression is off by
+default because noise/film grain can cost CPU without saving bandwidth. Run the
+benchmark below on representative hardware; synthetic flat/gradient/noise data
+does not establish TV performance. On the development ARM64 Mac, 640×360 NV12
+synthetic encoding took roughly 9–11 µs per frame; these are host measurements.
+
+There is no frame queue. Connect and complete-frame writes each have a 100 ms
+deadline; partial writes close the connection and retry after one second. Safe
+`nix` polling preserves one deadline across every partial write. TCP buffers can
+still retain frames briefly, so this is not a hard end-to-end latency guarantee.
+
+The sole wire format is a 24-byte header followed by its payload:
 
 | Offset | Bytes | Value |
 | --- | --- | --- |
-| 0 | 4 | ASCII `PRY1` |
+| 0 | 4 | ASCII `PRY2` |
 | 4 | 4 | Width, unsigned big-endian |
 | 8 | 4 | Height, unsigned big-endian |
-| 12 | 4 | Payload byte length, unsigned big-endian (`width × height × 3`) |
-| 16 | length | RGB24, rows top-to-bottom |
+| 12 | 4 | Format: `0` RGB24, `1` NV12, `2` NV16 |
+| 16 | 4 | Codec: `0` raw, `1` LZ4 block without a size prefix |
+| 20 | 4 | Payload byte length, unsigned big-endian |
+| 24 | length | Tightly packed pixels or their LZ4 block |
 
-There are no registration messages or application replies. Maximum dimensions
-are 1920×1080. The receiver validates the header before allocating pixels,
-disconnects malformed/stalled clients, accepts reconnections, and publishes only
-the latest complete frame. Only one TV connection is handled at a time.
+NV12 is Y followed by interleaved UV at half height; NV16 uses full-height UV.
+Native padding is omitted. Maximum dimensions are 1920×1080. NV12 requires
+even width/height and NV16 requires even width. Allocation bounds and decoded
+length come from validated dimensions, never a compressed size prefix. Unknown
+formats/codecs, invalid lengths, corrupt LZ4, truncated frames, and stalled peers
+disconnect. Receiver scratch buffers are reused; only complete latest frames are
+published. Both sender and receiver must use this protocol; no legacy protocol
+or command-line aliases remain.
 
-The sender reuses capture buffers directly during sending, handles partial writes,
-and has no application frame queue. Connect and frame writes each have a 100 ms
-deadline; failure closes the connection and retries after one second. TCP socket
-buffers can still retain frames briefly; this is not a hard end-to-end latency
-guarantee. No compression, resampling, smoothing, or LED layout runs on the TV.
+There is no authentication or encryption. Bind on a trusted LAN interface and
+restrict port 19400 to the TV. One TV connection is handled at a time.
 
-## Host checks
+## Verification
 
 ```sh
-python3 crates/capture/webos-capture/tests/test_transport.py
-cargo test -p prysm-capture -p prysm-contract --locked
+cargo test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-capture
+cargo run --release -p prysm-webos-protocol --example compression
 ```
 
-These cover the sender's wire bytes, retry and write deadline, receiver parsing,
-fragmented frames, invalid payloads, reconnection, shutdown, and configuration.
-They do not establish capture compatibility or color accuracy on an LG TV.
+Tests cover typed CLI validation/help, native ABI layouts, C++ exception
+containment, acquisition/cleanup, padded planes, color conversion/blending,
+raw/LZ4 boundaries, malformed input, retry/backoff, complete-frame deadlines,
+and receiver cancellation. CI also runs sender/protocol tests as ARM32 soft-float
+executables under QEMU. Cross-build separately with the actual SDK script.
+These checks do not load LG drivers or establish hardware performance or colors.

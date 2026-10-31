@@ -28,11 +28,11 @@ Error handling policy: see [docs/error-handling.md](docs/error-handling.md).
 
 ### Workspace Structure
 
-**9 Rust crates, with executables in `apps/prysm` and `apps/prysm-web`**
+**Rust workspace with application binaries and a standalone webOS capture CLI**
 
 Applications live in `apps/`. Reusable crates are grouped under
-`crates/{capture,processing,rendering,common}/`; the standalone C webOS sender
-lives beside the Rust capture crate. See the workspace table in README.md.
+`crates/{capture,processing,rendering,common}/`; the standalone Rust webOS sender
+and its shared wire protocol live beside the capture crate. See the workspace table in README.md.
 
 Libraries are reusable components for capture, processing and rendering:
 

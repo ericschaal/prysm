@@ -1,0 +1,12 @@
+[package]
+name = "prysm-webos-protocol"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+
+[lints]
+workspace = true

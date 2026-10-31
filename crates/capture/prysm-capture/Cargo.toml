@@ -19,6 +19,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros", "net", "io-util", "time"] }
 tokio-util.workspace = true
+prysm-webos-protocol = { path = "../prysm-webos-protocol" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
