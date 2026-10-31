@@ -4,10 +4,116 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
 jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust formatting
+        run: |
+          rustup update stable --no-self-update
+          rustup component add rustfmt --toolchain stable
+          cargo +stable fmt --all -- --check
+      - name: Shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck scripts/build-deb.sh apps/prysm-web/debian/postinst apps/prysm-web/debian/postrm apps/prysm-web/debian/prerm crates/capture/prysm-capture/video_test.sh
+      - name: GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
+      - name: Update Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: frontend
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/prysm-web/control-ui
+      - name: Generated API, TypeScript, production bundle, UI and proxy tests
+        run: npm test --prefix apps/prysm-web/control-ui
+
+  webos-transport:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile C sender and test wire protocol, retry and write deadline
+        run: python3 crates/capture/webos-capture/tests/test_transport.py
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
+      - name: Update Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup component add clippy --toolchain stable
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust
+      - name: Headless workspace tests and doctests
+        run: cargo +stable test --locked --workspace --no-default-features --exclude prysm-renderer-desktop
+      - name: Desktop workspace tests and doctests
+        run: cargo +stable test --locked --workspace --all-features
+      - name: Compile and lint all targets, including examples
+        # shortcut: existing pedantic/cargo warnings remain advisory; tighten after lint cleanup.
+        run: cargo +stable clippy --locked --workspace --all-targets --all-features -- -D clippy::correctness -D clippy::suspicious
+      - name: Build API documentation
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
+        run: cargo +stable doc --locked --workspace --all-features --no-deps
+      - name: Install FFmpeg
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Real FFmpeg playback and controller tests
+        if: runner.os == 'macOS'
+        run: cargo +stable test --locked -p prysm --all-features --lib --test controller -- --ignored
+
   debian-arm64:
     runs-on: ubuntu-24.04-arm
     container: rust:bookworm
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,14 +123,15 @@ jobs:
           cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
       - name: Linux build dependencies
         run: apt-get update && apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config dpkg-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: debian-arm64
       - name: Packaging tool
         run: cargo install cargo-deb --version 3.8.0 --locked
       - name: Verify and build package
         run: ./scripts/build-deb.sh
       - name: Generated contracts must be committed
         run: git diff --exit-code -- apps/prysm-web/control-ui/openapi.json apps/prysm-web/control-ui/api.generated.ts
-      - name: Formatting
-        run: rustup component add rustfmt && cargo fmt --all -- --check
       - name: Inspect package and validate installation config
         run: |
           dpkg-deb --info target/debian/*.deb
@@ -35,21 +142,4 @@ jobs:
         with:
           name: prysm-debian-arm64
           path: target/debian/*.deb
-
-  desktop-and-playback:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
-      - name: Update Rust
-        run: rustup update stable --no-self-update
-      - name: Install FFmpeg
-        run: brew install ffmpeg
-      - name: Desktop build and workspace tests
-        run: cargo +stable test --locked --workspace --features prysm/desktop
-      - name: Real FFmpeg playback and controller tests
-        run: cargo +stable test --locked -p prysm --features desktop --lib --test controller -- --ignored
+          if-no-files-found: error

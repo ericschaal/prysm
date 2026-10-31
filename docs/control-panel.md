@@ -63,6 +63,8 @@ With `prysm --features desktop` and `[output] type = "egui"`, Prysm renders to a
 native window. Device, file, and webOS input all work with either egui or WLED.
 No `[wled]` HTTP endpoint is required for rendering. Without WLED HTTP control,
 Start output and Stop output control the pipeline; WLED effects are unavailable.
+Startup is idle: the native preview stays black until Start output is requested
+through the web panel or `PUT /api/state` with `{"power":true,"source":"prysm"}`.
 At file EOF the last frame stays visible and the REST API remains available;
 stop/start replays it. Closing the window stops Prysm but leaves `prysm-web`
 running. The same pipeline controls work with DDP output without HTTP management.

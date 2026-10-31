@@ -151,8 +151,16 @@ cargo run -p prysm --features desktop -- --config prysm-egui.toml
 ```
 
 The egui window displays video, detected crop, and edge colors. Start/stop and
-processing settings use the same REST API for every input/output pair. At EOF,
-the last egui frame stays visible and the API remains available. Stop/start
+processing settings use the same REST API for every input/output pair. It starts
+idle with a black preview; click **Start output** in the web panel to begin playback.
+Alternatively, run this in another terminal:
+
+```sh
+curl -X PUT http://127.0.0.1:8787/api/state \
+  -H 'Content-Type: application/json' -d '{"power":true,"source":"prysm"}'
+```
+
+At EOF, the last egui frame stays visible and the API remains available. Stop/start
 replays a file. Closing the window stops Prysm; the independent browser
 controller remains available and reports a lost connection.
 
@@ -222,6 +230,22 @@ From `apps/prysm-web/control-ui`, run `npm run generate-api` after API changes. 
 the `prysm-api` schema exporter and regenerates TypeScript. `npm test` verifies both
 against Rust, then checks types, bundling, and UI behavior.
 See [frontend tooling](apps/prysm-web/control-ui/README.md).
+
+GitHub Actions runs these checks on every push and pull request:
+
+- Rust formatting, ShellCheck, and workflow validation with actionlint.
+- Headless and desktop workspace tests (including doctests) on Linux and macOS,
+  Clippy across all targets/examples, and API documentation link checks.
+  Clippy correctness and suspicious lints fail CI; existing style and metadata warnings remain advisory.
+- Generated API freshness, TypeScript checks, production bundling, and UI/proxy tests.
+- C webOS transport tests on Linux and macOS, with no TV SDK required.
+- Real FFmpeg playback/controller tests on macOS and ARM64 Debian package build,
+  installation, and installed configuration validation.
+
+Capture-device recovery requires a dedicated V4L2 device (for example, an HDMI/USB
+capture adapter), the egui smoke test requires a native desktop session, and
+webOS capture requires the TV SDK and hardware. These
+remain manual; the headless transport, renderer logic, and controller tests run in CI.
 
 ## Debian deployment
 
