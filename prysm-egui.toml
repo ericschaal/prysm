@@ -13,12 +13,12 @@ allowed_hosts = [
 ]
 
 [input]
+refresh_rate_hz = 30
 type = "file"
 path = "/Users/eschaal/Amazing Shots of CINEMA [jb9daxcYYJk].webm"
 
 [output]
 type = "egui"
-refresh_rate_hz = 30
 
 [processing]
 brightness_percent = 100

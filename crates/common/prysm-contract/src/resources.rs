@@ -172,13 +172,19 @@ impl LedCounts {
 pub enum Input {
     Device {
         device: DeviceId,
+        #[schema(value_type = u32, minimum = 1)]
+        refresh_rate_hz: NonZeroU32,
     },
     File {
         path: VideoPath,
+        #[schema(value_type = u32, minimum = 1)]
+        refresh_rate_hz: NonZeroU32,
     },
     Webos {
         #[schema(value_type = String)]
         listen: std::net::SocketAddr,
+        #[schema(value_type = u32, minimum = 1)]
+        refresh_rate_hz: NonZeroU32,
     },
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -186,14 +192,9 @@ pub enum Input {
 pub enum Output {
     Wled {
         address: WledAddress,
-        #[schema(value_type = u32, minimum = 1)]
-        refresh_rate_hz: NonZeroU32,
         leds: LedCounts,
     },
-    Egui {
-        #[schema(value_type = u32, minimum = 1)]
-        refresh_rate_hz: NonZeroU32,
-    },
+    Egui {},
 }
 
 impl Output {

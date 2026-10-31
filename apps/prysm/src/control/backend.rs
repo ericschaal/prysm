@@ -97,11 +97,7 @@ impl LightingService {
         })
     }
     pub fn requires_restart(&self, output: &Output) -> bool {
-        match (&self.active_output, output) {
-            (Output::Wled { .. }, Output::Wled { .. }) => false,
-            (Output::Egui { .. }, Output::Egui { .. }) => self.active_output != *output,
-            _ => true,
-        }
+        self.active_output.is_egui() != output.is_egui()
     }
 
     fn has_wled_control(&self) -> bool {
@@ -258,6 +254,7 @@ mod tests {
         let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
         config.wled = None;
         config.input = prysm_contract::Input::File {
+            refresh_rate_hz: 30.try_into().unwrap(),
             path: "/missing/prysm-ddp-test.mp4".to_owned().try_into().unwrap(),
         };
         config.validate().unwrap();

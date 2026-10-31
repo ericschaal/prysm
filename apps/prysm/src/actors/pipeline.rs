@@ -40,12 +40,8 @@ pub(crate) struct Renderers {
 impl Renderers {
     fn create(&self, output: &Output, completion: Completion) -> Result<RenderTarget> {
         match output {
-            Output::Wled {
-                address,
-                refresh_rate_hz,
-                leds,
-            } => {
-                let renderer = Wled::new(address, *refresh_rate_hz, *leds, completion)?.start();
+            Output::Wled { address, leds } => {
+                let renderer = Wled::new(address, *leds, completion)?.start();
                 Ok(RenderTarget {
                     frames: renderer.clone().recipient(),
                     stop: renderer.recipient(),
@@ -272,6 +268,7 @@ mod tests {
         PipelineConfig {
             revision: ConfigRevision::default(),
             input: prysm_contract::Input::File {
+                refresh_rate_hz: 30.try_into().unwrap(),
                 path: "/missing/prysm-pipeline-test.mp4"
                     .to_owned()
                     .try_into()
@@ -286,7 +283,6 @@ mod tests {
             output: serde_json::from_value(serde_json::json!({
                 "type": "wled",
                 "address": address,
-                "refresh_rate_hz": 60,
                 "leds": {"top": 1, "right": 1, "bottom": 1, "left": 1}
             }))
             .unwrap(),
@@ -309,9 +305,7 @@ mod tests {
             egui: Some(Egui { colors, frames }),
         };
         let mut config = config("127.0.0.1:4048".into());
-        config.output = Output::Egui {
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
+        config.output = Output::Egui {};
         let exit = run_session(
             config,
             crate::input::InputStream {

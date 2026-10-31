@@ -11,7 +11,6 @@ use image::frame_to_image;
 use layout::{LayoutDimensions, calculate_led_distribution};
 use prysm_capture::Frame;
 use prysm_core::{ColorStrip, EdgeColors, Viewport};
-use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// Keep the detected crop paired with the frame it describes.
@@ -26,7 +25,6 @@ type Toolbar = Box<dyn FnMut(&mut egui::Ui) + Send>;
 /// The eframe application that displays edge color gradients
 pub struct DesktopRenderer {
     toolbar: Option<Toolbar>,
-    refresh_interval: Duration,
     edge_colors_rx: tokio::sync::watch::Receiver<EdgeColors>,
     frame_rx: Option<tokio::sync::watch::Receiver<DisplayFrame>>,
     shutdown_token: Option<CancellationToken>,
@@ -47,7 +45,6 @@ impl eframe::App for DesktopRenderer {
             tracing::info!("Shutdown signal received, closing window");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ctx.request_repaint_after(self.refresh_interval);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -250,16 +247,27 @@ enum EdgePosition {
     Right,
 }
 
-/// Wake the GUI immediately on shutdown, even at low refresh rates.
-fn spawn_shutdown_notifier(app: &DesktopRenderer, ctx: egui::Context) {
-    let Some(shutdown_token) = app.shutdown_token.clone() else {
-        return;
-    };
-
+/// Wake the GUI when processed colors arrive or shutdown is requested.
+fn spawn_repaint_notifier(app: &DesktopRenderer, ctx: egui::Context) {
+    let shutdown = app.shutdown_token.clone().unwrap_or_default();
+    let mut colors = app.edge_colors_rx.clone();
     std::thread::spawn(move || {
         futures::executor::block_on(async move {
-            shutdown_token.cancelled().await;
-            ctx.request_repaint();
+            loop {
+                let changed = {
+                    let changed = colors.changed();
+                    let cancelled = shutdown.cancelled();
+                    futures::pin_mut!(changed, cancelled);
+                    match futures::future::select(changed, cancelled).await {
+                        futures::future::Either::Left((result, _)) => result.is_ok(),
+                        futures::future::Either::Right(_) => false,
+                    }
+                };
+                ctx.request_repaint();
+                if !changed {
+                    break;
+                }
+            }
         });
     });
 }
@@ -277,7 +285,9 @@ fn spawn_shutdown_notifier(app: &DesktopRenderer, ctx: egui::Context) {
 /// # Arguments
 /// * `app` - The configured desktop renderer
 /// * `shutdown_token` - Token to signal shutdown when window closes
-pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::Result {
+pub fn run(mut app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::Result {
+    app.shutdown_token
+        .get_or_insert_with(|| shutdown_token.clone());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 600.0])
@@ -289,7 +299,7 @@ pub fn run(app: DesktopRenderer, shutdown_token: &CancellationToken) -> eframe::
         "Prysm",
         options,
         Box::new(move |cc| {
-            spawn_shutdown_notifier(&app, cc.egui_ctx.clone());
+            spawn_repaint_notifier(&app, cc.egui_ctx.clone());
             Ok(Box::new(app))
         }),
     );

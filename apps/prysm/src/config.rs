@@ -55,17 +55,24 @@ mod tests {
         next.processing.shadow_lift_percent = prysm_contract::ShadowLiftPercent::new(50).unwrap();
         next.revision = current.revision.next().unwrap();
         assert!(!current.requires_restart(&next));
+        let mut rate_change = current.clone();
+        if let Input::Device {
+            refresh_rate_hz, ..
+        } = &mut rate_change.input
+        {
+            *refresh_rate_hz = 15.try_into().unwrap();
+        }
+        assert!(current.requires_restart(&rate_change));
         next.resolution = CaptureResolution::new(1280, 720).unwrap();
         assert!(current.requires_restart(&next));
         let mut next = current.clone();
         next.input = Input::Webos {
+            refresh_rate_hz: 30.try_into().unwrap(),
             listen: "0.0.0.0:19400".parse().unwrap(),
         };
         assert!(current.requires_restart(&next));
         let mut next = current.clone();
-        next.output = Output::Egui {
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
+        next.output = Output::Egui {};
         assert!(current.requires_restart(&next));
     }
 }

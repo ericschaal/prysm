@@ -12,12 +12,12 @@ allowed_hosts = ["localhost:8787"]
 [wled]
 url = "http://wled.local/"
 [input]
+refresh_rate_hz = 30
 type = "device"
 device = "/dev/video0"
 [output]
 type = "wled"
 address = "wled.local:4048"
-refresh_rate_hz = 30
 [output.leds]
 top = 51
 right = 31
@@ -120,6 +120,7 @@ fn webos_input_round_trips() {
     let config: Config = toml::from_str(CONFIG).unwrap();
     let mut next = config.clone();
     next.input = Input::Webos {
+        refresh_rate_hz: 30.try_into().unwrap(),
         listen: "0.0.0.0:19400".parse().unwrap(),
     };
     assert_eq!(
@@ -127,15 +128,21 @@ fn webos_input_round_trips() {
         next
     );
     assert_eq!(
-        serde_json::from_value::<Input>(json!({"type":"webos", "listen":"127.0.0.1:19400"}))
-            .unwrap(),
+        serde_json::from_value::<Input>(
+            json!({"type":"webos", "refresh_rate_hz":30, "listen":"127.0.0.1:19400"})
+        )
+        .unwrap(),
         Input::Webos {
+            refresh_rate_hz: 30.try_into().unwrap(),
             listen: "127.0.0.1:19400".parse().unwrap()
         }
     );
     for invalid in ["tv.local:19400", "0.0.0.0", "bad"] {
         assert!(
-            serde_json::from_value::<Input>(json!({"type":"webos", "listen":invalid})).is_err()
+            serde_json::from_value::<Input>(
+                json!({"type":"webos", "refresh_rate_hz":30, "listen":invalid})
+            )
+            .is_err()
         );
     }
 }
@@ -164,13 +171,13 @@ fn schema_matches_serialized_values() {
 fn every_input_output_pair_is_valid_without_wled_http_control() {
     let base: Config = toml::from_str(CONFIG).unwrap();
     let inputs = [
-        json!({"type":"device", "device":"/dev/video0"}),
-        json!({"type":"file", "path":"/tmp/video.mkv"}),
-        json!({"type":"webos", "listen":"127.0.0.1:19400"}),
+        json!({"type":"device", "refresh_rate_hz":30, "device":"/dev/video0"}),
+        json!({"type":"file", "refresh_rate_hz":30, "path":"/tmp/video.mkv"}),
+        json!({"type":"webos", "refresh_rate_hz":30, "listen":"127.0.0.1:19400"}),
     ];
     let outputs = [
         serde_json::to_value(&base.output).unwrap(),
-        json!({"type":"egui", "refresh_rate_hz":30}),
+        json!({"type":"egui"}),
     ];
     for input in inputs {
         for output in &outputs {
@@ -186,5 +193,32 @@ fn every_input_output_pair_is_valid_without_wled_http_control() {
             config.source = Source::Wled;
             assert!(config.validate().is_err());
         }
+    }
+}
+
+#[test]
+fn input_rates_are_required_positive_and_output_rates_are_rejected() {
+    for input in [
+        json!({"type":"device", "device":"/dev/video0"}),
+        json!({"type":"file", "path":"video.mkv"}),
+        json!({"type":"webos", "listen":"127.0.0.1:19400"}),
+    ] {
+        assert!(serde_json::from_value::<Input>(input.clone()).is_err());
+        for rate in [json!(0), json!(-1), json!(1.5), json!("30")] {
+            let mut invalid = input.clone();
+            invalid["refresh_rate_hz"] = rate;
+            assert!(serde_json::from_value::<Input>(invalid).is_err());
+        }
+        let mut valid = input;
+        valid["refresh_rate_hz"] = json!(30);
+        assert!(serde_json::from_value::<Input>(valid).is_ok());
+    }
+    let base: Config = toml::from_str(CONFIG).unwrap();
+    for mut output in [
+        serde_json::to_value(base.output).unwrap(),
+        json!({"type":"egui"}),
+    ] {
+        output["refresh_rate_hz"] = json!(30);
+        assert!(serde_json::from_value::<Output>(output).is_err());
     }
 }

@@ -13,17 +13,16 @@ allowed_hosts = [
 ]
 
 [input]
+refresh_rate_hz = 50
 type = "webos"
 listen = "0.0.0.0:19400"
 
 [output]
 type = "egui"
-refresh_rate_hz = 50
 
 #[output]
 #type = "wled"
 #address = "192.168.18.39:4048"
-#refresh_rate_hz = 50
 #
 #[output.leds]
 #top = 51

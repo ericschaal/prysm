@@ -8,9 +8,8 @@ port 4048. See [WLED's DDP documentation](https://kno.wled.ge/interfaces/ddp/).
 ```rust
 use prysm_renderer_wled::WledRenderer;
 use prysm_core::{Color, EdgeColors};
-use std::num::NonZeroU32;
 
-let mut renderer = WledRenderer::new("wled.local:4048", NonZeroU32::new(30).unwrap())?;
+let mut renderer = WledRenderer::new("wled.local:4048")?;
 renderer.render(&[Color::new(255, 0, 0), Color::new(0, 0, 255)])?;
 
 // Call for each processor output; counts match the physical strip.
@@ -54,11 +53,13 @@ All settings are owned by the controller's single TOML file. File input uses:
 [input]
 type = "file"
 path = "/path/to/video.mp4"
+refresh_rate_hz = 30
 ```
 
 Device input uses `type = "device"` with a Linux device path or macOS AVFoundation
-UID in `device`. Select `[output] type = "wled"` and configure its `address`, positive
-`refresh_rate_hz`, and top/right/bottom/left LED counts. Alternatively, select
+UID in `device`. Each input requires a positive `refresh_rate_hz`.
+Select `[output] type = "wled"` and configure its `address` and
+top/right/bottom/left LED counts. Alternatively, select
 `type = "egui"` with `--features desktop` for a native output without WLED.
 Counts may be zero for absent edges, with a total of 1–65535 LEDs. Processing
 settings belong under `[processing]`. See the complete [example](../../../prysm.toml)
@@ -70,12 +71,10 @@ File EOF completes capture, while capture/decoder/send failures leave HTTP alive
 for inspection and retry. Ctrl+C drains the pipeline and exits. File input needs
 FFmpeg 9+, converts HDR to sRGB, and runs at the source frame rate.
 
-`output.refresh_rate_hz` caps WLED sends per second (positive integer).
-Library callers pass this cap as a `NonZeroU32` to `WledRenderer::new`,
-shared by `render` and `render_edges`. The source frame rate limits actual output;
-skipped frames are not queued. The first nonempty frame sends immediately; calls
-within the configured interval of the previous successful send are skipped and
-return success. Frames use a
+`input.refresh_rate_hz` caps frames delivered to processing for file, device,
+and webOS inputs. Excess frames are dropped; the source rate limits actual output.
+Device capture and webOS transmission still run at their source rates.
+The renderer sends every nonempty frame immediately. Frames use a
 nonblocking socket with no queue or retries; the RGB buffer is reused.
 DNS resolution happens in the constructor and can
 block. Render errors are returned as `ddp_rs::error::DDPError` (including an I/O

@@ -141,12 +141,12 @@ allowed_hosts = ["{address}"]
 [wled]
 url = "http://{wled_address}/"
 [input]
+refresh_rate_hz = 30
 type = "file"
 path = "/missing/prysm-local-controller-test.mp4"
 [output]
 type = "wled"
 address = "{output_address}"
-refresh_rate_hz = 30
 [output.leds]
 top = 1
 right = 1
@@ -262,9 +262,7 @@ left = 1
     if !cfg!(feature = "desktop") {
         let before = std::fs::read(&config).unwrap();
         let mut egui = saved.clone();
-        egui.output = prysm_contract::Output::Egui {
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
+        egui.output = prysm_contract::Output::Egui {};
         let response = client
             .put(&config_endpoint)
             .json(&UpdateConfig {
@@ -359,6 +357,7 @@ left = 1
             .await
             .unwrap();
         settings.input = prysm_contract::Input::File {
+            refresh_rate_hz: 30.try_into().unwrap(),
             path: video.to_str().unwrap().to_owned().try_into().unwrap(),
         };
         settings.capture_resolution = [16, 16].try_into().unwrap();
@@ -407,9 +406,9 @@ left = 1
         .unwrap();
 
         let mut settings = saved;
-        if let prysm_contract::Output::Wled {
+        if let prysm_contract::Input::File {
             refresh_rate_hz, ..
-        } = &mut settings.output
+        } = &mut settings.input
         {
             *refresh_rate_hz = 15.try_into().unwrap();
         }

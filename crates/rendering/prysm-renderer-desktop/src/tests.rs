@@ -1,7 +1,7 @@
 use super::*;
 use eframe::App;
 use prysm_capture::PixelFormat;
-use std::num::NonZeroU32;
+use std::time::Duration;
 
 #[test]
 fn draws_application_toolbar_above_video() {
@@ -209,41 +209,24 @@ fn crop_outline_tracks_the_displayed_frame_and_window_size() {
 }
 
 #[test]
-fn schedules_output_refreshes_at_default_and_configured_rates() {
-    for (rate, nanos) in [
-        (None, 33_333_334),
-        (Some(2), 500_000_000),
-        (Some(60), 16_666_667),
-        (Some(u32::MAX), 1),
-    ] {
-        let (_sender, receiver) = tokio::sync::watch::channel(EdgeColors::default());
-        let mut builder = DesktopRendererBuilder::new(receiver);
-        if let Some(rate) = rate {
-            builder = builder.with_refresh_rate_hz(NonZeroU32::new(rate).unwrap());
-        }
-        let mut app = builder.build();
-        let context = egui::Context::default();
-        let mut frame = eframe::Frame::_new_kittest();
-        let mut output = egui::FullOutput::default();
-        // Let egui's initial layout repaints settle before checking the timer.
-        for _ in 0..3 {
-            output = context.run_ui(
-                egui::RawInput {
-                    predicted_dt: 0.0,
-                    ..Default::default()
-                },
-                |ui| {
-                    app.logic(ui.ctx(), &mut frame);
-                    app.ui(ui, &mut frame);
-                },
-            );
-            output.textures_delta.clear();
-        }
-        assert_eq!(
-            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
-            Duration::from_nanos(nanos)
-        );
-    }
+fn incoming_colors_request_a_repaint() {
+    let (colors, receiver) = tokio::sync::watch::channel(EdgeColors::default());
+    let shutdown = CancellationToken::new();
+    let app = DesktopRendererBuilder::new(receiver)
+        .with_shutdown_token(&shutdown)
+        .build();
+    let context = egui::Context::default();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    context.set_request_repaint_callback(move |info| {
+        let _ = sender.send(info.delay);
+    });
+    spawn_repaint_notifier(&app, context);
+    colors.send_replace(EdgeColors::default());
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+        Duration::ZERO
+    );
+    shutdown.cancel();
 }
 
 #[test]
@@ -258,7 +241,7 @@ fn shutdown_requests_an_immediate_repaint() {
     context.set_request_repaint_callback(move |info| {
         sender.send(info.delay).unwrap();
     });
-    spawn_shutdown_notifier(&app, context);
+    spawn_repaint_notifier(&app, context);
     shutdown.cancel();
     assert_eq!(
         receiver.recv_timeout(Duration::from_secs(1)).unwrap(),

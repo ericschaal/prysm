@@ -22,15 +22,11 @@ fn run_with_window(path: &Path, config: Config) -> Result<()> {
     use crate::actors::{egui::Egui, pipeline::Renderers};
     use anyhow::{Context as _, anyhow};
     use prysm_capture::Frame;
-    use prysm_contract::Output;
     use prysm_core::EdgeColors;
     use prysm_renderer_desktop::{DesktopRendererBuilder, DisplayFrame};
     use tokio::sync::watch;
     use tokio_util::sync::CancellationToken;
 
-    let Output::Egui { refresh_rate_hz } = config.output else {
-        unreachable!("native window requested for egui output");
-    };
     let [width, height] = config.capture_resolution.dimensions();
     let shutdown = CancellationToken::new();
     let (colors, colors_rx) = watch::channel(EdgeColors::default());
@@ -42,7 +38,6 @@ fn run_with_window(path: &Path, config: Config) -> Result<()> {
     let app = DesktopRendererBuilder::new(colors_rx)
         .with_toolbar(move |ui| controls.show(ui))
         .with_frame_rx(frames_rx)
-        .with_refresh_rate_hz(refresh_rate_hz)
         .with_shutdown_token(&shutdown)
         .build();
     let renderers = Renderers {

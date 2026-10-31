@@ -10,13 +10,13 @@ listen = "127.0.0.1:8787"
 allowed_hosts = ["*"]
 
 [input]
+refresh_rate_hz = 50
 type = "device"
 device = "0x2200000345f2131"
 
 [output]
 type = "wled"
 address = "192.168.18.39:4048"
-refresh_rate_hz = 50
 
 [output.leds]
 top = 51

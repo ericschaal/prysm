@@ -137,14 +137,18 @@ Input and output are independent:
 | Remote TV capture (`webos`) | ✓ | ✓ |
 
 Set `[input]` to `type = "file"` with `path`, `type = "device"` with `device`,
-or `type = "webos"` with a TCP `listen` address. Files require FFmpeg 9+ on PATH.
+or `type = "webos"` with a TCP `listen` address. Each input requires a positive
+`refresh_rate_hz`, which caps frames delivered to processing and either output.
+Excess frames are dropped without slowing file playback or duplicating frames.
+Device capture and webOS transmission still run at their source rates.
+Files require FFmpeg 9+ on PATH.
 Capture devices provide video feeds; this does not directly record the desktop.
 See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.
 See [centralized monitoring](observability/README.md) for opt-in process, system and
 stream metrics with a provisioned Prometheus/Grafana Docker Compose stack.
 
-Set `[output]` to `type = "wled"` with a DDP address, refresh rate, and
-`[output.leds]` layout, or `type = "egui"` with a refresh rate. egui is a renderer
+Set `[output]` to `type = "wled"` with a DDP address and
+`[output.leds]` layout, or `type = "egui"`. egui is a renderer
 and requires `--features desktop`:
 
 ```sh
@@ -180,7 +184,7 @@ own effects and requires WLED output with an HTTP endpoint.
 
 REST configuration updates save this file atomically with revision checks.
 Processing changes apply live; input, resolution, and DDP settings recreate an
-active session. Changing output kind, egui refresh rate, or REST listen/access
+active session. Changing output kind or REST listen/access
 policy requires restarting Prysm. Output configuration requires an explicit `type`. No web UI preferences or duplicate pipeline config are stored.
 
 LED counts are viewed from the front. Wiring starts at bottom-left, then runs

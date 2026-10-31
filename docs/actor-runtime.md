@@ -62,7 +62,7 @@ WLED HTTP management is optional. Without it, power represents pipeline activity
 and no WLED HTTP requests occur. With it, the configuration actor coordinates
 capture with WLED power/effects and observes physical lighting state.
 
-Changing output kind or egui refresh rate saves the configuration, stops capture,
+Changing output kind saves the configuration, stops capture,
 and requests a Prysm restart. Builds without `desktop` reject egui settings before
 saving; startup and `check` enforce the same validation. Processing changes apply
 live through messages. REST listen/access policy changes also require a restart.

@@ -42,7 +42,7 @@ the UI replaces this file atomically; the process needs write access to its pare
 folder. No separate preferences file exists. All settings have one shared Rust
 model for disk and HTTP. Processing settings update through actor messages;
 input, capture resolution, and WLED output changes recreate a running session.
-Changing output kind or the egui refresh rate stops capture and requires
+Changing output kind stops capture and requires
 a restart. Processing changes apply live for either renderer. Listen-address and allowed-host changes are saved but require an application
 restart. The current API keeps its original access policy until then. Settings
 that require unavailable build features are rejected before they are saved.

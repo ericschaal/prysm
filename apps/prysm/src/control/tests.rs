@@ -7,7 +7,7 @@ use axum::{body::Body, http::Request};
 use prysm_api::App;
 use prysm_capture::Frame;
 use prysm_contract::{
-    Input, OperationStatus, Output, PipelinePhase, Source, StateResponse, Target, UpdateConfig,
+    Input, OperationStatus, PipelinePhase, Source, StateResponse, Target, UpdateConfig,
 };
 use prysm_core::{EdgeColors, LinearColor};
 use prysm_renderer_desktop::DisplayFrame;
@@ -31,6 +31,7 @@ impl EguiController {
         let mut config: Config =
             toml::from_str(include_str!("../../../../prysm-egui.toml")).unwrap();
         config.input = Input::File {
+            refresh_rate_hz: 30.try_into().unwrap(),
             path: "/missing/prysm-egui-test.mkv"
                 .to_owned()
                 .try_into()
@@ -209,11 +210,14 @@ async fn egui_controller_serves_state_handles_failure_and_saves_settings_without
     let state = egui.target(false).await;
     assert_eq!(state.pipeline.phase, PipelinePhase::Idle);
     let mut config = egui.app.config.borrow().clone();
-    config.output = Output::Egui {
-        refresh_rate_hz: 15.try_into().unwrap(),
-    };
+    if let Input::File {
+        refresh_rate_hz, ..
+    } = &mut config.input
+    {
+        *refresh_rate_hz = 15.try_into().unwrap();
+    }
     let saved = egui.save(config).await;
-    assert!(saved.restart_required);
+    assert!(!saved.restart_required);
     let response = egui
         .request(
             "PUT",
@@ -224,7 +228,7 @@ async fn egui_controller_serves_state_handles_failure_and_saves_settings_without
             },
         )
         .await;
-    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
     egui.shutdown().await;
 }
 
@@ -254,6 +258,7 @@ async fn egui_controller_processes_file_applies_settings_restarts_and_replays_af
     );
     let mut config = egui.app.config.borrow().clone();
     config.input = Input::File {
+        refresh_rate_hz: 30.try_into().unwrap(),
         path: video.to_str().unwrap().to_owned().try_into().unwrap(),
     };
     assert!(matches!(

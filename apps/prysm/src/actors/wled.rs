@@ -3,7 +3,6 @@ use actix::{Actor, ActorContext, Context, Handler};
 use anyhow::{Context as _, Result};
 use prysm_contract::{LedCounts, WledAddress};
 use prysm_renderer_wled::WledRenderer;
-use std::num::NonZeroU32;
 
 /// WLED output. Other outputs handle the same `RenderFrame` message.
 pub struct Wled {
@@ -13,14 +12,8 @@ pub struct Wled {
 }
 
 impl Wled {
-    pub fn new(
-        address: &WledAddress,
-        refresh_rate_hz: NonZeroU32,
-        leds: LedCounts,
-        completion: Completion,
-    ) -> Result<Self> {
-        let backend = WledRenderer::new(address.as_str(), refresh_rate_hz)
-            .context("cannot create WLED renderer")?;
+    pub fn new(address: &WledAddress, leds: LedCounts, completion: Completion) -> Result<Self> {
+        let backend = WledRenderer::new(address.as_str()).context("cannot create WLED renderer")?;
         Ok(Self {
             backend,
             leds,
@@ -75,27 +68,17 @@ mod tests {
         let config: prysm_contract::Output = serde_json::from_value(serde_json::json!({
             "type": "wled",
             "address": receiver.local_addr().unwrap().to_string(),
-            "refresh_rate_hz": 60,
             "leds": { "top": 2, "right": 1, "bottom": 1, "left": 1 }
         }))
         .unwrap();
-        let prysm_contract::Output::Wled {
-            address,
-            refresh_rate_hz,
-            leds,
-        } = config
-        else {
+        let prysm_contract::Output::Wled { address, leds } = config else {
             panic!("expected WLED fixture")
         };
-        let output: Recipient<RenderFrame> = Wled::new(
-            &address,
-            refresh_rate_hz,
-            leds,
-            tokio::sync::mpsc::channel(3).0,
-        )
-        .unwrap()
-        .start()
-        .recipient();
+        let output: Recipient<RenderFrame> =
+            Wled::new(&address, leds, tokio::sync::mpsc::channel(3).0)
+                .unwrap()
+                .start()
+                .recipient();
         let edges = EdgeColors::new(
             ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), 1),
             ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), 1),

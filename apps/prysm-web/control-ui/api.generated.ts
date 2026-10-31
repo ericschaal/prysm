@@ -55,7 +55,7 @@ export interface components {
             revision: components["schemas"]["ConfigRevision"];
             source: components["schemas"]["Source"];
             web: components["schemas"]["WebConfig"];
-            wled?: null | components["schemas"]["WledConfig"];
+            wled?: components["schemas"]["WledConfig"] | null;
         };
         ConfigRevision: string;
         DeviceId: string;
@@ -63,14 +63,20 @@ export interface components {
         ErrorCode: "invalid_request" | "conflict" | "persistence" | "backend" | "unavailable";
         Input: {
             device: components["schemas"]["DeviceId"];
+            /** Format: int32 */
+            refresh_rate_hz: number;
             /** @enum {string} */
             type: "device";
         } | {
             path: components["schemas"]["VideoPath"];
+            /** Format: int32 */
+            refresh_rate_hz: number;
             /** @enum {string} */
             type: "file";
         } | {
             listen: string;
+            /** Format: int32 */
+            refresh_rate_hz: number;
             /** @enum {string} */
             type: "webos";
         };
@@ -117,20 +123,16 @@ export interface components {
         Output: {
             address: components["schemas"]["WledAddress"];
             leds: components["schemas"]["LedCounts"];
-            /** Format: int32 */
-            refresh_rate_hz: number;
             /** @enum {string} */
             type: "wled";
         } | {
-            /** Format: int32 */
-            refresh_rate_hz: number;
             /** @enum {string} */
             type: "egui";
         };
         /** @enum {string} */
         PipelinePhase: "idle" | "starting" | "running" | "failed" | "completed";
         PipelineStatus: {
-            applied_revision?: null | components["schemas"]["ConfigRevision"];
+            applied_revision?: components["schemas"]["ConfigRevision"] | null;
             error?: string | null;
             /** Format: int64 */
             frames_processed: number;
@@ -151,10 +153,10 @@ export interface components {
         Source: "prysm" | "wled";
         SpatialReachPercent: number;
         StateResponse: {
-            applied_revision?: null | components["schemas"]["ConfigRevision"];
+            applied_revision?: components["schemas"]["ConfigRevision"] | null;
             config_revision: components["schemas"]["ConfigRevision"];
             observation_error?: string | null;
-            observed?: null | components["schemas"]["Observation"];
+            observed?: components["schemas"]["Observation"] | null;
             operation: components["schemas"]["OperationStatus"];
             pipeline: components["schemas"]["PipelineStatus"];
             restart_required: boolean;

@@ -12,6 +12,7 @@ allowed_hosts = ["127.0.0.1:8787", "localhost:8787"]
 url = "http://wled.local/"
 
 [input]
+refresh_rate_hz = 50
 type = "device"
 # Prefer /dev/v4l/by-id/... when available.
 device = "/dev/video0"
@@ -19,7 +20,6 @@ device = "/dev/video0"
 [output]
 type = "wled"
 address = "wled.local:4048"
-refresh_rate_hz = 50
 
 # Viewed from the front; wiring starts at bottom-left and goes up.
 [output.leds]

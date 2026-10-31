@@ -12,8 +12,8 @@ const revision = '1';
 const operationId = '00000000-0000-4000-8000-000000000002';
 function config(lift = 0, revision = '1') {
   return { revision, source: 'prysm', web: { listen: '127.0.0.1:8787', allowed_hosts: ['localhost:8787'] },
-    input: { type: 'device', device: '/dev/video0' }, capture_resolution: [640, 360],
-    output: { type: 'wled', address: '192.168.18.39:4048', refresh_rate_hz: 30, leds: { top: 10, right: 10, bottom: 10, left: 10 } },
+    input: { type: 'device', device: '/dev/video0', refresh_rate_hz: 30 }, capture_resolution: [640, 360],
+    output: { type: 'wled', address: '192.168.18.39:4048', leds: { top: 10, right: 10, bottom: 10, left: 10 } },
     wled: { url: 'http://192.168.18.39/' }, processing: { ...processing, shadow_lift_percent: lift } };
 }
 const response = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -104,7 +104,7 @@ async function check(initial, test, initialConfig) {
 }
 
 (async () => {
-  for (const directConfig of [ { ...config(), output: { type: 'egui', refresh_rate_hz: 30 }, wled: null },
+  for (const directConfig of [ { ...config(), output: { type: 'egui' }, wled: null },
     { ...config(), wled: null },
   ]) {
   await check({ ...off, wled_url: '' }, async p => {
