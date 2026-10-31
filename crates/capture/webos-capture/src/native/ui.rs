@@ -132,6 +132,22 @@ impl HalCapture {
             "libhalgal.so.1",
             "libhalgal.so.2",
         ])?;
+        Self::open_with(api, options, |surface| {
+            let file = OpenOptions::new().read(true).write(true).open("/dev/gfx")?;
+            let length = if surface.property != 0 {
+                surface.property as usize
+            } else {
+                surface.pitch as usize * surface.height as usize
+            };
+            mapping(&file, surface.offset, length)
+        })
+    }
+
+    fn open_with(
+        api: HalApi,
+        options: &CaptureOptions,
+        map: impl FnOnce(&HalSurface) -> Result<Mapping>,
+    ) -> Result<Self> {
         // SAFETY: initialization, capture and teardown all run on this thread
         // because HAL_GAL binds an EGL context to its initialization thread.
         status(unsafe { (api.init)() }, "HAL_GAL_Init")?;
@@ -146,13 +162,7 @@ impl HalCapture {
             surface,
             mapping: None,
         };
-        let file = OpenOptions::new().read(true).write(true).open("/dev/gfx")?;
-        let length = if this.surface.property != 0 {
-            this.surface.property as usize
-        } else {
-            this.surface.pitch as usize * this.surface.height as usize
-        };
-        this.mapping = Some(mapping(&file, this.surface.offset, length)?);
+        this.mapping = Some(map(&this.surface)?);
         Ok(this)
     }
 }
@@ -162,5 +172,60 @@ impl Drop for HalCapture {
         unsafe {
             (self.api.destroy)(&raw mut self.surface);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DESTROYED: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn init() -> i32 {
+        0
+    }
+    unsafe extern "C" fn create(width: u32, height: u32, _: u32, surface: *mut HalSurface) -> i32 {
+        // SAFETY: open_with supplies an initialized writable surface.
+        unsafe {
+            (*surface).width = u16::try_from(width).unwrap();
+            (*surface).height = u16::try_from(height).unwrap();
+            (*surface).vendor_data = 42;
+        }
+        0
+    }
+    unsafe extern "C" fn destroy(surface: *mut HalSurface) -> i32 {
+        // SAFETY: the owned surface remains live throughout teardown.
+        assert_eq!(unsafe { (*surface).vendor_data }, 42);
+        DESTROYED.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+
+    #[test]
+    fn failed_mapping_destroys_the_created_surface_once() {
+        let cli = Cli::try_parse_from(["capture", "127.0.0.1:19400"]).unwrap();
+        let before = DESTROYED.load(Ordering::Relaxed);
+        let result = HalCapture::open_with(
+            HalApi {
+                init,
+                create,
+                capture: destroy,
+                destroy,
+                _library: libloading::os::unix::Library::this().into(),
+            },
+            &cli.capture,
+            |surface| {
+                assert_eq!(surface.vendor_data, 42);
+                assert_eq!(u32::from(surface.width), cli.capture.width);
+                // Exercise the actual mapping validation after surface creation.
+                mapping(&std::fs::File::open("/dev/null")?, 0, 0)
+            },
+        );
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "invalid native mapping size"
+        );
+        assert_eq!(DESTROYED.load(Ordering::Relaxed), before + 1);
     }
 }

@@ -33,13 +33,17 @@ impl Sender {
         }
     }
 
+    pub fn ready(&self) -> bool {
+        self.socket.is_some() || Instant::now() >= self.retry_after
+    }
+
     /// False means reconnect backoff; capture keeps running without a frame queue.
     pub fn send(&mut self, mut header: Header, pixels: &[u8]) -> Result<bool> {
         anyhow::ensure!(
             pixels.len() == header.raw_len()?,
             "incorrect sender frame length"
         );
-        if self.socket.is_none() && Instant::now() < self.retry_after {
+        if !self.ready() {
             return Ok(false);
         }
         let result: Result<bool> = (|| {
@@ -172,10 +176,12 @@ mod tests {
             payload_len: 3,
         };
         assert!(sender.send(header, &[0; 3]).is_err());
+        assert!(!sender.ready());
         assert!(!sender.send(header, &[0; 3]).unwrap());
         assert!(sender.socket.is_none());
         let listener = TcpListener::bind(address).unwrap();
         sender.retry_after = Instant::now();
+        assert!(sender.ready());
         assert!(sender.send(header, &[1, 2, 3]).unwrap());
         let (mut receiver, _) = listener.accept().unwrap();
         let mut bytes = [0; HEADER_LEN + 3];

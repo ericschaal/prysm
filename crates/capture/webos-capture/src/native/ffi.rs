@@ -107,7 +107,7 @@ pub type VtPreprocess = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut Prop
 pub type VtPlane = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut PlaneInfo) -> c_int;
 pub type VtBuffer = unsafe extern "C" fn(*mut c_void, *mut BufferInfo) -> c_int;
 pub type VtClient = unsafe extern "C" fn(*mut c_void, *mut c_char) -> c_int;
-pub type VtRelease = unsafe extern "C" fn(*mut c_void) -> c_int;
+pub type VtRelease = unsafe extern "C" fn(*mut c_void);
 
 unsafe extern "C" {
     pub fn prysm_vt_create(
@@ -192,6 +192,7 @@ mod tests {
         fn prysm_abi_layout(output: *mut usize);
         fn prysm_test_throw_create() -> *mut c_void;
         fn prysm_test_throw_call(driver: *mut c_void, client: *mut c_char) -> c_int;
+        fn prysm_test_throw_release(driver: *mut c_void);
     }
 
     #[test]
@@ -255,6 +256,14 @@ mod tests {
             assert_eq!(
                 CStr::from_ptr(error.as_ptr()).to_str().unwrap(),
                 "native call failed"
+            );
+            assert_eq!(
+                prysm_vt_release(prysm_test_throw_release, driver, error.as_mut_ptr()),
+                -1000
+            );
+            assert_eq!(
+                CStr::from_ptr(error.as_ptr()).to_str().unwrap(),
+                "native release failed"
             );
         }
     }

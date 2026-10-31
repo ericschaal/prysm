@@ -13,6 +13,7 @@ use std::{ffi::CStr, fs::OpenOptions, os::fd::AsRawFd};
 use std::{
     ffi::{c_char, c_void},
     ptr::{self, NonNull},
+    time::{Duration, Instant},
 };
 
 api!(VtApi {
@@ -42,8 +43,8 @@ pub struct VtCapture {
     client: [c_char; 128],
     stage: Stage,
     plane: PlaneInfo,
-    previous: Option<NonNull<u8>>,
     force_capture: bool,
+    pending_since: Option<Instant>,
 }
 
 fn vt_result(code: i32, error: &[u8]) -> Result<i32> {
@@ -81,8 +82,8 @@ impl VtCapture {
             client: [0; 128],
             stage: Stage::Created,
             plane: PlaneInfo::default(),
-            previous: None,
             force_capture: options.force_capture,
+            pending_since: None,
         };
         this.client[..2].fill(c_char::try_from(b'0')?);
         let code = vt_call!(
@@ -157,6 +158,15 @@ impl VtCapture {
     pub(super) fn capture(&mut self, output: &mut Vec<u8>) -> Result<Option<Header>> {
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
+        if code == 2 {
+            // Allow the asynchronous producer to supply a frame before restarting it.
+            let since = self.pending_since.get_or_insert_with(Instant::now);
+            ensure!(
+                since.elapsed() < Duration::from_secs(2),
+                "vtCapture_currentCaptureBuffInfo status 2 persisted for two seconds"
+            );
+            return Ok(None);
+        }
         if code == 17 && self.force_capture {
             force_capture()?;
         }
@@ -165,9 +175,6 @@ impl VtCapture {
             !buffer.y.is_null() && !buffer.uv.is_null(),
             "empty vtcapture planes"
         );
-        if Some(NonNull::new(buffer.y).context("null vtcapture luma plane")?) == self.previous {
-            return Ok(None);
-        }
         let width = u32::try_from(self.plane.region[2])?;
         let height = u32::try_from(self.plane.region[3])?;
         let header = pixels::header(width, height, PixelFormat::Nv12)?;
@@ -182,7 +189,7 @@ impl VtCapture {
         };
         pixels::copy_plane(y, stride, width as usize, height as usize, output)?;
         pixels::copy_plane(uv, stride, width as usize, height as usize / 2, output)?;
-        self.previous = NonNull::new(buffer.y);
+        self.pending_since = None;
         Ok(Some(header))
     }
 }
@@ -201,9 +208,7 @@ impl Drop for VtCapture {
                 }
             }
         }
-        if let Err(error) = vt_call!(self, prysm_vt_release, self.api.release)
-            .and_then(|code| status(code, "vtCapture_release"))
-        {
+        if let Err(error) = vt_call!(self, prysm_vt_release, self.api.release) {
             eprintln!("vtcapture cleanup: {error:#}");
         }
     }
@@ -226,9 +231,16 @@ fn force_capture() -> Result<()> {
 mod tests {
     use super::*;
     use crate::native::Video;
+    use clap::Parser;
+    use std::{
+        io::Read,
+        net::TcpListener,
+        sync::atomic::{AtomicBool, Ordering},
+    };
 
     struct Driver {
         code: i32,
+        pending_polls: usize,
         y: [u8; 8],
         uv: [u8; 4],
         cleanup: Vec<u8>,
@@ -237,6 +249,10 @@ mod tests {
         // SAFETY: test owns Driver and BufferInfo for the duration of this call.
         unsafe {
             let driver = &mut *driver.cast::<Driver>();
+            if driver.pending_polls > 0 {
+                driver.pending_polls -= 1;
+                return 2;
+            }
             if driver.code != 0 {
                 return driver.code;
             }
@@ -270,12 +286,11 @@ mod tests {
         }
         0
     }
-    unsafe extern "C" fn fake_release(driver: *mut c_void) -> i32 {
+    unsafe extern "C" fn fake_release(driver: *mut c_void) {
         // SAFETY: test owns the driver and checks the event list after drop.
         unsafe {
             (*driver.cast::<Driver>()).cleanup.push(4);
         }
-        0
     }
     unsafe extern "C" fn unused_create() -> *mut c_void {
         ptr::null_mut()
@@ -294,14 +309,7 @@ mod tests {
         0
     }
 
-    #[test]
-    fn native_frames_are_copied_once_and_errors_never_publish_stale_pixels() {
-        let mut driver = Driver {
-            code: 0,
-            y: [16, 235, 99, 99, 16, 235, 99, 99],
-            uv: [128, 128, 99, 99],
-            cleanup: Vec::new(),
-        };
+    fn fake_capture(driver: &mut Driver) -> Video {
         let api = VtApi {
             create: unused_create,
             init: unused_init,
@@ -315,9 +323,9 @@ mod tests {
             release: fake_release,
             _library: libloading::os::unix::Library::this().into(),
         };
-        let mut capture = Video::Vt(VtCapture {
+        Video::Vt(VtCapture {
             api,
-            driver: NonNull::from(&mut driver).cast(),
+            driver: NonNull::from(driver).cast(),
             client: [0; 128],
             stage: Stage::Running,
             plane: PlaneInfo {
@@ -325,19 +333,126 @@ mod tests {
                 region: [0, 0, 2, 2],
                 active: [0; 4],
             },
-            previous: None,
             force_capture: false,
-        });
+            pending_since: None,
+        })
+    }
+
+    #[test]
+    fn reused_buffers_are_copied_and_errors_never_publish_stale_pixels() {
+        let mut driver = Driver {
+            code: 0,
+            pending_polls: 0,
+            y: [16, 235, 99, 99, 16, 235, 99, 99],
+            uv: [128, 128, 99, 99],
+            cleanup: Vec::new(),
+        };
+        let mut capture = fake_capture(&mut driver);
         let mut output = Vec::new();
         let header = capture.capture(&mut output).unwrap().unwrap();
         assert_eq!(header.format, PixelFormat::Nv12);
         assert_eq!(output, [16, 235, 16, 235, 128, 128]);
-        assert!(capture.capture(&mut output).unwrap().is_none());
-        assert_eq!(output, [] as [u8; 0]);
+        driver.y[0] = 235;
+        capture.capture(&mut output).unwrap();
+        assert_eq!(output, [235, 235, 16, 235, 128, 128]);
         driver.code = 12;
         assert!(capture.capture(&mut output).is_err());
         assert_eq!(output, [] as [u8; 0]);
         drop(capture);
         assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn initial_status_two_keeps_driver_alive_until_frames_arrive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cli = crate::cli::Cli::try_parse_from([
+            "capture",
+            &listener.local_addr().unwrap().to_string(),
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ])
+        .unwrap();
+        let mut driver = Driver {
+            code: 0,
+            pending_polls: 2,
+            y: [235; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut capture = Some(fake_capture(&mut driver));
+        let stop = AtomicBool::new(false);
+        let mut ui_frames = 0;
+        crate::capture_loop(
+            &cli,
+            &stop,
+            |_| {
+                Ok(capture
+                    .take()
+                    .expect("status 2 must not restart the driver"))
+            },
+            Some(|_, _, bgra: &mut Vec<u8>| {
+                ui_frames += 1;
+                bgra.resize(16, 0);
+                if ui_frames == 3 {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        for expected in [0, 0, 255] {
+            let mut header = [0; prysm_webos_protocol::HEADER_LEN];
+            socket.read_exact(&mut header).unwrap();
+            let header = Header::decode(&header).unwrap();
+            let mut pixels = vec![0; header.payload_len];
+            socket.read_exact(&mut pixels).unwrap();
+            assert!(
+                pixels.iter().all(|value| value.abs_diff(expected) <= 1),
+                "expected UI-only black while waiting, then white video; got {pixels:?}"
+            );
+        }
+        assert_eq!(driver.pending_polls, 0);
+        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn status_two_wait_is_bounded_and_resets_after_success() {
+        let mut driver = Driver {
+            code: 2,
+            pending_polls: 0,
+            y: [16; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut capture = fake_capture(&mut driver);
+        let mut output = vec![255; 6];
+        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert_eq!(output, [] as [u8; 0]);
+        if let Video::Vt(vt) = &mut capture {
+            vt.pending_since = Some(Instant::now().checked_sub(Duration::from_secs(3)).unwrap());
+        }
+        assert!(
+            capture
+                .capture(&mut output)
+                .unwrap_err()
+                .to_string()
+                .contains("status 2 persisted")
+        );
+        driver.code = 0;
+        assert!(capture.capture(&mut output).unwrap().is_some());
+        driver.code = 2;
+        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert_eq!(output, [] as [u8; 0]);
+        assert_eq!(driver.cleanup, [] as [u8; 0]);
+        for code in [12, 17, 99] {
+            driver.code = code;
+            assert!(capture.capture(&mut output).is_err());
+        }
     }
 }

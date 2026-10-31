@@ -8,7 +8,7 @@ mod transport;
 
 use anyhow::{Result, ensure};
 use clap::Parser;
-use cli::{Cli, Source};
+use cli::{CaptureOptions, Cli, Source};
 use native::{Ui, Video};
 use prysm_webos_protocol::PixelFormat;
 use signal_hook::consts::{SIGINT, SIGTERM};
@@ -36,11 +36,6 @@ fn main() -> Result<()> {
 
 fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
     let options = &cli.capture;
-    let mut video = if cli.source.includes_video() {
-        Some(Video::open(options)?)
-    } else {
-        None
-    };
     let mut ui = if cli.source.includes_ui() {
         match Ui::open(options) {
             Ok(ui) => Some(ui),
@@ -53,12 +48,28 @@ fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
     } else {
         None
     };
+    capture_loop(
+        cli,
+        stop,
+        Video::open,
+        ui.as_mut()
+            .map(|ui| move |width, height, output: &mut Vec<u8>| ui.capture(width, height, output)),
+    )
+}
+
+fn capture_loop(
+    cli: &Cli,
+    stop: &AtomicBool,
+    mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
+    mut capture_ui: Option<impl FnMut(u32, u32, &mut Vec<u8>) -> Result<()>>,
+) -> Result<()> {
+    let options = &cli.capture;
+    let mut video = None;
     let mut sender = transport::Sender::new(cli.receiver, cli.compression);
     let (mut native, mut rgb, mut bgra) = (Vec::new(), Vec::new(), Vec::new());
     let period = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut next = Instant::now();
     let mut retry = next;
-    let mut last_frame = next;
     let mut ui_warning = next;
     eprintln!(
         "Capturing {}x{} at {} fps for {} (compression: {:?})",
@@ -66,40 +77,32 @@ fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
     );
     while !stop.load(Ordering::Relaxed) {
         if cli.source.includes_video() && video.is_none() && Instant::now() >= retry {
-            match Video::open(options) {
-                Ok(capture) => {
-                    video = Some(capture);
-                    last_frame = Instant::now();
-                }
+            match open_video(options) {
+                Ok(capture) => video = Some(capture),
                 Err(error) => {
-                    eprintln!("video restart failed: {error:#}");
+                    eprintln!("video unavailable; retrying: {error:#}");
                     retry = Instant::now() + Duration::from_secs(1);
                 }
             }
         }
         let mut frame = None;
         if let Some(capture) = &mut video {
-            let result = capture.capture(&mut native);
-            match result {
-                Ok(Some(header)) => {
-                    last_frame = Instant::now();
-                    frame = Some(header);
-                }
-                Ok(None) if last_frame.elapsed() < Duration::from_secs(2) => {}
-                result => {
-                    eprintln!("video interrupted; restarting: {result:?}");
+            match capture.capture(&mut native) {
+                Ok(header) => frame = header,
+                Err(error) => {
+                    eprintln!("video interrupted; restarting: {error:#}");
                     video = None;
                     retry = Instant::now() + Duration::from_secs(1);
                 }
             }
         }
         let mut converted = false;
-        if (frame.is_some() || video.is_none())
-            && let Some(ui) = &mut ui
+        if sender.ready()
+            && let Some(capture_ui) = &mut capture_ui
         {
             let (width, height) =
                 frame.map_or((options.width, options.height), |h| (h.width, h.height));
-            match ui.capture(width, height, &mut bgra) {
+            match capture_ui(width, height, &mut bgra) {
                 Ok(()) => {
                     if let Some(header) = frame {
                         pixels::to_rgb(header, &native, &mut rgb)?;
@@ -135,4 +138,97 @@ fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prysm_webos_protocol::{HEADER_LEN, Header};
+    use std::{cell::Cell, io::Read, net::TcpListener};
+
+    #[test]
+    fn startup_retries_while_ui_frames_continue() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cli = Cli::try_parse_from([
+            "capture",
+            &listener.local_addr().unwrap().to_string(),
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ])
+        .unwrap();
+        let stop = AtomicBool::new(false);
+        let mut attempts = 0;
+        let ui_frames = Cell::new(0);
+        let start = Instant::now();
+        capture_loop(
+            &cli,
+            &stop,
+            |_| {
+                attempts += 1;
+                if attempts == 2 {
+                    assert!(ui_frames.get() > 0);
+                    stop.store(true, Ordering::Relaxed);
+                }
+                anyhow::bail!("driver not ready")
+            },
+            Some(|_, _, bgra: &mut Vec<u8>| {
+                ui_frames.set(ui_frames.get() + 1);
+                *bgra = [0, 0, 255, 255].repeat(4);
+                Ok(())
+            }),
+        )
+        .unwrap();
+        assert_eq!(attempts, 2);
+        assert!(start.elapsed() >= Duration::from_secs(1));
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut bytes = [0; HEADER_LEN];
+        socket.read_exact(&mut bytes).unwrap();
+        let header = Header::decode(&bytes).unwrap();
+        assert_eq!(header.format, PixelFormat::Rgb);
+        let mut pixels = vec![0; header.payload_len];
+        socket.read_exact(&mut pixels).unwrap();
+        assert_eq!(pixels, [255, 0, 0].repeat(4));
+    }
+
+    #[test]
+    fn network_backoff_skips_ui_capture_and_composition() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cli = Cli::try_parse_from([
+            "capture",
+            &listener.local_addr().unwrap().to_string(),
+            "--source",
+            "ui",
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ])
+        .unwrap();
+        drop(listener);
+        let stop = AtomicBool::new(false);
+        let mut ui_frames = 0;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(250));
+                stop.store(true, Ordering::Relaxed);
+            });
+            capture_loop(
+                &cli,
+                &stop,
+                |_| panic!("UI-only opened video"),
+                Some(|_, _, bgra: &mut Vec<u8>| {
+                    ui_frames += 1;
+                    *bgra = [0, 0, 255, 255].repeat(4);
+                    Ok(())
+                }),
+            )
+            .unwrap();
+        });
+        assert_eq!(ui_frames, 1);
+    }
 }

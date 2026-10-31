@@ -83,4 +83,5 @@ int vtCapture_currentCaptureBuffInfo(VT_DRIVER *driver, _LibVtCaptureBufferInfo 
 int vtCapture_stop(VT_DRIVER *driver, VT_CLIENTID_T *clientid);
 int vtCapture_postprocess(VT_DRIVER *driver, VT_CLIENTID_T *clientid);
 int vtCapture_finalize(VT_DRIVER *driver, VT_CLIENTID_T *clientid);
-int vtCapture_release(VT_DRIVER *driver);
+// TV implementation deletes the driver; it does not return a status.
+void vtCapture_release(VT_DRIVER *driver);

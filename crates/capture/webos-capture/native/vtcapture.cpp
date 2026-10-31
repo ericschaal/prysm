@@ -34,6 +34,6 @@ extern "C" int prysm_vt_client(int (*function)(VT_DRIVER*, char*),
     VT_DRIVER* driver, char* client, char* error) noexcept {
     return guarded(error, [&] { return function(driver, client); });
 }
-extern "C" int prysm_vt_release(int (*function)(VT_DRIVER*), VT_DRIVER* driver, char* error) noexcept {
-    return guarded(error, [&] { return function(driver); });
+extern "C" int prysm_vt_release(void (*function)(VT_DRIVER*), VT_DRIVER* driver, char* error) noexcept {
+    return guarded(error, [&] { function(driver); return 0; });
 }

@@ -16,9 +16,9 @@ are used. All unsafe Rust is confined to `src/native`; the rest of the sender
 denies unsafe code at compile time.
 
 The Luna setup and native video startup were previously verified on an LG
-43QNED87A6D.BEUFLJP running webOS 25 (10.3.2-34), with UI disabled. **This Rust
-sender has cross-built but has not run on the TV yet.** Root access does not
-guarantee driver compatibility, successful capture, or correct colors.
+43QNED87A6D.BEUFLJP running webOS 25 (10.3.2-34), with UI disabled. The Rust sender
+has also completed a short 640×240/30 fps test with both layers and LZ4 on that TV.
+Root access does not guarantee compatibility with other drivers or correct colors.
 
 ## Build for webOS
 
@@ -192,9 +192,16 @@ CPU usage on the TV before increasing resolution.
 
 Buffers are reused. Checked slice copies omit native stride padding, avoid
 zero-filling, and release frozen native frames before network writes. Failed
-acquisition does not send stale pixels. Missed ticks and duplicate vtcapture
-buffers are skipped; errors or two seconds without a new buffer restart video
-with a one-second retry delay. UI frames continue during video recovery.
+acquisition does not send stale pixels. Missed ticks are skipped. Video open and
+capture errors retry after one second, including at startup; UI frames continue
+while video is unavailable. Driver errors remain logged until capture succeeds
+or the sender is stopped. Vtcapture status 2 means initialization is still pending;
+the sender polls the same driver for up to two seconds before restarting. Its
+release function deletes the driver without returning a status; only exceptions
+are treated as release failures. Every successful acquisition is copied, even when
+the driver reuses a buffer address. Without a frame sequence or timestamp, a repeated
+address cannot distinguish a fresh frame from a stalled driver, so it does not
+trigger a restart.
 
 `--compression lz4` independently compresses each frame using a pure Rust block
 codec and reusable storage. Expanded frames are sent raw. Compression is off by
@@ -204,8 +211,9 @@ does not establish TV performance. On the development ARM64 Mac, 640×360 NV12
 synthetic encoding took roughly 9–11 µs per frame; these are host measurements.
 
 There is no frame queue. Connect and complete-frame writes each have a 100 ms
-deadline; partial writes close the connection and retry after one second. Safe
-`nix` polling preserves one deadline across every partial write. TCP buffers can
+deadline; partial writes close the connection and retry after one second. During
+network backoff, video polling continues but UI capture and composition are skipped.
+Safe `nix` polling preserves one deadline across every partial write. TCP buffers can
 still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
 The sole wire format is a 24-byte header followed by its payload:
@@ -240,7 +248,10 @@ cargo run --release -p prysm-webos-protocol --example compression
 ```
 
 Tests cover typed CLI validation/help, native ABI layouts, C++ exception
-containment, acquisition/cleanup, padded planes, color conversion/blending,
+containment, reused video buffers, pending initialization without premature restart,
+startup retries with UI output, DILE unfreezing after acquisition failures,
+HAL surface cleanup after mapping failure, skipped UI
+work during network backoff, padded planes, color conversion/blending,
 raw/LZ4 boundaries, malformed input, retry/backoff, complete-frame deadlines,
 and receiver cancellation. CI also runs sender/protocol tests as ARM32 soft-float
 executables under QEMU. Cross-build separately with the actual SDK script.

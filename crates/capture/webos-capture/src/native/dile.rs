@@ -245,3 +245,115 @@ impl Drop for DileCapture {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Driver {
+        events: Vec<&'static str>,
+        fail_current: bool,
+    }
+
+    unsafe extern "C" fn state(driver: *mut c_void, flags: u32, state: *mut OutputState) -> i32 {
+        assert_eq!(flags, 2);
+        // SAFETY: the test owns both arguments until the call returns.
+        unsafe {
+            (*driver.cast::<Driver>())
+                .events
+                .push(if (*state).frozen == 1 {
+                    "freeze"
+                } else {
+                    "unfreeze"
+                });
+        }
+        0
+    }
+    unsafe extern "C" fn current(driver: *mut c_void, _: *mut Framebuffer, index: *mut u32) -> i32 {
+        // SAFETY: the test owns the driver and capture supplies a live index.
+        unsafe {
+            (*driver.cast::<Driver>()).events.push("current");
+            *index = 0;
+            i32::from((*driver.cast::<Driver>()).fail_current)
+        }
+    }
+    unsafe extern "C" fn stop(driver: *mut c_void) -> i32 {
+        // SAFETY: the test driver outlives the capture.
+        unsafe {
+            (*driver.cast::<Driver>()).events.push("stop");
+        }
+        0
+    }
+    unsafe extern "C" fn destroy(driver: *mut c_void) {
+        // SAFETY: the test driver outlives the capture.
+        unsafe {
+            (*driver.cast::<Driver>()).events.push("destroy");
+        }
+    }
+    unsafe extern "C" fn create(_: u32) -> *mut c_void {
+        ptr::null_mut()
+    }
+    unsafe extern "C" fn limitation(_: *mut c_void, _: *mut Limitation) -> i32 {
+        0
+    }
+    unsafe extern "C" fn dump(_: *mut c_void, _: i32) -> i32 {
+        0
+    }
+    unsafe extern "C" fn region(_: *mut c_void, _: i32, _: *mut Rect) -> i32 {
+        0
+    }
+    unsafe extern "C" fn capability(_: *mut c_void, _: *mut Capability) -> i32 {
+        0
+    }
+    unsafe extern "C" fn buffers(_: *mut c_void, _: *mut Capability, _: *mut Framebuffer) -> i32 {
+        0
+    }
+
+    #[test]
+    fn acquisition_failures_unfreeze_before_teardown() {
+        for fail_current in [true, false] {
+            let mut driver = Driver {
+                fail_current,
+                ..Driver::default()
+            };
+            let mut capture = DileCapture {
+                api: DileApi {
+                    create,
+                    destroy,
+                    limitation,
+                    dump,
+                    region,
+                    state,
+                    capability,
+                    buffers,
+                    current,
+                    start: stop,
+                    stop,
+                    _library: libloading::os::unix::Library::this().into(),
+                },
+                _logging: libloading::os::unix::Library::this().into(),
+                handle: NonNull::from(&mut driver).cast(),
+                running: true,
+                freeze: true,
+                state: OutputState::default(),
+                info: Framebuffer::default(),
+                planes: 2,
+                mappings: Vec::new(),
+                header: pixels::header(2, 2, PixelFormat::Nv12).unwrap(),
+            };
+            let error = capture.capture(&mut Vec::new()).unwrap_err();
+            assert!(error.to_string().contains(if fail_current {
+                "DILE_VT current buffer"
+            } else {
+                "invalid DILE_VT buffer index"
+            }));
+            assert_eq!(driver.events, ["freeze", "current", "unfreeze"]);
+            drop(capture);
+            assert_eq!(
+                driver.events,
+                ["freeze", "current", "unfreeze", "stop", "destroy"]
+            );
+        }
+    }
+}

@@ -28,3 +28,7 @@ extern "C" VT_DRIVER* prysm_test_throw_create() {
 extern "C" int prysm_test_throw_call(VT_DRIVER*, char*) {
     throw std::runtime_error("native call failed");
 }
+
+extern "C" void prysm_test_throw_release(VT_DRIVER*) {
+    throw std::runtime_error("native release failed");
+}
