@@ -48,7 +48,7 @@ impl Ui {
             UiBackend::Auto => match GmCapture::open(options) {
                 Ok(gm) => Ok(Self::Gm(gm)),
                 Err(error) => {
-                    eprintln!("gm unavailable: {error:#}; trying halgal");
+                    tracing::warn!(error = %format!("{error:#}"), "gm unavailable; trying halgal");
                     Ok(Self::Hal(HalCapture::open(options)?))
                 }
             },

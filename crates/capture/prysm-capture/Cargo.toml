@@ -14,7 +14,7 @@ test = true
 [dependencies]
 prysm-metrics = { path = "../../common/prysm-metrics" }
 futures.workspace = true
-yuv = { workspace = true, features = ["fast_mode"] }
+yuv = { workspace = true, default-features = true, features = ["fast_mode"] }
 tracing.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
@@ -30,10 +30,10 @@ tracing-subscriber.workspace = true
 v4l = { git = "https://github.com/raymanfx/libv4l-rs.git", rev = "30f6dbaeed5cdb1b33760fc5b35c1b545cfe0e46", features = [] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-av-foundation = "0.8.1"
-core-foundation = { version = "0.10", default-features = false }
-core-media = { version = "0.8.1", default-features = false, features = ["objc"] }
-core-video = { version = "0.6.1", default-features = false, features = ["objc"] }
-dispatch2 = "0.3"
-objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }
+av-foundation.workspace = true
+core-foundation.workspace = true
+core-media = { workspace = true, features = ["objc"] }
+core-video = { workspace = true, features = ["objc"] }
+dispatch2.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }

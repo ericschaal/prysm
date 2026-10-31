@@ -38,7 +38,7 @@ pub struct DesktopRenderer {
 }
 
 impl eframe::App for DesktopRenderer {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self
             .shutdown_token
             .as_ref()
@@ -46,18 +46,18 @@ impl eframe::App for DesktopRenderer {
         {
             tracing::info!("Shutdown signal received, closing window");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
         }
+        ctx.request_repaint_after(self.refresh_interval);
+    }
 
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let edge_colors = self.edge_colors_rx.borrow_and_update().clone();
 
-        self.update_video_texture(ctx);
+        self.update_video_texture(ui.ctx());
         if let Some(toolbar) = self.toolbar.as_mut() {
-            egui::TopBottomPanel::top("capture_controls").show(ctx, |ui| toolbar(ui));
+            egui::Panel::top("capture_controls").show(ui, |ui| toolbar(ui));
         }
-        egui::CentralPanel::default().show(ctx, |ui| self.draw_output(ui, &edge_colors));
-
-        ctx.request_repaint_after(self.refresh_interval);
+        egui::CentralPanel::default().show(ui, |ui| self.draw_output(ui, &edge_colors));
     }
 }
 

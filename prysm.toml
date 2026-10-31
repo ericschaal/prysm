@@ -24,9 +24,6 @@ right = 31
 bottom = 49
 left = 31
 
-[wled]
-url = "http://192.168.18.39/"
-
 [processing]
 brightness_percent = 80
 shadow_lift_percent = 0

@@ -11,6 +11,7 @@ use clap::Parser;
 use cli::{CaptureOptions, Cli, Source};
 use native::{Ui, Video};
 use prysm_metrics::{FrameStage, PipelineEvent, Stage, UiCaptureEvent, VideoCaptureEvent};
+use prysm_webos_protocol::Header;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use std::{
     sync::{
@@ -22,6 +23,9 @@ use std::{
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     ensure!(cfg!(target_os = "linux"), "capture requires webOS Linux");
     ensure!(
         nix::unistd::Uid::effective().is_root(),
@@ -34,11 +38,11 @@ fn main() -> Result<()> {
     let _metrics = cli.metrics_listen.and_then(|address| {
         match prysm_metrics::start(address, prysm_metrics::Role::Capturer) {
             Ok(exporter) => {
-                eprintln!("Metrics listening on {}", exporter.address());
+                tracing::info!(address = %exporter.address(), "metrics listening");
                 Some(exporter)
             }
             Err(error) => {
-                eprintln!("Metrics disabled: {error:#}");
+                tracing::warn!(error = %format!("{error:#}"), "metrics disabled");
                 None
             }
         }
@@ -66,7 +70,7 @@ fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
             Ok(ui) => Some(ui),
             Err(error) if cli.source == Source::Ui => return Err(error),
             Err(error) => {
-                eprintln!("UI unavailable; video only: {error:#}");
+                tracing::warn!(error = %format!("{error:#}"), "UI unavailable; video only");
                 None
             }
         }
@@ -110,57 +114,28 @@ fn capture_loop(
     let mut next = Instant::now();
     let mut retry = next;
     let mut ui_warning = next;
-    eprintln!(
-        "Capturing {}x{} at {} fps for {} (compression: {:?}, composition format: {:?})",
-        options.width,
-        options.height,
-        options.fps,
-        cli.receiver,
-        cli.compression,
-        cli.composition_format
+    tracing::info!(
+        width = options.width,
+        height = options.height,
+        fps = options.fps,
+        receiver = %cli.receiver,
+        compression = ?cli.compression,
+        composition_format = ?cli.composition_format,
+        "starting capture"
     );
     while !stop.load(Ordering::Relaxed) {
         let work = prysm_metrics::timer(Stage::CaptureIteration);
-        if cli.source.includes_video() && video.is_none() && Instant::now() >= retry {
-            prysm_metrics::event(VideoCaptureEvent::InitAttempt);
-            match open_video(options) {
-                Ok(capture) => {
-                    prysm_metrics::backend_info(
-                        prysm_metrics::Layer::Video,
-                        capture.metrics_backend(),
-                    );
-                    video = Some(capture);
-                }
-                Err(error) => {
-                    prysm_metrics::event(VideoCaptureEvent::InitFailed);
-                    eprintln!("video unavailable; retrying: {error:#}");
-                    retry = Instant::now() + Duration::from_secs(1);
-                }
-            }
-        }
-        let mut frame = None;
-        if let Some(capture) = &mut video {
-            let capture_time = prysm_metrics::timer(Stage::VideoAcquire);
-            let result = capture.capture(&mut native);
-            drop(capture_time);
-            match result {
-                Ok(Some(header)) => {
-                    prysm_metrics::frame(FrameStage::VideoCaptured, header.format.into());
-                    frame = Some(header);
-                }
-                Ok(None) => prysm_metrics::event(VideoCaptureEvent::Duplicate),
-                Err(error) => {
-                    prysm_metrics::event(VideoCaptureEvent::AcquireFailed);
-                    eprintln!("video interrupted; restarting: {error:#}");
-                    video = None;
-                    prysm_metrics::backend_info(
-                        prysm_metrics::Layer::Video,
-                        prysm_metrics::Backend::Disabled,
-                    );
-                    retry = Instant::now() + Duration::from_secs(1);
-                }
-            }
-        }
+        let mut frame = if cli.source.includes_video() {
+            capture_video(
+                options,
+                &mut video,
+                &mut retry,
+                &mut native,
+                &mut open_video,
+            )
+        } else {
+            None
+        };
         let mut payload = native.as_slice();
         let mut content = prysm_metrics::Content::Video;
         if sender.ready()
@@ -196,7 +171,7 @@ fn capture_loop(
                     payload = composed.pixels;
                 }
                 Err(error) if Instant::now() >= ui_warning => {
-                    eprintln!("UI frame skipped: {error:#}");
+                    tracing::warn!(error = %format!("{error:#}"), "UI frame skipped");
                     ui_warning = Instant::now() + Duration::from_secs(1);
                 }
                 Err(_) => {}
@@ -204,7 +179,7 @@ fn capture_loop(
         }
         if let Some(header) = frame {
             if let Err(error) = sender.send(header, payload, content) {
-                eprintln!("{error:#}");
+                tracing::warn!(error = %format!("{error:#}"), "frame send failed");
             }
         }
         drop(work);
@@ -219,6 +194,54 @@ fn capture_loop(
         }
     }
     Ok(())
+}
+
+fn capture_video(
+    options: &CaptureOptions,
+    video: &mut Option<Video>,
+    retry: &mut Instant,
+    native: &mut Vec<u8>,
+    open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
+) -> Option<Header> {
+    if video.is_none() && Instant::now() >= *retry {
+        prysm_metrics::event(VideoCaptureEvent::InitAttempt);
+        match open_video(options) {
+            Ok(capture) => {
+                prysm_metrics::backend_info(prysm_metrics::Layer::Video, capture.metrics_backend());
+                *video = Some(capture);
+            }
+            Err(error) => {
+                prysm_metrics::event(VideoCaptureEvent::InitFailed);
+                tracing::warn!(error = %format!("{error:#}"), "video unavailable; retrying");
+                *retry = Instant::now() + Duration::from_secs(1);
+            }
+        }
+    }
+    let capture = video.as_mut()?;
+    let capture_time = prysm_metrics::timer(Stage::VideoAcquire);
+    let result = capture.capture(native);
+    drop(capture_time);
+    match result {
+        Ok(Some(header)) => {
+            prysm_metrics::frame(FrameStage::VideoCaptured, header.format.into());
+            Some(header)
+        }
+        Ok(None) => {
+            prysm_metrics::event(VideoCaptureEvent::Duplicate);
+            None
+        }
+        Err(error) => {
+            prysm_metrics::event(VideoCaptureEvent::AcquireFailed);
+            tracing::warn!(error = %format!("{error:#}"), "video interrupted; restarting");
+            *video = None;
+            prysm_metrics::backend_info(
+                prysm_metrics::Layer::Video,
+                prysm_metrics::Backend::Disabled,
+            );
+            *retry = Instant::now() + Duration::from_secs(1);
+            None
+        }
+    }
 }
 
 #[cfg(test)]

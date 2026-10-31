@@ -204,12 +204,12 @@ impl Drop for VtCapture {
             if needed {
                 match vt_call!(self, prysm_vt_client, function, self.client.as_mut_ptr()) {
                     Ok(0) => {}
-                    result => eprintln!("vtcapture cleanup: {result:?}"),
+                    result => tracing::warn!(?result, "vtcapture cleanup failed"),
                 }
             }
         }
         if let Err(error) = vt_call!(self, prysm_vt_release, self.api.release) {
-            eprintln!("vtcapture cleanup: {error:#}");
+            tracing::warn!(error = %format!("{error:#}"), "vtcapture cleanup failed");
         }
     }
 }

@@ -450,8 +450,15 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "8 * rate({__name__=~\"prysm_system_network_(receive|transmit)_bytes_total\",node=~\"$node\",device!~\"lo|lo0\"}[$__rate_interval])",
-          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{device}} / {{__name__}}",
+          "expr": "8 * rate(prysm_system_network_receive_bytes_total{node=~\"$node\",device!~\"lo|lo0\"}[$__rate_interval])",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{device}} / receive",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "8 * rate(prysm_system_network_transmit_bytes_total{node=~\"$node\",device!~\"lo|lo0\"}[$__rate_interval])",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{device}} / transmit",
           "instant": false,
           "format": "time_series"
         }

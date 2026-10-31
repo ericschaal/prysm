@@ -332,19 +332,26 @@ fn serve(address: SocketAddr, metrics: Arc<Metrics>) -> Result<Exporter> {
         .context("metrics listener is not TCP")?;
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = Arc::clone(&stop);
+    let refresh = RefreshKind::nothing()
+        .with_cpu(CpuRefreshKind::nothing().with_usage())
+        .with_memory(MemoryRefreshKind::nothing().with_ram());
+    let system = System::new_with_specifics(refresh).context("cannot initialize system metrics")?;
+    let networks =
+        Networks::new_with_refreshed_list().context("cannot initialize network metrics")?;
     std::thread::Builder::new()
         .name("prysm-metrics".into())
-        .spawn(move || run_exporter(server, &metrics, &stopped))
+        .spawn(move || run_exporter(server, &metrics, &stopped, system, networks))
         .context("cannot start metrics exporter")?;
     Ok(Exporter { stop, address })
 }
 
-fn run_exporter(server: Server, metrics: &Metrics, stopped: &AtomicBool) {
-    let refresh = RefreshKind::nothing()
-        .with_cpu(CpuRefreshKind::nothing().with_cpu_usage())
-        .with_memory(MemoryRefreshKind::nothing().with_ram());
-    let mut system = System::new_with_specifics(refresh);
-    let mut networks = Networks::new_with_refreshed_list();
+fn run_exporter(
+    server: Server,
+    metrics: &Metrics,
+    stopped: &AtomicBool,
+    mut system: System,
+    mut networks: Networks,
+) {
     let mut sampled = Instant::now();
     let content_type = Header::from_bytes(
         "Content-Type",
@@ -406,7 +413,7 @@ fn collect(metrics: &Metrics, system: &mut System, networks: &mut Networks) {
     networks.refresh(true);
     for (device, data) in networks.iter() {
         let labels = Device {
-            device: device.clone(),
+            device: device.to_string_lossy().into_owned(),
         };
         metrics
             .network_rx
@@ -488,8 +495,8 @@ mod tests {
     #[test]
     fn collector_samples_the_current_process_off_the_hot_path() {
         let metrics = Metrics::new(Role::Prysm);
-        let mut system = System::new();
-        let mut networks = Networks::new();
+        let mut system = System::new().unwrap();
+        let mut networks = Networks::new().unwrap();
         collect(&metrics, &mut system, &mut networks);
         assert!(metrics.memory_total.get() > 0);
         assert!(metrics.process_memory.get() > 0);

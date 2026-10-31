@@ -13,7 +13,11 @@ fn draws_application_toolbar_above_video() {
         .build();
     let context = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
-    let output = context.run(Default::default(), |ctx| app.update(ctx, &mut frame));
+    let mut output = context.run_ui(Default::default(), |ui| {
+        app.logic(ui.ctx(), &mut frame);
+        app.ui(ui, &mut frame);
+    });
+    output.textures_delta.clear();
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
         egui::Shape::Text(text) if text.galley.text() == "Start capture")));
 }
@@ -39,8 +43,8 @@ fn output_draws_each_edge_color_in_its_strip() {
             .build();
         let context = egui::Context::default();
         let mut expected = Vec::new();
-        let output = context.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let mut output = context.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let layout = LayoutDimensions::calculate(
                     ui.available_rect_before_wrap(),
                     &app.layout_config,
@@ -54,6 +58,7 @@ fn output_draws_each_edge_color_in_its_strip() {
                 app.draw_output(ui, &colors);
             });
         });
+        output.textures_delta.clear();
         let leds: Vec<_> = output
             .shapes
             .iter()
@@ -82,22 +87,25 @@ fn displays_final_frame_after_sender_closes() {
         .build();
     let context = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
-    let _ = context.run(Default::default(), |ctx| app.update(ctx, &mut frame));
+    let mut output = context.run_ui(Default::default(), |ui| {
+        app.logic(ui.ctx(), &mut frame);
+        app.ui(ui, &mut frame);
+    });
+    output.textures_delta.clear();
     frames.send_replace(DisplayFrame {
         frame: Frame::fill(255, 4, 4, PixelFormat::RGB24),
         viewport: Some(Viewport::full_frame(4, 4)),
     });
     drop(frames);
 
-    let output = context.run(Default::default(), |ctx| app.update(ctx, &mut frame));
+    let mut output = context.run_ui(Default::default(), |ui| {
+        app.logic(ui.ctx(), &mut frame);
+        app.ui(ui, &mut frame);
+    });
     let texture = app.texture_handle.as_ref().unwrap().id();
-    let (_, update) = output
-        .textures_delta
-        .set
-        .iter()
-        .find(|(id, _)| *id == texture)
-        .unwrap();
-    let egui::ImageData::Color(image) = &update.image;
+    let update = output.textures_delta.set.remove(&texture).unwrap();
+    output.textures_delta.clear();
+    let egui::ImageData::Color(image) = &update.last().unwrap().image;
     assert!(
         image
             .pixels
@@ -111,7 +119,10 @@ fn displays_final_frame_after_sender_closes() {
             egui::pos2(1.0, 1.0)
         ))
     );
-    let output = context.run(Default::default(), |ctx| app.update(ctx, &mut frame));
+    let mut output = context.run_ui(Default::default(), |ui| {
+        app.logic(ui.ctx(), &mut frame);
+        app.ui(ui, &mut frame);
+    });
     assert!(
         output
             .textures_delta
@@ -119,6 +130,7 @@ fn displays_final_frame_after_sender_closes() {
             .iter()
             .all(|(id, _)| *id != texture)
     );
+    output.textures_delta.clear();
 }
 
 #[test]
@@ -151,13 +163,17 @@ fn crop_outline_tracks_the_displayed_frame_and_window_size() {
                 viewport: Some(viewport),
             })
             .unwrap();
-        let output = context.run(
+        let mut output = context.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
                 ..Default::default()
             },
-            |ctx| app.update(ctx, &mut frame),
+            |ui| {
+                app.logic(ui.ctx(), &mut frame);
+                app.ui(ui, &mut frame);
+            },
         );
+        output.textures_delta.clear();
         let video = output
             .shapes
             .iter()
@@ -211,13 +227,17 @@ fn schedules_output_refreshes_at_default_and_configured_rates() {
         let mut output = egui::FullOutput::default();
         // Let egui's initial layout repaints settle before checking the timer.
         for _ in 0..3 {
-            output = context.run(
+            output = context.run_ui(
                 egui::RawInput {
                     predicted_dt: 0.0,
                     ..Default::default()
                 },
-                |ctx| app.update(ctx, &mut frame),
+                |ui| {
+                    app.logic(ui.ctx(), &mut frame);
+                    app.ui(ui, &mut frame);
+                },
             );
+            output.textures_delta.clear();
         }
         assert_eq!(
             output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
@@ -268,9 +288,9 @@ fn zero_leds_draw_no_shapes() {
     let (_, receiver) = tokio::sync::watch::channel(EdgeColors::default());
     let app = DesktopRendererBuilder::new(receiver).build();
     let context = egui::Context::default();
-    let _ = context.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let before = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            let before = context.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
             app.render_discrete_leds(
                 ui,
                 &ColorStrip::default(),
@@ -278,10 +298,11 @@ fn zero_leds_draw_no_shapes() {
                 EdgePosition::Top,
                 0,
             );
-            let after = ctx.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
+            let after = context.graphics_mut(|g| g.entry(ui.layer_id()).all_entries().count());
             assert_eq!(before, after);
         });
     });
+    output.textures_delta.clear();
 }
 
 #[test]

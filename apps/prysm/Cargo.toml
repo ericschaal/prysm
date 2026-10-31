@@ -44,9 +44,9 @@ desktop = ["dep:prysm-renderer-desktop", "prysm-api/client"]
 
 [dependencies]
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-toml = "1"
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
 actix.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -62,12 +62,12 @@ tokio-util.workspace = true
 
 prysm-contract = { path = "../../crates/common/prysm-contract" }
 
-axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde_json = "1"
+axum.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls"] }
+serde_json.workspace = true
 prysm-api = { path = "../../crates/common/prysm-api" }
-atomic-write-file = "0.3"
-tempfile = "3"
+atomic-write-file.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true, features = ["util"] }

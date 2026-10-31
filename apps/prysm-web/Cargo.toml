@@ -9,16 +9,16 @@ description = "Web UI for the Prysm REST API"
 workspace = true
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
-axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-tower-http = { version = "0.7", features = ["csrf", "set-header", "validate-request"] }
-rust-embed = { version = "8", features = ["debug-embed"] }
-mime_guess = "2"
+axum.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
+tower-http = { workspace = true, features = ["csrf", "set-header", "validate-request"] }
+rust-embed = { workspace = true, features = ["debug-embed"] }
+mime_guess.workspace = true
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true, features = ["util"] }

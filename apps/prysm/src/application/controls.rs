@@ -126,7 +126,7 @@ impl Controls {
             ui.visuals().weak_text_color()
         };
         let enabled = connected && !busy && !state.restart_required;
-        let shortcut = !ui.ctx().wants_keyboard_input()
+        let shortcut = !ui.ctx().egui_wants_keyboard_input()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space));
         ui.horizontal(|ui| {
             let response = ui
@@ -197,7 +197,7 @@ impl Controls {
             && state.pipeline.phase == PipelinePhase::Idle
             && self.error.is_none()
         {
-            egui::Area::new(egui::Id::new("capture_empty_state"))
+            egui::Area::new(egui::Id::unique("capture_empty_state"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .order(egui::Order::Foreground)
                 .interactable(false)
@@ -252,7 +252,7 @@ mod tests {
         context: &egui::Context,
         events: Vec<egui::Event>,
     ) -> Vec<(String, egui::Pos2)> {
-        let output = context.run(
+        let mut output = context.run_ui(
             egui::RawInput {
                 events,
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -261,10 +261,11 @@ mod tests {
                 )),
                 ..Default::default()
             },
-            |ctx| {
-                egui::TopBottomPanel::top("controls").show(ctx, |ui| controls.show(ui));
+            |ui| {
+                egui::Panel::top("controls").show(ui, |ui| controls.show(ui));
             },
         );
+        output.textures_delta.clear();
         output
             .shapes
             .into_iter()

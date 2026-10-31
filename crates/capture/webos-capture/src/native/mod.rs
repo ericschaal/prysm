@@ -106,7 +106,7 @@ impl Video {
             VideoBackend::Auto => match VtCapture::open(options) {
                 Ok(vt) => Ok(Self::Vt(vt)),
                 Err(error) => {
-                    eprintln!("vtcapture unavailable: {error:#}; trying dile_vt");
+                    tracing::warn!(error = %format!("{error:#}"), "vtcapture unavailable; trying dile_vt");
                     Ok(Self::Dile(DileCapture::open(options)?))
                 }
             },
