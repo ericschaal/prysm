@@ -2,6 +2,8 @@
 name = "prysm-contract"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+license-file.workspace = true
 description = "Validated configuration and wire contracts for Prysm"
 
 [lints]

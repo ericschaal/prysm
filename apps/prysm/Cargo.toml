@@ -2,6 +2,8 @@
 name = "prysm"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+license-file.workspace = true
 description = "Capture and process video for egui or WLED output"
 
 [package.metadata.deb]
@@ -14,7 +16,7 @@ maintainer-scripts = "../../packaging/debian"
 assets = [
     ["target/release/prysm-web", "usr/bin/prysm-web", "755"],
     ["target/release/prysm", "usr/bin/prysm", "755"],
-    ["../../packaging/debian/prysm.sysusers", "usr/lib/sysusers.d/prysm.conf", "644"],
+    ["../../packaging/debian/prysm.conf", "usr/lib/sysusers.d/prysm.conf", "644"],
     ["../../packaging/debian/prysm.toml", "usr/share/prysm/prysm.toml", "644"],
     ["../../packaging/debian/README.md", "usr/share/doc/prysm-led/README.md", "644"],
 ]

@@ -256,3 +256,7 @@ Build with `./scripts/build-deb.sh`. The package contains `prysm`, `prysm-web` w
 and separate systemd services. Installation seeds a writable configuration under
 `/etc/prysm/prysm.toml`; the service is disabled until configured.
 See the [Debian guide](packaging/debian/README.md).
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

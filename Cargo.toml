@@ -12,6 +12,10 @@ members = [
     "crates/rendering/prysm-renderer-wled",
 ]
 
+[workspace.package]
+license = "Apache-2.0"
+license-file = "LICENSE"
+
 # The video pipeline does per-pixel work on full HD frames; unoptimized dev
 # builds make it burn >100% CPU. Lightly optimize workspace code and fully
 # optimize dependencies (yuv, epaint) while keeping debug assertions on.

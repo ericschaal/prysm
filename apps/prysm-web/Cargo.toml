@@ -2,6 +2,8 @@
 name = "prysm-web"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+license-file.workspace = true
 description = "Web UI for the Prysm REST API"
 
 [lints]
