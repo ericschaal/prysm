@@ -3,7 +3,6 @@ name = "prysm-processor"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
-license-file.workspace = true
 
 [lints]
 workspace = true

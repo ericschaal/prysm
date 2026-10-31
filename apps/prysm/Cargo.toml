@@ -3,10 +3,10 @@ name = "prysm"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
-license-file.workspace = true
 description = "Capture and process video for egui or WLED output"
 
 [package.metadata.deb]
+license-file = "../../LICENSE"
 name = "prysm-led"
 maintainer = "Eric Schaal <eric@schaal.dev>"
 depends = "$auto, systemd, init-system-helpers"
