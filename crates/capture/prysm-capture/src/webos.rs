@@ -312,7 +312,7 @@ mod tests {
     use futures::StreamExt;
     use tokio::{io::AsyncWriteExt, net::TcpStream};
 
-    fn packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+    fn raw_rgb_packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         let mut packet = b"PRY2".to_vec();
         for value in [width, height, 0, 0, u32::try_from(pixels.len()).unwrap()] {
             packet.extend_from_slice(&value.to_be_bytes());
@@ -321,7 +321,7 @@ mod tests {
         packet
     }
 
-    fn v2_packet(format: WireFormat, compressed: bool) -> Vec<u8> {
+    fn fixture_packet(format: WireFormat, compressed: bool) -> Vec<u8> {
         let raw = match format {
             WireFormat::Rgb => vec![42; 24],
             WireFormat::Nv12 => [vec![16; 8], vec![128; 4]].concat(),
@@ -359,13 +359,13 @@ mod tests {
         let exporter =
             prysm_metrics::start("127.0.0.1:0".parse().unwrap(), prysm_metrics::Role::Prysm)
                 .unwrap();
-        let mut malformed = v2_packet(WireFormat::Rgb, true);
+        let mut malformed = fixture_packet(WireFormat::Rgb, true);
         malformed[HEADER_LEN] = 0xff;
         assert!(read_frame(&mut malformed.as_slice()).await.is_err());
-        let mut rejected = v2_packet(WireFormat::Rgb, false);
+        let mut rejected = fixture_packet(WireFormat::Rgb, false);
         rejected[0] = 0;
         assert!(read_frame(&mut rejected.as_slice()).await.is_err());
-        let truncated = &v2_packet(WireFormat::Rgb, false)[..HEADER_LEN + 1];
+        let truncated = &fixture_packet(WireFormat::Rgb, false)[..HEADER_LEN + 1];
         assert!(read_frame(&mut &truncated[..]).await.is_err());
         let address = exporter.address();
         let text = tokio::task::spawn_blocking(move || {
@@ -404,12 +404,15 @@ mod tests {
                     &[false]
                 };
                 for &compressed in variants {
-                    for fragment in v2_packet(format, compressed).chunks(3) {
+                    for fragment in fixture_packet(format, compressed).chunks(3) {
                         writer.write_all(fragment).await.unwrap();
                     }
                 }
             }
-            writer.write_all(&packet(1, 1, &[1, 2, 3])).await.unwrap();
+            writer
+                .write_all(&raw_rgb_packet(1, 1, &[1, 2, 3]))
+                .await
+                .unwrap();
         });
         let mut scratch = [Vec::new(), Vec::new()];
         for expected in [
@@ -460,7 +463,7 @@ mod tests {
             packet[HEADER_LEN] = 0xff;
             assert!(read_frame(&mut packet.as_slice()).await.is_err());
         }
-        let mut packet = v2_packet(WireFormat::Rgb, false);
+        let mut packet = fixture_packet(WireFormat::Rgb, false);
         for (offset, value) in [(4, u32::MAX), (12, 99), (16, 99), (20, u32::MAX)] {
             let mut bad = packet.clone();
             bad[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
@@ -474,7 +477,10 @@ mod tests {
     async fn fragmented_and_consecutive_rgb_frames_keep_their_boundaries() {
         let (mut writer, mut reader) = tokio::io::duplex(8);
         let send = tokio::spawn(async move {
-            for bytes in [packet(1, 1, &[255, 0, 12]), packet(3, 1, &[42; 9])] {
+            for bytes in [
+                raw_rgb_packet(1, 1, &[255, 0, 12]),
+                raw_rgb_packet(3, 1, &[42; 9]),
+            ] {
                 for fragment in bytes.chunks(3) {
                     writer.write_all(fragment).await.unwrap();
                 }
@@ -492,16 +498,16 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_bad_headers_and_truncated_pixels_without_panicking() {
-        let mut bad_magic = packet(1, 1, &[0; 3]);
+        let mut bad_magic = raw_rgb_packet(1, 1, &[0; 3]);
         bad_magic[0] = 0;
         for bytes in [
             bad_magic,
-            packet(0, 1, &[]),
-            packet(u32::MAX, u32::MAX, &[]),
-            packet(1921, 1, &[]),
-            packet(1, 1081, &[]),
-            packet(2, 2, &[0; 3]),
-            packet(1, 1, &[0; 3])[..HEADER_LEN + 2].to_vec(),
+            raw_rgb_packet(0, 1, &[]),
+            raw_rgb_packet(u32::MAX, u32::MAX, &[]),
+            raw_rgb_packet(1921, 1, &[]),
+            raw_rgb_packet(1, 1081, &[]),
+            raw_rgb_packet(2, 2, &[0; 3]),
+            raw_rgb_packet(1, 1, &[0; 3])[..HEADER_LEN + 2].to_vec(),
         ] {
             assert!(read_frame(&mut bytes.as_slice()).await.is_err());
         }
@@ -535,7 +541,10 @@ mod tests {
                     capture_resolution: [640, 360],
                 }
             );
-            client.write_all(&packet(1, 1, &[1, 2, 3])).await.unwrap();
+            client
+                .write_all(&raw_rgb_packet(1, 1, &[1, 2, 3]))
+                .await
+                .unwrap();
             let frame = tokio::time::timeout(Duration::from_secs(1), frames.next())
                 .await
                 .unwrap()
@@ -544,7 +553,7 @@ mod tests {
             assert_eq!(frame.as_slice(), &[1, 2, 3]);
             // Cancellation also interrupts an incomplete payload.
             client
-                .write_all(&packet(1, 1, &[4, 5, 6])[..HEADER_LEN + 1])
+                .write_all(&raw_rgb_packet(1, 1, &[4, 5, 6])[..HEADER_LEN + 1])
                 .await
                 .unwrap();
             if stop {
