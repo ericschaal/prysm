@@ -1,6 +1,6 @@
 use super::*;
 use eframe::App;
-use prysm_capture::PixelFormat;
+use prysm_core::PixelFormat;
 use std::time::Duration;
 
 #[test]
@@ -27,10 +27,10 @@ fn output_draws_each_edge_color_in_its_strip() {
     use prysm_core::LinearColor;
 
     let colors = EdgeColors::new(
-        ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), 1),
-        ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), 1),
-        ColorStrip::fill(LinearColor::new(0.0, 0.0, 1.0), 1),
-        ColorStrip::fill(LinearColor::new(1.0, 1.0, 1.0), 1),
+        ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), std::num::NonZeroUsize::MIN),
+        ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), std::num::NonZeroUsize::MIN),
+        ColorStrip::fill(LinearColor::new(0.0, 0.0, 1.0), std::num::NonZeroUsize::MIN),
+        ColorStrip::fill(LinearColor::new(1.0, 1.0, 1.0), std::num::NonZeroUsize::MIN),
     );
     for enable_border in [false, true] {
         let (_, receiver) = tokio::sync::watch::channel(colors.clone());
@@ -79,7 +79,7 @@ fn output_draws_each_edge_color_in_its_strip() {
 fn displays_final_frame_after_sender_closes() {
     let (_colors, colors_rx) = tokio::sync::watch::channel(EdgeColors::default());
     let (frames, frames_rx) = tokio::sync::watch::channel(DisplayFrame {
-        frame: Frame::dummy(4, 4),
+        frame: Frame::dummy(4, 4).unwrap(),
         viewport: None,
     });
     let mut app = DesktopRendererBuilder::new(colors_rx)
@@ -93,7 +93,7 @@ fn displays_final_frame_after_sender_closes() {
     });
     output.textures_delta.clear();
     frames.send_replace(DisplayFrame {
-        frame: Frame::fill(255, 4, 4, PixelFormat::RGB24),
+        frame: Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap(),
         viewport: Some(Viewport::full_frame(4, 4)),
     });
     drop(frames);
@@ -137,7 +137,7 @@ fn displays_final_frame_after_sender_closes() {
 fn crop_outline_tracks_the_displayed_frame_and_window_size() {
     let (_colors, colors_rx) = tokio::sync::watch::channel(EdgeColors::default());
     let (frames, frames_rx) = tokio::sync::watch::channel(DisplayFrame {
-        frame: Frame::dummy(640, 360),
+        frame: Frame::dummy(640, 360).unwrap(),
         viewport: None,
     });
     let mut app = DesktopRendererBuilder::new(colors_rx)
@@ -159,7 +159,7 @@ fn crop_outline_tracks_the_displayed_frame_and_window_size() {
     ] {
         frames
             .send(DisplayFrame {
-                frame: Frame::dummy(640, 360),
+                frame: Frame::dummy(640, 360).unwrap(),
                 viewport: Some(viewport),
             })
             .unwrap();
@@ -290,20 +290,46 @@ fn zero_leds_draw_no_shapes() {
 
 #[test]
 fn limited_range_output_displays_black_and_white() {
-    let mut frame = Frame::new(vec![16, 128, 235, 128], 2, 1, PixelFormat::YUYV);
-    frame.yuv_range = prysm_capture::YuvRange::Limited;
-    frame.yuv_matrix = prysm_capture::YuvStandardMatrix::Bt709;
+    let frame = Frame::new(
+        vec![16, 128, 235, 128],
+        2,
+        1,
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Limited,
+            matrix: prysm_core::YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap();
     let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
     assert_eq!(image.pixels, [egui::Color32::BLACK, egui::Color32::WHITE]);
 }
 
 #[test]
 fn bgr_frames_display_in_rgb_order() {
-    let frame = Frame::new(vec![10, 20, 200, 255, 0, 0], 2, 1, PixelFormat::BGR24);
+    let frame = Frame::new(vec![10, 20, 200, 255, 0, 0], 2, 1, PixelFormat::BGR24).unwrap();
     let image = frame_to_image(&frame, &mut Vec::new()).unwrap();
     assert_eq!(image.size, [2, 1]);
     assert_eq!(
         image.pixels,
         [egui::Color32::from_rgb(200, 20, 10), egui::Color32::BLUE]
     );
+}
+
+#[test]
+fn empty_yuyv_preview_clears_reused_pixels() {
+    let frame = Frame::new(
+        vec![],
+        0,
+        0,
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        },
+    )
+    .unwrap();
+    let mut scratch = vec![255; 6];
+    let image = frame_to_image(&frame, &mut scratch).unwrap();
+    assert_eq!(image.size, [0, 0]);
+    assert!(image.pixels.is_empty());
+    assert!(scratch.is_empty());
 }

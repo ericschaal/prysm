@@ -376,8 +376,8 @@ fn test_letterbox_detection() {
     let viewport = Viewport {
         x: left,
         y: top,
-        width: frame.width - left - right,
-        height: frame.height - top - bottom,
+        width: frame.width() - left - right,
+        height: frame.height() - top - bottom,
     };
 
     // Should detect both bands (allowing some tolerance)
@@ -408,8 +408,8 @@ fn test_letterbox_detection_low_res() {
     let viewport = Viewport {
         x: left,
         y: top,
-        width: frame.width - left - right,
-        height: frame.height - top - bottom,
+        width: frame.width() - left - right,
+        height: frame.height() - top - bottom,
     };
 
     assert!(
@@ -439,8 +439,8 @@ fn test_pillarbox_detection() {
     let viewport = Viewport {
         x: left,
         y: top,
-        width: frame.width - left - right,
-        height: frame.height - top - bottom,
+        width: frame.width() - left - right,
+        height: frame.height() - top - bottom,
     };
 
     // Should detect both bands
@@ -471,8 +471,8 @@ fn test_subtitle_handling() {
     let viewport = Viewport {
         x: left,
         y: top,
-        width: frame.width - left - right,
-        height: frame.height - top - bottom,
+        width: frame.width() - left - right,
+        height: frame.height() - top - bottom,
     };
 
     // Should still detect top band correctly
@@ -500,8 +500,8 @@ fn test_no_letterbox() {
     let viewport = Viewport {
         x: left,
         y: top,
-        width: frame.width - left - right,
-        height: frame.height - top - bottom,
+        width: frame.width() - left - right,
+        height: frame.height() - top - bottom,
     };
 
     // Should detect no bands
@@ -517,7 +517,7 @@ fn test_projection_building() {
 
     let frame = create_letterboxed_frame(1920, 1080, 100, 100);
 
-    let row_projection = detector.build_row_projection(&frame, 0..frame.width, 50);
+    let row_projection = detector.build_row_projection(&frame, 0..frame.width(), 50);
     assert_eq!(row_projection.len(), 1080);
 
     // Top 100 rows should be black (brightness ~0)

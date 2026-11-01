@@ -25,7 +25,7 @@ struct Finished(OperationId, Target, Result<()>);
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub(super) struct Shutdown;
+pub(crate) struct Shutdown;
 
 fn initial_state(config: &Config) -> StateResponse {
     StateResponse {
@@ -65,7 +65,7 @@ fn failed_operation(id: OperationId, error: &anyhow::Error) -> OperationStatus {
         },
     }
 }
-pub(super) struct Controller {
+pub(crate) struct Controller {
     path: PathBuf,
     config: Config,
     active_web: WebConfig,
@@ -352,7 +352,7 @@ impl Handler<crate::actors::Stop> for Controller {
 }
 
 impl Controller {
-    pub(super) fn spawn(
+    pub(crate) fn spawn(
         path: PathBuf,
         config: &Config,
         lighting: Arc<LightingService>,

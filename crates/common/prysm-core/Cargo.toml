@@ -8,3 +8,4 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+yuv = { workspace = true, default-features = true, features = ["fast_mode"] }

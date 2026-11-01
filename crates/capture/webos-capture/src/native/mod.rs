@@ -1,5 +1,6 @@
 //! Capture lifecycle ported from hyperion-webos; see LICENSE.hyperion.
 //! Native libraries stay loaded until all their resources have been released.
+pub mod events;
 mod ffi;
 use crate::cli::{CaptureOptions, VideoBackend};
 use crate::pixels;

@@ -43,6 +43,8 @@ pub struct VtCapture {
     client: [c_char; 128],
     stage: Stage,
     plane: PlaneInfo,
+    properties: Properties,
+    prepare_at: Instant,
     force_capture: bool,
     pending_since: Option<Instant>,
 }
@@ -68,6 +70,14 @@ macro_rules! vt_call {
 
 impl VtCapture {
     pub(super) fn open(options: &CaptureOptions) -> Result<Self> {
+        let properties = Properties {
+            dump: options.capture_point as i32,
+            width: i16::try_from(options.width)?,
+            height: i16::try_from(options.height)?,
+            buffers: 3,
+            fps: i32::from(options.fps),
+            ..Properties::default()
+        };
         let api = VtApi::load(&["libvtcapture.so.1", "libvtcapture.so"])?;
         let mut driver = ptr::null_mut();
         let mut error = [0_u8; 512];
@@ -82,6 +92,8 @@ impl VtCapture {
             client: [0; 128],
             stage: Stage::Created,
             plane: PlaneInfo::default(),
+            properties,
+            prepare_at: Instant::now(),
             force_capture: options.force_capture,
             pending_since: None,
         };
@@ -101,32 +113,32 @@ impl VtCapture {
             "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
         )?;
         this.stage = Stage::Initialized;
-        let mut props = Properties {
-            dump: options.capture_point as i32,
-            width: i16::try_from(options.width)?,
-            height: i16::try_from(options.height)?,
-            buffers: 3,
-            fps: i32::from(options.fps),
-            ..Properties::default()
-        };
-        status(
-            vt_call!(
-                this,
-                prysm_vt_preprocess,
-                this.api.preprocess,
-                this.client.as_mut_ptr(),
-                &raw mut props
-            )?,
-            "vtCapture_preprocess",
+        this.prepare()?;
+        Ok(this)
+    }
+
+    fn prepare(&mut self) -> Result<bool> {
+        self.prepare_at = Instant::now() + Duration::from_secs(1);
+        let code = vt_call!(
+            self,
+            prysm_vt_preprocess,
+            self.api.preprocess,
+            self.client.as_mut_ptr(),
+            &raw mut self.properties
         )?;
-        this.stage = Stage::Prepared;
+        // No video is a pending state; keep the client alive so UI capture can continue.
+        if code == 1 {
+            return Ok(false);
+        }
+        status(code, "vtCapture_preprocess")?;
+        self.stage = Stage::Prepared;
         let mut plane = PlaneInfo::default();
         status(
             vt_call!(
-                this,
+                self,
                 prysm_vt_plane,
-                this.api.plane,
-                this.client.as_mut_ptr(),
+                self.api.plane,
+                self.client.as_mut_ptr(),
                 &raw mut plane
             )?,
             "vtCapture_planeInfo",
@@ -140,22 +152,27 @@ impl VtCapture {
             plane.stride >= i32::from(plane.region[2]) && plane.stride <= 32768,
             "invalid vtcapture stride"
         );
-        this.plane = plane;
+        self.plane = plane;
         // A failed process may have partially started the driver; stop on drop.
-        this.stage = Stage::Running;
+        self.stage = Stage::Running;
         status(
             vt_call!(
-                this,
+                self,
                 prysm_vt_client,
-                this.api.process,
-                this.client.as_mut_ptr()
+                self.api.process,
+                self.client.as_mut_ptr()
             )?,
             "vtCapture_process",
         )?;
-        Ok(this)
+        Ok(true)
     }
 
     pub(super) fn capture(&mut self, output: &mut Vec<u8>) -> Result<Option<Header>> {
+        if self.stage == Stage::Initialized
+            && (Instant::now() < self.prepare_at || !self.prepare()?)
+        {
+            return Ok(None);
+        }
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
         if code == 2 {
@@ -298,24 +315,14 @@ mod tests {
     unsafe extern "C" fn unused_init(_: *mut c_void, _: *const c_char, _: *mut c_char) -> i32 {
         0
     }
-    unsafe extern "C" fn unused_preprocess(
-        _: *mut c_void,
-        _: *mut c_char,
-        _: *mut Properties,
-    ) -> i32 {
-        0
-    }
-    unsafe extern "C" fn unused_plane(_: *mut c_void, _: *mut c_char, _: *mut PlaneInfo) -> i32 {
-        0
-    }
 
     fn fake_capture(driver: &mut Driver) -> Video {
         let api = VtApi {
             create: unused_create,
             init: unused_init,
-            preprocess: unused_preprocess,
-            plane: unused_plane,
-            process: fake_stop,
+            preprocess: fake_preprocess,
+            plane: fake_plane,
+            process: fake_process,
             buffer: fake_buffer,
             stop: fake_stop,
             postprocess: fake_postprocess,
@@ -333,9 +340,65 @@ mod tests {
                 region: [0, 0, 2, 2],
                 active: [0; 4],
             },
+            properties: Properties::default(),
+            prepare_at: Instant::now(),
             force_capture: false,
             pending_since: None,
         })
+    }
+
+    unsafe extern "C" fn fake_preprocess(
+        driver: *mut c_void,
+        _: *mut c_char,
+        _: *mut Properties,
+    ) -> i32 {
+        // SAFETY: the test owns the driver until the capture has been dropped.
+        unsafe { (*driver.cast::<Driver>()).code }
+    }
+
+    unsafe extern "C" fn fake_plane(_: *mut c_void, _: *mut c_char, plane: *mut PlaneInfo) -> i32 {
+        // SAFETY: the caller supplies a live output parameter.
+        unsafe {
+            *plane = PlaneInfo {
+                stride: 4,
+                region: [0, 0, 2, 2],
+                active: [0; 4],
+            };
+        }
+        0
+    }
+
+    unsafe extern "C" fn fake_process(_: *mut c_void, _: *mut c_char) -> i32 {
+        0
+    }
+
+    #[test]
+    fn preprocess_not_ready_keeps_driver_until_video_returns() {
+        let mut driver = Driver {
+            code: 1,
+            pending_polls: 0,
+            y: [16; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut capture = fake_capture(&mut driver);
+        if let Video::Vt(vt) = &mut capture {
+            vt.stage = Stage::Initialized;
+        }
+        let mut output = vec![255; 6];
+        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert!(output.is_empty());
+        assert!(driver.cleanup.is_empty());
+        driver.code = 99;
+        assert!(capture.capture(&mut output).unwrap().is_none());
+        driver.code = 0;
+        if let Video::Vt(vt) = &mut capture {
+            vt.prepare_at = Instant::now();
+        }
+        assert!(capture.capture(&mut output).unwrap().is_some());
+        assert_eq!(output, [16, 16, 16, 16, 128, 128]);
+        drop(capture);
+        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
     }
 
     #[test]

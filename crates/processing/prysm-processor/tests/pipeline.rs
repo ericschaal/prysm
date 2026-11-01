@@ -1,11 +1,12 @@
-use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{BrightnessPercent, SmoothingSeconds, SpatialReachPercent};
-use prysm_core::{Config, SampleDensity};
+use prysm_core::{
+    BrightnessPercent, Config, Frame, PixelFormat, SampleDensity, SmoothingSeconds,
+    SpatialReachPercent,
+};
 use prysm_processor::PrysmProcessor;
 use std::time::{Duration, Instant};
 
 fn rgb(width: u32, height: u32, value: u8) -> Frame {
-    Frame::fill(value, width, height, PixelFormat::RGB24)
+    Frame::fill(value, width, height, PixelFormat::RGB24).unwrap()
 }
 
 #[test]
@@ -55,7 +56,7 @@ fn a_static_letterboxed_picture_does_not_bypass_smoothing_when_crop_confirms() {
     let mut data = vec![128; 640 * 360 * 3];
     data[..640 * 48 * 3].fill(0);
     data[640 * 312 * 3..].fill(0);
-    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     let mut processor = PrysmProcessor::new(&config);
     let start = Instant::now();
     let before = processor.process_frame_at(frame.clone(), start);
@@ -96,12 +97,8 @@ fn edge_highlights_keep_local_contrast_and_interior_lights_still_contribute() {
                 }
             }
         }
-        let colors = PrysmProcessor::new(&config).process_frame(Frame::new(
-            data,
-            640,
-            360,
-            PixelFormat::RGB24,
-        ));
+        let colors = PrysmProcessor::new(&config)
+            .process_frame(Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap());
         let edges = [&colors.top, &colors.right, &colors.bottom, &colors.left];
         if edge < 4 {
             let nearby = edges[edge].sample_at(0.5).r;
@@ -147,7 +144,7 @@ fn combined_and_thin_black_bars_follow_the_picture() {
         for row in y..y + height {
             data[(row * 640 + x) * 3..(row * 640 + x + width) * 3].fill(255);
         }
-        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
         let output = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
         assert_eq!(
             output.top.len(),
@@ -194,9 +191,9 @@ fn combined_bars_keep_dark_centers_and_bright_corners_inside_the_picture() {
                 picture[picture_index..picture_index + 3].fill(value);
             }
         }
-        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
         let actual = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
-        let expected_frame = Frame::new(picture, 160, 100, PixelFormat::RGB24);
+        let expected_frame = Frame::new(picture, 160, 100, PixelFormat::RGB24).unwrap();
         let expected = PrysmProcessor::new(&Config {
             remove_black_bars: false,
             ..config
@@ -220,7 +217,7 @@ fn dim_gray_and_colored_edges_are_picture_not_black_bars() {
             for row in 0..360 {
                 data[(row * 640 + 80) * 3..(row * 640 + 560) * 3].fill(128);
             }
-            let frame = Frame::new(data, 640, 360, format);
+            let frame = Frame::new(data, 640, 360, format).unwrap();
             let output = settle(&mut PrysmProcessor::new(&config), &frame, Instant::now());
             let expected = PrysmProcessor::new(&Config {
                 remove_black_bars: false,
@@ -266,7 +263,7 @@ fn wide_black_bands_crop_each_axis_independently() {
         for y in y_start..y_end {
             data[(y * 640 + x_start) * 3..(y * 640 + x_end) * 3].fill(255);
         }
-        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+        let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
         let output = settle(&mut processor, &frame, start);
         start += Duration::from_secs(4);
         assert_eq!(
@@ -285,7 +282,7 @@ fn wide_black_bands_crop_each_axis_independently() {
 
 #[test]
 fn slightly_noisy_black_bands_still_crop() {
-    use prysm_capture::YuvRange;
+    use prysm_core::YuvRange;
     let config = Config {
         brightness_percent: BrightnessPercent(100),
         smoothing_seconds: SmoothingSeconds(0.0),
@@ -308,8 +305,16 @@ fn slightly_noisy_black_bands_still_crop() {
                     };
                 }
             }
-            let mut frame = Frame::new(data, 640, 360, PixelFormat::YUYV);
-            frame.yuv_range = range;
+            let frame = Frame::new(
+                data,
+                640,
+                360,
+                PixelFormat::YUYV {
+                    range,
+                    matrix: prysm_core::YuvStandardMatrix::Bt601,
+                },
+            )
+            .unwrap();
             let mut processor = PrysmProcessor::new(&config);
             let output = settle(&mut processor, &frame, Instant::now());
             let (width, height) = if horizontal { (640, 264) } else { (480, 360) };
@@ -349,12 +354,9 @@ fn edge_sampling_includes_the_last_row_and_column() {
                 }
             }
         }
-        let output = PrysmProcessor::new(&config).process_frame(Frame::new(
-            data,
-            width as u32,
-            height as u32,
-            PixelFormat::RGB24,
-        ));
+        let output = PrysmProcessor::new(&config).process_frame(
+            Frame::new(data, width as u32, height as u32, PixelFormat::RGB24).unwrap(),
+        );
         let edges = if width == 636 {
             [&output.top, &output.bottom]
         } else {
@@ -413,14 +415,22 @@ fn color_change_must_update_output() {
         [128, 128, 128, 128].repeat(64 * 36 / 2),
         64,
         36,
-        PixelFormat::YUYV,
-    );
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        },
+    )
+    .unwrap();
     let b = Frame::new(
         [128, 128, 128, 200].repeat(64 * 36 / 2),
         64,
         36,
-        PixelFormat::YUYV,
-    );
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        },
+    )
+    .unwrap();
     p.process_frame(a.clone());
     p.process_frame(a);
     let actual = p.process_frame(b.clone());
@@ -438,7 +448,7 @@ fn static_letterbox_confirms_with_default_tuning() {
     let mut data = vec![128; 640 * 360 * 3];
     data[..640 * 48 * 3].fill(0);
     data[640 * 312 * 3..].fill(0);
-    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     let mut p = PrysmProcessor::new(&c);
     assert_eq!(p.viewport(), None);
     let actual = settle(&mut p, &frame, Instant::now());
@@ -480,12 +490,9 @@ fn bgr_supported_by_capture_must_process() {
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
-    let actual = p.process_frame(Frame::new(
-        [0, 0, 255].repeat(64 * 36),
-        64,
-        36,
-        PixelFormat::BGR24,
-    ));
+    let actual = p.process_frame(
+        Frame::new([0, 0, 255].repeat(64 * 36), 64, 36, PixelFormat::BGR24).unwrap(),
+    );
     let color = actual.top.sample_at(0.5);
     assert!(
         color.r > 0.99 && color.g == 0.0 && color.b == 0.0,
@@ -504,7 +511,7 @@ fn dark_scene_preserves_confirmed_crop() {
     let mut data = vec![128; 640 * 360 * 3];
     data[..640 * 48 * 3].fill(0);
     data[640 * 312 * 3..].fill(0);
-    let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     let start = Instant::now();
     let cropped = settle(&mut p, &letterbox, start);
     assert_eq!(
@@ -526,7 +533,7 @@ fn dark_scene_preserves_confirmed_crop() {
 fn format_change_clears_smoothing_history() {
     let mut p = PrysmProcessor::default();
     p.process_frame(rgb(64, 36, 255));
-    let dark = p.process_frame(Frame::fill(0, 64, 36, PixelFormat::BGR24));
+    let dark = p.process_frame(Frame::fill(0, 64, 36, PixelFormat::BGR24).unwrap());
     assert!(dark.top.sample_at(0.5).r.abs() < f32::EPSILON);
 }
 
@@ -548,8 +555,8 @@ fn equal_mean_rgb_colors_update_output() {
         ..Config::default()
     };
     let mut p = PrysmProcessor::new(&c);
-    let red = Frame::new([255, 0, 0].repeat(64 * 36), 64, 36, PixelFormat::RGB24);
-    let blue = Frame::new([0, 0, 255].repeat(64 * 36), 64, 36, PixelFormat::RGB24);
+    let red = Frame::new([255, 0, 0].repeat(64 * 36), 64, 36, PixelFormat::RGB24).unwrap();
+    let blue = Frame::new([0, 0, 255].repeat(64 * 36), 64, 36, PixelFormat::RGB24).unwrap();
     p.process_frame(red.clone());
     p.process_frame(red);
     let color = p.process_frame(blue).top.sample_at(0.5);
@@ -586,9 +593,9 @@ fn narrow_edge_changes_update_output_immediately() {
     };
     let mut processor = PrysmProcessor::new(&config);
     let base = rgb(640, 360, 128);
-    let mut data = base.data.as_ref().clone();
+    let mut data = base.as_slice().to_vec();
     data[..640 * 10 * 3].fill(255);
-    let changed = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let changed = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     let old = processor.process_frame(base);
     let actual = processor.process_frame(changed.clone());
     let expected = PrysmProcessor::new(&config).process_frame(changed);
@@ -634,8 +641,8 @@ fn bright_objects_grow_stronger_as_they_approach_each_edge() {
                         data[((y * width + x) * 3) as usize] = 255;
                     }
                 }
-                let output =
-                    processor.process_frame(Frame::new(data, width, height, PixelFormat::RGB24));
+                let output = processor
+                    .process_frame(Frame::new(data, width, height, PixelFormat::RGB24).unwrap());
                 let edges = [&output.top, &output.right, &output.bottom, &output.left];
                 let actual = edges[edge].sample_at(0.5);
                 assert!(
@@ -654,7 +661,7 @@ fn bright_objects_grow_stronger_as_they_approach_each_edge() {
 
 #[test]
 fn changing_yuv_metadata_resets_processing_history() {
-    use prysm_capture::{YuvRange, YuvStandardMatrix};
+    use prysm_core::{YuvRange, YuvStandardMatrix};
     let config = Config {
         brightness_percent: BrightnessPercent(100),
         remove_black_bars: false,
@@ -665,11 +672,23 @@ fn changing_yuv_metadata_resets_processing_history() {
         [235, 128, 235, 128].repeat(64 * 36 / 2),
         64,
         36,
-        PixelFormat::YUYV,
-    );
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        },
+    )
+    .unwrap();
     let full = processor.process_frame(frame.clone());
-    frame.yuv_range = YuvRange::Limited;
-    frame.yuv_matrix = YuvStandardMatrix::Bt709;
+    frame = Frame::new(
+        frame.as_slice().to_vec(),
+        frame.width(),
+        frame.height(),
+        PixelFormat::YUYV {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap();
     let limited = processor.process_frame(frame.clone());
     assert!(full.top.sample_at(0.5).r < 1.0);
     assert!(limited.top.sample_at(0.5).r > 0.99);
@@ -817,11 +836,11 @@ fn configured_density_controls_valid_and_unsupported_frame_edge_colors() {
         let mut processor = PrysmProcessor::new(&config);
         for frame in [
             rgb(640, 360, 255),
-            Frame::new(vec![], 640, 360, PixelFormat::MJPEG),
+            Frame::new(vec![], 640, 360, PixelFormat::MJPEG).unwrap(),
             rgb(0, 360, 128),
         ] {
-            let width = frame.width as usize;
-            let height = frame.height as usize;
+            let width = frame.width() as usize;
+            let height = frame.height() as usize;
             let output = processor.process_frame(frame);
             assert_eq!(output.top.len(), sample_density.samples_for_length(width));
             assert_eq!(output.bottom.len(), output.top.len());
@@ -839,7 +858,7 @@ fn spatial_reach_controls_interior_influence_and_clamps_extremes() {
             data[(y * 100 + x) * 3] = 255;
         }
     }
-    let frame = Frame::new(data, 100, 100, PixelFormat::RGB24);
+    let frame = Frame::new(data, 100, 100, PixelFormat::RGB24).unwrap();
     let sample = |reach| {
         PrysmProcessor::new(&Config {
             smoothing_seconds: SmoothingSeconds(0.0),
@@ -867,7 +886,7 @@ fn black_bar_removal_can_be_disabled() {
     let mut data = vec![255; 640 * 360 * 3];
     data[..640 * 48 * 3].fill(0);
     data[640 * 312 * 3..].fill(0);
-    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let frame = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     for remove_black_bars in [false, true] {
         let config = Config {
             brightness_percent: BrightnessPercent(100),
@@ -913,7 +932,7 @@ fn crop_changes_preserve_smoothing_and_adopt_the_new_sample_grid() {
             data[(y * 640 + x) * 3..(y * 640 + x + 1) * 3].fill(value);
         }
     }
-    let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24);
+    let letterbox = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
     let full = rgb(640, 360, 128);
     let start = Instant::now();
     let mut previous: Option<prysm_core::EdgeColors> = None;
@@ -1000,7 +1019,7 @@ fn configuring_sampling_rebuilds_geometry_and_preserves_smoothing_history() {
             data[(y * 160 + x) * 3] = 255;
         }
     }
-    let frame = Frame::new(data, 160, 90, PixelFormat::RGB24);
+    let frame = Frame::new(data, 160, 90, PixelFormat::RGB24).unwrap();
     let actual = processor.process_frame_at(frame.clone(), start + Duration::from_millis(100));
     let target = PrysmProcessor::new(&updated).process_frame_at(frame, start);
     assert_eq!(actual.top.len(), 32);
@@ -1023,7 +1042,7 @@ fn configuring_bar_removal_only_resets_detection_when_toggled() {
     let mut data = vec![255; 160 * 90 * 3];
     data[..160 * 12 * 3].fill(0);
     data[160 * 78 * 3..].fill(0);
-    let frame = Frame::new(data, 160, 90, PixelFormat::RGB24);
+    let frame = Frame::new(data, 160, 90, PixelFormat::RGB24).unwrap();
     let mut processor = PrysmProcessor::new(&config);
     let start = Instant::now();
     settle(&mut processor, &frame, start);

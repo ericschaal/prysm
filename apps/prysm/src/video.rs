@@ -74,7 +74,10 @@ async fn read_frame(
         return Ok(None);
     }
     reader.read_exact(&mut data[1..]).await?;
-    Ok(Some(Frame::new(data, width, height, PixelFormat::RGB24)))
+    Ok(Some(
+        Frame::new(data, width, height, PixelFormat::RGB24)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+    ))
 }
 
 #[cfg(test)]
@@ -91,8 +94,8 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!((frame.width, frame.height), (8, 4));
-            assert_eq!(frame.format, PixelFormat::RGB24);
+            assert_eq!((frame.width(), frame.height()), (8, 4));
+            assert_eq!(frame.format(), PixelFormat::RGB24);
             assert!(frame.as_slice().iter().all(|&byte| byte == expected));
         }
         assert!(
@@ -152,7 +155,7 @@ mod tests {
                 .unwrap()
         {
             let frame = frame.unwrap();
-            assert_eq!((frame.width, frame.height), (32, 18));
+            assert_eq!((frame.width(), frame.height()), (32, 18));
             assert_eq!(frame.len(), 32 * 18 * 3);
             first_frame_at.get_or_insert_with(std::time::Instant::now);
             count += 1;

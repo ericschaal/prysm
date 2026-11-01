@@ -2,15 +2,24 @@
 #![cfg(feature = "desktop")]
 
 use super::*;
-use crate::actors::egui::Egui;
+use crate::{
+    actors::{
+        egui::Egui,
+        pipeline::Renderers,
+        runtime::{Pipeline, StopPipeline},
+    },
+    config::PipelineConfig,
+};
 use axum::{body::Body, http::Request};
 use prysm_api::App;
 use prysm_capture::Frame;
 use prysm_contract::{
-    Input, OperationStatus, PipelinePhase, Source, StateResponse, Target, UpdateConfig,
+    Config, Input, OperationStatus, PipelinePhase, Source, StateResponse, Target, UpdateConfig,
 };
 use prysm_core::{EdgeColors, LinearColor};
 use prysm_renderer_desktop::DisplayFrame;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::watch;
 use tower::ServiceExt;
 
 struct EguiController {
@@ -50,18 +59,17 @@ impl EguiController {
         let (config_tx, config_rx) = watch::channel(config.clone());
         let (colors, colors_rx) = watch::channel(EdgeColors::default());
         let (frames, frames_rx) = watch::channel(DisplayFrame {
-            frame: Frame::dummy(16, 16),
+            frame: Frame::dummy(16, 16).unwrap(),
             viewport: None,
         });
-        let lighting = Arc::new(
-            LightingService::new(
-                config_rx,
-                Renderers {
-                    egui: Some(Egui { colors, frames }),
-                },
-            )
-            .unwrap(),
-        );
+        let (pipeline, status) = Pipeline::with_renderers(
+            PipelineConfig::from(&config),
+            Renderers {
+                egui: Some(Egui { colors, frames }),
+            },
+        )
+        .unwrap();
+        let lighting = Arc::new(LightingService::new(config_rx, pipeline, status).unwrap());
         let (actor, app) = Controller::spawn(path.clone(), &config, lighting.clone(), config_tx);
         let router = http::router(app.clone(), config.web);
         Self {
@@ -285,7 +293,7 @@ async fn egui_controller_processes_file_applies_settings_restarts_and_replays_af
     })
     .await
     .unwrap();
-    assert_eq!(egui.frames.borrow().frame.width, 16);
+    assert_eq!(egui.frames.borrow().frame.width(), 16);
     let mut config = egui.app.config.borrow().clone();
     config.processing.brightness_percent = 0.try_into().unwrap();
     assert!(!egui.save(config).await.restart_required);
@@ -313,7 +321,7 @@ async fn egui_controller_processes_file_applies_settings_restarts_and_replays_af
         OperationStatus::Succeeded { .. }
     ));
     tokio::time::timeout(Duration::from_secs(5), async {
-        while egui.frames.borrow().frame.width != 8 {
+        while egui.frames.borrow().frame.width() != 8 {
             egui.frames.changed().await.unwrap();
         }
         let mut status = egui.lighting.status.clone();

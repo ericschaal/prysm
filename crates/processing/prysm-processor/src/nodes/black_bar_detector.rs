@@ -1,5 +1,5 @@
 use crate::frames::{FrameView, Viewport, luma_at};
-use prysm_capture::{Frame, PixelFormat, YuvRange};
+use prysm_core::{Frame, PixelFormat, YuvRange};
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
@@ -63,17 +63,22 @@ impl BlackBarDetector {
 
     fn detect_bands(&mut self, frame: &Frame) -> (Option<Bands>, Option<Bands>) {
         // Raw limited-range Y has a black level of 16; RGB/full-range Y starts at 0.
-        let threshold = if frame.format == PixelFormat::YUYV && frame.yuv_range == YuvRange::Limited
-        {
+        let threshold = if matches!(
+            frame.format(),
+            PixelFormat::YUYV {
+                range: YuvRange::Limited,
+                ..
+            }
+        ) {
             23
         } else {
             8
         };
-        let min_row_band = (frame.height / 200).max(2);
-        let min_col_band = (frame.width / 200).max(2);
+        let min_row_band = (frame.height() / 200).max(2);
+        let min_col_band = (frame.width() / 200).max(2);
         // A bar must be almost entirely black; a median can discard half the picture.
-        let rows = self.build_row_projection(frame, 0..frame.width, 98);
-        let cols = self.build_col_projection(frame, 0..frame.height, 98);
+        let rows = self.build_row_projection(frame, 0..frame.width(), 98);
+        let cols = self.build_col_projection(frame, 0..frame.height(), 98);
         let mut horizontal = detect_axis(&rows, threshold, min_row_band);
         let mut vertical = detect_axis(&cols, threshold, min_col_band);
 
@@ -81,13 +86,13 @@ impl BlackBarDetector {
         if let Some((left, right)) = vertical
             && left + right > 0
         {
-            let rows = self.build_row_projection(frame, left..frame.width - right, 98);
+            let rows = self.build_row_projection(frame, left..frame.width() - right, 98);
             horizontal = detect_axis(&rows, threshold, min_row_band);
         }
         if let Some((top, bottom)) = horizontal
             && top + bottom > 0
         {
-            let cols = self.build_col_projection(frame, top..frame.height - bottom, 98);
+            let cols = self.build_col_projection(frame, top..frame.height() - bottom, 98);
             vertical = detect_axis(&cols, threshold, min_col_band);
         }
         (horizontal, vertical)
@@ -99,8 +104,8 @@ impl BlackBarDetector {
         columns: Range<u32>,
         percent: usize,
     ) -> Vec<u8> {
-        let mut projection = Vec::with_capacity(frame.height as usize);
-        for y in 0..frame.height {
+        let mut projection = Vec::with_capacity(frame.height() as usize);
+        for y in 0..frame.height() {
             self.sample_scratch.clear();
             for x in columns.clone().step_by(SAMPLE_STRIDE) {
                 self.sample_scratch.push(luma_at(frame, x, y));
@@ -112,11 +117,11 @@ impl BlackBarDetector {
 
     /// Read strided rows sequentially before taking each column's percentile.
     fn build_col_projection(&mut self, frame: &Frame, rows: Range<u32>, percent: usize) -> Vec<u8> {
-        let width = frame.width as usize;
+        let width = frame.width() as usize;
         let n_rows = rows.clone().step_by(SAMPLE_STRIDE).count();
         self.grid_scratch.resize(width * n_rows, 0);
         for (k, y) in rows.step_by(SAMPLE_STRIDE).enumerate() {
-            for x in 0..frame.width {
+            for x in 0..frame.width() {
                 self.grid_scratch[k * width + x as usize] = luma_at(frame, x, y);
             }
         }
@@ -146,8 +151,8 @@ impl BlackBarDetector {
         input.viewport = Viewport {
             x: left,
             y: top,
-            width: input.frame.width - left - right,
-            height: input.frame.height - top - bottom,
+            width: input.frame.width() - left - right,
+            height: input.frame.height() - top - bottom,
         };
         input
     }

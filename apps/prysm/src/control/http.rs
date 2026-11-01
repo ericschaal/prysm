@@ -50,7 +50,7 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
     response
 }
 
-pub(super) fn router(app: App, web: WebConfig) -> Router {
+pub(crate) fn router(app: App, web: WebConfig) -> Router {
     prysm_api::router()
         .split_for_parts()
         .0

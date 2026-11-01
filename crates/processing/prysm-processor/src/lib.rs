@@ -1,8 +1,7 @@
 use frames::{FrameView, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
-use prysm_capture::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
-use prysm_core::{ColorStrip, Config, EdgeColors};
+use prysm_core::{ColorStrip, Config, EdgeColors, Frame, PixelFormat};
 use std::time::Instant;
 
 mod frames;
@@ -29,8 +28,6 @@ struct FrameLayout {
     width: u32,
     height: u32,
     format: PixelFormat,
-    yuv_range: YuvRange,
-    yuv_matrix: YuvStandardMatrix,
 }
 
 impl PrysmProcessor {
@@ -89,27 +86,25 @@ impl PrysmProcessor {
     /// Repeated or earlier times do not advance smoothing.
     pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
         let layout = FrameLayout {
-            width: frame.width,
-            height: frame.height,
-            format: frame.format,
-            yuv_range: frame.yuv_range,
-            yuv_matrix: frame.yuv_matrix,
+            width: frame.width(),
+            height: frame.height(),
+            format: frame.format(),
         };
         if self.frame_layout != Some(layout) {
             *self = Self::new(&self.config);
             self.frame_layout = Some(layout);
         }
 
-        if frame.width == 0 || frame.height == 0 || frame.format == PixelFormat::MJPEG {
+        if frame.width() == 0 || frame.height() == 0 || frame.format() == PixelFormat::MJPEG {
             tracing::error!(
                 "Unsupported frame: {} {}x{}",
-                frame.format,
-                frame.width,
-                frame.height
+                frame.format(),
+                frame.width(),
+                frame.height()
             );
             return EdgeColors::black(
-                frame.width as usize,
-                frame.height as usize,
+                frame.width() as usize,
+                frame.height() as usize,
                 self.config.sample_density,
             );
         }
@@ -140,7 +135,8 @@ impl PrysmProcessor {
                         .into_iter()
                         .map(|color| color.lift_shadows(self.config.shadow_lift_percent))
                         .collect(),
-                );
+                )
+                .expect("sample count is nonzero");
             }
         }
         edge_colors * self.config.brightness_percent.as_ratio()

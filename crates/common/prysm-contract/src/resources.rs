@@ -88,9 +88,10 @@ pub struct WledAddress(String);
 impl TryFrom<String> for WledAddress {
     type Error = &'static str;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let parsed = url::Url::parse(&format!("udp://{value}"))
-            .map_err(|_| "DDP address must be host:port")?;
-        if parsed.host_str().is_none()
+        let address = format!("udp://{value}");
+        let parsed = url::Url::parse(&address).map_err(|_| "DDP address must be host:port")?;
+        if parsed.as_str() != address
+            || parsed.host_str().is_none()
             || parsed.port().is_none_or(|port| port == 0)
             || !parsed.username().is_empty()
             || parsed.password().is_some()

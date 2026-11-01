@@ -104,6 +104,29 @@ async function check(initial, test, initialConfig) {
 }
 
 (async () => {
+  await check(off, async p => {
+    p.element('#power').click();
+    await until(() => p.requests.some(r => r.method === 'PUT'));
+    await delay();
+    await p.refresh(off);
+    assert.equal(p.element('#power').disabled, false, 'Backend restart releases the lost operation');
+    assert.match(p.element('details').textContent, /completion is unknown/i);
+    assert.equal(p.element('#retry').disabled, false);
+    p.element('#retry').click();
+    await until(() => p.requests.filter(r => r.method === 'PUT').length === 2);
+    assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[1].body), { power: true, source: 'prysm' });
+  });
+
+  await check({ ...off, restart_required: true }, async p => {
+    assert.match(p.element('#status').textContent, /restart prysm/i);
+    assert.equal(p.element('#power').disabled, true);
+    assert.equal(p.element('#retry').disabled, true);
+    assert.equal(p.element('#off').disabled, true);
+    await p.refresh({ ...off, restart_required: false });
+    assert.equal(p.element('#power').disabled, false);
+    assert.doesNotMatch(p.element('#status').textContent, /restart prysm/i);
+  }, { ...config(), output: { type: 'egui' }, wled: null });
+
   for (const directConfig of [ { ...config(), output: { type: 'egui' }, wled: null },
     { ...config(), wled: null },
   ]) {
@@ -187,8 +210,8 @@ async function check(initial, test, initialConfig) {
     assert.equal(p.element('.power-panel').getAttribute('aria-busy'), 'true');
     assert.equal(p.element('[data-source="wled"]').getAttribute('aria-busy'), 'false', 'Power changes do not animate sources');
     assert.equal(p.element('[data-source="wled"]').matches(':disabled'), true);
-    // An old GET must not unlock controls before the accepted operation is observed.
-    await p.refresh(on);
+    // An operation still running must keep controls locked.
+    await p.refresh({ ...on, operation: { kind: 'pending', id: operationId } });
     assert.equal(p.element('#power').disabled, true);
     await p.refresh({ ...off, operation: { kind: 'succeeded', id: operationId } });
     await until(() => !p.element('#power').disabled);

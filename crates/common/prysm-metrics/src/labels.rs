@@ -650,3 +650,14 @@ pub(crate) struct CaptureInfo {
     pub composition_format: Format,
     pub target_bitrate_bps: u32,
 }
+
+impl From<prysm_core::PixelFormat> for Format {
+    fn from(format: prysm_core::PixelFormat) -> Self {
+        match format {
+            prysm_core::PixelFormat::RGB24 => Self::Rgb24,
+            prysm_core::PixelFormat::BGR24 => Self::Bgr24,
+            prysm_core::PixelFormat::YUYV { .. } => Self::Yuyv,
+            prysm_core::PixelFormat::MJPEG => Self::Mjpeg,
+        }
+    }
+}

@@ -9,8 +9,7 @@ pub use layout::LayoutConfig;
 
 use image::frame_to_image;
 use layout::{LayoutDimensions, calculate_led_distribution};
-use prysm_capture::Frame;
-use prysm_core::{ColorStrip, EdgeColors, Viewport};
+use prysm_core::{ColorStrip, EdgeColors, Frame, Viewport};
 use tokio_util::sync::CancellationToken;
 
 /// Keep the detected crop paired with the frame it describes.
@@ -73,12 +72,12 @@ impl DesktopRenderer {
                     self.crop_rect = display.viewport.map(|crop| {
                         egui::Rect::from_min_max(
                             egui::pos2(
-                                crop.x as f32 / frame.width as f32,
-                                crop.y as f32 / frame.height as f32,
+                                crop.x as f32 / frame.width() as f32,
+                                crop.y as f32 / frame.height() as f32,
                             ),
                             egui::pos2(
-                                (crop.x + crop.width) as f32 / frame.width as f32,
-                                (crop.y + crop.height) as f32 / frame.height as f32,
+                                (crop.x + crop.width) as f32 / frame.width() as f32,
+                                (crop.y + crop.height) as f32 / frame.height() as f32,
                             ),
                         )
                     });

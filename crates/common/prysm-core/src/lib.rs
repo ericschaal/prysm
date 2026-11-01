@@ -1,10 +1,15 @@
 mod color;
 mod color_strip;
 mod config;
+mod frame;
 mod linear;
+pub mod yuyv;
+
+pub use frame::{Frame, FrameError, PixelFormat};
+pub use yuv::{YuvRange, YuvStandardMatrix};
 
 pub use color::Color;
-pub use color_strip::{ColorStrip, EdgeColors, SampleDensity};
+pub use color_strip::{ColorStrip, EdgeColors, EmptyColorStrip, SampleDensity};
 pub use config::{
     BrightnessPercent, CaptureResolution, Config, ShadowLiftPercent, SmoothingSeconds,
     SpatialReachPercent,

@@ -29,9 +29,9 @@ async fn check_capture(
             .context("Capture stream ended before three frames arrived")??;
         println!(
             "frame {i}: {}x{} {} ({} bytes)",
-            frame.width,
-            frame.height,
-            frame.format,
+            frame.width(),
+            frame.height(),
+            frame.format(),
             frame.len()
         );
     }
@@ -45,14 +45,14 @@ mod tests {
 
     #[tokio::test]
     async fn three_frames_succeed() {
-        let frames = futures::stream::iter((0..3).map(|_| Ok(Frame::dummy(2, 1))));
+        let frames = futures::stream::iter((0..3).map(|_| Ok(Frame::dummy(2, 1).unwrap())));
         assert!(check_capture(frames).await.is_ok());
     }
 
     #[tokio::test]
     async fn early_end_is_an_error() {
         for count in 0..3 {
-            let frames = futures::stream::iter((0..count).map(|_| Ok(Frame::dummy(2, 1))));
+            let frames = futures::stream::iter((0..count).map(|_| Ok(Frame::dummy(2, 1).unwrap())));
             assert!(
                 check_capture(frames).await.is_err(),
                 "only {count} frames arrived"

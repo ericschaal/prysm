@@ -31,7 +31,15 @@ every backend failure retryable or reconnect automatically.
 
 Report terminal errors once at the application boundary with the full chain.
 Libraries propagate terminal failures and may log recoverable frame drops.
-Panics remain for violated internal invariants, not expected device or I/O errors.
+`Frame::new`, `fill`, and `dummy` return `FrameError` for invalid layouts or
+payload lengths. Capture adapters propagate the error or discard an invalid
+frame according to their existing delivery policy; fixture code may unwrap
+known-valid frames. Panics remain for violated internal invariants, not expected
+device or I/O errors.
+
+YUYV conversion takes a validated `Frame`, returns conversion errors, and clears
+the output for empty frames. `ColorStrip::new` rejects empty vectors with
+`EmptyColorStrip`; its fill constructors require `NonZeroUsize`.
 
 When changing an error contract, update its callers, examples and tests. Verify
 that domain variants survive propagation, causes remain inspectable, and EOF and

@@ -1,154 +1,58 @@
 //! Receive raw/LZ4 pixels or connection-scoped H.264 from the Rust webOS sender.
-use crate::{Frame, PixelFormat, PrysmCapturer, Result, capture_channel};
+use crate::{Frame, PixelFormat};
 use anyhow::Context;
-use futures::Stream;
 use prysm_metrics::{
     BytesKind, Codec, DecoderEvent, FrameReceiverEvent, FrameStage, Stage, WireBoundary,
 };
-use prysm_webos_protocol::{ControlMessage, HEADER_LEN, HELLO, Header, PixelFormat as WireFormat};
+use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat as WireFormat};
 use std::{
     net::SocketAddr,
-    num::NonZeroU32,
     time::{Duration, Instant},
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-    sync::watch,
-};
-use tokio_util::sync::CancellationToken;
+use tokio::{io::AsyncReadExt, sync::watch};
 
-/// A session-scoped listener. TV disconnects return to accepting a connection.
-///
-/// This protocol has no authentication: bind on a trusted LAN interface only.
-/// Input dimensions and refresh rate are sent to the TV before capture starts.
-pub struct WebosCapturer {
-    listener: std::net::TcpListener,
-    shutdown: CancellationToken,
-    completed: CancellationToken,
-}
-
-impl WebosCapturer {
-    /// Bind immediately so address conflicts are reported during pipeline startup.
-    pub fn new(listen: SocketAddr, shutdown: CancellationToken) -> Result<Self> {
-        let listener = std::net::TcpListener::bind(listen)
-            .with_context(|| format!("cannot listen for webOS capture on {listen}"))?;
-        listener
-            .set_nonblocking(true)
-            .context("cannot configure webOS listener")?;
-        Ok(Self {
-            listener,
-            shutdown,
-            completed: CancellationToken::new(),
-        })
-    }
-
-    #[must_use]
-    pub fn completion(&self) -> CancellationToken {
-        self.completed.clone()
-    }
-}
-
-impl PrysmCapturer for WebosCapturer {
-    fn into_stream(
-        self,
-        width: u32,
-        height: u32,
-        refresh_rate_hz: NonZeroU32,
-    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
-        let (sender, finished, frames) = capture_channel(self.shutdown.clone());
-        tokio::spawn(async move {
-            let _completed = self.completed.drop_guard();
-            let result = async {
-                let settings = ControlMessage::CaptureSettings {
-                    refresh_rate_hz: refresh_rate_hz.get(),
-                    capture_resolution: [width, height],
-                }
-                .validate()?;
-                let listener = TcpListener::from_std(self.listener)?;
-                tokio::select! {
-                    () = self.shutdown.cancelled() => Ok(()),
-                    () = sender.closed() => Ok(()),
-                    result = receive(&listener, &sender, settings) => result,
-                }
-            }
-            .await;
-            let _ = finished.send(result.map_err(Into::into));
-        });
-        frames
-    }
-}
-
-async fn receive(
-    listener: &TcpListener,
+pub(super) async fn receive_frames(
+    socket: &mut tokio::net::TcpStream,
     sender: &watch::Sender<Option<Frame>>,
-    settings: ControlMessage,
-) -> anyhow::Result<()> {
-    let mut last_decoded = None;
+    receiving: &watch::Sender<bool>,
+    peer: SocketAddr,
+    last_decoded: &mut Option<Instant>,
+) {
+    let mut scratch = [Vec::new(), Vec::new()];
+    let mut decoder = None;
     loop {
-        let (mut socket, peer) = listener.accept().await.context("webOS accept failed")?;
-        tracing::info!(%peer, "webOS capture connected");
-        prysm_metrics::event(FrameReceiverEvent::ConnectionAccepted);
-        let handshake = tokio::time::timeout(Duration::from_secs(1), async {
-            let mut prefix = [0; 4];
-            socket
-                .read_exact(&mut prefix)
-                .await
-                .context("cannot read webOS hello length")?;
-            let length = ControlMessage::decode_length(prefix)?;
-            let mut hello = vec![0; length];
-            socket
-                .read_exact(&mut hello)
-                .await
-                .context("cannot read webOS hello")?;
-            anyhow::ensure!(
-                ControlMessage::decode(&hello)? == HELLO,
-                "expected webOS hello"
-            );
-            socket
-                .write_all(&settings.encode()?)
-                .await
-                .context("cannot send webOS capture settings")
-        })
-        .await;
-        if !matches!(handshake, Ok(Ok(()))) {
-            tracing::warn!(%peer, ?handshake, "webOS handshake failed");
-            continue;
-        }
-        let mut scratch = [Vec::new(), Vec::new()];
-        let mut decoder = None;
-        loop {
-            // A stalled or partial frame must not hold the only TV connection forever.
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                read_frame_into(&mut socket, &mut scratch, &mut decoder),
-            )
-            .await
-            {
-                Ok(Ok(frame)) => {
-                    if prysm_metrics::enabled() {
-                        let now = Instant::now();
-                        if let Some(last) = last_decoded.replace(now) {
-                            prysm_metrics::observe(
-                                Stage::ReceiverFrameGap,
-                                now.duration_since(last),
-                            );
-                        }
-                    }
-                    prysm_metrics::frame(FrameStage::Decoded, frame.format.into());
-                    if sender.send(Some(frame)).is_err() {
-                        return Ok(());
+        // A stalled or partial frame must not hold the only TV connection forever.
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            read_frame_into(socket, &mut scratch, &mut decoder),
+        )
+        .await
+        {
+            Ok(Ok(frame)) => {
+                if prysm_metrics::enabled() {
+                    let now = Instant::now();
+                    if let Some(last) = last_decoded.replace(now) {
+                        prysm_metrics::observe(Stage::ReceiverFrameGap, now.duration_since(last));
                     }
                 }
-                Ok(Err(error)) => {
-                    tracing::debug!(%peer, error = %format!("{error:#}"), "webOS connection ended");
-                    break;
+                prysm_metrics::frame(FrameStage::Decoded, frame.format().into());
+                if sender.send(Some(frame)).is_err() {
+                    return;
                 }
-                Err(_) => {
-                    prysm_metrics::event(FrameReceiverEvent::FrameTimedOut);
-                    tracing::warn!(%peer, "webOS frame timed out");
-                    break;
-                }
+                receiving.send_if_modified(|available| {
+                    let changed = !*available;
+                    *available = true;
+                    changed
+                });
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(%peer, error = %format!("{error:#}"), "webOS connection ended");
+                break;
+            }
+            Err(_) => {
+                prysm_metrics::event(FrameReceiverEvent::FrameTimedOut);
+                tracing::warn!(%peer, "webOS frame timed out");
+                break;
             }
         }
     }
@@ -201,7 +105,7 @@ async fn read_frame_into(
             header.width,
             header.height,
             PixelFormat::RGB24,
-        ));
+        )?);
     }
     read_pixels(reader, header, scratch).await
 }
@@ -256,7 +160,7 @@ async fn read_pixels(
             header.width,
             header.height,
             PixelFormat::RGB24,
-        ));
+        )?);
     }
     let [payload, decoded] = scratch;
     payload.resize(header.payload_len, 0);
@@ -303,14 +207,13 @@ async fn read_pixels(
         header.width,
         header.height,
         PixelFormat::RGB24,
-    ))
+    )?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt;
-    use tokio::{io::AsyncWriteExt, net::TcpStream};
+    use tokio::io::AsyncWriteExt;
 
     fn raw_rgb_packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         let mut packet = b"PRY2".to_vec();
@@ -488,7 +391,7 @@ mod tests {
         });
         let first = read_frame(&mut reader).await.unwrap();
         assert_eq!(
-            (first.width, first.height, first.format),
+            (first.width(), first.height(), first.format()),
             (1, 1, PixelFormat::RGB24)
         );
         assert_eq!(first.as_slice(), &[255, 0, 12]);
@@ -511,79 +414,6 @@ mod tests {
         ] {
             assert!(read_frame(&mut bytes.as_slice()).await.is_err());
         }
-    }
-
-    #[tokio::test]
-    async fn reconnects_after_bad_client_and_releases_listener_on_stop_or_drop() {
-        for (stop, rate) in [(true, 15), (false, 60)] {
-            let shutdown = CancellationToken::new();
-            let capturer =
-                WebosCapturer::new("127.0.0.1:0".parse().unwrap(), shutdown.clone()).unwrap();
-            let address = capturer.listener.local_addr().unwrap();
-            let completed = capturer.completion();
-            let mut frames = Box::pin(capturer.into_stream(640, 360, rate.try_into().unwrap()));
-            let mut bad = TcpStream::connect(address).await.unwrap();
-            bad.write_all(&[0; 16]).await.unwrap();
-            drop(bad);
-            let mut client = TcpStream::connect(address).await.unwrap();
-            for byte in HELLO.encode().unwrap() {
-                client.write_all(&[byte]).await.unwrap();
-            }
-            let mut prefix = [0; 4];
-            client.read_exact(&mut prefix).await.unwrap();
-            let length = ControlMessage::decode_length(prefix).unwrap();
-            let mut settings = vec![0; length];
-            client.read_exact(&mut settings).await.unwrap();
-            assert_eq!(
-                ControlMessage::decode(&settings).unwrap(),
-                ControlMessage::CaptureSettings {
-                    refresh_rate_hz: rate,
-                    capture_resolution: [640, 360],
-                }
-            );
-            client
-                .write_all(&raw_rgb_packet(1, 1, &[1, 2, 3]))
-                .await
-                .unwrap();
-            let frame = tokio::time::timeout(Duration::from_secs(1), frames.next())
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
-            assert_eq!(frame.as_slice(), &[1, 2, 3]);
-            // Cancellation also interrupts an incomplete payload.
-            client
-                .write_all(&raw_rgb_packet(1, 1, &[4, 5, 6])[..HEADER_LEN + 1])
-                .await
-                .unwrap();
-            if stop {
-                shutdown.cancel();
-                assert!(frames.next().await.is_none());
-            }
-            drop(frames);
-            tokio::time::timeout(Duration::from_secs(1), completed.cancelled())
-                .await
-                .unwrap();
-            assert!(std::net::TcpListener::bind(address).is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn cancellation_interrupts_a_stalled_handshake() {
-        let shutdown = CancellationToken::new();
-        let capturer =
-            WebosCapturer::new("127.0.0.1:0".parse().unwrap(), shutdown.clone()).unwrap();
-        let address = capturer.listener.local_addr().unwrap();
-        let completed = capturer.completion();
-        let mut frames = Box::pin(capturer.into_stream(2, 2, 30.try_into().unwrap()));
-        let _client = TcpStream::connect(address).await.unwrap();
-        shutdown.cancel();
-        assert!(frames.next().await.is_none());
-        drop(frames);
-        tokio::time::timeout(Duration::from_secs(1), completed.cancelled())
-            .await
-            .unwrap();
-        assert!(std::net::TcpListener::bind(address).is_ok());
     }
 
     #[tokio::test]
@@ -612,17 +442,9 @@ mod tests {
             let frame = read_frame_into(&mut packet.as_slice(), &mut scratch, &mut decoder)
                 .await
                 .unwrap();
-            assert_eq!(frame.width, 64);
-            assert_eq!(frame.height, 32);
+            assert_eq!(frame.width(), 64);
+            assert_eq!(frame.height(), 32);
             assert!(decoder.is_some());
         }
-    }
-
-    #[test]
-    fn bind_conflict_is_a_startup_error() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        assert!(
-            WebosCapturer::new(listener.local_addr().unwrap(), CancellationToken::new()).is_err()
-        );
     }
 }

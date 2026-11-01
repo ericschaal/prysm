@@ -15,6 +15,7 @@ pub enum ControlMessage {
     Hello {
         version: u32,
     },
+    Idle,
     CaptureSettings {
         refresh_rate_hz: u32,
         capture_resolution: [u32; 2],
@@ -24,6 +25,7 @@ pub enum ControlMessage {
 impl ControlMessage {
     pub fn validate(self) -> Result<Self> {
         match self {
+            Self::Idle => {}
             Self::Hello { version } => ensure!(version == 2, "unsupported webOS handshake version"),
             Self::CaptureSettings {
                 refresh_rate_hz,
@@ -209,6 +211,7 @@ mod tests {
     fn control_messages_are_versioned_bounded_and_validate_fields() {
         for message in [
             HELLO,
+            ControlMessage::Idle,
             ControlMessage::CaptureSettings {
                 refresh_rate_hz: 1,
                 capture_resolution: [2, 2],

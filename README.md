@@ -225,7 +225,7 @@ run Cargo commands from the repository root with `-p <crate-name>`.
 | `crates/capture/` | `prysm-capture`, `prysm-webos-protocol`, `webos-capture` | Frame streams, wire protocol, and standalone Rust webOS sender |
 | `crates/processing/` | `prysm-processor` | Sampling, black-bar detection, smoothing, brightness |
 | `crates/rendering/` | `prysm-renderer-wled`, `prysm-renderer-desktop` | WLED DDP and optional native egui output |
-| `crates/common/` | `prysm-core`, `prysm-contract`, `prysm-api` | Shared color/config types, validated REST DTOs, handlers and OpenAPI |
+| `crates/common/` | `prysm-core`, `prysm-contract`, `prysm-api` | Shared frame/color/config types and pixel conversion, validated REST DTOs, handlers and OpenAPI |
 
 `prysm-contract` owns configuration data and validation. The engine’s
 `apps/prysm/src/config.rs` owns file loading and pipeline restart decisions.

@@ -1,0 +1,5 @@
+{
+  "id": "io.prysm.capture.service",
+  "description": "Prysm TV capture supervisor",
+  "services": [{"name": "io.prysm.capture.service"}]
+}

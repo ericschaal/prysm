@@ -46,6 +46,8 @@ Changing output kind stops capture and requires
 a restart. Processing changes apply live for either renderer. Listen-address and allowed-host changes are saved but require an application
 restart. The current API keeps its original access policy until then. Settings
 that require unavailable build features are rejected before they are saved.
+When `restart_required` is set, the panel explains that Prysm must restart and
+disables power, source, and retry actions until the restart is complete.
 
 - `GET /api/config` returns the configuration and revision.
 - `PUT /api/config` accepts `{expected_revision, config}` and rejects stale writes
@@ -82,9 +84,21 @@ actor pipeline; success requires both processed frames and observed WLED live
 state. A failed start restores the previous lighting state where possible.
 Selecting a source while already Off does not turn on the lights.
 
+With the [webOS TV package](../packaging/webos/README.md), the TV sender stays
+available independently of capture. Prysm keeps its webOS listener open while
+the pipeline is off. Screen sync sends settings to the connected TV; Off or
+Effects ends the capture session and releases TV resources. A fresh worker then
+reconnects idle.
+The panel does not remotely start/stop TV processes. Wake the TV before enabling
+Screen sync; a start that is not confirmed within 12 seconds fails and rolls back.
+
 Accepted operations continue if a browser disconnects. Concurrent mutations are
 rejected while an operation is pending. Capture failures remain visible without
 stopping HTTP. Ctrl+C or SIGTERM drains the pipeline before application exit.
 
 The panel has no login. Restrict allowed hosts and use a trusted LAN/private VPN.
 See [actor runtime](actor-runtime.md) and [Debian deployment](../packaging/debian/README.md).
+
+If Prysm restarts before the panel observes an operation's completion, the panel
+releases its pending controls and reports that completion is unknown. Retry keeps
+the original requested target; it does not automatically repeat the operation.

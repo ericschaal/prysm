@@ -59,7 +59,7 @@ impl StreamHandler<Result<Frame>> for Capturer {
                 return;
             }
         };
-        prysm_metrics::frame(FrameStage::InputDelivered, frame.format.into());
+        prysm_metrics::frame(FrameStage::InputDelivered, frame.format().into());
         match self.processor.try_send(FrameUpdate(frame)) {
             Ok(()) => (),
             Err(SendError::Full(_)) => prysm_metrics::event(PipelineEvent::ProcessorMailboxFull),
@@ -156,13 +156,14 @@ mod tests {
             gate: Some(gate),
         }
         .start();
-        let first = processor.send(FrameUpdate(Frame::dummy(4, 4)));
+        let first = processor.send(FrameUpdate(Frame::dummy(4, 4).unwrap()));
         wait_until(|| received.get() == 1).await;
         let polled = Arc::new(AtomicUsize::new(0));
         let count = polled.clone();
-        let frames = stream::iter((0..8).map(|_| Ok(Frame::dummy(4, 4)))).inspect(move |_| {
-            count.fetch_add(1, Ordering::Relaxed);
-        });
+        let frames =
+            stream::iter((0..8).map(|_| Ok(Frame::dummy(4, 4).unwrap()))).inspect(move |_| {
+                count.fetch_add(1, Ordering::Relaxed);
+            });
         let capturer = Capturer::spawn(frames, processor.clone().recipient(), completion());
 
         wait_stopped(&capturer).await;
@@ -171,7 +172,7 @@ mod tests {
         release.send(()).unwrap();
         first.await.unwrap();
         processor
-            .send(FrameUpdate(Frame::dummy(4, 4)))
+            .send(FrameUpdate(Frame::dummy(4, 4).unwrap()))
             .await
             .unwrap();
         // Initial blocked frame, one queued capture frame, and the final awaited frame.
@@ -185,10 +186,13 @@ mod tests {
         drop(context);
         let polled = Arc::new(AtomicUsize::new(0));
         let count = polled.clone();
-        let frames =
-            stream::iter([Ok(Frame::dummy(4, 4)), Ok(Frame::dummy(4, 4))]).inspect(move |_| {
-                count.fetch_add(1, Ordering::Relaxed);
-            });
+        let frames = stream::iter([
+            Ok(Frame::dummy(4, 4).unwrap()),
+            Ok(Frame::dummy(4, 4).unwrap()),
+        ])
+        .inspect(move |_| {
+            count.fetch_add(1, Ordering::Relaxed);
+        });
         let capturer = Capturer::spawn(frames, processor, completion());
 
         wait_stopped(&capturer).await;
@@ -206,7 +210,7 @@ mod tests {
         .recipient();
         let frames = stream::iter([
             Err(anyhow::anyhow!("test capture failure")),
-            Ok(Frame::dummy(4, 4)),
+            Ok(Frame::dummy(4, 4).unwrap()),
         ]);
         let capturer = Capturer::spawn(frames, processor, completion());
 
@@ -226,7 +230,7 @@ mod tests {
         .recipient();
         let (resource, dropped) = oneshot::channel::<()>();
         let frames = stream::unfold(resource, |resource| async move {
-            Some((Ok(Frame::dummy(4, 4)), resource))
+            Some((Ok(Frame::dummy(4, 4).unwrap()), resource))
         });
         let capturer = Capturer::spawn(frames, processor, completion());
 

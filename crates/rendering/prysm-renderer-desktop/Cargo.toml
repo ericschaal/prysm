@@ -10,7 +10,6 @@ workspace = true
 [dependencies]
 tracing.workspace = true
 futures.workspace = true
-prysm-capture = { path = "../../capture/prysm-capture" }
 prysm-core = { path = "../../common/prysm-core" }
 
 # Desktop renderer dependencies

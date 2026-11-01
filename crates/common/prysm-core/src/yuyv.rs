@@ -1,3 +1,4 @@
+use crate::{Frame, PixelFormat};
 use yuv::{YuvPackedImage, YuvRange, YuvStandardMatrix, yuyv422_to_rgb};
 
 /// Decode one YUYV pixel using the frame's range and color matrix.
@@ -56,47 +57,110 @@ pub fn yuyv_pixel_to_rgb(
 /// For full-frame conversion, this is ~10x faster than pixel-by-pixel conversion
 /// due to SIMD optimizations. For sampling a small subset of pixels, use
 /// `yuyv_pixel_to_rgb` instead to avoid allocating the full RGB buffer.
-pub fn yuyv_to_rgb(
-    yuyv_data: &[u8],
-    width: usize,
-    height: usize,
-    range: YuvRange,
-    matrix: YuvStandardMatrix,
-) -> Vec<u8> {
+///
+/// # Errors
+/// Returns an error for a non-YUYV frame, RGB size overflow, or a decoder failure.
+pub fn yuyv_to_rgb(frame: &Frame) -> Result<Vec<u8>, ConversionError> {
     let mut rgb_data = Vec::new();
-    yuyv_to_rgb_into(yuyv_data, &mut rgb_data, width, height, range, matrix);
-    rgb_data
+    yuyv_to_rgb_into(frame, &mut rgb_data)?;
+    Ok(rgb_data)
 }
 
-/// Like [`yuyv_to_rgb`], but writes into a caller-provided buffer so that hot
-/// paths can reuse the allocation across frames.
-pub fn yuyv_to_rgb_into(
-    yuyv_data: &[u8],
-    rgb_out: &mut Vec<u8>,
-    width: usize,
-    height: usize,
-    range: YuvRange,
-    matrix: YuvStandardMatrix,
-) {
-    // Create packed image wrapper for YUYV data
-    // Stride is in components, YUYV has 2 components per pixel (4 bytes per 2 pixels)
-    let packed_image = YuvPackedImage {
-        yuy: yuyv_data,
-        yuy_stride: (width * 2) as u32,
-        width: width as u32,
-        height: height as u32,
+/// A frame cannot be converted to RGB using the YUYV decoder.
+#[derive(Debug)]
+pub enum ConversionError {
+    NotYuyv,
+    SizeOverflow,
+    Decode(yuv::YuvError),
+}
+
+impl std::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotYuyv => f.write_str("expected a YUYV frame"),
+            Self::SizeOverflow => f.write_str("RGB dimensions exceed the supported buffer size"),
+            Self::Decode(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ConversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// Like [`yuyv_to_rgb`], but reuses the output allocation. Empty frames clear it.
+///
+/// # Errors
+/// Returns an error for a non-YUYV frame, RGB size overflow, or a decoder failure.
+pub fn yuyv_to_rgb_into(frame: &Frame, rgb_out: &mut Vec<u8>) -> Result<(), ConversionError> {
+    let PixelFormat::YUYV { range, matrix } = frame.format() else {
+        return Err(ConversionError::NotYuyv);
     };
-
-    rgb_out.resize(width * height * 3, 0);
-    let rgb_stride = (width * 3) as u32;
-
+    let (width, height) = (frame.width(), frame.height());
+    if width == 0 || height == 0 {
+        rgb_out.clear();
+        return Ok(());
+    }
+    let rgb_size = PixelFormat::RGB24
+        .expected_size(width, height)
+        .map_err(|_| ConversionError::SizeOverflow)?
+        .ok_or(ConversionError::SizeOverflow)?;
+    let rgb_stride = width.checked_mul(3).ok_or(ConversionError::SizeOverflow)?;
+    let packed_image = YuvPackedImage {
+        yuy: frame.as_slice(),
+        yuy_stride: width.checked_mul(2).ok_or(ConversionError::SizeOverflow)?,
+        width,
+        height,
+    };
+    rgb_out.resize(rgb_size, 0);
     yuyv422_to_rgb(&packed_image, rgb_out, rgb_stride, range, matrix)
-        .expect("YUYV to RGB conversion failed");
+        .map_err(ConversionError::Decode)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decode(
+        data: &[u8],
+        width: u32,
+        height: u32,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    ) -> Vec<u8> {
+        let frame = Frame::new(
+            data.to_vec(),
+            width,
+            height,
+            PixelFormat::YUYV { range, matrix },
+        )
+        .unwrap();
+        yuyv_to_rgb(&frame).unwrap()
+    }
+
+    #[test]
+    fn conversion_handles_empty_frames_and_rejects_other_formats() {
+        let format = PixelFormat::YUYV {
+            range: YuvRange::Full,
+            matrix: YuvStandardMatrix::Bt601,
+        };
+        for (width, height) in [(0, 0), (0, 2), (2, 0)] {
+            let frame = Frame::new(vec![], width, height, format).unwrap();
+            let mut output = vec![1; 6];
+            yuyv_to_rgb_into(&frame, &mut output).unwrap();
+            assert!(output.is_empty());
+        }
+        assert!(matches!(
+            yuyv_to_rgb(&Frame::dummy(2, 1).unwrap()),
+            Err(ConversionError::NotYuyv)
+        ));
+        assert!(Frame::new(vec![], 2, 1, format).is_err());
+    }
 
     #[test]
     fn limited_range_black_and_white() {
@@ -108,7 +172,7 @@ mod tests {
             for (y, expected) in [(16, 0), (235, 255)] {
                 let data = [y, 128, y, 128];
                 assert_eq!(
-                    yuyv_to_rgb(&data, 2, 1, YuvRange::Limited, matrix),
+                    decode(&data, 2, 1, YuvRange::Limited, matrix),
                     [expected; 6]
                 );
                 assert_eq!(
@@ -132,7 +196,7 @@ mod tests {
                     for u in [0, 64, 128, 192, 255] {
                         for v in [0, 64, 128, 192, 255] {
                             let data = [y, u, y, v];
-                            let full = yuyv_to_rgb(&data, 2, 1, range, matrix);
+                            let full = decode(&data, 2, 1, range, matrix);
                             let (r, g, b) = yuyv_pixel_to_rgb(&data, 1, 0, 2, range, matrix);
                             for (actual, expected) in [r, g, b].into_iter().zip(full) {
                                 assert!(
@@ -151,7 +215,7 @@ mod tests {
     fn test_black_pixels() {
         // Black: Y=0, U=128, V=128 (neutral chroma)
         let yuyv = vec![0, 128, 0, 128];
-        let rgb = yuyv_to_rgb(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Should produce black (0, 0, 0) for both pixels
         assert_eq!(rgb, vec![0, 0, 0, 0, 0, 0]);
@@ -161,7 +225,7 @@ mod tests {
     fn test_white_pixels() {
         // White: Y=255, U=128, V=128 (neutral chroma)
         let yuyv = vec![255, 128, 255, 128];
-        let rgb = yuyv_to_rgb(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Should produce white (255, 255, 255) for both pixels
         assert_eq!(rgb, vec![255, 255, 255, 255, 255, 255]);
@@ -171,7 +235,7 @@ mod tests {
     fn test_gray_pixels() {
         // Gray: Y=128, U=128, V=128 (neutral chroma)
         let yuyv = vec![128, 128, 128, 128];
-        let rgb = yuyv_to_rgb(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Should produce gray (128, 128, 128) for both pixels
         assert_eq!(rgb, vec![128, 128, 128, 128, 128, 128]);
@@ -181,7 +245,7 @@ mod tests {
     fn test_output_dimensions() {
         // 4 pixels (2x2) = 8 YUYV bytes = 12 RGB bytes
         let yuyv = vec![128, 128, 128, 128, 128, 128, 128, 128];
-        let rgb = yuyv_to_rgb(&yuyv, 4, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 4, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Should produce 4 pixels * 3 bytes = 12 bytes
         assert_eq!(rgb.len(), 12);
@@ -192,7 +256,7 @@ mod tests {
         // Red tint: higher V value
         // Y=128, U=128, V=200 should produce reddish gray
         let yuyv = vec![128, 128, 128, 200];
-        let rgb = yuyv_to_rgb(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Red component should be higher than green/blue
         assert!(rgb[0] > rgb[1]); // R > G
@@ -204,7 +268,7 @@ mod tests {
         // Blue tint: higher U value
         // Y=128, U=200, V=128 should produce blueish gray
         let yuyv = vec![128, 200, 128, 128];
-        let rgb = yuyv_to_rgb(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let rgb = decode(&yuyv, 2, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Blue component should be higher than red/green
         assert!(rgb[2] > rgb[0]); // B > R
@@ -222,7 +286,7 @@ mod tests {
         ];
 
         // Full-frame conversion
-        let full_rgb = yuyv_to_rgb(&yuyv, 8, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
+        let full_rgb = decode(&yuyv, 8, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
 
         // Pixel-by-pixel conversion
         for x in 0..8 {

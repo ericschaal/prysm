@@ -1,16 +1,13 @@
 //! Capture interfaces, latest-frame delivery, and platform adapters.
-mod frame;
-pub use frame::{Frame, PixelFormat};
+pub use prysm_core::{Frame, FrameError, PixelFormat, YuvRange, YuvStandardMatrix, yuyv};
+mod receiver;
 mod webos;
-pub use webos::WebosCapturer;
+pub use receiver::WebosReceiver;
 
 use futures::{Stream, StreamExt};
 use std::num::NonZeroU32;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
-
-pub mod yuyv;
-pub use ::yuv::{YuvRange, YuvStandardMatrix};
 
 /// Terminal capture failures. Cancellation closes the stream successfully.
 #[derive(Debug, thiserror::Error)]
@@ -161,7 +158,7 @@ mod tests {
         // Simulate a consumer paused for eight capture intervals.
         for value in 1..=8 {
             sender
-                .send(Some(Frame::fill(value, 2, 1, PixelFormat::RGB24)))
+                .send(Some(Frame::fill(value, 2, 1, PixelFormat::RGB24).unwrap()))
                 .unwrap();
         }
         finished
@@ -189,7 +186,7 @@ mod tests {
         assert!(frames.next().await.is_none());
         drop(frames);
         assert!(sender.is_closed());
-        assert!(sender.send(Some(Frame::dummy(2, 1))).is_err());
+        assert!(sender.send(Some(Frame::dummy(2, 1).unwrap())).is_err());
     }
 
     #[tokio::test]

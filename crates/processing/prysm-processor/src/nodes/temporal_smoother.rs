@@ -38,7 +38,8 @@ impl TemporalSmoother {
                 (&mut prev.left, &input.left),
             ] {
                 if old.len() != new.len() {
-                    *old = ColorStrip::new(old.resample(new.len()));
+                    *old =
+                        ColorStrip::new(old.resample(new.len())).expect("sample count is nonzero");
                 }
             }
             prev.blend(&input, ratio as f32)

@@ -1,7 +1,9 @@
 use crate::actors::RenderFrame;
 use crate::actors::Stop;
 use crate::actors::pipeline::Completion;
-use actix::{Actor, ActorContext, Context, Handler, Message, Recipient, prelude::SendError};
+use actix::{
+    Actor, ActorContext, Context, Handler, Message, Recipient, StreamHandler, prelude::SendError,
+};
 use anyhow::anyhow;
 use prysm_capture::Frame;
 use prysm_contract::{ConfigRevision, PipelinePhase, PipelineStatus, ProcessingSettings};
@@ -14,6 +16,7 @@ pub struct Processor {
     renderer: Recipient<RenderFrame>,
     completion: Completion,
     status: watch::Sender<PipelineStatus>,
+    availability: Option<watch::Receiver<bool>>,
 }
 
 /// Frames are best effort: `try_send` drops incoming frames when the actor is busy.
@@ -32,14 +35,44 @@ impl Processor {
         renderer: Recipient<RenderFrame>,
         completion: Completion,
         status: watch::Sender<PipelineStatus>,
+        availability: Option<watch::Receiver<bool>>,
     ) -> Self {
         Self {
             frame_processor: PrysmProcessor::new(&settings.to_core()),
             renderer,
             completion,
             status,
+            availability,
         }
     }
+
+    fn update_availability(&self) {
+        let available = self
+            .availability
+            .as_ref()
+            .is_none_or(|receiver| *receiver.borrow());
+        self.status.send_modify(|status| {
+            if available {
+                if status.frames_processed > 0 {
+                    status.phase = PipelinePhase::Running;
+                }
+                status.error = None;
+            } else {
+                status.phase = PipelinePhase::Starting;
+                status.error = Some("input unavailable; waiting for frames".into());
+            }
+        });
+    }
+}
+
+impl StreamHandler<bool> for Processor {
+    fn handle(&mut self, _: bool, _: &mut Self::Context) {
+        // Read the latest value so queued frames or notifications cannot revive a disconnected input.
+        self.update_availability();
+    }
+
+    // The frame stream, not this observation channel, owns session completion.
+    fn finished(&mut self, _: &mut Self::Context) {}
 }
 
 impl Actor for Processor {
@@ -47,6 +80,17 @@ impl Actor for Processor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(1);
+        if let Some(availability) = self.availability.clone() {
+            self.update_availability();
+            Self::add_stream(
+                futures::stream::unfold(availability, |mut receiver| async {
+                    receiver.changed().await.ok()?;
+                    let available = *receiver.borrow_and_update();
+                    Some((available, receiver))
+                }),
+                ctx,
+            );
+        }
     }
 }
 
@@ -57,7 +101,7 @@ impl Handler<FrameUpdate> for Processor {
         let process_time = prysm_metrics::timer(Stage::FrameProcess);
         let colors = self.frame_processor.process_frame(msg.0.clone());
         drop(process_time);
-        prysm_metrics::frame(FrameStage::Processed, msg.0.format.into());
+        prysm_metrics::frame(FrameStage::Processed, msg.0.format().into());
         let rendered = RenderFrame {
             frame: msg.0,
             viewport: self.frame_processor.viewport(),
@@ -75,9 +119,9 @@ impl Handler<FrameUpdate> for Processor {
             }
         }
         self.status.send_modify(|status| {
-            status.phase = PipelinePhase::Running;
             status.frames_processed = status.frames_processed.saturating_add(1);
         });
+        self.update_availability();
     }
 }
 
@@ -149,7 +193,36 @@ mod tests {
     }
 
     fn white_frame() -> FrameUpdate {
-        FrameUpdate(Frame::fill(255, 4, 4, PixelFormat::RGB24))
+        FrameUpdate(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap())
+    }
+
+    #[actix::test]
+    async fn queued_frame_cannot_report_a_disconnected_input_as_running() {
+        let output = RecordingRenderer {
+            colors: Rc::new(RefCell::new(Vec::new())),
+        }
+        .start();
+        let status = status();
+        let (availability, receiver) = watch::channel(true);
+        let processor = Processor::new(
+            &settings(),
+            output.recipient(),
+            completion(),
+            status.clone(),
+            Some(receiver),
+        )
+        .start();
+        processor.send(white_frame()).await.unwrap();
+        assert_eq!(status.borrow().phase, PipelinePhase::Running);
+        availability.send_replace(false);
+        processor.send(white_frame()).await.unwrap();
+        assert_eq!(status.borrow().frames_processed, 2);
+        assert_eq!(status.borrow().phase, PipelinePhase::Starting);
+        assert!(status.borrow().error.is_some());
+        availability.send_replace(true);
+        processor.send(white_frame()).await.unwrap();
+        assert_eq!(status.borrow().phase, PipelinePhase::Running);
+        assert!(status.borrow().error.is_none());
     }
 
     #[actix::test]
@@ -165,6 +238,7 @@ mod tests {
             output.clone().recipient(),
             completion(),
             status(),
+            None,
         )
         .start();
 
@@ -209,6 +283,7 @@ mod tests {
             output.clone().recipient(),
             completion(),
             status(),
+            None,
         )
         .start();
 
@@ -227,7 +302,7 @@ mod tests {
         let output = context.address().recipient();
         drop(context);
         let (completion, mut outcomes) = tokio::sync::mpsc::channel(3);
-        let processor = Processor::new(&settings(), output, completion, status()).start();
+        let processor = Processor::new(&settings(), output, completion, status(), None).start();
 
         processor.send(white_frame()).await.unwrap();
         let error = outcomes.recv().await.unwrap().unwrap_err();

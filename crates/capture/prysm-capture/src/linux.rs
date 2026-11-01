@@ -242,7 +242,7 @@ impl PrysmCapturer for V4lCapturer {
                         + std::time::Duration::from_secs(1) / refresh_rate_hz.get(),
                 );
                 let pixel_format = match format.fourcc.str() {
-                    Ok("YUYV") => PixelFormat::YUYV,
+                    Ok("YUYV") => PixelFormat::YUYV { range, matrix },
                     Ok("RGB3") => PixelFormat::RGB24,
                     Ok("BGR3") => PixelFormat::BGR24,
                     _ => {
@@ -259,7 +259,7 @@ impl PrysmCapturer for V4lCapturer {
                     }
                     match input_stream.next() {
                         Ok((buffer, metadata)) => {
-                            let Some(mut frame) =
+                            let Some(frame) =
                                 buffer.get(..metadata.bytesused as usize).and_then(|data| {
                                     Frame::from_strided_buffer(
                                         data,
@@ -274,8 +274,6 @@ impl PrysmCapturer for V4lCapturer {
                                 tracing::warn!("Discarding corrupt or incomplete capture frame");
                                 continue;
                             };
-                            frame.yuv_range = range;
-                            frame.yuv_matrix = matrix;
                             if tx.send(Some(frame)).is_err() {
                                 return Ok(());
                             }

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Opt-in Prometheus telemetry for Prysm nodes"
 
 [dependencies]
+prysm-core = { path = "../prysm-core" }
 anyhow.workspace = true
 prysm-webos-protocol = { path = "../../capture/prysm-webos-protocol" }
 prometheus-client.workspace = true

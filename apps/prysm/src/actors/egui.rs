@@ -24,7 +24,7 @@ impl Handler<RenderFrame> for Egui {
     type Result = ();
 
     fn handle(&mut self, msg: RenderFrame, _: &mut Self::Context) {
-        prysm_metrics::frame(FrameStage::PreviewPublished, msg.frame.format.into());
+        prysm_metrics::frame(FrameStage::PreviewPublished, msg.frame.format().into());
         self.frames.send_replace(DisplayFrame {
             frame: msg.frame,
             viewport: msg.viewport,
@@ -51,11 +51,11 @@ mod tests {
     async fn publishes_source_crop_and_colors_to_the_gui() {
         let (colors, colors_rx) = watch::channel(EdgeColors::default());
         let (frames, frames_rx) = watch::channel(DisplayFrame {
-            frame: Frame::dummy(4, 4),
+            frame: Frame::dummy(4, 4).unwrap(),
             viewport: None,
         });
         let renderer = Egui { colors, frames }.start();
-        let frame = Frame::fill(255, 4, 4, prysm_capture::PixelFormat::RGB24);
+        let frame = Frame::fill(255, 4, 4, prysm_capture::PixelFormat::RGB24).unwrap();
         let viewport = Some(Viewport::full_frame(4, 4));
         let colors = EdgeColors::fill(LinearColor::new(1.0, 0.0, 0.0), 4, 4, SampleDensity(128));
         renderer
@@ -66,9 +66,9 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(std::sync::Arc::ptr_eq(
-            &frames_rx.borrow().frame.data,
-            &frame.data
+        assert!(std::ptr::eq(
+            frames_rx.borrow().frame.as_slice(),
+            frame.as_slice()
         ));
         assert_eq!(frames_rx.borrow().viewport, viewport);
         assert_eq!(*colors_rx.borrow(), colors);

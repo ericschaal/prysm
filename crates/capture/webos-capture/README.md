@@ -41,8 +41,10 @@ webOS compatibility build; runtime behavior still needs hardware validation.
 
 `dist` contains the executable, permissions, and license notices. LG's capture
 libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV. No Hyperion
-libraries or upstream checkout is required. IPK packaging, autostart, and
-standby/wake integration are not implemented.
+libraries or upstream checkout is required. The [TV app package](../../../packaging/webos/README.md)
+adds IPK packaging, Luna permission setup, opt-in boot startup, and a power-aware
+supervisor. Installation, Luna access, capture, and panel start/stop were verified
+on the TV above; cold boot and standby/wake remain unverified.
 
 ## Usage
 
@@ -130,7 +132,7 @@ time and both machines' CPU use. Hardware encoding is not used.
 Each TCP connection owns fresh codec state and begins with SPS/PPS plus an IDR.
 The receiver decodes every access unit before publishing the latest frame; it
 never drops reference packets to catch up. A write failure closes the connection,
-discards encoder state, and reconnects using the existing backoff. Slow networking
+discards encoder state, and exits. The TV service starts a fresh worker. Slow networking
 can still cause TCP head-of-line delay; there is no frame queue in the sender.
 The new binary has been cross-built with the webOS SDK; H.264 performance and
 thermal behavior still need validation on the TV.
@@ -274,20 +276,25 @@ network backoff, capture and composition are paused.
 Safe `nix` polling preserves one deadline across every partial write. TCP buffers can
 still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
-Each TCP connection begins with a control handshake. Both control messages are
-Serde JSON, prefixed by a four-byte unsigned big-endian payload length (1–128
-bytes). The sender sends `{"type":"hello","version":2}`; Prysm replies with
-`{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[640,360]}`
-using its configured input settings. Unknown versions, message types, fields,
-invalid rates/dimensions, and oversized messages
-are rejected. The handshake has a one-second deadline. Old senders/receivers
-without this handshake are incompatible; upgrade both together.
+Each TCP connection begins with bounded, length-prefixed Serde JSON control
+messages (four-byte unsigned big-endian length, 1–128 bytes). The sender sends
+`{"type":"hello","version":2}`. Prysm responds with either
+`{"type":"idle"}` when capture is off, or
+`{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[640,360]}`.
+After an idle response, the sender waits for capture settings without opening
+video/UI devices. The initial handshake and each partial control message have a
+one-second deadline; the idle wait is interruptible and has no time limit.
+Unknown versions, message types/fields, invalid rates/dimensions, and oversized
+messages are rejected.
 
-The sender connects before acquiring video/UI frames. On connection failure it
-backs off without capturing; on reconnect it negotiates again, recreates video
-capture when the rate or resolution changes, reopens UI surfaces when resized,
-and initializes a fresh H.264 encoder. Changing Prysm's input rate or resolution
-recreates its receiver session, causing this reconnect.
+Prysm listens while running with webOS input, independently of pipeline state.
+Starting the pipeline sends settings to an idle TV. Stopping it closes that
+capture connection; the worker exits and the TV service launches a fresh worker
+that reconnects idle. Initial connection failure also exits; only the service
+retries. This process boundary reclaims native LG state retained during UI
+teardown. Changing input rate or resolution starts a new capture session with
+fresh native resources and H.264 encoder. Update the host and TV package together
+to use idle connections. Standalone invocation handles exactly one connection.
 
 After the handshake, frames retain their 24-byte binary header and payload:
 

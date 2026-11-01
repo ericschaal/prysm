@@ -205,10 +205,7 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
         };
         match (u32::try_from(width), u32::try_from(height)) {
             (Ok(width), Ok(height)) => {
-                let mut frame = Frame::new(data, width, height, PixelFormat::YUYV);
-                frame.yuv_range = range;
-                frame.yuv_matrix = matrix;
-                Some(frame)
+                Frame::new(data, width, height, PixelFormat::YUYV { range, matrix }).ok()
             }
             _ => None,
         }
@@ -643,7 +640,12 @@ mod tests {
             frame.as_slice(),
             [16, 128, 235, 128, 16, 128, 235, 128].repeat(2)
         );
-        assert_eq!(frame.yuv_range, YuvRange::Limited);
-        assert_eq!(frame.yuv_matrix, YuvStandardMatrix::Bt709);
+        assert_eq!(
+            frame.format(),
+            PixelFormat::YUYV {
+                range: YuvRange::Limited,
+                matrix: YuvStandardMatrix::Bt709
+            }
+        );
     }
 }

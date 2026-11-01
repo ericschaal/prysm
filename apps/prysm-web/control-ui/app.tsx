@@ -87,11 +87,11 @@ function App() {
       setConfig(snapshot.config);
       setConnectionError('');
       // A fresh observation may already include a later operation from another client.
-      if (current.awaiting !== null && next.operation.kind !== 'pending' && next.operation.kind !== 'idle') {
+      if (current.awaiting !== null && next.operation.kind !== 'pending') {
         current.awaiting = null;
         setAwaiting(null);
-        setRequestError('');
-        if (next.operation.kind !== 'failed') current.requested = null;
+        setRequestError(next.operation.kind === 'idle' ? 'Prysm restarted; completion is unknown. Check status or retry.' : '');
+        if (next.operation.kind === 'succeeded') current.requested = null;
       }
       if (next.operation.kind !== 'pending' && current.awaiting === null) current.action = null;
     } catch (error) {
@@ -151,9 +151,10 @@ function App() {
   const pending = busy || data?.operation.kind === 'pending' || awaiting !== null;
   const mismatch = !!observed && !confirmed(observed, data!.source, !wledControl);
   const available = !!data && !connectionError;
+  const restartRequired = !!data?.restart_required;
   const operationError = data?.operation.kind === 'failed' ? data.operation.error.message : '';
   const error = connectionError || requestError || data?.observation_error || operationError || data?.pipeline.error;
-  const needsAttention = !!error || mismatch;
+  const needsAttention = !!error || mismatch || restartRequired;
   const power = observed?.power ? 'On' : observed && !mismatch ? 'Off' : 'Unknown';
   const source = data?.source || 'prysm';
   const powerPending = pending && operation.current.action === 'power';
@@ -161,6 +162,7 @@ function App() {
   let message = data ? '' : 'Connecting to your lights…';
   if (connectionError) message = 'Connection lost. Checking again automatically.';
   else if (pending) message = '';
+  else if (restartRequired) message = 'Restart Prysm to apply the saved settings.';
   else if (requestError) message = 'Change not confirmed. Check status or retry.';
   else if (data?.observation_error || (data && !observed)) message = 'Light status unknown. Check device connections and capture.';
   else if (operationError) message = 'Couldn’t apply the change. Try again.';
@@ -169,7 +171,7 @@ function App() {
   else if (mismatch) message = 'Selected state is not confirmed. Retry or turn the lights off.';
 
   const retryTarget = operation.current.requested || (observed ? { power: observed.power, source } : null);
-  const disabled = !available || !observed || pending;
+  const disabled = !available || !observed || pending || restartRequired;
 
   return <main>
     <header>
@@ -198,8 +200,8 @@ function App() {
 
     {needsAttention ? <section className="recovery" aria-label="Connection and recovery">
       <div className="recovery-actions">
-        <button id="retry" disabled={pending} onClick={() => available && retryTarget ? setState(retryTarget) : poll()}>{available && retryTarget ? 'Retry change' : 'Check connection'}</button>
-        {available ? <button id="off" disabled={pending} onClick={() => setState({ power: false, source })}>{directOutput ? 'Stop output' : 'Turn lights off'}</button> : null}
+        <button id="retry" disabled={pending || restartRequired} onClick={() => available && retryTarget ? setState(retryTarget) : poll()}>{available && retryTarget ? 'Retry change' : 'Check connection'}</button>
+        {available ? <button id="off" disabled={pending || restartRequired} onClick={() => setState({ power: false, source })}>{directOutput ? 'Stop output' : 'Turn lights off'}</button> : null}
       </div>
       {error ? <details><summary>Technical details</summary><p>{error}</p></details> : null}
     </section> : null}

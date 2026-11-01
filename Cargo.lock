@@ -3675,6 +3675,7 @@ dependencies = [
  "futures",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "prysm-core",
  "prysm-metrics",
  "prysm-webos-protocol",
  "thiserror 2.0.21",
@@ -3703,6 +3704,9 @@ dependencies = [
 [[package]]
 name = "prysm-core"
 version = "0.1.0"
+dependencies = [
+ "yuv",
+]
 
 [[package]]
 name = "prysm-metrics"
@@ -3710,6 +3714,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "prometheus-client",
+ "prysm-core",
  "prysm-webos-protocol",
  "sysinfo",
  "tiny_http",
@@ -3720,7 +3725,6 @@ name = "prysm-processor"
 version = "0.1.0"
 dependencies = [
  "futures",
- "prysm-capture",
  "prysm-core",
  "tracing",
 ]
@@ -3732,7 +3736,6 @@ dependencies = [
  "eframe",
  "egui",
  "futures",
- "prysm-capture",
  "prysm-core",
  "tokio",
  "tokio-util",
@@ -3778,6 +3781,8 @@ dependencies = [
  "nix",
  "prysm-metrics",
  "prysm-webos-protocol",
+ "serde",
+ "serde_json",
  "signal-hook",
  "tracing",
  "tracing-subscriber",

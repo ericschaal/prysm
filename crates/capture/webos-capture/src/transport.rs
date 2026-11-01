@@ -20,21 +20,19 @@ const DEADLINE: Duration = Duration::from_millis(100);
 #[derive(Debug, PartialEq, Eq)]
 pub enum SendOutcome {
     Sent,
-    Backoff,
     EncoderSkipped,
 }
 
 pub struct Sender {
     destination: SocketAddr,
     socket: Option<TcpStream>,
-    retry_after: Instant,
     compression: Compression,
     scratch: Vec<u8>,
-    has_connected: bool,
     encoder: Option<prysm_webos_protocol::h264::Encoder>,
     pub h264_bitrate: u32,
     pub fps: u8,
     pub capture_resolution: [u32; 2],
+    pub capturing: bool,
 }
 
 impl Sender {
@@ -42,33 +40,35 @@ impl Sender {
         Self {
             destination,
             socket: None,
-            retry_after: Instant::now(),
             compression,
             scratch: Vec::new(),
-            has_connected: false,
             encoder: None,
             h264_bitrate: 2_000_000,
             fps: 30,
             capture_resolution: [320, 180],
+            capturing: false,
         }
     }
 
+    #[cfg(test)]
     pub fn connected(&self) -> bool {
         self.socket.is_some()
     }
 
-    pub fn ready(&self) -> bool {
-        self.socket.is_some() || Instant::now() >= self.retry_after
+    /// Detect receiver shutdown even when the driver produces no frames.
+    pub fn check_connection(&self) -> Result<()> {
+        let socket = self.socket.as_ref().context("receiver is not connected")?;
+        match socket.peek(&mut [0]) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(_) => anyhow::bail!("receiver closed or sent unexpected control data"),
+        }
     }
 
-    /// Negotiate capture settings before acquiring or encoding any frames.
-    /// Returns false while reconnect backoff is active.
-    pub fn connect(&mut self) -> Result<bool> {
+    /// Negotiate one capture connection before acquiring or encoding frames.
+    pub fn connect(&mut self) -> Result<()> {
         if self.socket.is_some() {
-            return Ok(true);
-        }
-        if !self.ready() {
-            return Ok(false);
+            return self.check_connection();
         }
         let result: Result<()> = (|| {
             prysm_metrics::event(FrameSenderEvent::ConnectAttempt);
@@ -90,29 +90,47 @@ impl Sender {
                 .context("cannot send webOS hello")?;
             let message =
                 read_settings(&mut connected).context("cannot read webOS capture settings")?;
-            let ControlMessage::CaptureSettings {
-                refresh_rate_hz,
-                capture_resolution,
-            } = message
-            else {
-                anyhow::bail!("expected webOS capture settings");
-            };
-            self.fps = u8::try_from(refresh_rate_hz)?;
-            self.capture_resolution = capture_resolution;
+            if message != ControlMessage::Idle {
+                self.apply_settings(message)?;
+            }
             self.socket = Some(connected);
-            prysm_metrics::event(if self.has_connected {
-                FrameSenderEvent::Reconnected
-            } else {
-                FrameSenderEvent::Connected
-            });
-            self.has_connected = true;
+            prysm_metrics::event(FrameSenderEvent::Connected);
             Ok(())
         })();
-        if result.is_err() {
-            self.retry_after = Instant::now() + Duration::from_secs(1);
+        result.with_context(|| format!("negotiating capture with {}", self.destination))
+    }
+
+    fn apply_settings(&mut self, message: ControlMessage) -> Result<()> {
+        let ControlMessage::CaptureSettings {
+            refresh_rate_hz,
+            capture_resolution,
+        } = message
+        else {
+            anyhow::bail!("expected webOS capture settings");
+        };
+        self.fps = u8::try_from(refresh_rate_hz)?;
+        self.capture_resolution = capture_resolution;
+        self.capturing = true;
+        Ok(())
+    }
+
+    /// An idle connection owns no capture resources. Bound partial control messages once data arrives.
+    pub fn wait_for_capture(&mut self, stop: &std::sync::atomic::AtomicBool) -> Result<bool> {
+        while !self.capturing && !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let socket = self.socket.as_mut().context("receiver is not connected")?;
+            match socket.peek(&mut [0]) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+                Err(error) => return Err(error.into()),
+                Ok(0) => anyhow::bail!("receiver disconnected"),
+                Ok(_) => {
+                    let message = read_settings(socket)?;
+                    self.apply_settings(message)?;
+                }
+            }
         }
-        result.with_context(|| format!("negotiating capture with {}", self.destination))?;
-        Ok(true)
+        Ok(self.capturing)
     }
 
     /// Send on the negotiated connection, without a frame queue or implicit reconnect.
@@ -129,10 +147,7 @@ impl Sender {
             prysm_metrics::event(EncoderEvent::InputRejected);
             anyhow::bail!("incorrect sender frame length");
         }
-        if self.socket.is_none() {
-            prysm_metrics::event(FrameSenderEvent::BackoffSkipped);
-            return Ok(SendOutcome::Backoff);
-        }
+        anyhow::ensure!(self.socket.is_some(), "receiver is not connected");
         let result: Result<SendOutcome> = (|| {
             header.codec = prysm_webos_protocol::Codec::Raw;
             let encode_time = prysm_metrics::timer(Stage::FrameEncode);
@@ -217,7 +232,6 @@ impl Sender {
             // A partially written frame cannot be resumed on a later connection.
             self.socket = None;
             self.encoder = None;
-            self.retry_after = Instant::now() + Duration::from_secs(1);
         }
         result.with_context(|| format!("sending capture to {}", self.destination))
     }
@@ -357,6 +371,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn receiver_close_is_visible_without_sending_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::None);
+        let receiver = thread::spawn(move || accept(&listener, 30));
+        sender.connect().unwrap();
+        sender.check_connection().unwrap();
+        receiver
+            .join()
+            .unwrap()
+            .shutdown(std::net::Shutdown::Both)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while sender.check_connection().is_ok() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
     fn loopback_raw_and_compressed_frames_have_exact_boundaries() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -386,7 +419,7 @@ pub(crate) mod tests {
             codec: prysm_webos_protocol::Codec::Raw,
             payload_len: 600,
         };
-        assert!(sender.connect().unwrap());
+        sender.connect().unwrap();
         assert_eq!(
             sender.send(header, &[42; 600], Content::Video).unwrap(),
             SendOutcome::Sent
@@ -432,7 +465,7 @@ pub(crate) mod tests {
         let mut random = 1_u32;
         let mut sent = 0;
         let mut skipped = 0;
-        assert!(sender.connect().unwrap());
+        sender.connect().unwrap();
         assert_eq!(sender.fps, 60);
         for _ in 0..120 {
             for byte in &mut pixels {
@@ -442,7 +475,6 @@ pub(crate) mod tests {
             match sender.send(header, &pixels, Content::Video).unwrap() {
                 SendOutcome::Sent => sent += 1,
                 SendOutcome::EncoderSkipped => skipped += 1,
-                SendOutcome::Backoff => panic!("rate control must not disconnect"),
             }
             assert!(sender.socket.is_some());
             assert!(sender.encoder.is_some());
@@ -481,7 +513,7 @@ pub(crate) mod tests {
             payload_len: 64 * 32 * 3,
         };
         let pixels = [255, 0, 0].repeat(64 * 32);
-        assert!(sender.connect().unwrap());
+        sender.connect().unwrap();
         assert_eq!(
             sender.send(header, &pixels, Content::Blended).unwrap(),
             SendOutcome::Sent
@@ -494,8 +526,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(sender.send(header, &pixels, Content::Blended).is_err());
         assert!(sender.encoder.is_none());
-        sender.retry_after = Instant::now();
-        assert!(sender.connect().unwrap());
+        sender.connect().unwrap();
         assert_eq!(sender.capture_resolution, [32, 16]);
         let header = Header {
             width: 32,
@@ -513,7 +544,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn refuses_connection_then_backs_off_without_queuing() {
+    fn refuses_connection_without_queuing_frames() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
@@ -526,22 +557,16 @@ pub(crate) mod tests {
             payload_len: 3,
         };
         assert!(sender.connect().is_err());
-        assert!(!sender.ready());
-        assert_eq!(
-            sender.send(header, &[0; 3], Content::Video).unwrap(),
-            SendOutcome::Backoff
-        );
+        assert!(sender.send(header, &[0; 3], Content::Video).is_err());
         assert!(sender.socket.is_none());
         let listener = TcpListener::bind(address).unwrap();
-        sender.retry_after = Instant::now();
-        assert!(sender.ready());
         let receiver = thread::spawn(move || {
             let mut socket = accept(&listener, 15);
             let mut bytes = [0; HEADER_LEN + 3];
             socket.read_exact(&mut bytes).unwrap();
             assert_eq!(&bytes[HEADER_LEN..], &[1, 2, 3]);
         });
-        assert!(sender.connect().unwrap());
+        sender.connect().unwrap();
         assert_eq!(sender.fps, 15);
         assert_eq!(
             sender.send(header, &[1, 2, 3], Content::Video).unwrap(),
@@ -551,7 +576,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn telemetry_attributes_connect_encoding_backoff_and_write_timeout() {
+    fn telemetry_attributes_connect_encoding_and_write_timeout() {
         // One opt-in exporter for this test process. Other transport tests may
         // add samples concurrently, so assertions test distinct label series.
         let exporter = prysm_metrics::start(
@@ -571,10 +596,7 @@ pub(crate) mod tests {
             payload_len: 3,
         };
         assert!(sender.connect().is_err());
-        assert_eq!(
-            sender.send(header, &[0; 3], Content::Video).unwrap(),
-            SendOutcome::Backoff
-        );
+        assert!(sender.send(header, &[0; 3], Content::Video).is_err());
         assert!(sender.send(header, &[0; 2], Content::Video).is_err());
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -596,7 +618,6 @@ pub(crate) mod tests {
                 .is_err()
         );
         assert!(sender.socket.is_none());
-        assert!(!sender.ready());
 
         let mut socket = TcpStream::connect(exporter.address()).unwrap();
         socket
@@ -607,7 +628,6 @@ pub(crate) mod tests {
         socket.read_to_string(&mut text).unwrap();
         for labels in [
             "component=\"FrameSender\",operation=\"Connect\",outcome=\"Failed\"",
-            "component=\"FrameSender\",operation=\"SendFrame\",outcome=\"SkippedBackoff\"",
             "component=\"FrameEncoder\",operation=\"ValidateInput\",outcome=\"Rejected\"",
             "component=\"FrameSender\",operation=\"WriteFrame\",outcome=\"TimedOut\"",
         ] {
@@ -637,7 +657,6 @@ pub(crate) mod tests {
             });
             assert!(sender.connect().is_err());
             assert!(!sender.connected());
-            assert!(!sender.ready());
             assert!(sender.encoder.is_none());
             receiver.join().unwrap();
         }
@@ -654,7 +673,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn stalled_handshake_times_out_and_enters_backoff() {
+    fn stalled_handshake_times_out() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::None);
         let receiver = thread::spawn(move || {
@@ -671,7 +690,6 @@ pub(crate) mod tests {
         );
         assert!(start.elapsed() < Duration::from_secs(2));
         assert!(!sender.connected());
-        assert!(!sender.ready());
         receiver.join().unwrap();
     }
 

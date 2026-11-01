@@ -612,3 +612,125 @@ async fn save_config(
     .unwrap();
     saved
 }
+
+#[tokio::test]
+async fn start_retries_saved_configuration_before_opening_the_input() {
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let desired = occupied.local_addr().unwrap();
+    let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = available.local_addr().unwrap();
+    drop(available);
+    let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+    config.web.listen = address;
+    config.web.allowed_hosts = vec!["*".into()];
+    config.wled = None;
+    config.input = prysm_contract::Input::File {
+        path: "/missing/old-input.mkv".to_owned().try_into().unwrap(),
+        capture_resolution: [4, 2].try_into().unwrap(),
+        refresh_rate_hz: 30.try_into().unwrap(),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("prysm.toml");
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
+        .arg("--config")
+        .arg(&path)
+        .kill_on_drop(true)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let endpoint = format!("http://{address}/api/state");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if client.get(&endpoint).send().await.is_ok() {
+                break;
+            }
+            assert!(child.try_wait().unwrap().is_none());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    config.input = prysm_contract::Input::Webos {
+        listen: desired,
+        capture_resolution: [4, 2].try_into().unwrap(),
+        refresh_rate_hz: 30.try_into().unwrap(),
+    };
+    let saved: Config = client
+        .put(format!("http://{address}/api/config"))
+        .json(&UpdateConfig {
+            expected_revision: config.revision,
+            config,
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let state = wait(&client, &endpoint).await;
+            if state.config_revision == saved.revision
+                && matches!(state.operation, OperationStatus::Failed { .. })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Retrying while the desired input is unavailable must never start the old input.
+    let accepted = client
+        .put(&endpoint)
+        .json(&Target {
+            power: true,
+            source: Source::Prysm,
+        })
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let failed = wait_operation(&client, &endpoint, accepted).await;
+    let OperationStatus::Failed { error, .. } = failed.operation else {
+        panic!("expected bind failure")
+    };
+    assert!(
+        error.message.contains("cannot listen for webOS"),
+        "{}",
+        error.message
+    );
+    assert_eq!(failed.pipeline.phase, prysm_contract::PipelinePhase::Idle);
+    drop(occupied);
+    let accepted = client
+        .put(&endpoint)
+        .json(&Target {
+            power: true,
+            source: Source::Prysm,
+        })
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let started = wait_operation(&client, &endpoint, accepted).await;
+    assert!(
+        matches!(started.operation, OperationStatus::Succeeded { .. }),
+        "{started:?}"
+    );
+    assert_eq!(started.applied_revision, Some(saved.revision));
+    assert!(tokio::net::TcpStream::connect(desired).await.is_ok());
+    child.kill().await.unwrap();
+}

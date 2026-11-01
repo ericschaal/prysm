@@ -1,7 +1,6 @@
 //! Rough per-frame pipeline cost: `cargo run --release -p prysm-processor --example bench`
 
-use prysm_capture::{Frame, PixelFormat};
-use prysm_core::Config;
+use prysm_core::{Config, Frame, PixelFormat};
 use prysm_processor::PrysmProcessor;
 use std::time::{Duration, Instant};
 
@@ -10,7 +9,16 @@ fn yuyv_frame(width: u32, height: u32, seed: u8) -> Frame {
     for (i, byte) in data.iter_mut().enumerate().step_by(2) {
         *byte = ((i / 7) as u8).wrapping_add(seed); // luma varies per frame
     }
-    Frame::new(data, width, height, PixelFormat::YUYV)
+    Frame::new(
+        data,
+        width,
+        height,
+        PixelFormat::YUYV {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        },
+    )
+    .unwrap()
 }
 
 fn bench(label: &str, width: u32, height: u32, vary: bool) {
@@ -41,14 +49,7 @@ fn bench_full_decode() {
     let start = Instant::now();
     let iterations = 120;
     for _ in 0..iterations {
-        prysm_capture::yuyv::yuyv_to_rgb_into(
-            &frame.data,
-            &mut rgb,
-            1920,
-            1080,
-            frame.yuv_range,
-            frame.yuv_matrix,
-        );
+        prysm_core::yuyv::yuyv_to_rgb_into(&frame, &mut rgb).unwrap();
         std::hint::black_box(&rgb);
     }
     let per_frame = start.elapsed() / iterations;

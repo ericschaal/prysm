@@ -1,5 +1,4 @@
-use prysm_capture::{Frame, PixelFormat};
-use prysm_core::{Color, LinearColor};
+use prysm_core::{Color, Frame, LinearColor, PixelFormat};
 
 pub use prysm_core::Viewport;
 
@@ -9,17 +8,17 @@ pub use prysm_core::Viewport;
 /// never needs a color conversion. Out-of-bounds coordinates read as black.
 /// RGB uses the brightest channel so dark colored pixels are not treated as black.
 pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
-    if x >= frame.width || y >= frame.height {
+    if x >= frame.width() || y >= frame.height() {
         return 0;
     }
-    match frame.format {
-        PixelFormat::YUYV => {
-            let idx = ((y * frame.width + x) * 2) as usize;
-            frame.data.get(idx).copied().unwrap_or(0)
+    match frame.format() {
+        PixelFormat::YUYV { .. } => {
+            let idx = ((y * frame.width() + x) * 2) as usize;
+            frame.as_slice().get(idx).copied().unwrap_or(0)
         }
         PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let idx = ((y * frame.width + x) * 3) as usize;
-            match frame.data.get(idx..idx + 3) {
+            let idx = ((y * frame.width() + x) * 3) as usize;
+            match frame.as_slice().get(idx..idx + 3) {
                 Some(px) => px[0].max(px[1]).max(px[2]),
                 None => 0,
             }
@@ -39,7 +38,7 @@ pub struct FrameView {
 
 impl FrameView {
     pub fn new(frame: Frame) -> Self {
-        let viewport = Viewport::full_frame(frame.width, frame.height);
+        let viewport = Viewport::full_frame(frame.width(), frame.height());
         Self { frame, viewport }
     }
 
@@ -64,12 +63,12 @@ impl FrameView {
 
         for y in y_start..y_end {
             let abs_y = self.viewport.y + y;
-            if abs_y >= self.frame.height {
+            if abs_y >= self.frame.height() {
                 break;
             }
             for x in x_start..x_end {
                 let abs_x = self.viewport.x + x;
-                if abs_x >= self.frame.width {
+                if abs_x >= self.frame.width() {
                     break;
                 }
                 if let Some(color) = self.pixel_srgb(abs_x, abs_y) {
@@ -91,22 +90,22 @@ impl FrameView {
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
     fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
-        match self.frame.format {
-            PixelFormat::YUYV => {
-                let (r, g, b) = prysm_capture::yuyv::yuyv_pixel_to_rgb(
-                    &self.frame.data,
+        match self.frame.format() {
+            PixelFormat::YUYV { range, matrix } => {
+                let (r, g, b) = prysm_core::yuyv::yuyv_pixel_to_rgb(
+                    self.frame.as_slice(),
                     x,
                     y,
-                    self.frame.width,
-                    self.frame.yuv_range,
-                    self.frame.yuv_matrix,
+                    self.frame.width(),
+                    range,
+                    matrix,
                 );
                 Some(Color::new(r, g, b))
             }
             PixelFormat::RGB24 | PixelFormat::BGR24 => {
-                let idx = ((y * self.frame.width + x) * 3) as usize;
-                let px = self.frame.data.get(idx..idx + 3)?;
-                Some(if self.frame.format == PixelFormat::BGR24 {
+                let idx = ((y * self.frame.width() + x) * 3) as usize;
+                let px = self.frame.as_slice().get(idx..idx + 3)?;
+                Some(if self.frame.format() == PixelFormat::BGR24 {
                     Color::new(px[2], px[1], px[0])
                 } else {
                     Color::new(px[0], px[1], px[2])
@@ -132,7 +131,16 @@ pub mod tests {
                 data.push(128); // V
             }
         }
-        Frame::new(data, width, height, PixelFormat::YUYV)
+        Frame::new(
+            data,
+            width,
+            height,
+            PixelFormat::YUYV {
+                range: prysm_core::YuvRange::Full,
+                matrix: prysm_core::YuvStandardMatrix::Bt601,
+            },
+        )
+        .unwrap()
     }
 
     #[test]

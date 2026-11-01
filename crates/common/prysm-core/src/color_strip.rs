@@ -1,4 +1,5 @@
 use crate::LinearColor;
+use std::num::NonZeroUsize;
 use std::ops::{Add, Mul};
 use std::sync::Arc;
 
@@ -34,25 +35,41 @@ pub struct ColorStrip {
     samples: Arc<Vec<LinearColor>>,
 }
 
+/// A color strip needs at least one sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmptyColorStrip;
+
+impl std::fmt::Display for EmptyColorStrip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("color strip must have at least one sample")
+    }
+}
+
+impl std::error::Error for EmptyColorStrip {}
+
 impl ColorStrip {
-    /// Create a new `ColorStrip` from a vector of linear color samples
-    pub fn new(samples: Vec<LinearColor>) -> Self {
-        assert!(
-            !samples.is_empty(),
-            "ColorStrip must have at least one sample"
-        );
-        Self {
+    /// Create a strip from linear color samples.
+    ///
+    /// # Errors
+    /// Returns [`EmptyColorStrip`] if no samples are supplied.
+    pub fn new(samples: Vec<LinearColor>) -> Result<Self, EmptyColorStrip> {
+        if samples.is_empty() {
+            return Err(EmptyColorStrip);
+        }
+        Ok(Self {
             samples: Arc::new(samples),
+        })
+    }
+
+    /// Create a nonempty strip filled with the specified color.
+    pub fn fill(color: LinearColor, count: NonZeroUsize) -> Self {
+        Self {
+            samples: Arc::new(vec![color; count.get()]),
         }
     }
 
-    /// Create a `ColorStrip` filled with the specified color
-    pub fn fill(color: LinearColor, count: usize) -> Self {
-        Self::new(vec![color; count])
-    }
-
-    /// Create a `ColorStrip` with all black samples
-    pub fn black(count: usize) -> Self {
+    /// Create a nonempty strip of black samples.
+    pub fn black(count: NonZeroUsize) -> Self {
         Self::fill(LinearColor::black(), count)
     }
 
@@ -113,13 +130,15 @@ impl ColorStrip {
                 color1.blend(&color2, ratio)
             })
             .collect();
-        ColorStrip::new(blended)
+        Self {
+            samples: Arc::new(blended),
+        }
     }
 }
 
 impl Default for ColorStrip {
     fn default() -> Self {
-        Self::black(1)
+        Self::black(NonZeroUsize::MIN)
     }
 }
 
@@ -138,7 +157,9 @@ impl Add for ColorStrip {
                 self.sample_at(pos) + other.sample_at(pos)
             })
             .collect();
-        Self::new(summed)
+        Self {
+            samples: Arc::new(summed),
+        }
     }
 }
 
@@ -147,7 +168,9 @@ impl Mul<f32> for ColorStrip {
 
     fn mul(self, scalar: f32) -> Self {
         let scaled: Vec<LinearColor> = self.samples.iter().map(|&c| c * scalar).collect();
-        Self::new(scaled)
+        Self {
+            samples: Arc::new(scaled),
+        }
     }
 }
 
@@ -179,9 +202,11 @@ impl EdgeColors {
         height: usize,
         sample_density: SampleDensity,
     ) -> Self {
-        let top_samples = sample_density.samples_for_length(width);
+        let top_samples = NonZeroUsize::new(sample_density.samples_for_length(width))
+            .expect("sample density produces at least one sample");
         let bottom_samples = top_samples;
-        let left_samples = sample_density.samples_for_length(height);
+        let left_samples = NonZeroUsize::new(sample_density.samples_for_length(height))
+            .expect("sample density produces at least one sample");
         let right_samples = left_samples;
 
         Self {
@@ -239,5 +264,23 @@ impl Mul<f32> for EdgeColors {
             bottom: self.bottom * scalar,
             left: self.left * scalar,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_construction_preserves_nonempty_invariant() {
+        assert_eq!(ColorStrip::new(vec![]), Err(EmptyColorStrip));
+        let color = LinearColor::new(1.0, 0.5, 0.0);
+        let strip = ColorStrip::new(vec![color]).unwrap();
+        assert_eq!(strip.sample_at(0.5), color);
+        assert_eq!(ColorStrip::fill(color, NonZeroUsize::MIN).len(), 1);
+        assert_eq!(
+            ColorStrip::black(NonZeroUsize::MIN).sample_at(0.0),
+            LinearColor::black()
+        );
     }
 }

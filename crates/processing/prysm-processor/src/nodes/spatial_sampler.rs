@@ -120,6 +120,7 @@ impl SpatialSampler {
                     })
                     .collect(),
             )
+            .expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
     }
@@ -129,8 +130,8 @@ impl SpatialSampler {
 mod tests {
     use super::*;
     use crate::frames::Viewport;
-    use prysm_capture::{Frame, PixelFormat};
     use prysm_core::Color;
+    use prysm_core::{Frame, PixelFormat};
 
     fn picture(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 3]) -> FrameView {
         let mut data = Vec::new();
@@ -139,7 +140,7 @@ mod tests {
                 data.extend(pixel(x, y));
             }
         }
-        FrameView::new(Frame::new(data, width, height, PixelFormat::RGB24))
+        FrameView::new(Frame::new(data, width, height, PixelFormat::RGB24).unwrap())
     }
 
     fn strips(colors: &EdgeColors) -> [&ColorStrip; 4] {

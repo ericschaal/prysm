@@ -80,15 +80,15 @@ mod tests {
                 .start()
                 .recipient();
         let edges = EdgeColors::new(
-            ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), 1),
-            ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), 1),
-            ColorStrip::fill(LinearColor::new(0.0, 0.0, 1.0), 1),
-            ColorStrip::fill(LinearColor::new(1.0, 1.0, 1.0), 1),
+            ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), std::num::NonZeroUsize::MIN),
+            ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), std::num::NonZeroUsize::MIN),
+            ColorStrip::fill(LinearColor::new(0.0, 0.0, 1.0), std::num::NonZeroUsize::MIN),
+            ColorStrip::fill(LinearColor::new(1.0, 1.0, 1.0), std::num::NonZeroUsize::MIN),
         );
 
         output
             .send(RenderFrame {
-                frame: Frame::dummy(4, 4),
+                frame: Frame::dummy(4, 4).unwrap(),
                 viewport: None,
                 colors: edges,
             })

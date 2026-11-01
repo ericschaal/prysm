@@ -243,12 +243,13 @@ mod tests {
         let gradient = ColorStrip::new(vec![
             LinearColor::new(0.0, 0.0, 0.0),
             LinearColor::new(1.0, 1.0, 1.0),
-        ]);
+        ])
+        .unwrap();
         let edges = EdgeColors::new(
             gradient.clone(),
-            ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), 1),
+            ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), std::num::NonZeroUsize::MIN),
             gradient,
-            ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]),
+            ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]).unwrap(),
         );
         renderer.render_edges(&edges, [3, 1, 2, 2]).unwrap();
         let bytes = receive(&socket);
@@ -268,7 +269,8 @@ mod tests {
     fn skips_missing_edges_and_samples_single_led_at_midpoint() {
         let (mut renderer, socket) = receiver();
         let edges = EdgeColors {
-            bottom: ColorStrip::new(vec![LinearColor::black(), LinearColor::new(1.0, 1.0, 1.0)]),
+            bottom: ColorStrip::new(vec![LinearColor::black(), LinearColor::new(1.0, 1.0, 1.0)])
+                .unwrap(),
             ..EdgeColors::default()
         };
         renderer.render_edges(&edges, [0, 0, 1, 0]).unwrap();

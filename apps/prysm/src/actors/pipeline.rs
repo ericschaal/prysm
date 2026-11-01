@@ -104,8 +104,9 @@ pub(super) async fn start(
     config: PipelineConfig,
     status: watch::Sender<PipelineStatus>,
     renderers: Renderers,
+    input: crate::input::InputSource,
 ) -> Result<Session> {
-    start_with_output(config, status, move |output, completion| {
+    start_with_output(config, status, input, move |output, completion| {
         renderers.create(output, completion)
     })
     .await
@@ -114,6 +115,7 @@ pub(super) async fn start(
 async fn start_with_output<F>(
     config: PipelineConfig,
     status: watch::Sender<PipelineStatus>,
+    input: crate::input::InputSource,
     create_output: F,
 ) -> Result<Session>
 where
@@ -128,7 +130,7 @@ where
     arbiter.spawn(async move {
         let mut ready = Some(ready_tx);
         let result = async {
-            let frames = crate::input::into_stream(config.input.clone(), worker_shutdown.clone())?;
+            let frames = input.into_stream(worker_shutdown.clone())?;
             run_session(
                 config,
                 frames,
@@ -191,6 +193,7 @@ where
             renderer.frames,
             completion.clone(),
             status,
+            input.availability,
         )
         .start();
         let capturer = Capturer::spawn(input.frames, processor.clone().recipient(), completion);
@@ -251,6 +254,7 @@ mod tests {
             crate::input::InputStream {
                 frames,
                 completed: None,
+                availability: None,
             },
             shutdown,
             status,
@@ -294,7 +298,7 @@ mod tests {
 
         let (colors, colors_rx) = watch::channel(EdgeColors::default());
         let (frames, frames_rx) = watch::channel(DisplayFrame {
-            frame: Frame::dummy(4, 4),
+            frame: Frame::dummy(4, 4).unwrap(),
             viewport: None,
         });
         let renderers = Renderers {
@@ -305,9 +309,12 @@ mod tests {
         let exit = run_session(
             config,
             crate::input::InputStream {
-                frames: stream::once(async { Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24)) })
-                    .boxed(),
+                frames: stream::once(async {
+                    Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap())
+                })
+                .boxed(),
                 completed: None,
+                availability: None,
             },
             CancellationToken::new(),
             watch::channel(super::super::runtime::idle()).0,
@@ -328,7 +335,8 @@ mod tests {
     async fn eof_drains_the_final_accepted_frame() {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let config = config(receiver.local_addr().unwrap().to_string());
-        let frames = stream::once(async { Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24)) });
+        let frames =
+            stream::once(async { Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap()) });
 
         let exit = test_session(config, frames.boxed(), CancellationToken::new())
             .await
@@ -400,6 +408,7 @@ mod tests {
                 crate::input::InputStream {
                     frames: stream::pending().boxed(),
                     completed: Some(completed),
+                    availability: None,
                 },
                 shutdown,
                 watch::channel(super::super::runtime::idle()).0,
@@ -458,7 +467,7 @@ mod tests {
     async fn final_render_failure_takes_precedence_over_eof() {
         // Broadcast sends fail without SO_BROADCAST; no packet leaves the socket.
         let config = config("255.255.255.255:4048".into());
-        let frames = stream::once(async { Ok(Frame::dummy(4, 4)) });
+        let frames = stream::once(async { Ok(Frame::dummy(4, 4).unwrap()) });
 
         let error = test_session(config, frames.boxed(), CancellationToken::new())
             .await
@@ -476,9 +485,10 @@ mod tests {
         let error = tokio::time::timeout(
             Duration::from_secs(2),
             start(
-                config,
+                config.clone(),
                 watch::channel(super::super::runtime::idle()).0,
                 Renderers::default(),
+                crate::input::InputSource::new(config.input.clone()).unwrap(),
             ),
         )
         .await

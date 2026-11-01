@@ -1,6 +1,6 @@
 //! Coordinate connection negotiation, frame capture, transmission, and pacing.
 use crate::{
-    capture::{Capture, NativeUi, UiCapture},
+    capture::{Capture, UiCapture},
     cli::{CaptureOptions, Cli, Compression},
     native::Video,
     transport::Sender,
@@ -12,61 +12,76 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn run(cli: &Cli, stop: &AtomicBool) -> Result<()> {
-    capture_loop(
-        cli,
-        stop,
-        Video::open,
-        cli.source.includes_ui().then(|| NativeUi::new(cli.source)),
-    )
+/// One negotiated receiver connection and its native capture resources.
+pub struct Session {
+    capture: Capture,
+    sender: Sender,
 }
 
+impl Session {
+    /// Connect before acquiring any video or UI resources.
+    pub fn connect(cli: &Cli) -> Result<Self> {
+        let mut sender = Sender::new(cli.receiver, cli.compression);
+        sender.h264_bitrate = cli.h264_bitrate;
+        sender.connect()?;
+
+        Ok(Self {
+            capture: Capture::new(cli),
+            sender,
+        })
+    }
+
+    pub fn wait_for_capture(&mut self, cli: &Cli, stop: &AtomicBool) -> Result<bool> {
+        let capturing = self.sender.wait_for_capture(stop)?;
+        if capturing {
+            record_capture_settings(cli, self.sender.fps, self.sender.capture_resolution);
+        }
+        Ok(capturing)
+    }
+
+    pub fn configure(&mut self, ui: &mut Option<impl UiCapture>) -> Result<()> {
+        self.capture
+            .configure(self.sender.fps, self.sender.capture_resolution, ui)
+    }
+
+    /// Native resources remain owned by the caller until the session is dropped.
+    pub fn run(
+        &mut self,
+        stop: &AtomicBool,
+        open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
+        capture_ui: &mut Option<impl UiCapture>,
+    ) -> Result<()> {
+        let mut next = Instant::now();
+        while !stop.load(Ordering::Relaxed) {
+            if let Err(error) = self.sender.check_connection() {
+                tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
+                return Ok(());
+            }
+            let work = prysm_metrics::timer(Stage::CaptureIteration);
+            if let Some(frame) = self.capture.capture(open_video, capture_ui)?
+                && let Err(error) = self.sender.send(frame.header, frame.pixels, frame.content)
+            {
+                tracing::warn!(error = %format!("{error:#}"), "frame send failed");
+                return Ok(());
+            }
+            drop(work);
+            pace(&mut next, self.sender.fps);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn capture_loop(
     cli: &Cli,
     stop: &AtomicBool,
     mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
     mut capture_ui: Option<impl UiCapture>,
 ) -> Result<()> {
-    let mut capture = Capture::new(cli);
-    let mut sender = Sender::new(cli.receiver, cli.compression);
-    sender.h264_bitrate = cli.h264_bitrate;
-    let mut next = Instant::now();
-    tracing::info!(
-        width = cli.capture.width,
-        height = cli.capture.height,
-        receiver = %cli.receiver,
-        compression = ?cli.compression,
-        composition_format = ?cli.composition_format,
-        "waiting for receiver capture settings"
-    );
-    while !stop.load(Ordering::Relaxed) {
-        let was_connected = sender.connected();
-        match sender.connect() {
-            Ok(true) => {}
-            Ok(false) => {
-                std::thread::sleep(Duration::from_millis(50));
-                continue;
-            }
-            Err(error) => {
-                tracing::warn!(error = %format!("{error:#}"), "capture handshake failed");
-                capture.release_video();
-                continue;
-            }
-        }
-        if !was_connected {
-            capture.configure(sender.fps, sender.capture_resolution, &mut capture_ui)?;
-            next = Instant::now();
-            record_capture_settings(cli, sender.fps, sender.capture_resolution);
-        }
-        let work = prysm_metrics::timer(Stage::CaptureIteration);
-        if let Some(frame) = capture.capture(&mut open_video, &mut capture_ui)?
-            && let Err(error) = sender.send(frame.header, frame.pixels, frame.content)
-        {
-            tracing::warn!(error = %format!("{error:#}"), "frame send failed");
-            capture.release_video();
-        }
-        drop(work);
-        pace(&mut next, sender.fps);
+    let mut session = Session::connect(cli)?;
+    if session.wait_for_capture(cli, stop)? {
+        session.configure(&mut capture_ui)?;
+        session.run(stop, &mut open_video, &mut capture_ui)?;
     }
     Ok(())
 }

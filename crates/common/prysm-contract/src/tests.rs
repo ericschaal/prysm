@@ -55,6 +55,9 @@ fn numeric_values_are_checked_at_deserialization() {
         "wled.local:0",
         "wled.local:4048/path",
         "user@wled.local:4048",
+        "127.0.0.1:4048\n",
+        "127.0.0.1:40\t48",
+        "127.0.0.1:4048\r",
     ] {
         assert!(WledAddress::try_from(value.to_owned()).is_err());
     }
