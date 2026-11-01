@@ -188,7 +188,53 @@ left = 1
     })
     .await
     .unwrap();
-    for path in ["/", "/missing", "/api/missing"] {
+    let response = client
+        .get(format!("http://{address}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "text/html");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let html = response.text().await.unwrap();
+    assert!(html.contains("<div id=\"root\">"));
+    let script = html
+        .split("src=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let asset = client
+        .get(format!("http://{address}{script}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(asset.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        asset.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    for path in ["/", script, "/api/state"] {
+        let response = client
+            .get(format!("http://{address}{path}"))
+            .header("Host", "attacker.test")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+    for path in ["/api/state", "/api/config"] {
+        let response = client
+            .put(format!("http://{address}{path}"))
+            .header("Sec-Fetch-Site", "cross-site")
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+    for path in ["/missing", "/api/missing"] {
         let response = client
             .get(format!("http://{address}{path}"))
             .send()
@@ -201,10 +247,8 @@ left = 1
         );
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         let message = response.text().await.unwrap();
-        assert!(message.contains("Prysm REST API"));
         assert!(message.contains("/api/state"));
         assert!(message.contains("/api/config"));
-        assert!(message.contains("8788"));
     }
     let initial = tokio::time::timeout(Duration::from_secs(5), async {
         loop {

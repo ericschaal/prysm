@@ -1,9 +1,9 @@
 # Web UI
 
-`prysm` owns configuration, the REST API, and capture → processing → rendering.
-`prysm-web` serves the React web UI and forwards requests to Prysm. They run
-independently and can live on separate machines. The web UI never reads or
-writes Prysm's TOML file or starts a pipeline in its own process.
+`prysm` owns configuration, the embedded React web UI, the REST API, and
+capture → processing → rendering. UI and API share `[web].listen` and
+`[web].allowed_hosts`. The optional standalone `prysm-web` can host the UI on a
+separate machine and forward API requests; it never reads or writes Prysm’s TOML.
 
 ## Run locally
 
@@ -22,10 +22,13 @@ npm run dev
 ```
 
 Open http://localhost:5173. Vite refreshes React and proxies `/api/` to port 8787.
-For production, run `cargo run -p prysm-web --
+Prysm also serves the production UI at http://localhost:8787. Its build requires
+Node.js 24 and npm to build and embed the assets. To host the UI separately, run
+`cargo run -p prysm-web --
 --backend http://127.0.0.1:8787`. The Rust build installs npm dependencies and builds/embeds the UI; Node.js 24
 and npm are required. Open http://localhost:8788.
-Use `--listen` and `--allowed-host` to expose the web UI on your LAN.
+For the embedded UI, configure `[web].listen` and `[web].allowed_hosts`, then
+restart Prysm. Only the standalone proxy uses `--listen` and `--allowed-host`.
 Prysm must allow the Host from the backend URL; the web UI validates browser
 Host and uses Tower’s CSRF middleware before forwarding. Cross-site writes are
 rejected using `Sec-Fetch-Site` or an Origin/Host comparison; requests without
@@ -44,7 +47,7 @@ model for disk and HTTP. Processing settings update through actor messages;
 input, capture resolution, and WLED output changes recreate a running session.
 Changing output kind stops capture and requires
 a restart. Processing changes apply live for either renderer. Listen-address and allowed-host changes are saved but require an application
-restart. The current API keeps its original access policy until then. Settings
+restart. The UI and API keep their original access policy until then. Settings
 that require unavailable build features are rejected before they are saved.
 When `restart_required` is set, the panel explains that Prysm must restart and
 disables power, source, and retry actions until the restart is complete.
@@ -73,8 +76,8 @@ replays the file. These controls call `PUT /api/state` with
 `GET /api/state` every 250 ms. Requests use `prysm-contract` types and run off the
 UI thread, with a three-second timeout and automatic state polling recovery.
 At file EOF the last frame stays visible and the REST API remains available;
-Start capture replays it. Closing the window stops Prysm but leaves `prysm-web`
-running. WLED output uses the lighting transitions below.
+Start capture replays it. Closing the window stops Prysm, including its embedded UI and API. An optional
+standalone `prysm-web` process remains running. WLED output uses the lighting transitions below.
 
 ## Lighting transitions
 

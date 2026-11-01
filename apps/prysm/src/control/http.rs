@@ -8,6 +8,7 @@ use axum::{
 };
 use prysm_api::{ApiFailure, App};
 use prysm_contract::{ErrorCode, WebConfig};
+use tower_http::csrf::CsrfLayer;
 
 async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Response {
     let host = request
@@ -25,7 +26,11 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
             origin == format!("http://{host}") || origin == format!("https://{host}")
         })
     });
-    if !allowed || !origin_ok {
+    let authority_ok = request
+        .uri()
+        .authority()
+        .is_none_or(|authority| authority.as_str() == host);
+    if !allowed || !origin_ok || !authority_ok {
         return ApiFailure::new(
             StatusCode::FORBIDDEN,
             ErrorCode::InvalidRequest,
@@ -34,8 +39,11 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
         .into_response();
     }
     let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .entry(header::CACHE_CONTROL)
+        .or_insert(axum::http::HeaderValue::from_static("no-store"));
     for (key, value) in [
-        ("cache-control", "no-store"),
         ("x-content-type-options", "nosniff"),
         (
             "content-security-policy",
@@ -54,13 +62,15 @@ pub(crate) fn router(app: App, web: WebConfig) -> Router {
     prysm_api::router()
         .split_for_parts()
         .0
+        .with_state(app)
+        .merge(prysm_web::assets_router())
         .fallback(async || {
             (
                 StatusCode::NOT_FOUND,
-                "404 Not Found\n\nThis is the Prysm REST API. Available endpoints: /api/state and /api/config.\nFor the web UI, open prysm-web (port 8788 by default).\n",
+                "404 Not Found\n\nAvailable endpoints: /, /api/state and /api/config.\n",
             )
         })
         .layer(DefaultBodyLimit::max(64 * 1024))
+        .layer(CsrfLayer::new())
         .layer(middleware::from_fn_with_state(web, guard))
-        .with_state(app)
 }

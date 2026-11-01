@@ -3927,6 +3927,7 @@ dependencies = [
  "prysm-processor",
  "prysm-renderer-desktop",
  "prysm-renderer-wled",
+ "prysm-web",
  "prysm-webos-protocol",
  "reqwest",
  "serde",
@@ -3936,6 +3937,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tower",
+ "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
 ]

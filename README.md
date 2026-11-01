@@ -84,7 +84,8 @@ The initial webOS 25 target still requires hardware validation.
 ## Get started
 
 Prysm owns capture, processing, rendering, its TOML configuration, and its REST
-API. `prysm-web` is an independent web UI that calls that API.
+API. The embedded web UI shares the API’s `[web]` listen address and host policy.
+Node.js 24 and npm are required when building the embedded UI.
 
 Edit [prysm.toml](prysm.toml) for your hardware, then start Prysm:
 
@@ -92,7 +93,7 @@ Edit [prysm.toml](prysm.toml) for your hardware, then start Prysm:
 cargo run -p prysm -- --config prysm.toml
 ```
 
-The API listens on port 8787. Startup leaves capture stopped. Start it through
+Open http://localhost:8787 for the UI and API. Startup leaves capture stopped. Start it through
 `PUT /api/state` or the web UI; processing and configuration work
 without a browser connected.
 
@@ -204,7 +205,8 @@ See the [web UI guide](docs/control-panel.md) for HTTP/configuration behavior.
 
 ## Architecture
 
-`prysm-web` serves the UI and forwards same-origin REST requests to a configured
+`prysm` serves the embedded UI and REST API on one listener configured by `[web]`.
+The optional standalone `prysm-web` forwards same-origin REST requests to a configured
 Prysm URL. It has no dependency on the engine crate and owns no configuration or
 pipeline. `prysm` exposes REST handlers through typed actor messages and owns
 configuration persistence, operations, and the capture lifecycle.
@@ -265,7 +267,7 @@ remain manual; the headless transport, renderer logic, and controller tests run 
 ## Debian deployment
 
 Build with `./scripts/build-deb.sh`. The package contains `prysm`, `prysm-web` with its bundled UI,
-and separate systemd services. Installation seeds a writable configuration under
+and systemd units for the engine and optional standalone UI. Installation seeds a writable configuration under
 `/etc/prysm/prysm.toml`; the service is disabled until configured.
 See the [Debian guide](packaging/debian/README.md).
 

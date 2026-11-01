@@ -66,17 +66,10 @@ pub fn router(backend: &str, allowed_hosts: Vec<String>) -> Result<Router> {
         }
         Ok::<_, Response>(())
     });
-    Ok(Router::new()
-        .route("/", axum::routing::get(index))
-        .route("/assets/{*path}", axum::routing::get(static_asset).layer(
-            SetResponseHeaderLayer::overriding(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=31536000, immutable"),
-            ),
-        ))
+    Ok(assets_router().merge(Router::new()
         .route("/api/state", axum::routing::get(proxy).put(proxy))
         .route("/api/config", axum::routing::get(proxy).put(proxy))
-        .with_state(backend)
+        .with_state(backend))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(CsrfLayer::new())
         .layer(host_policy)
@@ -90,6 +83,17 @@ pub fn router(backend: &str, allowed_hosts: Vec<String>) -> Result<Router> {
             header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"),
         )))
+}
+
+/// Embedded UI routes, protected by the hosting application's HTTP policy.
+pub fn assets_router() -> Router {
+    Router::new().route("/", axum::routing::get(index)).route(
+        "/assets/{*path}",
+        axum::routing::get(static_asset).layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        )),
+    )
 }
 
 async fn proxy(

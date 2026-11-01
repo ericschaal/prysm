@@ -70,6 +70,8 @@ axum.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls"] }
 serde_json.workspace = true
 prysm-api = { path = "../../crates/common/prysm-api" }
+prysm-web = { path = "../prysm-web" }
+tower-http = { workspace = true, features = ["csrf"] }
 atomic-write-file.workspace = true
 tempfile.workspace = true
 

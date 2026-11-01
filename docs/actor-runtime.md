@@ -48,11 +48,11 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:5173. For production, run `cargo run -p prysm-web` and
-open http://localhost:8788. The build installs npm dependencies and builds/embeds
-the UI; Node.js 24 and npm are required. This independent process forwards REST calls to Prysm
-on port 8787. It owns no pipeline or settings file; stopping it leaves capture
-and configuration untouched.
+Open http://localhost:5173 for frontend development. Prysm itself serves the
+production UI and REST API at http://localhost:8787, using the same `[web]`
+settings for both. Its build requires Node.js 24 and npm to embed the UI.
+The optional standalone `prysm-web` process can host the UI separately and
+forward API requests without owning a pipeline or settings file.
 
 ## Native output
 
