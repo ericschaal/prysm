@@ -32,13 +32,14 @@ impl Encoder {
         let config = EncoderConfig::new()
             .bitrate(BitRate::from_bps(bitrate))
             .max_frame_rate(FrameRate::from_hz(f32::from(fps)))
-            .intra_frame_period(IntraFramePeriod::from_num_frames(u32::from(fps)))
+            // TCP preserves references; reconnects already start with a fresh IDR.
+            .intra_frame_period(IntraFramePeriod::from_num_frames(0))
             .complexity(Complexity::Low)
             .profile(Profile::Baseline)
             .rate_control_mode(RateControlMode::Bitrate)
             .skip_frames(true)
             .num_threads(1)
-            .vui(VuiConfig::bt601());
+            .vui(VuiConfig::bt709());
         Ok(Self {
             inner: openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), config)?,
             planes: Vec::new(),
@@ -78,8 +79,8 @@ impl Encoder {
                 pixels,
                 header.width * 3,
                 YuvRange::Limited,
-                YuvStandardMatrix::Bt601,
-                YuvConversionMode::Fast,
+                YuvStandardMatrix::Bt709,
+                YuvConversionMode::Balanced,
             )?;
         } else {
             y.copy_from_slice(&pixels[..n]);
@@ -191,6 +192,19 @@ impl Decoder {
                         && u8::from(sps.profile_idc) == 66,
                     "unsupported H.264 sequence"
                 );
+                ensure!(
+                    sps.vui_parameters
+                        .as_ref()
+                        .and_then(|vui| vui.video_signal_type.as_ref())
+                        .is_some_and(|signal| {
+                            !signal.video_full_range_flag
+                                && signal
+                                    .colour_description
+                                    .as_ref()
+                                    .is_some_and(|color| color.matrix_coefficients == 1)
+                        }),
+                    "H.264 must signal limited-range BT.709"
+                );
             }
         }
         let decoded = self
@@ -218,7 +232,7 @@ impl Decoder {
             &mut rgb,
             header.width * 3,
             YuvRange::Limited,
-            YuvStandardMatrix::Bt601,
+            YuvStandardMatrix::Bt709,
         )?;
         Ok(rgb)
     }
@@ -228,6 +242,122 @@ impl Decoder {
 mod tests {
     use super::*;
     use crate::Codec;
+
+    #[test]
+    fn rejects_sps_with_wrong_matrix_or_range() {
+        for vui in [VuiConfig::bt601(), VuiConfig::bt709_full()] {
+            let mut encoder = Encoder::new(2_000_000, 30).unwrap();
+            encoder.inner = openh264::encoder::Encoder::with_api_config(
+                OpenH264API::from_source(),
+                EncoderConfig::new()
+                    .profile(Profile::Baseline)
+                    .max_frame_rate(FrameRate::from_hz(30.0))
+                    .vui(vui),
+            )
+            .unwrap();
+            let input = Header {
+                width: 32,
+                height: 32,
+                format: PixelFormat::Rgb,
+                codec: Codec::Raw,
+                payload_len: 32 * 32 * 3,
+            };
+            let mut payload = Vec::new();
+            encoder
+                .encode(input, &vec![0; input.payload_len], &mut payload)
+                .unwrap();
+            let wire = Header {
+                codec: Codec::H264,
+                payload_len: payload.len(),
+                ..input
+            };
+            let error = Decoder::new().unwrap().decode(wire, &payload).unwrap_err();
+            assert!(
+                error.to_string().contains("limited-range BT.709"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn constrained_bitrate_preserves_color_and_shadow_patch_averages() {
+        let colors = [
+            [0, 0, 0],
+            [4, 4, 4],
+            [8, 8, 8],
+            [16, 16, 16],
+            [32, 32, 32],
+            [128, 128, 128],
+            [235, 235, 235],
+            [255, 255, 255],
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [255, 255, 0],
+            [0, 255, 255],
+            [255, 0, 255],
+            [180, 95, 55],
+            [24, 40, 72],
+        ];
+        let input = Header {
+            width: 256,
+            height: 128,
+            format: PixelFormat::Rgb,
+            codec: Codec::Raw,
+            payload_len: 256 * 128 * 3,
+        };
+        let pixels: Vec<u8> = (0..128)
+            .flat_map(|y| (0..256).flat_map(move |x| colors[y / 32 * 4 + x / 64]))
+            .collect();
+        let mut encoder = Encoder::new(64_000, 30).unwrap();
+        let mut decoder = Decoder::new().unwrap();
+        let mut payload = Vec::new();
+        let mut total_bytes = 0;
+        let mut max_error = 0.0_f64;
+        for _ in 0..90 {
+            if encoder
+                .encode(input, &pixels, &mut payload)
+                .unwrap()
+                .is_none()
+            {
+                continue;
+            }
+            total_bytes += payload.len();
+            let rgb = decoder
+                .decode(
+                    Header {
+                        codec: Codec::H264,
+                        payload_len: payload.len(),
+                        ..input
+                    },
+                    &payload,
+                )
+                .unwrap();
+            for (patch, color) in colors.iter().enumerate() {
+                // Average patch interiors as LED sampling does, excluding subsampled boundaries.
+                let mut sums = [0_u32; 3];
+                for y in patch / 4 * 32 + 4..patch / 4 * 32 + 28 {
+                    for x in patch % 4 * 64 + 4..patch % 4 * 64 + 60 {
+                        for channel in 0..3 {
+                            sums[channel] += u32::from(rgb[(y * 256 + x) * 3 + channel]);
+                        }
+                    }
+                }
+                for channel in 0..3 {
+                    let error = (f64::from(sums[channel]) / (24.0 * 56.0)
+                        - f64::from(color[channel]))
+                    .abs();
+                    max_error = max_error.max(error);
+                    assert!(error <= 6.0, "patch {color:?}, channel {channel}: {error}");
+                }
+            }
+        }
+        assert!(total_bytes > 0);
+        eprintln!(
+            "color patches: {total_bytes} bytes / 3 s, max mean RGB error {max_error:.2}/255"
+        );
+    }
+
     #[test]
     fn rate_control_skips_inputs_without_breaking_reference_frames() {
         let mut encoder = Encoder::new(64_000, 60).unwrap();
@@ -289,8 +419,8 @@ mod tests {
                 let pixels = match format {
                     PixelFormat::Rgb => [255, 0, 0].repeat(64 * 34),
                     PixelFormat::Nv12 | PixelFormat::Nv16 => [
-                        vec![81; 64 * 34],
-                        [90, 240].repeat((input.payload_len - 64 * 34) / 2),
+                        vec![63; 64 * 34],
+                        [102, 240].repeat((input.payload_len - 64 * 34) / 2),
                     ]
                     .concat(),
                 };
@@ -299,9 +429,14 @@ mod tests {
                     .encode(input, &pixels, &mut payload)
                     .unwrap()
                     .expect("unconstrained solid frame");
-                if i == 0 || i == 30 {
-                    assert_eq!(kind, FrameKind::Idr);
-                }
+                assert_eq!(
+                    kind,
+                    if i == 0 {
+                        FrameKind::Idr
+                    } else {
+                        FrameKind::Predicted
+                    }
+                );
                 let wire = Header {
                     format: PixelFormat::Rgb,
                     codec: Codec::H264,

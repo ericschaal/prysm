@@ -114,15 +114,23 @@ and the TV distribution, then run on the TV:
 ```
 
 OpenH264 runs in software with ARM NEON, baseline IP frames, one encoder thread,
-low complexity, rate-control frame skipping, and a keyframe every configured second
-of frames. Bitrate is a target, not a strict per-frame or instantaneous limit.
+low complexity, and rate-control frame skipping. Periodic keyframes are disabled:
+TCP delivers every reference frame, and each new connection starts with an IDR.
+Scene-change detection remains enabled. This avoids spending the bandwidth budget
+on a forced keyframe every second; there is no seeking or midstream joining.
+Bitrate is a target, not a strict per-frame or instantaneous limit.
 When the bitrate budget is exhausted, the encoder can skip an input without
 sending a packet or resetting the connection. Metrics report this as
 FrameEncoder/EncodeH264/SkippedRateControl. The receiver retains its last frame
 until the next encoded frame arrives.
-The default RGB composition converts directly to limited-range BT.601 I420 for
-encoding; leave `--composition-format` at its default to avoid an extra NV12
+The default RGB composition converts directly to limited-range BT.709 I420 with
+balanced conversion precision; the decoder uses the same range and matrix.
+Leave `--composition-format` at its default to avoid an extra NV12
 conversion. Native NV12/NV16 video converts to I420 without an RGB round trip.
+The tested TV's default display capture tap produces limited-range BT.709,
+confirmed from the live scaler registers and the exact firmware's conversion
+table. Native decoding, composition, H.264 VUI, and the receiver use that same
+matrix and range. See the [colorimetry investigation](../../../research/webos-capture/2026-11-01-colorimetry/README.md).
 H.264 carries chroma subsampling and lossy quantization, so compare LED colors
 and dark scenes as well as bitrate, frame rate, encoder time, receiver DecodeH264
 time and both machines' CPU use. Hardware encoding is not used.
@@ -134,6 +142,12 @@ discards encoder state, and exits. The TV service starts a fresh worker. Slow ne
 can still cause TCP head-of-line delay; there is no frame queue in the sender.
 The new binary has been cross-built with the webOS SDK; H.264 performance and
 thermal behavior still need validation on the TV.
+
+For a constrained link, set `--h264-bitrate` below its sustained available payload
+bandwidth, leaving room for TCP overhead and keyframe bursts. The default is
+2 Mbit/s; the TV app currently uses that default. Reduce the receiver's capture
+resolution before forcing severe quantization or persistent frame skipping.
+Keep low complexity until encoder timing on the TV shows headroom for more work.
 
 ## TV setup
 
@@ -158,7 +172,7 @@ raw pixels need 83 Mbit/s instead of 166 Mbit/s, before network overhead.
 320×180 NV12 needs about 21 Mbit/s. UI blending converts video directly to RGB
 and blends premultiplied BGRA in place, without an ARGB intermediate frame.
 `--composition-format nv12` converts the composed RGB image to packed NV12
-(limited-range BT.601, matching the receiver) before compression. It reuses the
+(limited-range BT.709, matching the receiver) before compression. It reuses the
 RGB and NV12 allocations, requires no receiver or protocol changes, and halves
 the raw payload. At 640×240/30 fps this is 55.3 Mbit/s instead of 110.6 Mbit/s,
 before compression and network overhead. UI-only output also uses the selected
@@ -202,7 +216,10 @@ still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
 Each TCP connection begins with bounded, length-prefixed Serde JSON control
 messages (four-byte unsigned big-endian length, 1–128 bytes). The sender sends
-`{"type":"hello","version":2}`. Prysm responds with either
+`{"type":"hello","version":3}`. Version 3 defines YUV as limited-range BT.709,
+replacing version 2's BT.601 assumption. Rebuild/update both the TV worker and
+Prysm receiver together: mixed versions reject the handshake instead of silently
+changing hues. RGB remains full-range RGB24. Prysm responds with either
 `{"type":"idle"}` when capture is off, or
 `{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[640,360]}`.
 After an idle response, the sender waits for capture settings without opening
@@ -224,7 +241,7 @@ After the handshake, frames retain their 24-byte binary header and payload:
 
 | Offset | Bytes | Value |
 | --- | --- | --- |
-| 0 | 4 | ASCII `PRY2` |
+| 0 | 4 | ASCII `PRY3` |
 | 4 | 4 | Width, unsigned big-endian |
 | 8 | 4 | Height, unsigned big-endian |
 | 12 | 4 | Format: `0` RGB24, `1` NV12, `2` NV16 |

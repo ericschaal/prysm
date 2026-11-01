@@ -1,0 +1,19 @@
+REUSE idle 0 fds=10 threads=4 maps=120
+REUSE device /dev/shm/pmloglib.lock
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+COLOR G_FMT type=1 result=0 errno=0 fields=00000001,00000140,000000b4,00000001,00000000,00000000,00000000,00000000,feedcafe,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,
+COLOR G_FMT type=9 result=0 errno=0 fields=00000009,00000140,000000b4,00000001,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,00000000,
+COLOR Y range=19..219 count0=0 count16=0 count235=0 count255=0
+REUSE frame cycle=1 dimensions=320x180 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 1 fds=10 threads=4 maps=121
+REUSE device /dev/shm/pmloglib.lock
+REUSE final release begin
+REUSE final release done
+REUSE idle 2 fds=5 threads=1 maps=121
+REUSE device /dev/shm/pmloglib.lock

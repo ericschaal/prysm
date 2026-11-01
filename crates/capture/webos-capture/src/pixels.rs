@@ -66,14 +66,14 @@ impl CompositionBuffer {
                     width,
                     height,
                 };
-                // Match the receiver's limited-range BT.601 interpretation.
+                // Match the limited-range BT.709 wire contract.
                 yuv::rgb_to_yuv_nv12(
                     &mut image,
                     &self.rgb,
                     width * 3,
                     YuvRange::Limited,
-                    YuvStandardMatrix::Bt601,
-                    YuvConversionMode::Fast,
+                    YuvStandardMatrix::Bt709,
+                    YuvConversionMode::Balanced,
                 )?;
                 self.nv12.as_slice()
             }
@@ -169,14 +169,14 @@ pub fn to_rgb(header: Header, input: &[u8], rgb: &mut Vec<u8>) -> Result<()> {
         PixelFormat::Nv16 => yuv::yuv_nv16_to_rgb,
         PixelFormat::Rgb => unreachable!(),
     };
-    // Match upstream libyuv's default NV12/NV16 conversion (limited BT.601).
+    // The default display tap on the tested TV captures limited-range BT.709.
     convert(
         &image,
         rgb,
         header.width * 3,
         YuvRange::Limited,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::Fast,
+        YuvStandardMatrix::Bt709,
+        YuvConversionMode::Balanced,
     )?;
     Ok(())
 }
@@ -362,7 +362,7 @@ mod tests {
         to_rgb(h, &[16, 235, 16, 235, 128, 128], &mut rgb).unwrap();
         assert!(rgb[..3].iter().all(|v| *v <= 1));
         assert!(rgb[3..6].iter().all(|v| *v >= 253));
-        to_rgb(h, &[81, 81, 81, 81, 90, 240], &mut rgb).unwrap();
+        to_rgb(h, &[63, 63, 63, 63, 102, 240], &mut rgb).unwrap();
         assert!(
             rgb.as_chunks::<3>()
                 .0

@@ -1,0 +1,76 @@
+{
+  "date": "2026-11-01",
+  "app_version": "0.1.11",
+  "wire_version": 3,
+  "receiver_sha256": "c3cf378bafe7c33194c59479ae00ecbbd12d65b54fd55d77ed1418cf293f6d74",
+  "tv_worker_sha256": "537e3a9e1d91694e17a97d23b5e8601de4e6645238a8bf4649e98c6fcc66ec31",
+  "tv_supervisor_sha256": "7684624015c15402ff75c894952d3905c0c1e12ecef4a9ba17a9f61cd18e9ce5",
+  "settings_preserved": true,
+  "permission_mount_preserved": true,
+  "autostart_preserved": true,
+  "receiver_samples": [
+    {
+      "sample": 0,
+      "supervisor_pid": 11757,
+      "connected": true,
+      "capturing": true,
+      "frames_processed": 723,
+      "phase": "running"
+    },
+    {
+      "sample": 1,
+      "supervisor_pid": 11757,
+      "connected": true,
+      "capturing": true,
+      "frames_processed": 749,
+      "phase": "running"
+    },
+    {
+      "sample": 2,
+      "supervisor_pid": 11757,
+      "connected": true,
+      "capturing": true,
+      "frames_processed": 773,
+      "phase": "running"
+    },
+    {
+      "sample": 3,
+      "supervisor_pid": 11757,
+      "connected": true,
+      "capturing": true,
+      "frames_processed": 799,
+      "phase": "running"
+    },
+    {
+      "sample": 4,
+      "supervisor_pid": 11757,
+      "connected": true,
+      "capturing": true,
+      "frames_processed": 850,
+      "phase": "running"
+    }
+  ],
+  "metrics": [
+    "prysm_pipeline_frames_total{role=\"Prysm\",flow=\"CaptureFrames\",component=\"FrameReceiver\",boundary=\"PayloadReceived\",format=\"Rgb24\",codec=\"H264\",content=\"Unspecified\",width=\"640\",height=\"360\"} 864",
+    "prysm_operation_duration_seconds_sum{role=\"Prysm\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 1.334290849999999",
+    "prysm_operation_duration_seconds_count{role=\"Prysm\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.0001\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 0",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.00025\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 0",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.0005\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 3",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.001\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 67",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.0025\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 861",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.005\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.01\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.0167\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.025\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.0334\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.05\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.1\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.25\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"0.5\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"1.0\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"2.0\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"5.0\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863",
+    "prysm_operation_duration_seconds_bucket{role=\"Prysm\",le=\"+Inf\",flow=\"CaptureFrames\",component=\"FrameDecoder\",operation=\"DecodeH264\"} 863"
+  ]
+}

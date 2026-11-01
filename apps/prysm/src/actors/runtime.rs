@@ -225,7 +225,7 @@ mod tests {
             let (pipeline, _) = Pipeline::spawn(pipeline_config.clone()).unwrap();
             for _ in 0..2 {
                 let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-                let hello = br#"{"type":"hello","version":2}"#;
+                let hello = br#"{"type":"hello","version":3}"#;
                 tv.write_all(&(u32::try_from(hello.len()).unwrap()).to_be_bytes())
                     .await
                     .unwrap();

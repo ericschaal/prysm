@@ -17,7 +17,7 @@ var server = net.createServer(function (socket) {
             if (length < 1 || length > 128) throw new Error('Invalid hello length');
             if (pending.length < 4 + length) return;
             var value = JSON.parse(pending.subarray(4, 4 + length));
-            if (value.type !== 'hello' || value.version !== 2) throw new Error('Invalid hello');
+            if (value.type !== 'hello' || value.version !== 3) throw new Error('Invalid hello');
             pending = pending.subarray(4 + length);
             hello = true;
             var settings = Buffer.from(JSON.stringify({ type: 'capture_settings', refresh_rate_hz: 15, capture_resolution: [320, 180] }));
@@ -26,7 +26,7 @@ var server = net.createServer(function (socket) {
             socket.write(Buffer.concat([prefix, settings]));
         }
         while (hello && pending.length >= 24) {
-            if (pending.subarray(0, 4).toString() !== 'PRY2' || pending.readUInt32BE(4) !== 320 ||
+            if (pending.subarray(0, 4).toString() !== 'PRY3' || pending.readUInt32BE(4) !== 320 ||
                 pending.readUInt32BE(8) !== 180 || pending.readUInt32BE(12) !== 0 ||
                 pending.readUInt32BE(16) !== 0 || pending.readUInt32BE(20) !== 320 * 180 * 3) {
                 throw new Error('Invalid raw frame header');

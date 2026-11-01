@@ -196,8 +196,8 @@ async fn read_pixels(
             &mut rgb,
             header.width * 3,
             yuv::YuvRange::Limited,
-            yuv::YuvStandardMatrix::Bt601,
-            yuv::YuvConversionMode::Fast,
+            yuv::YuvStandardMatrix::Bt709,
+            yuv::YuvConversionMode::Balanced,
         )
         .inspect_err(|_| prysm_metrics::event(DecoderEvent::ConversionFailed))?;
         rgb
@@ -216,7 +216,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     fn raw_rgb_packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
-        let mut packet = b"PRY2".to_vec();
+        let mut packet = b"PRY3".to_vec();
         for value in [width, height, 0, 0, u32::try_from(pixels.len()).unwrap()] {
             packet.extend_from_slice(&value.to_be_bytes());
         }
@@ -334,6 +334,67 @@ mod tests {
             );
         }
         send.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bt709_limited_native_colors_match_across_all_codecs() {
+        use prysm_webos_protocol::{Codec, h264::Encoder};
+        for format in [WireFormat::Nv12, WireFormat::Nv16] {
+            for (y, u, v, expected) in [
+                (16, 128, 128, [0, 0, 0]),
+                (235, 128, 128, [255, 255, 255]),
+                (63, 102, 240, [255, 0, 0]),
+                (173, 42, 26, [0, 255, 0]),
+                (32, 240, 118, [0, 0, 255]),
+            ] {
+                let input = Header {
+                    width: 32,
+                    height: 16,
+                    format,
+                    codec: Codec::Raw,
+                    payload_len: 0,
+                };
+                let raw = [
+                    vec![y; 512],
+                    [u, v].repeat((input.raw_len().unwrap() - 512) / 2),
+                ]
+                .concat();
+                for codec in [Codec::Raw, Codec::Lz4, Codec::H264] {
+                    let mut header = Header { codec, ..input };
+                    let mut payload = Vec::new();
+                    match codec {
+                        Codec::Raw => payload.extend_from_slice(&raw),
+                        Codec::Lz4 => {
+                            let len = prysm_webos_protocol::compress(&raw, &mut payload)
+                                .unwrap()
+                                .unwrap();
+                            payload.truncate(len);
+                        }
+                        Codec::H264 => {
+                            Encoder::new(2_000_000, 30)
+                                .unwrap()
+                                .encode(input, &raw, &mut payload)
+                                .unwrap()
+                                .unwrap();
+                            header.format = WireFormat::Rgb;
+                        }
+                    }
+                    header.payload_len = payload.len();
+                    let mut packet = header.encode().unwrap().to_vec();
+                    packet.extend_from_slice(&payload);
+                    let frame = read_frame(&mut packet.as_slice()).await.unwrap();
+                    assert!(
+                        frame.as_slice().as_chunks::<3>().0.iter().all(|pixel| {
+                            pixel
+                                .iter()
+                                .zip(expected)
+                                .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
+                        }),
+                        "{format:?}/{codec:?}: wrong color for {expected:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[tokio::test]

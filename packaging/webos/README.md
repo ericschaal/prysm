@@ -31,7 +31,7 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
 ```
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.10_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.11_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -43,12 +43,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.10_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.11_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.10_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.11_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This
@@ -313,3 +313,10 @@ the TV web app kept closed. On 0.1.10, native setup succeeded and HDMI frames
 were advancing by 66.54 seconds OS uptime. The user confirmed automatic capture.
 The boot hook still follows earlier serial Homebrew hooks; service/worker startup
 was about 65 seconds after OS boot. Startup ordering was left unchanged.
+
+Version 0.1.11 corrects the verified default display capture path to limited-range
+BT.709 throughout composition, encoding, and decoding. Wire protocol 3 rejects
+older peers, so update the receiver and TV worker together. It was installed on
+2026-11-01 with settings, autostart, boot hook and permission mount preserved;
+640×360 H.264 frames were confirmed advancing in the updated receiver. See the
+[colorimetry and deployment evidence](../../research/webos-capture/2026-11-01-colorimetry/README.md).

@@ -1,4 +1,4 @@
-//! Bounded webOS frames with an explicit wire codec.
+//! Bounded webOS frames: full-range RGB, or limited-range BT.709 YUV (including H.264).
 #[cfg(feature = "h264")]
 pub mod h264;
 use anyhow::{Result, bail, ensure};
@@ -6,7 +6,7 @@ use anyhow::{Result, bail, ensure};
 pub const HEADER_LEN: usize = 24;
 
 pub const MAX_CONTROL_LEN: usize = 128;
-pub const HELLO: ControlMessage = ControlMessage::Hello { version: 2 };
+pub const HELLO: ControlMessage = ControlMessage::Hello { version: 3 };
 
 /// Connection control uses bounded, length-prefixed JSON; frame payloads stay binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -26,7 +26,7 @@ impl ControlMessage {
     pub fn validate(self) -> Result<Self> {
         match self {
             Self::Idle => {}
-            Self::Hello { version } => ensure!(version == 2, "unsupported webOS handshake version"),
+            Self::Hello { version } => ensure!(version == 3, "unsupported webOS handshake version"),
             Self::CaptureSettings {
                 refresh_rate_hz,
                 capture_resolution: [width, height],
@@ -78,7 +78,9 @@ impl ControlMessage {
 #[repr(u32)]
 pub enum PixelFormat {
     Rgb = 0,
+    /// Limited-range BT.709; independent of the scaled frame dimensions.
     Nv12 = 1,
+    /// Limited-range BT.709; independent of the scaled frame dimensions.
     Nv16 = 2,
 }
 
@@ -140,7 +142,7 @@ impl Header {
     pub fn encode(self) -> Result<[u8; HEADER_LEN]> {
         self.validate()?;
         let mut bytes = [0; HEADER_LEN];
-        bytes[..4].copy_from_slice(b"PRY2");
+        bytes[..4].copy_from_slice(b"PRY3");
         for (offset, value) in [
             (4, self.width),
             (8, self.height),
@@ -154,7 +156,7 @@ impl Header {
     }
 
     pub fn decode(bytes: &[u8; HEADER_LEN]) -> Result<Self> {
-        ensure!(&bytes[..4] == b"PRY2", "unsupported webOS frame protocol");
+        ensure!(&bytes[..4] == b"PRY3", "unsupported webOS frame protocol");
         let field = |offset| {
             u32::from_be_bytes([
                 bytes[offset],
@@ -229,8 +231,8 @@ mod tests {
             assert_eq!(ControlMessage::decode(&bytes[4..]).unwrap(), message);
         }
         for json in [
-            r#"{"type":"hello","version":3}"#,
-            r#"{"type":"hello","version":2,"extra":true}"#,
+            r#"{"type":"hello","version":2}"#,
+            r#"{"type":"hello","version":3,"extra":true}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":0}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":61}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":"30"}"#,
@@ -290,6 +292,9 @@ mod tests {
                 Header::decode(&header.encode().unwrap()).unwrap().format,
                 format
             );
+            let mut legacy = header.encode().unwrap();
+            legacy[..4].copy_from_slice(b"PRY2");
+            assert!(Header::decode(&legacy).is_err());
             header.payload_len += 1;
             assert!(header.encode().is_err());
             header.width = u32::MAX;
