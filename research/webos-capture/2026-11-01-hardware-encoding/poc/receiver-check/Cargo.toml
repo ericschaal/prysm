@@ -1,0 +1,9 @@
+[package]
+name = "webos-encoder-receiver-check"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+prysm-webos-protocol = { path = "../../../../../crates/capture/prysm-webos-protocol", features = ["h264"] }
