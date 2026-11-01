@@ -283,19 +283,23 @@ mod tests {
             .unwrap();
         for count in 1..=2 {
             let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-            let hello = br#"{"type":"hello","version":3}"#;
-            tv.write_all(&u32::try_from(hello.len()).unwrap().to_be_bytes())
+            tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
                 .await
                 .unwrap();
-            tv.write_all(hello).await.unwrap();
             let mut prefix = [0; 4];
             tv.read_exact(&mut prefix).await.unwrap();
             let mut settings = vec![0; u32::from_be_bytes(prefix) as usize];
             tv.read_exact(&mut settings).await.unwrap();
-            let mut frame = b"PRY3".to_vec();
-            for field in [4_u32, 2, 0, 0, 24] {
-                frame.extend(field.to_be_bytes());
+            let mut frame = prysm_webos_protocol::Header {
+                width: 4,
+                height: 2,
+                format: prysm_webos_protocol::PixelFormat::Rgb,
+                codec: prysm_webos_protocol::Codec::Raw,
+                payload_len: 24,
             }
+            .encode()
+            .unwrap()
+            .to_vec();
             frame.extend([255; 24]);
             tv.write_all(&frame).await.unwrap();
             tokio::time::timeout(Duration::from_secs(2), async {

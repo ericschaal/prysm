@@ -3,6 +3,7 @@
 mod native;
 use crate::{config::Config, supervisor::Event};
 use anyhow::Result;
+use prysm_webos_protocol::worker::{VideoAvailability, VideoUpdate};
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
@@ -13,7 +14,7 @@ use std::{
 pub struct Worker {
     child: Child,
     control: std::process::ChildStdin,
-    video_sent: Option<u8>,
+    video_sent: Option<VideoAvailability>,
     events: File,
     stderr: std::process::ChildStderr,
     pending: Vec<u8>,
@@ -30,10 +31,9 @@ impl Worker {
         self.child.id()
     }
     pub fn spawn(binary: &Path, config: &Config) -> Result<Self> {
-        config.validate()?;
         let mut command = Command::new(binary);
         command
-            .args(config.args())
+            .args(config.args()?)
             .env("PRYSM_CONTROL", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -58,22 +58,12 @@ impl Worker {
             channel_closed: false,
         })
     }
-    pub fn video_available(&mut self, available: Option<bool>, reset: bool) -> Result<bool> {
-        let state = match available {
-            Some(true) => b'1',
-            Some(false) => b'0',
-            None => b'?',
-        };
-        if self.video_sent == Some(state) && !reset {
+    pub fn update_video(&mut self, update: VideoUpdate) -> Result<bool> {
+        if self.video_sent == Some(update.availability) && !update.reset {
             return Ok(true);
         }
-        let byte = if reset && available != Some(false) {
-            b'r'
-        } else {
-            state
-        };
-        match self.control.write(&[byte]) {
-            Ok(1) => self.video_sent = Some(state),
+        match self.control.write(&[update.command().into()]) {
+            Ok(1) => self.video_sent = Some(update.availability),
             Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(false),
             Err(error) => return Err(error.into()),
             Ok(_) => anyhow::bail!("worker control pipe closed"),
@@ -208,7 +198,7 @@ mod tests {
         let mut pending = b"{\"type\":\"con".to_vec();
         let mut events = Vec::new();
         super::decode(&mut pending, &mut events);
-        assert!(events.is_empty());
+        assert_eq!(events, []);
         pending.extend_from_slice(b"nected\"}\n{\"type\":\"capturing\"}\n");
         super::decode(&mut pending, &mut events);
         assert_eq!(events.len(), 2);
@@ -230,7 +220,7 @@ mod process_tests {
     use std::time::{Duration, Instant};
     fn config() -> Config {
         Config {
-            receiver: "127.0.0.1:42".into(),
+            receiver: Some("127.0.0.1:42".parse().unwrap()),
             ..Config::default()
         }
     }
@@ -240,14 +230,25 @@ mod process_tests {
         let path = dir.path().join("worker");
         script(&path, "dd bs=1 count=6 >&2 2>/dev/null");
         let mut worker = Worker::spawn(&path, &config()).unwrap();
-        assert!(worker.video_available(Some(false), false).unwrap());
-        assert!(worker.video_available(Some(false), false).unwrap());
-        assert!(worker.video_available(Some(true), false).unwrap());
-        assert!(worker.video_available(Some(true), true).unwrap());
-        assert!(worker.video_available(None, false).unwrap());
-        assert!(worker.video_available(None, true).unwrap());
-        assert!(worker.video_available(None, false).unwrap());
-        assert!(worker.video_available(Some(false), true).unwrap());
+        for (availability, reset) in [
+            (VideoAvailability::Unavailable, false),
+            (VideoAvailability::Unavailable, false),
+            (VideoAvailability::Available, false),
+            (VideoAvailability::Available, true),
+            (VideoAvailability::Unknown, false),
+            (VideoAvailability::Unknown, true),
+            (VideoAvailability::Unknown, false),
+            (VideoAvailability::Unavailable, true),
+        ] {
+            assert!(
+                worker
+                    .update_video(VideoUpdate {
+                        availability,
+                        reset
+                    })
+                    .unwrap()
+            );
+        }
         let mut log = String::new();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {

@@ -6,7 +6,7 @@ configuration, persistence and permission setup. The browser UI uses native Luna
 subscriptions with reconnect; there is no Node service or setup helper.
 
 The single [package build](../../../packaging/webos/README.md) produces both
-binaries and `target/webos-ipk/io.prysm.capture_0.1.10_all.ipk`. The installed TV
+binaries and `target/webos-ipk/io.prysm.capture_0.1.12_all.ipk`. The installed TV
 setup is changed only by an explicit installation, not by building.
 
 With no arguments, the binary runs the production identity and paths as root,
@@ -61,6 +61,17 @@ library ABIs have not been validated. These are TV SDK bindings, rather than
 assumed layouts copied from webOS OSE documentation.
 
 ## Process adapter
+
+The service configuration and capture CLI share `Source`, `Compression`, and a
+validated `ReceiverAddress` from `prysm-webos-protocol`. An unconfigured receiver
+is `None` internally and remains `""` in the app's saved JSON. Invalid addresses
+and enum values are rejected while parsing; the existing JSON and CLI spellings
+are preserved.
+
+The protocol crate's `worker` module owns the private events, readiness states,
+and control-byte mapping used by both processes. Luna JSON is parsed into a video
+observation before reaching application state; native Luna handles stay local to
+the FFI boundary.
 
 `std::process::Child` owns the process and `nix` supplies pipes, descriptor flags,
 signals and parent-death protection. The small `pre_exec` boundary only clears

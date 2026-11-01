@@ -13,6 +13,7 @@ categories.workspace = true
 codegen = ["dep:bindgen"]
 
 [dependencies]
+prysm-webos-protocol = { path = "../prysm-webos-protocol" }
 anyhow.workspace = true
 atomic-write-file.workspace = true
 libc.workspace = true

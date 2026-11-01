@@ -7,6 +7,7 @@
 //! native invariants are the wrapper's responsibility, never its caller's.
 use crate::status::{Status, subscription_request};
 use anyhow::{Context as _, Result, anyhow, ensure};
+use prysm_webos_protocol::worker::VideoAvailability;
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -66,7 +67,7 @@ struct Callbacks {
     power_retry: Cell<Option<Instant>>,
     video_token: Cell<ffi::luna::LSMessageToken>,
     video_retry: Cell<Option<Instant>>,
-    video_context: RefCell<Option<String>>,
+    video_context: RefCell<Option<VideoContext>>,
     closing: Cell<bool>,
 }
 
@@ -228,7 +229,7 @@ impl Service {
             && state.subscribe_video(data).is_err()
             && let Some(app) = state.app.borrow_mut().as_mut()
         {
-            app.video_available(None);
+            app.video_available(VideoAvailability::Unknown);
         }
         // SAFETY: create a caller-owned timer source; retain it even if attach fails.
         let timer = NonNull::new(unsafe { state.glib.g_timeout_source_new(100) })
@@ -387,33 +388,24 @@ impl Callbacks {
             return;
         }
         let value = message.payload().unwrap_or(Value::Null);
-        let available = video_available(&value);
-        self.video_retry
-            .set(if available.is_some() && value["subscribed"] == true {
+        let observation = VideoObservation::parse(&value);
+        self.video_retry.set(
+            if observation.availability != VideoAvailability::Unknown && value["subscribed"] == true
+            {
                 None
             } else {
                 Some(Instant::now() + Duration::from_secs(5))
-            });
+            },
+        );
         if let Some(app) = self.app.borrow_mut().as_mut() {
-            if available == Some(true) {
-                let main = value["video"]
-                    .as_array()
-                    .and_then(|sinks| sinks.iter().find(|sink| sink["sink"] == "MAIN"));
-                if let Some(main) = main {
-                    let context = json!([
-                        main["connectedSource"],
-                        main["connectedSourcePort"],
-                        main["context"]
-                    ])
-                    .to_string();
-                    let mut previous = self.video_context.borrow_mut();
-                    if previous.as_ref().is_some_and(|old| old != &context) {
-                        app.reset_video();
-                    }
-                    *previous = Some(context);
+            if let Some(context) = observation.context {
+                let mut previous = self.video_context.borrow_mut();
+                if previous.as_ref().is_some_and(|old| old != &context) {
+                    app.reset_video();
                 }
+                *previous = Some(context);
             }
-            app.video_available(available);
+            app.video_available(observation.availability);
         }
     }
     fn tick(&self, now: Instant) -> Result<()> {
@@ -424,7 +416,7 @@ impl Callbacks {
         {
             self.video_retry.set(Some(now + Duration::from_secs(5)));
             if let Some(app) = self.app.borrow_mut().as_mut() {
-                app.video_available(None);
+                app.video_available(VideoAvailability::Unknown);
             }
             let token = self.video_token.get();
             let cancelled = token == 0
@@ -530,25 +522,52 @@ impl Callbacks {
     }
 }
 
-// No app ID or HDMI port filter: MAIN may carry any input or a built-in video app.
-fn video_available(value: &Value) -> Option<bool> {
-    if value["returnValue"] != true {
-        return None;
+#[derive(Debug, PartialEq, Eq)]
+struct VideoContext {
+    source: Value,
+    port: Value,
+    context: Value,
+}
+
+struct VideoObservation {
+    availability: VideoAvailability,
+    context: Option<VideoContext>,
+}
+impl VideoObservation {
+    fn parse(value: &Value) -> Self {
+        // No app ID or HDMI port filter: MAIN may carry any input or a built-in video app.
+        let main = value["video"]
+            .as_array()
+            .and_then(|sinks| sinks.iter().find(|sink| sink["sink"] == "MAIN"))
+            .filter(|_| value["returnValue"] == true);
+        let available = main.and_then(|main| {
+            if !main["connected"].as_bool()? {
+                return Some(false);
+            }
+            // Muted video can be legitimate black; it must not trigger a restart loop.
+            Some(
+                main["width"].as_u64()? > 0
+                    && main["height"].as_u64()? > 0
+                    && main["frameRate"].as_f64()? > 0.0,
+            )
+        });
+        let availability = match available {
+            Some(true) => VideoAvailability::Available,
+            Some(false) => VideoAvailability::Unavailable,
+            None => VideoAvailability::Unknown,
+        };
+        let context = main
+            .filter(|_| availability == VideoAvailability::Available)
+            .map(|main| VideoContext {
+                source: main["connectedSource"].clone(),
+                port: main["connectedSourcePort"].clone(),
+                context: main["context"].clone(),
+            });
+        Self {
+            availability,
+            context,
+        }
     }
-    let main = value["video"]
-        .as_array()?
-        .iter()
-        .find(|sink| sink["sink"] == "MAIN")?;
-    let connected = main["connected"].as_bool()?;
-    if !connected {
-        return Some(false);
-    }
-    // Muted video can be legitimate black; it must not trigger a restart loop.
-    Some(
-        main["width"].as_u64()? > 0
-            && main["height"].as_u64()? > 0
-            && main["frameRate"].as_f64()? > 0.0,
-    )
 }
 
 /// A non-owning message, borrowed only for the native callback invocation.

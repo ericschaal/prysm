@@ -7,6 +7,9 @@ use crate::{
 };
 use anyhow::Result;
 use prysm_metrics::{PipelineEvent, Stage};
+#[cfg(test)]
+use prysm_webos_protocol::worker::VideoAvailability;
+use prysm_webos_protocol::worker::VideoUpdate;
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -21,7 +24,7 @@ pub struct Session {
 impl Session {
     /// Connect before acquiring any video or UI resources.
     pub fn connect(cli: &Cli) -> Result<Self> {
-        let mut sender = Sender::new(cli.receiver, cli.compression);
+        let mut sender = Sender::new(cli.receiver.socket_addr(), cli.compression);
         sender.h264_bitrate = cli.h264_bitrate;
         sender.connect()?;
 
@@ -54,7 +57,7 @@ impl Session {
         stop: &AtomicBool,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
         capture_ui: &mut Option<impl UiCapture>,
-        readiness: &mut impl FnMut() -> Result<(bool, bool)>,
+        readiness: &mut impl FnMut() -> Result<VideoUpdate>,
         events: &mut crate::native::events::Events,
     ) -> Result<()> {
         let mut next = Instant::now();
@@ -63,11 +66,12 @@ impl Session {
                 tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
                 return Ok(());
             }
-            let (available, reset) = readiness()?;
-            if reset {
+            let update = readiness()?;
+            if update.reset {
                 self.capture.release_video(events)?;
             }
-            self.capture.set_video_available(available);
+            self.capture
+                .set_video_available(update.availability.allows_capture());
             let work = prysm_metrics::timer(Stage::CaptureIteration);
             if let Some(frame) = self.capture.capture(open_video, capture_ui, events)?
                 && let Err(error) = self.sender.send(frame.header, frame.pixels, frame.content)
@@ -99,7 +103,12 @@ pub(crate) fn capture_loop(
             stop,
             &mut open_video,
             &mut capture_ui,
-            &mut || Ok((true, false)),
+            &mut || {
+                Ok(VideoUpdate {
+                    availability: VideoAvailability::Unknown,
+                    reset: false,
+                })
+            },
             &mut crate::native::events::Events::disabled(),
         )?;
     }

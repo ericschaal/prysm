@@ -594,7 +594,7 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
         if configured {
             files
                 .persist(&crate::config::Config {
-                    receiver: "127.0.0.1:42".into(),
+                    receiver: Some("127.0.0.1:42".parse().unwrap()),
                     ..crate::config::Config::default()
                 })
                 .unwrap();
@@ -693,11 +693,20 @@ fn readiness_uses_main_geometry_for_every_hdmi_input_and_video_apps() {
                 {"sink":"MAIN","connected":true,"connectedSource":source,
                  "connectedSourcePort":port,"width":3840,"height":2160,"frameRate":50,"muted":true}
             ]});
-            assert_eq!(video_available(&value), Some(true));
+            assert_eq!(
+                VideoObservation::parse(&value).availability,
+                VideoAvailability::Available
+            );
             value["video"][1]["width"] = json!(0);
-            assert_eq!(video_available(&value), Some(false));
+            assert_eq!(
+                VideoObservation::parse(&value).availability,
+                VideoAvailability::Unavailable
+            );
             value["video"][1] = json!({"sink":"MAIN","connected":false});
-            assert_eq!(video_available(&value), Some(false));
+            assert_eq!(
+                VideoObservation::parse(&value).availability,
+                VideoAvailability::Unavailable
+            );
         }
     }
     for value in [
@@ -706,7 +715,10 @@ fn readiness_uses_main_geometry_for_every_hdmi_input_and_video_apps() {
         json!({"returnValue":true,"video":[]}),
         json!({"returnValue":true,"video":[{"sink":"MAIN","connected":true}]}),
     ] {
-        assert_eq!(video_available(&value), None);
+        assert_eq!(
+            VideoObservation::parse(&value).availability,
+            VideoAvailability::Unknown
+        );
     }
 }
 
@@ -757,15 +769,32 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
-    *service.callbacks.app.borrow_mut() =
-        Some(App::new(Files::sandbox(dir.path()).unwrap()).unwrap());
+    let files = Files::sandbox(dir.path()).unwrap();
+    files.persist(&serde_json::from_value(json!({
+        "receiver":"127.0.0.1:19400", "source":"video", "compression":"none", "autostart":false
+    })).unwrap()).unwrap();
+    crate::application::tests::script(&files.worker, r#"exec cat > "$0.control""#);
+    *service.callbacks.app.borrow_mut() = Some(App::new(files).unwrap());
     service.register().unwrap();
     assert!(service.callbacks.video_retry.get().is_some());
+    {
+        let mut app = service.callbacks.app.borrow_mut();
+        let app = app.as_mut().unwrap();
+        app.state.start(Instant::now()).unwrap();
+        app.power(Some("Active".into()), None, Instant::now());
+        app.tick(Instant::now());
+    }
     let data = Rc::as_ptr(&service.callbacks).cast_mut().cast();
-    for (port, context) in [(0, "a"), (0, "a"), (3, "b")] {
+    for (source, port, context, commands) in [
+        ("HDMI", 0, "a", "1"),
+        ("HDMI", 0, "a", "1"),
+        ("HDMI", 3, "a", "1r"),
+        ("HDMI", 3, "b", "1rr"),
+        ("VDEC", 3, "b", "1rrr"),
+    ] {
         let value = json!({"returnValue":true,"subscribed":true,"video":[{
             "sink":"MAIN","connected":true,"width":1920,"height":1080,"frameRate":60,
-            "connectedSource":"HDMI","connectedSourcePort":port,"context":context
+            "connectedSource":source,"connectedSourcePort":port,"context":context
         }]});
         let mut raw = MessageData(Some(CString::new(value.to_string()).unwrap()));
         // SAFETY: callback borrows live test message and retained Service state on this thread.
@@ -777,10 +806,31 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
             )
         });
         assert!(service.callbacks.video_retry.get().is_none());
-        let expected = json!(["HDMI", port, context]).to_string();
+        let expected = VideoContext {
+            source: json!(source),
+            port: json!(port),
+            context: json!(context),
+        };
         assert_eq!(
-            service.callbacks.video_context.borrow().as_deref(),
-            Some(expected.as_str())
+            service.callbacks.video_context.borrow().as_ref(),
+            Some(&expected)
         );
+        service
+            .callbacks
+            .app
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .tick(Instant::now());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while std::fs::read_to_string(dir.path().join("worker.control")).unwrap_or_default()
+            != commands
+        {
+            assert!(
+                Instant::now() < deadline,
+                "worker did not receive {commands:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

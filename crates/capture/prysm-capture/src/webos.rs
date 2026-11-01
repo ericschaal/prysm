@@ -216,7 +216,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     fn raw_rgb_packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
-        let mut packet = b"PRY3".to_vec();
+        let mut packet = prysm_webos_protocol::MAGIC.to_vec();
         for value in [width, height, 0, 0, u32::try_from(pixels.len()).unwrap()] {
             packet.extend_from_slice(&value.to_be_bytes());
         }

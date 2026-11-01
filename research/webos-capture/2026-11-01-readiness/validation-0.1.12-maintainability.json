@@ -1,0 +1,33 @@
+{
+  "version": "0.1.12",
+  "installed_binary_sha256": {
+    "prysm-webos-capture": "ac1aa9d791f56fb0c7d18c869f0820b132a0f794ba6ee4d23bd0a86023a33326",
+    "prysm-webos-service": "309fc8c0f0bfb8cc0163d05f9b170d4c789f1edfee6e279d03183e2c8a8e11ef"
+  },
+  "configuration_preserved": true,
+  "enabled_state_preserved": true,
+  "boot_hook_preserved": true,
+  "permission_mounts_preserved": true,
+  "status": {
+    "pid": 14530,
+    "enabled": true,
+    "power": "Active",
+    "senderRunning": true,
+    "receiverConnected": true,
+    "capturing": true,
+    "error": null,
+    "config": {
+      "autostart": true,
+      "compression": "h264",
+      "receiver": "192.168.18.18:19400",
+      "source": "both"
+    }
+  },
+  "host_frames": [
+    4609,
+    4639
+  ],
+  "package_sha256": "cc07de9db316f33e3738b9e8846a67859775a0a5c2b319de76ede9ac789b7b6f",
+  "wire_version": 3,
+  "date": "2026-11-01"
+}

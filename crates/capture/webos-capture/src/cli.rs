@@ -1,4 +1,6 @@
 use clap::{Args, Parser, ValueEnum};
+use prysm_webos_protocol::ReceiverAddress;
+pub use prysm_webos_protocol::{Compression, Source};
 use std::net::SocketAddr;
 
 /// Capture LG webOS video and UI and stream frames to Prysm.
@@ -6,8 +8,8 @@ use std::net::SocketAddr;
 #[command(version)]
 pub struct Cli {
     /// Prysm receiver address, including its port
-    #[arg(value_name = "IP:PORT", value_parser = receiver)]
-    pub receiver: SocketAddr,
+    #[arg(value_name = "IP:PORT")]
+    pub receiver: ReceiverAddress,
 
     /// Opt-in Prometheus endpoint on a trusted LAN interface, e.g. 0.0.0.0:9101
     #[arg(long, value_name = "IP:PORT")]
@@ -71,28 +73,6 @@ pub struct CaptureOptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Source {
-    Video,
-    Ui,
-    Both,
-}
-impl Source {
-    pub fn includes_video(self) -> bool {
-        matches!(self, Self::Video | Self::Both)
-    }
-    pub fn includes_ui(self) -> bool {
-        matches!(self, Self::Ui | Self::Both)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Compression {
-    None,
-    Lz4,
-    H264,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CompositionFormat {
     Rgb,
     Nv12,
@@ -121,17 +101,6 @@ pub enum CapturePoint {
     Blended = 3,
     Osd = 4,
     Histogram = 5,
-}
-
-fn receiver(value: &str) -> Result<SocketAddr, String> {
-    let address = value
-        .parse::<SocketAddr>()
-        .map_err(|error| error.to_string())?;
-    if address.port() == 0 {
-        Err("receiver port must be nonzero".into())
-    } else {
-        Ok(address)
-    }
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ fn app(dir: &tempfile::TempDir) -> App {
     let files = Files::sandbox(dir.path()).unwrap();
     files
         .persist(&Config {
-            receiver: "127.0.0.1:19400".into(),
+            receiver: Some("127.0.0.1:19400".parse().unwrap()),
             ..Config::default()
         })
         .unwrap();
@@ -98,7 +98,10 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
         false
     );
     assert!(!dir.path().join("capture.manifest.json").exists());
-    assert_eq!(app.files.load().unwrap().receiver, "127.0.0.1:19400");
+    assert_eq!(
+        app.files.load().unwrap().receiver,
+        Some("127.0.0.1:19400".parse().unwrap())
+    );
 }
 #[test]
 fn hook_failure_rolls_back_config() {
@@ -107,7 +110,7 @@ fn hook_failure_rolls_back_config() {
     let original = app.state.config.clone();
     fs::write(dir.path().join("boot-hook"), "unrelated").unwrap();
     let mut changed = original.clone();
-    changed.receiver = "[::1]:42".into();
+    changed.receiver = Some("[::1]:42".parse().unwrap());
     changed.autostart = true;
     assert!(
         request(
@@ -163,7 +166,7 @@ fn config_restart_waits_for_kill_and_reap() {
     }
     let pid = app.worker.as_ref().unwrap().child_id();
     let mut changed = app.state.config.clone();
-    changed.receiver = "[::1]:42".into();
+    changed.receiver = Some("[::1]:42".parse().unwrap());
     request(
         &mut app,
         "setConfig",
@@ -191,14 +194,14 @@ fn config_restart_waits_for_kill_and_reap() {
 fn readiness_loss_is_latched_across_rapid_input_transitions() {
     let dir = sandbox();
     let mut app = app(&dir);
-    assert_eq!(app.video_available, Some(false));
-    app.video_available(Some(true));
-    assert!(!app.video_reset);
-    app.video_available(Some(false));
-    app.video_available(Some(true));
-    assert!(app.video_reset);
-    assert_eq!(app.video_available, Some(true));
-    app.video_reset = false;
-    app.video_available(None);
-    assert!(!app.video_reset);
+    assert_eq!(app.video.availability, VideoAvailability::Unavailable);
+    app.video_available(VideoAvailability::Available);
+    assert!(!app.video.reset);
+    app.video_available(VideoAvailability::Unavailable);
+    app.video_available(VideoAvailability::Available);
+    assert!(app.video.reset);
+    assert_eq!(app.video.availability, VideoAvailability::Available);
+    app.video.reset = false;
+    app.video_available(VideoAvailability::Unknown);
+    assert!(!app.video.reset);
 }

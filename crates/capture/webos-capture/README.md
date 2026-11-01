@@ -216,7 +216,10 @@ still retain frames briefly, so this is not a hard end-to-end latency guarantee.
 
 Each TCP connection begins with bounded, length-prefixed Serde JSON control
 messages (four-byte unsigned big-endian length, 1–128 bytes). The sender sends
-`{"type":"hello","version":3}`. Version 3 defines YUV as limited-range BT.709,
+`{"type":"hello","version":VERSION}`. The active `VERSION` comes from
+[`wire-version.txt`](../prysm-webos-protocol/wire-version.txt); Rust, tests, and the
+TV smoke receiver all read that file. Bump it when changing the wire contract.
+Version 3 defines YUV as limited-range BT.709,
 replacing version 2's BT.601 assumption. Rebuild/update both the TV worker and
 Prysm receiver together: mixed versions reject the handshake instead of silently
 changing hues. RGB remains full-range RGB24. Prysm responds with either
@@ -241,7 +244,7 @@ After the handshake, frames retain their 24-byte binary header and payload:
 
 | Offset | Bytes | Value |
 | --- | --- | --- |
-| 0 | 4 | ASCII `PRY3` |
+| 0 | 4 | ASCII `PRY` followed by the version digit from `wire-version.txt` |
 | 4 | 4 | Width, unsigned big-endian |
 | 8 | 4 | Height, unsigned big-endian |
 | 12 | 4 | Format: `0` RGB24, `1` NV12, `2` NV16 |

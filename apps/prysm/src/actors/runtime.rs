@@ -225,11 +225,9 @@ mod tests {
             let (pipeline, _) = Pipeline::spawn(pipeline_config.clone()).unwrap();
             for _ in 0..2 {
                 let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-                let hello = br#"{"type":"hello","version":3}"#;
-                tv.write_all(&(u32::try_from(hello.len()).unwrap()).to_be_bytes())
+                tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
                     .await
                     .unwrap();
-                tv.write_all(hello).await.unwrap();
                 assert_eq!(message(&mut tv).await["type"], "idle");
                 pipeline
                     .send(ConfigurePipeline(pipeline_config.clone()))

@@ -5,6 +5,7 @@ use crate::{
     worker::Worker,
 };
 use anyhow::{Result, ensure};
+use prysm_webos_protocol::worker::{VideoAvailability, VideoUpdate};
 use serde_json::{Value, json};
 use std::{
     process::{Child, Command, Stdio},
@@ -33,8 +34,7 @@ pub struct App {
     pub state: Supervisor,
     files: Files,
     worker: Option<Worker>,
-    video_available: Option<bool>,
-    video_reset: bool,
+    video: VideoUpdate,
     pending: Option<Pending>,
     scan: Option<Scan>,
     shutting_down: bool,
@@ -45,8 +45,10 @@ impl App {
             state: Supervisor::new(files.load()?),
             files,
             worker: None,
-            video_available: Some(false),
-            video_reset: false,
+            video: VideoUpdate {
+                availability: VideoAvailability::Unavailable,
+                reset: false,
+            },
             pending: None,
             scan: None,
             shutting_down: false,
@@ -91,7 +93,7 @@ impl App {
                 config.validate()?;
                 self.files.persist(&config)?;
                 if let Err(error) = self.files.autostart(config.autostart) {
-                    if self.state.config.receiver.is_empty() {
+                    if self.state.config.receiver.is_none() {
                         Files::remove(&self.files.root.join("config.json"))?;
                     } else {
                         self.files.persist(&self.state.config)?;
@@ -105,7 +107,7 @@ impl App {
                 let mut config = self.state.config.clone();
                 config.autostart = false;
                 self.files.autostart(false)?;
-                if !config.receiver.is_empty() {
+                if config.receiver.is_some() {
                     self.files.persist(&config)?;
                 }
                 self.state.config = config;
@@ -134,12 +136,11 @@ impl App {
         });
         Ok(())
     }
-    pub fn video_available(&mut self, available: Option<bool>) {
-        self.video_reset |= self.video_available == Some(true) && available == Some(false);
-        self.video_available = available;
+    pub fn video_available(&mut self, available: VideoAvailability) {
+        self.video.observe(available);
     }
     pub fn reset_video(&mut self) {
-        self.video_reset = true;
+        self.video.reset = true;
     }
     pub fn power(&mut self, power: Option<String>, error: Option<String>, now: Instant) {
         if let Some(error) = error {
@@ -186,8 +187,8 @@ impl App {
     fn advance(&mut self, now: Instant) -> Result<Option<Value>> {
         if let Some(worker) = &mut self.worker {
             if !self.state.stopping {
-                match worker.video_available(self.video_available, self.video_reset) {
-                    Ok(true) => self.video_reset = false,
+                match worker.update_video(self.video) {
+                    Ok(true) => self.video.reset = false,
                     Ok(false) => (),
                     Err(error) => self.state.failed(format!("worker control: {error:#}"), now),
                 }

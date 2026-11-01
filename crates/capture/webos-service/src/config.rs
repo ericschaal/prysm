@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, ensure};
+use prysm_webos_protocol::{Compression, ReceiverAddress, Source};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Write,
-    net::SocketAddr,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -11,46 +11,66 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub receiver: String,
-    pub source: String,
-    pub compression: String,
+    #[serde(with = "receiver")]
+    pub receiver: Option<ReceiverAddress>,
+    pub source: Source,
+    pub compression: Compression,
     pub autostart: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            receiver: String::new(),
-            source: "both".into(),
-            compression: "lz4".into(),
+            receiver: None,
+            source: Source::Both,
+            compression: Compression::Lz4,
             autostart: false,
         }
     }
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        let address: SocketAddr = self.receiver.parse().map_err(|_| {
-            anyhow::anyhow!("Receiver must be an IP:port or [IPv6]:port, with port 1–65535")
-        })?;
-        ensure!(address.port() != 0, "Receiver port must be 1–65535");
-        ensure!(
-            ["video", "ui", "both"].contains(&self.source.as_str()),
-            "Invalid source"
-        );
-        ensure!(
-            ["none", "lz4", "h264"].contains(&self.compression.as_str()),
-            "Invalid compression"
-        );
+        self.receiver.context("Receiver must be configured")?;
         Ok(())
     }
-    pub fn args(&self) -> [&str; 5] {
-        [
-            &self.receiver,
-            "--source",
-            &self.source,
-            "--compression",
-            &self.compression,
-        ]
+    pub fn args(&self) -> Result<[String; 5]> {
+        Ok([
+            self.receiver
+                .context("Receiver must be configured")?
+                .to_string(),
+            "--source".into(),
+            self.source.as_str().into(),
+            "--compression".into(),
+            self.compression.as_str().into(),
+        ])
+    }
+}
+
+// Preserve the app's empty-string representation of an unconfigured receiver.
+mod receiver {
+    use super::ReceiverAddress;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    #[allow(clippy::ref_option, reason = "Serde passes a reference to the field")]
+    pub fn serialize<S: Serializer>(
+        address: &Option<ReceiverAddress>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match address {
+            Some(address) => serializer.collect_str(address),
+            None => serializer.serialize_str(""),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<ReceiverAddress>, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            value.parse().map(Some).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -236,7 +256,7 @@ mod tests {
     use super::*;
     fn valid() -> Config {
         Config {
-            receiver: "127.0.0.1:19400".into(),
+            receiver: Some("127.0.0.1:19400".parse().unwrap()),
             ..Config::default()
         }
     }
@@ -245,7 +265,7 @@ mod tests {
         let value = valid();
         value.validate().unwrap();
         let mut ipv6 = value.clone();
-        ipv6.receiver = "[::1]:19400".into();
+        ipv6.receiver = Some("[::1]:19400".parse().unwrap());
         ipv6.validate().unwrap();
         for address in [
             "",
@@ -255,9 +275,12 @@ mod tests {
             "::1:19400",
             "1.2.3.4:1;reboot",
         ] {
-            let mut value = value.clone();
-            value.receiver = address.into();
-            assert!(value.validate().is_err());
+            let mut json = serde_json::to_value(&value).unwrap();
+            json["receiver"] = address.into();
+            assert!(match serde_json::from_value::<Config>(json) {
+                Ok(config) => config.validate().is_err(),
+                Err(_) => true,
+            });
         }
         for (key, invalid) in [
             ("source", serde_json::json!(";reboot")),
@@ -274,6 +297,37 @@ mod tests {
         let mut json = serde_json::to_value(&value).unwrap();
         json["args"] = serde_json::json!(["--force-capture"]);
         assert!(serde_json::from_value::<Config>(json).is_err());
+    }
+    #[test]
+    fn typed_config_preserves_json_and_worker_argument_spellings() {
+        let empty = Config::default();
+        let json = serde_json::json!({"receiver":"","source":"both","compression":"lz4","autostart":false});
+        assert_eq!(serde_json::to_value(&empty).unwrap(), json);
+        assert_eq!(serde_json::from_value::<Config>(json).unwrap(), empty);
+        assert!(empty.args().is_err());
+        for source in [Source::Video, Source::Ui, Source::Both] {
+            for compression in [Compression::None, Compression::Lz4, Compression::H264] {
+                let config = Config {
+                    source,
+                    compression,
+                    ..valid()
+                };
+                let json = serde_json::to_value(&config).unwrap();
+                assert_eq!(json["source"], source.as_str());
+                assert_eq!(json["compression"], compression.as_str());
+                assert_eq!(serde_json::from_value::<Config>(json).unwrap(), config);
+                assert_eq!(
+                    config.args().unwrap(),
+                    [
+                        "127.0.0.1:19400",
+                        "--source",
+                        source.as_str(),
+                        "--compression",
+                        compression.as_str()
+                    ]
+                );
+            }
+        }
     }
     #[test]
     #[cfg_attr(miri, ignore = "filesystem integration runs in ordinary tests")]

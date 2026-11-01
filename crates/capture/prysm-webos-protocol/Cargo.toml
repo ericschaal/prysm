@@ -10,9 +10,11 @@ categories.workspace = true
 description = "Framed video transport protocol for Prysm webOS capture"
 
 [features]
+cli = ["dep:clap"]
 h264 = ["dep:openh264", "dep:yuv", "dep:h264-reader"]
 
 [dependencies]
+clap = { workspace = true, optional = true, features = ["derive"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

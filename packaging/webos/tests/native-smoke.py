@@ -141,6 +141,7 @@ def main():
             if args.capture:
                 receiver_source = (ROOT / "packaging/webos/tests/loopback-receiver.js").read_bytes()
                 write(directory + "/receiver.js", receiver_source)
+                write(directory + "/wire-version.txt", (ROOT / "crates/capture/prysm-webos-protocol/wire-version.txt").read_bytes())
                 receiver_pid = int(remote(f"timeout 18 node {directory}/receiver.js </dev/null >{directory}/receiver.log 2>&1 & echo $!").stdout)
                 remote(f"timeout 4 sh -c 'while [ ! -f {directory}/receiver.port ]; do sleep 0.1; done'")
                 port = int(remote(f"cat {directory}/receiver.port").stdout)
@@ -196,6 +197,7 @@ def main():
                f"{shlex.quote(directory)}/supervisor.manifest.json "
                f"{shlex.quote(directory)}/boot-hook {shlex.quote(directory)}/capture.role.json "
                f"{shlex.quote(directory)}/receiver.js {shlex.quote(directory)}/receiver.log "
+               f"{shlex.quote(directory)}/wire-version.txt "
                f"{shlex.quote(directory)}/receiver.port {shlex.quote(directory)}/receiver.complete; "
                f"rmdir {shlex.quote(directory)}")
         print("Removed temporary probe registration and files.", flush=True)

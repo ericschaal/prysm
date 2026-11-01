@@ -1,6 +1,6 @@
 //! Deterministic lifecycle; only the process adapter executes these actions.
 use crate::config::Config;
-use serde::Deserialize;
+pub use prysm_webos_protocol::worker::WorkerEvent as Event;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -10,17 +10,6 @@ pub enum Action {
     Terminate,
     Kill,
 }
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Event {
-    VideoResetting,
-    VideoReset,
-    Connected,
-    Capturing,
-    Disconnected,
-    Failed { message: String },
-}
-
 // Status flags are independent fields in the existing Luna contract.
 #[allow(clippy::struct_excessive_bools)]
 pub struct Supervisor {
@@ -61,7 +50,7 @@ impl Supervisor {
         }
     }
     fn wanted(&self) -> bool {
-        self.enabled && self.power.as_deref() == Some("Active") && !self.config.receiver.is_empty()
+        self.enabled && self.power.as_deref() == Some("Active") && self.config.receiver.is_some()
     }
     pub fn snapshot(&self) -> Value {
         json!({"enabled":self.enabled, "power":self.power, "senderRunning":self.running, "receiverConnected":self.connected, "capturing":self.capturing, "stopping":self.stopping, "error":self.error, "lastLog":self.log, "config":self.config})
@@ -179,7 +168,7 @@ mod tests {
     use super::*;
     fn configured() -> Supervisor {
         Supervisor::new(Config {
-            receiver: "127.0.0.1:19400".into(),
+            receiver: Some("127.0.0.1:19400".parse().unwrap()),
             autostart: true,
             ..Config::default()
         })
@@ -214,13 +203,13 @@ mod tests {
         state.set_power(Some("Active".into()), now);
         state.actions();
         let mut config = state.config.clone();
-        config.receiver = "[::1]:19400".into();
+        config.receiver = Some("[::1]:19400".parse().unwrap());
         config.autostart = false;
         state.configure(config, now);
         assert_eq!(state.actions(), [Action::Terminate]);
         state.closed(true, "0", now);
         assert_eq!(state.actions(), [Action::Spawn]);
-        assert_eq!(state.config.receiver, "[::1]:19400");
+        assert_eq!(state.config.receiver, Some("[::1]:19400".parse().unwrap()));
         assert!(state.enabled);
         state.enabled = false;
         state.stop(now, true);
@@ -284,7 +273,7 @@ mod video_reset_tests {
     fn completed_reset_keeps_worker_but_stalled_native_release_triggers_recovery() {
         let now = Instant::now();
         let mut state = Supervisor::new(Config {
-            receiver: "127.0.0.1:19400".into(),
+            receiver: Some("127.0.0.1:19400".parse().unwrap()),
             autostart: true,
             ..Config::default()
         });

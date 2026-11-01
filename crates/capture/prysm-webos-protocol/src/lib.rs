@@ -1,12 +1,23 @@
 //! Bounded webOS frames: full-range RGB, or limited-range BT.709 YUV (including H.264).
+//! Also owns the shared capture settings and private supervisor/worker IPC types.
 #[cfg(feature = "h264")]
 pub mod h264;
+pub mod settings;
+pub mod worker;
 use anyhow::{Result, bail, ensure};
+pub use settings::{Compression, ReceiverAddress, Source};
 
+/// One ASCII digit also forms the last byte of the four-byte frame magic.
+pub const VERSION: u32 = {
+    let text = include_bytes!("../wire-version.txt");
+    assert!(text.len() == 2 && text[0].is_ascii_digit() && text[1] == b'\n');
+    (text[0] - b'0') as u32
+};
+pub const MAGIC: [u8; 4] = [b'P', b'R', b'Y', include_bytes!("../wire-version.txt")[0]];
 pub const HEADER_LEN: usize = 24;
 
 pub const MAX_CONTROL_LEN: usize = 128;
-pub const HELLO: ControlMessage = ControlMessage::Hello { version: 3 };
+pub const HELLO: ControlMessage = ControlMessage::Hello { version: VERSION };
 
 /// Connection control uses bounded, length-prefixed JSON; frame payloads stay binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -26,7 +37,9 @@ impl ControlMessage {
     pub fn validate(self) -> Result<Self> {
         match self {
             Self::Idle => {}
-            Self::Hello { version } => ensure!(version == 3, "unsupported webOS handshake version"),
+            Self::Hello { version } => {
+                ensure!(version == VERSION, "unsupported webOS handshake version");
+            }
             Self::CaptureSettings {
                 refresh_rate_hz,
                 capture_resolution: [width, height],
@@ -142,7 +155,7 @@ impl Header {
     pub fn encode(self) -> Result<[u8; HEADER_LEN]> {
         self.validate()?;
         let mut bytes = [0; HEADER_LEN];
-        bytes[..4].copy_from_slice(b"PRY3");
+        bytes[..4].copy_from_slice(&MAGIC);
         for (offset, value) in [
             (4, self.width),
             (8, self.height),
@@ -156,7 +169,7 @@ impl Header {
     }
 
     pub fn decode(bytes: &[u8; HEADER_LEN]) -> Result<Self> {
-        ensure!(&bytes[..4] == b"PRY3", "unsupported webOS frame protocol");
+        ensure!(bytes[..4] == MAGIC, "unsupported webOS frame protocol");
         let field = |offset| {
             u32::from_be_bytes([
                 bytes[offset],
@@ -231,8 +244,6 @@ mod tests {
             assert_eq!(ControlMessage::decode(&bytes[4..]).unwrap(), message);
         }
         for json in [
-            r#"{"type":"hello","version":2}"#,
-            r#"{"type":"hello","version":3,"extra":true}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":0}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":61}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":"30"}"#,
@@ -241,6 +252,13 @@ mod tests {
             "{",
         ] {
             assert!(ControlMessage::decode(json.as_bytes()).is_err());
+        }
+        for value in [
+            serde_json::json!({"type":"hello", "version":VERSION.wrapping_sub(1)}),
+            serde_json::json!({"type":"hello", "version":VERSION + 1}),
+            serde_json::json!({"type":"hello", "version":VERSION, "extra":true}),
+        ] {
+            assert!(ControlMessage::decode(&serde_json::to_vec(&value).unwrap()).is_err());
         }
         for length in [0u32, 129, u32::MAX] {
             assert!(ControlMessage::decode_length(length.to_be_bytes()).is_err());
@@ -274,7 +292,6 @@ mod tests {
                 .is_err()
             );
         }
-        assert!(ControlMessage::decode(br#"{"type":"hello","version":1}"#).is_err());
     }
 
     #[test]

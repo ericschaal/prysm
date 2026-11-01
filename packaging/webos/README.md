@@ -1,5 +1,12 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.12 shares typed configuration and worker IPC between the native
+processes and centralizes the wire version. It was deployed on 2026-11-01 with
+saved settings, enabled state, boot hook, and permission mounts preserved.
+Installed binary hashes matched the ARM build; capture resumed without an error
+and host frame processing advanced. Wire version remains 3.
+[Deployment evidence](../../research/webos-capture/2026-11-01-readiness/validation-0.1.12-maintainability.json).
+
 The IPK installs a TV web app (`io.prysm.capture`), Rust Luna supervisor
 (`io.prysm.capture.service`) and Rust ARMv7 capture worker. It requires a rooted
 TV with Homebrew Channel root execution; boot hooks are needed only for opt-in
@@ -31,7 +38,7 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
 ```
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.11_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.12_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -43,12 +50,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.11_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.12_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.11_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.12_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This

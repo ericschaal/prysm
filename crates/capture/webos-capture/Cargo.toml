@@ -19,9 +19,8 @@ libc.workspace = true
 libloading.workspace = true
 memmap2.workspace = true
 nix = { workspace = true, features = ["poll", "user", "socket", "fs", "signal", "pthread"] }
-serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
+prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["cli", "h264"] }
 yuv = { workspace = true, features = ["fast_mode"] }
 
 [build-dependencies]

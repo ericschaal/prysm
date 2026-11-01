@@ -334,7 +334,16 @@ fn readiness_wait_keeps_sending_ui_on_the_same_connection_then_opens_video() {
                 anyhow::bail!("test open")
             },
             &mut ui,
-            &mut || Ok((frames.get() >= 3, false)),
+            &mut || {
+                Ok(VideoUpdate {
+                    availability: if frames.get() >= 3 {
+                        VideoAvailability::Available
+                    } else {
+                        VideoAvailability::Unavailable
+                    },
+                    reset: false,
+                })
+            },
             &mut crate::native::events::Events::disabled(),
         )
         .unwrap();
