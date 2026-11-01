@@ -49,8 +49,10 @@ a new Grafana data volume; it does not reset an existing account.
 The datasource and **Prysm — systems and stream** dashboard are provisioned from
 this directory. Select nodes at the top. Capture configuration and codec-specific
 panels retain requested codec, capture mode, width and height filters for
-live and historical TV series. Machine/pipeline overview panels remain visible so that
-host-side bottlenecks stay in context.
+live and historical TV series. The overview gives the health instruments two roomy
+rows: stream status, cadence and capture budget above frame regularity and faults.
+Expand **Machine resources**, **Throughput & encoding**, or **Timing & reliability**
+for detailed charts. Idle capture is displayed separately from stalled capture.
 
 [Prometheus targets](http://localhost:9090/targets) shows scrape errors. Check the
 endpoint directly if Prysm is DOWN:
@@ -104,3 +106,13 @@ The exporter uses maintained `prometheus-client`, `tiny_http`, and `sysinfo`
 crates. It contains no unsafe Rust. Bounded label families and histograms (which use brief library locks)
 are updated in process; sampling, encoding exposition, and HTTP I/O run on a
 separate thread. Prometheus/Grafana outages therefore do not block capture.
+
+
+Validate the overview expressions and layout with Docker available:
+
+```sh
+python3 observability/tests/check-health.py
+```
+
+The check uses the configured Prometheus image and synthetic healthy, idle,
+delayed, stalled, missing-telemetry and offline series; it does not need live capture.

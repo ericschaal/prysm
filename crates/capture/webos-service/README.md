@@ -6,7 +6,7 @@ configuration, persistence and permission setup. The browser UI uses native Luna
 subscriptions with reconnect; there is no Node service or setup helper.
 
 The single [package build](../../../packaging/webos/README.md) produces both
-binaries and `target/webos-ipk/io.prysm.capture_0.1.15_all.ipk`. The installed TV
+binaries and `target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. The installed TV
 setup is changed only by an explicit installation, not by building.
 
 With no arguments, the binary runs the production identity and paths as root,

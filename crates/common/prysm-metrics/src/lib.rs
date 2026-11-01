@@ -9,11 +9,12 @@ use prometheus_client::{
 };
 use std::{
     net::SocketAddr,
+    num::NonZeroU32,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use sysinfo::{
     CpuRefreshKind, MemoryRefreshKind, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate,
@@ -41,6 +42,8 @@ struct Metrics {
     durations: Timings,
     capture: Family<CaptureInfo, Gauge>,
     backend: Family<BackendInfo, Gauge>,
+    requested_fps: Gauge,
+    last_decoded_frame: FloatGauge,
     process_cpu: FloatGauge,
     process_memory: BytesGauge,
     system_cpu: FloatGauge,
@@ -102,6 +105,18 @@ impl Metrics {
             "Configured capture settings",
             capture.clone(),
         );
+        let requested_fps = Gauge::default();
+        let last_decoded_frame = FloatGauge::default();
+        registry.register(
+            "prysm_capture_requested_frames_per_second",
+            "Active capture target frame rate; zero when idle",
+            requested_fps.clone(),
+        );
+        registry.register(
+            "prysm_receiver_last_decoded_frame_timestamp_seconds",
+            "Unix time of the last successfully decoded frame; zero before the current request receives a frame",
+            last_decoded_frame.clone(),
+        );
         let process_cpu = FloatGauge::default();
         let process_memory = BytesGauge::default();
         let system_cpu = FloatGauge::default();
@@ -158,6 +173,8 @@ impl Metrics {
             durations,
             capture,
             backend,
+            requested_fps,
+            last_decoded_frame,
             process_cpu,
             process_memory,
             system_cpu,
@@ -185,6 +202,14 @@ pub fn enabled() -> bool {
 /// Record a frame using bounded, source-code-defined labels.
 pub fn frame(stage: FrameStage, format: Format) {
     if let Some(metrics) = METRICS.get() {
+        if matches!(stage, FrameStage::Decoded) {
+            metrics.last_decoded_frame.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
+            );
+        }
         metrics
             .frames
             .get_or_create(&FrameLabels::new(stage, format))
@@ -265,6 +290,7 @@ pub fn capture_info(
     target_bitrate_bps: u32,
 ) {
     if let Some(metrics) = METRICS.get() {
+        metrics.requested_fps.set(i64::from(fps));
         metrics.capture.clear();
         metrics
             .capture
@@ -278,6 +304,27 @@ pub fn capture_info(
                 target_bitrate_bps,
             })
             .set(1);
+    }
+}
+
+/// Keep the requested rate active across TV reconnects, until capture is stopped.
+#[must_use]
+pub fn receiver_request(fps: NonZeroU32) -> ReceiverRequest {
+    ReceiverRequest(METRICS.get().map(|metrics| {
+        metrics.last_decoded_frame.set(0.0);
+        metrics.requested_fps.set(i64::from(fps.get()));
+        metrics.requested_fps.clone()
+    }))
+}
+
+/// Owned by the single active receiver request, including while waiting for a TV.
+pub struct ReceiverRequest(Option<Gauge>);
+
+impl Drop for ReceiverRequest {
+    fn drop(&mut self) {
+        if let Some(fps) = &self.0 {
+            fps.set(0);
+        }
     }
 }
 

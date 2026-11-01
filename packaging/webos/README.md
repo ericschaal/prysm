@@ -1,5 +1,11 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.16 exports numeric requested FPS for the Grafana capture-budget gauge.
+Deployed on 2026-11-01 with both ARM binary hashes verified, settings and metrics
+opt-in preserved, and frames progressing. The host now exposes requested FPS and
+last decoded-frame time; its initial idle state and resumed capture were verified.
+[Deployment evidence](../../research/webos-capture/2026-11-01-readiness/validation-0.1.16-health-overview.json).
+
 Version 0.1.15 adds a saved **Prometheus metrics** checkbox, defaulting off for
 new and older configurations. Deployed on 2026-11-01; toggling on/off/on changed
 the actual TV endpoint, restarted the worker, persisted the setting, and resumed
@@ -57,7 +63,7 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
 ```
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.15_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -69,12 +75,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.15_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.15_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.16_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This

@@ -154,6 +154,8 @@ the actual wire cohort panel and keep dimensions/mode constant when comparing ru
 
 | Metric | Unit / owner / meaning | Additional labels |
 |---|---|---|
+| prysm_capture_requested_frames_per_second | FPS; active target rate on receiver or TV; zero when idle. Receiver request lifetime spans reconnects | none |
+| prysm_receiver_last_decoded_frame_timestamp_seconds | Unix seconds; host time of the last complete, successfully decoded frame; reset to zero on a new receiver request | none |
 | prysm_capture_requested_info | 1; historical TV settings; current worker composition is RGB | source, compression, composition_format, width, height, fps |
 | prysm_capture_backend_info | 1 selected, 0 unselected; TV actual opened backend per layer | layer, backend |
 | prysm_process_cpu_cores | cores; emitting process including its native threads, 1 = one full core | none |
@@ -180,3 +182,26 @@ FrameDecoder/DecodeH264. Codec labels derive from the packet enum and include H2
 For H.264 the wire format denotes decoded Rgb24, while the encoder's I420 surface
 is internal. Capture info includes target_bitrate_bps (zero for raw/LZ4); compare
 actual bytes and frame rates, since bitrate targets are not instantaneous caps.
+
+
+## Stream health overview
+
+The overview keeps stream status and two gauges above the regularity chart and
+recent-fault counts. Machine resources, throughput/encoding, and timing/reliability
+are separate collapsed sections; expand a section for diagnostics.
+
+Stream status is Idle when receiver-requested FPS is zero. While requested,
+frame age up to max(250 ms, two requested frame periods) is Healthy; up to
+max(1 s, five periods) is Delayed; older or never-received frames are Stalled.
+Age is computed at the last scrape (`timestamp(metric) - metric`) so the scrape
+interval itself cannot falsely age a healthy stream. Detection updates every five
+seconds. A failed scrape of the configured `computer` target is Receiver offline;
+missing health instrumentation remains No telemetry. The offline target follows
+the default `targets.json` node naming; update that selector if renaming the host.
+
+Cadence is decoded FPS / receiver-requested FPS. Capture budget is the mean TV
+iteration duration / requested frame period; it includes I/O and excludes pacing.
+The regularity chart compares rolling p99 frame gaps with the requested interval;
+histogram bucket precision limits the estimate. Fault counts estimate operation
+outcomes in the last five minutes, exclude expected peer closure, and show zero
+only for UP exporters. Counts are outcomes, not unique incidents.

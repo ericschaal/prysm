@@ -26,6 +26,22 @@ struct Request {
     finished: oneshot::Sender<Result<()>>,
     shutdown: CancellationToken,
     _completed: DropGuard,
+    metrics: Option<prysm_metrics::ReceiverRequest>,
+}
+
+impl Request {
+    fn activate(mut self) -> Self {
+        let ControlMessage::CaptureSettings {
+            refresh_rate_hz, ..
+        } = self.settings
+        else {
+            unreachable!("capture requests contain validated capture settings")
+        };
+        self.metrics = Some(prysm_metrics::receiver_request(
+            NonZeroU32::new(refresh_rate_hz).expect("validated capture rate is nonzero"),
+        ));
+        self
+    }
 }
 
 impl WebosReceiver {
@@ -95,6 +111,7 @@ impl WebosReceiver {
                 finished,
                 shutdown,
                 _completed: completed.clone().drop_guard(),
+                metrics: None,
             })
             .context("webOS listener unavailable or capture already pending")?;
         Ok((stream, completed, availability))
@@ -125,7 +142,7 @@ async fn serve(listener: TcpListener, mut requests: mpsc::Receiver<Request>) -> 
             biased;
             () = stop_requested(active.as_ref()) => finish(&mut active),
             request = requests.recv() => match request {
-                Some(request) => { ensure!(active.is_none(), "overlapping webOS captures"); active = Some(request); },
+                Some(request) => { ensure!(active.is_none(), "overlapping webOS captures"); active = Some(request.activate()); },
                 None => return Ok(()),
             },
             accepted = accept(&listener) => {
@@ -177,7 +194,7 @@ async fn connection(
     while active.is_none() {
         let mut byte = [0];
         tokio::select! {
-            request = requests.recv() => match request { Some(request) => *active = Some(request), None => return Ok(()) },
+            request = requests.recv() => match request { Some(request) => *active = Some(request.activate()), None => return Ok(()) },
             _ = socket.read(&mut byte) => return Ok(()),
             replacement = accept(listener) => {
                 let (next, address) = replacement?;
