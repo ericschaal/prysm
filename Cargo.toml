@@ -6,6 +6,7 @@ members = [
     "crates/capture/prysm-capture",
     "crates/capture/prysm-webos-protocol",
     "crates/capture/webos-capture",
+    "crates/capture/webos-service",
     "crates/processing/prysm-processor",
     "crates/common/prysm-core",
     "crates/common/prysm-contract",
@@ -48,6 +49,7 @@ anyhow = "1.0"
 atomic-write-file = "0.3"
 av-foundation = "0.8.1"
 axum = "0.8"
+bindgen = { version = "0.73.2", default-features = false, features = ["runtime"] }
 cc = "1"
 clap = "4"
 core-foundation = { version = "0.10", default-features = false }
