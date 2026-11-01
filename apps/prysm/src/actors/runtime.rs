@@ -199,6 +199,14 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    async fn message(tv: &mut tokio::net::TcpStream) -> serde_json::Value {
+        let mut prefix = [0; 4];
+        tv.read_exact(&mut prefix).await.unwrap();
+        let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+        tv.read_exact(&mut bytes).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
     #[actix::test]
     async fn webos_listener_survives_pipeline_stop_and_configuration() {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -215,17 +223,10 @@ mod tests {
             };
             let pipeline_config = PipelineConfig::from(&config);
             let (pipeline, _) = Pipeline::spawn(pipeline_config.clone()).unwrap();
-            async fn message(tv: &mut tokio::net::TcpStream) -> serde_json::Value {
-                let mut prefix = [0; 4];
-                tv.read_exact(&mut prefix).await.unwrap();
-                let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
-                tv.read_exact(&mut bytes).await.unwrap();
-                serde_json::from_slice(&bytes).unwrap()
-            }
             for _ in 0..2 {
                 let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
                 let hello = br#"{"type":"hello","version":2}"#;
-                tv.write_all(&(hello.len() as u32).to_be_bytes())
+                tv.write_all(&(u32::try_from(hello.len()).unwrap()).to_be_bytes())
                     .await
                     .unwrap();
                 tv.write_all(hello).await.unwrap();

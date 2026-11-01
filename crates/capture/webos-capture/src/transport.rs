@@ -120,7 +120,7 @@ impl Sender {
             let socket = self.socket.as_mut().context("receiver is not connected")?;
             match socket.peek(&mut [0]) {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(50))
+                    std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(error) => return Err(error.into()),
                 Ok(0) => anyhow::bail!("receiver disconnected"),
@@ -156,7 +156,7 @@ impl Sender {
                     self.encoder = Some(
                         prysm_webos_protocol::h264::Encoder::new(self.h264_bitrate, self.fps)
                             .inspect_err(|_| {
-                                prysm_metrics::event(EncoderEvent::InitializationFailed)
+                                prysm_metrics::event(EncoderEvent::InitializationFailed);
                             })?,
                     );
                 }

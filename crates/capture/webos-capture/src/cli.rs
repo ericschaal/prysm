@@ -98,15 +98,6 @@ pub enum CompositionFormat {
     Nv12,
 }
 
-impl From<CompositionFormat> for prysm_webos_protocol::PixelFormat {
-    fn from(format: CompositionFormat) -> Self {
-        match format {
-            CompositionFormat::Rgb => Self::Rgb,
-            CompositionFormat::Nv12 => Self::Nv12,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum VideoBackend {
     Auto,
@@ -202,25 +193,6 @@ mod tests {
             "127.0.0.1:19400 --composition-format nv16",
         ] {
             assert!(parse(args).is_err(), "{args}");
-        }
-    }
-}
-
-impl From<Source> for prysm_metrics::CaptureSource {
-    fn from(source: Source) -> Self {
-        match source {
-            Source::Video => Self::Video,
-            Source::Ui => Self::Ui,
-            Source::Both => Self::Both,
-        }
-    }
-}
-impl From<Compression> for prysm_metrics::Codec {
-    fn from(codec: Compression) -> Self {
-        match codec {
-            Compression::None => Self::None,
-            Compression::Lz4 => Self::Lz4,
-            Compression::H264 => Self::H264,
         }
     }
 }

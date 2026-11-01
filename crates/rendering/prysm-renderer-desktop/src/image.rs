@@ -6,7 +6,7 @@ pub(super) fn frame_to_image(frame: &Frame, rgb_scratch: &mut Vec<u8>) -> Option
         PixelFormat::RGB24 => frame.as_slice(),
         PixelFormat::BGR24 => {
             frame.as_slice().clone_into(rgb_scratch);
-            for pixel in rgb_scratch.chunks_exact_mut(3) {
+            for pixel in rgb_scratch.as_chunks_mut::<3>().0 {
                 pixel.swap(0, 2);
             }
             rgb_scratch

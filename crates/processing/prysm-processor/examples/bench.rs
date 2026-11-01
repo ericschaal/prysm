@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 fn yuyv_frame(width: u32, height: u32, seed: u8) -> Frame {
     let mut data = vec![128u8; (width * height * 2) as usize];
     for (i, byte) in data.iter_mut().enumerate().step_by(2) {
-        *byte = ((i / 7) as u8).wrapping_add(seed); // luma varies per frame
+        *byte = ((i / 7).to_le_bytes()[0]).wrapping_add(seed); // luma varies per frame
     }
     Frame::new(
         data,
@@ -37,7 +37,7 @@ fn bench(label: &str, width: u32, height: u32, vary: bool) {
         let now = clock + Duration::from_secs_f64(f64::from(step) / 30.0);
         processor.process_frame_at(frame.clone(), now);
     }
-    let per_frame = start.elapsed() / frames.len() as u32;
+    let per_frame = start.elapsed() / u32::try_from(frames.len()).unwrap();
     println!("{label}: {per_frame:?}/frame");
 }
 

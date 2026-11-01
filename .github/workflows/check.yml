@@ -110,8 +110,9 @@ jobs:
       - name: Desktop workspace tests and doctests
         run: cargo +stable test --locked --workspace --all-features
       - name: Compile and lint all targets, including examples
-        # shortcut: existing pedantic/cargo warnings remain advisory; tighten after lint cleanup.
-        run: cargo +stable clippy --locked --workspace --all-targets --all-features -- -D clippy::correctness -D clippy::suspicious
+        run: |
+          cargo +stable clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo +stable clippy --locked --workspace --all-targets --no-default-features -- -D warnings
       - name: Build API documentation
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links

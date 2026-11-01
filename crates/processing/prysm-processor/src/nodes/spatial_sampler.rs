@@ -25,6 +25,10 @@ impl SpatialSampler {
         }
     }
 
+    #[allow(
+        clippy::float_cmp,
+        reason = "invalidate geometry on any change to the configured reach"
+    )]
     pub fn configure(&mut self, sample_density: SampleDensity, reach_ratio: f32) {
         if self.sample_density != sample_density || self.reach_ratio != reach_ratio {
             self.sample_density = sample_density;
@@ -33,6 +37,11 @@ impl SpatialSampler {
         }
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "grid coordinates are bounded by u32 dimensions; weights use approximate f32 geometry"
+    )]
     fn prepare_geometry(&mut self, width: u32, height: u32) {
         let horizontal = self.sample_density.samples_for_length(width as usize);
         let vertical = self.sample_density.samples_for_length(height as usize);
@@ -93,6 +102,10 @@ impl SpatialSampler {
         self.dimensions = Some((width, height));
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "normalized weighted channel means fit the f32 color representation"
+    )]
     pub fn process(&mut self, view: &FrameView) -> EdgeColors {
         let (width, height) = (view.viewport_width(), view.viewport_height());
         if width == 0 || height == 0 {

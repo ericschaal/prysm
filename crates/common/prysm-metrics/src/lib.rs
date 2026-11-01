@@ -59,6 +59,10 @@ fn histogram() -> Histogram {
 }
 
 impl Metrics {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "register metric families together so names and labels can be reviewed in one place"
+    )]
     fn new(role: Role) -> Self {
         let mut registry =
             Registry::with_labels(std::iter::once(("role".into(), format!("{role:?}").into())));
@@ -341,13 +345,13 @@ fn serve(address: SocketAddr, metrics: Arc<Metrics>) -> Result<Exporter> {
         Networks::new_with_refreshed_list().context("cannot initialize network metrics")?;
     std::thread::Builder::new()
         .name("prysm-metrics".into())
-        .spawn(move || run_exporter(server, &metrics, &stopped, system, networks))
+        .spawn(move || run_exporter(&server, &metrics, &stopped, system, networks))
         .context("cannot start metrics exporter")?;
     Ok(Exporter { stop, address })
 }
 
 fn run_exporter(
-    server: Server,
+    server: &Server,
     metrics: &Metrics,
     stopped: &AtomicBool,
     mut system: System,

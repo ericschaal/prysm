@@ -1,4 +1,4 @@
-//! The real HTTP handlers and the OpenAPI document generated from their router.
+//! The real HTTP handlers and the `OpenAPI` document generated from their router.
 #[cfg(feature = "client")]
 pub mod client;
 
@@ -43,9 +43,11 @@ impl ApiFailure {
             },
         )
     }
+    #[must_use]
     pub fn conflict(message: &str) -> Self {
         Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
     }
+    #[must_use]
     pub fn unavailable() -> Self {
         Self::new(
             StatusCode::SERVICE_UNAVAILABLE,

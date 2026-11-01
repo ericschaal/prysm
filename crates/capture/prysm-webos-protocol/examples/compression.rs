@@ -3,6 +3,10 @@ use anyhow::Result;
 use prysm_webos_protocol::{compress, decompress};
 use std::{hint::black_box, time::Instant};
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "in-memory frame lengths are small enough for benchmark ratios"
+)]
 fn main() -> Result<()> {
     println!("NV12 LZ4: size, content, wire/raw %, encode us, decode us (500 frames)");
     for (width, height) in [(320, 180), (640, 360), (1920, 1080)] {
@@ -12,12 +16,12 @@ fn main() -> Result<()> {
             let input: Vec<u8> = (0..length)
                 .map(|index| match content {
                     "flat" => 128,
-                    "gradient" => ((index % width) * 255 / width) as u8,
+                    "gradient" => u8::try_from((index % width) * 255 / width).unwrap(),
                     _ => {
                         random ^= random << 13;
                         random ^= random >> 17;
                         random ^= random << 5;
-                        random as u8
+                        random.to_le_bytes()[0]
                     }
                 })
                 .collect();

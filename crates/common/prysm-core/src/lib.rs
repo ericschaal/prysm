@@ -35,6 +35,7 @@ pub struct Viewport {
 }
 
 impl Viewport {
+    #[must_use]
     pub fn full_frame(width: u32, height: u32) -> Self {
         Self {
             x: 0,

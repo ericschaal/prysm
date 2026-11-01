@@ -51,6 +51,11 @@ impl FrameView {
     }
 
     /// Area-average a viewport-relative region in linear RGB, including black pixels.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "accumulate in f64, then return the bounded mean in the f32 color representation"
+    )]
     pub fn average_linear(
         &self,
         x_start: u32,
@@ -92,7 +97,7 @@ impl FrameView {
     fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
         match self.frame.format() {
             PixelFormat::YUYV { range, matrix } => {
-                let (r, g, b) = prysm_core::yuyv::yuyv_pixel_to_rgb(
+                let (red, green, blue) = prysm_core::yuyv::yuyv_pixel_to_rgb(
                     self.frame.as_slice(),
                     x,
                     y,
@@ -100,7 +105,7 @@ impl FrameView {
                     range,
                     matrix,
                 );
-                Some(Color::new(r, g, b))
+                Some(Color::new(red, green, blue))
             }
             PixelFormat::RGB24 | PixelFormat::BGR24 => {
                 let idx = ((y * self.frame.width() + x) * 3) as usize;
@@ -145,7 +150,7 @@ pub mod tests {
 
     #[test]
     fn luma_reads_yuyv_directly() {
-        let frame = yuyv_frame_from_luma(4, 2, |x, y| (x + y * 10) as u8 * 10);
+        let frame = yuyv_frame_from_luma(4, 2, |x, y| u8::try_from(x + y * 10).unwrap() * 10);
         assert_eq!(luma_at(&frame, 0, 0), 0);
         assert_eq!(luma_at(&frame, 1, 0), 10);
         assert_eq!(luma_at(&frame, 3, 1), 130);

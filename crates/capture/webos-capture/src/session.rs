@@ -1,7 +1,7 @@
 //! Coordinate connection negotiation, frame capture, transmission, and pacing.
 use crate::{
     capture::{Capture, UiCapture},
-    cli::{CaptureOptions, Cli, Compression},
+    cli::{CaptureOptions, Cli, Compression, Source},
     native::Video,
     transport::Sender,
 };
@@ -89,8 +89,16 @@ pub(crate) fn capture_loop(
 fn record_capture_settings(cli: &Cli, fps: u8, [width, height]: [u32; 2]) {
     tracing::info!(fps, width, height, "capture settings negotiated");
     prysm_metrics::capture_info(
-        cli.source.into(),
-        cli.compression.into(),
+        match cli.source {
+            Source::Video => prysm_metrics::CaptureSource::Video,
+            Source::Ui => prysm_metrics::CaptureSource::Ui,
+            Source::Both => prysm_metrics::CaptureSource::Both,
+        },
+        match cli.compression {
+            Compression::None => prysm_metrics::Codec::None,
+            Compression::Lz4 => prysm_metrics::Codec::Lz4,
+            Compression::H264 => prysm_metrics::Codec::H264,
+        },
         width,
         height,
         fps,

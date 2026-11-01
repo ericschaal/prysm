@@ -387,8 +387,8 @@ mod tests {
         }
         let mut output = vec![255; 6];
         assert!(capture.capture(&mut output).unwrap().is_none());
-        assert!(output.is_empty());
-        assert!(driver.cleanup.is_empty());
+        assert_eq!(output, [] as [u8; 0]);
+        assert_eq!(driver.cleanup, [] as [u8; 0]);
         driver.code = 99;
         assert!(capture.capture(&mut output).unwrap().is_none());
         driver.code = 0;

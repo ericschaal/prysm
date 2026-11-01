@@ -58,6 +58,10 @@ impl eframe::App for DesktopRenderer {
 }
 
 impl DesktopRenderer {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "pixel coordinates are converted to approximate normalized GUI coordinates"
+    )]
     fn update_video_texture(&mut self, ctx: &egui::Context) {
         if let Some(frame_rx) = self.frame_rx.as_mut() {
             let has_changed = frame_rx.borrow().has_changed();
@@ -95,6 +99,11 @@ impl DesktopRenderer {
         }
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "available GUI dimensions are quantized to nonnegative pixel counts"
+    )]
     fn draw_output(&self, ui: &mut egui::Ui, edge_colors: &EdgeColors) {
         let available = ui.available_rect_before_wrap();
 
@@ -180,6 +189,10 @@ impl DesktopRenderer {
     }
 
     /// Render discrete individual LEDs along an edge
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "LED indices are converted to approximate GUI coordinates"
+    )]
     fn render_discrete_leds(
         &self,
         ui: &mut egui::Ui,
@@ -199,7 +212,10 @@ impl DesktopRenderer {
         };
 
         for i in 0..display_led_count {
-            let color = strip.color_at(i, display_led_count).to_srgb();
+            let Some(color) = strip.color_at(i, display_led_count) else {
+                continue;
+            };
+            let color = color.to_srgb();
             let egui_color = egui::Color32::from_rgb(color.r, color.g, color.b);
 
             // Calculate LED center position based on edge

@@ -49,6 +49,7 @@ impl PrysmProcessor {
     }
 
     /// Confirmed sampling area of the last supported frame, in source pixels.
+    #[must_use]
     pub fn viewport(&self) -> Option<Viewport> {
         self.last_viewport
     }
@@ -84,6 +85,10 @@ impl PrysmProcessor {
     /// Both black-bar confirmation and smoothing use this clock.
     /// Use a shared clock origin plus source timestamps when replaying video.
     /// Repeated or earlier times do not advance smoothing.
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "resampling a nonempty strip preserves its nonempty invariant"
+    )]
     pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
         let layout = FrameLayout {
             width: frame.width(),

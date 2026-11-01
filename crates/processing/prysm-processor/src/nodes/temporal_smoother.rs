@@ -24,6 +24,10 @@ impl TemporalSmoother {
         self.seconds = seconds;
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the exponential smoothing factor is in 0..=1"
+    )]
     pub fn process(&mut self, input: EdgeColors, mut now: Instant) -> EdgeColors {
         let smoothed = if let Some((prev, previous_time)) = &mut self.previous {
             now = now.max(*previous_time);

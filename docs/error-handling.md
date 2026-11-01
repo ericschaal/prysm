@@ -40,6 +40,7 @@ device or I/O errors.
 YUYV conversion takes a validated `Frame`, returns conversion errors, and clears
 the output for empty frames. `ColorStrip::new` rejects empty vectors with
 `EmptyColorStrip`; its fill constructors require `NonZeroUsize`.
+`ColorStrip::color_at` returns `None` for zero output counts or out-of-range indices.
 
 When changing an error contract, update its callers, examples and tests. Verify
 that domain variants survive propagation, causes remain inspectable, and EOF and

@@ -51,6 +51,10 @@ async fn file_capture_live_settings_restart_and_shutdown() {
     exercise_controller(Some(path)).await;
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keep each end-to-end controller scenario and its assertions together"
+)]
 async fn exercise_controller(video: Option<PathBuf>) {
     let wled = Arc::new(Mutex::new(
         serde_json::json!({"state":{"on":false,"lor":2},"info":{"live":false,"lm":null}}),
@@ -614,6 +618,10 @@ async fn save_config(
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keep each end-to-end controller scenario and its assertions together"
+)]
 async fn start_retries_saved_configuration_before_opening_the_input() {
     let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let desired = occupied.local_addr().unwrap();

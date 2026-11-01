@@ -3,6 +3,11 @@ name = "prysm-renderer-desktop"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Desktop preview renderer for Prysm"
 
 [lints]
 workspace = true

@@ -3,6 +3,11 @@ name = "prysm-processor"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Video edge color sampling and smoothing for Prysm"
 
 [lints]
 workspace = true

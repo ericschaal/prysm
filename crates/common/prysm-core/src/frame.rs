@@ -66,6 +66,7 @@ impl std::error::Error for FrameError {}
 impl PixelFormat {
     /// Returns the bytes per pixel for this format.
     /// Returns None for variable-size formats like MJPEG.
+    #[must_use]
     pub fn bytes_per_pixel(&self) -> Option<usize> {
         match self {
             PixelFormat::RGB24 | PixelFormat::BGR24 => Some(3),
@@ -120,6 +121,7 @@ pub struct Frame {
 
 impl Frame {
     /// Validate a capture payload and remove row padding before constructing a frame.
+    #[must_use]
     pub fn from_strided_buffer(
         data: &[u8],
         width: u32,

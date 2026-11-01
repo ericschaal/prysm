@@ -17,6 +17,10 @@ members = [
 
 [workspace.package]
 license = "Apache-2.0"
+repository = "https://github.com/ericschaal/prysm"
+readme = "README.md"
+keywords = ["ambilight", "lighting", "video", "wled"]
+categories = ["multimedia::video"]
 
 # The video pipeline does per-pixel work on full HD frames; unoptimized dev
 # builds make it burn >100% CPU. Lightly optimize workspace code and fully

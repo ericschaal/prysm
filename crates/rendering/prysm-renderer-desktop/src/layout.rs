@@ -134,6 +134,12 @@ impl LayoutDimensions {
 ///
 /// Distributes total LED count proportionally to edge lengths to achieve
 /// consistent spacing around the perimeter (like real LED strips).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "proportional allocation rounds nonnegative counts and caps them at the requested total"
+)]
 pub(super) fn calculate_led_distribution(
     width: usize,
     height: usize,

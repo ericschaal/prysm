@@ -10,31 +10,45 @@ pub struct Color {
 }
 
 impl Color {
+    #[must_use]
     pub fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
+    #[must_use]
     pub fn black() -> Self {
         Self { r: 0, g: 0, b: 0 }
     }
 
     /// Blend two colors with a ratio (0.0 = full self, 1.0 = full other)
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "8-bit color arithmetic deliberately quantizes with saturating float casts"
+    )]
     pub fn blend(&self, other: &Color, ratio: f32) -> Color {
         let ratio = ratio.clamp(0.0, 1.0);
         Color {
-            r: (self.r as f32 * (1.0 - ratio) + other.r as f32 * ratio) as u8,
-            g: (self.g as f32 * (1.0 - ratio) + other.g as f32 * ratio) as u8,
-            b: (self.b as f32 * (1.0 - ratio) + other.b as f32 * ratio) as u8,
+            r: (f32::from(self.r) * (1.0 - ratio) + f32::from(other.r) * ratio) as u8,
+            g: (f32::from(self.g) * (1.0 - ratio) + f32::from(other.g) * ratio) as u8,
+            b: (f32::from(self.b) * (1.0 - ratio) + f32::from(other.b) * ratio) as u8,
         }
     }
 
     /// Apply brightness multiplier (0.0 to 1.0)
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "8-bit color arithmetic deliberately quantizes with saturating float casts"
+    )]
     pub fn with_brightness(&self, brightness: f32) -> Color {
         let brightness = brightness.clamp(0.0, 1.0);
         Color {
-            r: (self.r as f32 * brightness) as u8,
-            g: (self.g as f32 * brightness) as u8,
-            b: (self.b as f32 * brightness) as u8,
+            r: (f32::from(self.r) * brightness) as u8,
+            g: (f32::from(self.g) * brightness) as u8,
+            b: (f32::from(self.b) * brightness) as u8,
         }
     }
 }
@@ -89,15 +103,20 @@ impl SubAssign for Color {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "8-bit color arithmetic deliberately quantizes with saturating float casts"
+)]
 impl Mul<f32> for Color {
     type Output = Self;
 
     fn mul(self, scalar: f32) -> Self {
         let scalar = scalar.clamp(0.0, 1.0);
         Self {
-            r: (self.r as f32 * scalar) as u8,
-            g: (self.g as f32 * scalar) as u8,
-            b: (self.b as f32 * scalar) as u8,
+            r: (f32::from(self.r) * scalar) as u8,
+            g: (f32::from(self.g) * scalar) as u8,
+            b: (f32::from(self.b) * scalar) as u8,
         }
     }
 }
@@ -108,6 +127,11 @@ impl MulAssign<f32> for Color {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "8-bit color arithmetic deliberately quantizes with saturating float casts"
+)]
 impl Div<f32> for Color {
     type Output = Self;
 
@@ -117,9 +141,9 @@ impl Div<f32> for Color {
         }
         let scalar = 1.0 / scalar;
         Self {
-            r: ((self.r as f32 * scalar).min(255.0)) as u8,
-            g: ((self.g as f32 * scalar).min(255.0)) as u8,
-            b: ((self.b as f32 * scalar).min(255.0)) as u8,
+            r: ((f32::from(self.r) * scalar).min(255.0)) as u8,
+            g: ((f32::from(self.g) * scalar).min(255.0)) as u8,
+            b: ((f32::from(self.b) * scalar).min(255.0)) as u8,
         }
     }
 }

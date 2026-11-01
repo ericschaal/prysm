@@ -216,14 +216,14 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
 }
 
 fn video_settings(width: u32, height: u32) -> Retained<NSDictionary<NSString, NSObject>> {
+    fn ns_object(number: Retained<NSNumber>) -> Retained<NSObject> {
+        Retained::into_super(Retained::into_super(number))
+    }
+
     // The kCVPixelBuffer* keys are CFStrings, toll-free bridged to NSString.
     let pixel_format_key = unsafe { &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>() };
     let width_key = unsafe { &*kCVPixelBufferWidthKey.cast::<NSString>() };
     let height_key = unsafe { &*kCVPixelBufferHeightKey.cast::<NSString>() };
-
-    fn ns_object(number: Retained<NSNumber>) -> Retained<NSObject> {
-        Retained::into_super(Retained::into_super(number))
-    }
 
     NSDictionary::from_retained_objects(
         &[pixel_format_key, width_key, height_key],

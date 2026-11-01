@@ -132,7 +132,15 @@ impl WledRenderer {
         ] {
             for i in 0..count {
                 let index = if reverse { count - 1 - i } else { i };
-                let color = strip.color_at(index, count).to_srgb();
+                let color = strip
+                    .color_at(index, count)
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "LED sample index out of bounds",
+                        )
+                    })?
+                    .to_srgb();
                 self.rgb.push(color);
             }
         }

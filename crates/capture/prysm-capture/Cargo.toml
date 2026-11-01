@@ -3,6 +3,11 @@ name = "prysm-capture"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Camera, file and webOS video capture for Prysm"
 
 [lints]
 workspace = true

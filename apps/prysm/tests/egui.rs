@@ -6,6 +6,10 @@ use std::{process::Stdio, time::Duration};
 
 #[tokio::test]
 #[ignore = "requires FFmpeg 9+ and a native desktop session"]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keep the full desktop startup and shutdown scenario together"
+)]
 async fn file_egui_keeps_final_frame_and_shuts_down_on_signal() {
     let directory = tempfile::tempdir().unwrap();
     let video = directory.path().join("egui.mkv");

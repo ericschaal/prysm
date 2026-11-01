@@ -33,9 +33,9 @@ impl Events {
         Ok(Self(Some(unsafe { File::from_raw_fd(descriptor) })))
     }
 
-    pub fn send(&mut self, event: Event) -> Result<()> {
+    pub fn send(&mut self, event: &Event) -> Result<()> {
         if let Some(pipe) = &mut self.0 {
-            serde_json::to_writer(&mut *pipe, &event)?;
+            serde_json::to_writer(&mut *pipe, event)?;
             pipe.write_all(b"\n")?;
         }
         Ok(())
@@ -51,8 +51,8 @@ mod tests {
         let (writer, mut reader) = UnixStream::pair().unwrap();
         let descriptor: OwnedFd = writer.into();
         let mut events = Events(Some(descriptor.into()));
-        events.send(Event::Connected).unwrap();
-        events.send(Event::Capturing).unwrap();
+        events.send(&Event::Connected).unwrap();
+        events.send(&Event::Capturing).unwrap();
         drop(events);
         let mut data = String::new();
         reader.read_to_string(&mut data).unwrap();

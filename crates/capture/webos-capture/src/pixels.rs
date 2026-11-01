@@ -16,6 +16,15 @@ pub struct ComposedFrame<'a> {
     pub pixels: &'a [u8],
 }
 
+impl From<CompositionFormat> for PixelFormat {
+    fn from(format: CompositionFormat) -> Self {
+        match format {
+            CompositionFormat::Rgb => Self::Rgb,
+            CompositionFormat::Nv12 => Self::Nv12,
+        }
+    }
+}
+
 impl CompositionBuffer {
     pub fn compose(
         &mut self,

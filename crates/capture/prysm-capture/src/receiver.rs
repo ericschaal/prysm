@@ -61,6 +61,7 @@ impl WebosReceiver {
     }
 
     /// The bound listening address.
+    #[must_use]
     pub fn address(&self) -> SocketAddr {
         self.address
     }
@@ -100,7 +101,7 @@ impl WebosReceiver {
     }
 }
 
-async fn stop_requested(active: &Option<Request>) {
+async fn stop_requested(active: Option<&Request>) {
     match active {
         Some(request) => tokio::select! {
             () = request.shutdown.cancelled() => {},
@@ -122,7 +123,7 @@ async fn serve(listener: TcpListener, mut requests: mpsc::Receiver<Request>) -> 
     loop {
         tokio::select! {
             biased;
-            () = stop_requested(&active) => finish(&mut active),
+            () = stop_requested(active.as_ref()) => finish(&mut active),
             request = requests.recv() => match request {
                 Some(request) => { ensure!(active.is_none(), "overlapping webOS captures"); active = Some(request); },
                 None => return Ok(()),
@@ -439,7 +440,7 @@ mod tests {
 
             // Cancellation also interrupts an incomplete payload.
             client
-                .write_all(&raw_rgb_packet(1, 1, &[4, 5, 6])[..HEADER_LEN + 1])
+                .write_all(&raw_rgb_packet(1, 1, &[4, 5, 6])[..=HEADER_LEN])
                 .await
                 .unwrap();
             if stop {
@@ -537,7 +538,9 @@ mod tests {
                     assert!(
                         frame
                             .as_slice()
-                            .chunks_exact(3)
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
                             .all(|rgb| rgb[0] > 240 && rgb[1] < 15 && rgb[2] < 15)
                     );
                 } else {

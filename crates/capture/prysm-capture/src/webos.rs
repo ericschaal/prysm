@@ -268,7 +268,7 @@ mod tests {
         let mut rejected = fixture_packet(WireFormat::Rgb, false);
         rejected[0] = 0;
         assert!(read_frame(&mut rejected.as_slice()).await.is_err());
-        let truncated = &fixture_packet(WireFormat::Rgb, false)[..HEADER_LEN + 1];
+        let truncated = &fixture_packet(WireFormat::Rgb, false)[..=HEADER_LEN];
         assert!(read_frame(&mut &truncated[..]).await.is_err());
         let address = exporter.address();
         let text = tokio::task::spawn_blocking(move || {

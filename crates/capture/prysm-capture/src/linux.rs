@@ -15,7 +15,16 @@ fn yuv_colorimetry(
     encoding: u32,
     quantization: u32,
 ) -> Result<(YuvRange, YuvStandardMatrix)> {
-    use v4l::v4l_sys::*;
+    use v4l::v4l_sys::{
+        v4l2_colorspace_V4L2_COLORSPACE_BT2020, v4l2_colorspace_V4L2_COLORSPACE_DCI_P3,
+        v4l2_colorspace_V4L2_COLORSPACE_JPEG, v4l2_colorspace_V4L2_COLORSPACE_REC709,
+        v4l2_colorspace_V4L2_COLORSPACE_SMPTE240M, v4l2_quantization_V4L2_QUANTIZATION_DEFAULT,
+        v4l2_quantization_V4L2_QUANTIZATION_FULL_RANGE,
+        v4l2_quantization_V4L2_QUANTIZATION_LIM_RANGE, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601,
+        v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_709, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020,
+        v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_DEFAULT, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SMPTE240M,
+        v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SYCC,
+    };
     let encoding = if encoding == v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_DEFAULT {
         match colorspace {
             v4l2_colorspace_V4L2_COLORSPACE_REC709 | v4l2_colorspace_V4L2_COLORSPACE_DCI_P3 => {
@@ -195,7 +204,6 @@ impl V4lCapturer {
                 }
                 Err(e) => {
                     last_error = Some(crate::check_format_rejection(e)?);
-                    continue;
                 }
             }
         }

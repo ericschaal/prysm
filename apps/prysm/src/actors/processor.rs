@@ -12,7 +12,7 @@ use prysm_processor::PrysmProcessor;
 use tokio::sync::watch;
 
 pub struct Processor {
-    frame_processor: PrysmProcessor,
+    engine: PrysmProcessor,
     renderer: Recipient<RenderFrame>,
     completion: Completion,
     status: watch::Sender<PipelineStatus>,
@@ -38,7 +38,7 @@ impl Processor {
         availability: Option<watch::Receiver<bool>>,
     ) -> Self {
         Self {
-            frame_processor: PrysmProcessor::new(&settings.to_core()),
+            engine: PrysmProcessor::new(&settings.to_core()),
             renderer,
             completion,
             status,
@@ -99,12 +99,12 @@ impl Handler<FrameUpdate> for Processor {
 
     fn handle(&mut self, msg: FrameUpdate, ctx: &mut Self::Context) {
         let process_time = prysm_metrics::timer(Stage::FrameProcess);
-        let colors = self.frame_processor.process_frame(msg.0.clone());
+        let colors = self.engine.process_frame(msg.0.clone());
         drop(process_time);
         prysm_metrics::frame(FrameStage::Processed, msg.0.format().into());
         let rendered = RenderFrame {
             frame: msg.0,
-            viewport: self.frame_processor.viewport(),
+            viewport: self.engine.viewport(),
             colors,
         };
         match self.renderer.try_send(rendered) {
@@ -137,7 +137,7 @@ impl Handler<ConfigureProcessor> for Processor {
     type Result = ();
 
     fn handle(&mut self, msg: ConfigureProcessor, _: &mut Self::Context) {
-        self.frame_processor.configure(&msg.0.to_core());
+        self.engine.configure(&msg.0.to_core());
         self.status
             .send_modify(|status| status.applied_revision = Some(msg.1));
     }

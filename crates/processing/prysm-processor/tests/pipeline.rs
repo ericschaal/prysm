@@ -301,7 +301,7 @@ fn slightly_noisy_black_bands_still_crop() {
                     data[(y * 640 + x) * 2] = if (start..end).contains(&position) {
                         white
                     } else {
-                        black + (position % 2) as u8
+                        black + u8::from(position % 2 != 0)
                     };
                 }
             }
@@ -355,7 +355,13 @@ fn edge_sampling_includes_the_last_row_and_column() {
             }
         }
         let output = PrysmProcessor::new(&config).process_frame(
-            Frame::new(data, width as u32, height as u32, PixelFormat::RGB24).unwrap(),
+            Frame::new(
+                data,
+                u32::try_from(width).unwrap(),
+                u32::try_from(height).unwrap(),
+                PixelFormat::RGB24,
+            )
+            .unwrap(),
         );
         let edges = if width == 636 {
             [&output.top, &output.bottom]
@@ -813,7 +819,10 @@ fn repeated_or_earlier_timestamps_do_not_advance_smoothing() {
     let mut processor = PrysmProcessor::new(&config);
     let start = Instant::now();
     let white = processor.process_frame_at(rgb(8, 8, 255), start);
-    for now in [start, start - Duration::from_millis(100)] {
+    for now in [
+        start,
+        start.checked_sub(Duration::from_millis(100)).unwrap(),
+    ] {
         assert_eq!(processor.process_frame_at(rgb(8, 8, 0), now), white);
     }
     let output = processor.process_frame_at(rgb(8, 8, 0), start + Duration::from_secs(1));
@@ -952,13 +961,13 @@ fn crop_changes_preserve_smoothing_and_adopt_the_new_sample_grid() {
         ] {
             assert_eq!(actual.len(), target.len());
             for index in 0..actual.len() {
-                let goal = target.color_at(index, actual.len()).r;
+                let goal = target.color_at(index, actual.len()).unwrap().r;
                 let expected = previous.map_or(goal, |old| {
-                    let old = old.color_at(index, actual.len()).r;
+                    let old = old.color_at(index, actual.len()).unwrap().r;
                     old + (goal - old) * ratio
                 });
                 assert!(
-                    (actual.color_at(index, actual.len()).r - expected).abs() < 1e-5,
+                    (actual.color_at(index, actual.len()).unwrap().r - expected).abs() < 1e-5,
                     "frame {step}, sample {index}: crop transition bypassed smoothing"
                 );
             }
@@ -1027,8 +1036,8 @@ fn configuring_sampling_rebuilds_geometry_and_preserves_smoothing_history() {
     let ratio = 1.0 - 0.05_f32.powf(0.1 / 0.5);
     for (actual, target) in [(&actual.top, &target.top), (&actual.left, &target.left)] {
         for sample in 0..actual.len() {
-            let expected = target.color_at(sample, actual.len()).r * ratio;
-            assert!((actual.color_at(sample, actual.len()).r - expected).abs() < 1e-6);
+            let expected = target.color_at(sample, actual.len()).unwrap().r * ratio;
+            assert!((actual.color_at(sample, actual.len()).unwrap().r - expected).abs() < 1e-6);
         }
     }
 }

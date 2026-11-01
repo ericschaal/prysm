@@ -117,6 +117,10 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires FFmpeg 9+ on PATH"]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "exercise ordered EOF, rate limiting, cancellation and decoder failure against one FFmpeg fixture"
+    )]
     async fn file_stream_preserves_ordered_eof_and_decoder_failure() {
         let directory =
             std::env::temp_dir().join(format!("prysm-video-stream-{}", std::process::id()));

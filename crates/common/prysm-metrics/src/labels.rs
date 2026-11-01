@@ -8,6 +8,10 @@ pub enum Role {
     Prysm,
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "variant names are the established exported Prometheus label values"
+)]
 pub enum Flow {
     CaptureFrames,
     InputFrames,

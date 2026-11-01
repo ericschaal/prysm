@@ -38,6 +38,13 @@ pub(crate) struct Renderers {
 }
 
 impl Renderers {
+    #[cfg_attr(
+        not(feature = "desktop"),
+        allow(
+            clippy::unused_self,
+            reason = "desktop builds use the preview sender stored on self"
+        )
+    )]
     fn create(&self, output: &Output, completion: Completion) -> Result<RenderTarget> {
         match output {
             Output::Wled { address, leds } => {
@@ -264,7 +271,7 @@ mod tests {
         .await
     }
 
-    fn config(address: String) -> PipelineConfig {
+    fn config(address: &str) -> PipelineConfig {
         PipelineConfig {
             revision: ConfigRevision::default(),
             input: prysm_contract::Input::File {
@@ -304,7 +311,7 @@ mod tests {
         let renderers = Renderers {
             egui: Some(Egui { colors, frames }),
         };
-        let mut config = config("127.0.0.1:4048".into());
+        let mut config = config("127.0.0.1:4048");
         config.output = Output::Egui {};
         let exit = run_session(
             config,
@@ -334,7 +341,7 @@ mod tests {
     #[actix::test]
     async fn eof_drains_the_final_accepted_frame() {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(receiver.local_addr().unwrap().to_string());
+        let config = config(&receiver.local_addr().unwrap().to_string());
         let frames =
             stream::once(async { Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap()) });
 
@@ -359,7 +366,7 @@ mod tests {
     #[actix::test]
     async fn cancellation_drops_input_and_returns_stopped() {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(receiver.local_addr().unwrap().to_string());
+        let config = config(&receiver.local_addr().unwrap().to_string());
         let (resource, dropped) = oneshot::channel::<()>();
         let frames = stream::once(async move {
             let _resource = resource;
@@ -390,7 +397,7 @@ mod tests {
     async fn shutdown_and_startup_failure_wait_for_camera_release() {
         for fail_output in [false, true] {
             let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            let config = config(receiver.local_addr().unwrap().to_string());
+            let config = config(&receiver.local_addr().unwrap().to_string());
             let completed = CancellationToken::new();
             let (release, gate) = std::sync::mpsc::channel();
             let (resource, mut dropped) = oneshot::channel::<()>();
@@ -447,7 +454,7 @@ mod tests {
     #[actix::test]
     async fn capture_failure_is_reported() {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(receiver.local_addr().unwrap().to_string());
+        let config = config(&receiver.local_addr().unwrap().to_string());
         let frames = stream::once(async {
             Err(std::io::Error::new(ErrorKind::NotConnected, "test capture failure").into())
         });
@@ -466,7 +473,7 @@ mod tests {
     #[actix::test]
     async fn final_render_failure_takes_precedence_over_eof() {
         // Broadcast sends fail without SO_BROADCAST; no packet leaves the socket.
-        let config = config("255.255.255.255:4048".into());
+        let config = config("255.255.255.255:4048");
         let frames = stream::once(async { Ok(Frame::dummy(4, 4).unwrap()) });
 
         let error = test_session(config, frames.boxed(), CancellationToken::new())
@@ -481,7 +488,7 @@ mod tests {
 
     #[actix::test]
     async fn startup_failure_returns_from_the_dedicated_thread() {
-        let config = config("127.0.0.1:4048".into());
+        let config = config("127.0.0.1:4048");
         let error = tokio::time::timeout(
             Duration::from_secs(2),
             start(

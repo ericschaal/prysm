@@ -46,30 +46,29 @@ fn main() -> Result<()> {
     let mut session = match session::Session::connect(&cli) {
         Ok(session) => session,
         Err(error) => {
-            events.send(native::events::Event::Disconnected)?;
+            events.send(&native::events::Event::Disconnected)?;
             return Err(error);
         }
     };
-    events.send(native::events::Event::Connected)?;
-    let capturing = match session.wait_for_capture(&cli, &stop) {
-        Ok(capturing) => capturing,
-        Err(error) => {
+    events.send(&native::events::Event::Connected)?;
+    let capturing = session
+        .wait_for_capture(&cli, &stop)
+        .unwrap_or_else(|error| {
             tracing::info!(error = %format!("{error:#}"), "idle receiver disconnected");
             false
-        }
-    };
+        });
     if !capturing {
-        events.send(native::events::Event::Disconnected)?;
+        events.send(&native::events::Event::Disconnected)?;
         return Ok(());
     }
     let mut ui = Some(capture::NativeUi::new(cli.source));
     let result = session.configure(&mut ui).and_then(|()| {
-        events.send(native::events::Event::Capturing)?;
+        events.send(&native::events::Event::Capturing)?;
         session.run(&stop, &mut native::Video::open, &mut ui)
     });
     match &result {
-        Ok(()) => events.send(native::events::Event::Disconnected)?,
-        Err(error) => events.send(native::events::Event::Failed {
+        Ok(()) => events.send(&native::events::Event::Disconnected)?,
+        Err(error) => events.send(&native::events::Event::Failed {
             message: format!("{error:#}"),
         })?,
     }

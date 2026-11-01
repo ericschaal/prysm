@@ -40,6 +40,10 @@ pub struct DileCapture {
 }
 
 impl DileCapture {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "vendor initialization is a single ordered sequence with shared cleanup guards"
+    )]
     pub(super) fn open(options: &CaptureOptions) -> Result<Self> {
         // libdile_vt on some TVs omits its DT_NEEDED entry for PmLogLib.
         // SAFETY: known system logging library; keep its symbols globally

@@ -3,6 +3,14 @@ use yuv::{YuvPackedImage, YuvRange, YuvStandardMatrix, yuyv422_to_rgb};
 
 /// Decode one YUYV pixel using the frame's range and color matrix.
 #[inline]
+#[must_use]
+#[allow(
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "standard YUV channel names; coefficients intentionally quantized to fixed point and RGB clamped to 8 bits"
+)]
 pub fn yuyv_pixel_to_rgb(
     data: &[u8],
     x: u32,
@@ -19,8 +27,8 @@ pub fn yuyv_pixel_to_rgb(
         return (0, 0, 0);
     };
     let (bias, y_scale, uv_scale) = match range {
-        YuvRange::Full => (0.0, 1.0, 1.0),
-        YuvRange::Limited => (16.0, 255.0 / 219.0, 255.0 / 224.0),
+        YuvRange::Full => (0, 1.0, 1.0),
+        YuvRange::Limited => (16, 255.0 / 219.0, 255.0 / 224.0),
     };
     let coefficients = matrix.get_kr_kb();
     let (kr, kb) = (coefficients.kr, coefficients.kb);
@@ -31,7 +39,7 @@ pub fn yuyv_pixel_to_rgb(
     let cb_coef = (2.0 * (1.0 - kb) * uv_scale * 64.0).round() as i32;
     let g_cr = (2.0 * (1.0 - kr) * kr / kg * uv_scale * 64.0).round() as i32;
     let g_cb = (2.0 * (1.0 - kb) * kb / kg * uv_scale * 64.0).round() as i32;
-    let y = (i32::from(pair[(x % 2) as usize * 2]) - bias as i32) * y_coef;
+    let y = (i32::from(pair[(x % 2) as usize * 2]) - bias) * y_coef;
     let u = i32::from(pair[1]) - 128;
     let v = i32::from(pair[3]) - 128;
     let r = ((y + cr_coef * v + 32) >> 6).clamp(0, 255) as u8;
@@ -43,7 +51,7 @@ pub fn yuyv_pixel_to_rgb(
 /// Converts YUYV (YUV 4:2:2) format to RGB using the `yuv` crate
 ///
 /// This uses SIMD-optimized conversions with automatic platform detection:
-/// - x86_64: AVX2 or SSE4.1
+/// - `x86_64`: AVX2 or SSE4.1
 /// - ARM64: NEON
 /// - Fallback: Portable scalar code
 ///
@@ -153,7 +161,7 @@ mod tests {
             let frame = Frame::new(vec![], width, height, format).unwrap();
             let mut output = vec![1; 6];
             yuyv_to_rgb_into(&frame, &mut output).unwrap();
-            assert!(output.is_empty());
+            assert_eq!(output, [] as [u8; 0]);
         }
         assert!(matches!(
             yuyv_to_rgb(&Frame::dummy(2, 1).unwrap()),
@@ -296,21 +304,21 @@ mod tests {
 
             // Should match within rounding tolerance (±1)
             assert!(
-                (full_rgb[offset] as i16 - r as i16).abs() <= 1,
+                (i16::from(full_rgb[offset]) - i16::from(r)).abs() <= 1,
                 "Red mismatch at pixel {}: full={}, pixel={}",
                 x,
                 full_rgb[offset],
                 r
             );
             assert!(
-                (full_rgb[offset + 1] as i16 - g as i16).abs() <= 1,
+                (i16::from(full_rgb[offset + 1]) - i16::from(g)).abs() <= 1,
                 "Green mismatch at pixel {}: full={}, pixel={}",
                 x,
                 full_rgb[offset + 1],
                 g
             );
             assert!(
-                (full_rgb[offset + 2] as i16 - b as i16).abs() <= 1,
+                (i16::from(full_rgb[offset + 2]) - i16::from(b)).abs() <= 1,
                 "Blue mismatch at pixel {}: full={}, pixel={}",
                 x,
                 full_rgb[offset + 2],

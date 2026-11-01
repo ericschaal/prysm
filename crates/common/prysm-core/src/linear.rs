@@ -13,7 +13,10 @@ pub struct LinearColor {
 /// Precomputed sRGB-to-linear lookup table (IEC 61966-2-1).
 /// Maps each u8 sRGB value to its linear [0.0, 1.0] equivalent.
 /// Generated from: if srgb <= 0.04045 { srgb / 12.92 } else { ((srgb + 0.055) / 1.055)^2.4 }
-#[allow(clippy::unreadable_literal)]
+#[allow(
+    clippy::unreadable_literal,
+    reason = "keep generated lookup values aligned with the sRGB transfer table"
+)]
 const SRGB_TO_LINEAR: [f32; 256] = [
     0.0, 0.0003035, 0.0006071, 0.0009106, 0.0012141, 0.0015176, 0.0018212, 0.0021247, 0.0024282,
     0.0027317, 0.0030353, 0.0033465, 0.0036765, 0.0040247, 0.0043914, 0.0047770, 0.0051815,
@@ -29,31 +32,33 @@ const SRGB_TO_LINEAR: [f32; 256] = [
     0.0998987, 0.1022417, 0.1046165, 0.1070231, 0.1094617, 0.1119324, 0.1144354, 0.1169707,
     0.1195384, 0.1221388, 0.1247718, 0.1274377, 0.1301365, 0.1328683, 0.1356333, 0.1384316,
     0.1412633, 0.1441285, 0.1470273, 0.1499598, 0.1529262, 0.1559265, 0.1589608, 0.1620294,
-    0.1651322, 0.1682694, 0.1714411, 0.1746474, 0.1778884, 0.1811642, 0.1844750, 0.1878208,
+    0.1651322, 0.1682694, 0.1714411, 0.1746474, 0.1778884, 0.1811642, 0.184_475, 0.1878208,
     0.1912017, 0.1946178, 0.1980693, 0.2015563, 0.2050787, 0.2086369, 0.2122308, 0.2158605,
-    0.2195262, 0.2232280, 0.2269659, 0.2307400, 0.2345506, 0.2383976, 0.2422811, 0.2462013,
+    0.2195262, 0.223_228, 0.2269659, 0.230_74, 0.2345506, 0.2383976, 0.2422811, 0.2462013,
     0.2501583, 0.2541521, 0.2581829, 0.2622507, 0.2663556, 0.2704978, 0.2746773, 0.2788943,
     0.2831487, 0.2874408, 0.2917706, 0.2961383, 0.3005438, 0.3049873, 0.3094689, 0.3139887,
     0.3185468, 0.3231432, 0.3277781, 0.3324515, 0.3371636, 0.3419144, 0.3467041, 0.3515326,
-    0.3564001, 0.3613068, 0.3662526, 0.3712377, 0.3762621, 0.3813260, 0.3864294, 0.3915725,
+    0.3564001, 0.3613068, 0.3662526, 0.3712377, 0.3762621, 0.381_326, 0.3864294, 0.3915725,
     0.3967552, 0.4019778, 0.4072402, 0.4125426, 0.4178851, 0.4232677, 0.4286905, 0.4341536,
-    0.4396572, 0.4452012, 0.4507858, 0.4564110, 0.4620770, 0.4677838, 0.4735315, 0.4793202,
-    0.4851499, 0.4910208, 0.4969330, 0.5028865, 0.5088813, 0.5149177, 0.5209956, 0.5271151,
+    0.4396572, 0.4452012, 0.4507858, 0.456_411, 0.462_077, 0.4677838, 0.4735315, 0.4793202,
+    0.4851499, 0.4910208, 0.496_933, 0.5028865, 0.5088813, 0.5149177, 0.5209956, 0.5271151,
     0.5332764, 0.5394795, 0.5457245, 0.5520114, 0.5583404, 0.5647115, 0.5711248, 0.5775804,
     0.5840784, 0.5906188, 0.5972018, 0.6038273, 0.6104956, 0.6172066, 0.6239604, 0.6307571,
     0.6375969, 0.6444797, 0.6514056, 0.6583748, 0.6653873, 0.6724432, 0.6795425, 0.6866853,
     0.6938718, 0.7011019, 0.7083758, 0.7156935, 0.7230551, 0.7304607, 0.7379104, 0.7454042,
     0.7529422, 0.7605245, 0.7681511, 0.7758222, 0.7835378, 0.7912979, 0.7991027, 0.8069523,
-    0.8148466, 0.8227858, 0.8307699, 0.8387990, 0.8468732, 0.8549926, 0.8631572, 0.8713671,
+    0.8148466, 0.8227858, 0.8307699, 0.838_799, 0.8468732, 0.8549926, 0.8631572, 0.8713671,
     0.8796224, 0.8879231, 0.8962694, 0.9046612, 0.9130987, 0.9215819, 0.9301109, 0.9386857,
     0.9473065, 0.9559734, 0.9646862, 0.9734453, 0.9822506, 0.9911021, 1.0,
 ];
 
 impl LinearColor {
+    #[must_use]
     pub fn new(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b }
     }
 
+    #[must_use]
     pub fn black() -> Self {
         Self {
             r: 0.0,
@@ -63,6 +68,7 @@ impl LinearColor {
     }
 
     /// Convert an sRGB u8 color to linear RGB via const LUT.
+    #[must_use]
     pub fn from_srgb(color: Color) -> Self {
         Self {
             r: SRGB_TO_LINEAR[color.r as usize],
@@ -72,6 +78,7 @@ impl LinearColor {
     }
 
     /// Convert linear RGB back to sRGB u8 using the IEC 61966-2-1 transfer function.
+    #[must_use]
     pub fn to_srgb(&self) -> Color {
         Color {
             r: linear_to_srgb_u8(self.r),
@@ -81,6 +88,7 @@ impl LinearColor {
     }
 
     /// Lift shadows with one RGB gain, preserving black, chromaticity and highlights.
+    #[must_use]
     pub fn lift_shadows(self, strength: crate::ShadowLiftPercent) -> Self {
         let peak = self.r.max(self.g).max(self.b);
         if strength.0 == 0 || peak <= 0.0 || peak >= 0.1 {
@@ -93,6 +101,7 @@ impl LinearColor {
 
     /// Linearly interpolate between two colors.
     /// ratio=0.0 returns self, ratio=1.0 returns other.
+    #[must_use]
     pub fn blend(&self, other: &LinearColor, ratio: f32) -> LinearColor {
         let ratio = ratio.clamp(0.0, 1.0);
         let inv = 1.0 - ratio;
@@ -105,9 +114,14 @@ impl LinearColor {
 }
 
 /// Apply the sRGB companding function to a single linear channel and round to u8.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped linear light is rounded and quantized to an 8-bit channel"
+)]
 fn linear_to_srgb_u8(linear: f32) -> u8 {
     let clamped = linear.clamp(0.0, 1.0);
-    let srgb = if clamped <= 0.0031308 {
+    let srgb = if clamped <= 0.003_130_8 {
         clamped * 12.92
     } else {
         1.055 * clamped.powf(1.0 / 2.4) - 0.055
@@ -197,8 +211,8 @@ mod tests {
     fn shadow_lift_preserves_black_color_ratios_highlights_and_order() {
         for strength in [0, 25, 100, 255] {
             let mut previous = 0.0;
-            for step in 0..=2000 {
-                let peak = step as f32 / 2000.0;
+            for step in 0_u16..=2000 {
+                let peak = f32::from(step) / 2000.0;
                 let input = LinearColor::new(peak, peak * 0.4, peak * 0.1);
                 let output = input.lift_shadows(crate::ShadowLiftPercent(strength));
                 assert!(output.r >= previous - 1e-6 && output.r >= peak);
@@ -223,7 +237,7 @@ mod tests {
             let linear = LinearColor::from_srgb(color);
             let back = linear.to_srgb();
             assert!(
-                (back.r as i16 - r as i16).unsigned_abs() <= 1,
+                (i16::from(back.r) - i16::from(r)).unsigned_abs() <= 1,
                 "Round-trip failed for sRGB {r}: got {}",
                 back.r
             );
@@ -258,7 +272,7 @@ mod tests {
         // Linear midpoint 0.5 should map to sRGB ~188 (not 128)
         let srgb = mid.to_srgb();
         assert!(
-            (srgb.r as i16 - 188).unsigned_abs() <= 1,
+            (i16::from(srgb.r) - 188).unsigned_abs() <= 1,
             "Linear 0.5 -> sRGB {}, expected ~188",
             srgb.r
         );

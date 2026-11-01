@@ -104,7 +104,9 @@ fn nv12_composition_reaches_the_socket_with_raw_or_lz4_payload() {
         let mut rgb = Vec::new();
         pixels::to_rgb(header, &raw, &mut rgb).unwrap();
         assert!(
-            rgb.chunks_exact(3)
+            rgb.as_chunks::<3>()
+                .0
+                .iter()
                 .all(|p| p[0] >= 250 && p[1] <= 4 && p[2] <= 4)
         );
     }

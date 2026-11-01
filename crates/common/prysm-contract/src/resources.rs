@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, path::Path};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "[u32; 2]", into = "[u32; 2]")]
-pub struct CaptureResolution([u32; 2]);
+pub struct CaptureResolution(prysm_core::CaptureResolution);
 impl utoipa::PartialSchema for CaptureResolution {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
         use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
@@ -24,21 +24,15 @@ impl utoipa::PartialSchema for CaptureResolution {
 impl ToSchema for CaptureResolution {}
 impl CaptureResolution {
     pub fn new(width: u32, height: u32) -> Result<Self, &'static str> {
-        prysm_core::CaptureResolution::new(width, height)?;
-        Ok(Self([width, height]))
+        prysm_core::CaptureResolution::new(width, height).map(Self)
     }
     #[must_use]
     pub const fn dimensions(self) -> [u32; 2] {
-        self.0
+        self.0.dimensions()
     }
     #[must_use]
     pub fn to_core(self) -> prysm_core::CaptureResolution {
-        prysm_core::CaptureResolution::new(self.0[0], self.0[1]).expect("validated resolution")
-    }
-}
-impl Default for CaptureResolution {
-    fn default() -> Self {
-        Self(prysm_core::CaptureResolution::default().dimensions())
+        self.0
     }
 }
 impl TryFrom<[u32; 2]> for CaptureResolution {
@@ -49,7 +43,7 @@ impl TryFrom<[u32; 2]> for CaptureResolution {
 }
 impl From<CaptureResolution> for [u32; 2] {
     fn from(value: CaptureResolution) -> Self {
-        value.0
+        value.dimensions()
     }
 }
 

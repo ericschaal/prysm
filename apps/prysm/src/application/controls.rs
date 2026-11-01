@@ -59,7 +59,7 @@ impl Controls {
             .show(ui, |ui| self.show_contents(ui));
     }
 
-    fn show_contents(&mut self, ui: &mut egui::Ui) {
+    fn poll_request(&mut self) {
         if let Some(request) = self.request.as_mut() {
             match request.try_recv() {
                 Ok(result) => {
@@ -76,6 +76,32 @@ impl Controls {
                 Err(oneshot::error::TryRecvError::Empty) => {}
             }
         }
+    }
+
+    fn request_target(&mut self, power: bool) {
+        let (reply, request) = oneshot::channel();
+        match self.targets.try_send((
+            Target {
+                power,
+                source: Source::Prysm,
+            },
+            reply,
+        )) {
+            Ok(()) => {
+                self.request = Some(request);
+                self.error = None;
+            }
+            Err(_) => {
+                self.error = Some(ApiError {
+                    code: ErrorCode::Unavailable,
+                    message: "Could not send capture request".into(),
+                });
+            }
+        }
+    }
+
+    fn show_contents(&mut self, ui: &mut egui::Ui) {
+        self.poll_request();
         let snapshot = self.state.borrow_and_update().clone();
         let state = match snapshot {
             Some(Ok(state)) => state,
@@ -146,25 +172,7 @@ impl Controls {
                     "Start capture (Space)"
                 });
             if enabled && (response.clicked() || shortcut) {
-                let (reply, request) = oneshot::channel();
-                match self.targets.try_send((
-                    Target {
-                        power: !running,
-                        source: Source::Prysm,
-                    },
-                    reply,
-                )) {
-                    Ok(()) => {
-                        self.request = Some(request);
-                        self.error = None;
-                    }
-                    Err(_) => {
-                        self.error = Some(ApiError {
-                            code: ErrorCode::Unavailable,
-                            message: "Could not send capture request".into(),
-                        });
-                    }
-                }
+                self.request_target(!running);
             }
             ui.add_space(4.0);
             ui.separator();
@@ -192,6 +200,10 @@ impl Controls {
             ui.add_space(6.0);
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
+        self.show_empty_state(ui, &state, enabled);
+    }
+
+    fn show_empty_state(&self, ui: &mut egui::Ui, state: &StateResponse, enabled: bool) {
         if enabled
             && !self.has_frames
             && state.pipeline.phase == PipelinePhase::Idle

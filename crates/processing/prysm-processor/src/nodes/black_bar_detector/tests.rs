@@ -521,32 +521,17 @@ fn test_projection_building() {
     assert_eq!(row_projection.len(), 1080);
 
     // Top 100 rows should be black (brightness ~0)
-    for i in 0..100 {
-        assert!(
-            row_projection[i] < 20,
-            "Row {} brightness: {}",
-            i,
-            row_projection[i]
-        );
+    for (i, &brightness) in row_projection.iter().enumerate().take(100) {
+        assert!(brightness < 20, "Row {i} brightness: {brightness}");
     }
 
     // Middle rows should be gray (brightness ~128)
-    for i in 100..980 {
-        assert!(
-            row_projection[i] > 100,
-            "Row {} brightness: {}",
-            i,
-            row_projection[i]
-        );
+    for (i, &brightness) in row_projection.iter().enumerate().take(980).skip(100) {
+        assert!(brightness > 100, "Row {i} brightness: {brightness}");
     }
 
     // Bottom 100 rows should be black
-    for i in 980..1080 {
-        assert!(
-            row_projection[i] < 20,
-            "Row {} brightness: {}",
-            i,
-            row_projection[i]
-        );
+    for (i, &brightness) in row_projection.iter().enumerate().take(1080).skip(980) {
+        assert!(brightness < 20, "Row {i} brightness: {brightness}");
     }
 }

@@ -13,7 +13,7 @@ fn draws_application_toolbar_above_video() {
         .build();
     let context = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
-    let mut output = context.run_ui(Default::default(), |ui| {
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
         app.logic(ui.ctx(), &mut frame);
         app.ui(ui, &mut frame);
     });
@@ -43,7 +43,7 @@ fn output_draws_each_edge_color_in_its_strip() {
             .build();
         let context = egui::Context::default();
         let mut expected = Vec::new();
-        let mut output = context.run_ui(Default::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let layout = LayoutDimensions::calculate(
                     ui.available_rect_before_wrap(),
@@ -87,7 +87,7 @@ fn displays_final_frame_after_sender_closes() {
         .build();
     let context = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
-    let mut output = context.run_ui(Default::default(), |ui| {
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
         app.logic(ui.ctx(), &mut frame);
         app.ui(ui, &mut frame);
     });
@@ -98,7 +98,7 @@ fn displays_final_frame_after_sender_closes() {
     });
     drop(frames);
 
-    let mut output = context.run_ui(Default::default(), |ui| {
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
         app.logic(ui.ctx(), &mut frame);
         app.ui(ui, &mut frame);
     });
@@ -119,7 +119,7 @@ fn displays_final_frame_after_sender_closes() {
             egui::pos2(1.0, 1.0)
         ))
     );
-    let mut output = context.run_ui(Default::default(), |ui| {
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
         app.logic(ui.ctx(), &mut frame);
         app.ui(ui, &mut frame);
     });
@@ -134,6 +134,10 @@ fn displays_final_frame_after_sender_closes() {
 }
 
 #[test]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test dimensions are small exact f32 integers"
+)]
 fn crop_outline_tracks_the_displayed_frame_and_window_size() {
     let (_colors, colors_rx) = tokio::sync::watch::channel(EdgeColors::default());
     let (frames, frames_rx) = tokio::sync::watch::channel(DisplayFrame {
@@ -166,7 +170,7 @@ fn crop_outline_tracks_the_displayed_frame_and_window_size() {
         let mut output = context.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
-                ..Default::default()
+                ..egui::RawInput::default()
             },
             |ui| {
                 app.logic(ui.ctx(), &mut frame);
@@ -330,6 +334,6 @@ fn empty_yuyv_preview_clears_reused_pixels() {
     let mut scratch = vec![255; 6];
     let image = frame_to_image(&frame, &mut scratch).unwrap();
     assert_eq!(image.size, [0, 0]);
-    assert!(image.pixels.is_empty());
-    assert!(scratch.is_empty());
+    assert_eq!(image.pixels, [] as [egui::Color32; 0]);
+    assert_eq!(scratch, [] as [u8; 0]);
 }

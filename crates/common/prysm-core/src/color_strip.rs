@@ -12,6 +12,12 @@ pub struct SampleDensity(pub usize);
 impl SampleDensity {
     /// Calculate samples, capped at one per pixel (at least one for empty edges).
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "sample counts use approximate geometry and saturate to the edge length"
+    )]
     pub fn samples_for_length(self, length_px: usize) -> usize {
         (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
     }
@@ -62,6 +68,7 @@ impl ColorStrip {
     }
 
     /// Create a nonempty strip filled with the specified color.
+    #[must_use]
     pub fn fill(color: LinearColor, count: NonZeroUsize) -> Self {
         Self {
             samples: Arc::new(vec![color; count.get()]),
@@ -69,21 +76,31 @@ impl ColorStrip {
     }
 
     /// Create a nonempty strip of black samples.
+    #[must_use]
     pub fn black(count: NonZeroUsize) -> Self {
         Self::fill(LinearColor::black(), count)
     }
 
     /// Get the number of samples in the strip
+    #[must_use]
     pub fn len(&self) -> usize {
         self.samples.len()
     }
 
     /// Check if the strip is empty (should never be true)
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
 
     /// Sample the strip at a normalized position [0.0, 1.0] using linear interpolation
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "normalized coordinates are quantized to nonnegative indices, then capped at the last sample"
+    )]
     pub fn sample_at(&self, position: f32) -> LinearColor {
         let position = position.clamp(0.0, 1.0);
 
@@ -92,30 +109,45 @@ impl ColorStrip {
         }
 
         let float_index = position * (self.samples.len() - 1) as f32;
-        let index = float_index.floor() as usize;
+        let index = (float_index.floor() as usize).min(self.samples.len() - 1);
         let next_index = (index + 1).min(self.samples.len() - 1);
         let ratio = float_index - index as f32;
 
         self.samples[index].blend(&self.samples[next_index], ratio)
     }
 
-    /// Get color at specific index in a count-sized output
-    pub fn color_at(&self, index: usize, count: usize) -> LinearColor {
-        assert!(index < count, "Index out of bounds");
+    /// Get color at specific index in a count-sized output.
+    ///
+    /// Returns `None` if `count` is zero or `index >= count`.
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "output indices become normalized floating-point interpolation positions"
+    )]
+    pub fn color_at(&self, index: usize, count: usize) -> Option<LinearColor> {
+        if index >= count {
+            return None;
+        }
         let position = if count == 1 {
             0.5
         } else {
             index as f32 / (count - 1) as f32
         };
-        self.sample_at(position)
+        Some(self.sample_at(position))
     }
 
     /// Resample the strip into exactly N linear colors
+    #[must_use]
     pub fn resample(&self, count: usize) -> Vec<LinearColor> {
-        (0..count).map(|i| self.color_at(i, count)).collect()
+        (0..count).filter_map(|i| self.color_at(i, count)).collect()
     }
 
     /// Blend two strips together with a ratio (0.0 = full self, 1.0 = full other)
+    #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "strip blending resamples both operands at normalized floating-point positions"
+    )]
     pub fn blend(&self, other: &ColorStrip, ratio: f32) -> ColorStrip {
         let result_len = self.samples.len().max(other.samples.len());
         let blended: Vec<LinearColor> = (0..result_len)
@@ -142,6 +174,10 @@ impl Default for ColorStrip {
     }
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "strip addition resamples both operands at normalized floating-point positions"
+)]
 impl Add for ColorStrip {
     type Output = Self;
 
@@ -184,7 +220,8 @@ pub struct EdgeColors {
 }
 
 impl EdgeColors {
-    /// Create new EdgeColors with the given strips
+    /// Create new `EdgeColors` with the given strips
+    #[must_use]
     pub fn new(top: ColorStrip, right: ColorStrip, bottom: ColorStrip, left: ColorStrip) -> Self {
         Self {
             top,
@@ -196,6 +233,10 @@ impl EdgeColors {
 
     /// Create `EdgeColors` filled with the specified color
     #[must_use]
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "sample density guarantees nonzero counts"
+    )]
     pub fn fill(
         color: LinearColor,
         width: usize,
@@ -270,6 +311,35 @@ impl Mul<f32> for EdgeColors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_at_checks_output_bounds_and_preserves_resampling() {
+        let start = LinearColor::black();
+        let end = LinearColor::new(1.0, 0.5, 0.0);
+        let strip = ColorStrip::new(vec![start, end]).unwrap();
+        assert_eq!(strip.color_at(0, 0), None);
+        assert_eq!(strip.color_at(1, 1), None);
+        assert_eq!(strip.color_at(3, 2), None);
+        assert_eq!(strip.color_at(usize::MAX, usize::MAX), None);
+        assert_eq!(strip.color_at(0, 1), Some(start.blend(&end, 0.5)));
+        assert_eq!(strip.color_at(0, 2), Some(start));
+        assert_eq!(strip.color_at(1, 2), Some(end));
+        assert_eq!(strip.resample(0), Vec::<LinearColor>::new());
+        assert_eq!(strip.resample(1), vec![start.blend(&end, 0.5)]);
+        assert_eq!(strip.resample(3), vec![start, start.blend(&end, 0.5), end]);
+    }
+
+    #[test]
+    fn sampling_the_endpoint_caps_float_rounding_at_the_last_sample() {
+        // Above f32's exact integer range, the last index can round up to len.
+        let count = (1 << 24) + 4;
+        let mut samples = vec![LinearColor::black(); count];
+        let last = LinearColor::new(1.0, 0.5, 0.0);
+        samples[count - 1] = last;
+        let strip = ColorStrip::new(samples).unwrap();
+        assert_eq!(strip.sample_at(1.0), last);
+        assert_eq!(strip.color_at(count - 1, count), Some(last));
+    }
 
     #[test]
     fn strip_construction_preserves_nonempty_invariant() {
