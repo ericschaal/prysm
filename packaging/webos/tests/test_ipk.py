@@ -32,6 +32,11 @@ class PackageTests(unittest.TestCase):
             with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(['ar', '-p', str(package), 'data.tar.gz'])), mode='r:gz') as tar:
                 self.assertEqual(tar.getmembers()[0].mode, 0o644)
                 self.assertEqual(tar.getmembers()[0].uid, 0)
+            archive('data.tar.gz', 'usr/palm/services/io.prysm.capture.service/prysm-webos-service')
+            build()
+            module.secure(package)
+            with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(['ar', '-p', str(package), 'data.tar.gz'])), mode='r:gz') as tar:
+                self.assertEqual(tar.getmembers()[0].mode, 0o755)
             archive('control.tar.gz', 'postinst')
             build()
             with self.assertRaisesRegex(ValueError, 'installation scripts'):

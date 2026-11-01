@@ -135,3 +135,20 @@ fn resolution_changes_reconfigure_ui_and_retry_video_without_changing_rate() {
     assert_eq!(ui.unwrap().configured, [[2, 2], [4, 2]]);
     assert_eq!(attempts, [[2, 2], [4, 2]]);
 }
+
+#[test]
+fn constructor_failure_exits_instead_of_retrying_or_sending_ui() {
+    let mut capture = Capture::new(&config("both"));
+    let mut ui =
+        Some(|_, _, _: &mut Bgra8Pixels| panic!("UI continued after poisoned video construction"));
+    let error = capture
+        .capture(
+            &mut |_| {
+                Err(crate::native::FatalVideo(anyhow::anyhow!("constructor exception")).into())
+            },
+            &mut ui,
+        )
+        .err()
+        .unwrap();
+    assert!(error.is::<crate::native::FatalVideo>());
+}

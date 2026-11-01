@@ -79,12 +79,19 @@ impl VtCapture {
             ..Properties::default()
         };
         let api = VtApi::load(&["libvtcapture.so.1", "libvtcapture.so"])?;
+        super::permissions::check().map_err(super::FatalVideo)?;
         let mut driver = ptr::null_mut();
         let mut error = [0_u8; 512];
         // SAFETY: typed create symbol and valid out parameters; C++ contains throws.
         let code =
             unsafe { prysm_vt_create(api.create, &raw mut driver, error.as_mut_ptr().cast()) };
-        status(vt_result(code, &error)?, "vtCapture_create")?;
+        if let Err(error) =
+            vt_result(code, &error).and_then(|code| status(code, "vtCapture_create"))
+        {
+            // Failed construction can leave live threads and stale global pointers.
+            std::mem::forget(api);
+            return Err(super::FatalVideo(error).into());
+        }
         let driver = NonNull::new(driver).context("vtcapture returned a null driver")?;
         let mut this = Self {
             api,

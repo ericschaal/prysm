@@ -141,7 +141,7 @@ impl Capture {
         capture_ui: &mut Option<impl UiCapture>,
     ) -> Result<Option<CapturedFrame<'_>>> {
         let video = if self.source.includes_video() {
-            self.capture_video(open_video)
+            self.capture_video(open_video)?
         } else {
             None
         };
@@ -196,7 +196,7 @@ impl Capture {
     fn capture_video(
         &mut self,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
-    ) -> Option<Header> {
+    ) -> Result<Option<Header>> {
         if self.video.is_none() && Instant::now() >= self.video_retry {
             prysm_metrics::event(VideoCaptureEvent::InitAttempt);
             match open_video(&self.options) {
@@ -207,6 +207,7 @@ impl Capture {
                     );
                     self.video = Some(capture);
                 }
+                Err(error) if error.is::<crate::native::FatalVideo>() => return Err(error),
                 Err(error) => {
                     prysm_metrics::event(VideoCaptureEvent::InitFailed);
                     tracing::warn!(error = %format!("{error:#}"), "video unavailable; retrying");
@@ -214,11 +215,13 @@ impl Capture {
                 }
             }
         }
-        let capture = self.video.as_mut()?;
+        let Some(capture) = self.video.as_mut() else {
+            return Ok(None);
+        };
         let capture_time = prysm_metrics::timer(Stage::VideoAcquire);
         let result = capture.capture(&mut self.native);
         drop(capture_time);
-        match result {
+        Ok(match result {
             Ok(Some(header)) => {
                 prysm_metrics::frame(FrameStage::VideoCaptured, header.format.into());
                 Some(header)
@@ -238,7 +241,7 @@ impl Capture {
                 self.video_retry = Instant::now() + Duration::from_secs(1);
                 None
             }
-        }
+        })
     }
 }
 

@@ -24,7 +24,7 @@ fn main() -> Result<()> {
         (
             "luna",
             "luna-service2/lunaservice.h",
-            "LSError(Init|Free)|LS(Register|RegisterCategory|CategorySetData|Unregister|GmainAttach|MessageGetPayload|MessageReply|SubscriptionProcess|SubscriptionReply|SubscriptionGetHandleSubscribersCount|Call|CallCancel)",
+            "LSError(Init|Free)|LS(Register|RegisterCategory|CategorySetData|Unregister|GmainAttach|MessageGetPayload|MessageGetMethod|MessageGetApplicationID|MessageGetSenderServiceName|MessageRef|MessageUnref|MessageReply|SubscriptionProcess|SubscriptionReply|SubscriptionGetHandleSubscribersCount|Call|CallCancel)",
             "Luna",
         ),
         (
@@ -32,6 +32,12 @@ fn main() -> Result<()> {
             "glib-2.0/glib.h",
             "g_main_context_(new|unref)|g_main_loop_(new|run|quit|unref)|g_timeout_source_new|g_source_(set_callback|attach|destroy|unref)",
             "Glib",
+        ),
+        (
+            "../../../webos-capture/src/native/generated/luna",
+            "luna-service2/lunaservice.h",
+            "LSError(Init|Free)|LS(Register|Unregister)",
+            "Luna",
         ),
     ] {
         let bindings = bindgen::Builder::default()

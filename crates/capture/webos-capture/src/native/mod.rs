@@ -84,11 +84,21 @@ fn copy_mapping(
 }
 
 mod dile;
+mod permissions;
 mod ui;
 mod vtcapture;
 use dile::DileCapture;
 pub use ui::Ui;
 use vtcapture::VtCapture;
+
+#[derive(Debug)]
+pub struct FatalVideo(pub anyhow::Error);
+impl std::fmt::Display for FatalVideo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "video worker must exit: {:#}", self.0)
+    }
+}
+impl std::error::Error for FatalVideo {}
 
 pub enum Video {
     Vt(VtCapture),
@@ -106,6 +116,7 @@ impl Video {
         match options.video_backend {
             VideoBackend::Auto => match VtCapture::open(options) {
                 Ok(vt) => Ok(Self::Vt(vt)),
+                Err(error) if error.is::<FatalVideo>() => Err(error),
                 Err(error) => {
                     tracing::warn!(error = %format!("{error:#}"), "vtcapture unavailable; trying dile_vt");
                     Ok(Self::Dile(DileCapture::open(options)?))

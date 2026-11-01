@@ -153,7 +153,7 @@ test('receiver availability follows explicit handshake events, not process exist
 test('Luna setup and cleanup touch only the Prysm manifest and boot hook', t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'prysm-service-'));
     const original = { ...paths };
-    Object.assign(paths, { manifest: path.join(directory, 'prysm.json'), hook: path.join(directory, 'init.d', 'prysm-capture') });
+    Object.assign(paths, { supervisorManifest: path.join(directory, 'supervisor.json'), manifest: path.join(directory, 'prysm.json'), hook: path.join(directory, 'init.d', 'prysm-capture') });
     const calls = [];
     t.mock.method(child, 'execFileSync', (...args) => calls.push(args));
     t.after(() => { Object.assign(paths, original); fs.rmSync(directory, { recursive: true }); });
@@ -167,11 +167,14 @@ test('Luna setup and cleanup touch only the Prysm manifest and boot hook', t => 
     permissions.autostart(true);
     assert.match(fs.readFileSync(paths.hook, 'utf8'), /if \[ -x .*setup.sh \]/);
     permissions.autostart(false);
+    // Rust's JSON object key order differs; ownership is structural, not textual.
+    fs.writeFileSync(paths.manifest, JSON.stringify({ version: manifest.version, roleFiles: manifest.roleFiles, id: manifest.id }));
+    permissions.install();
     permissions.remove();
     permissions.remove();
     assert.equal(fs.existsSync(paths.hook), false);
     assert.equal(fs.existsSync(paths.manifest), false);
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
     assert.ok(calls.every(args => args[0] === 'ls-control' && args[1][0] === 'scan-services'));
     fs.writeFileSync(paths.manifest, '{"id":"unrelated"}');
     assert.throws(() => permissions.install(), /unrelated/);
@@ -245,4 +248,26 @@ test('service restricts mutations to its app and serializes cleanup against star
     assert.equal(cleanup[0].enabled, false);
     assert.equal(processes.length, 1, 'cleanup cannot accidentally restart the capturer');
     assert.equal(JSON.parse(files[paths.config]).autostart, false);
+});
+
+test('native setup and JS rollback recognize only the exact supervisor registration', t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'prysm-native-service-'));
+    const original = { ...paths };
+    Object.assign(paths, { service: directory, manifest: path.join(directory, 'capture.manifest'), supervisorManifest: path.join(directory, 'supervisor.manifest') });
+    t.mock.method(child, 'execFileSync', () => {});
+    t.after(() => { Object.assign(paths, original); fs.rmSync(directory, { recursive: true }); });
+    fs.writeFileSync(path.join(directory, 'supervisor.role.json'), '{}');
+    permissions.install();
+    permissions.install();
+    const manifest = JSON.parse(fs.readFileSync(paths.supervisorManifest));
+    assert.deepEqual(manifest.roleFiles, [directory + '/supervisor.role.json']);
+    assert.deepEqual(manifest.serviceFiles, [directory + '/supervisor.service']);
+    permissions.remove();
+    assert.equal(fs.existsSync(paths.supervisorManifest), true, 'cleanup keeps supervisor activatable');
+    fs.unlinkSync(path.join(directory, 'supervisor.role.json'));
+    permissions.install();
+    assert.equal(fs.existsSync(paths.supervisorManifest), false, 'JS rollback removes native activation');
+    fs.writeFileSync(paths.supervisorManifest, '{"id":"unrelated"}');
+    assert.throws(() => permissions.install(), /unrelated supervisor/);
+    assert.equal(fs.readFileSync(paths.supervisorManifest, 'utf8'), '{"id":"unrelated"}');
 });

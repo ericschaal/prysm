@@ -108,6 +108,14 @@ pub struct Luna {
         lserror: *mut LSError,
     ) -> bool,
     pub LSUnregister: unsafe extern "C" fn(service: *mut LSHandle, lserror: *mut LSError) -> bool,
+    pub LSMessageRef: unsafe extern "C" fn(message: *mut LSMessage),
+    pub LSMessageUnref: unsafe extern "C" fn(message: *mut LSMessage),
+    pub LSMessageGetApplicationID:
+        unsafe extern "C" fn(message: *mut LSMessage) -> *const ::std::os::raw::c_char,
+    pub LSMessageGetSenderServiceName:
+        unsafe extern "C" fn(message: *mut LSMessage) -> *const ::std::os::raw::c_char,
+    pub LSMessageGetMethod:
+        unsafe extern "C" fn(message: *mut LSMessage) -> *const ::std::os::raw::c_char,
     pub LSMessageGetPayload:
         unsafe extern "C" fn(message: *mut LSMessage) -> *const ::std::os::raw::c_char,
     pub LSMessageReply: unsafe extern "C" fn(
@@ -174,6 +182,14 @@ impl Luna {
             unsafe { __library.get(b"LSRegisterCategory\0") }.map(|sym| *sym)?;
         let LSCategorySetData = unsafe { __library.get(b"LSCategorySetData\0") }.map(|sym| *sym)?;
         let LSUnregister = unsafe { __library.get(b"LSUnregister\0") }.map(|sym| *sym)?;
+        let LSMessageRef = unsafe { __library.get(b"LSMessageRef\0") }.map(|sym| *sym)?;
+        let LSMessageUnref = unsafe { __library.get(b"LSMessageUnref\0") }.map(|sym| *sym)?;
+        let LSMessageGetApplicationID =
+            unsafe { __library.get(b"LSMessageGetApplicationID\0") }.map(|sym| *sym)?;
+        let LSMessageGetSenderServiceName =
+            unsafe { __library.get(b"LSMessageGetSenderServiceName\0") }.map(|sym| *sym)?;
+        let LSMessageGetMethod =
+            unsafe { __library.get(b"LSMessageGetMethod\0") }.map(|sym| *sym)?;
         let LSMessageGetPayload =
             unsafe { __library.get(b"LSMessageGetPayload\0") }.map(|sym| *sym)?;
         let LSMessageReply = unsafe { __library.get(b"LSMessageReply\0") }.map(|sym| *sym)?;
@@ -195,6 +211,11 @@ impl Luna {
             LSRegisterCategory,
             LSCategorySetData,
             LSUnregister,
+            LSMessageRef,
+            LSMessageUnref,
+            LSMessageGetApplicationID,
+            LSMessageGetSenderServiceName,
+            LSMessageGetMethod,
             LSMessageGetPayload,
             LSMessageReply,
             LSGmainAttach,
@@ -241,6 +262,30 @@ impl Luna {
     }
     pub unsafe fn LSUnregister(&self, service: *mut LSHandle, lserror: *mut LSError) -> bool {
         unsafe { (self.LSUnregister)(service, lserror) }
+    }
+    pub unsafe fn LSMessageRef(&self, message: *mut LSMessage) {
+        unsafe { (self.LSMessageRef)(message) }
+    }
+    pub unsafe fn LSMessageUnref(&self, message: *mut LSMessage) {
+        unsafe { (self.LSMessageUnref)(message) }
+    }
+    pub unsafe fn LSMessageGetApplicationID(
+        &self,
+        message: *mut LSMessage,
+    ) -> *const ::std::os::raw::c_char {
+        unsafe { (self.LSMessageGetApplicationID)(message) }
+    }
+    pub unsafe fn LSMessageGetSenderServiceName(
+        &self,
+        message: *mut LSMessage,
+    ) -> *const ::std::os::raw::c_char {
+        unsafe { (self.LSMessageGetSenderServiceName)(message) }
+    }
+    pub unsafe fn LSMessageGetMethod(
+        &self,
+        message: *mut LSMessage,
+    ) -> *const ::std::os::raw::c_char {
+        unsafe { (self.LSMessageGetMethod)(message) }
     }
     pub unsafe fn LSMessageGetPayload(
         &self,

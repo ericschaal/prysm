@@ -13,6 +13,9 @@ struct Mock {
     data: *mut c_void,
     reenter: bool,
     reply: Option<Value>,
+    method: Option<&'static CStr>,
+    app_id: Option<&'static CStr>,
+    reply_reentry: bool,
 }
 
 thread_local! { static MOCK: RefCell<Mock> = RefCell::new(Mock::default()); }
@@ -156,6 +159,22 @@ pub(super) unsafe extern "C" fn cancel(
     true
 }
 
+pub(super) extern "C" fn method(_: *mut LSMessage) -> *const c_char {
+    MOCK.with_borrow(|mock| mock.method.unwrap_or(c"status").as_ptr())
+}
+pub(super) extern "C" fn application_id(_: *mut LSMessage) -> *const c_char {
+    MOCK.with_borrow(|mock| mock.app_id.unwrap_or(c"").as_ptr())
+}
+pub(super) extern "C" fn sender_service(_: *mut LSMessage) -> *const c_char {
+    c"".as_ptr()
+}
+pub(super) extern "C" fn message_ref(_: *mut LSMessage) {
+    event("message_ref");
+}
+pub(super) extern "C" fn message_unref(_: *mut LSMessage) {
+    event("message_unref");
+}
+
 struct MessageData(Option<CString>);
 
 pub(super) unsafe extern "C" fn payload(message: *mut LSMessage) -> *const c_char {
@@ -177,6 +196,19 @@ pub(super) unsafe extern "C" fn reply(
     let value = unsafe { CStr::from_ptr(value) };
     let value = serde_json::from_slice(value.to_bytes()).unwrap();
     MOCK.with_borrow_mut(|mock| mock.reply = Some(value));
+    let reentry = MOCK.with_borrow_mut(|mock| std::mem::take(&mut mock.reply_reentry));
+    if reentry {
+        let (callback, data) = MOCK.with_borrow(|mock| (mock.callback, mock.data));
+        let mut message = MessageData(Some(CString::new("{\"state\":\"Active\"}").unwrap()));
+        // SAFETY: simulate a synchronous power notification while the reply is live.
+        unsafe {
+            callback.unwrap()(
+                NonNull::dangling().as_ptr(),
+                ptr::from_mut(&mut message).cast(),
+                data,
+            );
+        }
+    }
     event("reply")
 }
 
@@ -248,7 +280,7 @@ fn service() -> Result<Service> {
         Luna::test_api(),
         Glib::test_api(),
         "test.prysm",
-        Duration::from_secs(1),
+        Some(Duration::from_secs(1)),
         Arc::new(AtomicBool::new(false)),
     )
 }
@@ -272,7 +304,7 @@ fn invalid_safe_inputs_fail_before_allocating_native_resources() {
                 Luna::test_api(),
                 Glib::test_api(),
                 name,
-                lifetime,
+                Some(lifetime),
                 Arc::new(AtomicBool::new(false))
             )
             .is_err()
@@ -294,7 +326,7 @@ fn shutdown_flag_and_expiry_quit_the_owned_loop() {
         Luna::test_api(),
         Glib::test_api(),
         "test.prysm",
-        Duration::from_secs(300),
+        Some(Duration::from_secs(300)),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
@@ -310,7 +342,7 @@ fn shutdown_flag_and_expiry_quit_the_owned_loop() {
         Luna::test_api(),
         Glib::test_api(),
         "test.prysm",
-        Duration::ZERO,
+        Some(Duration::ZERO),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
@@ -358,7 +390,7 @@ fn cleanup_detaches_callbacks_before_releasing_state_even_with_reentry() {
             "context_unref"
         ]
     );
-    assert!(MOCK.with_borrow(|mock| mock.events.contains(&"publish")));
+    assert!(!MOCK.with_borrow(|mock| mock.events.contains(&"publish")));
 }
 
 #[test]
@@ -370,7 +402,6 @@ fn partial_initialization_releases_only_resources_it_acquired() {
         "category",
         "category_data",
         "loop_attach",
-        "call",
         "timer_new",
         "source_attach",
     ] {
@@ -516,4 +547,119 @@ fn fatal_boundary_failures_abort_without_unwinding() {
         .unwrap();
         assert_eq!(status.signal(), Some(6), "{mode}");
     }
+}
+
+#[test]
+fn retained_messages_are_released_before_unregister_even_with_cancel_reentry() {
+    reset(None);
+    let mut service = service().unwrap();
+    service.register().unwrap();
+    let mut raw = MessageData(Some(CString::new("{}").unwrap()));
+    // SAFETY: test-owned message remains live until after the retained reference is released.
+    let message =
+        unsafe { Message::from_callback(&service.callbacks, ptr::from_mut(&mut raw).cast()) }
+            .unwrap();
+    *service.callbacks.pending.borrow_mut() = Some(message.retain());
+    MOCK.with_borrow_mut(|mock| mock.reenter = true);
+    drop(service);
+    let events = MOCK.with_borrow(|mock| mock.events.clone());
+    assert_eq!(events.iter().filter(|e| **e == "message_ref").count(), 1);
+    assert_eq!(events.iter().filter(|e| **e == "message_unref").count(), 1);
+    assert!(
+        events.iter().position(|e| *e == "message_unref")
+            < events.iter().position(|e| *e == "unregister")
+    );
+}
+
+#[test]
+#[cfg(not(miri))]
+fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failure() {
+    use crate::{
+        application::{
+            App,
+            tests::{sandbox, script},
+        },
+        config::Files,
+    };
+    for (fail, configured) in [("publish", false), ("publish", true), ("reply", true)] {
+        reset(None);
+        let dir = sandbox();
+        script(&dir.path().join("scan-services"), "exit 0");
+        let mut service = service().unwrap();
+        service.register().unwrap();
+        let files = Files::sandbox(dir.path()).unwrap();
+        if configured {
+            files
+                .persist(&crate::config::Config {
+                    receiver: "127.0.0.1:42".into(),
+                    ..crate::config::Config::default()
+                })
+                .unwrap();
+        }
+        *service.callbacks.app.borrow_mut() = Some(App::new(files).unwrap());
+        MOCK.with_borrow_mut(|mock| {
+            mock.method = Some(c"start");
+            mock.app_id = Some(c"io.prysm.capture.probe.app session");
+            mock.fail = Some(fail);
+        });
+        let mut raw = MessageData(Some(CString::new("{}").unwrap()));
+        // SAFETY: the fixture stays alive through completion/unref, just as LS2 retain promises.
+        let message =
+            unsafe { Message::from_callback(&service.callbacks, ptr::from_mut(&mut raw).cast()) }
+                .unwrap();
+        let _ = service.callbacks.status(&message);
+        assert!(service.callbacks.pending.borrow().is_some());
+        let deadline = Instant::now() + Duration::from_secs(3);
+        MOCK.with_borrow_mut(|mock| mock.reply_reentry = true);
+        while service.callbacks.pending.borrow().is_some() {
+            let _ = service.callbacks.tick(Instant::now());
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            MOCK.with_borrow(|mock| mock.reply.clone()).unwrap()["returnValue"],
+            configured
+        );
+        drop(service);
+        assert_eq!(
+            MOCK.with_borrow(|mock| mock
+                .events
+                .iter()
+                .filter(|e| **e == "message_unref")
+                .count()),
+            1
+        );
+    }
+}
+
+#[test]
+fn initial_power_subscription_failure_keeps_service_available_and_retries() {
+    reset(Some("call"));
+    let mut service = service().unwrap();
+    service.register().unwrap();
+    assert!(service.callbacks.snapshot(false)["power"].is_null());
+    assert!(service.callbacks.power_retry.get().is_some());
+    MOCK.with_borrow_mut(|mock| mock.fail = None);
+    service
+        .callbacks
+        .tick(Instant::now() + Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(service.callbacks.power_token.get(), 42);
+    assert!(service.callbacks.power_retry.get().is_none());
+}
+
+#[test]
+#[cfg(not(miri))]
+fn initial_power_failure_remains_visible_when_supervisor_status_is_merged() {
+    reset(Some("call"));
+    let dir = crate::application::tests::sandbox();
+    let mut service = service().unwrap();
+    *service.callbacks.app.borrow_mut() = Some(
+        crate::application::App::new(crate::config::Files::sandbox(dir.path()).unwrap()).unwrap(),
+    );
+    service.register().unwrap();
+    let value = service.callbacks.snapshot(false);
+    assert!(value["power"].is_null());
+    assert!(value["error"].is_string());
+    assert_eq!(value["senderRunning"], false);
 }

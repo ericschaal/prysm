@@ -9,7 +9,7 @@ use crate::status::{Status, subscription_request};
 use anyhow::{Context as _, Result, anyhow, ensure};
 use serde_json::{Value, json};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     ffi::{CStr, CString, c_void},
     io::Write,
     mem::MaybeUninit,
@@ -52,29 +52,39 @@ use ffi::{
 // Only Service owns this Rc. Raw callback pointers never acquire ownership.
 // Rc and RefCell also prevent Send/Sync implementations from being inferred.
 struct Callbacks {
-    luna: Luna,
+    luna: Rc<Luna>,
     glib: Glib,
     handle: NonNull<LSHandle>,
     context: NonNull<ffi::glib::GMainContext>,
     main_loop: NonNull<ffi::glib::GMainLoop>,
     status: RefCell<Status>,
     stop: Arc<AtomicBool>,
-    deadline: Instant,
+    deadline: Option<Instant>,
+    app: RefCell<Option<crate::application::App>>,
+    pending: RefCell<Option<PendingMessage>>,
+    power_token: Cell<ffi::luna::LSMessageToken>,
+    power_retry: Cell<Option<Instant>>,
+    closing: Cell<bool>,
 }
 
 struct Service {
     callbacks: Rc<Callbacks>,
-    methods: Box<[LSMethod; 2]>,
+    methods: Box<[LSMethod]>,
     timer: Option<NonNull<ffi::glib::GSource>>,
-    power_token: ffi::luna::LSMessageToken,
 }
 
-pub(super) fn run(name: &str, lifetime: Duration, stop: Arc<AtomicBool>) -> Result<()> {
+pub(super) fn run(
+    name: &str,
+    lifetime: Option<Duration>,
+    stop: Arc<AtomicBool>,
+    app: Option<crate::application::App>,
+) -> Result<()> {
     // SAFETY: load TV libraries with signatures generated from the matching SDK.
     let luna = unsafe { Luna::new("/usr/lib/libluna-service2.so.3") }.context("load Luna")?;
     // SAFETY: generated table retains the library for every function pointer's lifetime.
     let glib = unsafe { Glib::new("/usr/lib/libglib-2.0.so.0") }.context("load GLib")?;
     let mut service = Service::new(luna, glib, name, lifetime, stop)?;
+    *service.callbacks.app.borrow_mut() = app;
     service.register()?;
     eprintln!("native Luna proof registered: {name}");
     let state = &service.callbacks;
@@ -90,13 +100,17 @@ impl Service {
         luna: Luna,
         glib: Glib,
         name: &str,
-        lifetime: Duration,
+        lifetime: Option<Duration>,
         stop: Arc<AtomicBool>,
     ) -> Result<Self> {
         let name = CString::new(name)?;
-        let deadline = Instant::now()
-            .checked_add(lifetime)
-            .context("invalid service lifetime")?;
+        let deadline = lifetime
+            .map(|lifetime| {
+                Instant::now()
+                    .checked_add(lifetime)
+                    .context("invalid service lifetime")
+            })
+            .transpose()?;
         // SAFETY: create an owned, private context, never attached to a default loop.
         let context =
             NonNull::new(unsafe { glib.g_main_context_new() }).context("create GLib context")?;
@@ -127,7 +141,7 @@ impl Service {
         let handle = NonNull::new(handle).unwrap_or_else(|| std::process::abort());
         Ok(Self {
             callbacks: Rc::new(Callbacks {
-                luna,
+                luna: Rc::new(luna),
                 glib,
                 handle,
                 context,
@@ -135,27 +149,32 @@ impl Service {
                 status: RefCell::new(Status::default()),
                 stop,
                 deadline,
+                app: RefCell::new(None),
+                pending: RefCell::new(None),
+                power_token: Cell::new(0),
+                power_retry: Cell::new(None),
+                closing: Cell::new(false),
             }),
-            methods: Box::new([
-                LSMethod {
-                    name: c"status".as_ptr(),
+            methods: [c"status", c"start", c"stop", c"setConfig", c"cleanup"]
+                .into_iter()
+                .map(|name| LSMethod {
+                    name: name.as_ptr(),
                     function: Some(status_callback),
                     flags: 0,
-                },
-                LSMethod {
+                })
+                .chain(std::iter::once(LSMethod {
                     name: ptr::null(),
                     function: None,
                     flags: 0,
-                },
-            ]),
+                }))
+                .collect(),
             timer: None,
-            power_token: 0,
         })
     }
 
     fn register(&mut self) -> Result<()> {
         ensure!(
-            self.power_token == 0 && self.timer.is_none(),
+            self.callbacks.power_token.get() == 0 && self.timer.is_none(),
             "service already initialized"
         );
         let state = &self.callbacks;
@@ -189,21 +208,15 @@ impl Service {
                     .LSGmainAttach(state.handle.as_ptr(), state.main_loop.as_ptr(), error)
             }
         })?;
-        check(&state.luna, |error| {
-            // SAFETY: payload/URI are static; callback storage remains shared and live
-            // through cancellation and unregistration, including partial initialization.
-            unsafe {
-                state.luna.LSCall(
-                    state.handle.as_ptr(),
-                    c"luna://com.webos.service.tvpower/power/getPowerState".as_ptr(),
-                    c"{\"subscribe\":true}".as_ptr(),
-                    Some(power_callback),
-                    data,
-                    &raw mut self.power_token,
-                    error,
-                )
+        if let Err(error) = state.subscribe_power(data) {
+            state
+                .status
+                .borrow_mut()
+                .observe_power(&json!({"returnValue":false,"errorText":error.to_string()}));
+            if let Some(app) = state.app.borrow_mut().as_mut() {
+                app.power(None, state.status.borrow().error(), Instant::now());
             }
-        })?;
+        }
         // SAFETY: create a caller-owned timer source; retain it even if attach fails.
         let timer = NonNull::new(unsafe { state.glib.g_timeout_source_new(100) })
             .context("create shutdown timer")?;
@@ -232,39 +245,197 @@ impl Callbacks {
             self.luna
                 .LSSubscriptionGetHandleSubscribersCount(self.handle.as_ptr(), c"/status".as_ptr())
         };
-        self.status.borrow().snapshot(subscribed, count)
+        let mut value = self.status.borrow().snapshot(subscribed, count);
+        if let Some(app) = self.app.borrow().as_ref() {
+            value.as_object_mut().expect("status object").extend(
+                app.state
+                    .snapshot()
+                    .as_object()
+                    .expect("supervisor object")
+                    .clone(),
+            );
+        }
+        value
     }
 
     fn status(&self, message: &Message<'_>) -> Result<()> {
-        let result = message
-            .payload()
-            .and_then(|value| subscription_request(&value))
-            .and_then(|subscribe| {
-                let subscribed = subscribe && message.subscribe()?;
-                Ok(self.snapshot(subscribed))
-            });
-        let reply = result
-            .unwrap_or_else(|error| json!({"returnValue": false, "errorText": error.to_string()}));
-        message.respond(&reply)
+        if self.closing.get() {
+            return Ok(());
+        }
+        let method = message.method()?;
+        let result = if method == "status" {
+            message
+                .payload()
+                .and_then(|value| subscription_request(&value))
+                .and_then(|subscribe| {
+                    let subscribed = subscribe && message.subscribe()?;
+                    Ok(Some(self.snapshot(subscribed)))
+                })
+        } else {
+            (|| {
+                let value = message.payload()?;
+                let sender = message.sender()?;
+                let mut app = self.app.borrow_mut();
+                app.as_mut()
+                    .context("Supervisor is disabled in read-only probe mode")?
+                    .request(&method, value, &sender, Instant::now())
+            })()
+        };
+        let changed = method != "status" && result.is_ok();
+        let response = match result {
+            Ok(Some(value)) => {
+                let reply = if value["returnValue"] == false {
+                    value
+                } else {
+                    self.snapshot(false)
+                };
+                message.respond(&reply)
+            }
+            Ok(None) => {
+                *self.pending.borrow_mut() = Some(message.retain());
+                Ok(())
+            }
+            Err(error) => {
+                message.respond(&json!({"returnValue":false, "errorText":error.to_string()}))
+            }
+        };
+        if changed {
+            self.status.borrow_mut().bump();
+            let published = self.publish();
+            response.and(published)
+        } else {
+            response
+        }
+    }
+    fn publish(&self) -> Result<()> {
+        let payload = CString::new(self.snapshot(true).to_string())?;
+        check(&self.luna, |error| {
+            // SAFETY: registered handle and static key are live; LS2 copies JSON.
+            unsafe {
+                self.luna.LSSubscriptionReply(
+                    self.handle.as_ptr(),
+                    c"/status".as_ptr(),
+                    payload.as_ptr(),
+                    error,
+                )
+            }
+        })
+    }
+    fn subscribe_power(&self, data: *mut c_void) -> Result<()> {
+        let mut token = 0;
+        self.power_retry.set(None);
+        let result = check(&self.luna, |error| {
+            // SAFETY: all strings are static, the output is local, and Service retains
+            // this shared callback allocation until every call is cancelled/unregistered.
+            unsafe {
+                self.luna.LSCall(
+                    self.handle.as_ptr(),
+                    c"luna://com.webos.service.tvpower/power/getPowerState".as_ptr(),
+                    c"{\"subscribe\":true}".as_ptr(),
+                    Some(power_callback),
+                    data,
+                    &raw mut token,
+                    error,
+                )
+            }
+        });
+        if result.is_err() {
+            self.power_retry
+                .set(Some(Instant::now() + Duration::from_secs(5)));
+        }
+        result?;
+        self.power_token.set(token);
+        Ok(())
+    }
+    fn tick(&self, now: Instant) -> Result<()> {
+        if self
+            .power_retry
+            .get()
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.power_retry.set(Some(now + Duration::from_secs(5)));
+            let token = self.power_token.get();
+            let cancelled = token == 0
+                || check(&self.luna, |error| {
+                    // SAFETY: token belongs to this registered handle and remains owned here.
+                    unsafe { self.luna.LSCallCancel(self.handle.as_ptr(), token, error) }
+                })
+                .is_ok();
+            if cancelled {
+                self.power_token.set(0);
+                let _ = self.subscribe_power(ptr::from_ref(self).cast_mut().cast());
+            }
+        }
+        let shutting_down = self.stop.load(Ordering::Relaxed)
+            || self.deadline.is_some_and(|deadline| now >= deadline);
+        let mut app = self.app.borrow_mut();
+        let mut changed = false;
+        let mut reply = None;
+        let stopped = if let Some(app) = app.as_mut() {
+            let before = app.state.snapshot();
+            if shutting_down {
+                app.shutdown(now);
+            }
+            reply = app.tick(now);
+            changed = before != app.state.snapshot();
+            app.stopped()
+        } else {
+            true
+        };
+        drop(app);
+        let message = if reply.is_some() {
+            self.pending.borrow_mut().take()
+        } else {
+            None
+        };
+        let response = if let (Some(value), Some(message)) = (reply, message) {
+            let value = if value["returnValue"] == false {
+                value
+            } else {
+                self.snapshot(false)
+            };
+            message.respond(self, &value)
+        } else {
+            Ok(())
+        };
+        let published = if changed {
+            self.status.borrow_mut().bump();
+            self.publish()
+        } else {
+            Ok(())
+        };
+        if shutting_down && stopped {
+            // SAFETY: the private loop is live on this owner thread.
+            unsafe {
+                self.glib.g_main_loop_quit(self.main_loop.as_ptr());
+            }
+        }
+        response.and(published)
     }
 
     fn power(&self, message: &Message<'_>) -> Result<()> {
-        let value = message.payload()?;
-        let changed = self.status.borrow_mut().observe_power(&value);
-        if changed {
-            let payload = CString::new(self.snapshot(true).to_string())?;
-            check(&self.luna, |error| {
-                // SAFETY: LS2 copies JSON during this call; handle and key are live.
-                unsafe {
-                    self.luna.LSSubscriptionReply(
-                        self.handle.as_ptr(),
-                        c"/status".as_ptr(),
-                        payload.as_ptr(),
-                        error,
-                    )
-                }
-            })?;
+        if self.closing.get() {
+            return Ok(());
         }
+        let value = message
+            .payload()
+            .unwrap_or_else(|error| json!({"returnValue":false,"errorText":error.to_string()}));
+        let changed = self.status.borrow_mut().observe_power(&value);
+        let (power, error) = {
+            let status = self.status.borrow();
+            (status.power(), status.error())
+        };
+        if error.is_some() && self.power_retry.get().is_none() {
+            self.power_retry
+                .set(Some(Instant::now() + Duration::from_secs(5)));
+        }
+        if let Some(app) = self.app.borrow_mut().as_mut() {
+            app.power(power, error, Instant::now());
+        }
+        if changed {
+            self.publish()?;
+        }
+
         Ok(())
     }
 }
@@ -286,6 +457,39 @@ impl<'callback> Message<'callback> {
         })
     }
 
+    fn method(&self) -> Result<String> {
+        // SAFETY: constructor guarantees this callback message is live.
+        let pointer = unsafe { self.state.luna.LSMessageGetMethod(self.raw.as_ptr()) };
+        // SAFETY: LS2 getter returned a callback-owned string.
+        unsafe { native_text(pointer) }
+    }
+    fn sender(&self) -> Result<String> {
+        // SAFETY: both identity fields are supplied by LS2, never by JSON payload.
+        let app = unsafe { self.state.luna.LSMessageGetApplicationID(self.raw.as_ptr()) };
+        // SAFETY: LS2 owns this identity buffer for the callback duration.
+        let app = unsafe { native_text(app) }?;
+        if !app.is_empty() {
+            return Ok(app.split(' ').next().unwrap_or_default().to_owned());
+        }
+        // SAFETY: same live callback message; anonymous clients may return null.
+        let service = unsafe {
+            self.state
+                .luna
+                .LSMessageGetSenderServiceName(self.raw.as_ptr())
+        };
+        // SAFETY: same live callback identity or null for anonymous clients.
+        unsafe { native_text(service) }
+    }
+    fn retain(&self) -> PendingMessage {
+        // SAFETY: acquire one LS2 reference while the borrowed message is still live.
+        unsafe {
+            self.state.luna.LSMessageRef(self.raw.as_ptr());
+        }
+        PendingMessage {
+            api: Rc::clone(&self.state.luna),
+            raw: self.raw,
+        }
+    }
     fn payload(&self) -> Result<Value> {
         // SAFETY: constructor guarantees a live callback message from this service.
         let text = unsafe { self.state.luna.LSMessageGetPayload(self.raw.as_ptr()) };
@@ -330,11 +534,45 @@ impl<'callback> Message<'callback> {
     }
 }
 
+/// # Safety
+/// Non-null input must be a live LS2-owned, NUL-terminated callback string.
+unsafe fn native_text(pointer: *const std::ffi::c_char) -> Result<String> {
+    if pointer.is_null() {
+        return Ok(String::new());
+    }
+    // SAFETY: only LS2 getter results enter this private helper; LS2 owns their
+    // NUL-terminated strings for the callback duration. Return an owned copy.
+    Ok(unsafe { CStr::from_ptr(pointer) }.to_str()?.to_owned())
+}
+struct PendingMessage {
+    api: Rc<Luna>,
+    raw: NonNull<LSMessage>,
+}
+impl PendingMessage {
+    fn respond(&self, state: &Callbacks, value: &Value) -> Result<()> {
+        Message {
+            state,
+            raw: self.raw,
+        }
+        .respond(value)
+    }
+}
+impl Drop for PendingMessage {
+    fn drop(&mut self) {
+        // SAFETY: balances the single retain; Service clears pending replies before
+        // unregistering the connection, while this Rc retains the function table.
+        unsafe {
+            self.api.LSMessageUnref(self.raw.as_ptr());
+        }
+    }
+}
+
 impl Drop for Service {
     fn drop(&mut self) {
         // The loop has stopped (or never ran). The Rc pointee remains shared even
         // if cancellation synchronously calls back; cleanup never takes &mut Callbacks.
         let state = &self.callbacks;
+        state.closing.set(true);
         if let Some(timer) = self.timer.take() {
             // SAFETY: destroy detaches the source before releasing our owned reference.
             unsafe {
@@ -342,13 +580,15 @@ impl Drop for Service {
                 state.glib.g_source_unref(timer.as_ptr());
             }
         }
-        if self.power_token != 0
+        let pending = state.pending.borrow_mut().take();
+        drop(pending);
+        if state.power_token.get() != 0
             && let Err(error) = check(&state.luna, |error| {
                 // SAFETY: live handle and the token written by this service's LSCall.
                 unsafe {
                     state
                         .luna
-                        .LSCallCancel(state.handle.as_ptr(), self.power_token, error)
+                        .LSCallCancel(state.handle.as_ptr(), state.power_token.get(), error)
                 }
             })
         {
@@ -480,12 +720,7 @@ unsafe extern "C" fn timer_callback(data: *mut c_void) -> i32 {
         // SAFETY: private source retains this non-owning pointer while Service owns the Rc.
         let state =
             unsafe { data.cast::<Callbacks>().as_ref() }.context("missing callback state")?;
-        if state.stop.load(Ordering::Relaxed) || Instant::now() >= state.deadline {
-            // SAFETY: live loop owned by Service, running on this thread.
-            unsafe {
-                state.glib.g_main_loop_quit(state.main_loop.as_ptr());
-            }
-        }
+        state.tick(Instant::now())?;
         Ok(())
     });
     1

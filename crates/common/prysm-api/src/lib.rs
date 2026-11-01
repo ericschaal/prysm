@@ -62,8 +62,8 @@ impl IntoResponse for ApiFailure {
     }
 }
 fn payload<T>(
-    body: std::result::Result<Json<T>, JsonRejection>,
-) -> std::result::Result<T, ApiFailure> {
+    body: Result<Json<T>, JsonRejection>,
+) -> Result<T, ApiFailure> {
     body.map(|Json(value)| value).map_err(|error| {
         ApiFailure::new(error.status(), ErrorCode::InvalidRequest, error.body_text())
     })
@@ -76,8 +76,8 @@ async fn get_state(State(app): State<App>) -> Json<StateResponse> {
 #[utoipa::path(put,path="/api/state",operation_id="setState",request_body=Target,responses((status=202,body=OperationResponse),(status=409,body=ApiError),(status=422,body=ApiError),(status=503,body=ApiError)))]
 async fn set_state(
     State(app): State<App>,
-    body: std::result::Result<Json<Target>, JsonRejection>,
-) -> std::result::Result<(StatusCode, Json<OperationResponse>), ApiFailure> {
+    body: Result<Json<Target>, JsonRejection>,
+) -> Result<(StatusCode, Json<OperationResponse>), ApiFailure> {
     let response = app
         .set_target
         .send(SetTarget(payload(body)?))
@@ -92,8 +92,8 @@ async fn get_config(State(app): State<App>) -> Json<Config> {
 #[utoipa::path(put,path="/api/config",operation_id="updateConfig",request_body=UpdateConfig,responses((status=200,body=Config),(status=409,body=ApiError),(status=422,body=ApiError),(status=500,body=ApiError),(status=503,body=ApiError)))]
 async fn set_config(
     State(app): State<App>,
-    body: std::result::Result<Json<UpdateConfig>, JsonRejection>,
-) -> std::result::Result<Json<Config>, ApiFailure> {
+    body: Result<Json<UpdateConfig>, JsonRejection>,
+) -> Result<Json<Config>, ApiFailure> {
     Ok(Json(
         app.set_config
             .send(SetConfig(payload(body)?))

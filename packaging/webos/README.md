@@ -11,6 +11,39 @@ There are no npm dependencies in the TV app or service. `webos-service` and Node
 are provided by webOS. webOS 25 provides Node 16.20.2; see LG's
 [JS service documentation](https://webostv.developer.lge.com/develop/guides/js-service-basics).
 
+## Native supervisor review candidate
+
+The Rust supervisor is implemented and tested in an isolated Luna sandbox;
+production remains on the installed JS service. Build its review IPK separately:
+
+```sh
+WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
+  bash packaging/webos/build-ipk.sh --native
+```
+
+Output: `target/webos-ipk/native/io.prysm.capture_0.1.4_all.ipk`. This command builds
+and checks the package locally; it does not install it. Keep the previous JS IPK
+for rollback. The default build below continues to generate the JS package.
+
+Native metadata selects `prysm-webos-service` as the service executable. Setup
+registers a separate root-owned supervisor manifest with TV-power permissions,
+rather than elevating Node. The API, saved configuration path, guarded boot-hook
+text, capture role and process lifecycle remain compatible. Cleanup keeps saved
+settings and supervisor activation while removing capture permissions. A JS
+rollback package's setup removes only the exact recognized native supervisor
+manifest; unrelated content is rejected. Package-manager replacement and stopping
+the old supervisor must precede activation of its replacement.
+
+The native candidate passed host/Linux tests, Miri on ARMv7/x86-64, strict Clippy,
+ARM builds, codegen reproducibility and local IPK metadata/mode checks. Isolated TV
+tests passed with both a TERM-ignoring fake worker and bounded real capture through
+a TV-local loopback receiver; no pixels left the TV. See the
+[native service verification](../../crates/capture/webos-service/README.md#supervisor-verification-2026-11-01).
+Installed upgrade/rollback, actual app bridge calls, subscription reconnect,
+standby/wake and cold boot remain unverified and require approval before changing
+the installed setup. The UI still polls status. Native activation alone does not
+provide an immediate crash-restart watchdog.
+
 ## Build and install
 
 Install the [webOS CLI](https://github.com/webos-tools/cli), which supplies
@@ -95,7 +128,10 @@ connection; Off or Effects closes the capture session. Resolution and FPS remain
 owned by Prysm. After a capture session ends, the worker exits and the supervisor
 starts a fresh worker after one second. On this TV, UI reinitialization in one
 process retained five device handles; process exit lets the OS reclaim vendor
-state. The standalone CLI also handles one connection, exiting if connection
+state. A [focused cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md)
+subsequently isolated that growth to HAL library unloading and fixed the library
+lifetime. Video constructor failures still retain resources, and native video
+release has a reproduced lost-wakeup hang, so process isolation remains in place. The standalone CLI also handles one connection, exiting if connection
 fails or the receiver disconnects. The supervisor owns retries.
 
 Version 0.1.4 was installed and checked on the target TV using an isolated Prysm

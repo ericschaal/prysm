@@ -14,6 +14,10 @@ codegen = ["dep:bindgen"]
 
 [dependencies]
 anyhow.workspace = true
+atomic-write-file.workspace = true
+libc.workspace = true
+nix = { workspace = true, features = ["fs", "process", "signal", "user"] }
+serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
 libloading.workspace = true
 serde_json.workspace = true

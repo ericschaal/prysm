@@ -155,8 +155,12 @@ cd /media/developer/prysm-capture
   --source video --video-backend vtcapture
 ```
 
-Ctrl+C and SIGTERM request shutdown and resource cleanup. Native driver calls
-can block, so shutdown latency must be measured on hardware. Test HDMI and
+Ctrl+C and SIGTERM request shutdown through a signal-waiting thread; native capture
+threads inherit blocked shutdown signals to avoid interrupting vendor calls.
+Native video release has a reproduced lost-wakeup hang on the tested TV; the
+supervisor must retain a shutdown deadline and process-level recovery.
+See [cleanup diagnosis](../../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md) for restart measurements, the HAL
+library-lifetime fix, constructor-failure leaks, and teardown race. Test HDMI and
 ordinary menus with Prysm's desktop preview first. Protected video may be
 unavailable. Captured HDR pixels are not automatically tone-mapped.
 
@@ -346,3 +350,19 @@ These checks do not load LG drivers or establish hardware performance or colors.
 Add `--metrics-listen 0.0.0.0:9101` to expose opt-in Prometheus metrics.
 See [centralized monitoring](../../../observability/README.md) for the computer
 Docker Compose stack, dashboard, node setup and measurement catalog.
+
+### Video constructor failures
+
+Before calling `vtCapture_create`, the worker registers and unregisters unique
+names under both capture/resource-manager Luna prefixes. Errors are freed on all
+paths; an unregister failure aborts rather than leaving live native registration
+behind. The ABI is generated from the TV SDK by the service binding generator.
+This precheck prevents the measured name-registration denial leak; it does not
+guarantee later outbound permissions or native initialization success.
+
+A constructor failure poisons process-global vendor state. It now ends that worker
+with a typed failure event, without automatic backend fallback or further capture
+attempts in the same process. The library stays loaded until process exit.
+Ordinary missing-backend errors may still fall back, and successfully constructed
+video clients still retry not-ready preparation. The supervisor retries a failed
+worker after five seconds and can cancel retries with Stop.

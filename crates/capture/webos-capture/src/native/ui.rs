@@ -6,6 +6,7 @@ use crate::{cli::CaptureOptions, pixels};
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
 use std::fs::OpenOptions;
+use std::sync::{Arc, OnceLock};
 
 api!(GmApi {
     create: unsafe extern "C" fn(u32, u32, u32, *mut GmSurface) -> i32 = "GM_CreateSurface",
@@ -30,7 +31,7 @@ pub struct GmCapture {
     height: u32,
 }
 pub struct HalCapture {
-    api: HalApi,
+    api: Arc<HalApi>,
     surface: HalSurface,
     mapping: Option<Mapping>,
 }
@@ -139,12 +140,19 @@ impl Drop for GmCapture {
 }
 impl HalCapture {
     fn open(options: &CaptureOptions) -> Result<Self> {
-        let api = HalApi::load(&[
-            "libhalgal.so",
-            "libhalgal.so.0",
-            "libhalgal.so.1",
-            "libhalgal.so.2",
-        ])?;
+        // HAL finalization is a no-op on webOS 25; unloading loses its live FD bookkeeping.
+        static API: OnceLock<Arc<HalApi>> = OnceLock::new();
+        let api = if let Some(api) = API.get() {
+            Arc::clone(api)
+        } else {
+            let api = Arc::new(HalApi::load(&[
+                "libhalgal.so",
+                "libhalgal.so.0",
+                "libhalgal.so.1",
+                "libhalgal.so.2",
+            ])?);
+            Arc::clone(API.get_or_init(|| api))
+        };
         Self::open_with(api, options, |surface| {
             let file = OpenOptions::new().read(true).write(true).open("/dev/gfx")?;
             let length = if surface.property != 0 {
@@ -157,7 +165,7 @@ impl HalCapture {
     }
 
     fn open_with(
-        api: HalApi,
+        api: Arc<HalApi>,
         options: &CaptureOptions,
         map: impl FnOnce(&HalSurface) -> Result<Mapping>,
     ) -> Result<Self> {
@@ -220,13 +228,13 @@ mod tests {
         let cli = Cli::try_parse_from(["capture", "127.0.0.1:19400"]).unwrap();
         let before = DESTROYED.load(Ordering::Relaxed);
         let result = HalCapture::open_with(
-            HalApi {
+            Arc::new(HalApi {
                 init,
                 create,
                 capture: destroy,
                 destroy,
                 _library: libloading::os::unix::Library::this().into(),
-            },
+            }),
             &cli.capture,
             |surface| {
                 assert_eq!(surface.vendor_data, 42);

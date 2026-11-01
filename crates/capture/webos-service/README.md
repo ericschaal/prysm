@@ -1,10 +1,18 @@
 # Native webOS service
 
-First migration milestone: a read-only Rust Luna service proving native activation,
-status subscriptions, TV power observation and shutdown on a rooted retail LG TV.
-The installed JavaScript supervisor, capture worker and TV web UI are unchanged.
-This executable does not open capture devices, change configuration, or install
-itself at boot. It exits after 60 seconds by default (`--run-for 1..300`).
+Rust Luna supervisor using the existing separate capture worker, typed event pipe,
+hardware lock and five-second TERM-to-KILL deadline. It preserves the JavaScript
+service's methods, status fields, configuration, power gating and retry policy.
+The installed service has not been replaced. The default IPK build still uses
+JavaScript; `packaging/webos/build-ipk.sh --native` builds the review candidate in
+`target/webos-ipk/native/`.
+
+With no arguments, the binary runs the production identity and paths as root,
+without automatic expiry. `--run-for 1..300` selects a separate read-only probe.
+`--sandbox /tmp/prysm-supervisor.XXXXXX --run-for 30` enables mutations and child
+processes only inside an existing private (0700) temporary directory. Sandbox
+workers and scanners are named `worker` and `scan-services`; its app identity is
+`io.prysm.capture.probe.app`. Never launch the unbounded production mode as a probe.
 
 ## Build and FFI generation
 
@@ -40,9 +48,10 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
   --bin generate-luna-bindings -- --check
 ```
 
-The generated function tables retain their loaded libraries. The handwritten
-unsafe boundary is confined to `src/luna.rs`; all callbacks run on one private
-GLib context. No SDK or target Luna libraries are required for host unit tests.
+The generated function tables retain their loaded libraries. The handwritten Luna
+boundary is confined to `src/luna.rs`; all callbacks run on one private GLib
+context. `src/worker/native.rs` contains the separately audited fork/exec and FD
+boundary, with atomic close-on-exec pipes and parent-death SIGKILL on Linux. No SDK or target Luna libraries are required for host unit tests.
 
 The proof loads `/usr/lib/libluna-service2.so.3` and `/usr/lib/libglib-2.0.so.0`
 by absolute path from the TV. Other
@@ -51,7 +60,7 @@ assumed layouts copied from webOS OSE documentation.
 
 ## Unsafe boundary contract
 
-Only `luna::run` is visible outside the boundary; it takes Rust values and returns
+Only `luna::run` is visible outside the Luna boundary; it takes Rust values and returns
 a Rust result. It has **no caller-side memory-safety preconditions**: callers
 cannot supply native pointers, manufacture messages, select native callbacks,
 move native state between threads, or manually free native resources. Lifetimes,
@@ -59,7 +68,7 @@ ownership and cleanup are enforced inside the wrapper. Documentation below
 describes its implementation obligations, rather than rules callers must follow
 to avoid undefined behavior.
 
-The rest of the runtime denies unsafe code. The generator also
+Application, configuration and supervisor logic deny unsafe code. The generator also
 forbids unsafe code; generated raw declarations and loading tables remain private.
 Both handwritten and generated code deny implicit unsafe operations inside unsafe
 functions. Handwritten unsafe blocks require safety comments through Clippy.
@@ -68,9 +77,9 @@ functions. Handwritten unsafe blocks require safety comments through Clippy.
 | --- | --- |
 | Callback storage | One stable, shared `Rc` allocation. Initialization and cleanup never take an exclusive reference to that allocation. Neither service nor callback state can cross threads. |
 | Dispatch | LS2 and the shutdown source attach to a private context driven only by the service's run thread. No default-context dispatch or nested main loop is used. |
-| Messages | A callback-local `Message` wrapper has a documented unsafe constructor. Raw messages never enter safe application logic, and only owned JSON leaves payload parsing. LS2 owns subscription references. |
+| Messages | A callback-local `Message` wrapper has a documented unsafe constructor. Raw messages never enter safe application logic, and only owned JSON leaves payload parsing. LS2 owns subscription references; deferred mutations acquire exactly one explicit ref, released after reply/error or before unregister. |
 | Native errors | Successful initialization precedes every read. An owned guard copies error text before freeing native storage, including on Rust unwind. |
-| Teardown | Destroy/unref the timer, cancel the power call, unregister Luna, then release callback storage, loop/context references and library handles. Partial initialization follows the same ownership rules. |
+| Teardown | Mark callbacks closing, destroy/unref the timer, release deferred messages, cancel the power call, unregister Luna, then release callback storage, loop/context references and library handles. Partial initialization follows the same ownership rules. |
 | Failure | A callback panic aborts without running the panic payload's destructor or unwinding into C. Failed unregistration also aborts rather than freeing storage that native code may retain. |
 | ABI | Function tables and struct layouts come from the target SDK. The libraries must implement that ABI, return valid NUL-terminated strings, and honor LS2/GLib ownership contracts. |
 
@@ -97,8 +106,9 @@ The LS2/GLib function pointers still call the same Rust ABI stubs as ordinary
 unit tests, exercising the production ownership and callback code. Miri checks
 remain enabled, including aliasing and leak detection.
 
-The subprocess-abort test is skipped under Miri and remains enabled in ordinary
-tests. Miri cannot prove that arbitrary safe callers can never trigger UB, or
+Subprocess-abort and filesystem/process integration tests run under the ordinary
+host/Linux test harness rather than Miri. Miri retains isolation, aliasing and leak
+checks for the in-process ownership tests. Miri cannot prove that arbitrary safe callers can never trigger UB, or
 check the implementation of LG's libraries; that remains a wrapper design and
 review obligation, with hardware integration tested separately.
 
@@ -141,18 +151,61 @@ passed. Regenerating the bindings reproduced the checked-in files byte-for-byte.
 Actual web-app bridge calls and changing power notifications remain unverified;
 the smoke test observes power without turning the TV off or on.
 
-## Migration after the proof
+## Supervisor verification (2026-11-01)
 
-1. Port configuration, persistence and the existing worker supervisor tests into
-   Rust. Keep the current service methods/status fields and worker event pipe.
-2. Add worker lifecycle handling and parent-death protection, preserving the
-   capture process boundary, hardware lock and five-second stop deadline.
-3. Switch the web UI from polling to a recoverable Luna subscription.
-4. Migrate IPK registration, narrowly scoped permissions and opt-in boot setup
-   together; preserve saved settings and provide rollback to the existing IPK.
-5. Verify actual web-app calls, changing power notifications, standby/wake,
-   blocked capture teardown, crashes, upgrades and rollback before removing JS.
+The extended supervisor passed 28 host tests plus the codegen test, 29 Linux tests
+(including actual parent-death SIGKILL), strict Clippy for all targets/features,
+ARM soft-float builds and byte-for-byte codegen checks. Pinned Miri passed 18 tests
+on both ARMv7 and x86-64; filesystem and subprocess tests use their native harness.
+
+The isolated TV test now has two supervisor modes:
+
+```sh
+python3 packaging/webos/tests/native-smoke.py --host root@192.168.18.10 --supervisor
+python3 packaging/webos/tests/native-smoke.py --host root@192.168.18.10 --capture
+```
+
+Both passed on the same webOS 25 TV. The fake worker ignores TERM, exercising the
+five-second KILL/reap deadline. The real worker test registers its own temporary
+capture role and validates at least three raw 320x180 frames at a requested 15 Hz
+through a TV-local loopback receiver. Pixels are discarded on the TV; only the
+frame count and status leave it. This is a bounded capture/ownership check, not a
+sustained-rate, video-freshness or image-quality result. Probe RSS after reactivation
+was 1988 KiB. Both tests also checked mutation identity, saved sandbox settings,
+cleanup, subscriptions, shutdown/reactivation and expiry. All temporary artifacts
+were removed; installed Prysm, settings, boot hooks, power and input were preserved.
+
+Process tests cover inherited FD 3, fragmented/invalid/oversized events, EOF,
+stderr pressure, spawn failure, scanner failure/timeout, hook rollback, mutation
+serialization, config restart and no replacement before reap. Routine polling is
+bounded; unexpected owner destruction kills and delegates reaping to a thread,
+never blocking the GLib thread. SIGKILL cannot force immediate reaping of a task
+in uninterruptible kernel sleep. The measured native hangs were reapable.
+
+The worker prechecks both allowed Luna registration prefixes before video
+construction. This prevents the measured registration-denial leak, without
+promising outbound permission or subsequent native success. A constructor error
+is fatal to the worker, bypasses automatic backend fallback and session retries,
+and emits the existing typed failure event. Successfully constructed but not-ready
+video still retries preparation on its original client. The supervisor owns
+process retry/backoff and Stop cancellation.
+
+## Remaining installation validation
+
+The native review IPK and JavaScript rollback setup share the saved config and
+byte-identical boot-hook format. Native setup registers a separate supervisor
+manifest/role with only TV-power outbound access. Cleanup removes capture
+permissions while leaving the supervisor activatable. Installing the JS package
+and running setup removes only the recognized native supervisor manifest before
+resuming JS activation. Unrelated manifests/hooks are refused.
+
+The native IPK has been built and its metadata, ARM ELF and root-owned modes
+checked locally. Actual TV app bridge calls, subscription reconnect, production
+upgrade/rollback, changing power notifications, standby/wake and cold boot still
+need approved installation tests. The web UI continues its existing polling;
+a recoverable subscription is the subsequent migration step.
 
 Native service registration does not itself guarantee automatic restart after a
-crash. Immediate restart requires a separately verified TV process supervisor;
-Luna reactivation and the opt-in boot hook remain the initial recovery model.
+crash. The recovery model remains subsequent Luna activation or the opt-in boot
+hook until an external TV supervisor is verified. Do not deploy this candidate
+without approval for changing the installed service.

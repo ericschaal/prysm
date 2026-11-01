@@ -24,6 +24,15 @@ impl Status {
         true
     }
 
+    pub fn power(&self) -> Option<String> {
+        self.power.clone()
+    }
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+    pub fn bump(&mut self) {
+        self.revision += 1;
+    }
     pub fn snapshot(&self, subscribed: bool, subscribers: u32) -> Value {
         json!({
             "returnValue": true,

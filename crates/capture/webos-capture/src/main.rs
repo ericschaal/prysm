@@ -6,13 +6,12 @@ mod cli;
 mod native;
 mod pixels;
 mod session;
+mod shutdown;
 mod transport;
 
 use anyhow::{Result, ensure};
 use clap::Parser;
 use cli::Cli;
-use signal_hook::consts::{SIGINT, SIGTERM};
-use std::sync::{Arc, atomic::AtomicBool};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -27,10 +26,7 @@ fn main() -> Result<()> {
         "TV capture requires root"
     );
     let _lock = capture_lock(std::path::Path::new("/tmp/prysm-capture.lock"))?;
-    let stop = Arc::new(AtomicBool::new(false));
-    for signal in [SIGINT, SIGTERM] {
-        signal_hook::flag::register(signal, Arc::clone(&stop))?;
-    }
+    let (stop, _signal_waiter) = shutdown::listen()?;
     let _metrics = cli.metrics_listen.and_then(|address| {
         match prysm_metrics::start(address, prysm_metrics::Role::Capturer) {
             Ok(exporter) => {

@@ -49,7 +49,7 @@ def secure(package):
                             raise ValueError('unexpected package path: ' + member.name)
                     if not (member.isdir() or member.isfile()):
                         raise ValueError('unexpected link or special file: ' + member.name)
-                    member.mode = 0o755 if member.isdir() or Path(member.name).name in ['setup.sh', 'prysm-webos-capture'] else 0o644
+                    member.mode = 0o755 if member.isdir() or Path(member.name).name in ['setup.sh', 'prysm-webos-capture', 'prysm-webos-service'] else 0o644
                     member.uid = member.gid = 0
                     member.uname = member.gname = 'root'
                     new.addfile(member, old.extractfile(member) if member.isfile() else None)
