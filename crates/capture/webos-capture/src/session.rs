@@ -39,9 +39,13 @@ impl Session {
         Ok(capturing)
     }
 
-    pub fn configure(&mut self, ui: &mut Option<impl UiCapture>) -> Result<()> {
+    pub fn configure(
+        &mut self,
+        ui: &mut Option<impl UiCapture>,
+        events: &mut crate::native::events::Events,
+    ) -> Result<()> {
         self.capture
-            .configure(self.sender.fps, self.sender.capture_resolution, ui)
+            .configure(self.sender.fps, self.sender.capture_resolution, ui, events)
     }
 
     /// Native resources remain owned by the caller until the session is dropped.
@@ -50,6 +54,8 @@ impl Session {
         stop: &AtomicBool,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
         capture_ui: &mut Option<impl UiCapture>,
+        readiness: &mut impl FnMut() -> Result<(bool, bool)>,
+        events: &mut crate::native::events::Events,
     ) -> Result<()> {
         let mut next = Instant::now();
         while !stop.load(Ordering::Relaxed) {
@@ -57,8 +63,13 @@ impl Session {
                 tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
                 return Ok(());
             }
+            let (available, reset) = readiness()?;
+            if reset {
+                self.capture.release_video(events)?;
+            }
+            self.capture.set_video_available(available);
             let work = prysm_metrics::timer(Stage::CaptureIteration);
-            if let Some(frame) = self.capture.capture(open_video, capture_ui)?
+            if let Some(frame) = self.capture.capture(open_video, capture_ui, events)?
                 && let Err(error) = self.sender.send(frame.header, frame.pixels, frame.content)
             {
                 tracing::warn!(error = %format!("{error:#}"), "frame send failed");
@@ -80,8 +91,17 @@ pub(crate) fn capture_loop(
 ) -> Result<()> {
     let mut session = Session::connect(cli)?;
     if session.wait_for_capture(cli, stop)? {
-        session.configure(&mut capture_ui)?;
-        session.run(stop, &mut open_video, &mut capture_ui)?;
+        session.configure(
+            &mut capture_ui,
+            &mut crate::native::events::Events::disabled(),
+        )?;
+        session.run(
+            stop,
+            &mut open_video,
+            &mut capture_ui,
+            &mut || Ok((true, false)),
+            &mut crate::native::events::Events::disabled(),
+        )?;
     }
     Ok(())
 }

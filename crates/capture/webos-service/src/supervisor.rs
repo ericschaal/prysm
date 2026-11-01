@@ -13,6 +13,8 @@ pub enum Action {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    VideoResetting,
+    VideoReset,
     Connected,
     Capturing,
     Disconnected,
@@ -33,6 +35,7 @@ pub struct Supervisor {
     log: Option<String>,
     retry: Option<Instant>,
     kill_at: Option<Instant>,
+    video_reset_at: Option<Instant>,
     immediate: bool,
     expected_exit: bool,
     actions: Vec<Action>,
@@ -51,6 +54,7 @@ impl Supervisor {
             log: None,
             retry: None,
             kill_at: None,
+            video_reset_at: None,
             immediate: false,
             expected_exit: false,
             actions: Vec::new(),
@@ -107,6 +111,10 @@ impl Supervisor {
         }
     }
     pub fn tick(&mut self, now: Instant) {
+        if self.video_reset_at.is_some_and(|deadline| now >= deadline) {
+            self.video_reset_at = None;
+            self.failed("Native video reset timed out".into(), now);
+        }
         if self.kill_at.is_some_and(|deadline| now >= deadline) {
             self.kill_at = None;
             self.actions.push(Action::Kill);
@@ -122,6 +130,7 @@ impl Supervisor {
         self.connected = false;
         self.capturing = false;
         self.kill_at = None;
+        self.video_reset_at = None;
         if self.wanted() && !self.immediate {
             if !success && !self.expected_exit && self.error.is_none() {
                 self.error = Some(format!("Capturer exited: {description}"));
@@ -138,6 +147,8 @@ impl Supervisor {
             return;
         }
         match event {
+            Event::VideoResetting => self.video_reset_at = Some(now + Duration::from_secs(5)),
+            Event::VideoReset => self.video_reset_at = None,
             Event::Connected => self.connected = true,
             Event::Capturing => self.capturing = true,
             Event::Disconnected => {
@@ -263,5 +274,30 @@ mod tests {
         assert_eq!(state.snapshot()["receiverConnected"], false);
         state.tick(now + Duration::from_secs(1));
         assert_eq!(state.actions(), [Action::Spawn]);
+    }
+}
+
+#[cfg(test)]
+mod video_reset_tests {
+    use super::*;
+    #[test]
+    fn completed_reset_keeps_worker_but_stalled_native_release_triggers_recovery() {
+        let now = Instant::now();
+        let mut state = Supervisor::new(Config {
+            receiver: "127.0.0.1:19400".into(),
+            autostart: true,
+            ..Config::default()
+        });
+        state.set_power(Some("Active".into()), now);
+        assert_eq!(state.actions(), [Action::Spawn]);
+        state.event(Event::VideoResetting, now);
+        state.event(Event::VideoReset, now);
+        state.tick(now + Duration::from_secs(6));
+        assert_eq!(state.actions(), []);
+        state.event(Event::VideoResetting, now + Duration::from_secs(6));
+        state.tick(now + Duration::from_secs(11));
+        assert_eq!(state.actions(), [Action::Terminate]);
+        state.tick(now + Duration::from_secs(16));
+        assert_eq!(state.actions(), [Action::Kill]);
     }
 }

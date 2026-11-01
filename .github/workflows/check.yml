@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh crates/capture/webos-capture/build-webos.sh crates/capture/webos-capture/webos-linker.sh crates/capture/webos-service/build-webos.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
+          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -51,7 +51,7 @@ jobs:
           key: frontend
       - name: Install frontend dependencies
         run: npm ci --prefix apps/prysm-web/control-ui
-      - name: webOS service lifecycle and Luna setup
+      - name: webOS app and package checks
         run: |
           node --test packaging/webos/tests/*.test.js
           python3 -m unittest discover -s packaging/webos/tests

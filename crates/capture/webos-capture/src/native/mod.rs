@@ -127,10 +127,14 @@ impl Video {
         }
     }
 
-    pub fn capture(&mut self, output: &mut Vec<u8>) -> Result<Option<Header>> {
+    pub fn capture(
+        &mut self,
+        output: &mut Vec<u8>,
+        events: &mut events::Events,
+    ) -> Result<Option<Header>> {
         output.clear();
         match self {
-            Self::Vt(vt) => vt.capture(output),
+            Self::Vt(vt) => vt.capture(output, events),
             Self::Dile(dile) => dile.capture(output).map(Some),
         }
     }

@@ -28,10 +28,10 @@ then from the repository root:
 ```sh
 rustup target add armv7-unknown-linux-gnueabi
 WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
-  ./crates/capture/webos-capture/build-webos.sh
+  ./packaging/webos/build-ipk.sh
 ```
 
-The script builds the standalone sender with the SDK C++ compiler and linker,
+The shared package build compiles the sender and supervisor with the SDK C++ compiler and linker,
 an explicit sysroot, Cortex-A9 code generation, and the **soft-float ABI**
 (`gnueabi`, not `gnueabihf`). The `webos` Cargo profile enables optimization, LTO,
 one codegen unit, and stripped symbols. The executable uses `/lib/ld-linux.so.3`.
@@ -39,12 +39,10 @@ Rust normally targets glibc 2.17+, while this SDK supplies glibc 2.12; the linke
 explicitly includes the SDK's `libglibc_polyfills.a` for `getauxval`. This is a
 webOS compatibility build; runtime behavior still needs hardware validation.
 
-`dist` contains the executable, permissions, and license notices. LG's capture
-libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV. No Hyperion
-libraries or upstream checkout is required. The [TV app package](../../../packaging/webos/README.md)
-adds IPK packaging, Luna permission setup, opt-in boot startup, and a power-aware
-supervisor. Installation, Luna access, capture, and panel start/stop were verified
-on the TV above; cold boot and standby/wake remain unverified.
+Binaries are in `target/armv7-unknown-linux-gnueabi/webos/`; the IPK and license
+notices are assembled by the [TV package build](../../../packaging/webos/README.md).
+There is no separate distribution staging tree or per-crate build script.
+LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 
 ## Usage
 
@@ -137,98 +135,20 @@ can still cause TCP head-of-line delay; there is no frame queue in the sender.
 The new binary has been cross-built with the webOS SDK; H.264 performance and
 thermal behavior still need validation on the TV.
 
-## First TV run
+## TV setup
 
-Stop PicCap or any other capture process. Copy the distribution:
-
-```sh
-ssh root@TV_IP 'mkdir -p /media/developer/prysm-capture'
-scp -r crates/capture/webos-capture/dist/. root@TV_IP:/media/developer/prysm-capture/
-ssh -t root@TV_IP
-```
-
-Apply the temporary Luna setup below if needed. On the TV:
-
-```sh
-cd /media/developer/prysm-capture
-./prysm-webos-capture PRYSM_MACHINE_IPV4:19400 \
-  --source video --video-backend vtcapture
-```
+Use the [TV app package](../../../packaging/webos/README.md) to install the worker
+and Rust supervisor and register their separate executable Luna roles. Root alone
+does not grant permission to register native capture clients. Standalone launches
+must use the executable path named by the installed capture role. Old system
+manifest overlay templates are no longer distributed.
 
 Ctrl+C and SIGTERM request shutdown through a signal-waiting thread; native capture
 threads inherit blocked shutdown signals to avoid interrupting vendor calls.
 Native video release has a reproduced lost-wakeup hang on the tested TV; the
-supervisor must retain a shutdown deadline and process-level recovery.
-See [cleanup diagnosis](../../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md) for restart measurements, the HAL
-library-lifetime fix, constructor-failure leaks, and teardown race. Test HDMI and
-ordinary menus with Prysm's desktop preview first. Protected video may be
-unavailable. Captured HDR pixels are not automatically tone-mapped.
-
-## Temporary Luna capture permissions
-
-`vtcapture exception: LSRegisterPubPriv FAILED` can mean Luna denies
-registration of the executable's capture-client identity, even when run as root.
-The supplied `permissions/role.json` grants capture-client and media resource
-manager access to exactly `/media/developer/prysm-capture/prysm-webos-capture`.
-Moving the executable requires updating `exeName` in that role.
-
-This is the setup verified on the model/firmware above. It overlays a manifest
-using a bind mount; the original system file is not overwritten. Reloading
-permissions affects the shared Luna configuration. Review the files first;
-this is not an automatic installer or a persistent boot setup.
-
-On the TV, prepare temporary copies (stop if this directory already exists):
-
-```sh
-mkdir -m 700 /tmp/prysm-luna-test &&
-cp /media/developer/prysm-capture/permissions/role.json \
-   /media/developer/prysm-capture/permissions/screen-capture-webos.manifest.json \
-   /tmp/prysm-luna-test/
-```
-
-Compare the proposed manifest with your TV's original:
-
-```sh
-diff -u /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json \
-        /tmp/prysm-luna-test/screen-capture-webos.manifest.json
-```
-
-The only substantive change must be adding `/tmp/prysm-luna-test/role.json`
-to `roleFiles`. If any existing entries differ, stop and adapt the template to
-preserve your TV's entries. Also stop if the manifest is already bind-mounted;
-check with `mount | grep screen-capture-webos.manifest.json`.
-
-After reviewing the diff, apply it:
-
-```sh
-mount --bind \
-  /tmp/prysm-luna-test/screen-capture-webos.manifest.json \
-  /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json &&
-ls-control scan-services
-```
-
-This does not start capture. Run the foreground video-only test above afterward.
-The mount and `/tmp` files do not survive a normal reboot; no autostart hook is
-installed. Do not delete the role file while the overlay is active.
-
-To roll back, stop Prysm capture with Ctrl+C, then restore the original manifest
-view, reload permissions, and remove only the files added here:
-
-```sh
-umount /usr/share/luna-service2/manifests.d/screen-capture-webos.manifest.json &&
-ls-control scan-services &&
-rm /tmp/prysm-luna-test/role.json \
-   /tmp/prysm-luna-test/screen-capture-webos.manifest.json &&
-rmdir /tmp/prysm-luna-test
-```
-
-The rollback sequence has not yet been verified on the target TV. Do not replace
-`scan-services` with `scan-volatile-dirs`: the latter only adds manifests and
-does not reliably remove previously loaded permissions.
-
-Once the log reaches `Capturing …`, `Connection refused` refers to
-the receiver: start Prysm with the webOS input and enable Screen sync (or
-**Start capture** in the desktop preview) to open TCP port 19400.
+supervisor retains a shutdown deadline and process-level recovery. See the
+[cleanup diagnosis](../../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md)
+for evidence. Protected video may be unavailable; HDR is not automatically tone-mapped.
 
 ## Performance and protocol
 
@@ -363,6 +283,27 @@ guarantee later outbound permissions or native initialization success.
 A constructor failure poisons process-global vendor state. It now ends that worker
 with a typed failure event, without automatic backend fallback or further capture
 attempts in the same process. The library stays loaded until process exit.
-Ordinary missing-backend errors may still fall back, and successfully constructed
-video clients still retry not-ready preparation. The supervisor retries a failed
-worker after five seconds and can cancel retries with Stop.
+Under the installed supervisor, Luna MAIN-sink readiness controls video startup
+over a private stdin pipe. Without video, UI capture and the receiver connection
+continue while video-only capture waits. Any HDMI input or built-in video source
+can become ready; there is no HDMI1 filter. A source/context transition resets
+only the video client. The supervisor bounds that reset with a five-second
+watchdog and recycles the worker on timeout.
+
+Ordinary missing-backend errors may still fall back. Standalone or unknown-readiness
+capture retries not-ready preparation for up to ten seconds. A native client that
+stays unready emits failure before driver teardown, which can block. The supervisor
+retains its five-second kill deadline and failure backoff. Known video absence
+does not cause periodic worker restarts. Stop cancels retries.
+
+Status 1 from LG init/preprocess can leave the session finalized. Version 0.1.9
+reinitializes that session on the same driver before retrying preprocessing;
+repeating preprocessing on a closed device cannot recover. Retries are paced at
+one second and bounded by the existing ten-second deadline. The supervisor also
+watches native startup/reinitialization, preserving worker recovery on a hang.
+
+The installed 0.1.9 wake test reproduced the initial preprocessing failure and
+recovered by session reinitialization in 1.09 seconds, retaining the wake worker
+and receiver connection. The user confirmed visible video within about two
+seconds of the TV picture. Full OS cold boot and other physical HDMI ports remain
+unverified; this test used suspend/resume with Freebox on HDMI1.

@@ -584,7 +584,10 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
     for (fail, configured) in [("publish", false), ("publish", true), ("reply", true)] {
         reset(None);
         let dir = sandbox();
-        script(&dir.path().join("scan-services"), "exit 0");
+        script(
+            &dir.path().join("scan-services"),
+            "while [ ! -f \"$0.ready\" ]; do sleep 0.01; done",
+        );
         let mut service = service().unwrap();
         service.register().unwrap();
         let files = Files::sandbox(dir.path()).unwrap();
@@ -609,6 +612,7 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
                 .unwrap();
         let _ = service.callbacks.status(&message);
         assert!(service.callbacks.pending.borrow().is_some());
+        std::fs::write(dir.path().join("scan-services.ready"), "").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         MOCK.with_borrow_mut(|mock| mock.reply_reentry = true);
         while service.callbacks.pending.borrow().is_some() {
@@ -662,4 +666,121 @@ fn initial_power_failure_remains_visible_when_supervisor_status_is_merged() {
     assert!(value["power"].is_null());
     assert!(value["error"].is_string());
     assert_eq!(value["senderRunning"], false);
+}
+
+#[test]
+fn status_subscription_reply_acknowledges_the_retained_native_subscription() {
+    reset(None);
+    let service = service().unwrap();
+    let mut raw = MessageData(Some(CString::new(r#"{"subscribe":true}"#).unwrap()));
+    // SAFETY: the test message remains alive for this entire callback invocation.
+    let message =
+        unsafe { Message::from_callback(&service.callbacks, ptr::from_mut(&mut raw).cast()) }
+            .unwrap();
+    service.callbacks.status(&message).unwrap();
+    assert_eq!(
+        MOCK.with_borrow(|mock| mock.reply.clone()).unwrap()["subscribed"],
+        true
+    );
+}
+
+#[test]
+fn readiness_uses_main_geometry_for_every_hdmi_input_and_video_apps() {
+    for source in ["HDMI", "VDEC"] {
+        for port in 0..4 {
+            let mut value = json!({"returnValue":true,"video":[
+                {"sink":"SUB0","connected":true,"width":100,"height":100,"frameRate":60},
+                {"sink":"MAIN","connected":true,"connectedSource":source,
+                 "connectedSourcePort":port,"width":3840,"height":2160,"frameRate":50,"muted":true}
+            ]});
+            assert_eq!(video_available(&value), Some(true));
+            value["video"][1]["width"] = json!(0);
+            assert_eq!(video_available(&value), Some(false));
+            value["video"][1] = json!({"sink":"MAIN","connected":false});
+            assert_eq!(video_available(&value), Some(false));
+        }
+    }
+    for value in [
+        Value::Null,
+        json!({"returnValue":false}),
+        json!({"returnValue":true,"video":[]}),
+        json!({"returnValue":true,"video":[{"sink":"MAIN","connected":true}]}),
+    ] {
+        assert_eq!(video_available(&value), None);
+    }
+}
+
+#[test]
+fn video_subscription_failure_retries_and_drop_cancels_both_owned_calls() {
+    reset(None);
+    let mut service = Service::new(
+        Luna::test_api(),
+        Glib::test_api(),
+        "test.prysm",
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    service.register().unwrap();
+    let data = Rc::as_ptr(&service.callbacks).cast_mut().cast();
+    MOCK.with_borrow_mut(|mock| mock.fail = Some("call"));
+    assert!(service.callbacks.subscribe_video(data).is_err());
+    assert!(service.callbacks.video_retry.get().is_some());
+    MOCK.with_borrow_mut(|mock| mock.fail = None);
+    service
+        .callbacks
+        .tick(Instant::now() + Duration::from_secs(6))
+        .unwrap();
+    assert_ne!(service.callbacks.video_token.get(), 0);
+    MOCK.with_borrow_mut(|mock| {
+        mock.events.clear();
+        mock.reenter = true;
+    });
+    drop(service);
+    assert_eq!(
+        MOCK.with_borrow(|mock| mock.events.iter().filter(|e| **e == "cancel").count()),
+        2
+    );
+}
+
+#[test]
+#[cfg(not(miri))]
+fn video_callback_updates_context_and_recovers_after_subscription_failure() {
+    use crate::{application::App, config::Files};
+    reset(Some("call"));
+    let dir = crate::application::tests::sandbox();
+    let mut service = Service::new(
+        Luna::test_api(),
+        Glib::test_api(),
+        "test.prysm",
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    *service.callbacks.app.borrow_mut() =
+        Some(App::new(Files::sandbox(dir.path()).unwrap()).unwrap());
+    service.register().unwrap();
+    assert!(service.callbacks.video_retry.get().is_some());
+    let data = Rc::as_ptr(&service.callbacks).cast_mut().cast();
+    for (port, context) in [(0, "a"), (0, "a"), (3, "b")] {
+        let value = json!({"returnValue":true,"subscribed":true,"video":[{
+            "sink":"MAIN","connected":true,"width":1920,"height":1080,"frameRate":60,
+            "connectedSource":"HDMI","connectedSourcePort":port,"context":context
+        }]});
+        let mut raw = MessageData(Some(CString::new(value.to_string()).unwrap()));
+        // SAFETY: callback borrows live test message and retained Service state on this thread.
+        assert!(unsafe {
+            video_callback(
+                service.callbacks.handle.as_ptr(),
+                ptr::from_mut(&mut raw).cast(),
+                data,
+            )
+        });
+        assert!(service.callbacks.video_retry.get().is_none());
+        let expected = json!(["HDMI", port, context]).to_string();
+        assert_eq!(
+            service.callbacks.video_context.borrow().as_deref(),
+            Some(expected.as_str())
+        );
+    }
 }

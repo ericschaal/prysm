@@ -92,6 +92,7 @@ fn main() -> Result<()> {
         .map_err(|(_, error)| error)
         .context("another Prysm capturer is running")?;
     let (stop, _signal_waiter) = shutdown::listen()?;
+    let mut events = native::events::Events::from_environment()?;
     snapshot(0, "baseline")?;
     let mut failures = 0;
     for cycle in 1..=probe.cycles {
@@ -117,7 +118,7 @@ fn main() -> Result<()> {
                     break;
                 }
                 if let Some(video) = &mut video {
-                    let frame = video.capture(&mut bytes)?;
+                    let frame = video.capture(&mut bytes, &mut events)?;
                     println!(
                         "{}",
                         json!({"cycle": cycle, "video_frame": frame.is_some()})

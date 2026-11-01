@@ -1,0 +1,14 @@
+{
+  "baseline_worker": "worker=13402",
+  "baseline_video_device_open": true,
+  "home_worker_ids": [
+    "worker=13402"
+  ],
+  "home_duration_seconds": 16.13,
+  "home_frames_advanced": 510,
+  "video_device_released": true,
+  "receiver_stayed_connected": true,
+  "errors": [
+    null
+  ]
+}

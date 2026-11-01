@@ -1,7 +1,10 @@
 //! Acquire video/UI layers and assemble frames using reusable pixel buffers.
 use crate::{
     cli::{CaptureOptions, Cli, CompositionFormat, Source},
-    native::{Ui, Video},
+    native::{
+        Ui, Video,
+        events::{Event, Events},
+    },
     pixels::{Bgra8Pixels, CompositionBuffer},
 };
 use anyhow::Result;
@@ -81,6 +84,7 @@ pub struct Capture {
     source: Source,
     composition_format: CompositionFormat,
     video: Option<Video>,
+    video_available: bool,
     video_retry: Instant,
     native: Vec<u8>,
     composition: CompositionBuffer,
@@ -100,6 +104,7 @@ impl Capture {
             source: cli.source,
             composition_format: cli.composition_format,
             video: None,
+            video_available: true,
             video_retry: Instant::now(),
             native: Vec::new(),
             composition: CompositionBuffer::default(),
@@ -114,10 +119,11 @@ impl Capture {
         fps: u8,
         resolution: [u32; 2],
         ui: &mut Option<impl UiCapture>,
+        events: &mut Events,
     ) -> Result<()> {
         let resized = [self.options.width, self.options.height] != resolution;
         if self.options.fps != fps || resized {
-            self.release_video();
+            self.release_video(events)?;
             self.options.fps = fps;
             [self.options.width, self.options.height] = resolution;
             self.video_retry = Instant::now();
@@ -131,17 +137,33 @@ impl Capture {
         Ok(())
     }
 
-    pub fn release_video(&mut self) {
-        self.video = None;
+    pub fn set_video_available(&mut self, available: bool) {
+        if available != self.video_available && self.source.includes_video() {
+            tracing::info!(available, "video source availability changed");
+        }
+        if available && !self.video_available {
+            self.video_retry = Instant::now();
+        }
+        self.video_available = available;
+    }
+
+    pub fn release_video(&mut self, events: &mut Events) -> Result<()> {
+        if self.video.is_some() {
+            events.send(&Event::VideoResetting)?;
+            self.video = None;
+            events.send(&Event::VideoReset)?;
+        }
+        Ok(())
     }
 
     pub fn capture(
         &mut self,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
         capture_ui: &mut Option<impl UiCapture>,
+        events: &mut Events,
     ) -> Result<Option<CapturedFrame<'_>>> {
-        let video = if self.source.includes_video() {
-            self.capture_video(open_video)?
+        let video = if self.source.includes_video() && self.video_available {
+            self.capture_video(open_video, events)?
         } else {
             None
         };
@@ -196,10 +218,14 @@ impl Capture {
     fn capture_video(
         &mut self,
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
+        events: &mut Events,
     ) -> Result<Option<Header>> {
         if self.video.is_none() && Instant::now() >= self.video_retry {
             prysm_metrics::event(VideoCaptureEvent::InitAttempt);
-            match open_video(&self.options) {
+            events.send(&Event::VideoResetting)?;
+            let result = open_video(&self.options);
+            events.send(&Event::VideoReset)?;
+            match result {
                 Ok(capture) => {
                     prysm_metrics::backend_info(
                         prysm_metrics::Layer::Video,
@@ -219,7 +245,7 @@ impl Capture {
             return Ok(None);
         };
         let capture_time = prysm_metrics::timer(Stage::VideoAcquire);
-        let result = capture.capture(&mut self.native);
+        let result = capture.capture(&mut self.native, events);
         drop(capture_time);
         Ok(match result {
             Ok(Some(header)) => {
@@ -230,10 +256,12 @@ impl Capture {
                 prysm_metrics::event(VideoCaptureEvent::Duplicate);
                 None
             }
+            // Keep ownership until main has reported failure; native Drop can block.
+            Err(error) if error.is::<crate::native::FatalVideo>() => return Err(error),
             Err(error) => {
                 prysm_metrics::event(VideoCaptureEvent::AcquireFailed);
                 tracing::warn!(error = %format!("{error:#}"), "video interrupted; restarting");
-                self.release_video();
+                self.release_video(events)?;
                 prysm_metrics::backend_info(
                     prysm_metrics::Layer::Video,
                     prysm_metrics::Backend::Disabled,

@@ -5,13 +5,15 @@ use crate::{config::Config, supervisor::Event};
 use anyhow::Result;
 use std::{
     fs::File,
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
 };
 
 pub struct Worker {
     child: Child,
+    control: std::process::ChildStdin,
+    video_sent: Option<u8>,
     events: File,
     stderr: std::process::ChildStderr,
     pending: Vec<u8>,
@@ -32,23 +34,51 @@ impl Worker {
         let mut command = Command::new(binary);
         command
             .args(config.args())
-            .stdin(Stdio::null())
+            .env("PRYSM_CONTROL", "1")
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         let (mut child, events) = native::spawn(command)?;
+        let control = child.stdin.take().expect("stdin configured as a pipe");
         let stderr = child.stderr.take().expect("stderr configured as a pipe");
-        if let Err(error) = native::nonblocking(&stderr) {
+        if let Err(error) =
+            native::nonblocking(&stderr).and_then(|()| native::nonblocking(&control))
+        {
             let _ = child.kill();
             reap(&mut child);
             return Err(error);
         }
         Ok(Self {
             child,
+            control,
+            video_sent: None,
             events,
             stderr,
             pending: Vec::new(),
             channel_closed: false,
         })
+    }
+    pub fn video_available(&mut self, available: Option<bool>, reset: bool) -> Result<bool> {
+        let state = match available {
+            Some(true) => b'1',
+            Some(false) => b'0',
+            None => b'?',
+        };
+        if self.video_sent == Some(state) && !reset {
+            return Ok(true);
+        }
+        let byte = if reset && available != Some(false) {
+            b'r'
+        } else {
+            state
+        };
+        match self.control.write(&[byte]) {
+            Ok(1) => self.video_sent = Some(state),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(false),
+            Err(error) => return Err(error.into()),
+            Ok(_) => anyhow::bail!("worker control pipe closed"),
+        }
+        Ok(true)
     }
     pub fn terminate(&mut self) -> Result<()> {
         use nix::{
@@ -205,12 +235,41 @@ mod process_tests {
         }
     }
     #[test]
+    fn control_pipe_deduplicates_readiness_and_preserves_explicit_reset() {
+        let dir = sandbox();
+        let path = dir.path().join("worker");
+        script(&path, "dd bs=1 count=6 >&2 2>/dev/null");
+        let mut worker = Worker::spawn(&path, &config()).unwrap();
+        assert!(worker.video_available(Some(false), false).unwrap());
+        assert!(worker.video_available(Some(false), false).unwrap());
+        assert!(worker.video_available(Some(true), false).unwrap());
+        assert!(worker.video_available(Some(true), true).unwrap());
+        assert!(worker.video_available(None, false).unwrap());
+        assert!(worker.video_available(None, true).unwrap());
+        assert!(worker.video_available(None, false).unwrap());
+        assert!(worker.video_available(Some(false), true).unwrap());
+        let mut log = String::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let update = worker.poll().unwrap();
+            if let Some(chunk) = update.log {
+                log.push_str(&chunk);
+            }
+            if update.exit.is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(log, "01r?r0");
+    }
+    #[test]
     fn inherited_fd_fragmentation_stderr_pressure_and_exit_are_observed() {
         let dir = sandbox();
         let path = dir.path().join("worker");
         script(
             &path,
-            "printf '{\"type\":\"con' >&3; sleep 0.02; printf 'nected\"}\\n' >&3; dd if=/dev/zero bs=8192 count=32 >&2 2>/dev/null; printf '%s\\n' '{\"type\":\"disconnected\"}' >&3",
+            "printf '{\"type\":\"con' >&\"$PRYSM_EVENTS_FD\"; sleep 0.02; printf 'nected\"}\\n' >&\"$PRYSM_EVENTS_FD\"; dd if=/dev/zero bs=8192 count=32 >&2 2>/dev/null; printf '%s\\n' '{\"type\":\"disconnected\"}' >&\"$PRYSM_EVENTS_FD\"",
         );
         let mut worker = Worker::spawn(&path, &config()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -239,8 +298,8 @@ mod process_tests {
     #[test]
     fn event_eof_with_live_child_and_incomplete_last_line_fail_closed() {
         for body in [
-            "exec 3>&-; exec sleep 30",
-            "printf '{' >&3; exec 3>&-; exec sleep 30",
+            "eval \"exec $PRYSM_EVENTS_FD>&-\"; exec sleep 30",
+            "printf '{' >&\"$PRYSM_EVENTS_FD\"; eval \"exec $PRYSM_EVENTS_FD>&-\"; exec sleep 30",
         ] {
             let dir = sandbox();
             let path = dir.path().join("worker");

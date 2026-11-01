@@ -64,6 +64,9 @@ struct Callbacks {
     pending: RefCell<Option<PendingMessage>>,
     power_token: Cell<ffi::luna::LSMessageToken>,
     power_retry: Cell<Option<Instant>>,
+    video_token: Cell<ffi::luna::LSMessageToken>,
+    video_retry: Cell<Option<Instant>>,
+    video_context: RefCell<Option<String>>,
     closing: Cell<bool>,
 }
 
@@ -153,6 +156,9 @@ impl Service {
                 pending: RefCell::new(None),
                 power_token: Cell::new(0),
                 power_retry: Cell::new(None),
+                video_token: Cell::new(0),
+                video_retry: Cell::new(None),
+                video_context: RefCell::new(None),
                 closing: Cell::new(false),
             }),
             methods: [c"status", c"start", c"stop", c"setConfig", c"cleanup"]
@@ -216,6 +222,13 @@ impl Service {
             if let Some(app) = state.app.borrow_mut().as_mut() {
                 app.power(None, state.status.borrow().error(), Instant::now());
             }
+        }
+        let has_app = state.app.borrow().is_some();
+        if has_app
+            && state.subscribe_video(data).is_err()
+            && let Some(app) = state.app.borrow_mut().as_mut()
+        {
+            app.video_available(None);
         }
         // SAFETY: create a caller-owned timer source; retain it even if attach fails.
         let timer = NonNull::new(unsafe { state.glib.g_timeout_source_new(100) })
@@ -284,7 +297,7 @@ impl Callbacks {
         let changed = method != "status" && result.is_ok();
         let response = match result {
             Ok(Some(value)) => {
-                let reply = if value["returnValue"] == false {
+                let reply = if method == "status" || value["returnValue"] == false {
                     value
                 } else {
                     self.snapshot(false)
@@ -347,7 +360,84 @@ impl Callbacks {
         self.power_token.set(token);
         Ok(())
     }
+    fn subscribe_video(&self, data: *mut c_void) -> Result<()> {
+        let mut token = 0;
+        // Also bound a missing initial response; unknown state retains capture fallback.
+        self.video_retry
+            .set(Some(Instant::now() + Duration::from_secs(5)));
+        check(&self.luna, |error| {
+            // SAFETY: static strings, local output, and callback storage retained by Service.
+            unsafe {
+                self.luna.LSCall(
+                    self.handle.as_ptr(),
+                    c"luna://com.webos.service.videooutput/getStatus".as_ptr(),
+                    c"{\"subscribe\":true}".as_ptr(),
+                    Some(video_callback),
+                    data,
+                    &raw mut token,
+                    error,
+                )
+            }
+        })?;
+        self.video_token.set(token);
+        Ok(())
+    }
+    fn video(&self, message: &Message<'_>) {
+        if self.closing.get() {
+            return;
+        }
+        let value = message.payload().unwrap_or(Value::Null);
+        let available = video_available(&value);
+        self.video_retry
+            .set(if available.is_some() && value["subscribed"] == true {
+                None
+            } else {
+                Some(Instant::now() + Duration::from_secs(5))
+            });
+        if let Some(app) = self.app.borrow_mut().as_mut() {
+            if available == Some(true) {
+                let main = value["video"]
+                    .as_array()
+                    .and_then(|sinks| sinks.iter().find(|sink| sink["sink"] == "MAIN"));
+                if let Some(main) = main {
+                    let context = json!([
+                        main["connectedSource"],
+                        main["connectedSourcePort"],
+                        main["context"]
+                    ])
+                    .to_string();
+                    let mut previous = self.video_context.borrow_mut();
+                    if previous.as_ref().is_some_and(|old| old != &context) {
+                        app.reset_video();
+                    }
+                    *previous = Some(context);
+                }
+            }
+            app.video_available(available);
+        }
+    }
     fn tick(&self, now: Instant) -> Result<()> {
+        if self
+            .video_retry
+            .get()
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.video_retry.set(Some(now + Duration::from_secs(5)));
+            if let Some(app) = self.app.borrow_mut().as_mut() {
+                app.video_available(None);
+            }
+            let token = self.video_token.get();
+            let cancelled = token == 0
+                || check(&self.luna, |error| {
+                    // SAFETY: token belongs to our live registered handle.
+                    unsafe { self.luna.LSCallCancel(self.handle.as_ptr(), token, error) }
+                })
+                .is_ok();
+            if cancelled {
+                self.video_token.set(0);
+                let _ = self.subscribe_video(ptr::from_ref(self).cast_mut().cast());
+            }
+        }
         if self
             .power_retry
             .get()
@@ -438,6 +528,27 @@ impl Callbacks {
 
         Ok(())
     }
+}
+
+// No app ID or HDMI port filter: MAIN may carry any input or a built-in video app.
+fn video_available(value: &Value) -> Option<bool> {
+    if value["returnValue"] != true {
+        return None;
+    }
+    let main = value["video"]
+        .as_array()?
+        .iter()
+        .find(|sink| sink["sink"] == "MAIN")?;
+    let connected = main["connected"].as_bool()?;
+    if !connected {
+        return Some(false);
+    }
+    // Muted video can be legitimate black; it must not trigger a restart loop.
+    Some(
+        main["width"].as_u64()? > 0
+            && main["height"].as_u64()? > 0
+            && main["frameRate"].as_f64()? > 0.0,
+    )
 }
 
 /// A non-owning message, borrowed only for the native callback invocation.
@@ -594,6 +705,18 @@ impl Drop for Service {
         {
             let _ = writeln!(std::io::stderr(), "cancel power subscription: {error}");
         }
+        if state.video_token.get() != 0
+            && let Err(error) = check(&state.luna, |error| {
+                // SAFETY: live handle and token owned by this service's video subscription.
+                unsafe {
+                    state
+                        .luna
+                        .LSCallCancel(state.handle.as_ptr(), state.video_token.get(), error)
+                }
+            })
+        {
+            let _ = writeln!(std::io::stderr(), "cancel video subscription: {error}");
+        }
         if let Err(error) = check(&state.luna, |error| {
             // SAFETY: handle is owned by Service. This removes all LS2 callback
             // sources before Rc storage, method table or libraries can be dropped.
@@ -709,6 +832,24 @@ unsafe extern "C" fn power_callback(
         // SAFETY: LS2 message is borrowed only for this invocation.
         let message = unsafe { Message::from_callback(state, message) }?;
         state.power(&message)
+    })
+}
+
+/// # Safety
+/// Same lifetime/thread contract as `power_callback`, installed by `LSCall`.
+unsafe extern "C" fn video_callback(
+    _: *mut LSHandle,
+    message: *mut LSMessage,
+    data: *mut c_void,
+) -> bool {
+    callback(|| {
+        // SAFETY: Service retains this callback allocation until cancellation/unregistration.
+        let state =
+            unsafe { data.cast::<Callbacks>().as_ref() }.context("missing callback state")?;
+        // SAFETY: the LS2 message is borrowed only for this invocation.
+        let message = unsafe { Message::from_callback(state, message) }?;
+        state.video(&message);
+        Ok(())
     })
 }
 

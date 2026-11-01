@@ -12,8 +12,22 @@ function fixture(t, options = {}) {
     const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
     t.after(() => dom.window.close());
     const w = dom.window;
-    let poll;
-    w.setInterval = callback => { poll = callback; return 1; };
+    let now = 0;
+    let timerId = 0;
+    const timers = new Map();
+    w.setTimeout = (callback, delay) => { const id = ++timerId; timers.set(id, { at: now + delay, callback }); return id; };
+    w.clearTimeout = id => timers.delete(id);
+    w.setInterval = () => { throw new Error('status must use a subscription'); };
+    function advance(milliseconds) {
+        const end = now + milliseconds;
+        while (true) {
+            const next = [...timers.entries()].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+            if (!next) break;
+            timers.delete(next[0]); now = next[1].at; next[1].callback();
+        }
+        now = end;
+    }
+    let subscription;
     const calls = [];
     let value = {
         returnValue: true, enabled: false, power: 'Active', senderRunning: false, receiverConnected: false, stopping: false,
@@ -21,11 +35,12 @@ function fixture(t, options = {}) {
         config: { receiver: '192.168.18.18:19400', source: 'both', compression: 'lz4', autostart: false }
     };
     w.PalmServiceBridge = function () {
-        this.cancel = () => {};
+        this.cancel = () => { this.cancelled = true; if (options.cancelReentry) this.onservicecallback('{"returnValue":false}'); };
         this.call = (uri, data) => {
             const payload = JSON.parse(data);
             const method = uri.split('/').pop();
             calls.push({ method, payload });
+            if (method === 'status') { subscription = this; if (options.silentStatus) return; }
             if (method === 'status' && options.offline) {
                 this.onservicecallback(JSON.stringify({ returnValue: false, errorText: 'Service unavailable' }));
                 return;
@@ -34,12 +49,14 @@ function fixture(t, options = {}) {
             if (method === 'start') { value.enabled = true; value.senderRunning = true; }
             if (method === 'stop' || method === 'cleanup') { value.enabled = false; value.senderRunning = false; }
             if (method === 'cleanup') value.config.autostart = false;
-            this.onservicecallback(JSON.stringify(value));
+            this.onservicecallback(JSON.stringify({ ...value, subscribed: method === 'status' }));
         };
     };
     w.eval(script);
     return {
-        w, calls, poll: () => poll(), get value() { return value; },
+        w, calls, advance, options, subscription: () => subscription,
+        notify: () => subscription.onservicecallback(JSON.stringify({ ...value, subscribed: true })),
+        get value() { return value; },
         el: id => w.document.getElementById(id),
         focus: () => w.document.activeElement.id,
         key: code => w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { keyCode: code, bubbles: true, cancelable: true })),
@@ -146,13 +163,13 @@ test('cleanup is tucked away and requires explicit confirmation; Back returns on
     assert.equal(f.el('modal').hidden, true);
 });
 
-test('status polling preserves an unsaved choice and its focus', t => {
+test('status subscription preserves an unsaved choice and its focus', t => {
     const f = fixture(t);
     f.el('autostart').focus();
     f.el('autostart').click();
     f.el('choice-true').click();
     assert.equal(f.focus(), 'autostart');
-    f.poll();
+    f.notify();
     assert.equal(f.focus(), 'autostart');
     assert.equal(f.el('autostart-value').textContent, 'On');
     assert.equal(f.value.config.autostart, false);
@@ -184,20 +201,62 @@ test('a waiting sender is described as enabled, rather than actively capturing o
     assert.equal(f.el('primary').textContent, 'Enable sender');
     f.el('primary').click();
     f.value.lastLog = 'capture handshake failed: Connection refused';
-    f.poll();
+    f.notify();
     assert.equal(f.el('primary').textContent, 'Disable sender');
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
     assert.match(f.el('status-description').textContent, /192\.168\.18\.18:19400/);
     assert.equal(f.value.enabled, true, 'egui stop must leave the sender available for the next start');
     f.value.receiverConnected = true;
-    f.poll();
+    f.notify();
     assert.equal(f.el('connection').textContent, 'Connected · Capture off');
     assert.equal(f.el('status-title').textContent, 'Connected · Capture off');
     f.value.capturing = true;
-    f.poll();
+    f.notify();
     assert.equal(f.el('status-title').textContent, 'Capturing');
     f.value.receiverConnected = false;
-    f.poll();
+    f.notify();
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
+});
+
+test('one status subscription recovers after service failure without losing draft settings', t => {
+    const f = fixture(t);
+    assert.deepEqual(f.calls.filter(call => call.method === 'status').map(call => call.payload), [{ subscribe: true }]);
+    f.el('compression').click(); f.el('choice-h264').click();
+    const old = f.subscription();
+    old.onservicecallback('{"returnValue":false,"errorText":"service exited"}');
+    assert.equal(old.cancelled, true);
+    assert.equal(f.el('connection').textContent, 'TV service unavailable');
+    f.advance(2999);
+    assert.equal(f.calls.length, 1);
+    f.advance(1);
+    assert.notEqual(f.subscription(), old);
+    assert.equal(f.el('compression-value').textContent, 'H.264');
+    assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
+    old.onservicecallback('{"returnValue":false,"errorText":"late reply"}');
+    assert.notEqual(f.el('connection').textContent, 'TV service unavailable');
+});
+
+test('a silent activation times out; hiding the page cancels retries and synchronous cancel callbacks', t => {
+    const f = fixture(t, { silentStatus: true, cancelReentry: true });
+    f.advance(30000);
+    assert.equal(f.el('connection').textContent, 'TV service unavailable');
+    f.w.dispatchEvent(new f.w.Event('pagehide'));
+    const calls = f.calls.length;
+    f.advance(60000);
+    assert.equal(f.calls.length, calls);
+    f.options.silentStatus = false;
+    f.w.dispatchEvent(new f.w.Event('pageshow'));
+    assert.equal(f.el('connection').textContent, 'Sender disabled');
+});
+
+test('malformed or unsubscribed status replies are cancelled and retried', t => {
+    const f = fixture(t);
+    f.subscription().onservicecallback('{');
+    assert.equal(f.el('connection').textContent, 'TV service unavailable');
+    f.advance(3000);
+    f.subscription().onservicecallback(JSON.stringify({ ...f.value, subscribed: false }));
+    assert.equal(f.el('connection').textContent, 'TV service unavailable');
+    f.advance(3000);
+    assert.equal(f.el('connection').textContent, 'Sender disabled');
 });

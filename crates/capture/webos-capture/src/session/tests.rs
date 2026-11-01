@@ -304,3 +304,51 @@ fn idle_connection_opens_no_native_resources_and_remains_interruptible() {
     release.send(()).unwrap();
     receiver.join().unwrap();
 }
+
+#[test]
+fn readiness_wait_keeps_sending_ui_on_the_same_connection_then_opens_video() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let cli =
+        Cli::try_parse_from(["capture", &listener.local_addr().unwrap().to_string()]).unwrap();
+    let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 30));
+    let stop = AtomicBool::new(false);
+    let frames = Cell::new(0);
+    let mut ui = Some(|_, _, bgra: &mut pixels::Bgra8Pixels| {
+        frames.set(frames.get() + 1);
+        *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
+        Ok(())
+    });
+    let mut session = Session::connect(&cli).unwrap();
+    assert!(session.wait_for_capture(&cli, &stop).unwrap());
+    session
+        .configure(&mut ui, &mut crate::native::events::Events::disabled())
+        .unwrap();
+    let mut attempts = 0;
+    session
+        .run(
+            &stop,
+            &mut |_| {
+                assert_eq!(frames.get(), 3);
+                attempts += 1;
+                stop.store(true, Ordering::Relaxed);
+                anyhow::bail!("test open")
+            },
+            &mut ui,
+            &mut || Ok((frames.get() >= 3, false)),
+            &mut crate::native::events::Events::disabled(),
+        )
+        .unwrap();
+    assert_eq!(attempts, 1);
+    let mut socket = receiver.join().unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    for _ in 0..4 {
+        let mut bytes = [0; HEADER_LEN];
+        socket.read_exact(&mut bytes).unwrap();
+        let header = Header::decode(&bytes).unwrap();
+        let mut pixels = vec![0; header.payload_len];
+        socket.read_exact(&mut pixels).unwrap();
+        assert_eq!(pixels, [255, 0, 0].repeat(4));
+    }
+}

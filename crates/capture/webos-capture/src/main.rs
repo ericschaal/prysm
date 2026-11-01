@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 mod capture;
 mod cli;
+mod control;
 #[allow(unsafe_code)]
 mod native;
 mod pixels;
@@ -16,6 +17,7 @@ use cli::Cli;
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut events = native::events::Events::from_environment()?;
+    let mut control = control::Control::from_environment()?;
     tracing_subscriber::fmt()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .with_writer(std::io::stderr)
@@ -58,9 +60,15 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let mut ui = Some(capture::NativeUi::new(cli.source));
-    let result = session.configure(&mut ui).and_then(|()| {
+    let result = session.configure(&mut ui, &mut events).and_then(|()| {
         events.send(&native::events::Event::Capturing)?;
-        session.run(&stop, &mut native::Video::open, &mut ui)
+        session.run(
+            &stop,
+            &mut native::Video::open,
+            &mut ui,
+            &mut || control.poll(),
+            &mut events,
+        )
     });
     match &result {
         Ok(()) => events.send(&native::events::Event::Disconnected)?,

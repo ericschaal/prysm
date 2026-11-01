@@ -5,6 +5,8 @@ use std::{fs::File, io::Write, os::fd::FromRawFd};
 #[derive(serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    VideoResetting,
+    VideoReset,
     Connected,
     Capturing,
     Disconnected,
@@ -13,6 +15,14 @@ pub enum Event {
 
 pub struct Events(Option<File>);
 impl Events {
+    #[cfg(test)]
+    pub fn disabled() -> Self {
+        Self(None)
+    }
+    #[cfg(test)]
+    pub fn from_file(file: File) -> Self {
+        Self(Some(file))
+    }
     pub fn from_environment() -> Result<Self> {
         let Some(value) = std::env::var_os("PRYSM_EVENTS_FD") else {
             return Ok(Self(None));

@@ -61,6 +61,7 @@ pub struct Files {
     pub app_id: String,
     manifest_path: PathBuf,
     capture_role: PathBuf,
+    supervisor_manifest_path: PathBuf,
     hook_path: PathBuf,
     boot_script: String,
 }
@@ -83,12 +84,15 @@ impl Files {
             PathBuf::from("/media/developer/apps/usr/palm/services/io.prysm.capture.service");
         Ok(Self {
             worker: service.join("prysm-webos-capture"),
-            scanner: PathBuf::from("ls-control"),
+            scanner: PathBuf::from("/usr/sbin/ls-control"),
             app_id: "io.prysm.capture".into(),
             manifest_path: PathBuf::from(
                 "/var/luna-service2/manifests.d/io.prysm.capture.native.json",
             ),
             capture_role: service.join("capture.role.json"),
+            supervisor_manifest_path: PathBuf::from(
+                "/var/luna-service2/manifests.d/io.prysm.capture.supervisor.native.json",
+            ),
             hook_path: PathBuf::from("/var/lib/webosbrew/init.d/prysm-capture"),
             boot_script: format!(
                 "#!/bin/sh\nif [ -x {0}/setup.sh ]; then\n  {0}/setup.sh > /tmp/prysm-capture-setup.log 2>&1 &\nfi\n",
@@ -117,6 +121,7 @@ impl Files {
             scanner: root.join("scan-services"),
             manifest_path: root.join("capture.manifest.json"),
             capture_role: root.join("capture.role.json"),
+            supervisor_manifest_path: root.join("supervisor.manifest.json"),
             hook_path: root.join("boot-hook"),
             boot_script: {
                 let quoted = format!("'{}'", root.display().to_string().replace('\'', "'\\''"));
@@ -151,30 +156,18 @@ impl Files {
     }
     pub fn manifest(&self, install: bool) -> Result<()> {
         let value = serde_json::json!({"id":"io.prysm.capture.native", "version":"1.0.0", "roleFiles":[self.capture_role]});
-        let path = &self.manifest_path;
-        match fs::read(path) {
-            Ok(bytes) => ensure!(
-                serde_json::from_slice::<serde_json::Value>(&bytes)? == value,
-                "Refusing to change an unrelated Luna manifest"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if install {
-                    let mut file = fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .mode(0o644)
-                        .open(path)?;
-                    serde_json::to_writer(&mut file, &value)?;
-                    file.write_all(b"\n")?;
-                }
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
-        }
-        if !install {
-            fs::remove_file(path)?;
-        }
-        Ok(())
+        registration(&self.manifest_path, &value, install)
+    }
+    pub fn register_supervisor(&self) -> Result<()> {
+        let service = self.capture_role.parent().context("service directory")?;
+        let value = serde_json::json!({
+            "id":"io.prysm.capture.supervisor.native", "version":"1.0.0",
+            "roleFiles":[service.join("supervisor.role.json")],
+            "serviceFiles":[service.join("supervisor.service")],
+            "clientPermissionFiles":[service.join("supervisor.client.json")],
+            "apiPermissionFiles":[service.join("supervisor.api.json")]
+        });
+        registration(&self.supervisor_manifest_path, &value, true)
     }
     pub fn autostart(&self, enabled: bool) -> Result<()> {
         let script = &self.boot_script;
@@ -211,6 +204,33 @@ impl Files {
     }
 }
 
+fn registration(path: &Path, value: &serde_json::Value, install: bool) -> Result<()> {
+    match fs::read(path) {
+        Ok(bytes) => ensure!(
+            serde_json::from_slice::<serde_json::Value>(&bytes)? == *value,
+            "Refusing to change an unrelated Luna manifest: {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if install {
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o644)
+                    .open(path)?;
+                serde_json::to_writer(&mut file, value)?;
+                file.write_all(b"\n")?;
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    if !install {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +259,18 @@ mod tests {
             value.receiver = address.into();
             assert!(value.validate().is_err());
         }
+        for (key, invalid) in [
+            ("source", serde_json::json!(";reboot")),
+            ("compression", serde_json::json!("gzip")),
+            ("autostart", serde_json::json!("true")),
+        ] {
+            let mut json = serde_json::to_value(&value).unwrap();
+            json[key] = invalid;
+            assert!(match serde_json::from_value::<Config>(json) {
+                Ok(config) => config.validate().is_err(),
+                Err(_) => true,
+            });
+        }
         let mut json = serde_json::to_value(&value).unwrap();
         json["args"] = serde_json::json!(["--force-capture"]);
         assert!(serde_json::from_value::<Config>(json).is_err());
@@ -264,10 +296,29 @@ mod tests {
                 & 0o777,
             0o600
         );
+        files.register_supervisor().unwrap();
+        files.register_supervisor().unwrap();
+        let supervisor_path = directory.path().join("supervisor.manifest.json");
+        let supervisor: serde_json::Value =
+            serde_json::from_slice(&fs::read(&supervisor_path).unwrap()).unwrap();
+        assert_eq!(
+            supervisor["roleFiles"][0],
+            files.root.join("supervisor.role.json").to_str().unwrap()
+        );
         files.manifest(true).unwrap();
         files.manifest(true).unwrap();
         files.manifest(false).unwrap();
         files.manifest(false).unwrap();
+        assert!(
+            supervisor_path.exists(),
+            "capture cleanup must leave the supervisor activatable"
+        );
+        fs::write(&supervisor_path, "{\"id\":\"unrelated\"}").unwrap();
+        assert!(files.register_supervisor().is_err());
+        assert_eq!(
+            fs::read_to_string(supervisor_path).unwrap(),
+            "{\"id\":\"unrelated\"}"
+        );
         files.autostart(true).unwrap();
         files.autostart(false).unwrap();
         let manifest = directory.path().join("capture.manifest.json");

@@ -1,6 +1,9 @@
 'use strict';
 
 var bridges = [];
+var statusBridge = null;
+var statusRetry = null;
+var statusTimer = null;
 var busy = false;
 var changing = false;
 var online = null;
@@ -52,6 +55,47 @@ function call(uri, payload, callback) {
         done(value);
     };
     bridge.call(uri, JSON.stringify(payload));
+}
+function observe(value) {
+    online = true;
+    observed = value;
+    if (!saved) { saved = copy(value.config); draft = copy(saved); }
+}
+function stopWatching() {
+    var bridge = statusBridge;
+    statusBridge = null;
+    clearTimeout(statusRetry);
+    clearTimeout(statusTimer);
+    if (bridge) bridge.cancel();
+}
+function watchStatus() {
+    stopWatching();
+    function failed(text) {
+        stopWatching();
+        online = false;
+        notice(text || 'The service is unavailable. Open Service options to repair setup.', true);
+        render();
+        statusRetry = setTimeout(watchStatus, 3000);
+    }
+    if (typeof PalmServiceBridge === 'undefined') { failed('Open Prysm Capture on your LG TV to connect to the service.'); return; }
+    var bridge = statusBridge = new PalmServiceBridge();
+    statusTimer = setTimeout(function () { failed('The service did not respond. Open Service options to repair setup.'); }, 30000);
+    bridge.onservicecallback = function (text) {
+        if (statusBridge !== bridge) return;
+        var value;
+        try { value = JSON.parse(text); }
+        catch (error) { failed(error.message); return; }
+        if (!value || value.returnValue !== true || !value.config || value.subscribed !== true) {
+            failed(value && value.errorText);
+            return;
+        }
+        clearTimeout(statusTimer);
+        if (online === false) notice('Service connected.');
+        observe(value);
+        render();
+    };
+    try { bridge.call('luna://io.prysm.capture.service/status', JSON.stringify({ subscribe: true })); }
+    catch (error) { failed(error.message); }
 }
 function render() {
     var enabled = observed && observed.enabled;
@@ -112,20 +156,17 @@ function render() {
 function request(method, payload, success) {
     if (busy) return;
     busy = true;
-    changing = method !== 'status';
-    if (changing) render();
+    changing = true;
+    render();
     call('luna://io.prysm.capture.service/' + method, payload || {}, function (value) {
         busy = false;
         changing = false;
-        if (value.returnValue === false) {
-            if (method === 'status') online = false;
+        if (value.returnValue !== true || !value.config) {
             notice(value.errorText || 'The service could not complete this action.', true);
             render();
             return;
         }
-        online = true;
-        observed = value;
-        if (!saved && value.config) { saved = copy(value.config); draft = copy(saved); }
+        observe(value);
         if (method === 'setConfig') saved = copy(value.config);
         if (method === 'cleanup') { saved = copy(value.config); draft.autostart = false; }
         render();
@@ -230,7 +271,7 @@ function setup() {
         if (value.returnValue === false || value.error || value.stderrString) {
             notice(value.errorText || value.error || value.stderrString, true);
             render();
-        } else { notice('Service setup complete.'); request('status'); }
+        } else { notice('Service setup complete.'); watchStatus(); }
     });
 }
 function serviceOptions() {
@@ -327,5 +368,7 @@ document.addEventListener('keydown', function (event) {
     }
 });
 render();
-request('status');
-setInterval(function () { request('status'); }, 3000);
+watchStatus();
+window.addEventListener('pagehide', stopWatching);
+window.addEventListener('pageshow', watchStatus);
+document.addEventListener('visibilitychange', function () { if (!document.hidden) watchStatus(); });

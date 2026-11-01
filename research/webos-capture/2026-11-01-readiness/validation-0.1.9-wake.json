@@ -1,0 +1,10 @@
+{
+  "version": "0.1.9",
+  "scenario": "TV suspend/resume \u2192 Home \u2192 HDMI1, Freebox waking through CEC",
+  "wake_worker": "19274",
+  "reinitialization_to_native_start_seconds": 1.091374,
+  "additional_worker_restart": false,
+  "receiver_connected_during_recovery": true,
+  "errors": [],
+  "user_confirmation": "Video appeared within about 2 seconds of appearing on TV"
+}

@@ -4,7 +4,7 @@ use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::{
     fs::File,
     os::{
-        fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
+        fd::{AsFd, AsRawFd},
         unix::process::CommandExt,
     },
     process::{Child, Command},
@@ -18,35 +18,29 @@ pub(super) fn nonblocking(file: &impl AsFd) -> Result<()> {
 
 pub(super) fn spawn(mut command: Command) -> Result<(Child, File)> {
     #[cfg(target_os = "linux")]
-    let (reader, original) = nix::unistd::pipe2(OFlag::O_CLOEXEC)?;
+    let (reader, writer) = nix::unistd::pipe2(OFlag::O_CLOEXEC)?;
     #[cfg(not(target_os = "linux"))]
-    let (reader, original) = nix::unistd::pipe()?;
+    let (reader, writer) = nix::unistd::pipe()?;
     fcntl(&reader, FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
-    fcntl(&original, FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
-    let duplicate = fcntl(&original, FcntlArg::F_DUPFD_CLOEXEC(4))?;
-    // SAFETY: fcntl returned a fresh, owned descriptor. Only this OwnedFd closes it.
-    let writer = unsafe { OwnedFd::from_raw_fd(duplicate) };
-    drop(original);
+    fcntl(&writer, FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
     let descriptor = writer.as_raw_fd();
     #[cfg(target_os = "linux")]
-    let parent = std::process::id();
-    command.env("PRYSM_EVENTS_FD", "3");
+    let parent = nix::unistd::getpid();
+    command.env("PRYSM_EVENTS_FD", descriptor.to_string());
     // SAFETY: after fork the closure calls only async-signal-safe libc operations.
-    // The parent retains writer through spawn; dup2 installs a non-CLOEXEC FD 3.
+    // The parent retains writer through spawn; only the child clears CLOEXEC.
     // No Rust allocation, locks, destructors or captured references run in the child.
     unsafe {
         command.pre_exec(move || {
-            if libc::dup2(descriptor, 3) < 0 {
+            if libc::fcntl(descriptor, libc::F_SETFD, 0) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             #[cfg(target_os = "linux")]
             {
                 // The worker cannot outlive a crashed supervisor. Recheck PPID to close
                 // the race where its parent exits before PR_SET_PDEATHSIG is installed.
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::getppid().cast_unsigned() != parent {
+                nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)?;
+                if nix::unistd::getppid() != parent {
                     libc::_exit(1);
                 }
             }

@@ -11,7 +11,8 @@
         "*"
       ],
       "outbound": [
-        "com.webos.service.tvpower"
+        "com.webos.service.tvpower",
+        "com.webos.service.videooutput"
       ]
     }
   ]

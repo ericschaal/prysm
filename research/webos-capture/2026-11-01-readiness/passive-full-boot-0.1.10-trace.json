@@ -1,0 +1,598 @@
+[
+  {
+    "seconds": 0.0,
+    "online": true,
+    "uptime": 512.5,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75700,
+    "phase": "running"
+  },
+  {
+    "seconds": 2.34,
+    "online": true,
+    "uptime": 514.84,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75742,
+    "phase": "running"
+  },
+  {
+    "seconds": 4.66,
+    "online": true,
+    "uptime": 517.17,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75811,
+    "phase": "running"
+  },
+  {
+    "seconds": 6.99,
+    "online": true,
+    "uptime": 519.51,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75858,
+    "phase": "running"
+  },
+  {
+    "seconds": 9.35,
+    "online": true,
+    "uptime": 521.86,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75908,
+    "phase": "running"
+  },
+  {
+    "seconds": 11.69,
+    "online": true,
+    "uptime": 524.18,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 75982,
+    "phase": "running"
+  },
+  {
+    "seconds": 14.01,
+    "online": true,
+    "uptime": 526.51,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76030,
+    "phase": "running"
+  },
+  {
+    "seconds": 16.34,
+    "online": true,
+    "uptime": 528.9,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76078,
+    "phase": "running"
+  },
+  {
+    "seconds": 18.74,
+    "online": true,
+    "uptime": 531.26,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76152,
+    "phase": "running"
+  },
+  {
+    "seconds": 21.09,
+    "online": true,
+    "uptime": 533.59,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76200,
+    "phase": "running"
+  },
+  {
+    "seconds": 23.43,
+    "online": true,
+    "uptime": 535.96,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76273,
+    "phase": "running"
+  },
+  {
+    "seconds": 25.78,
+    "online": true,
+    "uptime": 538.71,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76316,
+    "phase": "running"
+  },
+  {
+    "seconds": 28.54,
+    "online": true,
+    "uptime": 541.3,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "7160",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76381,
+    "phase": "running"
+  },
+  {
+    "seconds": 31.14,
+    "online": true,
+    "uptime": 544.07,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76432,
+    "phase": "running"
+  },
+  {
+    "seconds": 34.29,
+    "online": true,
+    "uptime": 546.92,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76508,
+    "phase": "running"
+  },
+  {
+    "seconds": 37.04,
+    "online": true,
+    "uptime": 549.66,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76564,
+    "phase": "running"
+  },
+  {
+    "seconds": 39.54,
+    "online": true,
+    "uptime": 552.33,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76649,
+    "phase": "running"
+  },
+  {
+    "seconds": 42.65,
+    "online": true,
+    "uptime": 555.16,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76715,
+    "phase": "running"
+  },
+  {
+    "seconds": 44.96,
+    "online": true,
+    "uptime": 557.45,
+    "boot_seen": false,
+    "service": "7137",
+    "worker": "7160",
+    "video": "",
+    "setup": {
+      "returnValue": true,
+      "pid": 7137,
+      "error": null,
+      "power": "Active",
+      "capturing": true,
+      "receiverConnected": true,
+      "subscribers": 1
+    },
+    "frames": 76775,
+    "phase": "running"
+  },
+  {
+    "seconds": 47.27,
+    "online": false,
+    "frames": 76803,
+    "phase": "running"
+  },
+  {
+    "seconds": 51.29,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 55.32,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 59.35,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 63.37,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 67.4,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 71.18,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 73.21,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 75.22,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 77.25,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 79.28,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 81.31,
+    "online": false,
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 83.38,
+    "online": true,
+    "uptime": 47.02,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 86.42,
+    "online": true,
+    "uptime": 51.1,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 91.54,
+    "online": true,
+    "uptime": 55.4,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 94.7,
+    "online": true,
+    "uptime": 58.58,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 97.8,
+    "online": true,
+    "uptime": 61.42,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 100.56,
+    "online": true,
+    "uptime": 64.09,
+    "boot_seen": true,
+    "service": "",
+    "worker": "",
+    "video": "",
+    "setup": {
+      "log": ""
+    },
+    "frames": 76803,
+    "phase": "starting"
+  },
+  {
+    "seconds": 103.07,
+    "online": true,
+    "uptime": 66.54,
+    "boot_seen": true,
+    "service": "7035",
+    "worker": "7051",
+    "video": "7051",
+    "setup": {
+      "returnValue": true,
+      "pid": 7035,
+      "error": null,
+      "power": null,
+      "capturing": false,
+      "receiverConnected": false,
+      "subscribers": 0
+    },
+    "frames": 76827,
+    "phase": "running"
+  },
+  {
+    "seconds": 105.48,
+    "online": true,
+    "uptime": 69.57,
+    "boot_seen": true,
+    "service": "7035",
+    "worker": "7051",
+    "video": "7051",
+    "setup": {
+      "returnValue": true,
+      "pid": 7035,
+      "error": null,
+      "power": null,
+      "capturing": false,
+      "receiverConnected": false,
+      "subscribers": 0
+    },
+    "frames": 76885,
+    "phase": "running"
+  },
+  {
+    "seconds": 109.21,
+    "online": true,
+    "uptime": 72.69,
+    "boot_seen": true,
+    "service": "7035",
+    "worker": "7051",
+    "video": "7051",
+    "setup": {
+      "returnValue": true,
+      "pid": 7035,
+      "error": null,
+      "power": null,
+      "capturing": false,
+      "receiverConnected": false,
+      "subscribers": 0
+    },
+    "frames": 76920,
+    "phase": "running"
+  }
+]

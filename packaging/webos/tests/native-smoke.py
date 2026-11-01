@@ -94,9 +94,9 @@ def main():
         write(directory + "/api.json", json.dumps({"public": [SERVICE + "/" + method for method in methods]}).encode())
         options = " --sandbox " + directory if args.supervisor else ""
         if args.capture:
-            write(directory + "/worker", (ROOT / "crates/capture/webos-capture/dist/prysm-webos-capture").read_bytes(), "700")
+            write(directory + "/worker", (ROOT / "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-capture").read_bytes(), "700")
         elif args.supervisor:
-            write(directory + "/worker", b"#!/bin/sh\ntrap '' TERM\nprintf '%s\\n' '{\"type\":\"connected\"}' >&3\nwhile :; do sleep 1; done\n", "700")
+            write(directory + "/worker", b"#!/bin/sh\ntrap '' TERM\nprintf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"\nwhile :; do sleep 1; done\n", "700")
         if args.supervisor:
             write(directory + "/scan-services", b"#!/bin/sh\nexit 0\n", "700")
         write(directory + "/service.service",
@@ -104,6 +104,11 @@ def main():
         write(MANIFEST, manifest_data, "644")
         remote("ls-control scan-services")
 
+        if args.supervisor:
+            # Exercise the real Rust setup/activation path without installed paths.
+            value = json.loads(remote(f"{binary} --setup --sandbox {directory}").stdout)
+            assert value["returnValue"] is True, value
+            print("PASS Rust sandbox setup and activation", flush=True)
         value = request({})  # Launch through Luna, rather than starting it over SSH.
         assert value["returnValue"] is True, value
         pid = int(value["pid"])
@@ -116,6 +121,9 @@ def main():
         value = request({"subscribe": "yes"})
         assert value["returnValue"] is False, value
         print("PASS malformed request rejected", flush=True)
+        value = request({"subscribe": True})
+        assert value["subscribed"] is True, value
+        print("PASS native subscription acknowledgement", flush=True)
 
         subscription = subprocess.Popen(ssh + [f"luna-send -i luna://{SERVICE}/status '{{\"subscribe\":true}}'"],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -185,6 +193,7 @@ def main():
                f"{shlex.quote(directory)}/api.json {shlex.quote(directory)}/service.service {shlex.quote(binary)} "
                f"{shlex.quote(directory)}/worker {shlex.quote(directory)}/scan-services "
                f"{shlex.quote(directory)}/config.json {shlex.quote(directory)}/capture.manifest.json "
+               f"{shlex.quote(directory)}/supervisor.manifest.json "
                f"{shlex.quote(directory)}/boot-hook {shlex.quote(directory)}/capture.role.json "
                f"{shlex.quote(directory)}/receiver.js {shlex.quote(directory)}/receiver.log "
                f"{shlex.quote(directory)}/receiver.port {shlex.quote(directory)}/receiver.complete; "

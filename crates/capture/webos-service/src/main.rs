@@ -6,11 +6,12 @@ mod application;
 mod config;
 #[allow(unsafe_code)]
 mod luna;
+mod setup;
 mod status;
 mod supervisor;
 mod worker;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use std::sync::{Arc, atomic::AtomicBool};
@@ -18,6 +19,9 @@ use std::time::Duration;
 
 #[derive(Parser)]
 struct Cli {
+    /// Register the packaged native service and capture permissions, then activate it.
+    #[arg(long, conflicts_with = "run_for")]
+    setup: bool,
     /// Override the separate identity in bounded probe/sandbox mode.
     #[arg(long, requires = "run_for")]
     service_name: Option<String>,
@@ -51,12 +55,18 @@ fn main() -> Result<()> {
         );
         Some(config::Files::production()?)
     };
-    let app = files.map(application::App::new).transpose()?;
     let name = cli.service_name.as_deref().unwrap_or(if testing {
         "io.prysm.capture.probe.service"
     } else {
         "io.prysm.capture.service"
     });
+    if cli.setup {
+        return setup::run(
+            &files.context("setup requires production paths or --sandbox")?,
+            name,
+        );
+    }
+    let app = files.map(application::App::new).transpose()?;
     luna::run(
         name,
         testing.then(|| Duration::from_secs(cli.run_for.unwrap_or(60))),

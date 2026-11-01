@@ -33,6 +33,8 @@ pub struct App {
     pub state: Supervisor,
     files: Files,
     worker: Option<Worker>,
+    video_available: Option<bool>,
+    video_reset: bool,
     pending: Option<Pending>,
     scan: Option<Scan>,
     shutting_down: bool,
@@ -43,6 +45,8 @@ impl App {
             state: Supervisor::new(files.load()?),
             files,
             worker: None,
+            video_available: Some(false),
+            video_reset: false,
             pending: None,
             scan: None,
             shutting_down: false,
@@ -130,6 +134,13 @@ impl App {
         });
         Ok(())
     }
+    pub fn video_available(&mut self, available: Option<bool>) {
+        self.video_reset |= self.video_available == Some(true) && available == Some(false);
+        self.video_available = available;
+    }
+    pub fn reset_video(&mut self) {
+        self.video_reset = true;
+    }
     pub fn power(&mut self, power: Option<String>, error: Option<String>, now: Instant) {
         if let Some(error) = error {
             self.state.error = Some(error);
@@ -174,6 +185,13 @@ impl App {
     }
     fn advance(&mut self, now: Instant) -> Result<Option<Value>> {
         if let Some(worker) = &mut self.worker {
+            if !self.state.stopping {
+                match worker.video_available(self.video_available, self.video_reset) {
+                    Ok(true) => self.video_reset = false,
+                    Ok(false) => (),
+                    Err(error) => self.state.failed(format!("worker control: {error:#}"), now),
+                }
+            }
             match worker.poll() {
                 Err(error) => self.state.failed(format!("{error:#}"), now),
                 Ok(update) => {

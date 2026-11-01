@@ -25,7 +25,7 @@ fn app(dir: &tempfile::TempDir) -> App {
     script(&files.scanner, "exit 0");
     script(
         &files.worker,
-        "trap 'exit 0' TERM; printf '%s\\n' '{\"type\":\"connected\"}' >&3; while :; do sleep 0.01; done",
+        "trap 'exit 0' TERM; printf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"; while :; do sleep 0.01; done",
     );
     App::new(files).unwrap()
 }
@@ -150,7 +150,7 @@ fn config_restart_waits_for_kill_and_reap() {
     let mut app = app(&dir);
     script(
         &app.files.worker,
-        "trap '' TERM; printf '%s\\n' '{\"type\":\"connected\"}' >&3; while :; do sleep 0.01; done",
+        "trap '' TERM; printf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"; while :; do sleep 0.01; done",
     );
     let now = Instant::now();
     app.power(Some("Active".into()), None, now);
@@ -185,4 +185,20 @@ fn config_restart_waits_for_kill_and_reap() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn readiness_loss_is_latched_across_rapid_input_transitions() {
+    let dir = sandbox();
+    let mut app = app(&dir);
+    assert_eq!(app.video_available, Some(false));
+    app.video_available(Some(true));
+    assert!(!app.video_reset);
+    app.video_available(Some(false));
+    app.video_available(Some(true));
+    assert!(app.video_reset);
+    assert_eq!(app.video_available, Some(true));
+    app.video_reset = false;
+    app.video_available(None);
+    assert!(!app.video_reset);
 }

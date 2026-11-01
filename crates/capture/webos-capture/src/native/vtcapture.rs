@@ -105,27 +105,32 @@ impl VtCapture {
             pending_since: None,
         };
         this.client[..2].fill(c_char::try_from(b'0')?);
-        let code = vt_call!(
-            this,
-            prysm_vt_init,
-            this.api.init,
-            c"prysm-webos-capture".as_ptr(),
-            this.client.as_mut_ptr()
-        )?;
-        if code == 17 && this.force_capture {
-            force_capture()?;
-        }
-        status(
-            code,
-            "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
-        )?;
-        this.stage = Stage::Initialized;
         this.prepare()?;
         Ok(this)
     }
 
     fn prepare(&mut self) -> Result<bool> {
         self.prepare_at = Instant::now() + Duration::from_secs(1);
+        if self.stage == Stage::Created {
+            let code = vt_call!(
+                self,
+                prysm_vt_init,
+                self.api.init,
+                c"prysm-webos-capture".as_ptr(),
+                self.client.as_mut_ptr()
+            )?;
+            if code == 1 {
+                return self.retry_initialization();
+            }
+            if code == 17 && self.force_capture {
+                force_capture()?;
+            }
+            status(
+                code,
+                "vtCapture_init (11 = Luna permission denied, 17 = not ready)",
+            )?;
+            self.stage = Stage::Initialized;
+        }
         let code = vt_call!(
             self,
             prysm_vt_preprocess,
@@ -133,11 +138,11 @@ impl VtCapture {
             self.client.as_mut_ptr(),
             &raw mut self.properties
         )?;
-        // No video is a pending state; keep the client alive so UI capture can continue.
         if code == 1 {
-            return Ok(false);
+            return self.retry_initialization();
         }
         status(code, "vtCapture_preprocess")?;
+        self.pending_since = None;
         self.stage = Stage::Prepared;
         let mut plane = PlaneInfo::default();
         status(
@@ -171,14 +176,45 @@ impl VtCapture {
             )?,
             "vtCapture_process",
         )?;
+        tracing::info!(
+            width = self.plane.region[2],
+            height = self.plane.region[3],
+            "video capture started"
+        );
         Ok(true)
     }
 
-    pub(super) fn capture(&mut self, output: &mut Vec<u8>) -> Result<Option<Header>> {
-        if self.stage == Stage::Initialized
-            && (Instant::now() < self.prepare_at || !self.prepare()?)
-        {
-            return Ok(None);
+    fn retry_initialization(&mut self) -> Result<bool> {
+        // LG finalizes the session on status 1; preprocessing alone cannot reopen its device.
+        self.stage = Stage::Created;
+        if self.pending_since.is_none() {
+            tracing::info!("video session finalized; retrying initialization");
+        }
+        let since = self.pending_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= Duration::from_secs(10) {
+            return Err(super::FatalVideo(anyhow::anyhow!(
+                "video initialization remained not ready for ten seconds; restarting worker"
+            ))
+            .into());
+        }
+        Ok(false)
+    }
+
+    pub(super) fn capture(
+        &mut self,
+        output: &mut Vec<u8>,
+        events: &mut super::events::Events,
+    ) -> Result<Option<Header>> {
+        if self.stage <= Stage::Initialized {
+            if Instant::now() < self.prepare_at {
+                return Ok(None);
+            }
+            events.send(&super::events::Event::VideoResetting)?;
+            let result = self.prepare();
+            events.send(&super::events::Event::VideoReset)?;
+            if !result? {
+                return Ok(None);
+            }
         }
         let mut buffer = BufferInfo::default();
         let code = vt_call!(self, prysm_vt_buffer, self.api.buffer, &raw mut buffer)?;
@@ -254,7 +290,7 @@ fn force_capture() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::Video;
+    use crate::native::{Video, events::Events};
     use clap::Parser;
     use std::{
         io::Read,
@@ -264,6 +300,8 @@ mod tests {
 
     struct Driver {
         code: i32,
+        initialized: bool,
+        initializations: usize,
         pending_polls: usize,
         y: [u8; 8],
         uv: [u8; 4],
@@ -319,14 +357,18 @@ mod tests {
     unsafe extern "C" fn unused_create() -> *mut c_void {
         ptr::null_mut()
     }
-    unsafe extern "C" fn unused_init(_: *mut c_void, _: *const c_char, _: *mut c_char) -> i32 {
-        0
+    unsafe extern "C" fn fake_init(driver: *mut c_void, _: *const c_char, _: *mut c_char) -> i32 {
+        // SAFETY: the test owns Driver throughout initialization and capture.
+        let driver = unsafe { &mut *driver.cast::<Driver>() };
+        driver.initializations += 1;
+        driver.initialized = driver.code == 0;
+        driver.code
     }
 
     fn fake_capture(driver: &mut Driver) -> Video {
         let api = VtApi {
             create: unused_create,
-            init: unused_init,
+            init: fake_init,
             preprocess: fake_preprocess,
             plane: fake_plane,
             process: fake_process,
@@ -360,7 +402,16 @@ mod tests {
         _: *mut Properties,
     ) -> i32 {
         // SAFETY: the test owns the driver until the capture has been dropped.
-        unsafe { (*driver.cast::<Driver>()).code }
+        let driver = unsafe { &mut *driver.cast::<Driver>() };
+        if !driver.initialized {
+            return 1;
+        }
+        let code = driver.code;
+        // LG preprocessing failure finalizes its session; preprocessing alone cannot reopen it.
+        if code != 0 {
+            driver.initialized = false;
+        }
+        code
     }
 
     unsafe extern "C" fn fake_plane(_: *mut c_void, _: *mut c_char, plane: *mut PlaneInfo) -> i32 {
@@ -380,9 +431,12 @@ mod tests {
     }
 
     #[test]
-    fn preprocess_not_ready_keeps_driver_until_video_returns() {
+    fn preprocessing_failure_reinitializes_the_finalized_session_without_recreating_driver() {
+        let mut events = Events::disabled();
         let mut driver = Driver {
             code: 1,
+            initialized: true,
+            initializations: 0,
             pending_polls: 0,
             y: [16; 8],
             uv: [128; 4],
@@ -393,25 +447,185 @@ mod tests {
             vt.stage = Stage::Initialized;
         }
         let mut output = vec![255; 6];
-        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         assert_eq!(output, [] as [u8; 0]);
         assert_eq!(driver.cleanup, [] as [u8; 0]);
         driver.code = 99;
-        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
+        driver.code = 1;
+        if let Video::Vt(vt) = &mut capture {
+            vt.prepare_at = Instant::now();
+        }
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
+        assert_eq!(driver.initializations, 1);
         driver.code = 0;
         if let Video::Vt(vt) = &mut capture {
             vt.prepare_at = Instant::now();
         }
-        assert!(capture.capture(&mut output).unwrap().is_some());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_some());
+        assert_eq!(driver.initializations, 2);
         assert_eq!(output, [16, 16, 16, 16, 128, 128]);
         drop(capture);
         assert_eq!(driver.cleanup, [1, 2, 3, 4]);
     }
 
     #[test]
-    fn reused_buffers_are_copied_and_errors_never_publish_stale_pixels() {
+    fn persistent_not_ready_reports_failure_before_native_teardown() {
+        let mut events = Events::disabled();
+        let cli = crate::cli::Cli::try_parse_from(["capture", "127.0.0.1:19400"]).unwrap();
+        let mut driver = Driver {
+            code: 1,
+            initialized: true,
+            initializations: 0,
+            pending_polls: 0,
+            y: [16; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut video = fake_capture(&mut driver);
+        if let Video::Vt(vt) = &mut video {
+            vt.stage = Stage::Initialized;
+            vt.prepare_at = Instant::now();
+            vt.pending_since = Instant::now().checked_sub(Duration::from_secs(11));
+        }
+        let mut video = Some(video);
+        let mut capture = crate::capture::Capture::new(&cli);
+        let mut ui = Some(|width, height, bgra: &mut crate::pixels::Bgra8Pixels| {
+            bgra.bytes_mut().resize((width * height * 4) as usize, 0);
+            Ok(())
+        });
+        let error = capture
+            .capture(&mut |_| Ok(video.take().unwrap()), &mut ui, &mut events)
+            .err()
+            .expect("a permanently unready client must request worker recovery");
+        assert!(error.is::<crate::native::FatalVideo>());
+        assert_eq!(
+            driver.cleanup,
+            [] as [u8; 0],
+            "main must report the failure before potentially blocking native teardown"
+        );
+        drop(capture);
+        assert_eq!(driver.cleanup, [4]);
+    }
+
+    #[test]
+    fn acquisition_error_arms_watchdog_before_native_cleanup() {
+        use std::{
+            cell::RefCell,
+            os::{fd::OwnedFd, unix::net::UnixStream},
+        };
+        thread_local! {
+            static OBSERVED: RefCell<Option<(UnixStream, Vec<u8>)>> = const { RefCell::new(None) };
+        }
+        unsafe extern "C" fn observe_stop(driver: *mut c_void, client: *mut c_char) -> i32 {
+            OBSERVED.with_borrow_mut(|observed| {
+                if let Some((reader, bytes)) = observed {
+                    let mut buffer = [0; 128];
+                    if let Ok(count) = reader.read(&mut buffer) {
+                        bytes.extend_from_slice(&buffer[..count]);
+                    }
+                }
+            });
+            // SAFETY: the caller retains the same test-owned driver through cleanup.
+            unsafe { fake_stop(driver, client) }
+        }
         let mut driver = Driver {
             code: 0,
+            initialized: true,
+            initializations: 0,
+            pending_polls: 0,
+            y: [16; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut video = fake_capture(&mut driver);
+        if let Video::Vt(vt) = &mut video {
+            vt.api.stop = observe_stop;
+        }
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let writer: OwnedFd = writer.into();
+        let mut events = Events::from_file(writer.into());
+        let cli =
+            crate::cli::Cli::try_parse_from(["capture", "127.0.0.1:19400", "--source", "video"])
+                .unwrap();
+        let mut capture = crate::capture::Capture::new(&cli);
+        let mut video = Some(video);
+        let mut ui = None::<fn(u32, u32, &mut crate::pixels::Bgra8Pixels) -> Result<()>>;
+        assert!(
+            capture
+                .capture(&mut |_| Ok(video.take().unwrap()), &mut ui, &mut events)
+                .unwrap()
+                .is_some()
+        );
+        let startup = b"{\"type\":\"video_resetting\"}\n{\"type\":\"video_reset\"}\n";
+        let mut bytes = vec![0; startup.len()];
+        reader.read_exact(&mut bytes).unwrap();
+        assert_eq!(bytes, startup);
+        OBSERVED.with_borrow_mut(|observed| *observed = Some((reader, Vec::new())));
+        driver.code = 99;
+        assert!(
+            capture
+                .capture(
+                    &mut |_| panic!("reopened before backoff"),
+                    &mut ui,
+                    &mut events
+                )
+                .unwrap()
+                .is_none()
+        );
+        let (mut reader, bytes) = OBSERVED.with_borrow_mut(Option::take).unwrap();
+        assert_eq!(bytes, b"{\"type\":\"video_resetting\"}\n");
+        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+        let mut completed = [0; 23];
+        reader.read_exact(&mut completed).unwrap();
+        assert_eq!(&completed, b"{\"type\":\"video_reset\"}\n");
+    }
+
+    #[test]
+    fn successful_preparation_clears_the_old_wait_before_buffer_polling() {
+        use std::os::{fd::OwnedFd, unix::net::UnixStream};
+        let (writer, mut reader) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let writer: OwnedFd = writer.into();
+        let mut events = Events::from_file(writer.into());
+        let mut driver = Driver {
+            code: 0,
+            initialized: true,
+            initializations: 0,
+            pending_polls: 1,
+            y: [16; 8],
+            uv: [128; 4],
+            cleanup: Vec::new(),
+        };
+        let mut video = fake_capture(&mut driver);
+        if let Video::Vt(vt) = &mut video {
+            vt.stage = Stage::Initialized;
+            vt.prepare_at = Instant::now();
+            vt.pending_since = Instant::now().checked_sub(Duration::from_secs(11));
+        }
+        let mut output = Vec::new();
+        assert!(video.capture(&mut output, &mut events).unwrap().is_none());
+        assert!(video.capture(&mut output, &mut events).unwrap().is_some());
+        let expected = b"{\"type\":\"video_resetting\"}\n{\"type\":\"video_reset\"}\n";
+        let mut bytes = vec![0; expected.len()];
+        reader.read_exact(&mut bytes).unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            reader.read(&mut bytes).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        drop(video);
+        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn reused_buffers_are_copied_and_errors_never_publish_stale_pixels() {
+        let mut events = Events::disabled();
+        let mut driver = Driver {
+            code: 0,
+            initialized: true,
+            initializations: 0,
             pending_polls: 0,
             y: [16, 235, 99, 99, 16, 235, 99, 99],
             uv: [128, 128, 99, 99],
@@ -419,14 +633,14 @@ mod tests {
         };
         let mut capture = fake_capture(&mut driver);
         let mut output = Vec::new();
-        let header = capture.capture(&mut output).unwrap().unwrap();
+        let header = capture.capture(&mut output, &mut events).unwrap().unwrap();
         assert_eq!(header.format, PixelFormat::Nv12);
         assert_eq!(output, [16, 235, 16, 235, 128, 128]);
         driver.y[0] = 235;
-        capture.capture(&mut output).unwrap();
+        capture.capture(&mut output, &mut events).unwrap();
         assert_eq!(output, [235, 235, 16, 235, 128, 128]);
         driver.code = 12;
-        assert!(capture.capture(&mut output).is_err());
+        assert!(capture.capture(&mut output, &mut events).is_err());
         assert_eq!(output, [] as [u8; 0]);
         drop(capture);
         assert_eq!(driver.cleanup, [1, 2, 3, 4]);
@@ -442,6 +656,8 @@ mod tests {
         .unwrap();
         let mut driver = Driver {
             code: 0,
+            initialized: true,
+            initializations: 0,
             pending_polls: 2,
             y: [235; 8],
             uv: [128; 4],
@@ -490,8 +706,11 @@ mod tests {
 
     #[test]
     fn status_two_wait_is_bounded_and_resets_after_success() {
+        let mut events = Events::disabled();
         let mut driver = Driver {
             code: 2,
+            initialized: true,
+            initializations: 0,
             pending_polls: 0,
             y: [16; 8],
             uv: [128; 4],
@@ -499,27 +718,27 @@ mod tests {
         };
         let mut capture = fake_capture(&mut driver);
         let mut output = vec![255; 6];
-        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         assert_eq!(output, [] as [u8; 0]);
         if let Video::Vt(vt) = &mut capture {
             vt.pending_since = Some(Instant::now().checked_sub(Duration::from_secs(3)).unwrap());
         }
         assert!(
             capture
-                .capture(&mut output)
+                .capture(&mut output, &mut events)
                 .unwrap_err()
                 .to_string()
                 .contains("status 2 persisted")
         );
         driver.code = 0;
-        assert!(capture.capture(&mut output).unwrap().is_some());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_some());
         driver.code = 2;
-        assert!(capture.capture(&mut output).unwrap().is_none());
+        assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         assert_eq!(output, [] as [u8; 0]);
         assert_eq!(driver.cleanup, [] as [u8; 0]);
         for code in [12, 17, 99] {
             driver.code = code;
-            assert!(capture.capture(&mut output).is_err());
+            assert!(capture.capture(&mut output, &mut events).is_err());
         }
     }
 }
