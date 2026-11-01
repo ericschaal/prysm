@@ -1,0 +1,188 @@
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/tmp/prysm-reverse/java-home
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/tmp/prysm-reverse/java-home
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/tmp/prysm-reverse/java-home
+Picked up JAVA_TOOL_OPTIONS: -Duser.home=/tmp/prysm-reverse/java-home
+openjdk version "25.0.5.0.3" 2026-10-24
+OpenJDK Runtime Environment Homebrew (build 25.0.5.0.3)
+OpenJDK 64-Bit Server VM Homebrew (build 25.0.5.0.3, mixed mode)
+INFO  Using log config file: jar:file:/opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: /tmp/prysm-reverse/work/vt-lifecycle/evidence/E-002-ghidra.log (LoggingInitialization)  
+INFO  Loading user preferences: /tmp/prysm-reverse/java-home/Library/ghidra/ghidra_12.2_PUBLIC/preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (480 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: NativePRNGNonBlocking (SecureRandomFactory)  
+WARN  OS Truststore load failed: X509 trusted CA certificates not found (DefaultTrustManagerFactory)  
+INFO  Loaded 106 trusted CA certificates from the Java default trust store. (DefaultTrustManagerFactory)  
+INFO  Starting cache cleanup: /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/fscache2 (FileCacheMaintenanceDaemon)  
+INFO  Finished cache cleanup, estimated storage used: 0 (FileCacheMaintenanceDaemon)  
+INFO  Headless startup complete (925 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 60 extension points (19 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Decompiler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/FunctionID/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/FileFormats/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/8051/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/VersionTracking/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/BSim/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/Atmel/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Swift/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/DATA/ghidra_scripts
+    /tmp/prysm-reverse/scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Debug/Debugger/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/JVM/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/PIC/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/PDB/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/BytePatterns/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/PyGhidra/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Base/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating project: /tmp/prysm-reverse/projects/lifecycle (HeadlessAnalyzer)  
+INFO  Creating project: /tmp/prysm-reverse/projects/lifecycle (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: /tmp/prysm-reverse/projects/lifecycle (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0 (HeadlessAnalyzer)  
+INFO  Using Loader: Executable and Linking Format (ELF) (ProgramLoader)  
+INFO  Using Language/Compiler: ARM:LE:32:v8:default (ProgramLoader)  
+INFO  Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/eschaal/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java] (ProgramLoader)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040548 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 0004058c (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000405ac (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000405ec (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 0004060c (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040658 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040660 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040668 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040670 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040678 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040568 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040594 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000405a0 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000405f4 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040600 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040634 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040680 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 0004068c (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040718 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040724 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040730 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040650 (External Location = _ZTVN10__cxxabiv120__function_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040918 (External Location = _ZTVN10__cxxabiv120__function_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040698 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000406b8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000406d8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 000406f8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 0004073c (External Location = _ZTVN10__cxxabiv119__pointer_type_infoE+0x8) (ElfRelocationHandler)  
+WARN  EXTERNAL Data ELF Relocation with offset: at 00040920 (External Location = _ZTVN10__cxxabiv119__pointer_type_infoE+0x8) (ElfRelocationHandler)  
+INFO  Additional info:
+Loading file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0?MD5=35d3fec665b861e80af7fa61df8302ab...
+Setting block .init_array to read-only
+Setting block .fini_array to read-only
+Setting block .data.rel.ro to read-only
+Setting block .dynamic to read-only
+------------------------------------------------
+
+Linking the External Programs of 'libvtcapture.so.1.0.0' to imported libraries...
+  [libresource_mgr_client.so.1] -> not found in project
+  [libglib-2.0.so.0] -> not found in project
+  [libstdc++.so.6] -> not found in project
+  [libgcc_s.so.1] -> not found in project
+  [libc.so.6] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/libvtcapture.so.1.0.0] - 185 unresolved symbols, no external libraries configured - skipping
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0 (HeadlessAnalyzer)  
+INFO  DWARF external debug information found: [BuildIdDebugInfo [buildId=[-40, 53, 56, 73, 42, 79, -70, -96, -65, -108, -103, -15, 15, 0, 85, 78, 111, -47, -64, -70], objectType=DEBUGINFO, ], DebugLinkDebugInfo [filename=libvtcapture.so.1.0.0, crc=-52683234]] (ExternalDebugFileSectionProvider)  
+INFO  DWARF external debug file found with mismatching crc, ignored: /private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0, (8f914fee) (SameDirDebugInfoProvider)  
+INFO  Unable to find DWARF information, skipping DWARF analysis (DWARFAnalyzer)  
+WARN  WARNING! Repairing body of function at 0001dbdc (ClearFlowAndRepairCmd)  
+WARN  WARNING! Repairing body of function at 00020c00 (ClearFlowAndRepairCmd)  
+WARN  Decompiling 0001a8dc, pcode error at 0004231c: Unable to disassemble EXTERNAL block location: 0004231c (DecompileCallback)  
+WARN  Decompiling 0001a8b0, pcode error at 000422dc: Unable to disassemble EXTERNAL block location: 000422dc (DecompileCallback)  
+INFO  Packed database cache: /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/packed-db-cache (PackedDatabaseCache)  
+INFO  Applied data type archive: generic_clib (ApplyDataArchiveAnalyzer)  
+WARN  Unable to fully apply external demangled Address Table at 00042034: std::ios::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042044: pbnjson::JValue::typeinfo (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042074: std::__cxx11::stringstream::VTT (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000420e8: std::streambuf::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042108: __cxxabiv1::__class_type_info::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042190: std::bad_exception::typeinfo (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000421a4: std::__cxx11::ostringstream::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000421a8: std::ifstream::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000421b8: std::__cxx11::stringstream::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000421dc: pbnjson::JSchema::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000421e0: std::__cxx11::ostringstream::VTT (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042210: __cxxabiv1::__pointer_type_info::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042224: std::bad_alloc::typeinfo (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 0004222c: __cxxabiv1::__si_class_type_info::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042274: std::filebuf::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 0004228c: __cxxabiv1::__function_type_info::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 000422d8: __cxxabiv1::__vmi_class_type_info::vtable (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042304: std::exception::typeinfo (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 0004232c: std::ifstream::VTT (DemangledAddressTable)  
+WARN  Unable to fully apply external demangled Address Table at 00042338: std::__cxx11::stringbuf::vtable (DemangledAddressTable)  
+INFO  -----------------------------------------------------
+    ARM Constant Reference Analyzer            0.456 secs
+    ARM Symbol                                 0.001 secs
+    ASCII Strings                              0.118 secs
+    Apply Data Archives                        0.157 secs
+    Call Convention ID                         1.026 secs
+    Call-Fixup Installer                       0.018 secs
+    Create Address Tables                      0.035 secs
+    Create Address Tables - One Time           0.012 secs
+    Create Function                            0.101 secs
+    DWARF                                      0.004 secs
+    Data Reference                             0.466 secs
+    Decompiler Switch Analysis                 2.018 secs
+    Demangler GNU                              0.353 secs
+    Disassemble                                0.041 secs
+    Disassemble Entry Points                   0.621 secs
+    Embedded Media                             0.002 secs
+    External Entry References                  0.001 secs
+    Function ID                                0.018 secs
+    Function Start Pre Search                  0.007 secs
+    Function Start Search                      0.061 secs
+    Function Start Search After Code           0.013 secs
+    Function Start Search After Data           0.020 secs
+    Function Start Search delayed - One Time   0.003 secs
+    GCC Exception Handlers                     0.003 secs
+    Non-Returning Functions - Discovered       0.086 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.579 secs
+    Shared Return Calls                        0.023 secs
+    Source Language Support                    0.002 secs
+    Stack                                      0.208 secs
+    Subroutine References                      0.065 secs
+    Subroutine References - One Time           0.000 secs
+    Variadic Function Signature Override       1.315 secs
+-----------------------------------------------------
+     Total Time   7 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0 (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ExportLifecycle.java '/tmp/prysm-reverse/work/vt-lifecycle/evidence/E-002-vt-decompiled.c'  (HeadlessAnalyzer)  
+INFO  SCRIPT: /tmp/prysm-reverse/scripts/ExportLifecycle.java (HeadlessAnalyzer)  
+WARN  Decompiling 00042004, pcode error at 00042004: Unable to disassemble EXTERNAL block location: 00042004 (DecompileCallback)  
+WARN  Decompiling 00042160, pcode error at 00042160: Unable to disassemble EXTERNAL block location: 00042160 (DecompileCallback)  
+WARN  Decompiling 00042164, pcode error at 00042164: Unable to disassemble EXTERNAL block location: 00042164 (DecompileCallback)  
+WARN  Decompiling 00042168, pcode error at 00042168: Unable to disassemble EXTERNAL block location: 00042168 (DecompileCallback)  
+WARN  Decompiling 00042170, pcode error at 00042170: Unable to disassemble EXTERNAL block location: 00042170 (DecompileCallback)  
+WARN  Decompiling 00042198, pcode error at 00042198: Unable to disassemble EXTERNAL block location: 00042198 (DecompileCallback)  
+WARN  Decompiling 000421b0, pcode error at 000421b0: Unable to disassemble EXTERNAL block location: 000421b0 (DecompileCallback)  
+WARN  Decompiling 0004224c, pcode error at 0004224c: Unable to disassemble EXTERNAL block location: 0004224c (DecompileCallback)  
+WARN  Decompiling 000422b0, pcode error at 000422b0: Unable to disassemble EXTERNAL block location: 000422b0 (DecompileCallback)  
+INFO  ExportLifecycle.java> Lifecycle export: 176 functions, 0 failures (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0 (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0 (HeadlessAnalyzer)  
+INFO  /libvtcapture.so.1.0.0: file created (eschaal) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /libvtcapture.so.1.0.0 (lifecycle:/libvtcapture.so.1.0.0) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  

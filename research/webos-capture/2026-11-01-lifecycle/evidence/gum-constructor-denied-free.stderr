@@ -1,0 +1,18 @@
+GUM attach kind=4 result=0
+GUM smoke passed
+GUM attach kind=1 result=0
+GUM attach kind=2 result=0
+GUM attach kind=3 result=0
+GUM register 0x13940e0
+GUM free registered object 0x13940e0
+GUM constructor threw LSRegisterPubPriv FAILED
+GUM cycle=1 threw=1 registrations=1 unregistrations=0 deletes=1 list_size=1 retains_deleted=1
+GUM register 0x1392800
+GUM free registered object 0x1392800
+GUM constructor threw LSRegisterPubPriv FAILED
+GUM cycle=2 threw=1 registrations=2 unregistrations=0 deletes=2 list_size=2 retains_deleted=1
+GUM register 0x13940e0
+GUM free registered object 0x13940e0
+GUM constructor threw LSRegisterPubPriv FAILED
+GUM cycle=3 threw=1 registrations=3 unregistrations=0 deletes=3 list_size=2 retains_deleted=1
+GUM assertions passed; process exit reclaims diagnostic state

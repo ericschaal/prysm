@@ -1,0 +1,99 @@
+HISTORICAL INITIAL RESULTS — superseded by README.md and report.md.
+The later pitch-768 run produced a validated synthetic stream.
+
+Hardware H.264 encoding investigation — 2026-11-01
+
+Conclusion
+The TV exposes Realtek H.264 encoder interfaces, including a standard V4L2
+memory-to-memory device. This is stronger evidence than the playback APIs in
+the linked webOSbrew guide. None of the bounded synthetic tests produced an
+encoded stream, so availability is confirmed but usable encoding is not.
+Do not replace Prysm's OpenH264 encoder based on these results alone.
+
+Target
+Existing project TV: the owner-operated project TV.
+webOS TV 10.3.2, Rockhopper 10.3.2-34, papikonda, Linux 5.4.268 aarch64.
+The installed userland tools/libraries include lib32 packages.
+
+Available interfaces (inventory.txt and v4l2-capabilities.txt)
+- /dev/video24: driver/card/bus rtk-vea / platform:rtk-vea; multi-planar
+  memory-to-memory streaming. OUTPUT_MPLANE accepts NM12 (NV12 with separate
+  planes); CAPTURE_MPLANE produces H264.
+- H.264 controls include bitrate, GOP size, profile, level, entropy mode,
+  force-key-frame, and prepend-SPS/PPS-to-IDR. Enumeration alone does not prove
+  that every control works. The B-frame control is flagged inactive.
+- /dev/lg/venc0 and /usr/lib/libhal_venc.so.1.0.0 also exist. Library strings
+  expose HAL_VENC_Open, Start, SetParam, RegisterEncoderCallback, CopyData and
+  ReleaseData. These private signatures and behavior were not established;
+  none of these HAL calls was invoked.
+- GStreamer rvenc 0.9.0: Realtek hardware H.264 encoder, NV12 system-memory or
+  DMABuf input advertised; source template advertises AVC/AU up to 1280x720
+  at 30 FPS. Runtime negotiation also accepted byte-stream/AU, despite the
+  narrower template. Neither caps result establishes successful encoding.
+- rvenc references RVEncoderOpen/Start/QueueBuffer/SetResourceInfo and uses
+  librpccore.so plus Realtek GStreamer support libraries.
+- libgstrtkdmaheap-1.0.so.0 exposes vendor DMA allocators/buffer pools;
+  /dev/dma_heap/dvr exists and allowed synthetic buffer allocation/mapping.
+- GStreamer v4l2h264enc 1.24.0 selects /dev/video24. Runtime probing reports
+  dimensions 192x192 through 1920x1152 with driver warnings. Treat these as
+  reported limits, not validated operating limits.
+- h264parse is installed for framing conversion and SPS/PPS insertion.
+
+Bounded tests (15 frames, NV12, 15 FPS, target bitrate 2 Mbit/s)
+1. rvenc with ordinary videotestsrc buffers, 320x180: initialization succeeds,
+   first frame fails at gstrvenc.c:621; zero output. This initial log was
+   observed in the chat tool result, not retained as a file.
+2. v4l2h264enc at 320x180: negotiation fails; height is below its reported
+   minimum 192. See v4l2-320x180.log.
+3. v4l2h264enc at 640x360: negotiates Baseline/BT.709 but SIGSEGV occurs during
+   allocation. gst-launch's fault handler spins; the external timeout ends it.
+   Zero output. See v4l2-640x360.log.
+4. Explicit mmap for both V4L2 queues at 640x360 with level 3: SIGSEGV while
+   acquiring an input buffer. Fault interception disabled; exit 139. Zero
+   output. This changed both I/O mode and level, so it does not isolate those
+   variables. See v4l2-mmap.log.
+5. rvenc appsrc with /dev/dma_heap/dvr buffers, cache synchronization, standard
+   DMABuf wrapping and GstVideoMeta, 640x360: input validation gets further,
+   but first hardware submission fails at gstrvenc.c:685 with -1. No EOS before
+   timeout, zero output. See rvenc-dma.log and rvenc-dma-probe.py.
+6. Same DMA probe at 640x384: both planes, offsets, pitches and fd are logged;
+   submission still returns -1. Simple height alignment did not fix it.
+   See rvenc-dma-aligned.log. Reproduce this variant by replacing 360 with
+   384 in a temporary copy of the retained probe.
+
+Probe invocation
+The Python probe is a research harness for this TV, not a production backend.
+Stream it to python3 - OUTPUT_PATH over SSH, inside an external 10-second
+timeout, using a private mktemp directory and cleanup trap. Set GST_DEBUG to
+rvenc:6 and GST_REGISTRY to an inspection-only temporary path. Require normal
+EOS and nonempty output; the script asserts both. appsrc push=0 means queue
+acceptance, not hardware completion. All pushes succeeding is not a pass.
+
+Integration implications / next experiment
+The most promising portable boundary is /dev/video24 through V4L2, if a minimal
+native two-plane buffer harness can bypass the observed GStreamer allocation
+crash. Alternatively, establish the Realtek allocator, resource information,
+and queue-buffer contract used by rvenc. Resource setup and vendor allocation
+requirements are hypotheses, not diagnosed causes of the -1 result.
+Private HAL calls should wait until their ABI and lifecycle are understood.
+
+Before integration, require a real encoded sample that passes Prysm's existing
+SPS validation and decoder: Annex B access units, expected dimensions,
+Baseline profile, progressive frames, and limited-range BT.709 metadata.
+Caps negotiation alone does not prove SPS contents. Then measure latency,
+CPU use, cleanup/restart behavior and coexistence with native TV capture.
+
+Scope and cleanup
+Only synthetic frames were submitted. No settings, firmware, installed
+packages or Prysm product code were changed. Test processes and remote
+temporary output directories were removed; the inspection registry cache was
+removed. The supervisor PID remained 23968. A capture worker PID change was
+observed during the investigation; its cause was not established, so continuous
+capture throughout the tests is not claimed. Final Luna status reports
+capturing=true, receiverConnected=true, senderRunning=true, error=null.
+See post-probe-health.txt. No claim of zero transient interference is made.
+
+Reference
+https://www.webosbrew.org/develop/guides/native/media/
+The linked guide covers playback/decoding APIs; it does not supply the missing
+encoder buffer/resource contract. No receiver changes were investigated here.

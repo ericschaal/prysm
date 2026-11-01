@@ -1,0 +1,99 @@
+TRACE 27470.172669 tid=28561 context_new 0xa525d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 27470.172731 tid=28561 loop_new 0xa50410 0xa525d8 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 27470.177947 tid=28561 context_unref 0xa525d8 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 27470.189613 tid=28563 signal 0xa524b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 27470.190626 tid=28564 context_new 0xf6200600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 27470.190889 tid=28564 loop_new 0xf6202f88 0xf6200600 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+TRACE 27470.201619 tid=28567 broadcast 0xa52348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27470.201981 tid=28567 wait_enter 0xa52300 0xa522e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE idle 0 fds=10 threads=4 maps=127
+REUSE device /dev/shm/pmloglib.lock
+TRACE 27470.205797 tid=28561 wait_enter 0xa6f408 0xa52518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27470.205878 tid=28563 signal 0xa6f408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27470.206282 tid=28561 wait_exit 0xa6f408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27470.288711 tid=28561 signal 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+TRACE 27470.288780 tid=28567 wait_exit 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+REUSE frame cycle=1 dimensions=320x180 ready=1
+TRACE 27470.347294 tid=28567 broadcast 0xa52348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27470.347363 tid=28567 wait_enter 0xa52300 0xa522e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 27470.347383 tid=28567 delay_wait_500ms 0xa52300 0x2 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 1 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+TRACE 27470.351258 tid=28561 wait_enter 0xa6f408 0xa52518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27470.351785 tid=28563 signal 0xa6f408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27470.351950 tid=28561 wait_exit 0xa6f408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27470.446276 tid=28561 signal 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+TRACE 27470.847489 tid=28567 delay_done 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE frame cycle=2 dimensions=160x90 ready=0
+REUSE recovery stop result=0
+REUSE recovery postprocess result=0
+REUSE recovery finalize result=0
+REUSE idle 2 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+REUSE bounded retry after missed frame deadline
+TRACE 27475.008323 tid=28561 wait_enter 0xa6f408 0xa52518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27475.008722 tid=28563 signal 0xa6f408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27475.009118 tid=28561 wait_exit 0xa6f408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27475.108964 tid=28561 signal 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+TRACE 27475.109043 tid=28567 wait_exit 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+REUSE frame cycle=2 dimensions=160x90 ready=1
+TRACE 27475.167569 tid=28567 broadcast 0xa52348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27475.167677 tid=28567 wait_enter 0xa52300 0xa522e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 2 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+TRACE 27475.171257 tid=28561 wait_enter 0xa6f408 0xa52518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27475.171751 tid=28563 signal 0xa6f408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27475.171907 tid=28561 wait_exit 0xa6f408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27475.268928 tid=28561 signal 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+TRACE 27475.269003 tid=28567 wait_exit 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+REUSE frame cycle=3 dimensions=320x180 ready=1
+TRACE 27475.327483 tid=28567 broadcast 0xa52348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27475.327547 tid=28567 wait_enter 0xa52300 0xa522e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 3 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+REUSE final release begin
+TRACE 27475.330714 tid=28561 signal 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 27475.330770 tid=28567 wait_exit 0xa52300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 27475.330789 tid=28561 join_enter 0xf61ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 27475.346182 tid=28561 join_exit 0xf61ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 27475.347039 tid=28561 join_enter 0xf759e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 27475.347183 tid=28561 join_exit 0xf759e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 27475.348314 tid=28561 context_unref 0xa525d8 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 27475.348709 tid=28561 context_unref 0xa525d8 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 27475.348743 tid=28561 loop_unref 0xa50410 (nil) /usr/lib/libums_connector_impl.so.1+0xba0b
+TRACE 27475.348800 tid=28561 context_unref 0xa525d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d7b
+TRACE 27475.348814 tid=28561 loop_unref 0xa50410 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d83
+TRACE 27475.349214 tid=28561 context_unref 0xf6200600 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 27475.349247 tid=28561 context_unref 0xf6200600 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 27475.349353 tid=28561 join_enter 0xf6bff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 27475.349529 tid=28561 join_exit 0xf6bff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 27475.349589 tid=28561 loop_unref 0xf6202f88 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7e7
+TRACE 27475.349607 tid=28561 context_unref 0xf6200600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7ed
+REUSE final release done
+REUSE idle 4 fds=5 threads=1 maps=128
+REUSE device /dev/shm/pmloglib.lock

@@ -1,0 +1,44 @@
+0:00:00.055987407 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:535:gst_v4l2_video_enc_sink_getcaps:<v4l2h264enc0> Returning sink caps video/x-raw, format=(string)NV12, width=(int)[ 1, 32768 ], height=(int)[ 1, 32768 ], framerate=(fraction)[ 0/1, 2147483647/1 ]
+0:00:00.056164815 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:535:gst_v4l2_video_enc_sink_getcaps:<v4l2h264enc0> Returning sink caps video/x-raw, format=(string)NV12, width=(int)[ 1, 32768 ], height=(int)[ 1, 32768 ], framerate=(fraction)[ 0/1, 2147483647/1 ]
+0:00:00.056409148 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:1025:gst_v4l2_video_enc_src_query:<v4l2h264enc0> Returning src caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string){ 1, 1b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1 }, profile=(string){ baseline, constrained-baseline, main, extended, high }
+0:00:00.056500148 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:1025:gst_v4l2_video_enc_src_query:<v4l2h264enc0> Returning src caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string){ 1, 1b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1 }, profile=(string){ baseline, constrained-baseline, main, extended, high }
+0:00:00.056602592 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:1025:gst_v4l2_video_enc_src_query:<v4l2h264enc0> Returning src caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string){ 1, 1b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1 }, profile=(string){ baseline, constrained-baseline, main, extended, high }
+Setting pipeline to PAUSED ...
+0:00:00.059166037 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:116:gst_v4l2_video_enc_open:<v4l2h264enc0> Opening
+0:00:00.059748148 28298   0xbe6a40 INFO                    v4l2 v4l2_calls.c:592:gst_v4l2_open:<v4l2h264enc0:sink> Opened device 'platform:rtk-vea' (/dev/video24) successfully
+0:00:00.059834963 28298   0xbe6a40 INFO                    v4l2 v4l2_calls.c:688:gst_v4l2_dup:<v4l2h264enc0:src> Cloned device 'platform:rtk-vea' (/dev/video24) successfully
+0:00:00.059884518 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:1283:gst_v4l2_object_fill_format_list:<v4l2h264enc0:sink> got 1 format(s):
+0:00:00.059901666 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:1287:gst_v4l2_object_fill_format_list:<v4l2h264enc0:sink>   NM12
+0:00:00.060094592 28298   0xbe6a40 ERROR                   v4l2 gstv4l2object.c:2221:gst_v4l2_object_get_interlace_mode: Driver bug detected - check driver with v4l2-compliance from http://git.linuxtv.org/v4l-utils.git
+
+0:00:00.060125296 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3287:gst_v4l2_object_get_nearest_size:<v4l2h264enc0:sink> Unsupported field type for NM12@192x192: 0
+0:00:00.060138518 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3297:gst_v4l2_object_get_nearest_size:<v4l2h264enc0:sink> Unable to try format: Invalid argument
+0:00:00.060152148 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3169:gst_v4l2_object_probe_caps_for_format:<v4l2h264enc0:sink> Could not probe minimum capture size for pixelformat NM12
+0:00:00.060214037 28298   0xbe6a40 ERROR                   v4l2 gstv4l2object.c:2221:gst_v4l2_object_get_interlace_mode: Driver bug detected - check driver with v4l2-compliance from http://git.linuxtv.org/v4l-utils.git
+
+0:00:00.060231370 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3287:gst_v4l2_object_get_nearest_size:<v4l2h264enc0:sink> Unsupported field type for NM12@1920x1152: 0
+0:00:00.060242037 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3297:gst_v4l2_object_get_nearest_size:<v4l2h264enc0:sink> Unable to try format: Invalid argument
+0:00:00.060254222 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:3175:gst_v4l2_object_probe_caps_for_format:<v4l2h264enc0:sink> Could not probe maximum capture size for pixelformat NM12
+0:00:00.061061296 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:5085:gst_v4l2_object_probe_caps:<v4l2h264enc0:sink> probed caps: video/x-raw, format=(string)NV12, width=(int)[ 192, 1920 ], height=(int)[ 192, 1152 ], framerate=(fraction)[ 0/1, 2147483647/1 ], interlace-mode=(string){ progressive, interleaved }, colorimetry=(string){ bt601, smpte240m, bt709, 1:3:5:1, 2:4:5:2, 2:4:5:3, 1:4:7:1, 2:4:7:1, 2:4:12:8, bt2020, 2:0:0:0 }; video/x-raw(format:Interlaced), format=(string)NV12, width=(int)[ 192, 1920 ], height=(int)[ 192, 1152 ], framerate=(fraction)[ 0/1, 2147483647/1 ], interlace-mode=(string)alternate, colorimetry=(string){ bt601, smpte240m, bt709, 1:3:5:1, 2:4:5:2, 2:4:5:3, 1:4:7:1, 2:4:7:1, 2:4:12:8, bt2020, 2:0:0:0 }
+0:00:00.061204778 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:1283:gst_v4l2_object_fill_format_list:<v4l2h264enc0:src> got 1 format(s):
+0:00:00.061233889 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:1287:gst_v4l2_object_fill_format_list:<v4l2h264enc0:src>   H264
+0:00:00.061252741 28298   0xbe6a40 WARN                    v4l2 gstv4l2object.c:5005:gst_v4l2_object_probe_caps:<v4l2h264enc0:src> Failed to probe pixel aspect ratio with VIDIOC_CROPCAP: Invalid argument
+0:00:00.062012592 28298   0xbe6a40 INFO                    v4l2 gstv4l2object.c:5085:gst_v4l2_object_probe_caps:<v4l2h264enc0:src> probed caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string){ 1, 1b, 1.1, 1.2, 1.3, 2, 2.1, 2.2, 3, 3.1, 3.2, 4, 4.1, 4.2, 5, 5.1 }, profile=(string){ baseline, constrained-baseline, main, extended, high }, width=(int)[ 192, 1920, 2 ], height=(int)[ 192, 1152, 2 ], colorimetry=(string){ bt601, smpte240m, bt709, 1:3:5:1, 2:4:5:2, 2:4:5:3, 1:4:7:1, 2:4:7:1, 2:4:12:8, bt2020, 2:0:0:0 }, framerate=(fraction)[ 0/1, 2147483647/1 ]
+0:00:00.062923074 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:188:gst_v4l2_video_enc_start:<v4l2h264enc0> Starting
+0:00:00.064195704 28298   0xc09058 DEBUG           v4l2videoenc gstv4l2videoenc.c:535:gst_v4l2_video_enc_sink_getcaps:<v4l2h264enc0> Returning sink caps EMPTY
+ERROR: from element /GstPipeline:pipeline0/GstVideoTestSrc:videotestsrc0: Internal data stream error.
+Additional debug info:
+../gstreamer/libs/gst/base/gstbasesrc.c(3302): gst_base_src_loop (): /GstPipeline:pipeline0/GstVideoTestSrc:videotestsrc0:
+streaming stopped, reason not-negotiated (-4)
+0:00:00.066450370 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:202:gst_v4l2_video_enc_stop:<v4l2h264enc0> Stopping
+0:00:00.066500592 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:226:gst_v4l2_video_enc_stop:<v4l2h264enc0> Stopped
+0:00:00.066958481 28298   0xbe6a40 DEBUG           v4l2videoenc gstv4l2videoenc.c:173:gst_v4l2_video_enc_close:<v4l2h264enc0> Closing
+Pipeline is live and does not need PREROLL ...
+Pipeline is PREROLLED ...
+Setting pipeline to PLAYING ...
+New clock: GstSystemClock
+Execution ended after 0:00:00.000811111
+Setting pipeline to NULL ...
+Freeing pipeline ...
+ENCODE_EXIT=1
+0 /tmp/prysm-v4l2-encoder.YoN5aq/output.h264

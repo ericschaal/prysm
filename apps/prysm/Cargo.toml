@@ -1,0 +1,80 @@
+[package]
+name = "prysm"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Capture and process video for egui or WLED output"
+
+[package.metadata.deb]
+license-file = "../../LICENSE"
+name = "prysm-led"
+maintainer = "Eric Schaal <eric@schaal.dev>"
+depends = "$auto, systemd, init-system-helpers"
+section = "video"
+priority = "optional"
+maintainer-scripts = "../../packaging/debian"
+assets = [
+    ["target/release/prysm-web", "usr/bin/prysm-web", "755"],
+    ["target/release/prysm", "usr/bin/prysm", "755"],
+    ["../../packaging/debian/prysm.conf", "usr/lib/sysusers.d/prysm.conf", "644"],
+    ["../../packaging/debian/prysm.toml", "usr/share/prysm/prysm.toml", "644"],
+    ["../../packaging/debian/README.md", "usr/share/doc/prysm-led/README.md", "644"],
+]
+
+[[package.metadata.deb.systemd-units]]
+unit-name = "prysm"
+enable = false
+start = false
+stop-on-upgrade = false
+restart-after-upgrade = true
+
+[[package.metadata.deb.systemd-units]]
+unit-name = "prysm-web"
+enable = false
+start = false
+stop-on-upgrade = false
+restart-after-upgrade = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+desktop = ["dep:prysm-renderer-desktop", "prysm-api/client"]
+
+[dependencies]
+prysm-metrics = { path = "../../crates/common/prysm-metrics" }
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+actix.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+prysm-capture = { path = "../../crates/capture/prysm-capture" }
+prysm-core = { path = "../../crates/common/prysm-core" }
+prysm-processor = { path = "../../crates/processing/prysm-processor" }
+prysm-renderer-wled = { path = "../../crates/rendering/prysm-renderer-wled" }
+prysm-renderer-desktop = { path = "../../crates/rendering/prysm-renderer-desktop", optional = true }
+tokio-util.workspace = true
+
+prysm-contract = { path = "../../crates/common/prysm-contract" }
+
+axum.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls"] }
+serde_json.workspace = true
+prysm-api = { path = "../../crates/common/prysm-api" }
+prysm-web = { path = "../prysm-web" }
+tower-http = { workspace = true, features = ["csrf"] }
+atomic-write-file.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol" }
+tower = { workspace = true, features = ["util"] }

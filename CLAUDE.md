@@ -11,7 +11,7 @@ colors, and generates color gradients for LED strips.
 
 **Current State:**
 
-- Desktop demo/visualizer binary (Linux/V4L) is working
+- One HTTP controller executable runs on macOS and Linux with an actor pipeline
 - Library components are modular and reusable
 - Headless WLED output supports camera capture and FFmpeg video input
 - Architecture supports multiple capture sources and rendering backends
@@ -28,11 +28,15 @@ Error handling policy: see [docs/error-handling.md](docs/error-handling.md).
 
 ### Workspace Structure
 
-**6 crates, with one application binary in `prysm`**
+**Rust workspace with application binaries and a standalone webOS capture CLI**
+
+Applications live in `apps/`. Reusable crates are grouped under
+`crates/{capture,processing,rendering,common}/`; the standalone Rust webOS sender
+and its shared wire protocol live beside the capture crate. See the workspace table in README.md.
 
 Libraries are reusable components for capture, processing and rendering:
 
-- `prysm` selects device/file input and WLED/egui output through TOML configuration
+- `prysm` serves HTTP and wires device/file capture, processing, and WLED actors
 - Clean separation: capture → process → render
 - Trait-based extensibility (not plugin-based)
 
@@ -71,9 +75,8 @@ Camera / FFmpeg → Frame Stream → PrysmProcessor → WledRenderer
 - `prysm-core`: Data structures (Color, ColorStrip, EdgeColors, Config) - zero external dependencies
 - `prysm-capture`: Frame abstraction, PixelFormat enum, PrysmCapturer trait
 - `prysm-processor`: Video analysis → edge color strips (stateful with temporal smoothing)
-- `v4l-capturer`: Linux V4L2 video capture implementation
-- `desktop-renderer`: egui/eframe GUI for visualization
-- `led-renderer`: WLED RGB output over DDP/UDP using `ddp-rs`
+- `prysm-renderer-desktop`: egui/eframe GUI for visualization
+- `prysm-renderer-wled`: WLED RGB output over DDP/UDP using `ddp-rs`
 
 **Binary:**
 
@@ -103,27 +106,30 @@ cargo clippy
 
 ## Key Configuration Points
 
-**Application setup (`prysm/src/config.rs`):**
+**Application setup (`apps/prysm/src/main.rs`, `apps/prysm/src/control`, `apps/prysm/src/actors`):**
 
-The single `prysm` binary reads `prysm.toml` at startup (or `--config PATH`).
-Top-level `brightness_percent`, `sample_density`, and `capture_resolution` default
-respectively to 100, 128 samples per 1000 edge pixels, and `[640, 360]`.
-These processor settings apply to both outputs.
+The `prysm` engine reads `prysm.toml` (or `--config PATH`). Prysm
+owns this one file and atomically saves UI changes into it. Validated application
+configuration lives in `prysm-contract`: REST policy, optional WLED HTTP endpoint, input,
+capture resolution, DDP address/layout/rate, processing settings, source, revision.
+No separate preferences file or legacy configuration migration is supported.
 
-`[input]` selects `type = "device"` with a required `device` (Linux device path
-or macOS AVFoundation UID), or `type = "file"` with a required `path`.
-File input uses FFmpeg 9+ for HDR-to-sRGB conversion, plays at the source rate,
-and exits successfully at EOF. Relative paths use the current working directory.
+The main Actix runtime serves HTTP/control. A lifecycle actor serializes start,
+stop, and configuration commands. Each active pipeline runs capture, processing,
+and rendering actors on a dedicated Arbiter. Typed recipients carry best-effort
+data through bounded mailboxes. Processing changes use `ConfigureProcessor`;
+input/resolution/output changes recreate the session. Stop capture, drain accepted
+output, then join the thread before applying WLED Off/effects commands.
 
-`[output]` selects `type = "wled"` with an `address` (DDP port 4048) and
-`[output.leds]` counts for top/right/bottom/left, or `type = "egui"` for an
-on-screen preview. WLED counts total 1–65535; wiring starts at bottom-left viewed
-from the front, up the left, across the top, down the right, and back along the bottom.
-The desktop output retains the main-thread egui / runtime-thread arrangement in
-`prysm/src/desktop.rs`; WLED runs headlessly on a single Tokio runtime in
-`prysm/src/wled.rs`.
-Ctrl+C cancels either output; closing egui also stops capture. Source and renderer
-failures preserve their error context. WLED's realtime timeout restores its normal effect.
+`[input]` selects `device` plus a Linux path/macOS AVFoundation UID, `file` plus
+a path, or `webos` plus a TCP listen address. File input uses FFmpeg 9+ and completes at EOF without stopping HTTP.
+`[output]` selects `type = "wled"` with a DDP address, rate and LED layout, or
+`type = "egui"` with an egui refresh rate. Counts total 1–65535; wiring runs clockwise from bottom-left.
+`--features desktop` enables native egui output in the same executable. It runs
+on the OS main thread with HTTP, the controller, and actors in a background runtime
+and needs no WLED. Both outputs start idle and use the same REST commands.
+`prysm-egui.toml` documents file input; EOF keeps the final frame visible.
+Startup never starts capture or restores saved On intent.
 
 The current pipeline assumes sRGB. `LinearColor` uses floating-point math, but input decoding
 uses the sRGB transfer function and preview output is 8-bit RGB. BT.2020 YUV matrix support
@@ -131,13 +137,10 @@ does not include PQ/HLG transfer decoding or an HDR display path, so file playba
 
 **Default Config (prysm_core::Config):**
 
-Application settings are parsed into one core `Config` in `prysm/src/config.rs`.
-That config owns capture resolution and processing settings; egui and input creation
-read the same resolution from it.
-All numeric defaults live in `prysm-core/src/config.rs`; the TOML parser uses the
-domain types’ `Default` implementations. Brightness, edge depth, smoothing duration,
-and capture resolution use distinct newtypes. Resolution, input identifiers/paths
-and WLED layouts are validated when parsed.
+`prysm-contract::ProcessingSettings` converts to `prysm_core::Config` at actor
+creation or explicit configuration messages. Core config contains processing
+settings only. Capture resolution is validated separately. Distinct newtypes
+prevent mixing brightness, spatial reach, smoothing duration, and resolution.
 Library callers can pass a `Config` directly to `PrysmProcessor::new`.
 Start with `Config::default()` and override only what you want to change:
 
@@ -154,24 +157,32 @@ let config = prysm_core::Config {
 | --- | --- | --- |
 | `capture_resolution` | `CaptureResolution::new(640, 360)` | Requested device capture or decoded file dimensions. |
 | `brightness_percent` | 100 | 0 turns lights off; 100 is full brightness. |
+| `shadow_lift_percent` | 0 | 0–100 strength of a black-preserving linear-light shadow boost. |
 | `smoothing_seconds` | 0.1 | Time to complete 95% of a transition, independent of frame rate. Zero disables smoothing. |
 | `sample_density` | `SampleDensity(128)` | Color samples per 1000 pixels of cropped edge length, independent of LED count. |
-| `edge_depth_percent` | 10 | How far inward to read colors, as a percentage of picture height after cropping. Influence fades quadratically from the edge to zero at the inner boundary. |
+| `spatial_reach_percent` | 10 | Broad influence radius as a percentage of cropped picture height, with a stronger local peak at one quarter of that radius. All picture pixels contribute. |
 | `remove_black_bars` | true | Follow the picture inside stable black bars. Set false to sample the full frame. |
 
-Brightness is clamped to 0–100, edge depth to 1–50. Edge regions never overlap their opposite
-edge. Negative and non-finite smoothing durations disable smoothing. Every frame is sampled;
-density changes how finely the edge bands are divided, with all region pixels still contributing.
+Brightness is clamped to 0–100, spatial reach to 1–100. Negative and non-finite smoothing durations
+disable smoothing. Every frame is sampled; density sets output positions and the area-average grid
+resolution, capped at 128 cells on its longest side. All picture pixels contribute.
 Sample counts are capped at one per pixel, with at least one per edge. Black-bar tuning is internal.
-The detector scans at most every 100 ms and confirms each axis independently after one second
+The detector scans at most every 50 ms and confirms each axis independently after 200 ms
 of stable evidence. It handles thin and combined bars, checks the capture's black level, and
-preserves the confirmed crop through dark scenes. A brighter percentile across the full frame
-recovers pictures hidden by wide bars, then median passes validate the crop. Pictures spanning
-less than 10% of either dimension or with sparse bright content may remain undetected.
+preserves the confirmed crop through dark scenes. Row and column scans use the 98th percentile
+so a bar must be almost entirely black; visible minority detail stops the crop. Cross-axis passes
+exclude the other bars when inspecting narrow content. Cropping requires both opposing bars;
+if either is absent, that axis returns to the full picture after confirmation. Opposing margins differing by more than
+2.5% of the axis use their shared depth, favoring picture retention over removal of strongly
+asymmetric bars. Pictures spanning less than 10% of either dimension or with sparse bright
+content may remain undetected. Crop changes retain temporal smoothing, resampling its history
+to the new edge sample counts.
 `process_frame` uses monotonic processing time; deterministic replay can use `process_frame_at`
 with a shared clock origin plus source timestamps.
 
-The old fractional `brightness` and `edge_depth` fields are replaced by integer percentages;
+`edge_depth_percent: EdgeDepthPercent` is replaced by `spatial_reach_percent: SpatialReachPercent`.
+Reach controls continuous falloff rather than an edge-band cutoff.
+The old fractional `brightness` field is replaced by an integer percentage;
 `black_band_detection` is now `remove_black_bars`. `smoothing_percent` is replaced by
 `smoothing_seconds`; `sample_density` is configurable again. Detector tuning stays internal.
 
@@ -179,7 +190,7 @@ The old fractional `brightness` and `edge_depth` fields are replaced by integer 
 
 Tests are minimal but focused:
 
-- YUYV color conversion tests in `prysm-capture/src/yuyv.rs`
+- YUYV color conversion tests in `crates/capture/prysm-capture/src/yuyv.rs`
 - Test black, white, gray, and color-tinted pixel conversions
 - Verify output dimensions
 
@@ -190,21 +201,18 @@ Tests are minimal but focused:
 - Implement the `PrysmCapturer` trait
 - Return a stream of `Result<Frame>` objects; preserve startup/runtime failure context
 - Use the shared latest-frame capture channel; keep terminal results separate from replaceable frames
-- Handle blocking I/O by spawning OS threads (see v4l-capturer pattern)
+- Handle blocking I/O by spawning OS threads (see the prysm-capture Linux adapter)
 - Use Arc-wrapped frame data for zero-copy sharing
 
 ### When working with the processor:
 
-- `PrysmProcessor` chains typed nodes: `BandDetector` (letterbox/pillarbox viewport) → `EdgeSampler`
-  (edge-weighted linear-light region averaging on every frame) → `TemporalSmoothing`
+- `PrysmProcessor` chains typed nodes: `BlackBarDetector` (letterbox/pillarbox viewport) → `SpatialSampler`
+  (whole-picture area averaging and distance-weighted projection onto the perimeter) → `TemporalSmoother`
 - Frames carry their YUYV range and matrix from capture into both processing and preview.
-- Brightness scales the final edge colors after smoothing.
-- Frames stay in their raw capture format end-to-end; there is no full-frame RGB decode. Each node
-  decodes only the pixels it reads (`ViewFrame::average_edge_linear`). Band detection reads luma via
-  `frames::luma_at`.
-- The processor is stateful (smoothing history, band debounce)
-- Supports YUYV, RGB24, and BGR24; MJPEG currently returns black edge colors
-- `cargo run --release -p prysm-processor --example bench` gives rough per-frame pipeline cost
+- Shadow lift follows smoothing, then brightness scales the final edge colors.
+- The controller owns installation TOML and saved JSON preferences, and runs capture as a supervised task.
+- `prysm-contract` owns validated config/HTTP types and OpenAPI schemas; core stays dependency-free.
+- The same application runs on macOS and Linux; there is no IPC or process-manager abstraction.
 
 ### Threading considerations:
 
@@ -221,19 +229,43 @@ Tests are minimal but focused:
 
 ## Critical Files
 
-- `prysm/src/main.rs` - CLI arguments and logging setup
-- `prysm/src/app.rs` - TOML-driven application setup and output selection
-- `prysm/src/config.rs` - TOML parsing and validated application configuration
-- `prysm-core/src/config.rs` - Domain settings, capture resolution and numeric defaults
-- `prysm/src/video.rs` - Shared FFmpeg frame stream
-- `prysm/src/lib.rs` - Public application entry points
-- `prysm/src/input.rs` - Device/file adaptation to a fallible frame stream
-- `prysm/src/desktop.rs` - Desktop runtime and threading setup
-- `prysm/src/wled.rs` - Headless runtime, WLED streaming, and shutdown
-- `prysm/src/stream.rs` - Owned fallible desktop stream consumer and lifecycle tests
-- `prysm-capture/src/lib.rs` - PrysmCapturer trait definition
-- `prysm-processor/src/nodes/` - Pipeline nodes (band detection, edge sampling, smoothing)
-- `prysm-processor/src/frames/view_frame.rs` - Raw-frame viewport with on-demand pixel decoding
-- `prysm-core/src/lib.rs` - Core types and configuration
-- `renderers/desktop-renderer/src/lib.rs` - GUI implementation
-- `capturers/v4l-capturer/src/capture.rs` - Blocking-to-async bridge pattern
+- `apps/prysm/src/main.rs` — CLI and one application entrypoint
+- `apps/prysm/src/application.rs` — common controller startup and optional native window
+- `apps/prysm/src/control/mod.rs` — HTTP server startup and shutdown
+- `apps/prysm/src/control/http.rs` — panel routes, assets, and host/origin policy
+- `apps/prysm/src/control/controller.rs` — serialized configuration/source mutations
+- `apps/prysm/src/control/persistence.rs` — atomic TOML persistence
+- `apps/prysm/src/control/switching.rs` — WLED transition ordering and compensation
+- `apps/prysm/src/actors/runtime.rs` — session lifecycle actor and status
+- `apps/prysm/src/actors/pipeline.rs` — thread setup, wiring, drain, and join
+- `apps/prysm/src/actors/{capturer,processor,wled,egui}.rs` — typed data actors
+- `apps/prysm/src/input.rs`, `video.rs` — fallible device/file frame streams
+- `crates/common/prysm-api/src/lib.rs` — actual HTTP handlers, route registration, and generated OpenAPI
+- `crates/common/prysm-contract/src/{config,resources,processing}.rs` — validated configuration
+- `crates/common/prysm-contract/src/{state,identifiers}.rs` — shared HTTP DTOs and identifiers
+- `crates/capture/prysm-capture/src/lib.rs` — capture trait and frame types
+- `crates/processing/prysm-processor/src/nodes/` — detection, sampling, smoothing
+- `crates/common/prysm-core/src/config.rs` — core processing settings and defaults
+
+## Controller architecture and development
+
+See [actor runtime](docs/actor-runtime.md) and [web UI guide](docs/control-panel.md).
+Keep lifecycle commands separate from best-effort frame traffic. Do not introduce
+worker binaries, private IPC, or service-manager APIs. `AtomicResponse` is used
+only to serialize lifecycle commands across awaits; frame handlers are synchronous.
+
+Run Rust with `cargo run -p prysm -- --config prysm.toml`. Run Vite independently
+from `apps/prysm-web/control-ui` with `npm run dev`. `cargo run -p prysm-api --bin export-openapi` prints OpenAPI from
+`prysm-api::router()`; `npm run generate-api` captures that output and generates
+the TypeScript client. Generation stays separate from frontend builds to avoid
+invoking Cargo recursively from `prysm-web/build.rs`.
+openapi-typescript/openapi-fetch supply the TypeScript HTTP client. The independent `prysm-web` binary forwards REST calls to Prysm; it owns no
+configuration or pipeline. Its build script installs locked npm dependencies and
+builds the Vite assets, which are always embedded.
+Run `cargo run -p prysm-web`, then open port 8788 (Prysm REST stays on 8787).
+Building `prysm-web` or the workspace requires Node.js 24 and npm; building
+`prysm` alone requires neither.
+
+Debian seeds `/etc/prysm/prysm.toml` from a packaged template and runs
+as the `prysm` service user. The writable runtime file is authoritative.
+Preserve WLED ordering, post-stop Off, compensation, and clean shutdown tests.

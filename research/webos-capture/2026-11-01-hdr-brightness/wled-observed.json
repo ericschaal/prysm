@@ -1,0 +1,16 @@
+{
+  "version": "16.0.1",
+  "global_brightness_scale": 100,
+  "current_limit_mA": 0,
+  "gamma": {
+    "bri": 1,
+    "col": 2.8,
+    "val": 2.8
+  },
+  "realtime": {
+    "en": true,
+    "maxbri": false,
+    "no-gc": false
+  },
+  "changed": false
+}

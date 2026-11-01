@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prysm Capture</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<main id="app">
+  <header class="header">
+    <div class="brand"><svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m16 3 13 24H3L16 3Z" stroke="currentColor" stroke-width="2"/><path d="m16 3 4 24M3 27l15-12 11 12" stroke="currentColor" stroke-width="1.5"/></svg><div><h1>prysm<span class="brand-dot">.</span></h1><p>TV capture</p></div></div>
+    <p id="connection" class="connection">Checking Prysm…</p>
+  </header>
+  <div class="layout">
+    <section class="overview" aria-labelledby="status-title">
+      <p class="eyebrow">TV CAPTURE</p>
+      <h2 id="status-title">Getting ready</h2>
+      <p id="status-description" class="description">Checking the capture service on this TV.</p>
+      <div class="light-spectrum" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="main-actions">
+        <button id="primary" class="primary" data-down="service-options" data-right="receiver" disabled>Connecting…</button>
+        <button id="service-options" class="quiet" data-up="primary" data-right="receiver">Service options</button>
+      </div>
+    </section>
+    <section class="settings" aria-labelledby="settings-title">
+      <div class="section-heading"><h2 id="settings-title">Settings</h2><span id="saved-state">On this TV</span></div>
+      <div class="setting-list">
+        <button id="receiver" class="setting" aria-haspopup="dialog" data-up="receiver" data-down="source" data-left="primary">
+          <span><span class="setting-label">Prysm receiver</span><span id="receiver-value" class="setting-value address">Add receiver address</span></span><span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button id="source" class="setting" aria-haspopup="dialog" data-up="receiver" data-down="compression" data-left="primary">
+          <span><span class="setting-label">Capture</span><span id="source-value" class="setting-value">Video + TV menus</span></span><span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button id="compression" class="setting" aria-haspopup="dialog" data-up="source" data-down="autostart" data-left="primary">
+          <span><span class="setting-label">Compression</span><span id="compression-value" class="setting-value">LZ4</span></span><span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button id="autostart" class="setting" aria-haspopup="dialog" data-up="compression" data-down="metrics" data-left="primary">
+          <span><span class="setting-label">Enable with TV</span><span id="autostart-value" class="setting-value">Off</span></span><span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button id="metrics" class="setting" role="checkbox" aria-checked="false" aria-describedby="metrics-description" data-up="autostart" data-down="save" data-left="primary">
+          <span><span class="setting-label">Prometheus metrics</span><span id="metrics-description" class="setting-value">Expose TV metrics on port 9101 while the sender runs.</span></span><span class="tickbox" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="settings-footer"><p id="save-hint">Changes apply only when you save.</p><button id="save" class="secondary" data-up="metrics" data-left="service-options" disabled>Save changes</button></div>
+    </section>
+  </div>
+  <p id="notice" class="notice" role="status" aria-live="polite"></p>
+  <footer class="key-help"><span><b>↑ ↓ ← →</b> Move</span><span><b>OK</b> Choose</span><span><b>Back</b> Return</span><span class="panel-hint">Start and stop capture in Prysm.</span></footer>
+</main>
+<div id="modal" class="modal" hidden>
+  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-description">
+    <p class="eyebrow">PRYSM CAPTURE</p><h2 id="dialog-title"></h2><p id="dialog-description" class="dialog-description"></p>
+    <div id="dialog-body"></div>
+    <button id="dialog-back" class="quiet dialog-back">Back</button>
+  </section>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+WATCHDOG timed out pid=16110
+/proc/16110/task/16110/comm probe
+
+/proc/16110/task/16110/wchan futex_wait_queue_me
+/proc/16110/task/16110/syscall 240 0xf62ff3e8 0x109 0x3ef1 0x0 0x0 0xffffffff 0xff869690 0xf7b71ca6
+
+/proc/16110/task/16110/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16110/task/16111/comm probe
+
+/proc/16110/task/16111/wchan do_sys_poll
+/proc/16110/task/16111/syscall 168 0xf6d01a58 0x3 0xffffffff 0x0 0xffffffff 0x3 0xf766d910 0xf7b71ca6
+
+/proc/16110/task/16111/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16110/task/16112/comm probe
+
+/proc/16110/task/16112/wchan do_sys_poll
+/proc/16110/task/16112/syscall 168 0xf63071a8 0x2 0xffffffff 0x0 0xffffffff 0x2 0xf6cfec48 0xf7b71ca6
+
+/proc/16110/task/16112/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16110/task/16113/comm probe
+
+/proc/16110/task/16113/wchan futex_wait_queue_me
+/proc/16110/task/16113/syscall 240 0x126328 0x189 0x0 0x0 0x0 0xffffffff 0xf62feba0 0xf7b71ca6
+
+/proc/16110/task/16113/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+HARNESS baseline fds=5
+HARNESS create 0
+TRACE 25404.281350 tid=16110 context_new 0x1265d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25404.281393 tid=16110 loop_new 0x124410 0x1265d8 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 25404.285634 tid=16110 context_unref 0x1265d8 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 25404.291617 tid=16111 signal 0x1264b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 25404.293417 tid=16112 context_new 0xf6300600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 25404.293725 tid=16112 loop_new 0xf6302f88 0xf6300600 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+HARNESS created 0x125fa0
+TRACE 25404.304416 tid=16113 broadcast 0x126348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25404.304659 tid=16113 wait_enter 0x126300 0x1262e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25404.304702 tid=16113 delay_wait_500ms 0x126300 0x1 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+HARNESS release 0
+TRACE 25404.354108 tid=16110 signal 0x126300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 25404.354165 tid=16110 join_enter 0xf62ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25404.804807 tid=16113 delay_done 0x126300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b

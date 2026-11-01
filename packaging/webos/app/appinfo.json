@@ -1,0 +1,14 @@
+{
+  "id": "io.prysm.capture",
+  "version": "0.1.19",
+  "vendor": "Prysm",
+  "type": "web",
+  "main": "index.html",
+  "disableBackHistoryAPI": true,
+  "title": "Prysm Capture",
+  "icon": "icon.png",
+  "largeIcon": "icon.png",
+  "requiredACG": [
+    "public"
+  ]
+}

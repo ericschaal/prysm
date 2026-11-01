@@ -1,6 +1,27 @@
 [workspace]
 resolver = "3"
-members = ["prysm", "prysm-capture", "prysm-core", "prysm-processor", "renderers/desktop-renderer", "renderers/led-renderer"]
+members = [
+    "apps/prysm",
+    "apps/prysm-web",
+    "crates/capture/prysm-capture",
+    "crates/capture/prysm-webos-protocol",
+    "crates/capture/webos-capture",
+    "crates/capture/webos-service",
+    "crates/processing/prysm-processor",
+    "crates/common/prysm-core",
+    "crates/common/prysm-contract",
+    "crates/common/prysm-api",
+    "crates/common/prysm-metrics",
+    "crates/rendering/prysm-renderer-desktop",
+    "crates/rendering/prysm-renderer-wled",
+]
+
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/ericschaal/prysm"
+readme = "README.md"
+keywords = ["ambilight", "lighting", "video", "wled"]
+categories = ["multimedia::video"]
 
 # The video pipeline does per-pixel work on full HD frames; unoptimized dev
 # builds make it burn >100% CPU. Lightly optimize workspace code and fully
@@ -11,17 +32,67 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+[profile.webos]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
 
 [workspace.dependencies]
-tokio = { version = "1" }
-tokio-util = { version = "0.7" }
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3" }
-anyhow = { version = "1.0" }
+actix = "0.13"
+anyhow = "1.0"
+atomic-write-file = "0.3"
+av-foundation = "0.8.1"
+axum = "0.8"
+bindgen = { version = "0.73.2", default-features = false, features = ["runtime"] }
+cc = "1"
+clap = "4"
+core-foundation = { version = "0.10", default-features = false }
+core-media = { version = "0.8.1", default-features = false }
+core-video = { version = "0.6.1", default-features = false }
+ddp-rs = "1.3"
+dispatch2 = "0.3"
+eframe = "0.37"
+egui = "0.37"
+futures = "0.3"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+gstreamer-allocators = "0.25"
+h264-reader = "0.9"
+libc = "0.2"
+libloading = "0.9"
+lz4_flex = { version = "0.14", default-features = false }
+memmap2 = "0.9"
+mime_guess = "2"
+nix = "0.31"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+openh264 = "0.9.9"
+prometheus-client = "0.25"
+reqwest = { version = "0.13", default-features = false }
+rust-embed = "8"
+serde = "1"
+serde_json = "1"
+signal-hook = "0.4"
+sysinfo = { version = "0.40", default-features = false }
+tempfile = "3"
 thiserror = "2"
-futures = { version = "0.3" }
-yuv = { version = "0.8" }
+tiny_http = { version = "0.12", default-features = false }
+tokio = "1"
+tokio-util = "0.7"
+toml = "1"
+tower = "0.5"
+tower-http = "0.7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+url = "2"
+utoipa = "6"
+utoipa-axum = "0.3"
+uuid = "1"
+yuv = { version = "0.8", default-features = false }

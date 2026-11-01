@@ -1,0 +1,24 @@
+[package]
+name = "prysm-renderer-desktop"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Desktop preview renderer for Prysm"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+futures.workspace = true
+prysm-core = { path = "../../common/prysm-core" }
+
+# Desktop renderer dependencies
+eframe.workspace = true
+egui.workspace = true
+tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
+tokio-util.workspace = true

@@ -1,0 +1,91 @@
+HARNESS baseline fds=5
+HARNESS create 0
+TRACE 25325.909998 tid=15570 context_new 0xcc35d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25325.910042 tid=15570 loop_new 0xcc1410 0xcc35d8 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 25325.914055 tid=15570 context_unref 0xcc35d8 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 25325.919182 tid=15571 signal 0xcc34b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 25325.920643 tid=15572 context_new 0xf5f00600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 25325.920705 tid=15572 loop_new 0xf5f02f88 0xf5f00600 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+HARNESS created 0xcc2fa0
+TRACE 25325.934317 tid=15573 broadcast 0xcc3348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25325.934369 tid=15573 wait_enter 0xcc3300 0xcc32e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+HARNESS release 0
+TRACE 25325.984281 tid=15570 signal 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 25325.984369 tid=15570 join_enter 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25325.984486 tid=15573 wait_exit 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25325.999919 tid=15570 join_exit 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.000830 tid=15570 join_enter 0xf723e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.001327 tid=15570 join_exit 0xf723e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.001634 tid=15570 context_unref 0xcc35d8 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.001671 tid=15570 context_unref 0xcc35d8 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.001745 tid=15570 loop_unref 0xcc1410 (nil) /usr/lib/libums_connector_impl.so.1+0xba0b
+TRACE 25326.001788 tid=15570 context_unref 0xcc35d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d7b
+TRACE 25326.001800 tid=15570 loop_unref 0xcc1410 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d83
+TRACE 25326.002184 tid=15570 context_unref 0xf5f00600 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.002270 tid=15570 context_unref 0xf5f00600 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.002377 tid=15570 join_enter 0xf68ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.003907 tid=15570 join_exit 0xf68ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.004219 tid=15570 loop_unref 0xf5f02f88 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7e7
+TRACE 25326.004255 tid=15570 context_unref 0xf5f00600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7ed
+HARNESS released 0
+HARNESS after 0 fds=5
+HARNESS create 1
+TRACE 25326.005020 tid=15570 context_new 0xce2480 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25326.005040 tid=15570 loop_new 0xcda428 0xce2480 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 25326.009526 tid=15570 context_unref 0xce2480 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 25326.014534 tid=15577 signal 0xcc34b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 25326.015977 tid=15578 context_new 0xf6904280 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 25326.016099 tid=15578 loop_new 0xf6904050 0xf6904280 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+HARNESS created 0xcc2fa0
+TRACE 25326.021163 tid=15579 broadcast 0xcc3348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25326.021200 tid=15579 wait_enter 0xcc3300 0xcc32e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+HARNESS release 1
+TRACE 25326.071266 tid=15570 signal 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 25326.071319 tid=15579 wait_exit 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25326.071339 tid=15570 join_enter 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.086630 tid=15570 join_exit 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.087340 tid=15570 join_enter 0xf68ff380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.087505 tid=15570 join_exit 0xf68ff380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.087771 tid=15570 context_unref 0xce2480 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.087798 tid=15570 context_unref 0xce2480 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.087815 tid=15570 loop_unref 0xcda428 (nil) /usr/lib/libums_connector_impl.so.1+0xba0b
+TRACE 25326.087841 tid=15570 context_unref 0xce2480 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d7b
+TRACE 25326.087852 tid=15570 loop_unref 0xcda428 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d83
+TRACE 25326.088254 tid=15570 context_unref 0xf6904280 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.088287 tid=15570 context_unref 0xf6904280 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.088394 tid=15570 join_enter 0xf723e380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.088710 tid=15570 join_exit 0xf723e380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.088788 tid=15570 loop_unref 0xf6904050 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7e7
+TRACE 25326.088808 tid=15570 context_unref 0xf6904280 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7ed
+HARNESS released 1
+HARNESS after 1 fds=5
+HARNESS create 2
+TRACE 25326.089371 tid=15570 context_new 0xcdfc58 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25326.089395 tid=15570 loop_new 0xcdbec0 0xcdfc58 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 25326.094612 tid=15570 context_unref 0xcdfc58 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 25326.099082 tid=15580 signal 0xcc34b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 25326.100574 tid=15581 context_new 0xf5f01c40 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 25326.100628 tid=15581 loop_new 0xf5f01ce8 0xf5f01c40 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+HARNESS created 0xcc2fa0
+TRACE 25326.110691 tid=15582 broadcast 0xcc3348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25326.110739 tid=15582 wait_enter 0xcc3300 0xcc32e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+HARNESS release 2
+TRACE 25326.160663 tid=15570 signal 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 25326.160720 tid=15582 wait_exit 0xcc3300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25326.160743 tid=15570 join_enter 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.176105 tid=15570 join_exit 0xf5eff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.176816 tid=15570 join_enter 0xf723e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.176995 tid=15570 join_exit 0xf723e380 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d61
+TRACE 25326.177239 tid=15570 context_unref 0xcdfc58 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.177275 tid=15570 context_unref 0xcdfc58 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.177294 tid=15570 loop_unref 0xcdbec0 (nil) /usr/lib/libums_connector_impl.so.1+0xba0b
+TRACE 25326.177320 tid=15570 context_unref 0xcdfc58 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d7b
+TRACE 25326.177330 tid=15570 loop_unref 0xcdbec0 (nil) /usr/lib/libresource_mgr_client.so.1+0x5d83
+TRACE 25326.177678 tid=15570 context_unref 0xf5f01c40 (nil) /usr/lib/libluna-service2.so.3+0x1ee39
+TRACE 25326.177709 tid=15570 context_unref 0xf5f01c40 (nil) /usr/lib/libluna-service2.so.3+0xc5f9
+TRACE 25326.177816 tid=15570 join_enter 0xf68ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.177969 tid=15570 join_exit 0xf68ff380 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25326.178030 tid=15570 loop_unref 0xf5f01ce8 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7e7
+TRACE 25326.178059 tid=15570 context_unref 0xf5f01c40 (nil) /usr/lib/libvtcapture.so.1.0.0+0xd7ed
+HARNESS released 2
+HARNESS after 2 fds=5

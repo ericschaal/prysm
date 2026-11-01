@@ -1,0 +1,96 @@
+{
+  "version": "0.1.14",
+  "installed_binary_sha256": {
+    "prysm-webos-capture": "f6c2deb7e365bda394f289a9c6efaa9e64ad0df7c209f17f157bb115bca80e82",
+    "prysm-webos-service": "b04924f9e658cefc824bb16b550bb278fa8e647064b02bd990f11ac5645b65f8"
+  },
+  "configuration_preserved": true,
+  "enabled_state_preserved": true,
+  "boot_hook_preserved": true,
+  "permission_mounts_preserved": true,
+  "status": {
+    "pid": 19798,
+    "enabled": true,
+    "power": "Active",
+    "senderRunning": true,
+    "receiverConnected": true,
+    "capturing": true,
+    "error": null,
+    "config": {
+      "autostart": true,
+      "compression": "h264",
+      "receiver": "192.168.18.18:19400",
+      "source": "both"
+    }
+  },
+  "host_frames": [
+    16757,
+    16784
+  ],
+  "worker_pid": 19820,
+  "worker_has_no_arguments": true,
+  "worker_startup_config": {
+    "receiver": "192.168.18.18:19400",
+    "source": "both",
+    "compression": "h264"
+  },
+  "monitoring": {
+    "dashboard_matches_repository": true,
+    "grafana_provisioning_reload": "success",
+    "dashboard_version": 5,
+    "targets": [
+      {
+        "labels": {
+          "instance": "host.docker.internal:9102",
+          "job": "prysm-nodes",
+          "node": "computer"
+        },
+        "health": "up",
+        "lastError": "",
+        "scrapeUrl": "http://host.docker.internal:9102/metrics"
+      },
+      {
+        "labels": {
+          "instance": "192.168.18.10:9101",
+          "job": "prysm-nodes",
+          "node": "tv"
+        },
+        "health": "up",
+        "lastError": "",
+        "scrapeUrl": "http://192.168.18.10:9101/metrics"
+      }
+    ],
+    "panels": [
+      {
+        "panel": "Encoded payload bytes per prepared frame",
+        "query": "(sum by (node) (rate(prysm_stream_bytes_total{node=~\".*\",boundary=\"EncoderOutput\"}[1m])) / sum by (node) (rate(prysm_pipeline_frames_total{node=~\".*\",boundary=\"Encoded\"}[1m]))) and on(node) (prysm_capture_requested_info{node=~\".*\",compression=~\".*\",source=~\".*\",width=~\".*\",height=~\".*\"} == 1)",
+        "result": [
+          {
+            "metric": {
+              "node": "tv"
+            },
+            "value": [
+              1793545355.783,
+              "1546.5876104857534"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "Compression saving",
+        "query": "(1 - sum by (node) (rate(prysm_stream_bytes_total{node=~\".*\",boundary=\"EncoderOutput\"}[1m])) / sum by (node) (rate(prysm_stream_bytes_total{node=~\".*\",boundary=\"EncoderInput\"}[1m]))) and on(node) (prysm_capture_requested_info{node=~\".*\",compression=~\".*\",source=~\".*\",width=~\".*\",height=~\".*\"} == 1)",
+        "result": [
+          {
+            "metric": {
+              "node": "tv"
+            },
+            "value": [
+              1793545355.79,
+              "0.9977758421283441"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

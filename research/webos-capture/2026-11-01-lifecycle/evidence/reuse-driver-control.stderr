@@ -1,0 +1,68 @@
+REUSE idle 0 fds=10 threads=4 maps=119
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=1 dimensions=320x180 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 1 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=2 dimensions=160x90 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 2 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=3 dimensions=320x180 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 3 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=4 dimensions=160x90 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 4 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=5 dimensions=320x180 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 5 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=6 dimensions=160x90 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 6 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=7 dimensions=320x180 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 7 fds=10 threads=4 maps=121
+REUSE init result=0
+REUSE preprocess result=0
+REUSE process result=0
+REUSE frame cycle=8 dimensions=160x90 ready=1
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 8 fds=10 threads=4 maps=121
+REUSE final release begin
+REUSE final release done
+REUSE idle 9 fds=5 threads=1 maps=121

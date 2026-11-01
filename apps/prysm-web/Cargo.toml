@@ -1,0 +1,28 @@
+[package]
+name = "prysm-web"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Web UI for the Prysm REST API"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
+tower-http = { workspace = true, features = ["csrf", "set-header", "validate-request"] }
+rust-embed = { workspace = true, features = ["debug-embed"] }
+mime_guess.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }

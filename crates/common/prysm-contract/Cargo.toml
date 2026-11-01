@@ -1,0 +1,25 @@
+[package]
+name = "prysm-contract"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Validated configuration and wire contracts for Prysm"
+
+[lints]
+workspace = true
+
+[dependencies]
+prysm-core = { path = "../prysm-core" }
+serde = { workspace = true, features = ["derive"] }
+utoipa = { workspace = true, features = ["uuid"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+url = { workspace = true, features = ["serde"] }
+anyhow.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+toml.workspace = true

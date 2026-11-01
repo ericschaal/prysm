@@ -1,0 +1,38 @@
+[package]
+name = "prysm-webos-service"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+description = "Native Luna service for Prysm webOS capture"
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+hardware-h264 = []
+codegen = ["dep:bindgen"]
+
+[dependencies]
+prysm-webos-protocol = { path = "../prysm-webos-protocol" }
+anyhow.workspace = true
+atomic-write-file.workspace = true
+libc.workspace = true
+nix = { workspace = true, features = ["fs", "process", "signal", "user"] }
+serde = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
+libloading.workspace = true
+serde_json.workspace = true
+signal-hook.workspace = true
+bindgen = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "generate-luna-bindings"
+path = "codegen/main.rs"
+required-features = ["codegen"]
+
+[lints]
+workspace = true

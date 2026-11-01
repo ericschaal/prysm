@@ -1,6 +1,11 @@
 # Prysm sampling A/B testing protocol
 
-Date: 2026-10-10. Status: protocol; experiments have not been run.
+Date: 2026-10-10. Status: historical edge-sampling protocol; experiments have not been run.
+
+As of 2026-10-24, Prysm uses whole-picture spatial sampling instead of edge bands.
+The baseline, candidate geometry, and edge-reference acceptance criteria below describe the
+previous sampler and must be revised before using this protocol for the spatial sampler.
+Current behavior and the `spatial_reach_percent` setting are documented in the README.
 
 ## Decision to make
 
@@ -8,22 +13,22 @@ Determine whether higher spatial sampling density improves faithful edge extensi
 
 Run these as separate experiments. A change in sampling density must not be bundled with a change in color selection or temporal smoothing. The numerical thresholds below are engineering acceptance criteria chosen for this experiment, not published perceptual thresholds.
 
-## Current implementation and prerequisites
+## Original baseline and prerequisites
 
-The current processor uses quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the edge colors.
+The original baseline used quadratic inward weighting, linear-light region averaging, black-bar detection, and elapsed-time exponential smoothing. `Config::sample_density` defaults to `SampleDensity(60)`, producing 38 horizontal and 21 vertical samples per edge at 640×360. `Config::smoothing_seconds` defaults to 0.1 seconds to complete 95% of a transition. The desktop renderer defaults to 300 displayed LEDs and interpolates the edge colors.
 
 Relevant code:
 
-- [Region averaging](../prysm-processor/src/frames/view_frame.rs)
-- [Sampling geometry](../prysm-processor/src/nodes/edge_sampler.rs)
-- [Density and color strip interpolation](../prysm-core/src/color_strip.rs)
-- [Processor configuration](../prysm-core/src/config.rs)
-- [Temporal smoothing](../prysm-processor/src/nodes/temporal_smoothing.rs)
-- [Video playback](../prysm/src/video.rs)
-- [Desktop rendering](../renderers/desktop-renderer/src/lib.rs)
-- [Existing pipeline regression tests](../prysm-processor/tests/pipeline.rs)
+- [Region averaging](../crates/processing/prysm-processor/src/frames/frame_view.rs)
+- [Sampling geometry](../crates/processing/prysm-processor/src/nodes/spatial_sampler.rs)
+- [Density and color strip interpolation](../crates/common/prysm-core/src/color_strip.rs)
+- [Processor configuration](../crates/common/prysm-core/src/config.rs)
+- [Temporal smoothing](../crates/processing/prysm-processor/src/nodes/temporal_smoother.rs)
+- [Video playback](../apps/prysm/src/video.rs)
+- [Desktop rendering](../crates/rendering/prysm-renderer-desktop/src/lib.rs)
+- [Existing pipeline regression tests](../crates/processing/prysm-processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../renderers/led-renderer/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../crates/rendering/prysm-renderer-wled/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
 Both outputs use FFmpeg 9+ for file input (`type = "file"` with a required `path` in `[input]`), delivering sRGB RGB24 frames at the configured capture resolution (default 640×360), playing once and exiting at EOF. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 

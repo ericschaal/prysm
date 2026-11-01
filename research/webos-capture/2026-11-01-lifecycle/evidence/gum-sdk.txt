@@ -1,0 +1,7 @@
+Source: https://github.com/openlgtv/buildroot-nc4/releases/tag/2026.08-webos
+Archive: arm-lgtv-linux-gnueabi_sdk-buildroot-x86_64.tar.gz
+SHA256: a8d82460b3a96a96cb2f3847df19d2c641672a9d8facf7141502c29dd86f9000
+Frida Gum source commit: 0c8df6742d2c7a08c32fc3c3b691779b062fb34a
+ELF32 little-endian ARM, flags 0x5000200 EABI5 soft-float
+Local extracted SDK: /tmp/prysm-reverse/sdk
+Gum and GLib statically linked, hidden archive symbols. No Gum/GLib dynamic dependency. Mac cross-compiler used; downloaded Linux host tools were not executed.

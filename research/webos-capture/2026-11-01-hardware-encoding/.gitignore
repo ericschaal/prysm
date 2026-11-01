@@ -1,0 +1,11 @@
+# Keep vendor libraries, local captures and generated analysis out of research.
+/private/
+/build/
+*.so
+*.so.[0-9]*
+*.o
+*.a
+*.tar
+*.tar.gz
+__pycache__/
+*.pyc
