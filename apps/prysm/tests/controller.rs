@@ -59,8 +59,7 @@ async fn exercise_controller(video: Option<PathBuf>) {
     let wled = Arc::new(Mutex::new(
         serde_json::json!({"state":{"on":false,"lor":2},"info":{"live":false,"lm":null}}),
     ));
-    let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let output_address = udp.local_addr().unwrap();
+    let udp = tokio::net::UdpSocket::bind("127.0.0.1:4048").await.unwrap();
     let packets = Arc::new(AtomicUsize::new(0));
     let packet_count = packets.clone();
     let ddp_state = wled.clone();
@@ -141,8 +140,6 @@ remove_black_bars = false
 [web]
 listen = "{address}"
 allowed_hosts = ["{address}"]
-[wled]
-url = "http://{wled_address}/"
 [input]
 capture_resolution = [4, 4]
 refresh_rate_hz = 30
@@ -150,7 +147,7 @@ type = "file"
 path = "/missing/prysm-local-controller-test.mp4"
 [output]
 type = "wled"
-address = "{output_address}"
+url = "http://{wled_address}/"
 [output.leds]
 top = 1
 right = 1
@@ -631,7 +628,27 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
     config.web.listen = address;
     config.web.allowed_hosts = vec!["*".into()];
-    config.wled = None;
+    let router = Router::new()
+        .route(
+            "/json/si",
+            get(|| async {
+                Json(serde_json::json!({
+                    "state":{"on":true,"lor":0},"info":{"live":true,"lm":"DDP"}
+                }))
+            }),
+        )
+        .route(
+            "/json/state",
+            post(|| async { Json(serde_json::json!({"success":true})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let fixture = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    if let prysm_contract::Output::Wled { url: target, .. } = &mut config.output {
+        *target = url.parse().unwrap();
+    }
     config.input = prysm_contract::Input::File {
         path: "/missing/old-input.mkv".to_owned().try_into().unwrap(),
         capture_resolution: [4, 2].try_into().unwrap(),
@@ -721,6 +738,48 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     );
     assert_eq!(failed.pipeline.phase, prysm_contract::PipelinePhase::Idle);
     drop(occupied);
+    let tv = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut socket = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(socket) = tokio::net::TcpStream::connect(desired).await {
+                    break socket;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        socket
+            .write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
+            .await
+            .unwrap();
+        loop {
+            let mut prefix = [0; 4];
+            socket.read_exact(&mut prefix).await.unwrap();
+            let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
+            socket.read_exact(&mut bytes).await.unwrap();
+            if matches!(
+                prysm_webos_protocol::ControlMessage::decode(&bytes).unwrap(),
+                prysm_webos_protocol::ControlMessage::CaptureSettings { .. }
+            ) {
+                break;
+            }
+        }
+        let mut frame = prysm_webos_protocol::Header {
+            width: 4,
+            height: 2,
+            format: prysm_webos_protocol::PixelFormat::Rgb,
+            codec: prysm_webos_protocol::Codec::Raw,
+            payload_len: 24,
+        }
+        .encode()
+        .unwrap()
+        .to_vec();
+        frame.extend([255; 24]);
+        socket.write_all(&frame).await.unwrap();
+        futures::future::pending::<()>().await;
+    });
     let accepted = client
         .put(&endpoint)
         .json(&Target {
@@ -741,4 +800,6 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     assert_eq!(started.applied_revision, Some(saved.revision));
     assert!(tokio::net::TcpStream::connect(desired).await.is_ok());
     child.kill().await.unwrap();
+    fixture.abort();
+    tv.abort();
 }

@@ -34,7 +34,7 @@ async fn file_egui_keeps_final_frame_and_shuts_down_on_signal() {
             .success()
     );
     let mut config: Config = toml::from_str(include_str!("../../../prysm-egui.toml")).unwrap();
-    assert!(config.wled.is_none());
+    assert!(config.output.wled_url().is_none());
     config.input = Input::File {
         capture_resolution: [640, 360].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),

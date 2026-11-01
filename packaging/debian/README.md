@@ -51,8 +51,7 @@ sudo systemctl enable --now prysm prysm-web
 journalctl -u prysm -f
 ```
 
-Set `[wled].url` to WLED's HTTP endpoint and `[output].address` to its DDP address
-(port 4048). Configure input and LED counts. Prefer stable `/dev/v4l/by-id/...`
+Set `[output].url` to WLED's HTTP base URL; DDP uses the same host on UDP port 4048. Configure input and LED counts. Prefer stable `/dev/v4l/by-id/...`
 device paths. The engine API listens on `127.0.0.1:8787`; the web UI listens on
 `127.0.0.1:8788`. Open http://localhost:8788 on the host, or configure LAN access below.
 

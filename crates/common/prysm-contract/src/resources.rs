@@ -76,39 +76,6 @@ macro_rules! nonempty_string {
     };
 }
 nonempty_string!(DeviceId);
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(try_from = "String", into = "String")]
-pub struct WledAddress(String);
-impl TryFrom<String> for WledAddress {
-    type Error = &'static str;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let address = format!("udp://{value}");
-        let parsed = url::Url::parse(&address).map_err(|_| "DDP address must be host:port")?;
-        if parsed.as_str() != address
-            || parsed.host_str().is_none()
-            || parsed.port().is_none_or(|port| port == 0)
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || !parsed.path().is_empty()
-            || parsed.query().is_some()
-            || parsed.fragment().is_some()
-        {
-            return Err("DDP address must be host:port");
-        }
-        Ok(Self(value))
-    }
-}
-impl From<WledAddress> for String {
-    fn from(value: WledAddress) -> Self {
-        value.0
-    }
-}
-impl WledAddress {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 nonempty_string!(VideoPath);
 impl VideoPath {
     #[must_use]
@@ -206,13 +173,33 @@ impl Input {
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Output {
     Wled {
-        address: WledAddress,
+        #[serde(deserialize_with = "crate::config::deserialize_http_base_url")]
+        #[schema(value_type = String)]
+        url: url::Url,
         leds: LedCounts,
     },
     Egui {},
 }
 
 impl Output {
+    #[must_use]
+    pub fn wled_url(&self) -> Option<&url::Url> {
+        match self {
+            Self::Wled { url, .. } => Some(url),
+            Self::Egui {} => None,
+        }
+    }
+
+    /// DDP uses the WLED host and its fixed UDP port, independently of the HTTP port.
+    pub fn ddp_address(&self) -> anyhow::Result<String> {
+        use anyhow::Context;
+        let host = self
+            .wled_url()
+            .and_then(url::Url::host)
+            .context("no WLED host configured")?;
+        Ok(format!("{host}:4048"))
+    }
+
     #[must_use]
     pub const fn is_egui(&self) -> bool {
         matches!(self, Self::Egui { .. })

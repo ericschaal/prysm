@@ -54,7 +54,6 @@ export interface components {
             revision: components["schemas"]["ConfigRevision"];
             source: components["schemas"]["Source"];
             web: components["schemas"]["WebConfig"];
-            wled?: components["schemas"]["WledConfig"] | null;
         };
         ConfigRevision: string;
         DeviceId: string;
@@ -123,10 +122,10 @@ export interface components {
             kind: "failed";
         };
         Output: {
-            address: components["schemas"]["WledAddress"];
             leds: components["schemas"]["LedCounts"];
             /** @enum {string} */
             type: "wled";
+            url: string;
         } | {
             /** @enum {string} */
             type: "egui";
@@ -177,10 +176,6 @@ export interface components {
         WebConfig: {
             allowed_hosts: string[];
             listen: string;
-        };
-        WledAddress: string;
-        WledConfig: {
-            url: string;
         };
     };
     responses: never;

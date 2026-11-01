@@ -34,9 +34,9 @@ fn initial_state(config: &Config) -> StateResponse {
         observation_error: None,
         operation: OperationStatus::Idle,
         wled_url: config
-            .wled
-            .as_ref()
-            .map(|wled| wled.url.to_string())
+            .output
+            .wled_url()
+            .map(ToString::to_string)
             .unwrap_or_default(),
         config_revision: config.revision,
         applied_revision: None,
@@ -89,9 +89,9 @@ impl Controller {
         self.state.source = self.config.source;
         self.state.wled_url = self
             .config
-            .wled
-            .as_ref()
-            .map(|wled| wled.url.to_string())
+            .output
+            .wled_url()
+            .map(ToString::to_string)
             .unwrap_or_default();
         self.state.restart_required = self.config.web != self.active_web
             || self.lighting.requires_restart(&self.config.output);
@@ -139,9 +139,8 @@ impl Controller {
         } else {
             running
         };
-        let reconnect = PipelineConfig::from(previous)
-            .requires_restart(&PipelineConfig::from(config))
-            || previous.wled != config.wled;
+        let reconnect =
+            PipelineConfig::from(previous).requires_restart(&PipelineConfig::from(config));
         if running && reconnect {
             lighting.capture(CaptureAction::Stop).await?;
         }
@@ -197,9 +196,7 @@ impl Handler<SetTarget> for Controller {
                 "restart the application to apply output settings",
             ));
         }
-        if (self.config.output.is_egui() || self.config.wled.is_none())
-            && target.source != prysm_contract::Source::Prysm
-        {
+        if self.config.output.is_egui() && target.source != prysm_contract::Source::Prysm {
             return Err(ApiFailure::conflict(
                 "this output supports only screen sync",
             ));

@@ -13,7 +13,6 @@ pub struct Config {
     pub web: WebConfig,
     pub input: Input,
     pub output: Output,
-    pub wled: Option<WledConfig>,
     pub processing: ProcessingSettings,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -30,14 +29,7 @@ pub struct WebConfig {
     pub listen: SocketAddr,
     pub allowed_hosts: Vec<String>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WledConfig {
-    #[serde(deserialize_with = "deserialize_http_base_url")]
-    #[schema(value_type = String)]
-    pub url: url::Url,
-}
-fn deserialize_http_base_url<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_http_base_url<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<url::Url, D::Error> {
     let value = url::Url::deserialize(deserializer)?;
@@ -67,8 +59,8 @@ impl Config {
             "configure at least one allowed panel host"
         );
         anyhow::ensure!(
-            self.source == Source::Prysm || (!self.output.is_egui() && self.wled.is_some()),
-            "WLED effects require WLED output and a [wled] HTTP endpoint"
+            self.source == Source::Prysm || !self.output.is_egui(),
+            "WLED effects require WLED output"
         );
         if let Input::Webos {
             refresh_rate_hz,
@@ -90,8 +82,7 @@ impl Config {
             );
         }
         // Revalidate programmatically constructed URLs as well as deserialized URLs.
-        if let Some(wled) = &self.wled {
-            let url = &wled.url;
+        if let Some(url) = self.output.wled_url() {
             anyhow::ensure!(
                 matches!(url.scheme(), "http" | "https")
                     && url.host_str().is_some()

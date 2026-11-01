@@ -7,9 +7,6 @@ listen = "127.0.0.1:8787"
 # Restrict this to exact host:port entries for your installation if desired.
 allowed_hosts = ["127.0.0.1:8787", "localhost:8787"]
 
-[wled]
-url = "http://wled.local/"
-
 [input]
 capture_resolution = [640, 360]
 refresh_rate_hz = 50
@@ -19,7 +16,7 @@ device = "/dev/video0"
 
 [output]
 type = "wled"
-address = "wled.local:4048"
+url = "http://wled.local/"
 
 # Viewed from the front; wiring starts at bottom-left and goes up.
 [output.leds]

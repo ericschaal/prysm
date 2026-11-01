@@ -47,8 +47,8 @@ impl Renderers {
     )]
     fn create(&self, output: &Output, completion: Completion) -> Result<RenderTarget> {
         match output {
-            Output::Wled { address, leds } => {
-                let renderer = Wled::new(address, *leds, completion)?.start();
+            Output::Wled { leds, .. } => {
+                let renderer = Wled::new(&output.ddp_address()?, *leds, completion)?.start();
                 Ok(RenderTarget {
                     frames: renderer.clone().recipient(),
                     stop: renderer.recipient(),
@@ -250,6 +250,18 @@ mod tests {
     use prysm_contract::{ConfigRevision, ProcessingSettings};
     use std::io::ErrorKind;
 
+    fn test_renderer(output: &Output, completion: Completion) -> Result<RenderTarget> {
+        let Output::Wled { url, leds } = output else {
+            return Renderers::default().create(output, completion);
+        };
+        // Use an ephemeral fixture port so concurrent session tests remain isolated.
+        let renderer = Wled::new(url.authority(), *leds, completion)?.start();
+        Ok(RenderTarget {
+            frames: renderer.clone().recipient(),
+            stop: renderer.recipient(),
+        })
+    }
+
     async fn test_session(
         config: PipelineConfig,
         frames: BoxStream<'static, Result<Frame>>,
@@ -266,7 +278,7 @@ mod tests {
             shutdown,
             status,
             &mut None,
-            |output, completion| Renderers::default().create(output, completion),
+            test_renderer,
         )
         .await
     }
@@ -289,7 +301,7 @@ mod tests {
             },
             output: serde_json::from_value(serde_json::json!({
                 "type": "wled",
-                "address": address,
+                "url": format!("http://{address}/"),
                 "leds": {"top": 1, "right": 1, "bottom": 1, "left": 1}
             }))
             .unwrap(),

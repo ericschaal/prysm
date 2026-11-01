@@ -145,7 +145,7 @@ function App() {
     setConfig(saved);
   }, [config]);
 
-  const wledControl = config?.output.type === 'wled' && !!config.wled;
+  const wledControl = config?.output.type === 'wled';
   const directOutput = !!config && !wledControl;
   const observed = connectionError ? null : data?.observed;
   const pending = busy || data?.operation.kind === 'pending' || awaiting !== null;

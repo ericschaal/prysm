@@ -229,16 +229,6 @@
           },
           "web": {
             "$ref": "#/components/schemas/WebConfig"
-          },
-          "wled": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/WledConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "additionalProperties": false
@@ -508,14 +498,11 @@
           {
             "type": "object",
             "required": [
-              "address",
+              "url",
               "leds",
               "type"
             ],
             "properties": {
-              "address": {
-                "$ref": "#/components/schemas/WledAddress"
-              },
               "leds": {
                 "$ref": "#/components/schemas/LedCounts"
               },
@@ -524,6 +511,9 @@
                 "enum": [
                   "wled"
                 ]
+              },
+              "url": {
+                "type": "string"
               }
             }
           },
@@ -751,21 +741,6 @@
             }
           },
           "listen": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "WledAddress": {
-        "type": "string"
-      },
-      "WledConfig": {
-        "type": "object",
-        "required": [
-          "url"
-        ],
-        "properties": {
-          "url": {
             "type": "string"
           }
         },

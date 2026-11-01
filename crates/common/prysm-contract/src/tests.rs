@@ -8,8 +8,6 @@ source = "prysm"
 [web]
 listen = "127.0.0.1:8787"
 allowed_hosts = ["localhost:8787"]
-[wled]
-url = "http://wled.local/"
 [input]
 capture_resolution = [640, 360]
 refresh_rate_hz = 30
@@ -17,7 +15,7 @@ type = "device"
 device = "/dev/video0"
 [output]
 type = "wled"
-address = "wled.local:4048"
+url = "http://wled.local/"
 [output.leds]
 top = 51
 right = 31
@@ -46,21 +44,6 @@ fn numeric_values_are_checked_at_deserialization() {
         assert!(SmoothingSeconds::new(invalid).is_err());
     }
     assert!(serde_json::from_str::<ProcessingSettings>("{}").is_err());
-    for value in ["wled.local:4048", "127.0.0.1:4048", "[::1]:4048"] {
-        assert!(WledAddress::try_from(value.to_owned()).is_ok());
-    }
-    for value in [
-        "",
-        "wled.local",
-        "wled.local:0",
-        "wled.local:4048/path",
-        "user@wled.local:4048",
-        "127.0.0.1:4048\n",
-        "127.0.0.1:40\t48",
-        "127.0.0.1:4048\r",
-    ] {
-        assert!(WledAddress::try_from(value.to_owned()).is_err());
-    }
 }
 #[test]
 fn revisions_preserve_u64_precision_and_reject_noncanonical_strings() {
@@ -173,7 +156,7 @@ fn schema_matches_serialized_values() {
 }
 
 #[test]
-fn every_input_output_pair_is_valid_without_wled_http_control() {
+fn every_input_output_pair_is_valid() {
     let base: Config = toml::from_str(CONFIG).unwrap();
     let inputs = [
         json!({"type":"device", "capture_resolution":[640,360], "refresh_rate_hz":30, "device":"/dev/video0"}),
@@ -189,14 +172,13 @@ fn every_input_output_pair_is_valid_without_wled_http_control() {
             let mut config = base.clone();
             config.input = serde_json::from_value(input.clone()).unwrap();
             config.output = serde_json::from_value(output.clone()).unwrap();
-            config.wled = None;
             config.validate().unwrap();
             assert_eq!(
                 toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
                 config
             );
             config.source = Source::Wled;
-            assert!(config.validate().is_err());
+            assert_eq!(config.validate().is_ok(), !config.output.is_egui());
         }
     }
 }
@@ -268,4 +250,35 @@ fn capture_resolution_belongs_to_input_and_webos_dimensions_are_validated() {
             resolution == [2, 2] || resolution == [1920, 1080]
         );
     }
+}
+
+#[test]
+fn wled_url_is_required_and_ddp_uses_its_host_with_fixed_port() {
+    let base: Config = toml::from_str(CONFIG).unwrap();
+    for (url, address) in [
+        ("http://wled.local/", "wled.local:4048"),
+        ("https://192.168.18.39:8443/", "192.168.18.39:4048"),
+        ("http://[::1]:8080/", "[::1]:4048"),
+    ] {
+        let mut config = base.clone();
+        config.output = serde_json::from_value(json!({"type":"wled", "url":url,
+            "leds":{"top":1,"right":0,"bottom":0,"left":0}}))
+        .unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.output.ddp_address().unwrap(), address);
+        if let Output::Wled { url, .. } = &mut config.output {
+            *url = "ftp://wled.local/".parse().unwrap();
+        }
+        assert!(config.validate().is_err());
+    }
+    let mut missing = serde_json::to_value(&base.output).unwrap();
+    missing.as_object_mut().unwrap().remove("url");
+    assert!(serde_json::from_value::<Output>(missing).is_err());
+    let mut legacy = serde_json::to_value(&base).unwrap();
+    legacy["wled"] = json!({"url":"http://wled.local/"});
+    assert!(serde_json::from_value::<Config>(legacy).is_err());
+    let mut legacy = serde_json::to_value(&base.output).unwrap();
+    legacy["address"] = json!("wled.local:4048");
+    assert!(serde_json::from_value::<Output>(legacy).is_err());
+    assert!(Output::Egui {}.ddp_address().is_err());
 }

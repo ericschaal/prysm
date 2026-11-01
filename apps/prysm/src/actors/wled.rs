@@ -1,7 +1,7 @@
 use super::{RenderFrame, Stop, pipeline::Completion};
 use actix::{Actor, ActorContext, Context, Handler};
 use anyhow::{Context as _, Result};
-use prysm_contract::{LedCounts, WledAddress};
+use prysm_contract::LedCounts;
 use prysm_renderer_wled::WledRenderer;
 
 /// WLED output. Other outputs handle the same `RenderFrame` message.
@@ -12,8 +12,8 @@ pub struct Wled {
 }
 
 impl Wled {
-    pub fn new(address: &WledAddress, leds: LedCounts, completion: Completion) -> Result<Self> {
-        let backend = WledRenderer::new(address.as_str()).context("cannot create WLED renderer")?;
+    pub fn new(address: &str, leds: LedCounts, completion: Completion) -> Result<Self> {
+        let backend = WledRenderer::new(address).context("cannot create WLED renderer")?;
         Ok(Self {
             backend,
             leds,
@@ -67,18 +67,21 @@ mod tests {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let config: prysm_contract::Output = serde_json::from_value(serde_json::json!({
             "type": "wled",
-            "address": receiver.local_addr().unwrap().to_string(),
+            "url": "http://localhost/",
             "leds": { "top": 2, "right": 1, "bottom": 1, "left": 1 }
         }))
         .unwrap();
-        let prysm_contract::Output::Wled { address, leds } = config else {
+        let prysm_contract::Output::Wled { leds, .. } = config else {
             panic!("expected WLED fixture")
         };
-        let output: Recipient<RenderFrame> =
-            Wled::new(&address, leds, tokio::sync::mpsc::channel(3).0)
-                .unwrap()
-                .start()
-                .recipient();
+        let output: Recipient<RenderFrame> = Wled::new(
+            &receiver.local_addr().unwrap().to_string(),
+            leds,
+            tokio::sync::mpsc::channel(3).0,
+        )
+        .unwrap()
+        .start()
+        .recipient();
         let edges = EdgeColors::new(
             ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), std::num::NonZeroUsize::MIN),
             ColorStrip::fill(LinearColor::new(0.0, 1.0, 0.0), std::num::NonZeroUsize::MIN),

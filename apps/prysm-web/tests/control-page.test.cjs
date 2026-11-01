@@ -13,8 +13,8 @@ const operationId = '00000000-0000-4000-8000-000000000002';
 function config(lift = 0, revision = '1') {
   return { revision, source: 'prysm', web: { listen: '127.0.0.1:8787', allowed_hosts: ['localhost:8787'] },
     input: { type: 'device', device: '/dev/video0', refresh_rate_hz: 30, capture_resolution: [640, 360] },
-    output: { type: 'wled', address: '192.168.18.39:4048', leds: { top: 10, right: 10, bottom: 10, left: 10 } },
-    wled: { url: 'http://192.168.18.39/' }, processing: { ...processing, shadow_lift_percent: lift } };
+    output: { type: 'wled', url: 'http://192.168.18.39/', leds: { top: 10, right: 10, bottom: 10, left: 10 } },
+    processing: { ...processing, shadow_lift_percent: lift } };
 }
 const response = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 const off = { source: 'prysm', observed: { power: false, realtime: false, live_override: 2,
@@ -125,11 +125,8 @@ async function check(initial, test, initialConfig) {
     await p.refresh({ ...off, restart_required: false });
     assert.equal(p.element('#power').disabled, false);
     assert.doesNotMatch(p.element('#status').textContent, /restart prysm/i);
-  }, { ...config(), output: { type: 'egui' }, wled: null });
+  }, { ...config(), output: { type: 'egui' } });
 
-  for (const directConfig of [ { ...config(), output: { type: 'egui' }, wled: null },
-    { ...config(), wled: null },
-  ]) {
   await check({ ...off, wled_url: '' }, async p => {
     assert.equal(p.element('#power').disabled, false);
     assert.equal(p.element('#power').getAttribute('aria-label'), 'Start output');
@@ -149,8 +146,7 @@ async function check(initial, test, initialConfig) {
     p.element('#power').click();
     await until(() => p.requests.filter(r => r.method === 'PUT').length === 2);
     assert.deepEqual(JSON.parse(p.requests.filter(r => r.method === 'PUT')[1].body), { power: false, source: 'prysm' });
-  }, directConfig);
-  }
+  }, { ...config(), output: { type: 'egui' } });
 
   await check(off, async p => {
     assert.match(p.element('h2').textContent, /^Off$/);

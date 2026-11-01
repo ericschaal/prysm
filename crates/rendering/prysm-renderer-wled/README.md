@@ -59,8 +59,9 @@ capture_resolution = [640, 360]
 
 Device input uses `type = "device"` with a Linux device path or macOS AVFoundation
 UID in `device`. Each input requires a positive `refresh_rate_hz` and a `capture_resolution`.
-Select `[output] type = "wled"` and configure its `address` and
-top/right/bottom/left LED counts. Alternatively, select
+Select `[output] type = "wled"` and configure its HTTP base `url` and
+top/right/bottom/left LED counts. DDP uses the URL host on fixed UDP port 4048;
+any URL port applies only to HTTP control. Alternatively, select
 `type = "egui"` with `--features desktop` for a native output without WLED.
 Counts may be zero for absent edges, with a total of 1–65535 LEDs. Processing
 settings belong under `[processing]`. See the complete [example](../../../prysm.toml)

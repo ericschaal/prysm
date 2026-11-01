@@ -61,9 +61,7 @@ impl IntoResponse for ApiFailure {
         (self.0, Json(self.1)).into_response()
     }
 }
-fn payload<T>(
-    body: Result<Json<T>, JsonRejection>,
-) -> Result<T, ApiFailure> {
+fn payload<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiFailure> {
     body.map(|Json(value)| value).map_err(|error| {
         ApiFailure::new(error.status(), ErrorCode::InvalidRequest, error.body_text())
     })

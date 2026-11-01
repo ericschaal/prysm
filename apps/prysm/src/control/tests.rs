@@ -196,7 +196,7 @@ async fn egui_controller_serves_state_handles_failure_and_saves_settings_without
     let snapshot = egui.lighting.snapshot().await;
     assert!(!snapshot.observed.unwrap().power);
     assert!(snapshot.error.is_none());
-    assert!(egui.app.config.borrow().wled.is_none());
+    assert!(egui.app.config.borrow().output.wled_url().is_none());
 
     let state = egui.target(true).await;
     assert!(matches!(state.operation, OperationStatus::Failed { .. }));

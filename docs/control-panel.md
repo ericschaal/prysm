@@ -63,8 +63,9 @@ client. See [frontend tooling](../apps/prysm-web/control-ui/README.md).
 
 With `prysm --features desktop` and `[output] type = "egui"`, Prysm renders to a
 native window. Device, file, and webOS input all work with either egui or WLED.
-No `[wled]` HTTP endpoint is required for rendering. Without WLED HTTP control,
-Start output and Stop output control the pipeline; WLED effects are unavailable.
+For egui, Start output and Stop output control the pipeline; WLED effects are unavailable.
+WLED output requires `[output].url` for HTTP control and device status. DDP goes to
+the same host on UDP port 4048, independently of the HTTP URL port.
 Startup is idle: click **Start capture** in the native toolbar to begin capture or playback,
 and **Stop capture** to stop it, or press **Space** to toggle. Status and errors appear beside the button; at EOF, **Start capture**
 replays the file. These controls call `PUT /api/state` with
@@ -73,7 +74,7 @@ replays the file. These controls call `PUT /api/state` with
 UI thread, with a three-second timeout and automatic state polling recovery.
 At file EOF the last frame stays visible and the REST API remains available;
 Start capture replays it. Closing the window stops Prysm but leaves `prysm-web`
-running. The same pipeline controls work with DDP output without HTTP management.
+running. WLED output uses the lighting transitions below.
 
 ## Lighting transitions
 

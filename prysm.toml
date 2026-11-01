@@ -16,7 +16,7 @@ device = "0x2200000345f2131"
 
 [output]
 type = "wled"
-address = "192.168.18.39:4048"
+url = "http://192.168.18.39/"
 
 [output.leds]
 top = 51

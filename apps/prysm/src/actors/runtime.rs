@@ -215,7 +215,6 @@ mod tests {
             drop(available);
             let mut config: prysm_contract::Config =
                 toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
-            config.wled = None;
             config.input = prysm_contract::Input::Webos {
                 listen: address,
                 capture_resolution: [4, 2].try_into().unwrap(),

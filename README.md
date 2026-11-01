@@ -152,7 +152,7 @@ See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV se
 See [centralized monitoring](observability/README.md) for opt-in process, system and
 stream metrics with a provisioned Prometheus/Grafana Docker Compose stack.
 
-Set `[output]` to `type = "wled"` with a DDP address and
+Set `[output]` to `type = "wled"` with its HTTP base `url` and
 `[output.leds]` layout, or `type = "egui"`. egui is a renderer
 and requires `--features desktop`:
 
@@ -183,10 +183,10 @@ web UI remains available and reports a lost connection.
 Prysm owns one TOML file with `[web]` (REST listen address and allowed hosts),
 `[input]` (including `capture_resolution` and `refresh_rate_hz`), `[output]`,
 `[processing]`, source, and revision.
-The optional `[wled]` HTTP endpoint enables WLED power/effect management for WLED
-output. Without it, start/stop controls the pipeline directly, for either renderer.
+WLED output requires `[output].url` for power/effect management and real device status.
+DDP uses the URL host on fixed UDP port 4048; an explicit URL port applies only to HTTP.
 `source = "prysm"` selects captured colors; `source = "wled"` selects WLED's
-own effects and requires WLED output with an HTTP endpoint.
+own effects and requires WLED output. egui start/stop controls the pipeline directly.
 
 REST configuration updates save this file atomically with revision checks.
 Processing changes apply live; input, resolution, and DDP settings recreate an

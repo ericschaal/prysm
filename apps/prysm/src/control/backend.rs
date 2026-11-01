@@ -99,7 +99,7 @@ impl LightingService {
     }
 
     fn has_wled_control(&self) -> bool {
-        !self.active_output.is_egui() && self.config.borrow().wled.is_some()
+        !self.active_output.is_egui()
     }
 
     pub(super) async fn switch(&self, target: Target) -> Result<()> {
@@ -128,9 +128,9 @@ impl LightingService {
     fn url(&self) -> Result<reqwest::Url> {
         self.config
             .borrow()
-            .wled
-            .as_ref()
-            .map(|wled| wled.url.clone())
+            .output
+            .wled_url()
+            .cloned()
             .context("no WLED HTTP endpoint configured")
     }
     async fn wled_status(&self) -> Result<WledStatus> {
@@ -265,7 +265,6 @@ mod tests {
         let address = available.local_addr().unwrap();
         drop(available);
         let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
-        config.wled = None;
         config.input = prysm_contract::Input::Webos {
             listen: address,
             capture_resolution: [4, 2].try_into().unwrap(),
@@ -274,13 +273,7 @@ mod tests {
         let (pipeline, mut status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
         let (_, receiver) = watch::channel(config);
         let lighting = LightingService::new(receiver, pipeline, status.clone()).unwrap();
-        lighting
-            .switch(Target {
-                power: true,
-                source: Source::Prysm,
-            })
-            .await
-            .unwrap();
+        lighting.capture(CaptureAction::Start).await.unwrap();
         for count in 1..=2 {
             let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
             tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
@@ -311,7 +304,7 @@ mod tests {
             })
             .await
             .unwrap();
-            assert!(lighting.snapshot().await.observed.unwrap().realtime);
+            assert_eq!(status.borrow().phase, PipelinePhase::Running);
             drop(tv);
             tokio::time::timeout(Duration::from_secs(2), async {
                 while status.borrow().phase != PipelinePhase::Starting {
@@ -320,64 +313,15 @@ mod tests {
             })
             .await
             .expect("disconnected input must report waiting");
-            let snapshot = lighting.snapshot().await;
-            assert!(!snapshot.observed.unwrap().realtime);
+            let snapshot = status.borrow().clone();
             assert!(
                 snapshot
-                    .pipeline
                     .error
                     .as_ref()
                     .is_some_and(|error| error.contains("waiting"))
             );
         }
         lighting.capture(CaptureAction::Stop).await.unwrap();
-        assert_eq!(
-            lighting.snapshot().await.pipeline.phase,
-            PipelinePhase::Idle
-        );
-    }
-
-    #[actix::test]
-    async fn ddp_without_http_uses_pipeline_state_and_reports_capture_failure() {
-        let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
-        config.wled = None;
-        config.input = prysm_contract::Input::File {
-            capture_resolution: [640, 360].try_into().unwrap(),
-            refresh_rate_hz: 30.try_into().unwrap(),
-            path: "/missing/prysm-ddp-test.mp4".to_owned().try_into().unwrap(),
-        };
-        config.validate().unwrap();
-        let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
-        let (_, receiver) = watch::channel(config);
-        let lighting = LightingService::new(receiver, pipeline, status).unwrap();
-        assert!(!lighting.snapshot().await.observed.unwrap().power);
-        lighting
-            .switch(Target {
-                power: false,
-                source: Source::Prysm,
-            })
-            .await
-            .unwrap();
-        let error = lighting
-            .switch(Target {
-                power: true,
-                source: Source::Prysm,
-            })
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("Cannot open video"));
-        let snapshot = lighting.snapshot().await;
-        assert_eq!(snapshot.pipeline.phase, PipelinePhase::Failed);
-        assert!(snapshot.error.is_none());
-        assert!(!snapshot.observed.unwrap().power);
-        assert!(
-            lighting
-                .switch(Target {
-                    power: true,
-                    source: Source::Wled
-                })
-                .await
-                .is_err()
-        );
+        assert_eq!(status.borrow().phase, PipelinePhase::Idle);
     }
 }
