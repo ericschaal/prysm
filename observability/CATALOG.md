@@ -116,13 +116,19 @@ instrumentation avoids clock reads. Histogram buckets span 100 μs to 5 s plus
 | FrameSender / WriteFrame | Entire header+payload write loop, including blocked waits |
 | FrameSender / WaitWritable | Each poll waiting for socket readiness, nested inside WriteFrame |
 | CaptureLoop / Iterate | Whole capture/composition/encoding/send iteration, excluding pacing sleep |
-| FrameReceiver / ReadHeader | Header read including wait for next frame |
+| FrameReceiver / ReadHeader | Wait for frame header, including idle time until the next frame arrives |
 | FrameReceiver / ReadPayload | Complete payload read, including socket wait |
 | FrameDecoder / Decompress | LZ4 decompression; compressed RGB includes only decompressor, chroma also includes decoded-buffer resize |
 | FrameDecoder / Convert | Chroma→RGB conversion, including output allocation |
 | FrameDecoder / FrameArrival | Gap between successful decoded frames; spans reconnection outages; no first-frame sample |
 | FrameProcessor / Process | Core frame processing call only |
 | WledSender / WriteDdp | DDP write only; excludes color generation, empty and rate-limited calls |
+
+Grafana separates processing durations from waiting and socket I/O. The displayed
+**Wait for frame header** legend retains the `ReadHeader` metric label for historical
+queries. Whole capture iteration totals have their own panel because they include both.
+Native capture acquisition can include driver waits; processing durations are wall time,
+not CPU time.
 
 Timings overlap: Iterate includes capture, conversion, encoding and writes;
 WaitWritable is inside WriteFrame. Never sum overlapping histograms or average

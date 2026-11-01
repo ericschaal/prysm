@@ -709,8 +709,8 @@
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Local operation duration p95",
-      "description": "Local wall time, including waits, by owning component/operation. Nested operations overlap; do not add them. FrameArrival is displayed separately. No synchronized cross-host latency.",
+      "title": "Processing duration p95",
+      "description": "Capture acquisition, composition, encoding, decoding and frame processing wall time. Native acquisition can include driver waits; these are not CPU measurements. Socket I/O and whole capture iterations are displayed separately.",
       "datasource": {
         "type": "prometheus",
         "uid": "prysm-prometheus"
@@ -724,7 +724,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation!=\"FrameArrival\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=~\"Acquire|Convert|Blend|PreparePayload|Decompress|DecodeH264|Process\"}[$__rate_interval])))",
           "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
           "instant": false,
           "format": "time_series"
@@ -757,8 +757,8 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "Local operation duration p99",
-      "description": "Local wall time, including waits, by owning component/operation. Nested operations overlap; do not add them. FrameArrival is displayed separately. No synchronized cross-host latency.",
+      "title": "Processing duration p99",
+      "description": "Capture acquisition, composition, encoding, decoding and frame processing wall time. Native acquisition can include driver waits; these are not CPU measurements. Socket I/O and whole capture iterations are displayed separately.",
       "datasource": {
         "type": "prometheus",
         "uid": "prysm-prometheus"
@@ -772,8 +772,173 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation!=\"FrameArrival\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=~\"Acquire|Convert|Blend|PreparePayload|Decompress|DecodeH264|Process\"}[$__rate_interval])))",
           "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Waiting and I/O duration p95",
+      "description": "Socket reads, writes, writable waits and connection establishment, including blocked time. Wait for frame header includes idle time until the next frame arrives. WaitWritable is nested within WriteFrame; do not add these durations.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=\"ReadHeader\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / Wait for frame header",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=~\"Connect|ReadPayload|WriteFrame|WaitWritable|WriteDdp\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Waiting and I/O duration p99",
+      "description": "Socket reads, writes, writable waits and connection establishment, including blocked time. Wait for frame header includes idle time until the next frame arrives. WaitWritable is nested within WriteFrame; do not add these durations.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=\"ReadHeader\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / Wait for frame header",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=~\"Connect|ReadPayload|WriteFrame|WaitWritable|WriteDdp\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 {{role}} \u00b7 {{component}} / {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Whole capture iteration duration",
+      "description": "Entire TV capture, composition, encoding and send iteration, excluding pacing sleep. Includes processing and socket waits, so it overlaps both categories above; do not add them.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=\"Iterate\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 p95",
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le,node,role,component,operation) (rate(prysm_operation_duration_seconds_bucket{node=~\"$node\",operation=\"Iterate\"}[$__rate_interval])))",
+          "legendFormat": "{{node}} \u00b7 p99",
           "instant": false,
           "format": "time_series"
         }
@@ -813,7 +978,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 69,
         "w": 12,
         "h": 8
       },
@@ -861,7 +1026,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 53,
+        "y": 69,
         "w": 12,
         "h": 8
       },
@@ -914,7 +1079,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 61,
+        "y": 77,
         "w": 12,
         "h": 8
       },
@@ -962,7 +1127,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 61,
+        "y": 77,
         "w": 12,
         "h": 8
       },
