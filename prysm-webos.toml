@@ -1,4 +1,4 @@
-revision = "21"
+revision = "26"
 source = "prysm"
 
 [web]
@@ -9,13 +9,13 @@ allowed_hosts = [
 ]
 
 [input]
+type = "webos"
+listen = "0.0.0.0:19400"
+refresh_rate_hz = 30
 capture_resolution = [
     640,
     360,
 ]
-refresh_rate_hz = 30
-type = "webos"
-listen = "0.0.0.0:19400"
 
 [output]
 type = "egui"
