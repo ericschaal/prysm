@@ -1,0 +1,4 @@
+{"capturing":true,"config":{"autostart":true,"compression":"h264","metrics":true,"receiver":"<local-host>:19400","source":"both"},"enabled":true,"error":null,"lastLog":"2026-11-01T15:39:19.105311Z  INFO prysm_webos_capture::native::vtcapture: video capture started width=640 height=360\n","pid":23968,"power":"Active","receiverConnected":true,"returnValue":true,"revision":52,"senderRunning":true,"stopping":false,"subscribed":false,"subscribers":0}
+
+
+STATUS_EXIT 0

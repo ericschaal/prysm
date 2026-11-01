@@ -1,0 +1,9 @@
+50b8bebdac84c55a50e9775f2f7f68812c7b5266402d22975f9600f42e30ef79  /usr/lib/gstreamer-1.0/libgstrvenc.so
+8c8e9d446fbe969599af5843963db9c89e5a61fd2881121c8a05088ae52d64b7  /usr/lib/gstreamer-1.0/libgstvideo4linux2.so
+0b10db702032c1135e83fe8cdacab196117faee6631c51b26b4207c6a1e607e3  /usr/lib/librpccore.so
+46f8f8eeadb99f0cdc7d0db3411369dc6af0f3f86e7c619cdf404d109a8dce6d  /usr/lib/libhal_venc.so.1.0.0
+0a773faa98de13309c0d8720f3cc8169438b69ccefcf5339c5287da4abef7654  /usr/lib/libgstrtkdmaheap-1.0.so.0
+87d58ca1baaeca485d1d7232e32375fe0f5d531b08dd99edeffbb19dadbb06db  /usr/lib/libgstrtkutils-1.0.so.0
+15c13748bb491d4d5a826f9024823048795e088b02155e089851209dcfd9d5e1  /usr/lib/libgstvideo-1.0.so.0
+017cc996b5846de1192096f210c68e9cf71fd6db4b7d2efcbbbff3691852e24d  /usr/lib/libgstallocators-1.0.so.0
+ea6d8b4d13c5e8d2f260178f0f47ba200f57fbf808d471a59369dbfd10d3c170  /usr/lib/libkadaptor.so

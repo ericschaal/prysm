@@ -1,0 +1,60 @@
+0:00:00.057643296 28806   0xa88580 INFO                   rvenc gstrvenc.c:127:gst_rv_enc_init:<GstRvEnc@0xac82c8> port 0 init 0xac82c8
+0:00:00.058218555 28806   0xa88580 INFO                   rvenc gstrvenc.c:164:gst_rv_enc_set_property:<rvenc0> port 0 bitrate bps 2000000 (1953 kbps)
+0:00:00.065381370 28806   0xa88580 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.066047333 28806   0xa88580 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.066475037 28806   0xa88580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.066759333 28806   0xa88580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.066988074 28806   0xa88580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 custom
+0:00:00.068245555 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 NULL_TO_READY (10)
+0:00:00.068511666 28806   0xa88580 INFO                   rvenc gstrvenc.c:199:gst_rv_enc_open:<rvenc0> port 0 open 0xac82c8
+0:00:00.068647259 28806   0xa88580 INFO                   rvenc gstrvenc.c:204:gst_rv_enc_open:<rvenc0> port 0 done
+0:00:00.068761333 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.069363037 28806   0xa88580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 scheduling
+0:00:00.069703741 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_PAUSED (19)
+0:00:00.069892592 28806   0xa88580 INFO                   rvenc gstrvenc.c:325:gst_rv_enc_start:<rvenc0> port 0 start
+0:00:00.082753592 28806   0xa88580 INFO                   rvenc gstrvenc.c:342:gst_rv_enc_start:<rvenc0> port 0 done
+0:00:00.082971592 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.083663518 28806   0xada408 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 stream-start
+0:00:00.083709629 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_PLAYING (28)
+0:00:00.083844815 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.083912185 28806   0xada408 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 allocation
+0:00:00.084091703 28806   0xada408 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 accept-caps
+0:00:00.084166926 28806   0xada408 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.084553703 28806   0xada408 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 caps
+0:00:00.084944703 28806   0xada408 INFO                   rvenc gstrvenc.c:403:gst_rv_enc_set_format:<rvenc0> port 0 caps video/x-raw(memory:DMABuf), format=(string)NV12, width=(int)640, height=(int)360, framerate=(fraction)15/1, colorimetry=(string)bt709
+0:00:00.085543222 28806   0xada408 INFO                   rvenc gstrvenc.c:415:gst_rv_enc_set_format:<rvenc0> port 0 negotiate caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, width=(int)640, height=(int)360, pixel-aspect-ratio=(fraction)1/1, framerate=(fraction)15/1, interlace-mode=(string)progressive, colorimetry=(string)bt709
+0:00:00.085888778 28806   0xada408 INFO                   rvenc gstrvenc.c:438:gst_rv_enc_set_format:<rvenc0> port 0 fps 15/3
+0:00:00.113804148 28806   0xada408 INFO                   rvenc gstrvenc.c:455:gst_rv_enc_set_format:<rvenc0> port 0 done
+0:00:00.114096778 28806   0xada408 INFO                   rvenc gstrvenc.c:761:gst_rv_enc_sink_event:<rvenc0> port 0 segment time segment start=0:00:00.000000000, offset=0:00:00.000000000, stop=99:99:99.999999999, rate=1.000000, applied_rate=1.000000, flags=0x00, time=0:00:00.000000000, base=0:00:00.000000000, position 0:00:00.000000000, duration 99:99:99.999999999
+push 0 0
+0:00:00.114247296 28806   0xada408 INFO                   rvenc gstrvenc.c:588:gst_rv_enc_handle_frame:<rvenc0> port 0 first-frame pts 0:00:00.005415926 dur 99:99:99.999999999
+0:00:00.114334555 28806   0xada408 ERROR                  rvenc gstrvenc.c:685:gst_rv_enc_handle_frame:<rvenc0> port 0 fail -1
+push 1 0
+push 2 0
+push 3 0
+push 4 0
+push 5 0
+push 6 0
+push 7 0
+push 8 0
+push 9 0
+push 10 0
+push 11 0
+push 12 0
+push 13 0
+push 14 0
+0:00:05.146322034 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PLAYING_TO_PAUSED (35)
+0:00:05.146459626 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.147446886 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_READY (26)
+0:00:05.147557515 28806   0xa88580 INFO                   rvenc gstrvenc.c:363:gst_rv_enc_stop:<rvenc0> port 0 stop
+0:00:05.185198293 28806   0xa88580 INFO                   rvenc gstrvenc.c:387:gst_rv_enc_stop:<rvenc0> port 0 stop done
+0:00:05.185518923 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.187621626 28806   0xa88580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_NULL (17)
+0:00:05.187698478 28806   0xa88580 INFO                   rvenc gstrvenc.c:215:gst_rv_enc_close:<rvenc0> port 0 close 0xac82c8
+0:00:05.187731849 28806   0xa88580 INFO                   rvenc gstrvenc.c:222:gst_rv_enc_close:<rvenc0> port 0 done
+0:00:05.187760663 28806   0xa88580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.188279663 28806   0xa88580 INFO                   rvenc gstrvenc.c:138:gst_rv_enc_finalize:<rvenc0> port 0 finalize 0xac82c8
+Traceback (most recent call last):
+  File "<stdin>", line 72, in <module>
+AssertionError: no EOS before timeout
+ENCODE_EXIT=1

@@ -1,0 +1,63 @@
+0:00:00.061475926 28913  0x12c6580 INFO                   rvenc gstrvenc.c:127:gst_rv_enc_init:<GstRvEnc@0x13062c8> port 0 init 0x13062c8
+0:00:00.062114148 28913  0x12c6580 INFO                   rvenc gstrvenc.c:164:gst_rv_enc_set_property:<rvenc0> port 0 bitrate bps 2000000 (1953 kbps)
+0:00:00.069179370 28913  0x12c6580 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.069573037 28913  0x12c6580 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.070003333 28913  0x12c6580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.070552778 28913  0x12c6580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.070894963 28913  0x12c6580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 custom
+0:00:00.072741333 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 NULL_TO_READY (10)
+0:00:00.072805111 28913  0x12c6580 INFO                   rvenc gstrvenc.c:199:gst_rv_enc_open:<rvenc0> port 0 open 0x13062c8
+0:00:00.072835815 28913  0x12c6580 INFO                   rvenc gstrvenc.c:204:gst_rv_enc_open:<rvenc0> port 0 done
+0:00:00.072862963 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.073280778 28913  0x12c6580 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 scheduling
+0:00:00.073470111 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_PAUSED (19)
+0:00:00.073532037 28913  0x12c6580 INFO                   rvenc gstrvenc.c:325:gst_rv_enc_start:<rvenc0> port 0 start
+0:00:00.079796074 28913  0x12c6580 INFO                   rvenc gstrvenc.c:342:gst_rv_enc_start:<rvenc0> port 0 done
+0:00:00.079991000 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.080719111 28913  0x1319808 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 stream-start
+0:00:00.080802222 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_PLAYING (28)
+0:00:00.080877259 28913  0x1319808 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 allocation
+0:00:00.080932889 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.081143259 28913  0x1319808 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 accept-caps
+0:00:00.081277630 28913  0x1319808 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.081580185 28913  0x1319808 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 caps
+0:00:00.081769037 28913  0x1319808 INFO                   rvenc gstrvenc.c:403:gst_rv_enc_set_format:<rvenc0> port 0 caps video/x-raw(memory:DMABuf), format=(string)NV12, width=(int)640, height=(int)384, framerate=(fraction)15/1, colorimetry=(string)bt709
+0:00:00.082475222 28913  0x1319808 INFO                   rvenc gstrvenc.c:415:gst_rv_enc_set_format:<rvenc0> port 0 negotiate caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, width=(int)640, height=(int)384, pixel-aspect-ratio=(fraction)1/1, framerate=(fraction)15/1, interlace-mode=(string)progressive, colorimetry=(string)bt709
+0:00:00.082615407 28913  0x1319808 INFO                   rvenc gstrvenc.c:438:gst_rv_enc_set_format:<rvenc0> port 0 fps 15/3
+0:00:00.093091704 28913  0x1319808 INFO                   rvenc gstrvenc.c:455:gst_rv_enc_set_format:<rvenc0> port 0 done
+0:00:00.093351889 28913  0x1319808 INFO                   rvenc gstrvenc.c:761:gst_rv_enc_sink_event:<rvenc0> port 0 segment time segment start=0:00:00.000000000, offset=0:00:00.000000000, stop=99:99:99.999999999, rate=1.000000, applied_rate=1.000000, flags=0x00, time=0:00:00.000000000, base=0:00:00.000000000, position 0:00:00.000000000, duration 99:99:99.999999999
+0:00:00.093517667 28913  0x1319808 INFO                   rvenc gstrvenc.c:588:gst_rv_enc_handle_frame:<rvenc0> port 0 first-frame pts 0:00:00.003623371 dur 99:99:99.999999999
+0:00:00.093613815 28913  0x1319808 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 245760 reset-gop 0
+push 0 0
+0:00:00.093637148 28913  0x1319808 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x384 pitch 640 fd 24
+0:00:00.093652259 28913  0x1319808 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x192 pitch 640 fd 24
+0:00:00.093676630 28913  0x1319808 ERROR                  rvenc gstrvenc.c:685:gst_rv_enc_handle_frame:<rvenc0> port 0 fail -1
+push 1 0
+push 2 0
+push 3 0
+push 4 0
+push 5 0
+push 6 0
+push 7 0
+push 8 0
+push 9 0
+push 10 0
+push 11 0
+push 12 0
+push 13 0
+push 14 0
+0:00:05.128530516 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PLAYING_TO_PAUSED (35)
+0:00:05.128668034 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.129581738 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_READY (26)
+0:00:05.129690071 28913  0x12c6580 INFO                   rvenc gstrvenc.c:363:gst_rv_enc_stop:<rvenc0> port 0 stop
+0:00:05.169556145 28913  0x12c6580 INFO                   rvenc gstrvenc.c:387:gst_rv_enc_stop:<rvenc0> port 0 stop done
+0:00:05.169982182 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.171958441 28913  0x12c6580 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_NULL (17)
+0:00:05.172030923 28913  0x12c6580 INFO                   rvenc gstrvenc.c:215:gst_rv_enc_close:<rvenc0> port 0 close 0x13062c8
+0:00:05.172065590 28913  0x12c6580 INFO                   rvenc gstrvenc.c:222:gst_rv_enc_close:<rvenc0> port 0 done
+0:00:05.172140034 28913  0x12c6580 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:05.172725738 28913  0x12c6580 INFO                   rvenc gstrvenc.c:138:gst_rv_enc_finalize:<rvenc0> port 0 finalize 0x13062c8
+Traceback (most recent call last):
+  File "<stdin>", line 72, in <module>
+AssertionError: no EOS before timeout
+ENCODE_EXIT=1
