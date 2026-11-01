@@ -36,6 +36,12 @@ Bypassing gamma drives LEDs with sRGB values as raw brightness, lifting dark
 channels and making dark blues look cyan or washed out. Gamma correction belongs
 in WLED; do not add a second correction in Prysm.
 
+Use a gamma near **2.2** as a nominal starting point for sRGB input, then
+calibrate against your LEDs and wall. A steeper curve such as 2.8 preserves
+maximum white but substantially darkens shadows and midtones: an input channel
+of 128 becomes drive 37 at 2.8, versus 56 at 2.2 (exact sRGB decoding gives 55).
+See the [HDR and brightness investigation](../../../research/webos-capture/2026-11-01-hdr-brightness/README.md).
+
 Edit [`prysm.toml`](../../../prysm.toml) and run from the workspace root:
 
 ```sh
