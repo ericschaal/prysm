@@ -1,0 +1,5 @@
+GUM attach kind=4 result=0
+GUM smoke passed
+GUM attach kind=1 result=0
+GUM attach kind=2 result=0
+GUM attach kind=3 result=-1

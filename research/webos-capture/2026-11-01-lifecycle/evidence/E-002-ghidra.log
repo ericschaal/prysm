@@ -1,0 +1,198 @@
+2026-11-01 11:05:49 INFO  (LoggingInitialization) Using log config file: jar:file:/opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml  
+2026-11-01 11:05:49 INFO  (LoggingInitialization) Using log file: /tmp/prysm-reverse/work/vt-lifecycle/evidence/E-002-ghidra.log  
+2026-11-01 11:05:49 DEBUG (GhidraObjectInputFilter) Including serial input filter: FileSystem/data/client.rmi.serial.filter  
+2026-11-01 11:05:49 INFO  (Preferences) Loading user preferences: /tmp/prysm-reverse/java-home/Library/ghidra/ghidra_12.2_PUBLIC/preferences  
+2026-11-01 11:05:49 INFO  (ClassSearcher) Searching for classes...  
+2026-11-01 11:05:49 INFO  (ClassSearcher) Class search complete (480 ms)  
+2026-11-01 11:05:49 INFO  (DefaultSSLContextInitializer) Initializing SSL Context  
+2026-11-01 11:05:49 INFO  (SecureRandomFactory) Initializing Random Number Generator...  
+2026-11-01 11:05:49 INFO  (SecureRandomFactory) Random Number Generator initialization complete: NativePRNGNonBlocking  
+2026-11-01 11:05:49 WARN  (DefaultTrustManagerFactory) OS Truststore load failed: X509 trusted CA certificates not found  
+2026-11-01 11:05:50 INFO  (DefaultTrustManagerFactory) Loaded 106 trusted CA certificates from the Java default trust store.  
+2026-11-01 11:05:50 INFO  (FileCacheMaintenanceDaemon) Starting cache cleanup: /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/fscache2  
+2026-11-01 11:05:50 INFO  (FileCacheMaintenanceDaemon) Finished cache cleanup, estimated storage used: 0  
+2026-11-01 11:05:50 INFO  (AnalyzeHeadless) Headless startup complete (925 ms)  
+2026-11-01 11:05:50 INFO  (ClassSearcher) Class searcher loaded 60 extension points (19 false positives)  
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer) HEADLESS Script Paths:
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/WildcardAssembler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Decompiler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/SystemEmulation/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/FunctionID/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/FileFormats/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/8051/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/VersionTracking/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Debug/Debugger-rmi-trace/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/BSim/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/DecompilerDependent/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/Atmel/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Swift/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/DATA/ghidra_scripts
+    /tmp/prysm-reverse/scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Debug/Debugger/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/JVM/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/PIC/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/GnuDemangler/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/PDB/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/BytePatterns/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/PyGhidra/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Base/ghidra_scripts
+    /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/MicrosoftCodeAnalyzer/ghidra_scripts  
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer) HEADLESS: execution starts  
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer) Creating project: /tmp/prysm-reverse/projects/lifecycle  
+2026-11-01 11:05:50 DEBUG (DefaultProjectManager) No tools found; Installing default tools  
+2026-11-01 11:05:50 DEBUG (DefaultProjectManager) 	no recent project directories found  
+2026-11-01 11:05:50 INFO  (DefaultProject) Creating project: /tmp/prysm-reverse/projects/lifecycle  
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer) REPORT: Processing input files:   
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer)      project: /tmp/prysm-reverse/projects/lifecycle  
+2026-11-01 11:05:50 INFO  (HeadlessAnalyzer) IMPORTING: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0  
+2026-11-01 11:05:50 DEBUG (SleighLanguage) Took 88ms (0ms inside lock) to initialize language /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/ARM/data/languages/ARM8_le.slaspec -> /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/ARM/data/languages/ARM8_le.sla  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf symbol table section .dynsym linked to string table section .dynstr  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf relocation table section .rel.dyn linked to symbol table section .dynsym affecting PT_LOAD  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf relocation table section .rel.plt linked to symbol table section .dynsym affecting .got  
+2026-11-01 11:05:50 INFO  (ProgramLoader) Using Loader: Executable and Linking Format (ELF)  
+2026-11-01 11:05:50 INFO  (ProgramLoader) Using Language/Compiler: ARM:LE:32:v8:default  
+2026-11-01 11:05:50 INFO  (ProgramLoader) Using Library Search Path: [., /System/Library/dyld/dyld_shared_cache_arm64e, /System/Library/dyld/dyld_shared_cache_x86_64, /System/Library/dyld/dyld_shared_cache_x86_64h, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64, /System/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h, /Users/eschaal/Library/Java/Extensions, /Library/Java/Extensions, /Network/Library/Java/Extensions, /System/Library/Java/Extensions, /usr/lib/java]  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf symbol table section .dynsym linked to string table section .dynstr  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf relocation table section .rel.dyn linked to symbol table section .dynsym affecting PT_LOAD  
+2026-11-01 11:05:50 DEBUG (ElfHeader) Elf relocation table section .rel.plt linked to symbol table section .dynsym affecting .got  
+2026-11-01 11:05:50 DEBUG (ElfProgramBuilder) Discarding 1-byte alignment/filler segment_1.6 at 00017b1f  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040548 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 0004058c (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000405ac (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000405ec (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 0004060c (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040658 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040660 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040668 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040670 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040678 (External Location = _ZTVN10__cxxabiv117__class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040568 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040594 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000405a0 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000405f4 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040600 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040634 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040680 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 0004068c (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040718 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040724 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040730 (External Location = _ZTVN10__cxxabiv120__si_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040650 (External Location = _ZTVN10__cxxabiv120__function_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040918 (External Location = _ZTVN10__cxxabiv120__function_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040698 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000406b8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000406d8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 000406f8 (External Location = _ZTVN10__cxxabiv121__vmi_class_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 0004073c (External Location = _ZTVN10__cxxabiv119__pointer_type_infoE+0x8)  
+2026-11-01 11:05:50 WARN  (ElfRelocationHandler) EXTERNAL Data ELF Relocation with offset: at 00040920 (External Location = _ZTVN10__cxxabiv119__pointer_type_infoE+0x8)  
+2026-11-01 11:05:51 INFO  (ProgramLoader) Additional info:
+Loading file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0?MD5=35d3fec665b861e80af7fa61df8302ab...
+Setting block .init_array to read-only
+Setting block .fini_array to read-only
+Setting block .data.rel.ro to read-only
+Setting block .dynamic to read-only
+------------------------------------------------
+
+Linking the External Programs of 'libvtcapture.so.1.0.0' to imported libraries...
+  [libresource_mgr_client.so.1] -> not found in project
+  [libglib-2.0.so.0] -> not found in project
+  [libstdc++.so.6] -> not found in project
+  [libgcc_s.so.1] -> not found in project
+  [libc.so.6] -> not found in project
+------------------------------------------------
+
+Resolving External Symbols of [/libvtcapture.so.1.0.0] - 185 unresolved symbols, no external libraries configured - skipping
+  
+2026-11-01 11:05:51 INFO  (HeadlessAnalyzer) IMPORTING: Loaded 0 additional files  
+2026-11-01 11:05:51 INFO  (HeadlessAnalyzer) ANALYZING all memory and code: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0  
+2026-11-01 11:05:51 INFO  (ExternalDebugFileSectionProvider) DWARF external debug information found: [BuildIdDebugInfo [buildId=[-40, 53, 56, 73, 42, 79, -70, -96, -65, -108, -103, -15, 15, 0, 85, 78, 111, -47, -64, -70], objectType=DEBUGINFO, ], DebugLinkDebugInfo [filename=libvtcapture.so.1.0.0, crc=-52683234]]  
+2026-11-01 11:05:51 DEBUG (LocalDirDebugInfoDProvider) Finished cache cleanup of debug files in /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/debuginfo-cache, deleted 0 files, 0 total bytes  
+2026-11-01 11:05:51 INFO  (SameDirDebugInfoProvider) DWARF external debug file found with mismatching crc, ignored: /private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0, (8f914fee)  
+2026-11-01 11:05:51 INFO  (DWARFAnalyzer) Unable to find DWARF information, skipping DWARF analysis  
+2026-11-01 11:05:51 WARN  (ClearFlowAndRepairCmd) WARNING! Repairing body of function at 0001dbdc  
+2026-11-01 11:05:51 WARN  (ClearFlowAndRepairCmd) WARNING! Repairing body of function at 00020c00  
+2026-11-01 11:05:52 WARN  (DecompileCallback) Decompiling 0001a8dc, pcode error at 0004231c: Unable to disassemble EXTERNAL block location: 0004231c  
+2026-11-01 11:05:52 WARN  (DecompileCallback) Decompiling 0001a8b0, pcode error at 000422dc: Unable to disassemble EXTERNAL block location: 000422dc  
+2026-11-01 11:05:55 DEBUG (FidAnalyzer) No FID Libraries apply for language ARM:LE:32:v8  
+2026-11-01 11:05:55 INFO  (PackedDatabaseCache) Packed database cache: /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/packed-db-cache  
+2026-11-01 11:05:55 DEBUG (PackedDatabaseCache) Caching packed database: /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Base/data/typeinfo/generic/generic_clib.gdt  
+2026-11-01 11:05:55 DEBUG (PackedDatabase) Unpacking database /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Base/data/typeinfo/generic/generic_clib.gdt -> /var/folders/z1/zbk4h6vs23v3_wdm05s1ytt00000gn/T/eschaal-ghidra/packed-db-cache/pdb284FAB02/db.1.gbf  
+2026-11-01 11:05:55 DEBUG (PackedDatabaseCache) Cache update completed: /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Features/Base/data/typeinfo/generic/generic_clib.gdt  
+2026-11-01 11:05:55 DEBUG (SleighLanguage) Took 55ms (0ms inside lock) to initialize language /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/x86/data/languages/x86.slaspec -> /opt/homebrew/Cellar/ghidra/12.2/libexec/Ghidra/Processors/x86/data/languages/x86.sla  
+2026-11-01 11:05:55 INFO  (ApplyDataArchiveAnalyzer) Applied data type archive: generic_clib  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042034: std::ios::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042044: pbnjson::JValue::typeinfo  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042074: std::__cxx11::stringstream::VTT  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000420e8: std::streambuf::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042108: __cxxabiv1::__class_type_info::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042190: std::bad_exception::typeinfo  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000421a4: std::__cxx11::ostringstream::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000421a8: std::ifstream::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000421b8: std::__cxx11::stringstream::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000421dc: pbnjson::JSchema::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000421e0: std::__cxx11::ostringstream::VTT  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042210: __cxxabiv1::__pointer_type_info::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042224: std::bad_alloc::typeinfo  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 0004222c: __cxxabiv1::__si_class_type_info::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042274: std::filebuf::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 0004228c: __cxxabiv1::__function_type_info::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 000422d8: __cxxabiv1::__vmi_class_type_info::vtable  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042304: std::exception::typeinfo  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 0004232c: std::ifstream::VTT  
+2026-11-01 11:05:55 WARN  (DemangledAddressTable) Unable to fully apply external demangled Address Table at 00042338: std::__cxx11::stringbuf::vtable  
+2026-11-01 11:05:59 INFO  (AutoAnalysisManager) -----------------------------------------------------
+    ARM Constant Reference Analyzer            0.456 secs
+    ARM Symbol                                 0.001 secs
+    ASCII Strings                              0.118 secs
+    Apply Data Archives                        0.157 secs
+    Call Convention ID                         1.026 secs
+    Call-Fixup Installer                       0.018 secs
+    Create Address Tables                      0.035 secs
+    Create Address Tables - One Time           0.012 secs
+    Create Function                            0.101 secs
+    DWARF                                      0.004 secs
+    Data Reference                             0.466 secs
+    Decompiler Switch Analysis                 2.018 secs
+    Demangler GNU                              0.353 secs
+    Disassemble                                0.041 secs
+    Disassemble Entry Points                   0.621 secs
+    Embedded Media                             0.002 secs
+    External Entry References                  0.001 secs
+    Function ID                                0.018 secs
+    Function Start Pre Search                  0.007 secs
+    Function Start Search                      0.061 secs
+    Function Start Search After Code           0.013 secs
+    Function Start Search After Data           0.020 secs
+    Function Start Search delayed - One Time   0.003 secs
+    GCC Exception Handlers                     0.003 secs
+    Non-Returning Functions - Discovered       0.086 secs
+    Non-Returning Functions - Known            0.002 secs
+    Reference                                  0.579 secs
+    Shared Return Calls                        0.023 secs
+    Source Language Support                    0.002 secs
+    Stack                                      0.208 secs
+    Subroutine References                      0.065 secs
+    Subroutine References - One Time           0.000 secs
+    Variadic Function Signature Override       1.315 secs
+-----------------------------------------------------
+     Total Time   7 secs
+-----------------------------------------------------
+  
+2026-11-01 11:05:59 INFO  (HeadlessAnalyzer) REPORT: Analysis succeeded for file: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0  
+2026-11-01 11:05:59 INFO  (HeadlessAnalyzer) REPORT: Execute script: ExportLifecycle.java '/tmp/prysm-reverse/work/vt-lifecycle/evidence/E-002-vt-decompiled.c'   
+2026-11-01 11:05:59 INFO  (HeadlessAnalyzer) SCRIPT: /tmp/prysm-reverse/scripts/ExportLifecycle.java  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042004, pcode error at 00042004: Unable to disassemble EXTERNAL block location: 00042004  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042160, pcode error at 00042160: Unable to disassemble EXTERNAL block location: 00042160  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042164, pcode error at 00042164: Unable to disassemble EXTERNAL block location: 00042164  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042168, pcode error at 00042168: Unable to disassemble EXTERNAL block location: 00042168  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042170, pcode error at 00042170: Unable to disassemble EXTERNAL block location: 00042170  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 00042198, pcode error at 00042198: Unable to disassemble EXTERNAL block location: 00042198  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 000421b0, pcode error at 000421b0: Unable to disassemble EXTERNAL block location: 000421b0  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 0004224c, pcode error at 0004224c: Unable to disassemble EXTERNAL block location: 0004224c  
+2026-11-01 11:06:00 WARN  (DecompileCallback) Decompiling 000422b0, pcode error at 000422b0: Unable to disassemble EXTERNAL block location: 000422b0  
+2026-11-01 11:06:00 INFO  (GhidraScript) ExportLifecycle.java> Lifecycle export: 176 functions, 0 failures  
+2026-11-01 11:06:00 INFO  (HeadlessAnalyzer) ANALYZING changes made by post scripts: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0  
+2026-11-01 11:06:00 INFO  (HeadlessAnalyzer) REPORT: Post-analysis succeeded for file: file:///private/tmp/prysm-cleanup-evidence/libvtcapture.so.1.0.0  
+2026-11-01 11:06:00 INFO  (LocalFileSystem) /libvtcapture.so.1.0.0: file created (eschaal)  
+2026-11-01 11:06:00 INFO  (HeadlessAnalyzer) REPORT: Save succeeded for: /libvtcapture.so.1.0.0 (lifecycle:/libvtcapture.so.1.0.0)  
+2026-11-01 11:06:00 INFO  (HeadlessAnalyzer) REPORT: Import succeeded  

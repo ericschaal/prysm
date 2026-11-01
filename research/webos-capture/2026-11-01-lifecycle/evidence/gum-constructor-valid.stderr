@@ -1,0 +1,55 @@
+WATCHDOG timed out pid=30139
+/proc/30139/task/30139/comm probe
+
+/proc/30139/task/30139/wchan futex_wait_queue_me
+/proc/30139/task/30139/syscall 240 0xf60ff3e8 0x109 0x75be 0x0 0x0 0xffffffff 0xff818ae8 0xf7a41ca6
+
+/proc/30139/task/30139/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/30139/task/30140/comm probe
+
+/proc/30139/task/30140/wchan do_sys_poll
+/proc/30139/task/30140/syscall 168 0xf6b01a58 0x3 0xffffffff 0x0 0xffffffff 0x3 0xf74ce910 0xf7a41ca6
+
+/proc/30139/task/30140/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/30139/task/30141/comm probe
+
+/proc/30139/task/30141/wchan do_sys_poll
+/proc/30139/task/30141/syscall 168 0xf61081c8 0x2 0xffffffff 0x0 0xffffffff 0x2 0xf6afec48 0xf7a41ca6
+
+/proc/30139/task/30141/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/30139/task/30142/comm probe
+
+/proc/30139/task/30142/wchan 0
+/proc/30139/task/30142/syscall running
+
+/proc/30139/task/30142/stack [<0>] __switch_to+0xf0/0x158
+[<0>] __rseq_handle_notify_resume+0x98/0x474
+[<0>] do_notify_resume+0x330/0xde0
+[<0>] work_pending+0x8/0x10
+
+GUM attach kind=4 result=0
+GUM smoke passed
+GUM attach kind=1 result=0
+GUM attach kind=2 result=0
+GUM attach kind=3 result=0
+GUM register 0xfa50e0
