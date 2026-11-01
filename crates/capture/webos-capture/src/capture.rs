@@ -176,24 +176,19 @@ impl Capture {
             match result {
                 Ok(true) => {
                     prysm_metrics::frame(FrameStage::UiCaptured, (&self.bgra).into());
-                    let content = if video.is_some() {
-                        Content::Blended
-                    } else {
-                        Content::Ui
-                    };
                     let composed = self.composition.compose(
                         width,
                         height,
                         video.map(|header| (header, self.native.as_slice())),
                         &self.bgra,
                     )?;
-                    if content == Content::Blended {
+                    if composed.content == Content::Blended {
                         prysm_metrics::frame(FrameStage::Composited, composed.header.format.into());
                     }
                     return Ok(Some(CapturedFrame {
                         header: composed.header,
                         pixels: composed.pixels,
-                        content,
+                        content: composed.content,
                     }));
                 }
                 Err(error) if Instant::now() >= self.ui_warning => {

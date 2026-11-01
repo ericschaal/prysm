@@ -670,9 +670,11 @@ mod tests {
             let header = Header::decode(&header).unwrap();
             let mut pixels = vec![0; header.payload_len];
             socket.read_exact(&mut pixels).unwrap();
+            let mut rgb = Vec::new();
+            crate::pixels::to_rgb(header, &pixels, &mut rgb).unwrap();
             assert!(
-                pixels.iter().all(|value| value.abs_diff(expected) <= 1),
-                "expected UI-only black while waiting, then white video; got {pixels:?}"
+                rgb.iter().all(|value| value.abs_diff(expected) <= 1),
+                "expected UI-only black while waiting, then white video; got {rgb:?}"
             );
         }
         assert_eq!(driver.pending_polls, 0);

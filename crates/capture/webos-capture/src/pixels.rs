@@ -1,5 +1,5 @@
 use anyhow::{Result, ensure};
-use prysm_metrics::Stage;
+use prysm_metrics::{Content, Stage};
 use prysm_webos_protocol::{Header, PixelFormat};
 use yuv::{YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
@@ -12,24 +12,46 @@ pub struct CompositionBuffer {
 pub struct ComposedFrame<'a> {
     pub header: Header,
     pub pixels: &'a [u8],
+    pub content: Content,
 }
 
 impl CompositionBuffer {
-    pub fn compose(
-        &mut self,
+    pub fn compose<'a>(
+        &'a mut self,
         width: u32,
         height: u32,
-        video: Option<(Header, &[u8])>,
+        video: Option<(Header, &'a [u8])>,
         ui: &Bgra8Pixels,
-    ) -> Result<ComposedFrame<'_>> {
+    ) -> Result<ComposedFrame<'a>> {
         let output_header = header(width, height, PixelFormat::Rgb)?;
+        ensure!(
+            ui.bytes.len() == output_header.raw_len()? / 3 * 4,
+            "UI and video dimensions differ"
+        );
+        if let Some((video_header, pixels)) = video {
+            ensure!(
+                video_header.width == width
+                    && video_header.height == height
+                    && pixels.len() == video_header.raw_len()?,
+                "invalid video plane"
+            );
+            if ui
+                .bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel[3] == 0)
+            {
+                return Ok(ComposedFrame {
+                    header: video_header,
+                    pixels,
+                    content: Content::Video,
+                });
+            }
+        }
         {
             let _time = prysm_metrics::timer(Stage::CompositionConvert);
             if let Some((video_header, pixels)) = video {
-                ensure!(
-                    video_header.width == width && video_header.height == height,
-                    "UI and video dimensions differ"
-                );
                 to_rgb(video_header, pixels, &mut self.rgb)?;
             } else {
                 ui.to_rgb(width, height, &mut self.rgb)?;
@@ -42,6 +64,11 @@ impl CompositionBuffer {
         Ok(ComposedFrame {
             header: output_header,
             pixels: &self.rgb,
+            content: if video.is_some() {
+                Content::Blended
+            } else {
+                Content::Ui
+            },
         })
     }
 }
@@ -188,6 +215,89 @@ mod tests {
     }
 
     #[test]
+    fn transparent_ui_preserves_native_video_and_visible_pixels_restore_composition() {
+        for format in [PixelFormat::Nv12, PixelFormat::Nv16, PixelFormat::Rgb] {
+            let video_header = header(4, 2, format).unwrap();
+            let mut video = vec![96; video_header.raw_len().unwrap()];
+            if format != PixelFormat::Rgb {
+                video[8..].fill(128);
+            }
+            let mut ui = Bgra8Pixels::default();
+            *ui.bytes_mut() = vec![0; 4 * 2 * 4];
+            let mut buffer = CompositionBuffer::default();
+            let frame = buffer
+                .compose(4, 2, Some((video_header, &video)), &ui)
+                .unwrap();
+            assert_eq!(frame.header.format, format);
+            assert_eq!(frame.content, Content::Video);
+            assert_eq!(frame.pixels, video);
+            assert_eq!(frame.pixels.as_ptr(), video.as_ptr());
+
+            // Even the last pixel with minimal alpha must take the composition path.
+            ui.bytes_mut()[28..].copy_from_slice(&[0, 0, 1, 1]);
+            let frame = buffer
+                .compose(4, 2, Some((video_header, &video)), &ui)
+                .unwrap();
+            assert_eq!(frame.header.format, PixelFormat::Rgb);
+            assert_ne!(frame.pixels.as_ptr(), video.as_ptr());
+            assert_eq!(frame.content, Content::Blended);
+            ui.bytes_mut()[28..].copy_from_slice(&[0, 0, 255, 255]);
+            let frame = buffer
+                .compose(4, 2, Some((video_header, &video)), &ui)
+                .unwrap();
+            assert_eq!(&frame.pixels[21..], &[255, 0, 0]);
+
+            ui.bytes_mut().fill(0);
+            let frame = buffer
+                .compose(4, 2, Some((video_header, &video)), &ui)
+                .unwrap();
+            assert_eq!(frame.header.format, format);
+            assert_eq!(frame.pixels.as_ptr(), video.as_ptr());
+            let frame = buffer.compose(4, 2, None, &ui).unwrap();
+            assert_eq!(frame.header.format, PixelFormat::Rgb);
+            assert_eq!(frame.pixels, [0; 24]);
+            assert_eq!(frame.content, Content::Ui);
+        }
+    }
+
+    #[test]
+    fn ui_transitions_keep_software_h264_references_and_colors() {
+        use crate::encoder::{Encoder, H264_BITRATE};
+        use prysm_webos_protocol::{Compression, h264};
+        for format in [PixelFormat::Nv12, PixelFormat::Nv16] {
+            let video_header = header(64, 32, format).unwrap();
+            let mut video = vec![96; video_header.raw_len().unwrap()];
+            video[64 * 32..].fill(128);
+            let mut ui = Bgra8Pixels::default();
+            let mut buffer = CompositionBuffer::default();
+            let mut encoder = Encoder::new(Compression::H264Software, 30, H264_BITRATE).unwrap();
+            let mut decoder = h264::Decoder::new().unwrap();
+            for (alpha, expected) in [
+                (0, [93, 93, 93]),
+                (255, [255, 0, 0]),
+                (128, [174, 46, 46]),
+                (0, [93, 93, 93]),
+            ] {
+                *ui.bytes_mut() = [0, 0, alpha, alpha].repeat(64 * 32);
+                let frame = buffer
+                    .compose(64, 32, Some((video_header, &video)), &ui)
+                    .unwrap();
+                let packet = encoder
+                    .encode(frame.header, frame.pixels, frame.content)
+                    .unwrap()
+                    .unwrap();
+                let rgb = decoder.decode(packet.header, packet.pixels).unwrap();
+                assert!(rgb.as_chunks::<3>().0.iter().all(|pixel| {
+                    pixel
+                        .iter()
+                        .zip(expected)
+                        .all(|(value, expected)| value.abs_diff(expected) <= 8)
+                }));
+            }
+        }
+    }
+
+    #[test]
     fn composition_rejects_invalid_geometry_and_short_planes() {
         let mut buffer = CompositionBuffer::default();
         let mut ui = Bgra8Pixels::default();
@@ -211,6 +321,17 @@ mod tests {
                     2,
                     2,
                     Some((header(2, 2, PixelFormat::Rgb).unwrap(), &[0; 3])),
+                    &ui
+                )
+                .is_err()
+        );
+        ui.bytes_mut().pop();
+        assert!(
+            buffer
+                .compose(
+                    2,
+                    2,
+                    Some((header(2, 2, PixelFormat::Nv12).unwrap(), &[0; 6])),
                     &ui
                 )
                 .is_err()

@@ -1,5 +1,20 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.19 passes native video directly to the encoder whenever the UI is
+fully transparent. Visible UI still uses RGB composition, with capture checked
+every frame. Deployed with hardware support included; the active settings remain
+software H.264, both layers, metrics and autostart enabled. All 21 installed files
+match the IPK and the receiver reconnected normally.
+
+On the project TV at 640×360/30 FPS, a 20-second live sample with fully transparent
+UI averaged 30.1 ms per iteration (90% of the 33.3 ms budget), compared with the
+39.1 ms pre-deployment sample (117%). Capture achieved 29.6 FPS; output was 28 FPS
+because the unchanged 2 Mbit/s encoder rate control skipped some frames. This is
+a short measurement of current content, not a sustained benchmark. Seven pixel
+and H.264 transition/color tests also passed directly on the TV.
+[Deployment evidence](../../work/webos-transparent-ui/deployment/evidence/deployment.json)
+and [timing sample](../../work/webos-transparent-ui/after-measurement.json).
+
 Version 0.1.18 deploys the Rust GStreamer bindings with `--hardware-h264` on the
 project TV. All 21 installed package files match the IPK, and the restarted
 service reports `capabilities.hardwareH264: true`. Saved settings were preserved;
@@ -99,7 +114,7 @@ GStreamer/GLib libraries are supplied by the TV and dynamically linked, not copi
 into the package.
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.18_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.19_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -111,12 +126,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.18_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.19_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.18_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.19_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This

@@ -119,8 +119,11 @@ configuration. Hardware remains an explicit choice after the earlier native
 binding implementation showed higher CPU use and an extra frame of latency.
 See [hardware integration and measurements](HARDWARE-H264.md).
 
-Video-only capture packs native NV12/NV16 without RGB conversion. UI composition
-produces RGB. All paths use reusable buffers and checked, tightly packed planes;
+Video-only capture packs native NV12/NV16 without RGB conversion. Combined capture
+also passes native video directly to the encoder when every UI pixel has zero
+alpha. Any visible UI pixel restores RGB composition for that frame; UI capture
+continues every iteration so menus and subtitles appear immediately. All paths
+use reusable buffers and checked, tightly packed planes;
 failed acquisition never publishes stale pixels.
 
 LZ4 compresses each frame independently and sends raw data when compression grows
