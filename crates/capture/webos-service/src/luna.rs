@@ -5,7 +5,10 @@
 //! reference to it. Sources and Luna are removed before that allocation is freed.
 //! The safe entry point has no caller-side memory-safety preconditions; these
 //! native invariants are the wrapper's responsibility, never its caller's.
-use crate::status::{Status, subscription_request};
+use crate::{
+    application::AppRequest,
+    status::{Status, subscription_request},
+};
 use anyhow::{Context as _, Result, anyhow, ensure};
 use prysm_webos_protocol::worker::VideoAvailability;
 use serde_json::{Value, json};
@@ -287,12 +290,14 @@ impl Callbacks {
                 })
         } else {
             (|| {
-                let value = message.payload()?;
                 let sender = message.sender()?;
                 let mut app = self.app.borrow_mut();
-                app.as_mut()
-                    .context("Supervisor is disabled in read-only probe mode")?
-                    .request(&method, value, &sender, Instant::now())
+                let app = app
+                    .as_mut()
+                    .context("Supervisor is disabled in read-only probe mode")?;
+                app.authorize(&sender)?;
+                let request = app_request(&method, message.payload()?)?;
+                app.request(request, Instant::now())
             })()
         };
         let changed = method != "status" && result.is_ok();
@@ -519,6 +524,16 @@ impl Callbacks {
         }
 
         Ok(())
+    }
+}
+
+fn app_request(method: &str, value: Value) -> Result<AppRequest> {
+    match method {
+        "start" => Ok(AppRequest::Start),
+        "stop" => Ok(AppRequest::Stop),
+        "setConfig" => Ok(AppRequest::SetConfig(serde_json::from_value(value)?)),
+        "cleanup" => Ok(AppRequest::Cleanup),
+        _ => anyhow::bail!("Unknown service method"),
     }
 }
 

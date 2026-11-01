@@ -1,5 +1,24 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.15 adds a saved **Prometheus metrics** checkbox, defaulting off for
+new and older configurations. Deployed on 2026-11-01; toggling on/off/on changed
+the actual TV endpoint, restarted the worker, persisted the setting, and resumed
+capture each time. Metrics were left enabled for Grafana; other settings were preserved.
+[Deployment evidence](../../research/webos-capture/2026-11-01-readiness/validation-0.1.15-metrics-toggle.json).
+
+Version 0.1.14 restores the supervised worker’s Prometheus exporter on port 9101.
+It was deployed on 2026-11-01 with both binary hashes verified, settings preserved,
+and capture progressing. Both monitoring targets were UP; the reloaded Grafana
+dashboard matched the repository and both encoder panels returned live TV data.
+[Deployment evidence](../../research/webos-capture/2026-11-01-readiness/validation-0.1.14-metrics.json).
+
+Version 0.1.13 makes the capturer worker-only. It was deployed on 2026-11-01;
+both installed binaries matched the ARM build. The worker ran without arguments
+using the supervisor's typed startup environment, and receiver frames advanced
+with no service error. Saved configuration, enabled state, boot hook, and
+permission mounts were preserved. The receiver wire protocol remains unchanged.
+[Deployment evidence](../../research/webos-capture/2026-11-01-readiness/validation-0.1.13-worker-only.json).
+
 Version 0.1.12 shares typed configuration and worker IPC between the native
 processes and centralizes the wire version. It was deployed on 2026-11-01 with
 saved settings, enabled state, boot hook, and permission mounts preserved.
@@ -38,7 +57,7 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
 ```
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.12_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.15_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -50,12 +69,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.12_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.15_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.12_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.15_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This
@@ -72,11 +91,14 @@ Stop any manually launched Prysm capturer or PicCap before the first run. Open
    supervisor/capture permissions, and activate the native service.
 2. Open **Prysm receiver** with OK, enter the IP and port, and choose **Use this
    address**. Open Capture or Compression to choose their values, then **Save changes**.
-   The initial choices are both layers and LZ4. Hardware-specific CLI flags remain
-   available in the standalone capturer; this setup app uses automatic backends.
+   The initial choices are both layers and LZ4. The worker uses automatic native
+   backends and the tested display capture defaults.
 3. Select **Enable sender** (or **Save and enable** if settings are unsaved).
    **Enable with TV** controls autostart, which defaults off. It arms the sender
    at future boots; keep it off until cold-boot and standby behavior is validated.
+   **Prometheus metrics** enables the worker’s endpoint on port 9101; it defaults
+   off, including for older saved configurations. Toggle the checkbox with OK
+   and choose **Save changes**. Saving restarts a running worker to apply it.
 4. Close the TV app and enable **Screen sync** in Prysm's web panel. Prysm must
    have a webOS input listening on the configured IP/port.
 
@@ -115,8 +137,8 @@ process retained five device handles; process exit lets the OS reclaim vendor
 state. A [focused cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md)
 subsequently isolated that growth to HAL library unloading and fixed the library
 lifetime. Video constructor failures still retain resources, and native video
-release has a reproduced lost-wakeup hang, so process isolation remains in place. The standalone CLI also handles one connection, exiting if connection
-fails or the receiver disconnects. The supervisor owns retries.
+release has a reproduced lost-wakeup hang, so process isolation remains in place. Each worker handles one connection and exits if connection fails or the receiver
+disconnects. The supervisor owns retries.
 
 Version 0.1.4 was installed and checked on the target TV using an isolated Prysm
 receiver and loopback-only output. Two idle → capture → idle cycles delivered
@@ -150,13 +172,15 @@ release after acquisition errors. A hung reset, failed constructor,
 or preparation that stays unready for ten seconds still triggers process recovery
 with the existing bounded teardown and failure backoff. Ordinary video absence
 reported by Luna does not start a restart cycle. Failed/malformed subscriptions
-fall back to bounded capture retries and resubscribe after five seconds. Standalone
-CLI capture retains its original retry behavior. Valid black frames never expire.
+fall back to bounded capture retries and resubscribe after five seconds. The worker retains bounded native retry for unknown readiness. Valid black
+frames never expire.
 
 The service receives typed JSON events over a dedicated inherited pipe, separate
 from vendor stdout and diagnostic stderr. `PRYSM_EVENTS_FD` identifies the private
-descriptor; standalone CLI use needs no status channel. `PRYSM_CONTROL=1` enables
-the supervisor-only stdin channel; commands never enter the receiver protocol. The supervisor clears connectivity on disconnect
+descriptor. Both the event pipe and stdin control channel are required. The
+supervisor launches the worker without arguments and supplies typed receiver,
+source, compression, and metrics settings in `PRYSM_WORKER_CONFIG`; commands never enter
+the receiver protocol. The supervisor clears connectivity on disconnect
 before native teardown, and kills a worker after five seconds if cleanup blocks.
 Upgrade native executable and supervisor together using the IPK. The always-on
 idle connection also requires rebuilding/restarting the host Prysm application.
@@ -279,7 +303,7 @@ and cleanup/uninstall. Also confirm that closing the TV app does not stop the
 service and that a failed power subscription stays visible in status.
 
 The native transport remains unauthenticated. Restrict the receiver port to
-the TV on a trusted LAN, as for the standalone sender.
+the TV on a trusted LAN.
 
 Version 0.1.8 corrects the supervisor role to allow outbound videooutput calls as
 well as tvpower. A package regression check covers both destinations. The

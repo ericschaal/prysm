@@ -1,5 +1,5 @@
 //! One-shot root setup; normal service operation needs neither Node nor shell IPC.
-use crate::config::Files;
+use crate::files::Files;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::process::{Command, Stdio};

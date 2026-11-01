@@ -1,19 +1,21 @@
 use super::*;
-use crate::native::events::Events;
-use clap::Parser;
+use crate::events::Events;
 use prysm_webos_protocol::PixelFormat;
 
-fn config(source: &str) -> Cli {
-    let mut cli = Cli::try_parse_from(["capture", "127.0.0.1:19400", "--source", source]).unwrap();
-    cli.capture.width = 2;
-    cli.capture.height = 2;
-    cli
+fn config(source: Source) -> Config {
+    let mut config = Config {
+        source,
+        ..Config::new("127.0.0.1:19400".parse().unwrap())
+    };
+    config.capture.width = 2;
+    config.capture.height = 2;
+    config
 }
 
 #[test]
 fn ui_frames_keep_their_metadata_and_reuse_storage_without_publishing_stale_pixels() {
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config("ui"));
+    let mut capture = Capture::new(&config(Source::Ui));
     let mut open_video = |_: &CaptureOptions| panic!("UI-only capture opened video");
     let mut count = 0;
     let mut ui = Some(|width, height, bgra: &mut Bgra8Pixels| {
@@ -51,7 +53,7 @@ fn ui_frames_keep_their_metadata_and_reuse_storage_without_publishing_stale_pixe
 #[test]
 fn video_startup_backoff_keeps_ui_available_until_a_retry_is_due() {
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config("both"));
+    let mut capture = Capture::new(&config(Source::Both));
     let mut attempts = 0;
     let mut open_video = |_: &CaptureOptions| {
         attempts += 1;
@@ -93,7 +95,7 @@ fn video_startup_backoff_keeps_ui_available_until_a_retry_is_due() {
 #[test]
 fn a_new_rate_retries_video_immediately_with_the_negotiated_options() {
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config("video"));
+    let mut capture = Capture::new(&config(Source::Video));
     let mut ui = None::<fn(u32, u32, &mut Bgra8Pixels) -> Result<()>>;
     capture.video_retry = Instant::now() + Duration::from_secs(60);
     capture.configure(30, [2, 2], &mut ui, &mut events).unwrap();
@@ -139,7 +141,7 @@ fn resolution_changes_reconfigure_ui_and_retry_video_without_changing_rate() {
         }
     }
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config("both"));
+    let mut capture = Capture::new(&config(Source::Both));
     let mut ui = Some(RecordingUi {
         configured: Vec::new(),
     });
@@ -170,7 +172,7 @@ fn resolution_changes_reconfigure_ui_and_retry_video_without_changing_rate() {
 #[test]
 fn constructor_failure_exits_instead_of_retrying_or_sending_ui() {
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config("both"));
+    let mut capture = Capture::new(&config(Source::Both));
     let mut ui =
         Some(|_, _, _: &mut Bgra8Pixels| panic!("UI continued after poisoned video construction"));
     let error = capture
@@ -189,10 +191,10 @@ fn constructor_failure_exits_instead_of_retrying_or_sending_ui() {
 #[test]
 fn absent_video_defers_initialization_keeps_ui_and_retries_immediately_on_return() {
     let mut events = Events::disabled();
-    for source in ["both", "video"] {
+    for source in [Source::Both, Source::Video] {
         let mut capture = Capture::new(&config(source));
         capture.set_video_available(false);
-        let mut ui = (source == "both").then_some(|_, _, bgra: &mut Bgra8Pixels| {
+        let mut ui = (source == Source::Both).then_some(|_, _, bgra: &mut Bgra8Pixels| {
             *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
             Ok(())
         });
@@ -203,7 +205,7 @@ fn absent_video_defers_initialization_keeps_ui_and_retries_immediately_on_return
         };
         for _ in 0..3 {
             let frame = capture.capture(&mut open, &mut ui, &mut events).unwrap();
-            assert_eq!(frame.is_some(), source == "both");
+            assert_eq!(frame.is_some(), source == Source::Both);
         }
         capture.video_retry = Instant::now() + Duration::from_secs(60);
         capture.set_video_available(true);

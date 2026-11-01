@@ -1,8 +1,7 @@
 use super::ffi::{GmSurface, HalSurface};
 use super::{Mapping, copy_mapping, driver_plane, mapping};
 use super::{library, status};
-use crate::cli::UiBackend;
-use crate::{cli::CaptureOptions, pixels};
+use crate::{config::CaptureOptions, pixels};
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
 use std::fs::OpenOptions;
@@ -45,16 +44,12 @@ impl Ui {
     }
 
     pub fn open(options: &CaptureOptions) -> Result<Self> {
-        match options.ui_backend {
-            UiBackend::Auto => match GmCapture::open(options) {
-                Ok(gm) => Ok(Self::Gm(gm)),
-                Err(error) => {
-                    tracing::warn!(error = %format!("{error:#}"), "gm unavailable; trying halgal");
-                    Ok(Self::Hal(HalCapture::open(options)?))
-                }
-            },
-            UiBackend::Gm => Ok(Self::Gm(GmCapture::open(options)?)),
-            UiBackend::Halgal => Ok(Self::Hal(HalCapture::open(options)?)),
+        match GmCapture::open(options) {
+            Ok(gm) => Ok(Self::Gm(gm)),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "gm unavailable; trying halgal");
+                Ok(Self::Hal(HalCapture::open(options)?))
+            }
         }
     }
 
@@ -199,8 +194,7 @@ impl Drop for HalCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Cli;
-    use clap::Parser;
+    use crate::config::Config;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static DESTROYED: AtomicUsize = AtomicUsize::new(0);
@@ -225,7 +219,7 @@ mod tests {
 
     #[test]
     fn failed_mapping_destroys_the_created_surface_once() {
-        let cli = Cli::try_parse_from(["capture", "127.0.0.1:19400"]).unwrap();
+        let config = Config::new("127.0.0.1:19400".parse().unwrap());
         let before = DESTROYED.load(Ordering::Relaxed);
         let result = HalCapture::open_with(
             Arc::new(HalApi {
@@ -235,10 +229,10 @@ mod tests {
                 destroy,
                 _library: libloading::os::unix::Library::this().into(),
             }),
-            &cli.capture,
+            &config.capture,
             |surface| {
                 assert_eq!(surface.vendor_data, 42);
-                assert_eq!(u32::from(surface.width), cli.capture.width);
+                assert_eq!(u32::from(surface.width), config.capture.width);
                 // Exercise the actual mapping validation after surface creation.
                 mapping(&std::fs::File::open("/dev/null")?, 0, 0)
             },

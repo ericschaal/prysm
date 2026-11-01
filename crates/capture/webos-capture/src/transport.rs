@@ -1,4 +1,5 @@
-use crate::cli::Compression;
+//! One negotiated TCP connection; encoding and capture policy belong to Session.
+use crate::{config::CaptureOptions, encoder::EncodedFrame};
 use anyhow::{Context, Result};
 use nix::{
     errno::Errno,
@@ -7,7 +8,7 @@ use nix::{
 use prysm_metrics::{
     BytesKind, Codec, Content, EncoderEvent, FrameSenderEvent, Stage, WireBoundary,
 };
-use prysm_webos_protocol::{ControlMessage, HELLO, Header, compress};
+use prysm_webos_protocol::{ControlMessage, HELLO};
 use std::{
     io::{self, IoSlice, Read, Write},
     net::{SocketAddr, TcpStream},
@@ -17,64 +18,19 @@ use std::{
 
 const DEADLINE: Duration = Duration::from_millis(100);
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum SendOutcome {
-    Sent,
-    EncoderSkipped,
-}
-
 pub struct Sender {
     destination: SocketAddr,
-    socket: Option<TcpStream>,
-    compression: Compression,
-    scratch: Vec<u8>,
-    encoder: Option<prysm_webos_protocol::h264::Encoder>,
-    pub h264_bitrate: u32,
-    pub fps: u8,
-    pub capture_resolution: [u32; 2],
-    pub capturing: bool,
+    socket: TcpStream,
 }
 
 impl Sender {
-    pub fn new(destination: SocketAddr, compression: Compression) -> Self {
-        Self {
-            destination,
-            socket: None,
-            compression,
-            scratch: Vec::new(),
-            encoder: None,
-            h264_bitrate: 2_000_000,
-            fps: 30,
-            capture_resolution: [320, 180],
-            capturing: false,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn connected(&self) -> bool {
-        self.socket.is_some()
-    }
-
-    /// Detect receiver shutdown even when the driver produces no frames.
-    pub fn check_connection(&self) -> Result<()> {
-        let socket = self.socket.as_ref().context("receiver is not connected")?;
-        match socket.peek(&mut [0]) {
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
-            Err(error) => Err(error.into()),
-            Ok(_) => anyhow::bail!("receiver closed or sent unexpected control data"),
-        }
-    }
-
-    /// Negotiate one capture connection before acquiring or encoding frames.
-    pub fn connect(&mut self) -> Result<()> {
-        if self.socket.is_some() {
-            return self.check_connection();
-        }
-        let result: Result<()> = (|| {
+    /// Establish one worker connection and validate its initial control message.
+    pub fn connect(destination: SocketAddr) -> Result<(Self, ControlMessage)> {
+        let result = (|| {
             prysm_metrics::event(FrameSenderEvent::ConnectAttempt);
             let connect_time = prysm_metrics::timer(Stage::FrameConnect);
-            let mut connected = TcpStream::connect_timeout(&self.destination, DEADLINE)
-                .inspect_err(|error| {
+            let mut socket =
+                TcpStream::connect_timeout(&destination, DEADLINE).inspect_err(|error| {
                     prysm_metrics::event(if error.kind() == io::ErrorKind::TimedOut {
                         FrameSenderEvent::ConnectTimedOut
                     } else {
@@ -82,142 +38,88 @@ impl Sender {
                     });
                 })?;
             drop(connect_time);
-            connected
+            socket
                 .set_nodelay(true)
-                .and_then(|()| connected.set_nonblocking(true))
-                .inspect_err(|_| prysm_metrics::event(FrameSenderEvent::ConfigureFailed))?;
-            write_frame(&mut connected, &HELLO.encode()?, &[], DEADLINE)
+                .and_then(|()| socket.set_nonblocking(true))
+                .inspect_err(|_| {
+                    prysm_metrics::event(FrameSenderEvent::ConfigureFailed);
+                })?;
+            write_frame(&mut socket, &HELLO.encode()?, &[], DEADLINE)
                 .context("cannot send webOS hello")?;
             let message =
-                read_settings(&mut connected).context("cannot read webOS capture settings")?;
-            if message != ControlMessage::Idle {
-                self.apply_settings(message)?;
-            }
-            self.socket = Some(connected);
+                read_settings(&mut socket).context("cannot read webOS capture settings")?;
+            anyhow::ensure!(
+                matches!(
+                    message,
+                    ControlMessage::Idle | ControlMessage::CaptureSettings { .. }
+                ),
+                "expected webOS capture settings or idle"
+            );
             prysm_metrics::event(FrameSenderEvent::Connected);
-            Ok(())
+            anyhow::Ok((
+                Self {
+                    destination,
+                    socket,
+                },
+                message,
+            ))
         })();
-        result.with_context(|| format!("negotiating capture with {}", self.destination))
+        result.with_context(|| format!("negotiating capture with {destination}"))
     }
 
-    fn apply_settings(&mut self, message: ControlMessage) -> Result<()> {
-        let ControlMessage::CaptureSettings {
-            refresh_rate_hz,
-            capture_resolution,
-        } = message
-        else {
-            anyhow::bail!("expected webOS capture settings");
-        };
-        self.fps = u8::try_from(refresh_rate_hz)?;
-        self.capture_resolution = capture_resolution;
-        self.capturing = true;
-        Ok(())
+    pub fn check_connection(&self) -> Result<()> {
+        match self.socket.peek(&mut [0]) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(_) => anyhow::bail!("receiver closed or sent unexpected control data"),
+        }
     }
 
-    /// An idle connection owns no capture resources. Bound partial control messages once data arrives.
-    pub fn wait_for_capture(&mut self, stop: &std::sync::atomic::AtomicBool) -> Result<bool> {
-        while !self.capturing && !stop.load(std::sync::atomic::Ordering::Relaxed) {
-            let socket = self.socket.as_mut().context("receiver is not connected")?;
-            match socket.peek(&mut [0]) {
+    /// Wait without opening native resources; partial messages retain their deadline.
+    pub fn wait_for_capture(
+        &mut self,
+        mut message: ControlMessage,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<Option<CaptureOptions>> {
+        loop {
+            match message {
+                ControlMessage::CaptureSettings {
+                    refresh_rate_hz,
+                    capture_resolution,
+                } => {
+                    return Ok(Some(CaptureOptions {
+                        fps: u8::try_from(refresh_rate_hz)?,
+                        width: capture_resolution[0],
+                        height: capture_resolution[1],
+                    }));
+                }
+                ControlMessage::Idle => (),
+                ControlMessage::Hello { .. } => anyhow::bail!("expected webOS capture settings"),
+            }
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(None);
+            }
+            match self.socket.peek(&mut [0]) {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(error) => return Err(error.into()),
                 Ok(0) => anyhow::bail!("receiver disconnected"),
-                Ok(_) => {
-                    let message = read_settings(socket)?;
-                    self.apply_settings(message)?;
-                }
+                Ok(_) => message = read_settings(&mut self.socket)?,
             }
         }
-        Ok(self.capturing)
     }
 
-    /// Send on the negotiated connection, without a frame queue or implicit reconnect.
-    pub fn send(
-        &mut self,
-        mut header: Header,
-        pixels: &[u8],
-        content: Content,
-    ) -> Result<SendOutcome> {
-        let raw_len = header
-            .raw_len()
-            .inspect_err(|_| prysm_metrics::event(EncoderEvent::InputRejected))?;
-        if raw_len != pixels.len() {
-            prysm_metrics::event(EncoderEvent::InputRejected);
-            anyhow::bail!("incorrect sender frame length");
-        }
-        anyhow::ensure!(self.socket.is_some(), "receiver is not connected");
-        let result: Result<SendOutcome> = (|| {
-            header.codec = prysm_webos_protocol::Codec::Raw;
-            let encode_time = prysm_metrics::timer(Stage::FrameEncode);
-            let payload = if self.compression == Compression::H264 {
-                if self.encoder.is_none() {
-                    self.encoder = Some(
-                        prysm_webos_protocol::h264::Encoder::new(self.h264_bitrate, self.fps)
-                            .inspect_err(|_| {
-                                prysm_metrics::event(EncoderEvent::InitializationFailed);
-                            })?,
-                    );
-                }
-                let kind = self
-                    .encoder
-                    .as_mut()
-                    .expect("initialized encoder")
-                    .encode(header, pixels, &mut self.scratch)
-                    .inspect_err(|_| prysm_metrics::event(EncoderEvent::H264EncodeFailed))?;
-                let Some(kind) = kind else {
-                    prysm_metrics::event(EncoderEvent::H264RateControlSkipped);
-                    return Ok(SendOutcome::EncoderSkipped);
-                };
-                prysm_metrics::event(match kind {
-                    prysm_webos_protocol::h264::FrameKind::Idr => EncoderEvent::H264IdrEncoded,
-                    prysm_webos_protocol::h264::FrameKind::Intra => {
-                        EncoderEvent::H264IntraFrameEncoded
-                    }
-                    prysm_webos_protocol::h264::FrameKind::Predicted => {
-                        EncoderEvent::H264PredictedFrameEncoded
-                    }
-                });
-                header.codec = prysm_webos_protocol::Codec::H264;
-                header.format = prysm_webos_protocol::PixelFormat::Rgb;
-                self.scratch.as_slice()
-            } else if self.compression == Compression::Lz4 {
-                if let Some(length) = compress(pixels, &mut self.scratch)
-                    .inspect_err(|_| prysm_metrics::event(EncoderEvent::CompressionFailed))?
-                {
-                    header.codec = prysm_webos_protocol::Codec::Lz4;
-                    &self.scratch[..length]
-                } else {
-                    prysm_metrics::event(EncoderEvent::RawFallback);
-                    pixels
-                }
-            } else {
-                pixels
-            };
-            drop(encode_time);
-            header.payload_len = payload.len();
-            let bytes = header
-                .encode()
-                .inspect_err(|_| prysm_metrics::event(EncoderEvent::HeaderRejected))?;
-            prysm_metrics::bytes(BytesKind::EncoderInput, pixels.len());
-            prysm_metrics::bytes(BytesKind::EncoderOutput, payload.len());
-            prysm_metrics::wire_frame(
-                WireBoundary::Encoded,
-                header.format.into(),
-                Codec::from(&header),
-                content,
-                header.width,
-                header.height,
-            );
+    pub fn send(&mut self, frame: EncodedFrame<'_>, content: Content) -> Result<()> {
+        let result = (|| {
+            let header = frame.header;
+            let bytes = header.encode().inspect_err(|_| {
+                prysm_metrics::event(EncoderEvent::HeaderRejected);
+            })?;
             let _write_time = prysm_metrics::timer(Stage::FrameWrite);
-            write_frame(
-                self.socket.as_mut().expect("connected socket"),
-                &bytes,
-                payload,
-                DEADLINE,
-            )
-            .inspect_err(|error| record_write_error(error.kind()))?;
+            write_frame(&mut self.socket, &bytes, frame.pixels, DEADLINE)
+                .inspect_err(|error| record_write_error(error.kind()))
+                .with_context(|| format!("sending capture to {}", self.destination))?;
             prysm_metrics::wire_frame(
                 WireBoundary::SocketAccepted,
                 header.format.into(),
@@ -226,14 +128,17 @@ impl Sender {
                 header.width,
                 header.height,
             );
-            Ok(SendOutcome::Sent)
+            anyhow::Ok(())
         })();
         if result.is_err() {
-            // A partially written frame cannot be resumed on a later connection.
-            self.socket = None;
-            self.encoder = None;
+            self.disconnect();
         }
-        result.with_context(|| format!("sending capture to {}", self.destination))
+        result
+    }
+
+    pub fn disconnect(&self) {
+        // Close the peer before potentially blocking LG teardown, even while Sender is retained.
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -333,9 +238,9 @@ fn write_frame(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use prysm_webos_protocol::{HEADER_LEN, PixelFormat, decompress};
-    use std::{io::Read, net::TcpListener, thread};
-
+    use crate::encoder::{Encoder, H264_BITRATE};
+    use prysm_webos_protocol::{Compression, HEADER_LEN, Header, PixelFormat, decompress};
+    use std::{io::Read, net::TcpListener, sync::atomic::AtomicBool, thread};
     pub(crate) fn accept(listener: &TcpListener, rate: u32) -> TcpStream {
         accept_resolution(listener, rate, [2, 2])
     }
@@ -370,12 +275,35 @@ pub(crate) mod tests {
         assert_eq!(ControlMessage::decode(&payload).unwrap(), HELLO);
     }
 
+    fn connect(address: SocketAddr) -> (Sender, CaptureOptions) {
+        let (mut sender, message) = Sender::connect(address).unwrap();
+        let settings = sender
+            .wait_for_capture(message, &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        (sender, settings)
+    }
+
+    fn send(
+        sender: &mut Sender,
+        encoder: &mut Encoder,
+        header: Header,
+        pixels: &[u8],
+        content: Content,
+    ) -> Result<bool> {
+        let Some(frame) = encoder.encode(header, pixels, content)? else {
+            return Ok(false);
+        };
+        sender.send(frame, content)?;
+        Ok(true)
+    }
+
     #[test]
     fn receiver_close_is_visible_without_sending_frames() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::None);
+        let address = listener.local_addr().unwrap();
         let receiver = thread::spawn(move || accept(&listener, 30));
-        sender.connect().unwrap();
+        let (sender, _) = connect(address);
         sender.check_connection().unwrap();
         receiver
             .join()
@@ -411,7 +339,7 @@ pub(crate) mod tests {
                 }
             }
         });
-        let mut sender = Sender::new(address, Compression::None);
+        let (mut sender, settings) = connect(address);
         let header = Header {
             width: 20,
             height: 10,
@@ -419,24 +347,26 @@ pub(crate) mod tests {
             codec: prysm_webos_protocol::Codec::Raw,
             payload_len: 600,
         };
-        sender.connect().unwrap();
-        assert_eq!(
-            sender.send(header, &[42; 600], Content::Video).unwrap(),
-            SendOutcome::Sent
-        );
-        sender.compression = Compression::Lz4;
-        assert_eq!(
-            sender.send(header, &[42; 600], Content::Video).unwrap(),
-            SendOutcome::Sent
-        );
+        for compression in [Compression::None, Compression::Lz4] {
+            let mut encoder = Encoder::new(compression, settings.fps, H264_BITRATE).unwrap();
+            assert!(
+                send(
+                    &mut sender,
+                    &mut encoder,
+                    header,
+                    &[42; 600],
+                    Content::Video
+                )
+                .unwrap()
+            );
+        }
         receiver.join().unwrap();
     }
 
     #[test]
     fn h264_rate_control_skips_without_packets_or_reconnects() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::H264);
-        sender.h264_bitrate = 64_000;
+        let address = listener.local_addr().unwrap();
         let receiver = thread::spawn(move || {
             let mut socket = accept(&listener, 60);
             let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
@@ -454,6 +384,9 @@ pub(crate) mod tests {
                 received += 1;
             }
         });
+        let (mut sender, settings) = connect(address);
+        assert_eq!(settings.fps, 60);
+        let mut encoder = Encoder::new(Compression::H264, settings.fps, 64_000).unwrap();
         let header = Header {
             width: 320,
             height: 180,
@@ -465,19 +398,17 @@ pub(crate) mod tests {
         let mut random = 1_u32;
         let mut sent = 0;
         let mut skipped = 0;
-        sender.connect().unwrap();
-        assert_eq!(sender.fps, 60);
         for _ in 0..120 {
             for byte in &mut pixels {
                 random = random.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 *byte = random.to_le_bytes()[3];
             }
-            match sender.send(header, &pixels, Content::Video).unwrap() {
-                SendOutcome::Sent => sent += 1,
-                SendOutcome::EncoderSkipped => skipped += 1,
+            if send(&mut sender, &mut encoder, header, &pixels, Content::Video).unwrap() {
+                sent += 1;
+            } else {
+                skipped += 1;
             }
-            assert!(sender.socket.is_some());
-            assert!(sender.encoder.is_some());
+            sender.check_connection().unwrap();
         }
         drop(sender);
         assert!(skipped > 0);
@@ -485,9 +416,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn h264_reconnect_starts_with_an_independently_decodable_frame() {
+    fn new_connections_start_with_an_independently_decodable_frame() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::H264);
+        let address = listener.local_addr().unwrap();
         let receiver = thread::spawn(move || {
             for (rate, resolution) in [(30, [64, 32]), (15, [32, 16])] {
                 let mut socket = accept_resolution(&listener, rate, resolution);
@@ -505,60 +436,37 @@ pub(crate) mod tests {
                 );
             }
         });
-        let header = Header {
-            width: 64,
-            height: 32,
-            format: PixelFormat::Rgb,
-            codec: prysm_webos_protocol::Codec::Raw,
-            payload_len: 64 * 32 * 3,
-        };
-        let pixels = [255, 0, 0].repeat(64 * 32);
-        sender.connect().unwrap();
-        assert_eq!(
-            sender.send(header, &pixels, Content::Blended).unwrap(),
-            SendOutcome::Sent
-        );
-        sender
-            .socket
-            .as_ref()
-            .unwrap()
-            .shutdown(std::net::Shutdown::Write)
-            .unwrap();
-        assert!(sender.send(header, &pixels, Content::Blended).is_err());
-        assert!(sender.encoder.is_none());
-        sender.connect().unwrap();
-        assert_eq!(sender.capture_resolution, [32, 16]);
-        let header = Header {
-            width: 32,
-            height: 16,
-            payload_len: 32 * 16 * 3,
-            ..header
-        };
-        let pixels = [255, 0, 0].repeat(32 * 16);
-        assert_eq!(
-            sender.send(header, &pixels, Content::Blended).unwrap(),
-            SendOutcome::Sent
-        );
-        assert_eq!(sender.fps, 15);
+        for resolution in [[64, 32], [32, 16]] {
+            let (mut sender, settings) = connect(address);
+            assert_eq!([settings.width, settings.height], resolution);
+            let mut encoder = Encoder::new(Compression::H264, settings.fps, H264_BITRATE).unwrap();
+            let header = Header {
+                width: resolution[0],
+                height: resolution[1],
+                format: PixelFormat::Rgb,
+                codec: prysm_webos_protocol::Codec::Raw,
+                payload_len: (resolution[0] * resolution[1] * 3) as usize,
+            };
+            assert!(
+                send(
+                    &mut sender,
+                    &mut encoder,
+                    header,
+                    &[255, 0, 0].repeat((resolution[0] * resolution[1]) as usize),
+                    Content::Blended
+                )
+                .unwrap()
+            );
+        }
         receiver.join().unwrap();
     }
 
     #[test]
-    fn refuses_connection_without_queuing_frames() {
+    fn failed_connection_cannot_create_a_sender_or_queue_frames() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
-        let mut sender = Sender::new(address, Compression::None);
-        let header = Header {
-            width: 1,
-            height: 1,
-            format: PixelFormat::Rgb,
-            codec: prysm_webos_protocol::Codec::Raw,
-            payload_len: 3,
-        };
-        assert!(sender.connect().is_err());
-        assert!(sender.send(header, &[0; 3], Content::Video).is_err());
-        assert!(sender.socket.is_none());
+        assert!(Sender::connect(address).is_err());
         let listener = TcpListener::bind(address).unwrap();
         let receiver = thread::spawn(move || {
             let mut socket = accept(&listener, 15);
@@ -566,19 +474,31 @@ pub(crate) mod tests {
             socket.read_exact(&mut bytes).unwrap();
             assert_eq!(&bytes[HEADER_LEN..], &[1, 2, 3]);
         });
-        sender.connect().unwrap();
-        assert_eq!(sender.fps, 15);
-        assert_eq!(
-            sender.send(header, &[1, 2, 3], Content::Video).unwrap(),
-            SendOutcome::Sent
+        let (mut sender, settings) = connect(address);
+        assert_eq!(settings.fps, 15);
+        let mut encoder = Encoder::new(Compression::None, settings.fps, H264_BITRATE).unwrap();
+        let header = Header {
+            width: 1,
+            height: 1,
+            format: PixelFormat::Rgb,
+            codec: prysm_webos_protocol::Codec::Raw,
+            payload_len: 3,
+        };
+        assert!(
+            send(
+                &mut sender,
+                &mut encoder,
+                header,
+                &[1, 2, 3],
+                Content::Video
+            )
+            .unwrap()
         );
         receiver.join().unwrap();
     }
 
     #[test]
     fn telemetry_attributes_connect_encoding_and_write_timeout() {
-        // One opt-in exporter for this test process. Other transport tests may
-        // add samples concurrently, so assertions test distinct label series.
         let exporter = prysm_metrics::start(
             "127.0.0.1:0".parse().unwrap(),
             prysm_metrics::Role::Capturer,
@@ -587,7 +507,8 @@ pub(crate) mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let destination = listener.local_addr().unwrap();
         drop(listener);
-        let mut sender = Sender::new(destination, Compression::None);
+        assert!(Sender::connect(destination).is_err());
+        let mut encoder = Encoder::new(Compression::None, 30, H264_BITRATE).unwrap();
         let header = Header {
             width: 1,
             height: 1,
@@ -595,16 +516,19 @@ pub(crate) mod tests {
             codec: prysm_webos_protocol::Codec::Raw,
             payload_len: 3,
         };
-        assert!(sender.connect().is_err());
-        assert!(sender.send(header, &[0; 3], Content::Video).is_err());
-        assert!(sender.send(header, &[0; 2], Content::Video).is_err());
-
+        assert!(encoder.encode(header, &[0; 2], Content::Video).is_err());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let socket = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (_receiver, _) = listener.accept().unwrap();
+        let (mut receiver, _) = listener.accept().unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         socket.set_nonblocking(true).unwrap();
         nix::sys::socket::setsockopt(&socket, nix::sys::socket::sockopt::SndBuf, &4096).unwrap();
-        sender.socket = Some(socket);
+        let mut sender = Sender {
+            destination,
+            socket,
+        };
         let header = Header {
             width: 1920,
             height: 1080,
@@ -613,12 +537,18 @@ pub(crate) mod tests {
             payload_len: 6_220_800,
         };
         assert!(
-            sender
-                .send(header, &vec![0; 6_220_800], Content::Video)
-                .is_err()
+            send(
+                &mut sender,
+                &mut encoder,
+                header,
+                &vec![0; 6_220_800],
+                Content::Video
+            )
+            .is_err()
         );
-        assert!(sender.socket.is_none());
-
+        // The peer must see EOF even while the owner retains Sender for native teardown.
+        let mut discarded = Vec::new();
+        receiver.read_to_end(&mut discarded).unwrap();
         let mut socket = TcpStream::connect(exporter.address()).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -633,15 +563,13 @@ pub(crate) mod tests {
         ] {
             assert!(text.contains(labels), "missing {labels}: {text}");
         }
-        // The reconnect test can emit WriteFrame/Failed concurrently.
         assert!(text.contains("codec=\"None\",content=\"Video\",width=\"1920\",height=\"1080\""));
     }
 
     #[test]
-    fn rejects_invalid_or_truncated_settings_without_starting_encoder() {
+    fn rejects_invalid_or_truncated_settings() {
         for json in [
             r#"{"type":"hello","version":1}"#,
-            r#"{"type":"hello","version":2}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":30,"capture_resolution":[3,360]}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":0,"capture_resolution":[640,360]}"#,
             r#"{"type":"capture_settings","refresh_rate_hz":61,"capture_resolution":[640,360]}"#,
@@ -649,47 +577,43 @@ pub(crate) mod tests {
             let mut bytes = u32::try_from(json.len()).unwrap().to_be_bytes().to_vec();
             bytes.extend_from_slice(json.as_bytes());
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::H264);
+            let address = listener.local_addr().unwrap();
             let receiver = thread::spawn(move || {
                 let (mut socket, _) = listener.accept().unwrap();
                 read_hello(&mut socket);
                 socket.write_all(&bytes).unwrap();
             });
-            assert!(sender.connect().is_err());
-            assert!(!sender.connected());
-            assert!(sender.encoder.is_none());
+            assert!(Sender::connect(address).is_err());
             receiver.join().unwrap();
         }
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::None);
+        let address = listener.local_addr().unwrap();
         let receiver = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             read_hello(&mut socket);
             socket.write_all(&30u32.to_be_bytes()).unwrap();
             socket.write_all(b"{").unwrap();
         });
-        assert!(sender.connect().is_err());
+        assert!(Sender::connect(address).is_err());
         receiver.join().unwrap();
     }
 
     #[test]
     fn stalled_handshake_times_out() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut sender = Sender::new(listener.local_addr().unwrap(), Compression::None);
+        let address = listener.local_addr().unwrap();
         let receiver = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             read_hello(&mut socket);
-            let mut eof = [0; 1];
-            assert_eq!(socket.read(&mut eof).unwrap(), 0);
+            assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
         });
         let start = Instant::now();
-        let error = sender.connect().unwrap_err();
+        let error = Sender::connect(address).err().unwrap();
         assert_eq!(
             error.downcast_ref::<io::Error>().unwrap().kind(),
             io::ErrorKind::TimedOut
         );
         assert!(start.elapsed() < Duration::from_secs(2));
-        assert!(!sender.connected());
         receiver.join().unwrap();
     }
 

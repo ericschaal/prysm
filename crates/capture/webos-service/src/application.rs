@@ -1,6 +1,7 @@
 //! Service operations, filesystem transactions, and process execution.
 use crate::{
-    config::{Config, Files},
+    config::Config,
+    files::Files,
     supervisor::{Action, Supervisor},
     worker::Worker,
 };
@@ -14,6 +15,14 @@ use std::{
 
 #[cfg(all(test, not(miri)))]
 pub(crate) mod tests;
+
+#[derive(Debug)]
+pub enum AppRequest {
+    Start,
+    Stop,
+    SetConfig(Config),
+    Cleanup,
+}
 
 enum Pending {
     Start,
@@ -54,42 +63,38 @@ impl App {
             shutting_down: false,
         })
     }
-    pub fn request(
-        &mut self,
-        method: &str,
-        value: Value,
-        sender: &str,
-        now: Instant,
-    ) -> Result<Option<Value>> {
+    pub fn authorize(&self, sender: &str) -> Result<()> {
         ensure!(
             sender == self.files.app_id,
             "Only the Prysm Capture app may change service state"
         );
+        Ok(())
+    }
+    pub fn request(&mut self, request: AppRequest, now: Instant) -> Result<Option<Value>> {
         ensure!(
             self.pending.is_none() && !self.shutting_down,
             "A service change is already in progress"
         );
-        let result = self.request_inner(method, value, now);
+        let result = self.request_inner(request, now);
         if result.is_err() {
             self.pending = None;
             self.scan = None;
         }
         result
     }
-    fn request_inner(&mut self, method: &str, value: Value, now: Instant) -> Result<Option<Value>> {
-        match method {
-            "start" => {
+    fn request_inner(&mut self, request: AppRequest, now: Instant) -> Result<Option<Value>> {
+        match request {
+            AppRequest::Start => {
                 self.files.manifest(true)?;
                 self.begin_scan(now)?;
                 self.pending = Some(Pending::Start);
             }
-            "stop" => {
+            AppRequest::Stop => {
                 self.state.enabled = false;
                 self.state.stop(now, true);
                 self.pending = Some(Pending::Stop);
             }
-            "setConfig" => {
-                let config: Config = serde_json::from_value(value)?;
+            AppRequest::SetConfig(config) => {
                 config.validate()?;
                 self.files.persist(&config)?;
                 if let Err(error) = self.files.autostart(config.autostart) {
@@ -102,7 +107,7 @@ impl App {
                 }
                 self.state.configure(config, now);
             }
-            "cleanup" => {
+            AppRequest::Cleanup => {
                 self.state.enabled = false;
                 let mut config = self.state.config.clone();
                 config.autostart = false;
@@ -114,7 +119,6 @@ impl App {
                 self.state.stop(now, true);
                 self.pending = Some(Pending::Cleanup);
             }
-            _ => anyhow::bail!("Unknown service method"),
         }
         self.execute(now)?;
         if self.pending.is_none() {

@@ -29,11 +29,8 @@ fn app(dir: &tempfile::TempDir) -> App {
     );
     App::new(files).unwrap()
 }
-fn request(app: &mut App, method: &str, value: Value, now: Instant) -> Result<Option<Value>> {
-    app.request(method, value, "io.prysm.capture.probe.app", now)
-}
-fn operate(app: &mut App, method: &str, value: Value, now: Instant) -> Result<Value> {
-    Ok(match request(app, method, value, now)? {
+fn operate(app: &mut App, request: AppRequest, now: Instant) -> Result<Value> {
+    Ok(match app.request(request, now)? {
         Some(value) => value,
         None => completion(app, now),
     })
@@ -54,31 +51,22 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     let mut app = app(&dir);
     let now = Instant::now();
     app.power(Some("Active".into()), None, now);
-    assert!(
-        app.request(
-            "start",
-            json!({"sender":"io.prysm.capture.probe.app"}),
-            "untrusted",
-            now
-        )
-        .is_err()
-    );
+    assert!(app.authorize("untrusted").is_err());
     assert!(!app.state.enabled);
     script(
         &app.files.scanner,
         "while [ ! -f \"$0.ready\" ]; do sleep 0.01; done",
     );
+    assert!(app.request(AppRequest::Start, now).unwrap().is_none());
     assert!(
-        request(&mut app, "start", json!({}), now)
-            .unwrap()
-            .is_none()
+        app.request(AppRequest::SetConfig(app.state.config.clone()), now)
+            .is_err()
     );
-    assert!(request(&mut app, "setConfig", json!({}), now).is_err());
     fs::write(dir.path().join("scan-services.ready"), "").unwrap();
     assert_eq!(completion(&mut app, now)["senderRunning"], true);
     let pid = app.worker.as_ref().unwrap().child_id();
     script(&app.files.scanner, "exit 7");
-    assert!(match operate(&mut app, "start", json!({}), now) {
+    assert!(match operate(&mut app, AppRequest::Start, now) {
         Ok(value) => value["returnValue"] == false,
         Err(_) => true,
     });
@@ -86,7 +74,7 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     assert!(!app.state.stopping);
     script(&app.files.scanner, "exit 0");
     assert_eq!(
-        operate(&mut app, "stop", json!({}), now).unwrap()["senderRunning"],
+        operate(&mut app, AppRequest::Stop, now).unwrap()["senderRunning"],
         false
     );
     app.power(Some("Suspend".into()), None, now);
@@ -94,7 +82,7 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     app.tick(now);
     assert!(app.worker.is_none());
     assert_eq!(
-        operate(&mut app, "cleanup", json!({}), now).unwrap()["config"]["autostart"],
+        operate(&mut app, AppRequest::Cleanup, now).unwrap()["config"]["autostart"],
         false
     );
     assert!(!dir.path().join("capture.manifest.json").exists());
@@ -113,13 +101,8 @@ fn hook_failure_rolls_back_config() {
     changed.receiver = Some("[::1]:42".parse().unwrap());
     changed.autostart = true;
     assert!(
-        request(
-            &mut app,
-            "setConfig",
-            serde_json::to_value(changed).unwrap(),
-            Instant::now()
-        )
-        .is_err()
+        app.request(AppRequest::SetConfig(changed), Instant::now())
+            .is_err()
     );
     assert_eq!(app.state.config, original);
     assert_eq!(app.files.load().unwrap(), original);
@@ -135,14 +118,14 @@ fn scanner_timeout_is_reaped_and_shutdown_cancels_pending_start() {
     let mut app = app(&dir);
     let now = Instant::now();
     script(&app.files.scanner, "exec sleep 30");
-    request(&mut app, "start", json!({}), now).unwrap();
+    app.request(AppRequest::Start, now).unwrap();
     assert_eq!(
         completion(&mut app, now + Duration::from_secs(10))["returnValue"],
         false
     );
     assert!(!app.state.running);
     script(&app.files.scanner, "exec sleep 30");
-    request(&mut app, "start", json!({}), now).unwrap();
+    app.request(AppRequest::Start, now).unwrap();
     app.shutdown(now);
     assert_eq!(completion(&mut app, now)["returnValue"], false);
     assert!(app.stopped());
@@ -157,7 +140,7 @@ fn config_restart_waits_for_kill_and_reap() {
     );
     let now = Instant::now();
     app.power(Some("Active".into()), None, now);
-    operate(&mut app, "start", json!({}), now).unwrap();
+    operate(&mut app, AppRequest::Start, now).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     while app.state.snapshot()["receiverConnected"] != true {
         app.tick(now);
@@ -166,14 +149,8 @@ fn config_restart_waits_for_kill_and_reap() {
     }
     let pid = app.worker.as_ref().unwrap().child_id();
     let mut changed = app.state.config.clone();
-    changed.receiver = Some("[::1]:42".parse().unwrap());
-    request(
-        &mut app,
-        "setConfig",
-        serde_json::to_value(changed).unwrap(),
-        now,
-    )
-    .unwrap();
+    changed.metrics = true;
+    app.request(AppRequest::SetConfig(changed), now).unwrap();
     app.tick(now + Duration::from_millis(4999));
     assert_eq!(app.worker.as_ref().unwrap().child_id(), pid);
     while app.worker.as_ref().is_some_and(|w| w.child_id() == pid) {
@@ -182,6 +159,7 @@ fn config_restart_waits_for_kill_and_reap() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(app.worker.is_some());
+    assert!(app.files.load().unwrap().metrics);
     app.shutdown(now);
     while !app.stopped() {
         app.tick(now + Duration::from_secs(5));

@@ -9,7 +9,7 @@ var changing = false;
 var online = null;
 var observed = null;
 var saved = null;
-var draft = { receiver: '', source: 'both', compression: 'lz4', autostart: false };
+var draft = { receiver: '', source: 'both', compression: 'lz4', autostart: false, metrics: false };
 var lastSetting = 'receiver';
 var returnFocus = null;
 var dialogBack = null;
@@ -22,7 +22,7 @@ var names = {
 };
 function element(id) { return document.getElementById(id); }
 function copy(value) {
-    return { receiver: value.receiver, source: value.source, compression: value.compression, autostart: value.autostart };
+    return { receiver: value.receiver, source: value.source, compression: value.compression, autostart: value.autostart, metrics: value.metrics === true };
 }
 function dirty() { return !saved || JSON.stringify(draft) !== JSON.stringify(saved); }
 function notice(text, error) {
@@ -140,13 +140,14 @@ function render() {
     element('status-description').textContent = description;
     element('primary').textContent = changing ? 'Please wait…' : label;
     element('primary').disabled = online === null || changing;
-    ['receiver', 'source', 'compression', 'autostart'].forEach(function (id) {
+    ['receiver', 'source', 'compression', 'autostart', 'metrics'].forEach(function (id) {
         element(id).disabled = !online || changing;
     });
     element('receiver-value').textContent = draft.receiver || 'Add receiver address';
     element('source-value').textContent = names.source[draft.source];
     element('compression-value').textContent = names.compression[draft.compression];
     element('autostart-value').textContent = draft.autostart ? 'On' : 'Off';
+    element('metrics').setAttribute('aria-checked', String(draft.metrics));
     element('save').disabled = !online || !dirty() || changing;
     element('saved-state').textContent = saved ? dirty() ? 'Unsaved changes' : 'Saved' : 'On this TV';
     element('saved-state').classList.toggle('unsaved', !!saved && dirty());
@@ -317,6 +318,10 @@ element('autostart').onclick = function () {
     ]);
 };
 element('save').onclick = function () { saveSettings(); };
+element('metrics').onclick = function () {
+    draft.metrics = !draft.metrics;
+    render();
+};
 element('primary').onclick = function () {
     if (busy) return;
     if (!online) { setup(); return; }

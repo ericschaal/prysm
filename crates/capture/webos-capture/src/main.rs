@@ -1,8 +1,11 @@
 //! Native webOS capture sender. Hardware resources never cross threads.
 #![deny(unsafe_code)]
 mod capture;
-mod cli;
+mod config;
 mod control;
+mod encoder;
+#[allow(unsafe_code)]
+mod events;
 #[allow(unsafe_code)]
 mod native;
 mod pixels;
@@ -10,14 +13,22 @@ mod session;
 mod shutdown;
 mod transport;
 
-use anyhow::{Result, ensure};
-use clap::Parser;
-use cli::Cli;
+use anyhow::{Context, Result, ensure};
+use config::Config;
+use prysm_webos_protocol::{WORKER_CONFIG_ENV, WorkerConfig};
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let mut events = native::events::Events::from_environment()?;
-    let mut control = control::Control::from_environment()?;
+    ensure!(
+        std::env::args_os().len() == 1,
+        "capture worker accepts no command-line arguments"
+    );
+    let startup = WorkerConfig::decode(
+        &std::env::var(WORKER_CONFIG_ENV)
+            .context("capture worker requires supervisor configuration")?,
+    )?;
+    let config = Config::from(startup);
+    let mut events = events::Events::from_environment()?;
+    let mut control = control::Control::from_stdin()?;
     tracing_subscriber::fmt()
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .with_writer(std::io::stderr)
@@ -29,8 +40,8 @@ fn main() -> Result<()> {
     );
     let _lock = capture_lock(std::path::Path::new("/tmp/prysm-capture.lock"))?;
     let (stop, _signal_waiter) = shutdown::listen()?;
-    let _metrics = cli.metrics_listen.and_then(|address| {
-        match prysm_metrics::start(address, prysm_metrics::Role::Capturer) {
+    let _metrics = if startup.metrics {
+        match prysm_metrics::start(([0, 0, 0, 0], 9101).into(), prysm_metrics::Role::Capturer) {
             Ok(exporter) => {
                 tracing::info!(address = %exporter.address(), "metrics listening");
                 Some(exporter)
@@ -40,28 +51,30 @@ fn main() -> Result<()> {
                 None
             }
         }
-    });
-    let mut session = match session::Session::connect(&cli) {
+    } else {
+        None
+    };
+    let mut session = match session::Session::connect(&config) {
         Ok(session) => session,
         Err(error) => {
-            events.send(&native::events::Event::Disconnected)?;
+            events.send(&events::Event::Disconnected)?;
             return Err(error);
         }
     };
-    events.send(&native::events::Event::Connected)?;
+    events.send(&events::Event::Connected)?;
     let capturing = session
-        .wait_for_capture(&cli, &stop)
+        .wait_for_capture(&config, &stop)
         .unwrap_or_else(|error| {
             tracing::info!(error = %format!("{error:#}"), "idle receiver disconnected");
             false
         });
     if !capturing {
-        events.send(&native::events::Event::Disconnected)?;
+        events.send(&events::Event::Disconnected)?;
         return Ok(());
     }
-    let mut ui = Some(capture::NativeUi::new(cli.source));
+    let mut ui = Some(capture::NativeUi::new(config.source));
     let result = session.configure(&mut ui, &mut events).and_then(|()| {
-        events.send(&native::events::Event::Capturing)?;
+        events.send(&events::Event::Capturing)?;
         session.run(
             &stop,
             &mut native::Video::open,
@@ -71,8 +84,8 @@ fn main() -> Result<()> {
         )
     });
     match &result {
-        Ok(()) => events.send(&native::events::Event::Disconnected)?,
-        Err(error) => events.send(&native::events::Event::Failed {
+        Ok(()) => events.send(&events::Event::Disconnected)?,
+        Err(error) => events.send(&events::Event::Failed {
             message: format!("{error:#}"),
         })?,
     }

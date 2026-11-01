@@ -1,8 +1,7 @@
 //! Capture lifecycle ported from hyperion-webos; see LICENSE.hyperion.
 //! Native libraries stay loaded until all their resources have been released.
-pub mod events;
 mod ffi;
-use crate::cli::{CaptureOptions, VideoBackend};
+use crate::config::CaptureOptions;
 use crate::pixels;
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
@@ -113,24 +112,20 @@ impl Video {
     }
 
     pub fn open(options: &CaptureOptions) -> Result<Self> {
-        match options.video_backend {
-            VideoBackend::Auto => match VtCapture::open(options) {
-                Ok(vt) => Ok(Self::Vt(vt)),
-                Err(error) if error.is::<FatalVideo>() => Err(error),
-                Err(error) => {
-                    tracing::warn!(error = %format!("{error:#}"), "vtcapture unavailable; trying dile_vt");
-                    Ok(Self::Dile(DileCapture::open(options)?))
-                }
-            },
-            VideoBackend::Vtcapture => Ok(Self::Vt(VtCapture::open(options)?)),
-            VideoBackend::Dile => Ok(Self::Dile(DileCapture::open(options)?)),
+        match VtCapture::open(options) {
+            Ok(vt) => Ok(Self::Vt(vt)),
+            Err(error) if error.is::<FatalVideo>() => Err(error),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "vtcapture unavailable; trying dile_vt");
+                Ok(Self::Dile(DileCapture::open(options)?))
+            }
         }
     }
 
     pub fn capture(
         &mut self,
         output: &mut Vec<u8>,
-        events: &mut events::Events,
+        events: &mut crate::events::Events,
     ) -> Result<Option<Header>> {
         output.clear();
         match self {

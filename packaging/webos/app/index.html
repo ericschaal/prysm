@@ -35,11 +35,14 @@
         <button id="compression" class="setting" aria-haspopup="dialog" data-up="source" data-down="autostart" data-left="primary">
           <span><span class="setting-label">Compression</span><span id="compression-value" class="setting-value">LZ4</span></span><span class="chevron" aria-hidden="true">›</span>
         </button>
-        <button id="autostart" class="setting" aria-haspopup="dialog" data-up="compression" data-down="save" data-left="primary">
+        <button id="autostart" class="setting" aria-haspopup="dialog" data-up="compression" data-down="metrics" data-left="primary">
           <span><span class="setting-label">Enable with TV</span><span id="autostart-value" class="setting-value">Off</span></span><span class="chevron" aria-hidden="true">›</span>
         </button>
+        <button id="metrics" class="setting" role="checkbox" aria-checked="false" aria-describedby="metrics-description" data-up="autostart" data-down="save" data-left="primary">
+          <span><span class="setting-label">Prometheus metrics</span><span id="metrics-description" class="setting-value">Expose TV metrics on port 9101 while the sender runs.</span></span><span class="tickbox" aria-hidden="true"></span>
+        </button>
       </div>
-      <div class="settings-footer"><p id="save-hint">Changes apply only when you save.</p><button id="save" class="secondary" data-up="autostart" data-left="service-options" disabled>Save changes</button></div>
+      <div class="settings-footer"><p id="save-hint">Changes apply only when you save.</p><button id="save" class="secondary" data-up="metrics" data-left="service-options" disabled>Save changes</button></div>
     </section>
   </div>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>

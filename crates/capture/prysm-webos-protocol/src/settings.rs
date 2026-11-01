@@ -1,9 +1,8 @@
-//! Capture choices shared by the TV app's configuration and capture CLI.
+//! Typed capture settings shared by the TV service and its worker.
 use serde::{Deserialize, Serialize};
 use std::{fmt, net::SocketAddr, str::FromStr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Video,
@@ -12,14 +11,6 @@ pub enum Source {
 }
 
 impl Source {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Video => "video",
-            Self::Ui => "ui",
-            Self::Both => "both",
-        }
-    }
     #[must_use]
     pub const fn includes_video(self) -> bool {
         matches!(self, Self::Video | Self::Both)
@@ -31,7 +22,6 @@ impl Source {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
 pub enum Compression {
     None,
@@ -39,14 +29,31 @@ pub enum Compression {
     H264,
 }
 
-impl Compression {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Lz4 => "lz4",
-            Self::H264 => "h264",
-        }
+/// Private worker startup configuration supplied by the supervisor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerConfig {
+    pub receiver: ReceiverAddress,
+    pub source: Source,
+    pub compression: Compression,
+    #[serde(default)]
+    pub metrics: bool,
+}
+
+pub const WORKER_CONFIG_ENV: &str = "PRYSM_WORKER_CONFIG";
+const MAX_WORKER_CONFIG_LEN: usize = 1024;
+
+impl WorkerConfig {
+    pub fn encode(self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(&self)?)
+    }
+
+    pub fn decode(payload: &str) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            payload.len() <= MAX_WORKER_CONFIG_LEN,
+            "oversized worker configuration"
+        );
+        Ok(serde_json::from_str(payload)?)
     }
 }
 
@@ -97,6 +104,31 @@ impl From<ReceiverAddress> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_configuration_is_typed_bounded_and_round_trips() {
+        let config = WorkerConfig {
+            receiver: "127.0.0.1:19400".parse().unwrap(),
+            source: Source::Both,
+            compression: Compression::H264,
+            metrics: true,
+        };
+        assert_eq!(
+            WorkerConfig::decode(&config.encode().unwrap()).unwrap(),
+            config
+        );
+        let mut legacy = serde_json::to_value(config).unwrap();
+        legacy.as_object_mut().unwrap().remove("metrics");
+        assert!(!WorkerConfig::decode(&legacy.to_string()).unwrap().metrics);
+        for payload in [
+            r#"{"receiver":"127.0.0.1:0","source":"both","compression":"h264"}"#,
+            r#"{"receiver":"127.0.0.1:19400","source":"unknown","compression":"h264"}"#,
+            r#"{"receiver":"127.0.0.1:19400","source":"both","compression":"h264","args":[]}"#,
+        ] {
+            assert!(WorkerConfig::decode(payload).is_err());
+        }
+        assert!(WorkerConfig::decode(&" ".repeat(MAX_WORKER_CONFIG_LEN + 1)).is_err());
+    }
 
     #[test]
     fn receiver_address_parsing_and_json_preserve_the_nonzero_port_invariant() {

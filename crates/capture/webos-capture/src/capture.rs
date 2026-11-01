@@ -1,10 +1,8 @@
 //! Acquire video/UI layers and assemble frames using reusable pixel buffers.
 use crate::{
-    cli::{CaptureOptions, Cli, CompositionFormat, Source},
-    native::{
-        Ui, Video,
-        events::{Event, Events},
-    },
+    config::{CaptureOptions, Config, Source},
+    events::{Event, Events},
+    native::{Ui, Video},
     pixels::{Bgra8Pixels, CompositionBuffer},
 };
 use anyhow::Result;
@@ -82,7 +80,6 @@ impl UiCapture for NativeUi {
 pub struct Capture {
     options: CaptureOptions,
     source: Source,
-    composition_format: CompositionFormat,
     video: Option<Video>,
     video_available: bool,
     video_retry: Instant,
@@ -94,15 +91,14 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn new(cli: &Cli) -> Self {
+    pub fn new(config: &Config) -> Self {
         prysm_metrics::backend_info(
             prysm_metrics::Layer::Video,
             prysm_metrics::Backend::Disabled,
         );
         Self {
-            options: cli.capture.clone(),
-            source: cli.source,
-            composition_format: cli.composition_format,
+            options: config.capture,
+            source: config.source,
             video: None,
             video_available: true,
             video_retry: Instant::now(),
@@ -190,7 +186,6 @@ impl Capture {
                         height,
                         video.map(|header| (header, self.native.as_slice())),
                         &self.bgra,
-                        self.composition_format,
                     )?;
                     if content == Content::Blended {
                         prysm_metrics::frame(FrameStage::Composited, composed.header.format.into());

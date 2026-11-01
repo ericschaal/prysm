@@ -452,7 +452,7 @@ mod tests {
             .observe(0.002);
         metrics
             .durations
-            .get_or_create(&Stage::CompositionToNv12.into())
+            .get_or_create(&Stage::FrameConvert.into())
             .observe(0.003);
         metrics
             .events
@@ -461,7 +461,7 @@ mod tests {
         let text = metrics.render().unwrap();
         assert!(text.contains("component=\"FrameSender\",boundary=\"SocketAccepted\",format=\"Rgb24\",codec=\"Unspecified\",content=\"Unspecified\",width=\"0\",height=\"0\"} 3"));
         assert!(text.contains("component=\"FrameEncoder\",operation=\"PreparePayload\"} 1"));
-        assert!(text.contains("component=\"Composer\",operation=\"ConvertToNv12\"} 1"));
+        assert!(text.contains("component=\"FrameDecoder\",operation=\"Convert\"} 1"));
         assert!(text.contains(
             "component=\"FrameSender\",operation=\"WriteFrame\",outcome=\"TimedOut\"} 1"
         ));

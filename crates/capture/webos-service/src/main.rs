@@ -4,6 +4,7 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 mod application;
 mod config;
+mod files;
 #[allow(unsafe_code)]
 mod luna;
 mod setup;
@@ -45,7 +46,7 @@ fn main() -> Result<()> {
     }
     let testing = cli.run_for.is_some() || cli.sandbox.is_some();
     let files = if let Some(root) = cli.sandbox.as_deref() {
-        Some(config::Files::sandbox(root)?)
+        Some(files::Files::sandbox(root)?)
     } else if testing {
         None
     } else {
@@ -53,7 +54,7 @@ fn main() -> Result<()> {
             nix::unistd::Uid::effective().is_root(),
             "TV service requires root"
         );
-        Some(config::Files::production()?)
+        Some(files::Files::production()?)
     };
     let name = cli.service_name.as_deref().unwrap_or(if testing {
         "io.prysm.capture.probe.service"

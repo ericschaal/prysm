@@ -3,7 +3,10 @@
 mod native;
 use crate::{config::Config, supervisor::Event};
 use anyhow::Result;
-use prysm_webos_protocol::worker::{VideoAvailability, VideoUpdate};
+use prysm_webos_protocol::{
+    WORKER_CONFIG_ENV,
+    worker::{VideoAvailability, VideoUpdate},
+};
 use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
@@ -33,8 +36,7 @@ impl Worker {
     pub fn spawn(binary: &Path, config: &Config) -> Result<Self> {
         let mut command = Command::new(binary);
         command
-            .args(config.args()?)
-            .env("PRYSM_CONTROL", "1")
+            .env(WORKER_CONFIG_ENV, config.worker_config()?.encode()?)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
@@ -221,6 +223,7 @@ mod process_tests {
     fn config() -> Config {
         Config {
             receiver: Some("127.0.0.1:42".parse().unwrap()),
+            metrics: true,
             ..Config::default()
         }
     }
@@ -228,7 +231,10 @@ mod process_tests {
     fn control_pipe_deduplicates_readiness_and_preserves_explicit_reset() {
         let dir = sandbox();
         let path = dir.path().join("worker");
-        script(&path, "dd bs=1 count=6 >&2 2>/dev/null");
+        script(
+            &path,
+            "printf '%s\\n' \"$#\" \"$PRYSM_WORKER_CONFIG\" > \"$0.startup\"; dd bs=1 count=6 >&2 2>/dev/null",
+        );
         let mut worker = Worker::spawn(&path, &config()).unwrap();
         for (availability, reset) in [
             (VideoAvailability::Unavailable, false),
@@ -263,6 +269,13 @@ mod process_tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(log, "01r?r0");
+        let startup = std::fs::read_to_string(dir.path().join("worker.startup")).unwrap();
+        let mut lines = startup.lines();
+        assert_eq!(lines.next(), Some("0"));
+        assert_eq!(
+            prysm_webos_protocol::WorkerConfig::decode(lines.next().unwrap()).unwrap(),
+            config().worker_config().unwrap()
+        );
     }
     #[test]
     fn inherited_fd_fragmentation_stderr_pressure_and_exit_are_observed() {

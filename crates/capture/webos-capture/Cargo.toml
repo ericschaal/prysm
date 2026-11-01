@@ -14,14 +14,16 @@ prysm-metrics = { path = "../../common/prysm-metrics" }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-clap = { workspace = true, features = ["derive"] }
 libc.workspace = true
 libloading.workspace = true
 memmap2.workspace = true
-nix = { workspace = true, features = ["poll", "user", "socket", "fs", "signal", "pthread"] }
+nix = { workspace = true, features = ["poll", "user", "fs", "signal"] }
 serde_json.workspace = true
-prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["cli", "h264"] }
-yuv = { workspace = true, features = ["fast_mode"] }
+prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
+yuv.workspace = true
+
+[dev-dependencies]
+nix = { workspace = true, features = ["socket", "pthread"] }
 
 [build-dependencies]
 cc.workspace = true

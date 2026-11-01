@@ -1,7 +1,9 @@
 //! Coordinate connection negotiation, frame capture, transmission, and pacing.
 use crate::{
     capture::{Capture, UiCapture},
-    cli::{CaptureOptions, Cli, Compression, Source},
+    config::{CaptureOptions, Compression, Config, Source},
+    encoder::{Encoder, H264_BITRATE},
+    events::Events,
     native::Video,
     transport::Sender,
 };
@@ -9,7 +11,7 @@ use anyhow::Result;
 use prysm_metrics::{PipelineEvent, Stage};
 #[cfg(test)]
 use prysm_webos_protocol::worker::VideoAvailability;
-use prysm_webos_protocol::worker::VideoUpdate;
+use prysm_webos_protocol::{ControlMessage, worker::VideoUpdate};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -19,36 +21,55 @@ use std::{
 pub struct Session {
     capture: Capture,
     sender: Sender,
+    state: State,
+    compression: Compression,
+}
+
+enum State {
+    Waiting(ControlMessage),
+    Capturing(CaptureOptions),
 }
 
 impl Session {
     /// Connect before acquiring any video or UI resources.
-    pub fn connect(cli: &Cli) -> Result<Self> {
-        let mut sender = Sender::new(cli.receiver.socket_addr(), cli.compression);
-        sender.h264_bitrate = cli.h264_bitrate;
-        sender.connect()?;
-
+    pub fn connect(config: &Config) -> Result<Self> {
+        let (sender, message) = Sender::connect(config.receiver.socket_addr())?;
         Ok(Self {
-            capture: Capture::new(cli),
+            capture: Capture::new(config),
             sender,
+            state: State::Waiting(message),
+            compression: config.compression,
         })
     }
 
-    pub fn wait_for_capture(&mut self, cli: &Cli, stop: &AtomicBool) -> Result<bool> {
-        let capturing = self.sender.wait_for_capture(stop)?;
-        if capturing {
-            record_capture_settings(cli, self.sender.fps, self.sender.capture_resolution);
+    pub fn wait_for_capture(&mut self, config: &Config, stop: &AtomicBool) -> Result<bool> {
+        let message = match &self.state {
+            State::Waiting(message) => *message,
+            State::Capturing(_) => return Ok(true),
+        };
+        let Some(settings) = self.sender.wait_for_capture(message, stop)? else {
+            return Ok(false);
+        };
+        record_capture_settings(config, settings.fps, [settings.width, settings.height]);
+        self.state = State::Capturing(settings);
+        Ok(true)
+    }
+
+    fn settings(&self) -> Result<CaptureOptions> {
+        match self.state {
+            State::Capturing(settings) => Ok(settings),
+            State::Waiting(_) => anyhow::bail!("receiver has not requested capture"),
         }
-        Ok(capturing)
     }
 
     pub fn configure(
         &mut self,
         ui: &mut Option<impl UiCapture>,
-        events: &mut crate::native::events::Events,
+        events: &mut Events,
     ) -> Result<()> {
+        let settings = self.settings()?;
         self.capture
-            .configure(self.sender.fps, self.sender.capture_resolution, ui, events)
+            .configure(settings.fps, [settings.width, settings.height], ui, events)
     }
 
     /// Native resources remain owned by the caller until the session is dropped.
@@ -58,8 +79,10 @@ impl Session {
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
         capture_ui: &mut Option<impl UiCapture>,
         readiness: &mut impl FnMut() -> Result<VideoUpdate>,
-        events: &mut crate::native::events::Events,
+        events: &mut Events,
     ) -> Result<()> {
+        let settings = self.settings()?;
+        let mut encoder = Encoder::new(self.compression, settings.fps, H264_BITRATE)?;
         let mut next = Instant::now();
         while !stop.load(Ordering::Relaxed) {
             if let Err(error) = self.sender.check_connection() {
@@ -73,14 +96,21 @@ impl Session {
             self.capture
                 .set_video_available(update.availability.allows_capture());
             let work = prysm_metrics::timer(Stage::CaptureIteration);
-            if let Some(frame) = self.capture.capture(open_video, capture_ui, events)?
-                && let Err(error) = self.sender.send(frame.header, frame.pixels, frame.content)
-            {
-                tracing::warn!(error = %format!("{error:#}"), "frame send failed");
-                return Ok(());
+            if let Some(frame) = self.capture.capture(open_video, capture_ui, events)? {
+                let result = encoder
+                    .encode(frame.header, frame.pixels, frame.content)
+                    .and_then(|packet| match packet {
+                        Some(packet) => self.sender.send(packet, frame.content),
+                        None => Ok(()),
+                    });
+                if let Err(error) = result {
+                    self.sender.disconnect();
+                    tracing::warn!(error = %format!("{error:#}"), "frame send failed");
+                    return Ok(());
+                }
             }
             drop(work);
-            pace(&mut next, self.sender.fps);
+            pace(&mut next, settings.fps);
         }
         Ok(())
     }
@@ -88,17 +118,14 @@ impl Session {
 
 #[cfg(test)]
 pub(crate) fn capture_loop(
-    cli: &Cli,
+    config: &Config,
     stop: &AtomicBool,
     mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
     mut capture_ui: Option<impl UiCapture>,
 ) -> Result<()> {
-    let mut session = Session::connect(cli)?;
-    if session.wait_for_capture(cli, stop)? {
-        session.configure(
-            &mut capture_ui,
-            &mut crate::native::events::Events::disabled(),
-        )?;
+    let mut session = Session::connect(config)?;
+    if session.wait_for_capture(config, stop)? {
+        session.configure(&mut capture_ui, &mut Events::disabled())?;
         session.run(
             stop,
             &mut open_video,
@@ -109,21 +136,21 @@ pub(crate) fn capture_loop(
                     reset: false,
                 })
             },
-            &mut crate::native::events::Events::disabled(),
+            &mut Events::disabled(),
         )?;
     }
     Ok(())
 }
 
-fn record_capture_settings(cli: &Cli, fps: u8, [width, height]: [u32; 2]) {
+fn record_capture_settings(config: &Config, fps: u8, [width, height]: [u32; 2]) {
     tracing::info!(fps, width, height, "capture settings negotiated");
     prysm_metrics::capture_info(
-        match cli.source {
+        match config.source {
             Source::Video => prysm_metrics::CaptureSource::Video,
             Source::Ui => prysm_metrics::CaptureSource::Ui,
             Source::Both => prysm_metrics::CaptureSource::Both,
         },
-        match cli.compression {
+        match config.compression {
             Compression::None => prysm_metrics::Codec::None,
             Compression::Lz4 => prysm_metrics::Codec::Lz4,
             Compression::H264 => prysm_metrics::Codec::H264,
@@ -131,9 +158,9 @@ fn record_capture_settings(cli: &Cli, fps: u8, [width, height]: [u32; 2]) {
         width,
         height,
         fps,
-        prysm_webos_protocol::PixelFormat::from(cli.composition_format).into(),
-        if cli.compression == Compression::H264 {
-            cli.h264_bitrate
+        prysm_webos_protocol::PixelFormat::Rgb.into(),
+        if config.compression == Compression::H264 {
+            H264_BITRATE
         } else {
             0
         },

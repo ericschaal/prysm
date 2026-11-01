@@ -10,6 +10,9 @@ families have `_bucket`, `_sum` and `_count` suffixes.
 
 Prometheus adds `job`, `instance`, and configured `node` (physical machine).
 Every exported series has `role=Capturer|Prysm` identifying the emitting process.
+Prysm launches its opt-in host exporter; the supervised TV worker launches its
+exporter on port 9101 for the lifetime of the worker when its saved `metrics`
+setting is enabled (defaults off).
 `flow` identifies CaptureFrames (TV → Prysm), InputFrames (host dispatch and
 processing), LedFrames (Prysm → WLED), or PreviewFrames (Prysm → preview).
 `component` identifies the owning module, `operation` the action being measured,
@@ -108,7 +111,6 @@ instrumentation avoids clock reads. Histogram buckets span 100 μs to 5 s plus
 | UiCapture / Acquire | Entire native UI capture call |
 | Composer / Convert | Video→RGB or UI→RGB conversion, including output allocation/resize |
 | Composer / Blend | Premultiplied BGRA blend into video RGB |
-| Composer / ConvertToNv12 | Composed/UI RGB→packed limited-range BT.601 NV12 conversion, including output resize; emitted only when selected |
 | FrameEncoder / PreparePayload | Raw payload selection or LZ4 compression; excludes header encoding |
 | FrameSender / Connect | TCP connect call only; excludes socket configuration |
 | FrameSender / WriteFrame | Entire header+payload write loop, including blocked waits |
@@ -146,7 +148,7 @@ the actual wire cohort panel and keep dimensions/mode constant when comparing ru
 
 | Metric | Unit / owner / meaning | Additional labels |
 |---|---|---|
-| prysm_capture_requested_info | 1; TV configured source/compression/composition format/dimensions/FPS | source, compression, composition_format, width, height, fps |
+| prysm_capture_requested_info | 1; historical TV settings; current worker composition is RGB | source, compression, composition_format, width, height, fps |
 | prysm_capture_backend_info | 1 selected, 0 unselected; TV actual opened backend per layer | layer, backend |
 | prysm_process_cpu_cores | cores; emitting process including its native threads, 1 = one full core | none |
 | prysm_process_resident_memory_bytes | bytes; emitting process RSS | none |

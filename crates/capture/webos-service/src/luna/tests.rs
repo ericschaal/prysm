@@ -511,6 +511,51 @@ fn callback_messages_reject_null_invalid_and_oversized_payloads() {
 }
 
 #[test]
+#[cfg(not(miri))]
+fn mutation_authorizes_before_deserializing_configuration() {
+    reset(None);
+    let dir = crate::application::tests::sandbox();
+    let service = service().unwrap();
+    *service.callbacks.app.borrow_mut() = Some(
+        crate::application::App::new(crate::files::Files::sandbox(dir.path()).unwrap()).unwrap(),
+    );
+    let mut raw = MessageData(Some(CString::new("{}").unwrap()));
+    // SAFETY: the test-owned message lives through all callback invocations.
+    let message =
+        unsafe { Message::from_callback(&service.callbacks, ptr::from_mut(&mut raw).cast()) }
+            .unwrap();
+    MOCK.with_borrow_mut(|mock| {
+        mock.method = Some(c"setConfig");
+        mock.app_id = Some(c"untrusted");
+    });
+    service.callbacks.status(&message).unwrap();
+    let denied = MOCK.with_borrow(|mock| mock.reply.clone()).unwrap();
+    assert_eq!(denied["returnValue"], false);
+    assert_eq!(
+        denied["errorText"],
+        "Only the Prysm Capture app may change service state"
+    );
+    MOCK.with_borrow_mut(|mock| mock.app_id = Some(c"io.prysm.capture.probe.app session"));
+    service.callbacks.status(&message).unwrap();
+    let invalid = MOCK.with_borrow(|mock| mock.reply.clone()).unwrap();
+    assert_eq!(invalid["returnValue"], false);
+    assert!(
+        invalid["errorText"]
+            .as_str()
+            .unwrap()
+            .contains("missing field")
+    );
+    assert!(!dir.path().join("config.json").exists());
+    raw.0 = Some(CString::new(r#"{"receiver":"127.0.0.1:19400","source":"video","compression":"none","autostart":false}"#).unwrap());
+    service.callbacks.status(&message).unwrap();
+    let saved = MOCK.with_borrow(|mock| mock.reply.clone()).unwrap();
+    assert_eq!(saved["returnValue"], true);
+    let persisted: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("config.json")).unwrap()).unwrap();
+    assert_eq!(saved["config"], persisted);
+}
+
+#[test]
 #[cfg_attr(
     miri,
     ignore = "subprocess termination is tested by the native test harness"
@@ -579,7 +624,7 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
             App,
             tests::{sandbox, script},
         },
-        config::Files,
+        files::Files,
     };
     for (fail, configured) in [("publish", false), ("publish", true), ("reply", true)] {
         reset(None);
@@ -659,7 +704,7 @@ fn initial_power_failure_remains_visible_when_supervisor_status_is_merged() {
     let dir = crate::application::tests::sandbox();
     let mut service = service().unwrap();
     *service.callbacks.app.borrow_mut() = Some(
-        crate::application::App::new(crate::config::Files::sandbox(dir.path()).unwrap()).unwrap(),
+        crate::application::App::new(crate::files::Files::sandbox(dir.path()).unwrap()).unwrap(),
     );
     service.register().unwrap();
     let value = service.callbacks.snapshot(false);
@@ -758,7 +803,7 @@ fn video_subscription_failure_retries_and_drop_cancels_both_owned_calls() {
 #[test]
 #[cfg(not(miri))]
 fn video_callback_updates_context_and_recovers_after_subscription_failure() {
-    use crate::{application::App, config::Files};
+    use crate::{application::App, files::Files};
     reset(Some("call"));
     let dir = crate::application::tests::sandbox();
     let mut service = Service::new(

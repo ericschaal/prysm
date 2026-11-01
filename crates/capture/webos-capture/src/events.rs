@@ -4,20 +4,19 @@ use std::{fs::File, io::Write, os::fd::FromRawFd};
 
 pub use prysm_webos_protocol::worker::WorkerEvent as Event;
 
-pub struct Events(Option<File>);
+pub struct Events(File);
 impl Events {
     #[cfg(test)]
     pub fn disabled() -> Self {
-        Self(None)
+        Self(File::options().write(true).open("/dev/null").unwrap())
     }
     #[cfg(test)]
     pub fn from_file(file: File) -> Self {
-        Self(Some(file))
+        Self(file)
     }
     pub fn from_environment() -> Result<Self> {
-        let Some(value) = std::env::var_os("PRYSM_EVENTS_FD") else {
-            return Ok(Self(None));
-        };
+        let value = std::env::var_os("PRYSM_EVENTS_FD")
+            .context("capture worker requires a supervisor event pipe")?;
         let descriptor: i32 = value
             .to_str()
             .context("invalid events descriptor")?
@@ -31,14 +30,12 @@ impl Events {
             unsafe { libc::fcntl(descriptor, libc::F_GETFD) } >= 0,
             "invalid events descriptor"
         );
-        Ok(Self(Some(unsafe { File::from_raw_fd(descriptor) })))
+        Ok(Self(unsafe { File::from_raw_fd(descriptor) }))
     }
 
     pub fn send(&mut self, event: &Event) -> Result<()> {
-        if let Some(pipe) = &mut self.0 {
-            serde_json::to_writer(&mut *pipe, event)?;
-            pipe.write_all(b"\n")?;
-        }
+        serde_json::to_writer(&mut self.0, event)?;
+        self.0.write_all(b"\n")?;
         Ok(())
     }
 }
@@ -51,7 +48,7 @@ mod tests {
     fn supervisor_events_are_json_on_a_separate_stream() {
         let (writer, mut reader) = UnixStream::pair().unwrap();
         let descriptor: OwnedFd = writer.into();
-        let mut events = Events(Some(descriptor.into()));
+        let mut events = Events(descriptor.into());
         events.send(&Event::Connected).unwrap();
         events.send(&Event::Capturing).unwrap();
         drop(events);

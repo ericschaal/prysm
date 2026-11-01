@@ -5,11 +5,11 @@ use super::ffi::{
     prysm_vt_preprocess, prysm_vt_release,
 };
 use super::{library, status};
-use crate::{cli::CaptureOptions, pixels};
+use crate::{config::CaptureOptions, pixels};
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
 use prysm_webos_protocol::{Header, PixelFormat};
-use std::{ffi::CStr, fs::OpenOptions, os::fd::AsRawFd};
+use std::ffi::CStr;
 use std::{
     ffi::{c_char, c_void},
     ptr::{self, NonNull},
@@ -45,7 +45,6 @@ pub struct VtCapture {
     plane: PlaneInfo,
     properties: Properties,
     prepare_at: Instant,
-    force_capture: bool,
     pending_since: Option<Instant>,
 }
 
@@ -71,7 +70,7 @@ macro_rules! vt_call {
 impl VtCapture {
     pub(super) fn open(options: &CaptureOptions) -> Result<Self> {
         let properties = Properties {
-            dump: options.capture_point as i32,
+            dump: 2, // LG display capture tap.
             width: i16::try_from(options.width)?,
             height: i16::try_from(options.height)?,
             buffers: 3,
@@ -101,7 +100,6 @@ impl VtCapture {
             plane: PlaneInfo::default(),
             properties,
             prepare_at: Instant::now(),
-            force_capture: options.force_capture,
             pending_since: None,
         };
         this.client[..2].fill(c_char::try_from(b'0')?);
@@ -121,9 +119,6 @@ impl VtCapture {
             )?;
             if code == 1 {
                 return self.retry_initialization();
-            }
-            if code == 17 && self.force_capture {
-                force_capture()?;
             }
             status(
                 code,
@@ -203,15 +198,15 @@ impl VtCapture {
     pub(super) fn capture(
         &mut self,
         output: &mut Vec<u8>,
-        events: &mut super::events::Events,
+        events: &mut crate::events::Events,
     ) -> Result<Option<Header>> {
         if self.stage <= Stage::Initialized {
             if Instant::now() < self.prepare_at {
                 return Ok(None);
             }
-            events.send(&super::events::Event::VideoResetting)?;
+            events.send(&crate::events::Event::VideoResetting)?;
             let result = self.prepare();
-            events.send(&super::events::Event::VideoReset)?;
+            events.send(&crate::events::Event::VideoReset)?;
             if !result? {
                 return Ok(None);
             }
@@ -226,9 +221,6 @@ impl VtCapture {
                 "vtCapture_currentCaptureBuffInfo status 2 persisted for two seconds"
             );
             return Ok(None);
-        }
-        if code == 17 && self.force_capture {
-            force_capture()?;
         }
         status(code, "vtCapture_currentCaptureBuffInfo")?;
         ensure!(
@@ -274,24 +266,10 @@ impl Drop for VtCapture {
     }
 }
 
-fn force_capture() -> Result<()> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/forcecapture")?;
-    // SAFETY: the forcecapture kernel interface defines _IO('Z', 0), no pointer.
-    let result = unsafe { libc::ioctl(file.as_raw_fd(), 0x5a00 as libc::c_ulong) };
-    if result < 0 {
-        return Err(std::io::Error::last_os_error()).context("forcecapture ioctl");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::{Video, events::Events};
-    use clap::Parser;
+    use crate::{events::Events, native::Video};
     use std::{
         io::Read,
         net::TcpListener,
@@ -391,7 +369,6 @@ mod tests {
             },
             properties: Properties::default(),
             prepare_at: Instant::now(),
-            force_capture: false,
             pending_since: None,
         })
     }
@@ -472,7 +449,7 @@ mod tests {
     #[test]
     fn persistent_not_ready_reports_failure_before_native_teardown() {
         let mut events = Events::disabled();
-        let cli = crate::cli::Cli::try_parse_from(["capture", "127.0.0.1:19400"]).unwrap();
+        let config = crate::config::Config::new("127.0.0.1:19400".parse().unwrap());
         let mut driver = Driver {
             code: 1,
             initialized: true,
@@ -489,7 +466,7 @@ mod tests {
             vt.pending_since = Instant::now().checked_sub(Duration::from_secs(11));
         }
         let mut video = Some(video);
-        let mut capture = crate::capture::Capture::new(&cli);
+        let mut capture = crate::capture::Capture::new(&config);
         let mut ui = Some(|width, height, bgra: &mut crate::pixels::Bgra8Pixels| {
             bgra.bytes_mut().resize((width * height * 4) as usize, 0);
             Ok(())
@@ -546,10 +523,11 @@ mod tests {
         reader.set_nonblocking(true).unwrap();
         let writer: OwnedFd = writer.into();
         let mut events = Events::from_file(writer.into());
-        let cli =
-            crate::cli::Cli::try_parse_from(["capture", "127.0.0.1:19400", "--source", "video"])
-                .unwrap();
-        let mut capture = crate::capture::Capture::new(&cli);
+        let config = crate::config::Config {
+            source: prysm_webos_protocol::Source::Video,
+            ..crate::config::Config::new("127.0.0.1:19400".parse().unwrap())
+        };
+        let mut capture = crate::capture::Capture::new(&config);
         let mut video = Some(video);
         let mut ui = None::<fn(u32, u32, &mut crate::pixels::Bgra8Pixels) -> Result<()>>;
         assert!(
@@ -649,11 +627,8 @@ mod tests {
     #[test]
     fn initial_status_two_keeps_driver_alive_until_frames_arrive() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let cli = crate::cli::Cli::try_parse_from([
-            "capture",
-            &listener.local_addr().unwrap().to_string(),
-        ])
-        .unwrap();
+        let config =
+            crate::config::Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
         let mut driver = Driver {
             code: 0,
             initialized: true,
@@ -668,7 +643,7 @@ mod tests {
         let stop = AtomicBool::new(false);
         let mut ui_frames = 0;
         crate::session::capture_loop(
-            &cli,
+            &config,
             &stop,
             |_| {
                 Ok(capture

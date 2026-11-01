@@ -5,7 +5,7 @@ pub mod h264;
 pub mod settings;
 pub mod worker;
 use anyhow::{Result, bail, ensure};
-pub use settings::{Compression, ReceiverAddress, Source};
+pub use settings::{Compression, ReceiverAddress, Source, WORKER_CONFIG_ENV, WorkerConfig};
 
 /// One ASCII digit also forms the last byte of the four-byte frame magic.
 pub const VERSION: u32 = {

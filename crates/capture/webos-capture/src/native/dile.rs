@@ -1,8 +1,7 @@
 use super::ffi::{Capability, Framebuffer, Limitation, OutputState, Rect};
 use super::{Mapping, copy_mapping, mapping};
 use super::{library, status};
-use crate::cli::CapturePoint;
-use crate::{cli::CaptureOptions, pixels};
+use crate::{config::CaptureOptions, pixels};
 use anyhow::{Context, Result, bail, ensure};
 use libloading::Library;
 use prysm_webos_protocol::{Header, PixelFormat};
@@ -31,7 +30,6 @@ pub struct DileCapture {
     _logging: Library,
     handle: NonNull<c_void>,
     running: bool,
-    freeze: bool,
     state: OutputState,
     info: Framebuffer,
     planes: usize,
@@ -56,26 +54,14 @@ impl DileCapture {
         }
         .into();
         let api = DileApi::load(&["libdile_vt.so.0", "libdile_vt.so"])?;
-        // SAFETY: this thread exclusively owns each live handle and all out parameters.
-        let handle = if options.dile_create_ex {
-            // SAFETY: optional vendor symbol has the documented native signature.
-            let create = unsafe {
-                api._library
-                    .get::<unsafe extern "C" fn(u32, i32) -> *mut c_void>(b"DILE_VT_CreateEx\0")?
-            };
-            // SAFETY: no preexisting handle; arguments follow the vendor ABI.
-            unsafe { create(0, 1) }
-        } else {
-            // SAFETY: this thread owns the live native resource and all borrowed out parameters.
-            unsafe { (api.create)(0) }
-        };
+        // SAFETY: no preexisting handle; this thread owns the returned resource.
+        let handle = unsafe { (api.create)(0) };
         let owned_handle = NonNull::new(handle).context("DILE_VT_Create failed")?;
         let mut this = Self {
             api,
             _logging: logging,
             handle: owned_handle,
             running: false,
-            freeze: !options.no_freeze,
             state: OutputState {
                 framerate: 60 / u32::from(options.fps),
                 ..OutputState::default()
@@ -98,14 +84,9 @@ impl DileCapture {
             limit.scale_down_width,
             limit.scale_down_height
         );
-        let mut location = match options.capture_point {
-            CapturePoint::Display => 1,
-            CapturePoint::ScalerOutput => 0,
-            _ => bail!("DILE supports display and scaler-output capture points"),
-        };
+        let mut location = 1; // Prefer display capture; retain the scaler fallback.
         // SAFETY: this thread owns the live native resource and all borrowed out parameters.
         if unsafe { (a.dump)(handle, location) } != 0 {
-            ensure!(location == 1, "DILE_VT capture point failed");
             location = 0;
             // SAFETY: this thread owns the live native resource and all borrowed out parameters.
             status(unsafe { (a.dump)(handle, location) }, "DILE_VT scaler dump")?;
@@ -188,14 +169,12 @@ impl DileCapture {
     }
 
     pub(super) fn capture(&mut self, output: &mut Vec<u8>) -> Result<Header> {
-        if self.freeze {
-            self.state.frozen = 1;
-            status(
-                // SAFETY: this thread owns the live native resource and all borrowed out parameters.
-                unsafe { (self.api.state)(self.handle.as_ptr(), 2, &raw mut self.state) },
-                "DILE_VT freeze",
-            )?;
-        }
+        self.state.frozen = 1;
+        status(
+            // SAFETY: this thread owns the live native resource and all borrowed out parameters.
+            unsafe { (self.api.state)(self.handle.as_ptr(), 2, &raw mut self.state) },
+            "DILE_VT freeze",
+        )?;
         let result = (|| {
             let mut index = 0;
             status(
@@ -226,14 +205,12 @@ impl DileCapture {
             }
             Ok(self.header)
         })();
-        if self.freeze {
-            self.state.frozen = 0;
-            status(
-                // SAFETY: this thread owns the live native resource and all borrowed out parameters.
-                unsafe { (self.api.state)(self.handle.as_ptr(), 2, &raw mut self.state) },
-                "DILE_VT unfreeze",
-            )?;
-        }
+        self.state.frozen = 0;
+        status(
+            // SAFETY: this thread owns the live native resource and all borrowed out parameters.
+            unsafe { (self.api.state)(self.handle.as_ptr(), 2, &raw mut self.state) },
+            "DILE_VT unfreeze",
+        )?;
         result
     }
 }
@@ -339,7 +316,6 @@ mod tests {
                 _logging: libloading::os::unix::Library::this().into(),
                 handle: NonNull::from(&mut driver).cast(),
                 running: true,
-                freeze: true,
                 state: OutputState::default(),
                 info: Framebuffer::default(),
                 planes: 2,

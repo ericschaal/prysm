@@ -69,13 +69,13 @@ test('remote arrows move through setting rows without changing any setting', t =
     assert.equal(f.focus(), 'primary');
     f.key(39);
     assert.equal(f.focus(), 'receiver');
-    for (const row of ['source', 'compression', 'autostart']) {
+    for (const row of ['source', 'compression', 'autostart', 'metrics']) {
         f.key(40);
         assert.equal(f.focus(), row);
     }
     f.key(39);
     f.key(40); // Unchanged settings have no enabled Save action.
-    assert.equal(f.focus(), 'autostart');
+    assert.equal(f.focus(), 'metrics');
     assert.equal(f.w.document.querySelectorAll('select').length, 0);
     assert.equal(f.el('source-value').textContent, 'Video + TV menus');
     assert.equal(f.el('compression-value').textContent, 'LZ4');
@@ -259,4 +259,28 @@ test('malformed or unsubscribed status replies are cancelled and retried', t => 
     assert.equal(f.el('connection').textContent, 'TV service unavailable');
     f.advance(3000);
     assert.equal(f.el('connection').textContent, 'Sender disabled');
+});
+
+
+test('metrics checkbox defaults off and only persists on Save', t => {
+    const f = fixture(t);
+    const checkbox = f.el('metrics');
+    assert.equal(checkbox.getAttribute('role'), 'checkbox');
+    assert.equal(checkbox.getAttribute('aria-checked'), 'false');
+    checkbox.focus();
+    checkbox.click();
+    assert.equal(f.focus(), 'metrics');
+    assert.equal(checkbox.getAttribute('aria-checked'), 'true');
+    assert.deepEqual(f.mutations(), []);
+    f.notify();
+    assert.equal(checkbox.getAttribute('aria-checked'), 'true');
+    f.key(40);
+    assert.equal(f.focus(), 'save');
+    f.el('save').click();
+    assert.equal(f.value.config.metrics, true);
+    assert.equal(f.mutations()[0].payload.metrics, true);
+    checkbox.click();
+    f.el('save').click();
+    assert.equal(f.value.config.metrics, false);
+    assert.equal(checkbox.getAttribute('aria-checked'), 'false');
 });
