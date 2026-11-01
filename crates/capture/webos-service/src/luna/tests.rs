@@ -556,10 +556,7 @@ fn mutation_authorizes_before_deserializing_configuration() {
 }
 
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "subprocess termination is tested by the native test harness"
-)]
+#[cfg(not(miri))]
 fn fatal_boundary_failures_abort_without_unwinding() {
     use std::os::unix::process::ExitStatusExt;
     if let Ok(mode) = std::env::var("PRYSM_TEST_BOUNDARY_FAILURE") {
