@@ -19,6 +19,7 @@
       <sourceFolder url="file://$MODULE_DIR$/apps/prysm-web/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-webos-protocol/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-webos-protocol/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/capture/prysm-webos-protocol/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/capture/webos-capture/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/capture/webos-capture/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/capture/webos-capture/tests" isTestSource="true" />

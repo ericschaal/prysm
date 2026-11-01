@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         &std::env::var(WORKER_CONFIG_ENV)
             .context("capture worker requires supervisor configuration")?,
     )?;
-    let config = Config::from(startup);
+    let mut config = Config::from(startup);
     let mut events = events::Events::from_environment()?;
     let mut control = control::Control::from_stdin()?;
     tracing_subscriber::fmt()
@@ -54,42 +54,62 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let mut session = match session::Session::connect(&config) {
-        Ok(session) => session,
-        Err(error) => {
+    loop {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
             events.send(&events::Event::Disconnected)?;
-            return Err(error);
+            return Ok(());
         }
-    };
-    events.send(&events::Event::Connected)?;
-    let capturing = session
-        .wait_for_capture(&config, &stop)
-        .unwrap_or_else(|error| {
-            tracing::info!(error = %format!("{error:#}"), "idle receiver disconnected");
-            false
+        let mut session = match session::Session::connect(&config) {
+            Ok(session) => session,
+            Err(error) => {
+                events.send(&events::Event::Disconnected)?;
+                return Err(error);
+            }
+        };
+        events.send(&events::Event::Connected)?;
+        let capturing = session
+            .wait_for_capture(&config, &stop)
+            .unwrap_or_else(|error| {
+                tracing::info!(error = %format!("{error:#}"), "idle receiver disconnected");
+                false
+            });
+        if !capturing || stop.load(std::sync::atomic::Ordering::Relaxed) {
+            events.send(&events::Event::Disconnected)?;
+            return Ok(());
+        }
+        let mut ui = Some(capture::NativeUi::new(config.source));
+        let result = session.configure(&mut ui, &mut events).and_then(|()| {
+            events.send(&events::Event::Capturing)?;
+            session.run(
+                &stop,
+                &mut native::Video::open,
+                &mut ui,
+                &mut || control.poll(),
+                &mut events,
+            )
         });
-    if !capturing {
-        events.send(&events::Event::Disconnected)?;
-        return Ok(());
+        if config.compression == config::Compression::H264Hardware
+            && result
+                .as_ref()
+                .is_err_and(|error| error.downcast_ref::<encoder::HardwareFailed>().is_some())
+            && !stop.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!("hardware encoder failed; reconnecting with OpenH264");
+            events.send(&events::Event::VideoResetting)?;
+            drop(ui);
+            drop(session);
+            events.send(&events::Event::VideoReset)?;
+            config.compression = config::Compression::H264Software;
+            continue;
+        }
+        match &result {
+            Ok(()) => events.send(&events::Event::Disconnected)?,
+            Err(error) => events.send(&events::Event::Failed {
+                message: format!("{error:#}"),
+            })?,
+        }
+        return result;
     }
-    let mut ui = Some(capture::NativeUi::new(config.source));
-    let result = session.configure(&mut ui, &mut events).and_then(|()| {
-        events.send(&events::Event::Capturing)?;
-        session.run(
-            &stop,
-            &mut native::Video::open,
-            &mut ui,
-            &mut || control.poll(),
-            &mut events,
-        )
-    });
-    match &result {
-        Ok(()) => events.send(&events::Event::Disconnected)?,
-        Err(error) => events.send(&events::Event::Failed {
-            message: format!("{error:#}"),
-        })?,
-    }
-    result
 }
 
 fn capture_lock(path: &std::path::Path) -> Result<nix::fcntl::Flock<std::fs::File>> {

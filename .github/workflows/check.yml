@@ -120,7 +120,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust

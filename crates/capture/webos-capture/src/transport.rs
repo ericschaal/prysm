@@ -386,7 +386,7 @@ pub(crate) mod tests {
         });
         let (mut sender, settings) = connect(address);
         assert_eq!(settings.fps, 60);
-        let mut encoder = Encoder::new(Compression::H264, settings.fps, 64_000).unwrap();
+        let mut encoder = Encoder::new(Compression::H264Software, settings.fps, 64_000).unwrap();
         let header = Header {
             width: 320,
             height: 180,
@@ -439,7 +439,8 @@ pub(crate) mod tests {
         for resolution in [[64, 32], [32, 16]] {
             let (mut sender, settings) = connect(address);
             assert_eq!([settings.width, settings.height], resolution);
-            let mut encoder = Encoder::new(Compression::H264, settings.fps, H264_BITRATE).unwrap();
+            let mut encoder =
+                Encoder::new(Compression::H264Software, settings.fps, H264_BITRATE).unwrap();
             let header = Header {
                 width: resolution[0],
                 height: resolution[1],

@@ -26,7 +26,10 @@ impl Source {
 pub enum Compression {
     None,
     Lz4,
-    H264,
+    #[serde(rename = "h264-software")]
+    H264Software,
+    #[serde(rename = "h264-hardware")]
+    H264Hardware,
 }
 
 /// Private worker startup configuration supplied by the supervisor.
@@ -106,11 +109,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn h264_compression_choices_have_explicit_names() {
+        assert!(serde_json::from_str::<Compression>(r#""h264""#).is_err());
+        for (name, compression) in [
+            ("h264-software", Compression::H264Software),
+            ("h264-hardware", Compression::H264Hardware),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<Compression>(&format!("\"{name}\"")).unwrap(),
+                compression
+            );
+            assert_eq!(serde_json::to_value(compression).unwrap(), name);
+            let config = WorkerConfig {
+                receiver: "127.0.0.1:19400".parse().unwrap(),
+                source: Source::Video,
+                compression,
+                metrics: false,
+            };
+            assert_eq!(
+                WorkerConfig::decode(&config.encode().unwrap()).unwrap(),
+                config
+            );
+        }
+    }
+
+    #[test]
     fn worker_configuration_is_typed_bounded_and_round_trips() {
         let config = WorkerConfig {
             receiver: "127.0.0.1:19400".parse().unwrap(),
             source: Source::Both,
-            compression: Compression::H264,
+            compression: Compression::H264Software,
             metrics: true,
         };
         assert_eq!(
@@ -121,9 +149,9 @@ mod tests {
         legacy.as_object_mut().unwrap().remove("metrics");
         assert!(!WorkerConfig::decode(&legacy.to_string()).unwrap().metrics);
         for payload in [
-            r#"{"receiver":"127.0.0.1:0","source":"both","compression":"h264"}"#,
-            r#"{"receiver":"127.0.0.1:19400","source":"unknown","compression":"h264"}"#,
-            r#"{"receiver":"127.0.0.1:19400","source":"both","compression":"h264","args":[]}"#,
+            r#"{"receiver":"127.0.0.1:0","source":"both","compression":"h264-software"}"#,
+            r#"{"receiver":"127.0.0.1:19400","source":"unknown","compression":"h264-software"}"#,
+            r#"{"receiver":"127.0.0.1:19400","source":"both","compression":"h264-software","args":[]}"#,
         ] {
             assert!(WorkerConfig::decode(payload).is_err());
         }

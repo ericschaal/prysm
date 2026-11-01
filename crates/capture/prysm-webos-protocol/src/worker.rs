@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerEvent {
+    EncoderBusy,
+    EncoderIdle,
     VideoResetting,
     VideoReset,
     Connected,
@@ -142,6 +144,8 @@ mod tests {
     #[test]
     fn worker_events_keep_the_existing_json_contract() {
         for event in [
+            WorkerEvent::EncoderBusy,
+            WorkerEvent::EncoderIdle,
             WorkerEvent::VideoResetting,
             WorkerEvent::VideoReset,
             WorkerEvent::Connected,

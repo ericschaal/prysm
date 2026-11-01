@@ -83,36 +83,60 @@ impl Session {
     ) -> Result<()> {
         let settings = self.settings()?;
         let mut encoder = Encoder::new(self.compression, settings.fps, H264_BITRATE)?;
-        let mut next = Instant::now();
-        while !stop.load(Ordering::Relaxed) {
-            if let Err(error) = self.sender.check_connection() {
-                tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
-                return Ok(());
-            }
-            let update = readiness()?;
-            if update.reset {
-                self.capture.release_video(events)?;
-            }
-            self.capture
-                .set_video_available(update.availability.allows_capture());
-            let work = prysm_metrics::timer(Stage::CaptureIteration);
-            if let Some(frame) = self.capture.capture(open_video, capture_ui, events)? {
-                let result = encoder
-                    .encode(frame.header, frame.pixels, frame.content)
-                    .and_then(|packet| match packet {
-                        Some(packet) => self.sender.send(packet, frame.content),
-                        None => Ok(()),
-                    });
-                if let Err(error) = result {
-                    self.sender.disconnect();
-                    tracing::warn!(error = %format!("{error:#}"), "frame send failed");
+        let result = (|| {
+            let mut next = Instant::now();
+            while !stop.load(Ordering::Relaxed) {
+                if let Err(error) = self.sender.check_connection() {
+                    tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
                     return Ok(());
                 }
+                let update = readiness()?;
+                if update.reset {
+                    self.capture.release_video(events)?;
+                }
+                self.capture
+                    .set_video_available(update.availability.allows_capture());
+                let work = prysm_metrics::timer(Stage::CaptureIteration);
+                if let Some(frame) = self.capture.capture(open_video, capture_ui, events)? {
+                    let hardware = encoder.hardware_active();
+                    if hardware {
+                        events.send(&crate::events::Event::EncoderBusy)?;
+                    }
+                    let packet = encoder.encode(frame.header, frame.pixels, frame.content);
+                    if hardware {
+                        events.send(&crate::events::Event::EncoderIdle)?;
+                    }
+                    let result = packet.and_then(|packet| match packet {
+                        Some(packet) => self.sender.send(packet, packet.content),
+                        None => Ok(()),
+                    });
+                    if let Err(error) = result {
+                        self.sender.disconnect();
+                        tracing::warn!(error = %format!("{error:#}"), "frame send failed");
+                        if error
+                            .downcast_ref::<crate::encoder::HardwareFailed>()
+                            .is_some()
+                        {
+                            return Err(error);
+                        }
+                        return Ok(());
+                    }
+                }
+                drop(work);
+                pace(&mut next, settings.fps);
             }
-            drop(work);
-            pace(&mut next, settings.fps);
+            Ok(())
+        })();
+        self.sender.disconnect();
+        let hardware = encoder.hardware_active();
+        if hardware {
+            events.send(&crate::events::Event::EncoderBusy)?;
         }
-        Ok(())
+        drop(encoder);
+        if hardware {
+            events.send(&crate::events::Event::EncoderIdle)?;
+        }
+        result
     }
 }
 
@@ -153,13 +177,16 @@ fn record_capture_settings(config: &Config, fps: u8, [width, height]: [u32; 2]) 
         match config.compression {
             Compression::None => prysm_metrics::Codec::None,
             Compression::Lz4 => prysm_metrics::Codec::Lz4,
-            Compression::H264 => prysm_metrics::Codec::H264,
+            Compression::H264Software | Compression::H264Hardware => prysm_metrics::Codec::H264,
         },
         width,
         height,
         fps,
         prysm_webos_protocol::PixelFormat::Rgb.into(),
-        if config.compression == Compression::H264 {
+        if matches!(
+            config.compression,
+            Compression::H264Software | Compression::H264Hardware
+        ) {
             H264_BITRATE
         } else {
             0

@@ -12,8 +12,9 @@ The native adapters derive from MIT-licensed
 [hyperion-webos](https://github.com/webosbrew/hyperion-webos), revision
 `00c932f092084b234b3f619b060a98fa134c12bd`; retain the supplied license notices.
 Project-owned C++ contains vendor exceptions before they can cross the Rust FFI
-boundary. H.264 uses OpenH264's bundled native codec. Unsafe Rust is confined to
-the LG adapters and the inherited event-descriptor boundary.
+boundary. H.264 defaults to OpenH264's bundled native codec. Unsafe Rust is confined to
+the LG adapters, kernel DMA allocation/mapping in the optional hardware encoder,
+and inherited event descriptors. GStreamer ownership uses the standard Rust bindings.
 
 The tested hardware is LG 43QNED87A6D.BEUFLJP, webOS 25 (10.3.2-34). Native YUV
 uses the verified limited-range BT.709 display capture path, independently of the
@@ -30,6 +31,13 @@ rustup target add armv7-unknown-linux-gnueabi
 WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
   ./packaging/webos/build-ipk.sh
 ```
+
+Hardware H.264 is excluded by default. Add `--hardware-h264` to the package
+command to enable it in both binaries. On Linux this links the worker to the
+TV's GStreamer core, app, video, allocators and GLib libraries; these libraries
+are not bundled. They must be present even if software compression is selected.
+The script uses the SDK's target pkg-config metadata. The checked SDK supplies
+GStreamer 1.20.4 and GLib 2.72.3; newer API version features are not enabled.
 
 The shared package build compiles the sender and supervisor with the SDK C++ compiler and linker,
 an explicit sysroot, Cortex-A9 code generation, and the **soft-float ABI**
@@ -49,7 +57,7 @@ LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 The service starts the worker without arguments and supplies:
 
 - `PRYSM_WORKER_CONFIG`: bounded JSON containing a validated receiver address,
-  `source` (`video`, `ui`, `both`), `compression` (`none`, `lz4`, `h264`), and
+  `source` (`video`, `ui`, `both`), `compression` (`none`, `lz4`, `h264-software`, `h264-hardware`), and
   `metrics` (boolean, defaults off).
 - `PRYSM_EVENTS_FD`: an owned inherited pipe for typed lifecycle events.
 - stdin: the required private readiness/reset control pipe.
@@ -102,6 +110,14 @@ necessary; see the
 These guards cannot make a blocking vendor call interruptible.
 
 ## Encoding and transport
+
+The TV app offers **H.264 (software)** (`h264-software`). It adds **H.264
+(hardware)** (`h264-hardware`) only when the supervisor reports
+`capabilities.hardwareH264: true` in its status response. This describes build
+support, not a runtime check of the TV's encoder. Default builds reject hardware
+configuration. Hardware remains an explicit choice after the earlier native
+binding implementation showed higher CPU use and an extra frame of latency.
+See [hardware integration and measurements](HARDWARE-H264.md).
 
 Video-only capture packs native NV12/NV16 without RGB conversion. UI composition
 produces RGB. All paths use reusable buffers and checked, tightly packed planes;

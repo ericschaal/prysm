@@ -18,7 +18,7 @@ var modal = document.getElementById('modal');
 var body = document.getElementById('dialog-body');
 var names = {
     source: { both: 'Video + TV menus', video: 'Video only', ui: 'TV menus only' },
-    compression: { lz4: 'LZ4', none: 'None', h264: 'H.264' }
+    compression: { lz4: 'LZ4', none: 'None', 'h264-software': 'H.264 (software)', 'h264-hardware': 'H.264 (hardware)' }
 };
 function element(id) { return document.getElementById(id); }
 function copy(value) {
@@ -308,9 +308,13 @@ element('source').onclick = function () {
     ]);
 };
 element('compression').onclick = function () {
-    choices('compression', 'Compression', 'Choose how frames are sent to Prysm.', [
-        ['lz4', 'LZ4', 'Lossless compression.'], ['none', 'None', 'Uncompressed frames. Uses more bandwidth.'], ['h264', 'H.264', 'Lossy compression. Uses more TV processing.']
-    ]);
+    var values = [
+        ['lz4', 'LZ4', 'Lossless compression.'], ['none', 'None', 'Uncompressed frames. Uses more bandwidth.'], ['h264-software', 'H.264 (software)', 'Lossy compression using TV processing.']
+    ];
+    if (observed && observed.capabilities && observed.capabilities.hardwareH264 === true) {
+        values.push(['h264-hardware', 'H.264 (hardware)', 'Uses the TV encoder. Falls back to software if unavailable.']);
+    }
+    choices('compression', 'Compression', 'Choose how frames are sent to Prysm.', values);
 };
 element('autostart').onclick = function () {
     choices('autostart', 'Enable with TV', 'Enable the background sender when the TV boots. Capture still follows Prysm.', [

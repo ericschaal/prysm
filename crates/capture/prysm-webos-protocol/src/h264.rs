@@ -1,4 +1,5 @@
 //! Stateful low-latency codec. Wire pixel format describes decoded RGB24 output.
+pub mod hardware;
 use crate::{Header, PixelFormat};
 use anyhow::{Result, ensure};
 use h264_reader::nal::{Nal, RefNal, UnitType, sps::SeqParameterSet};

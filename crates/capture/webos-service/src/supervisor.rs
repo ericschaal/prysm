@@ -25,6 +25,7 @@ pub struct Supervisor {
     retry: Option<Instant>,
     kill_at: Option<Instant>,
     video_reset_at: Option<Instant>,
+    encoder_at: Option<Instant>,
     immediate: bool,
     expected_exit: bool,
     actions: Vec<Action>,
@@ -44,6 +45,7 @@ impl Supervisor {
             retry: None,
             kill_at: None,
             video_reset_at: None,
+            encoder_at: None,
             immediate: false,
             expected_exit: false,
             actions: Vec::new(),
@@ -53,7 +55,7 @@ impl Supervisor {
         self.enabled && self.power.as_deref() == Some("Active") && self.config.receiver.is_some()
     }
     pub fn snapshot(&self) -> Value {
-        json!({"enabled":self.enabled, "power":self.power, "senderRunning":self.running, "receiverConnected":self.connected, "capturing":self.capturing, "stopping":self.stopping, "error":self.error, "lastLog":self.log, "config":self.config})
+        json!({"enabled":self.enabled, "power":self.power, "senderRunning":self.running, "receiverConnected":self.connected, "capturing":self.capturing, "stopping":self.stopping, "error":self.error, "lastLog":self.log, "config":self.config, "capabilities":{"hardwareH264":cfg!(feature = "hardware-h264")}})
     }
     pub fn reconcile(&mut self, now: Instant) {
         if !self.wanted() {
@@ -100,6 +102,10 @@ impl Supervisor {
         }
     }
     pub fn tick(&mut self, now: Instant) {
+        if self.encoder_at.is_some_and(|deadline| now >= deadline) {
+            self.encoder_at = None;
+            self.failed("Hardware encoder operation timed out".into(), now);
+        }
         if self.video_reset_at.is_some_and(|deadline| now >= deadline) {
             self.video_reset_at = None;
             self.failed("Native video reset timed out".into(), now);
@@ -120,6 +126,7 @@ impl Supervisor {
         self.capturing = false;
         self.kill_at = None;
         self.video_reset_at = None;
+        self.encoder_at = None;
         if self.wanted() && !self.immediate {
             if !success && !self.expected_exit && self.error.is_none() {
                 self.error = Some(format!("Capturer exited: {description}"));
@@ -136,6 +143,8 @@ impl Supervisor {
             return;
         }
         match event {
+            Event::EncoderBusy => self.encoder_at = Some(now + Duration::from_secs(5)),
+            Event::EncoderIdle => self.encoder_at = None,
             Event::VideoResetting => self.video_reset_at = Some(now + Duration::from_secs(5)),
             Event::VideoReset => self.video_reset_at = None,
             Event::Connected => self.connected = true,
@@ -172,6 +181,13 @@ mod tests {
             autostart: true,
             ..Config::default()
         })
+    }
+    #[test]
+    fn snapshot_reports_hardware_build_support() {
+        assert_eq!(
+            configured().snapshot()["capabilities"]["hardwareH264"],
+            cfg!(feature = "hardware-h264")
+        );
     }
     #[test]
     fn standby_rapid_wake_and_stop_never_overlap_workers() {
@@ -288,5 +304,38 @@ mod video_reset_tests {
         assert_eq!(state.actions(), [Action::Terminate]);
         state.tick(now + Duration::from_secs(16));
         assert_eq!(state.actions(), [Action::Kill]);
+    }
+}
+
+#[cfg(test)]
+mod encoder_tests {
+    use super::*;
+    #[test]
+    fn hardware_start_encode_and_drop_are_watchdog_bounded() {
+        let now = Instant::now();
+        let mut state = Supervisor::new(Config {
+            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            autostart: true,
+            ..Config::default()
+        });
+        state.set_power(Some("Active".into()), now);
+        assert_eq!(state.actions(), [Action::Spawn]);
+        state.event(Event::EncoderBusy, now);
+        state.event(Event::EncoderIdle, now);
+        state.tick(now + Duration::from_secs(6));
+        assert_eq!(state.actions(), []);
+        state.event(Event::EncoderBusy, now + Duration::from_secs(6));
+        // A capture event cannot cancel an encoder deadline.
+        state.event(Event::VideoReset, now + Duration::from_secs(7));
+        state.tick(now + Duration::from_secs(11));
+        assert_eq!(state.actions(), [Action::Terminate]);
+        assert!(state.error.as_ref().unwrap().contains("encoder"));
+        state.tick(now + Duration::from_secs(16));
+        assert_eq!(state.actions(), [Action::Kill]);
+        state.closed(false, "killed", now + Duration::from_secs(16));
+        state.tick(now + Duration::from_secs(21));
+        assert_eq!(state.actions(), [Action::Spawn]);
+        state.tick(now + Duration::from_secs(27));
+        assert_eq!(state.actions(), []);
     }
 }

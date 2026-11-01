@@ -1,5 +1,23 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.18 deploys the Rust GStreamer bindings with `--hardware-h264` on the
+project TV. All 21 installed package files match the IPK, and the restarted
+service reports `capabilities.hardwareH264: true`. Saved settings were preserved;
+capture remains disabled with LZ4 selected and no receiver configured.
+[Deployment evidence](../../work/webos-gstreamer-bindings/deployment/evidence/deployment.json).
+
+Builds use software H.264 by default. Pass `--hardware-h264` to include the
+experimental hardware backend and enable its service configuration choice.
+
+The deployed version 0.1.17 included both H.264 backends. Its TV app
+selects `h264-software` or `h264-hardware`; the former `h264` value was removed.
+For a clean installation, remove service setup, uninstall the app, and delete
+`/var/lib/prysm-capture/config.json` before installing this package. Deployed
+on 2026-11-01 after uninstalling 0.1.16 and deleting its saved configuration.
+Installed app/service files match the IPK; the app opens with factory defaults,
+capture disabled and no saved config file.
+[Deployment evidence](../../work/webos-hardware-integration/deployment-0.1.17.json).
+
 Version 0.1.16 exports numeric requested FPS for the Grafana capture-budget gauge.
 Deployed on 2026-11-01 with both ARM binary hashes verified, settings and metrics
 opt-in preserved, and frames progressing. The host now exposes requested FPS and
@@ -62,8 +80,20 @@ WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
   ./packaging/webos/build-ipk.sh
 ```
 
+The default package uses software H.264 and has no GStreamer library dependency.
+To include the experimental hardware encoder, pass `--hardware-h264` to the
+same command. This enables the feature in both the worker and supervisor. The
+SDK must provide GStreamer core, app, video and allocators development libraries;
+the script selects the SDK's target pkg-config metadata rather than host libraries.
+The checked SDK supplies GStreamer 1.20.4 and GLib 2.72.3. Hardware packages
+require compatible GStreamer libraries on the TV even when software compression
+is selected; missing shared libraries prevent the worker from starting.
+The IPK includes MIT notices for the GStreamer Rust and GLib bindings. The native
+GStreamer/GLib libraries are supplied by the TV and dynamically linked, not copied
+into the package.
+
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.18_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -75,12 +105,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.18_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.16_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.18_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This

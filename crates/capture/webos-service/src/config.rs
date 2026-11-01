@@ -29,6 +29,10 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         self.receiver.context("Receiver must be configured")?;
+        anyhow::ensure!(
+            self.compression != Compression::H264Hardware || cfg!(feature = "hardware-h264"),
+            "Hardware H.264 is not included in this build"
+        );
         Ok(())
     }
     pub fn worker_config(&self) -> Result<WorkerConfig> {
@@ -77,6 +81,14 @@ mod tests {
             receiver: Some("127.0.0.1:19400".parse().unwrap()),
             ..Config::default()
         }
+    }
+    #[test]
+    fn hardware_compression_requires_the_build_feature() {
+        let config = Config {
+            compression: Compression::H264Hardware,
+            ..valid()
+        };
+        assert_eq!(config.validate().is_ok(), cfg!(feature = "hardware-h264"));
     }
     #[test]
     fn configuration_rejects_unknown_fields_addresses_and_shell_input() {
@@ -147,7 +159,8 @@ mod tests {
             for (compression, compression_name) in [
                 (Compression::None, "none"),
                 (Compression::Lz4, "lz4"),
-                (Compression::H264, "h264"),
+                (Compression::H264Software, "h264-software"),
+                (Compression::H264Hardware, "h264-hardware"),
             ] {
                 let config = Config {
                     source,

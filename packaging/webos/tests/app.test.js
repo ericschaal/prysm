@@ -32,6 +32,7 @@ function fixture(t, options = {}) {
     let value = {
         returnValue: true, enabled: false, power: 'Active', senderRunning: false, receiverConnected: false, stopping: false,
         error: null, lastLog: null,
+        capabilities: { hardwareH264: options.hardwareH264 === true },
         config: { receiver: '192.168.18.18:19400', source: 'both', compression: 'lz4', autostart: false }
     };
     w.PalmServiceBridge = function () {
@@ -131,11 +132,11 @@ test('receiver editing is explicit and cancels without overwriting the address',
 test('save-and-enable applies the draft before enabling, with no optimistic streaming claim', t => {
     const f = fixture(t);
     f.el('compression').click();
-    f.el('choice-h264').click();
+    f.el('choice-h264-software').click();
     assert.equal(f.el('primary').textContent, 'Save and enable');
     f.el('primary').click();
     assert.deepEqual(f.mutations().map(call => call.method), ['setConfig', 'start']);
-    assert.equal(f.value.config.compression, 'h264');
+    assert.equal(f.value.config.compression, 'h264-software');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
     assert.equal(f.el('primary').textContent, 'Disable sender');
     f.el('primary').click();
@@ -222,7 +223,7 @@ test('a waiting sender is described as enabled, rather than actively capturing o
 test('one status subscription recovers after service failure without losing draft settings', t => {
     const f = fixture(t);
     assert.deepEqual(f.calls.filter(call => call.method === 'status').map(call => call.payload), [{ subscribe: true }]);
-    f.el('compression').click(); f.el('choice-h264').click();
+    f.el('compression').click(); f.el('choice-h264-software').click();
     const old = f.subscription();
     old.onservicecallback('{"returnValue":false,"errorText":"service exited"}');
     assert.equal(old.cancelled, true);
@@ -231,7 +232,7 @@ test('one status subscription recovers after service failure without losing draf
     assert.equal(f.calls.length, 1);
     f.advance(1);
     assert.notEqual(f.subscription(), old);
-    assert.equal(f.el('compression-value').textContent, 'H.264');
+    assert.equal(f.el('compression-value').textContent, 'H.264 (software)');
     assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
     old.onservicecallback('{"returnValue":false,"errorText":"late reply"}');
     assert.notEqual(f.el('connection').textContent, 'TV service unavailable');
@@ -283,4 +284,36 @@ test('metrics checkbox defaults off and only persists on Save', t => {
     f.el('save').click();
     assert.equal(f.value.config.metrics, false);
     assert.equal(checkbox.getAttribute('aria-checked'), 'false');
+});
+
+for (const [compression, label] of [['h264-software', 'H.264 (software)'], ['h264-hardware', 'H.264 (hardware)']]) {
+    test(`${label} is saved and restored as a distinct compression choice`, t => {
+        const f = fixture(t, { hardwareH264: true });
+        f.el('compression').click();
+        f.el('choice-' + compression).click();
+        assert.equal(f.el('compression-value').textContent, label);
+        assert.equal(f.value.config.compression, 'lz4');
+        f.el('save').click();
+        assert.equal(f.value.config.compression, compression);
+        assert.equal(f.mutations()[0].payload.compression, compression);
+        f.notify();
+        f.el('compression').click();
+        assert.equal(f.el('choice-' + compression).getAttribute('aria-pressed'), 'true');
+    });
+}
+
+test('hardware compression is offered only when the service advertises support', t => {
+    const f = fixture(t);
+    for (const capabilities of [undefined, { hardwareH264: false }, { hardwareH264: 'true' }]) {
+        f.value.capabilities = capabilities;
+        f.notify();
+        f.el('compression').click();
+        assert.equal(f.el('choice-h264-hardware'), null);
+        assert.ok(f.el('choice-h264-software'));
+        f.key(461);
+    }
+    f.value.capabilities = { hardwareH264: true };
+    f.notify();
+    f.el('compression').click();
+    assert.ok(f.el('choice-h264-hardware'));
 });

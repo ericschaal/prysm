@@ -9,6 +9,9 @@ keywords.workspace = true
 categories.workspace = true
 description = "Native webOS video capture sender for Prysm"
 
+[features]
+hardware-h264 = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
+
 [dependencies]
 prysm-metrics = { path = "../../common/prysm-metrics" }
 anyhow.workspace = true
@@ -21,6 +24,12 @@ nix = { workspace = true, features = ["poll", "user", "fs", "signal"] }
 serde_json.workspace = true
 prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
 yuv.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gstreamer = { workspace = true, optional = true }
+gstreamer-app = { workspace = true, optional = true }
+gstreamer-video = { workspace = true, optional = true }
+gstreamer-allocators = { workspace = true, optional = true }
 
 [dev-dependencies]
 nix = { workspace = true, features = ["socket", "pthread"] }

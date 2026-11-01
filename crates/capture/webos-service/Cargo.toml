@@ -10,6 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
+hardware-h264 = []
 codegen = ["dep:bindgen"]
 
 [dependencies]
