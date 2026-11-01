@@ -79,6 +79,46 @@ jobs:
       - name: ARM32 native ABI, exception boundary, pixels and transport tests
         run: cargo +stable test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-webos-service --target armv7-unknown-linux-gnueabi
 
+  webos-package:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      WEBOS_SDK: ${{ github.workspace }}/.webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: webOS build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential file python3
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add armv7-unknown-linux-gnueabi
+          npm install --global @webos-tools/cli@3.2.6
+      - name: Install pinned webOS SDK
+        run: |
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/webos-sdk.tar.gz" \
+            https://github.com/openlgtv/buildroot-nc4/releases/download/2026.08-webos/arm-webos-linux-gnueabi_sdk-buildroot-aarch64.tar.gz
+          echo "3a9330f3789f8008ece7c8a48f58c3a71d0307a9a1f81896db938b785524c3ce  $RUNNER_TEMP/webos-sdk.tar.gz" | sha256sum --check
+          mkdir -p "$(dirname "$WEBOS_SDK")"
+          tar -xzf "$RUNNER_TEMP/webos-sdk.tar.gz" -C "$(dirname "$WEBOS_SDK")"
+          "$WEBOS_SDK/relocate-sdk.sh"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: webos-package-2026.08-webos
+      - name: Build and validate webOS app package
+        run: ./packaging/webos/build-ipk.sh
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: prysm-webos-armv7
+          path: target/webos-ipk/*.ipk
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
   miri:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -184,7 +224,10 @@ jobs:
           test ! -e /etc/prysm/prysm.toml
           test ! -d /etc/prysm
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: prysm-debian-arm64
           path: target/debian/*.deb
           if-no-files-found: error
+          retention-days: 3
+          compression-level: 0

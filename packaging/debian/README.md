@@ -6,6 +6,11 @@ One `prysm-led` package installs `prysm` (REST API and pipeline) and `prysm-web`
 
 ## Build
 
+Pushes and manual runs of [Check and package](../../.github/workflows/check.yml)
+publish `prysm-debian-arm64` under the run's **Artifacts** section. It contains
+the ARM64 `.deb`, including both services and the embedded web UI. Downloads expire
+after three days; pull requests still build and verify packages without uploading them.
+
 On Debian arm64, install the Rust toolchain, Node 24, and native capture dependencies:
 
 ```sh

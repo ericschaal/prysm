@@ -70,6 +70,12 @@ capture and receiver connectivity were confirmed before transition testing.
 
 ## Build and install
 
+Pushes and manual runs of [Check and package](../../.github/workflows/check.yml)
+publish `prysm-webos-armv7` under the run's **Artifacts** section. It contains
+the `.ipk` built with software H.264, using the checksum-verified `2026.08-webos`
+SDK. Downloads expire after three days; pull requests build and validate the package
+without uploading it. Hardware H.264 remains an opt-in local build.
+
 Install the [webOS CLI](https://github.com/webos-tools/cli), which supplies
 `ares-package`, and the relocated TV SDK described in the
 [capturer README](../../crates/capture/webos-capture/README.md). From the repo root:

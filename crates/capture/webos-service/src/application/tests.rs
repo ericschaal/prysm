@@ -11,8 +11,19 @@ pub(crate) fn sandbox() -> tempfile::TempDir {
     dir
 }
 pub(crate) fn script(path: &std::path::Path, body: &str) {
-    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    // dash rejects the multi-digit event descriptors produced by parallel tests.
+    fs::write(path, format!("#!/bin/bash\n{body}\n")).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
+pub(crate) fn test_process() -> std::process::Command {
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", "ulimit -c 0; exec \"$@\"", "test"]);
+    // Cargo's runner is not automatically applied to child processes.
+    if let Ok(runner) = std::env::var("CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_RUNNER") {
+        command.args(runner.split_whitespace());
+    }
+    command.arg(std::env::current_exe().unwrap());
+    command
 }
 fn app(dir: &tempfile::TempDir) -> App {
     let files = Files::sandbox(dir.path()).unwrap();

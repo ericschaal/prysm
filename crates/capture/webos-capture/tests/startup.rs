@@ -13,7 +13,16 @@ fn worker_rejects_cli_and_missing_supervisor_contract_before_native_startup() {
             "requires a supervisor event pipe",
         ),
     ] {
-        let mut command = Command::new(binary);
+        // Cargo's runner is not automatically applied to child processes.
+        let mut command = match std::env::var("CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_RUNNER") {
+            Ok(runner) => {
+                let mut args = runner.split_whitespace();
+                let mut command = Command::new(args.next().expect("runner must not be empty"));
+                command.args(args).arg(binary);
+                command
+            }
+            Err(_) => Command::new(binary),
+        };
         command
             .env_remove(WORKER_CONFIG_ENV)
             .env_remove("PRYSM_EVENTS_FD")
@@ -28,8 +37,7 @@ fn worker_rejects_cli_and_missing_supervisor_contract_before_native_startup() {
         assert!(!output.status.success());
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),
-            "{:?}",
-            output.stderr
+            "argument={argument:?}, expected={expected:?}, output={output:?}"
         );
     }
 }

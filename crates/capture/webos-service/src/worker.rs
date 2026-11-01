@@ -279,6 +279,8 @@ mod process_tests {
     }
     #[test]
     fn inherited_fd_fragmentation_stderr_pressure_and_exit_are_observed() {
+        // Exercise multi-digit inherited descriptors even when this test runs alone.
+        let _descriptors: Vec<_> = (0..16).map(|_| File::open("/dev/null").unwrap()).collect();
         let dir = sandbox();
         let path = dir.path().join("worker");
         script(
@@ -346,7 +348,7 @@ mod process_tests {
         let dir = sandbox();
         let path = dir.path().join("pid");
         assert!(
-            Command::new(std::env::current_exe().unwrap())
+            crate::application::tests::test_process()
                 .args([
                     "--exact",
                     "worker::process_tests::worker_dies_when_supervisor_exits_without_dropping_it"

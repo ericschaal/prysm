@@ -578,18 +578,16 @@ fn fatal_boundary_failures_abort_without_unwinding() {
         panic!("callback resumed after a panic");
     }
     for mode in ["callback", "unregister"] {
-        let status = std::process::Command::new("sh")
-        .args([
-            "-c",
-            "ulimit -c 0; exec \"$1\" --exact luna::tests::fatal_boundary_failures_abort_without_unwinding",
-            "test",
-        ])
-        .arg(std::env::current_exe().unwrap())
-        .env("PRYSM_TEST_BOUNDARY_FAILURE", mode)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
+        let status = crate::application::tests::test_process()
+            .args([
+                "--exact",
+                "luna::tests::fatal_boundary_failures_abort_without_unwinding",
+            ])
+            .env("PRYSM_TEST_BOUNDARY_FAILURE", mode)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
         assert_eq!(status.signal(), Some(6), "{mode}");
     }
 }

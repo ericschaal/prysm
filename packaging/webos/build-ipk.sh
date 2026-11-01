@@ -5,7 +5,7 @@ features=(--no-default-features)
 case "$#:${1-}" in
   0:) ;;
   1:--hardware-h264)
-    features+=(--features prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264)
+    features+=(--features "prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264")
     ;;
   *) echo 'Usage: build-ipk.sh [--hardware-h264]' >&2; exit 1 ;;
 esac
