@@ -21,7 +21,7 @@ are now implemented and passed staged TV qualification, including 300 real
 640×280 frames at ~30 FPS and 405 independently replayed wire frames overall.
 See [integration results](integration-results.md). The user then explicitly
 requested deployment: version 0.1.21 is installed, the sender targets the current
-computer and capture is active. [Deployment evidence](../../../work/webos-encoder-latency/deployment/evidence/deployment.json).
+computer and capture is active. Deployment evidence (local evidence at `work/webos-encoder-latency/deployment/evidence/deployment.json`; not distributed).
 
 **Live follow-up completed:** removing the parser reduced measured frame latency
 from 45.6–45.8 ms to 11.8 ms at 640×360 with 30 fps input pacing. Native V4L2
@@ -42,8 +42,8 @@ or removing the current input/output ownership safeguards.
 
 Investigation: 2026-11-02. Platform: webOS, not Apple tvOS. Ordinary native
 reverse engineering (`flavor=null`, severity `n/a_re`).
-[Scope](../../../work/webos-encoder-latency/scope.md) and
-[timeline](../../../work/webos-encoder-latency/timeline.md).
+Scope (local evidence at `work/webos-encoder-latency/scope.md`; not distributed) and
+timeline (local evidence at `work/webos-encoder-latency/timeline.md`; not distributed).
 No TV connection, deployment, driver change, or production-code edit occurred.
 Existing uncommitted implementation changes were inspected and preserved.
 

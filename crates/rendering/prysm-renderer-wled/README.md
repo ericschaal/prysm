@@ -42,46 +42,11 @@ maximum white but substantially darkens shadows and midtones: an input channel
 of 128 becomes drive 37 at 2.8, versus 56 at 2.2 (exact sRGB decoding gives 55).
 See the [HDR and brightness investigation](../../../research/webos-capture/2026-11-01-hdr-brightness/README.md).
 
-Edit [`prysm.toml`](../../../prysm.toml) and run from the workspace root:
+For application setup, input selection and lifecycle behavior, use the
+[capture quickstart](../../../docs/users/quickstart.md),
+[configuration guide](../../../docs/users/configuration.md), and
+[control API](../../../docs/developers/control-api.md).
 
-```sh
-cargo run --release -p prysm
-# Or select another configuration file:
-cargo run --release -p prysm -- --config "/path/to/prysm.toml"
-```
-
-For Raspberry Pi OS arm64, see the [Debian package and systemd service instructions](../../../packaging/debian/README.md).
-
-Start the controller, select Screen sync, and turn the lights on in the panel.
-All settings are owned by the controller's single TOML file. File input uses:
-
-```toml
-[input]
-type = "file"
-path = "/path/to/video.mp4"
-refresh_rate_hz = 30
-capture_resolution = [640, 360]
-```
-
-Device input uses `type = "device"` with a Linux device path or macOS AVFoundation
-UID in `device`. Each input requires a positive `refresh_rate_hz` and a `capture_resolution`.
-Select `[output] type = "wled"` and configure its HTTP base `url` and
-top/right/bottom/left LED counts. DDP uses the URL host on fixed UDP port 4048;
-any URL port applies only to HTTP control. Alternatively, select
-`type = "egui"` with `--features desktop` for a native output without WLED.
-Counts may be zero for absent edges, with a total of 1–65535 LEDs. Processing
-settings belong under `[processing]`. See the complete [example](../../../prysm.toml)
-and [controller guide](../../../docs/control-panel.md).
-
-Settings saved through HTTP are persisted atomically. Processing changes apply
-live; input, resolution, and output changes recreate a running actor session.
-File EOF completes capture, while capture/decoder/send failures leave HTTP alive
-for inspection and retry. Ctrl+C drains the pipeline and exits. File input needs
-FFmpeg 9+, converts HDR to sRGB, and preserves playback speed while capping output FPS.
-
-`input.refresh_rate_hz` configures the source: FFmpeg caps file output, V4L2 and
-AVFoundation configure their native frame interval, and webOS negotiates its rate
-with the TV sender before capture. Unsupported device rates fail capture startup.
 The renderer sends every nonempty frame immediately. Frames use a
 nonblocking socket with no queue or retries; the RGB buffer is reused.
 DNS resolution happens in the constructor and can

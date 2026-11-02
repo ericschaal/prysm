@@ -1,0 +1,128 @@
+# Architecture
+
+`prysm` starts one Actix runtime for HTTP and control when using WLED output.
+`application` composes the pipeline, lighting backend, controller, and HTTP server,
+and owns their startup and shutdown. The control backend receives the existing
+pipeline and status channel; constructing it does not start a pipeline or listener.
+Axum sends typed `SetTarget` and `SetConfig` messages to the `Controller` actor.
+It owns configuration, operation state, and periodic WLED observations. Active
+operations reject competing mutations; shutdown waits for accepted work before
+stopping the pipeline. Configuration writes are serialized with `AtomicResponse`.
+Shutdown begins on the signal without waiting for HTTP requests to finish. After
+the controller and pipeline stop, remaining HTTP requests get at most five seconds
+to finish before the application exits.
+`Pipeline` serializes
+start, stop, and configuration commands. Each active session owns a dedicated
+Arbiter for capture → processing → configured rendering.
+
+Data travels through typed recipients. Frame and color mailboxes have capacity
+one; `try_send` drops incoming data when full. Processing and rendering handlers
+are synchronous. Lifecycle commands await replies and preserve ordering.
+`prysm-core` owns frame data, pixel formats, color metadata, and pure pixel
+conversion. Processing and desktop rendering depend on it directly, without
+pulling in capture drivers or network receivers. `prysm-capture` re-exports those
+types and conversions for existing callers.
+
+Prysm owns one TOML configuration and saves it atomically. Processing
+changes send `ConfigureProcessor`; input, resolution, or output changes stop and
+recreate the session. HTTP listen and allowed-host changes require an application
+restart; the running listener retains its original access policy until then.
+
+Each actor reports terminal results through a bounded completion channel. The
+lifecycle actor exposes phase, processed-frame count, applied revision, and
+failure details to HTTP. EOF completes the session; failures leave HTTP available.
+Starting the application never turns on capture or restores saved power intent.
+
+## Shutdown ordering
+
+Stopping cancels capture, drains accepted processing and rendering, waits for
+the camera worker to release its device, then joins the Arbiter. The WLED Off/effects operation follows that join, so no Prysm packet
+can race the final WLED command. A five-second drain timeout stops the Arbiter
+and reports an error. The host pipeline runs in process; the TV sender uses a
+separate worker as described in [webOS lifecycle](webos.md).
+
+Build/run commands are in [developer setup](README.md); Vite setup is in
+[frontend development](frontend.md).
+
+## Native output
+
+Select `[output] type = "egui"` and build Prysm with `--features desktop`.
+`application::run` keeps egui on the OS main thread while an Actix runtime thread
+serves REST and runs the configuration and pipeline lifecycle actors. Capture
+starts idle for either output. Any REST client can start/stop it and apply settings.
+
+`InputSource::into_stream` selects file, local device, or webOS capture, independently
+of output. Each renderer receives `RenderFrame` (source, crop, and edge colors);
+the WLED actor uses colors, while the egui actor publishes frames and colors to
+the window. At EOF the last egui frame remains visible and REST stays available;
+stop/start replays the file. Window close and signals shut down Prysm, drain
+accepted operations, and join the pipeline. See the [portable preview configuration](../users/examples/preview.toml).
+
+WLED output requires an HTTP base URL. The controller coordinates capture with
+WLED power/effects and observes physical lighting state. egui output has no WLED
+HTTP management; its power state represents pipeline activity.
+
+Changing output kind saves the configuration, stops capture,
+and requests a Prysm restart. Builds without `desktop` reject egui settings before
+saving; startup and `check` enforce the same validation. Processing changes apply
+live through messages. REST listen/access policy changes also require a restart.
+
+The lifecycle actor owns one `InputSource`. The input layer owns availability:
+webOS keeps its listener open while configured, including while the pipeline is
+idle; local device/file inputs retain configuration only. Pipeline startup asks
+that source for a frame stream on the capture thread. The webOS receiver owns a
+dedicated worker for accepting TVs, reading frames, decoding, and pixel conversion;
+none of that frame work runs on the HTTP/control runtime. The worker stops when
+its last receiver handle is dropped. Native capture resources
+exist only for the active stream. Processing and rendering see the same frame
+interface for every source. An idle TV receives `idle`, then capture settings on Start. Stop
+closes the capture connection and waits for the receiver to release the stream;
+the listening socket remains available for the TV's fresh worker. Input/address
+changes replace the listener; bind failures leave the previous receiver in place
+and report a failed configuration operation.
+While idle, a replacement TV connection must complete a valid handshake before
+it replaces the previous connection. A malformed client leaves the idle TV intact.
+
+Starting screen sync reapplies the saved pipeline configuration before opening the
+input. If a previous configuration attempt failed (for example, a listening port
+was occupied), retry either applies those settings or leaves capture stopped.
+
+The webOS frame stream has a separate availability signal. After disconnect or a
+frame timeout, the pipeline reports `starting` with a waiting-for-frames message;
+reconnection restores `running` after reception resumes. A queued frame cannot
+clear the unavailable state. Stop still cancels the request and drains the session.
+
+Shared `Frame` dimensions, format, and pixels are read-only after construction.
+Consumers use `width()`, `height()`, `format()`, and `as_slice()`; YUV color metadata
+belongs to the `PixelFormat::YUYV { range, matrix }` variant and is supplied by
+the capture adapter at construction. RGB formats cannot carry YUV metadata.
+
+## Workspace map
+
+| Location | Responsibility |
+| --- | --- |
+| `apps/prysm` | Host executable: embedded UI/API, config persistence, controller and pipeline actors |
+| `apps/prysm-webos-capture` | TV capture/encode/transport worker |
+| `apps/prysm-webos-service` | Native Luna supervisor, settings, setup and worker lifecycle |
+| `crates/capture` | Host capture adapters/receiver and shared webOS protocol |
+| `crates/processing` | Black-bar detection, spatial sampling and temporal smoothing |
+| `crates/rendering` | WLED DDP and optional native egui output |
+| `crates/common` | Dependency-free core, validated contracts, HTTP API/client and metrics |
+| `crates/web` | Embedded React/Vite panel and asset router |
+
+The host is one application process; TV worker process isolation is a separate
+platform boundary. See [TV lifecycle](webos.md) and [technical decisions](decisions/README.md).
+
+## Processing and color
+
+`PrysmProcessor` chains `BlackBarDetector` → `SpatialSampler` → `TemporalSmoother`.
+Sampling uses whole-picture area averages and distance-weighted projection onto
+the perimeter. Shadow lift follows smoothing; brightness scales the final colors.
+Density controls sample positions and area-grid resolution independently of LED count.
+Black-bar confirmation uses elapsed time and retains the confirmed crop through dark scenes.
+
+Frames carry YUYV range/matrix metadata in their pixel format. Processing assumes
+sRGB transfer; BT.2020 matrix support is not PQ/HLG decoding or an HDR display path.
+File input tone-maps first. TV capture calibration has [measured limits](../../research/webos-capture/2026-11-01-hdr-brightness/README.md).
+Use `process_frame_at` with a shared clock origin/source timestamps for deterministic
+smoothing replay; `process_frame` uses monotonic processing time.

@@ -328,12 +328,17 @@ neither the supervisor implementation nor the deployment architecture.
 
 ## Reproduction and safety
 
+**Historical procedure:** the diagnostic and build-script layout below are no
+longer present in the current tree. These commands record the original experiment;
+use the [current debugging guide](../../../docs/developers/debugging.md#hardware-checks)
+for maintained diagnostics.
+
 Local validation: 40 worker tests and four probe tests passed; capture Clippy
 passed with `--all-targets -- -D warnings`. Both the worker and diagnostic example
 built with the soft-float webOS SDK. The final worker binary was not installed on
 the TV. The partial `webos-service` port was preserved and was not validated here.
 
-[`cleanup_probe.rs`](../../../crates/capture/webos-capture/examples/cleanup_probe.rs) reuses production modules without adding a public
+The historical `cleanup_probe.rs` reused production modules without adding a public
 capture library API. It logs `/proc/self` descriptor targets, mappings, thread
 wait states and RSS at lifecycle boundaries. It never outputs frame contents.
 It bounds cycles/frames, refuses force-capture and holds `/tmp/prysm-capture.lock`.

@@ -18,7 +18,9 @@ The HAL handle-growth issue has a library-lifetime fix. Video construction can l
 | [scope.md](scope.md), [timeline.md](timeline.md), [workitems.md](workitems.md) | Authorization context and investigation history |
 | [tool-index.md](tool-index.md), [field-journal.md](field-journal.md) | Tool versions and reusable research notes |
 
-The Cargo diagnostic remains at [cleanup_probe.rs](../../../crates/capture/webos-capture/examples/cleanup_probe.rs), where it can use the production modules. Existing production fixes remain in their crates; this folder is a research archive, not a runtime dependency.
+The historical Cargo diagnostic `cleanup_probe.rs` used production modules but is
+no longer present in the source tree. Existing production fixes remain in their
+crates; this folder is a research archive, not a runtime dependency.
 
 ## Evidence preservation
 

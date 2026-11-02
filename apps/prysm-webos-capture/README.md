@@ -1,5 +1,7 @@
 # Prysm webOS capture worker
 
+Developer contract. For installation and operation, use [TV setup](../../docs/users/webos.md).
+
 Native Rust worker for `prysm-webos-service` on a rooted LG TV. Configure the
 receiver, capture source, and compression through the packaged **Prysm Capture**
 TV app. The worker has no command-line interface or standalone mode.
@@ -45,10 +47,10 @@ an explicit sysroot, Cortex-A9 code generation, and the **soft-float ABI**
 one codegen unit, and stripped symbols. The executable uses `/lib/ld-linux.so.3`.
 Rust normally targets glibc 2.17+, while this SDK supplies glibc 2.12; the linker
 explicitly includes the SDK's `libglibc_polyfills.a` for `getauxval`. This is a
-webOS compatibility build; runtime behavior still needs hardware validation.
+webOS compatibility build; each target firmware and hardware change needs its own validation.
 
 Binaries are in `target/armv7-unknown-linux-gnueabi/webos/`; the IPK and license
-notices are assembled by the [TV package build](../../packaging/webos/README.md).
+notices are assembled by the [TV package build](../../docs/developers/packaging.md#webos).
 There is no separate distribution staging tree or per-crate build script.
 LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 
@@ -66,7 +68,7 @@ The shared types and byte encoding live in `prysm-webos-protocol`. Missing or
 malformed startup configuration, missing event descriptors, and command-line
 arguments fail before native capture begins. The worker must run as root at the
 executable path authorized by the installed capture role. Install and register it
-using the [TV package](../../packaging/webos/README.md).
+using the [TV package](../../docs/users/webos.md).
 
 Each worker owns exactly one receiver connection. It connects and negotiates
 before opening native resources. An idle receiver opens no native capture devices.
@@ -117,7 +119,7 @@ The TV app offers **H.264 (software)** (`h264-software`). It adds **H.264
 support, not a runtime check of the TV's encoder. Default builds reject hardware
 configuration. Hardware remains an explicit choice after the earlier native
 binding implementation showed higher CPU use and an extra frame of latency.
-See [hardware integration and measurements](HARDWARE-H264.md).
+See [hardware integration and measurements](../../docs/developers/hardware-h264.md).
 
 Both capture sources pass native NV12 directly to the encoder. Combined capture
 reports Blended content; video-only reports Video. Reusable buffers and checked,

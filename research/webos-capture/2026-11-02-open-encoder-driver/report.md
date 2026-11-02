@@ -1,6 +1,6 @@
 # RTD2875Q: using the encoder without LG userspace libraries
 
-Date: 2026-11-02. Initial offline review followed by user-authorized, parent-executed TV probes and independent host validation. Scope: [existing authorized encoder case](../../../work/webos-encoder/scope.md), extended by the user's explicit request to build and test both paths. This sub-agent performed no TV connections, driver installation, or production change.
+Date: 2026-11-02. Initial offline review followed by user-authorized, parent-executed TV probes and independent host validation. Scope: existing authorized encoder case (local evidence at `work/webos-encoder/scope.md`; not distributed), extended by the user's explicit request to build and test both paths. This sub-agent performed no TV connections, driver installation, or production change.
 
 **The native V4L2 experiment now works: 1-frame and 15-frame clips passed complete content validation through FFmpeg and Prysm's unchanged receiver.** This demonstrates H.264 encoding without LG encoder userspace libraries, using the stock kernel driver and codec firmware. A fully open replacement for that driver/firmware has not been identified. Capture and receiver decoding remain separate. See the final section for measured results and limits; the initial source review and proposed experiment are retained below for provenance.
 
@@ -45,7 +45,7 @@ The native path has now been demonstrated for synthetic input; the exact driver-
 
 The primary-source review included [TCLOpenSource/rt2875p](https://github.com/TCLOpenSource/rt2875p/tree/e2bef2357c45b65eb02bde5b040853888232a077), revision `e2bef2357c45b65eb02bde5b040853888232a077`. The repository root recursive listing was truncated, so the `drivers/rtk_kdriver` and `drivers/media` subtrees were inspected separately: 10,131 and 2,520 entries respectively, both complete. No matching `rtk-vea` H.264 encoder implementation was found in those inventories. This is a bounded search result, not proof that no such source exists anywhere.
 
-The retained [source manifest](../../../work/webos-open-encoder-driver/sources/manifest.json) records exact URLs and SHA-256 hashes. In the related `rtd6748` code:
+The retained source manifest (local evidence at `work/webos-open-encoder-driver/sources/manifest.json`; not distributed) records exact URLs and SHA-256 hashes. In the related `rtd6748` code:
 
 - [`rtk_vdec_driver.c`](https://github.com/TCLOpenSource/rt2875p/blob/e2bef2357c45b65eb02bde5b040853888232a077/drivers/rtk_kdriver/vdec/rtd6748/rtk_vdec_driver.c) names the device `rtkvdec`, exposes DMA/RPC-related plumbing and allocates encoder memory (`RTKVDEC_ENCODER_ALLOC`, `EncoderMemAddr`). It declares GPL licensing. An encoder memory allocator is not a complete H.264 encoder implementation.
 - [`rtk_vdec_dmabuf.c`](https://github.com/TCLOpenSource/rt2875p/blob/e2bef2357c45b65eb02bde5b040853888232a077/drivers/rtk_kdriver/vdec/rtd6748/rtk_vdec_dmabuf.c) supplies useful related buffer-management source, without proving ABI identity with LG's Q platform.
@@ -82,7 +82,7 @@ At completion of the initial offline source review, no performance gain had been
 
 ## Follow-up: native harness built
 
-The user subsequently authorized building the native probe and live tests of both encoder paths. The [native harness and run instructions](../../../work/webos-v4l2-native/README.md) are now ready. Its ARM EABI5 executable links only libc/libdl/librt, negotiates two-plane NV12M MMAP input and H.264 output, acquires the existing capture lock with O_NOFOLLOW before opening the video device, and has bounded deadlines plus signal cleanup. It requests 640×360, 30 fps, 2 Mbit/s and Baseline/zero B frames, logging driver readback rather than assuming control acceptance.
+The user subsequently authorized building the native probe and live tests of both encoder paths. The native harness and run instructions (local evidence at `work/webos-v4l2-native/README.md`; not distributed) are now ready. Its ARM EABI5 executable links only libc/libdl/librt, negotiates two-plane NV12M MMAP input and H.264 output, acquires the existing capture lock with O_NOFOLLOW before opening the video device, and has bounded deadlines plus signal cleanup. It requests 640×360, 30 fps, 2 Mbit/s and Baseline/zero B frames, logging driver readback rather than assuming control acceptance.
 
 The exact pattern-generation functions passed a host ASan/UBSan self-check over 16 frames, padded strides, extra plane capacity and allocation guards; the SDK build passes `-Wall -Wextra -Werror`. Initial binary SHA-256: `7c24877f62b114092de35c478de79230d680ac85346d3e6e0eed391e609dede1`. This sub-agent has not run the TV: the parent serializes all hardware sessions and captures live evidence. The user's latest steering leaves the production sender disabled after testing.
 

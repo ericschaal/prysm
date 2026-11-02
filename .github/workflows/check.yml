@@ -33,6 +33,12 @@ jobs:
           shellcheck scripts/build-deb.sh packaging/debian/preinst packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
       - name: Debian upgrade script tests
         run: python3 -m unittest discover -s packaging/debian/tests
+      - name: Documentation checker tests and repository links
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 -m unittest discover -s scripts/tests
+          python3 scripts/check-doc-links.py
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 

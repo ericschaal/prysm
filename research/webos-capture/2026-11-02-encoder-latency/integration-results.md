@@ -4,7 +4,7 @@ Deployment follow-up: at the user's explicit request, version 0.1.21 was install
 after these checks. All 21 installed files match the IPK; the sender is enabled
 and connected to the current computer, with capture active and no service error.
 The host receiver confirmed decoded H.264 frames. The sections below retain the
-earlier staged-test context. [Deployment evidence](../../../work/webos-encoder-latency/deployment/evidence/deployment.json).
+earlier staged-test context. Deployment evidence (local evidence at `work/webos-encoder-latency/deployment/evidence/deployment.json`; not distributed).
 
 The user accepted continuing with the proposed production integration after the
 [controlled latency experiment](live-results.md). The source now connects
