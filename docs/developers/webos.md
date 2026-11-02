@@ -26,9 +26,12 @@ lifetime. Video constructor failures still retain resources, and native video
 release has a reproduced lost-wakeup hang, so process isolation remains in place. Each worker handles one connection and exits if connection fails or the receiver
 disconnects. The supervisor owns retries.
 
-The TV UI distinguishes **Waiting for Prysm**, **Connected · Capture off**, and
-**Capturing**. Capturing means the worker initialized capture and is attempting
-to send frames; it does not guarantee fresh HDMI video. Driver errors remain
+The TV UI distinguishes **Waiting for Prysm**, **Ready to capture**,
+**Waiting for video**, and **Capturing**. The service publishes `videoAvailable`
+as true, false, or null for unknown readiness. Known video absence takes priority
+over capture-request and receiver-connectivity flags, so reconnects cannot make
+the UI claim capture is active without a video source. **Capturing** means capture
+is requested with no known video absence; it does not guarantee fresh frames. Driver errors remain
 available in diagnostics. The app subscribes to native status changes. A failed subscription is cancelled
 and retried after three seconds; returning to the app refreshes it. Unsaved
 settings and focus survive status updates.
@@ -47,7 +50,9 @@ Native video open, preparation, and release have a five-second watchdog, includi
 release after acquisition errors. A hung reset, failed constructor,
 or preparation that stays unready for ten seconds still triggers process recovery
 with the existing bounded teardown and failure backoff. Ordinary video absence
-reported by Luna does not start a restart cycle. Failed/malformed subscriptions
+reported by Luna does not trigger the native watchdog. If capture is requested
+without video, the receiver's five-second frame deadline can recycle the empty
+connection. The sender remains enabled, and the TV UI stays **Waiting for video**. Failed/malformed subscriptions
 fall back to bounded capture retries and resubscribe after five seconds. The worker retains bounded native retry for unknown readiness. Valid black
 frames never expire.
 

@@ -7,6 +7,18 @@ or other models/firmware. Some original local evidence was not committed.
 **Current instructions:** [TV setup](../../docs/users/webos.md) and
 [developer lifecycle](../../docs/developers/webos.md).
 
+Version 0.1.25 refactors the TV React app into components and hooks, simplifies
+its TV layout, and removes the redundant disable confirmation. The service now
+publishes video readiness so the UI stays **Waiting for video** when capture is
+requested without an active source, including across receiver reconnects. The
+sender remains enabled. Deployed on 2026-11-02 with all 21 installed payload files
+verified and saved settings preserved. On-device UI checks covered navigation,
+dialogs, disable/enable, and 24 stable waiting-state samples over 12 seconds.
+Restoring HDMI 1 resumed hardware H.264 capture: the receiver processed 450 frames
+in 15.01 seconds, with no pipeline error. This is a short recovery check;
+standby, reboot and sustained performance were not retested. Local evidence is
+in `work/webos-video-wait-deployment/` (not distributed).
+
 Version 0.1.23 retains only Combined and Video only. DILE/GM/HAL, UI-only
 capture and CPU blending are removed. Old UI-only configuration is rejected;
 delete the saved config before reinstalling and configure the receiver again.

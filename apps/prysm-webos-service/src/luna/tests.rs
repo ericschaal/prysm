@@ -846,6 +846,7 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
             )
         });
         assert!(service.callbacks.video_retry.get().is_none());
+        assert_eq!(service.callbacks.snapshot(false)["videoAvailable"], true);
         let expected = VideoContext {
             source: json!(source),
             port: json!(port),
@@ -873,4 +874,44 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+#[test]
+fn video_readiness_changes_publish_even_without_worker_events() {
+    reset(None);
+    let service = Service::new(
+        Luna::test_api(),
+        Glib::test_api(),
+        "test.prysm",
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    MOCK.with_borrow_mut(|mock| mock.events.clear());
+    service
+        .callbacks
+        .observe_video(VideoAvailability::Unavailable)
+        .unwrap();
+    assert_eq!(service.callbacks.snapshot(true)["videoAvailable"], false);
+    assert_eq!(
+        MOCK.with_borrow(|mock| mock.events.iter().filter(|e| **e == "publish").count()),
+        1
+    );
+    service
+        .callbacks
+        .observe_video(VideoAvailability::Unavailable)
+        .unwrap();
+    assert_eq!(
+        MOCK.with_borrow(|mock| mock.events.iter().filter(|e| **e == "publish").count()),
+        1
+    );
+    service
+        .callbacks
+        .observe_video(VideoAvailability::Unknown)
+        .unwrap();
+    assert!(service.callbacks.snapshot(true)["videoAvailable"].is_null());
+    assert_eq!(
+        MOCK.with_borrow(|mock| mock.events.iter().filter(|e| **e == "publish").count()),
+        2
+    );
 }

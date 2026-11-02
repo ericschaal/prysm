@@ -9,6 +9,9 @@ const ts = require('typescript');
 const devService = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/dev-service.ts'), 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2015, module: ts.ModuleKind.CommonJS }
 }).outputText;
+const service = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/service.ts'), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2015, module: ts.ModuleKind.CommonJS }
+}).outputText;
 const html = fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
 const script = fs.readFileSync(path.join(__dirname, '../dist/' + html.match(/<script[^>]+src="([^"]+)"/)[1]), 'utf8');
 
@@ -43,6 +46,7 @@ async function fixture(t, options = {}) {
     }
     let subscription;
     const calls = [];
+    const pending = [];
     let value = {
         returnValue: true, enabled: false, power: 'Active', senderRunning: false, receiverConnected: false, stopping: false,
         error: null, lastLog: null,
@@ -55,6 +59,8 @@ async function fixture(t, options = {}) {
             const payload = JSON.parse(data);
             const method = uri.split('/').pop();
             calls.push({ method, payload });
+            if (options.throwMethod === method) throw new Error('Bridge call failed');
+            if (options.deferMethods?.includes(method)) { pending.push(this); return; }
             if (method === 'status') { subscription = this; if (options.silentStatus) return; }
             if (method === 'status' && options.offline) {
                 this.onservicecallback(JSON.stringify({ returnValue: false, errorText: 'Service unavailable' }));
@@ -75,8 +81,13 @@ async function fixture(t, options = {}) {
     w.eval(script);
     await settle();
     return {
-        w, calls, options, subscription: () => subscription,
+        w, calls, options, pending, subscription: () => subscription,
         advance: milliseconds => settle(() => advance(milliseconds)),
+        input: (id, value) => settle(() => {
+            const input = w.document.getElementById(id);
+            Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set.call(input, value);
+            input.dispatchEvent(new w.Event('input', { bubbles: true }));
+        }),
         click: id => settle(() => w.document.getElementById(id).click()),
         event: name => settle(() => w.dispatchEvent(new w.Event(name))),
         reply: (bridge, text) => settle(() => bridge.onservicecallback(text)),
@@ -119,7 +130,7 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
     assert.equal(f.el('choice-both').getAttribute('aria-pressed'), 'true');
     assert.equal(f.value.config.source, 'both');
     await f.key(461);
-    assert.equal(f.el('modal').hidden, true);
+    assert.equal(f.el('modal'), null);
     assert.equal(f.focus(), 'source');
     assert.equal(f.el('source-value').textContent, 'Video + TV menus');
     await f.click('source');
@@ -140,11 +151,11 @@ test('receiver editing is explicit and cancels without overwriting the address',
     f.el('receiver').focus();
     await f.click('receiver');
     assert.equal(f.focus(), 'receiver-input');
-    f.el('receiver-input').value = '192.168.1.50:19400';
+    await f.input('receiver-input', '192.168.1.50:19400');
     await f.key(461);
     assert.equal(f.el('receiver-value').textContent, '192.168.18.18:19400');
     await f.click('receiver');
-    f.el('receiver-input').value = '192.168.1.50:19400';
+    await f.input('receiver-input', '192.168.1.50:19400');
     await f.key(39);
     assert.equal(f.focus(), 'receiver-input', 'left/right remain cursor keys inside the editor');
     await f.key(40);
@@ -166,6 +177,8 @@ test('save-and-enable applies the draft before enabling, with no optimistic stre
     assert.equal(f.el('primary').textContent, 'Disable sender');
     await f.click('primary');
     assert.equal(f.value.enabled, false);
+    assert.equal(f.el('status-title').textContent, 'Sender disabled');
+    assert.equal(f.el('notice').textContent, '');
 });
 
 test('cleanup is tucked away and requires explicit confirmation; Back returns one level', async t => {
@@ -186,7 +199,7 @@ test('cleanup is tucked away and requires explicit confirmation; Back returns on
     await f.click('confirm-cleanup');
     assert.equal(f.mutations().length, 1);
     assert.equal(f.mutations()[0].method, 'cleanup');
-    assert.equal(f.el('modal').hidden, true);
+    assert.equal(f.el('modal'), null);
 });
 
 test('status subscription preserves an unsaved choice and its focus', async t => {
@@ -211,7 +224,7 @@ test('Back on the main screen asks before closing; modal Tab stays inside', asyn
     await f.key(9);
     assert.equal(f.focus(), 'stay');
     await f.key(27);
-    assert.equal(f.el('modal').hidden, true);
+    assert.equal(f.el('modal'), null);
     assert.equal(f.focus(), 'primary');
 });
 
@@ -231,12 +244,12 @@ test('a waiting sender is described as enabled, rather than actively capturing o
     assert.equal(f.el('primary').textContent, 'Disable sender');
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
-    assert.match(f.el('status-description').textContent, /192\.168\.18\.18:19400/);
+    assert.match(f.el('status-description').textContent, /enable webOS input/);
     assert.equal(f.value.enabled, true, 'egui stop must leave the sender available for the next start');
     f.value.receiverConnected = true;
     await f.notify();
-    assert.equal(f.el('connection').textContent, 'Connected · Capture off');
-    assert.equal(f.el('status-title').textContent, 'Connected · Capture off');
+    assert.equal(f.el('connection').textContent, 'Ready to capture');
+    assert.equal(f.el('status-title').textContent, 'Ready to capture');
     f.value.capturing = true;
     await f.notify();
     assert.equal(f.el('status-title').textContent, 'Capturing');
@@ -377,4 +390,143 @@ test('local development service supports settings, subscriptions, start, stop an
     await f.event('pagehide');
     await f.event('pageshow');
     assert.equal(f.el('status-title').textContent, 'Sender disabled');
+});
+
+
+test('receiver input survives status updates, trims on apply, and resets after cancelling', async t => {
+    const f = await fixture(t);
+    await f.click('receiver');
+    await f.input('receiver-input', '  192.168.1.50:19400  ');
+    await f.notify();
+    assert.equal(f.el('receiver-input').value, '  192.168.1.50:19400  ');
+    assert.equal(f.focus(), 'receiver-input');
+    await f.click('receiver-apply');
+    assert.equal(f.el('receiver-value').textContent, '192.168.1.50:19400');
+    await f.click('receiver');
+    await f.input('receiver-input', 'discard me');
+    await f.key(461);
+    await f.click('receiver');
+    assert.equal(f.el('receiver-input').value, '192.168.1.50:19400');
+    assert.deepEqual(f.mutations(), []);
+});
+
+test('failed save keeps the draft and never starts the sender', async t => {
+    const f = await fixture(t, { deferMethods: ['setConfig'] });
+    await f.click('metrics');
+    await f.click('primary');
+    assert.equal(f.el('primary').disabled, true);
+    await f.reply(f.pending[0], '{"returnValue":false,"errorText":"Save failed"}');
+    assert.equal(f.el('notice').textContent, 'Save failed');
+    assert.equal(f.el('primary').disabled, false);
+    assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
+    assert.equal(f.el('metrics').getAttribute('aria-checked'), 'true');
+    assert.deepEqual(f.mutations().map(call => call.method), ['setConfig']);
+});
+
+test('request timeout ignores cancel reentry and late replies, then permits retry', async t => {
+    const f = await fixture(t, { deferMethods: ['start'], cancelReentry: true });
+    await f.click('primary');
+    await f.advance(30000);
+    assert.equal(f.pending[0].cancelled, true);
+    assert.match(f.el('notice').textContent, /did not respond/);
+    assert.equal(f.el('primary').disabled, false);
+    await f.reply(f.pending[0], JSON.stringify({ ...f.value, enabled: true }));
+    assert.equal(f.el('primary').textContent, 'Enable sender');
+    f.options.deferMethods = [];
+    await f.click('primary');
+    assert.equal(f.el('primary').textContent, 'Disable sender');
+});
+
+test('synchronous bridge errors and invalid action replies release the busy state', async t => {
+    const f = await fixture(t, { throwMethod: 'start' });
+    await f.click('primary');
+    assert.match(f.el('notice').textContent, /Bridge call failed/);
+    assert.equal(f.el('primary').disabled, false);
+    f.options.throwMethod = undefined;
+    f.options.deferMethods = ['start'];
+    for (const reply of ['null', '{', '[]']) {
+        await f.click('primary');
+        await f.reply(f.pending[f.pending.length - 1], reply);
+        assert.equal(f.el('notice').getAttribute('role'), 'alert');
+        assert.equal(f.el('primary').disabled, false);
+    }
+    f.options.deferMethods = [];
+    await f.click('primary');
+    assert.equal(f.el('primary').textContent, 'Disable sender');
+});
+
+
+test('service clients own cancellation independently and can be reused after effect cleanup', async t => {
+    const f = await fixture(t, { deferMethods: ['start'], cancelReentry: true });
+    f.w.eval('var exports = {};\n' + service);
+    const first = f.w.exports.createServiceClient();
+    const second = f.w.exports.createServiceClient();
+    const replies = [];
+    const uri = 'luna://io.prysm.capture.service/start';
+    first.call(uri, {}, value => replies.push(value));
+    second.call(uri, {}, value => replies.push(value));
+    first.cancelAll();
+    assert.equal(f.pending[0].cancelled, true);
+    assert.equal(f.pending[1].cancelled, undefined);
+    await f.reply(f.pending[0], JSON.stringify(f.value));
+    assert.equal(replies.length, 0);
+    await f.reply(f.pending[1], JSON.stringify(f.value));
+    await f.reply(f.pending[1], JSON.stringify(f.value));
+    assert.equal(replies.length, 1, 'each request completes only once');
+    await f.advance(30000);
+    assert.equal(replies.length, 1, 'cleanup removes request timeouts');
+    first.call(uri, {}, value => replies.push(value));
+    await f.reply(f.pending[2], JSON.stringify(f.value));
+    assert.equal(replies.length, 2);
+});
+
+
+test('status has one live location and setting explanations remain secondary text', async t => {
+    const f = await fixture(t);
+    assert.equal(f.w.document.querySelector('header #connection'), null);
+    assert.equal(f.el('connection').getAttribute('role'), 'status');
+    assert.equal(f.el('connection').getAttribute('aria-live'), 'polite');
+    assert.equal(f.el('connection').querySelector('#status-title'), f.el('status-title'));
+    assert.equal(f.el('metrics-description').className, 'setting-detail');
+    await f.click('primary');
+    f.value.receiverConnected = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Ready to capture');
+    assert.match(f.el('status-description').textContent, /Start capture in Prysm/);
+    f.value.power = 'Standby';
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Waiting for TV');
+    f.value.stopping = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Stopping capture…');
+    f.value.error = 'capture failed';
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Sender needs attention');
+    assert.ok(f.el('status-title').closest('.attention'));
+    assert.match(f.el('status-description').textContent, /diagnostics or repair/);
+});
+
+test('no video keeps an enabled sender in a stable waiting state across receiver retries', async t => {
+    const f = await fixture(t);
+    await f.click('primary');
+    f.value.videoAvailable = false;
+    f.value.receiverConnected = true;
+    f.value.capturing = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Waiting for video');
+    assert.match(f.el('status-description').textContent, /HDMI input or play a video/);
+    assert.equal(f.el('primary').textContent, 'Disable sender');
+    assert.equal(f.w.document.querySelector('.ready'), null);
+    f.value.receiverConnected = false;
+    f.value.capturing = false;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Waiting for video');
+    assert.equal(f.value.enabled, true);
+    f.value.videoAvailable = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
+    f.value.receiverConnected = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Ready to capture');
+    assert.deepEqual(f.mutations().map(call => call.method), ['start']);
 });

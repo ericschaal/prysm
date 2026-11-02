@@ -8,7 +8,7 @@ export function installDevService() {
     const status: Status = {
         config: { receiver: '192.168.1.10:19400', source: 'both', compression: 'lz4', autostart: false, metrics: false },
         enabled: false, receiverConnected: false, capturing: false, senderRunning: false,
-        stopping: false, power: 'Active', error: null, lastLog: 'Local development: simulated TV service.',
+        stopping: false, videoAvailable: true, power: 'Active', error: null, lastLog: 'Local development: simulated TV service.',
         capabilities: { hardwareH264: true },
     };
     class DevBridge implements ServiceBridge {

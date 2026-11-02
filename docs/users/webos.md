@@ -67,9 +67,11 @@ Wake the TV and show active video. In Prysm's host panel at `http://localhost:87
 select **Screen sync** and turn the lights on (or **Start capture** in the desktop window).
 **Success:** the TV reports **Capturing** and Prysm displays frames or updates the LEDs.
 
-**Connected · Capture off** is normal while Prysm is idle. Off or WLED effects
+**Ready to capture** is normal while Prysm is idle. Off or WLED effects
 releases TV capture resources; the enabled sender reconnects and waits for the
-next start. Home without active video can wait without frames. **Capturing** alone
+next start. **Waiting for video** means the sender is still enabled, but no video
+source is active. Select an HDMI input or play video on the TV; Home and the
+Prysm app alone do not provide a capturable video stream. **Capturing** alone
 does not guarantee fresh video; inspect Prysm's output too.
 
 ## Change settings or remove

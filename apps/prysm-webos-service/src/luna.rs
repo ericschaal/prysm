@@ -388,9 +388,9 @@ impl Callbacks {
         self.video_token.set(token);
         Ok(())
     }
-    fn video(&self, message: &Message<'_>) {
+    fn video(&self, message: &Message<'_>) -> Result<()> {
         if self.closing.get() {
-            return;
+            return Ok(());
         }
         let value = message.payload().unwrap_or(Value::Null);
         let observation = VideoObservation::parse(&value);
@@ -402,16 +402,26 @@ impl Callbacks {
                 Some(Instant::now() + Duration::from_secs(5))
             },
         );
-        if let Some(app) = self.app.borrow_mut().as_mut() {
-            if let Some(context) = observation.context {
-                let mut previous = self.video_context.borrow_mut();
-                if previous.as_ref().is_some_and(|old| old != &context) {
-                    app.reset_video();
-                }
-                *previous = Some(context);
+        if let Some(app) = self.app.borrow_mut().as_mut()
+            && let Some(context) = observation.context
+        {
+            let mut previous = self.video_context.borrow_mut();
+            if previous.as_ref().is_some_and(|old| old != &context) {
+                app.reset_video();
             }
-            app.video_available(observation.availability);
+            *previous = Some(context);
         }
+        self.observe_video(observation.availability)
+    }
+    fn observe_video(&self, availability: VideoAvailability) -> Result<()> {
+        if let Some(app) = self.app.borrow_mut().as_mut() {
+            app.video_available(availability);
+        }
+        let changed = self.status.borrow_mut().observe_video(availability);
+        if changed {
+            self.publish()?;
+        }
+        Ok(())
     }
     fn tick(&self, now: Instant) -> Result<()> {
         if self
@@ -420,9 +430,7 @@ impl Callbacks {
             .is_some_and(|deadline| now >= deadline)
         {
             self.video_retry.set(Some(now + Duration::from_secs(5)));
-            if let Some(app) = self.app.borrow_mut().as_mut() {
-                app.video_available(VideoAvailability::Unknown);
-            }
+            self.observe_video(VideoAvailability::Unknown)?;
             let token = self.video_token.get();
             let cancelled = token == 0
                 || check(&self.luna, |error| {
@@ -882,8 +890,7 @@ unsafe extern "C" fn video_callback(
             unsafe { data.cast::<Callbacks>().as_ref() }.context("missing callback state")?;
         // SAFETY: the LS2 message is borrowed only for this invocation.
         let message = unsafe { Message::from_callback(state, message) }?;
-        state.video(&message);
-        Ok(())
+        state.video(&message)
     })
 }
 

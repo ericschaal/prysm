@@ -1,9 +1,11 @@
 use anyhow::{Result, bail};
+use prysm_webos_protocol::worker::VideoAvailability;
 use serde_json::{Value, json};
 
 #[derive(Default)]
 pub struct Status {
     power: Option<String>,
+    video_available: Option<bool>,
     error: Option<String>,
     revision: u64,
 }
@@ -24,6 +26,20 @@ impl Status {
         true
     }
 
+    pub fn observe_video(&mut self, availability: VideoAvailability) -> bool {
+        let available = match availability {
+            VideoAvailability::Available => Some(true),
+            VideoAvailability::Unavailable => Some(false),
+            VideoAvailability::Unknown => None,
+        };
+        if self.video_available == available {
+            return false;
+        }
+        self.video_available = available;
+        self.bump();
+        true
+    }
+
     pub fn power(&self) -> Option<String> {
         self.power.clone()
     }
@@ -38,6 +54,7 @@ impl Status {
             "returnValue": true,
             "subscribed": subscribed,
             "power": self.power,
+            "videoAvailable": self.video_available,
             "error": self.error,
             "revision": self.revision,
             "subscribers": subscribers,
@@ -77,6 +94,20 @@ mod tests {
         assert!(status.snapshot(false, 0)["error"].is_string());
         assert!(status.observe_power(&json!({"state": "Active"})));
         assert!(status.snapshot(false, 0)["error"].is_null());
+    }
+
+    #[test]
+    fn video_readiness_distinguishes_absent_video_from_unknown_state() {
+        let mut status = Status::default();
+        assert!(status.snapshot(false, 0)["videoAvailable"].is_null());
+        assert!(status.observe_video(VideoAvailability::Unavailable));
+        assert_eq!(status.snapshot(false, 0)["videoAvailable"], false);
+        assert!(!status.observe_video(VideoAvailability::Unavailable));
+        assert_eq!(status.snapshot(false, 0)["revision"], 1);
+        assert!(status.observe_video(VideoAvailability::Available));
+        assert_eq!(status.snapshot(false, 0)["videoAvailable"], true);
+        assert!(status.observe_video(VideoAvailability::Unknown));
+        assert!(status.snapshot(false, 0)["videoAvailable"].is_null());
     }
 
     #[test]

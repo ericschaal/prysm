@@ -1,6 +1,6 @@
 {
   "id": "io.prysm.capture",
-  "version": "0.1.23",
+  "version": "0.1.25",
   "vendor": "Prysm",
   "type": "web",
   "main": "index.html",
