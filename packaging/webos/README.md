@@ -1,5 +1,47 @@
 # Prysm Capture for rooted LG TVs
 
+Version 0.1.23 retains only Combined and Video only. DILE/GM/HAL, UI-only
+capture and CPU blending are removed. Old UI-only configuration is rejected;
+delete the saved config before reinstalling and configure the receiver again.
+Deployed with the old config deleted and fresh settings saved; all 21 installed
+files verified. Capture waits on Home without active video. See the
+[cleanup audit](../../research/webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md).
+
+Version 0.1.22 uses the native blended NV12 tap for **Both** capture, avoiding
+separate UI capture and CPU composition. Video-only and UI-only retain their
+existing paths. UI fallback remains available while video is absent or pending;
+opening an unsupported blended tap falls back to separate layers. The package
+also includes native UI-call/copy timings and a `VtcaptureBlended` backend label.
+Deployed on the project TV with all 21 payload files verified and existing
+settings preserved. A 30-second live sample averaged 12.9 ms per iteration at
+30 fps, with 61% average budget headroom and no skipped deadlines.
+[Qualification and deployment](../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
+
+Version 0.1.21 connects hardware `rvenc` directly to `appsink` and pairs each
+picture with its current input metadata. This removes the parser's one-frame
+wait while keeping DMA ownership, H.264 validation and software fallback.
+Deployed on the project TV after staged qualification; all 21 installed files
+match the IPK. The user requested starting the sender to the current computer;
+the receiver address was updated and the sender is enabled, connected and
+capturing with hardware H.264. Other settings were preserved. See
+[hardware details](../../crates/capture/webos-capture/HARDWARE-H264.md).
+[Deployment evidence](../../work/webos-encoder-latency/deployment/evidence/deployment.json).
+
+Version 0.1.20 keeps hardware DMA buffers mapped and uploads native NV12 directly,
+without an intermediate padded image. RGB/NV16 conversion remains in cached RAM.
+Eight encoder phase timings and a Grafana hardware phase panel expose the costs.
+The hardware-enabled package is installed on the project TV; all 21 files match
+the IPK and hardware H.264, receiver, metrics, autostart and enabled state were
+preserved. The receiver was idle during deployment.
+
+A controlled TV baseline → updated → baseline benchmark at 640×360/30 FPS found
+native NV12 encode wall time improved from 13.52–13.75 ms to 12.49 ms, with CPU
+time during encode calls down from 3.25–3.29 ms to 2.01 ms. This is a short
+synthetic benchmark, not total worker CPU or live end-to-end latency. Output wait
+remained dominant at 12.13 ms; that version retained one-frame lookahead. Full hardware
+qualification passed. See [hardware details](../../crates/capture/webos-capture/HARDWARE-H264.md)
+and [deployment evidence](../../work/webos-hardware-dma/deployment/evidence/deployment.json).
+
 Version 0.1.19 passes native video directly to the encoder whenever the UI is
 fully transparent. Visible UI still uses RGB composition, with capture checked
 every frame. Deployed with hardware support included; the active settings remain
@@ -114,7 +156,7 @@ GStreamer/GLib libraries are supplied by the TV and dynamically linked, not copi
 into the package.
 
 The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
-`target/webos-ipk/io.prysm.capture_0.1.19_all.ipk`. The version comes from
+`target/webos-ipk/io.prysm.capture_0.1.22_all.ipk`. The version comes from
 `app/appinfo.json`. The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
@@ -126,12 +168,12 @@ is packaged. This IPK contains no Node service files or `package.json`; that
 warning does not describe the native runtime.
 
 With a configured ares TV device, install using `ares-install --device TV
-target/webos-ipk/io.prysm.capture_0.1.19_all.ipk`. Alternatively copy the IPK to
+target/webos-ipk/io.prysm.capture_0.1.22_all.ipk`. Alternatively copy the IPK to
 `/tmp` on the TV and install from a root shell:
 
 ```sh
 luna-send -w 15000 -i -f luna://com.webos.appInstallService/dev/install \
-  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.19_all.ipk","subscribe":true}'
+  '{"id":"io.prysm.capture","ipkUrl":"/tmp/io.prysm.capture_0.1.22_all.ipk","subscribe":true}'
 ```
 
 Run this installation command in an interactive SSH terminal (`ssh -t`). This
@@ -148,8 +190,8 @@ Stop any manually launched Prysm capturer or PicCap before the first run. Open
    supervisor/capture permissions, and activate the native service.
 2. Open **Prysm receiver** with OK, enter the IP and port, and choose **Use this
    address**. Open Capture or Compression to choose their values, then **Save changes**.
-   The initial choices are both layers and LZ4. The worker uses automatic native
-   backends and the tested display capture defaults.
+   The initial choices are Combined and LZ4. Capture uses VTCapture’s blended
+   or display tap for Combined or Video only, respectively.
 3. Select **Enable sender** (or **Save and enable** if settings are unsaved).
    **Enable with TV** controls autostart, which defaults off. It arms the sender
    at future boots; keep it off until cold-boot and standby behavior is validated.
@@ -217,9 +259,8 @@ The supervisor subscribes to `com.webos.service.videooutput/getStatus` and sends
 MAIN source readiness over a private, nonblocking stdin control pipe. A usable
 source has a connected MAIN sink and nonzero dimensions/frame rate; it is not
 restricted to an HDMI port or app. Video mute is not treated as a capture failure.
-While video is absent, the worker keeps sending UI frames on the same connection
-without constructing a video client. With video-only source selection it waits
-without sending UI. Video initialization resumes immediately when readiness returns.
+Both sources wait without sending frames while video is absent. Native
+initialization resumes immediately when readiness returns.
 Input context changes reset only the video client. Duplicate notifications do not
 reset it; rapid loss/return transitions are retained until the worker consumes them,
 including when readiness becomes unknown before delivery.

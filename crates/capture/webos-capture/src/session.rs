@@ -1,16 +1,13 @@
 //! Coordinate connection negotiation, frame capture, transmission, and pacing.
 use crate::{
-    capture::{Capture, UiCapture},
+    capture::{Capture, FrameCapture},
     config::{CaptureOptions, Compression, Config, Source},
     encoder::{Encoder, H264_BITRATE},
     events::Events,
-    native::Video,
     transport::Sender,
 };
 use anyhow::Result;
 use prysm_metrics::{PipelineEvent, Stage};
-#[cfg(test)]
-use prysm_webos_protocol::worker::VideoAvailability;
 use prysm_webos_protocol::{ControlMessage, worker::VideoUpdate};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
@@ -18,8 +15,8 @@ use std::{
 };
 
 /// One negotiated receiver connection and its native capture resources.
-pub struct Session {
-    capture: Capture,
+pub struct Session<V: FrameCapture> {
+    capture: Capture<V>,
     sender: Sender,
     state: State,
     compression: Compression,
@@ -30,8 +27,8 @@ enum State {
     Capturing(CaptureOptions),
 }
 
-impl Session {
-    /// Connect before acquiring any video or UI resources.
+impl<V: FrameCapture> Session<V> {
+    /// Connect before acquiring native capture resources.
     pub fn connect(config: &Config) -> Result<Self> {
         let (sender, message) = Sender::connect(config.receiver.socket_addr())?;
         Ok(Self {
@@ -62,22 +59,17 @@ impl Session {
         }
     }
 
-    pub fn configure(
-        &mut self,
-        ui: &mut Option<impl UiCapture>,
-        events: &mut Events,
-    ) -> Result<()> {
+    pub fn configure(&mut self, events: &mut Events) -> Result<()> {
         let settings = self.settings()?;
         self.capture
-            .configure(settings.fps, [settings.width, settings.height], ui, events)
+            .configure(settings.fps, [settings.width, settings.height], events)
     }
 
     /// Native resources remain owned by the caller until the session is dropped.
     pub fn run(
         &mut self,
         stop: &AtomicBool,
-        open_video: &mut impl FnMut(&CaptureOptions) -> Result<Video>,
-        capture_ui: &mut Option<impl UiCapture>,
+        open_video: &mut impl FnMut(&CaptureOptions) -> Result<V>,
         readiness: &mut impl FnMut() -> Result<VideoUpdate>,
         events: &mut Events,
     ) -> Result<()> {
@@ -97,7 +89,7 @@ impl Session {
                 self.capture
                     .set_video_available(update.availability.allows_capture());
                 let work = prysm_metrics::timer(Stage::CaptureIteration);
-                if let Some(frame) = self.capture.capture(open_video, capture_ui, events)? {
+                if let Some(frame) = self.capture.capture(open_video, events)? {
                     let hardware = encoder.hardware_active();
                     if hardware {
                         events.send(&crate::events::Event::EncoderBusy)?;
@@ -141,22 +133,20 @@ impl Session {
 }
 
 #[cfg(test)]
-pub(crate) fn capture_loop(
+pub(crate) fn capture_loop<V: FrameCapture>(
     config: &Config,
     stop: &AtomicBool,
-    mut open_video: impl FnMut(&CaptureOptions) -> Result<Video>,
-    mut capture_ui: Option<impl UiCapture>,
+    mut open_video: impl FnMut(&CaptureOptions) -> Result<V>,
 ) -> Result<()> {
     let mut session = Session::connect(config)?;
     if session.wait_for_capture(config, stop)? {
-        session.configure(&mut capture_ui, &mut Events::disabled())?;
+        session.configure(&mut Events::disabled())?;
         session.run(
             stop,
             &mut open_video,
-            &mut capture_ui,
             &mut || {
                 Ok(VideoUpdate {
-                    availability: VideoAvailability::Unknown,
+                    availability: prysm_webos_protocol::worker::VideoAvailability::Unknown,
                     reset: false,
                 })
             },
@@ -171,7 +161,6 @@ fn record_capture_settings(config: &Config, fps: u8, [width, height]: [u32; 2]) 
     prysm_metrics::capture_info(
         match config.source {
             Source::Video => prysm_metrics::CaptureSource::Video,
-            Source::Ui => prysm_metrics::CaptureSource::Ui,
             Source::Both => prysm_metrics::CaptureSource::Both,
         },
         match config.compression {
@@ -182,7 +171,6 @@ fn record_capture_settings(config: &Config, fps: u8, [width, height]: [u32; 2]) 
         width,
         height,
         fps,
-        prysm_webos_protocol::PixelFormat::Rgb.into(),
         if matches!(
             config.compression,
             Compression::H264Software | Compression::H264Hardware

@@ -77,13 +77,11 @@ fn main() -> Result<()> {
             events.send(&events::Event::Disconnected)?;
             return Ok(());
         }
-        let mut ui = Some(capture::NativeUi::new(config.source));
-        let result = session.configure(&mut ui, &mut events).and_then(|()| {
+        let result = session.configure(&mut events).and_then(|()| {
             events.send(&events::Event::Capturing)?;
             session.run(
                 &stop,
-                &mut native::Video::open,
-                &mut ui,
+                &mut |options| native::Video::open(options, config.source),
                 &mut || control.poll(),
                 &mut events,
             )
@@ -96,7 +94,6 @@ fn main() -> Result<()> {
         {
             tracing::warn!("hardware encoder failed; reconnecting with OpenH264");
             events.send(&events::Event::VideoResetting)?;
-            drop(ui);
             drop(session);
             events.send(&events::Event::VideoReset)?;
             config.compression = config::Compression::H264Software;

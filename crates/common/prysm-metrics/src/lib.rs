@@ -25,8 +25,8 @@ use tiny_http::{Header, Method, Response, Server, StatusCode};
 mod labels;
 pub use labels::{
     Backend, BytesKind, CaptureSource, Codec, Content, DecoderEvent, EncoderEvent, Event, Format,
-    FrameReceiverEvent, FrameSenderEvent, FrameStage, Layer, PipelineEvent, Role, Stage,
-    UiCaptureEvent, VideoCaptureEvent, WireBoundary, WledEvent,
+    FrameReceiverEvent, FrameSenderEvent, FrameStage, PipelineEvent, Role, Stage,
+    VideoCaptureEvent, WireBoundary, WledEvent,
 };
 use labels::{BackendInfo, ByteLabels, CaptureInfo, Device, FrameLabels, StageLabels};
 
@@ -286,7 +286,6 @@ pub fn capture_info(
     width: u32,
     height: u32,
     fps: u8,
-    composition_format: Format,
     target_bitrate_bps: u32,
 ) {
     if let Some(metrics) = METRICS.get() {
@@ -300,7 +299,6 @@ pub fn capture_info(
                 width,
                 height,
                 fps,
-                composition_format,
                 target_bitrate_bps,
             })
             .set(1);
@@ -328,18 +326,16 @@ impl Drop for ReceiverRequest {
     }
 }
 
-pub fn backend_info(layer: Layer, selected: Backend) {
+pub fn backend_info(selected: Backend) {
     if let Some(metrics) = METRICS.get() {
         for backend in [
             Backend::Vtcapture,
-            Backend::Dile,
-            Backend::Gm,
-            Backend::Halgal,
+            Backend::VtcaptureBlended,
             Backend::Disabled,
         ] {
             metrics
                 .backend
-                .get_or_create(&BackendInfo { layer, backend })
+                .get_or_create(&BackendInfo { backend })
                 .set(i64::from(backend == selected));
         }
     }
@@ -513,6 +509,43 @@ mod tests {
             "component=\"FrameSender\",operation=\"WriteFrame\",outcome=\"TimedOut\"} 1"
         ));
         assert!(text.ends_with("# EOF\n"));
+    }
+
+    #[test]
+    fn phase_histograms_keep_capturer_component_context() {
+        let metrics = Metrics::new(Role::Capturer);
+        for (stage, component, operation) in [
+            (Stage::HardwareUpload, "FrameEncoder", "HardwareUpload"),
+            (
+                Stage::HardwareSyncStart,
+                "FrameEncoder",
+                "HardwareSyncStart",
+            ),
+            (Stage::HardwareSyncEnd, "FrameEncoder", "HardwareSyncEnd"),
+            (Stage::HardwareSubmit, "FrameEncoder", "HardwareSubmit"),
+            (Stage::HardwareWait, "FrameEncoder", "HardwareWait"),
+            (Stage::HardwareCollect, "FrameEncoder", "HardwareCollect"),
+            (
+                Stage::HardwareNormalize,
+                "FrameEncoder",
+                "HardwareNormalize",
+            ),
+        ] {
+            metrics
+                .durations
+                .get_or_create(&stage.into())
+                .observe(0.002);
+            let text = metrics.render().unwrap();
+            let labels = format!(
+                "role=\"Capturer\",flow=\"CaptureFrames\",component=\"{component}\",operation=\"{operation}\""
+            );
+            assert!(text.contains(&format!(
+                "prysm_operation_duration_seconds_count{{{labels}}} 1"
+            )));
+            assert!(text.contains(&format!(
+                "prysm_operation_duration_seconds_sum{{{labels}}} 0.002"
+            )));
+        }
     }
 
     #[test]

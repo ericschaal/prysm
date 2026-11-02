@@ -1,0 +1,191 @@
+{
+  "packets": [
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "838",
+      "pos": "0",
+      "flags": "K__"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1714",
+      "pos": "838",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1711",
+      "pos": "2552",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1713",
+      "pos": "4263",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1648",
+      "pos": "5976",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1644",
+      "pos": "7624",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1713",
+      "pos": "9268",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1714",
+      "pos": "10981",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1645",
+      "pos": "12695",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1715",
+      "pos": "14340",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1711",
+      "pos": "16055",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1713",
+      "pos": "17766",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1648",
+      "pos": "19479",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1645",
+      "pos": "21127",
+      "flags": "___"
+    },
+    {
+      "codec_type": "video",
+      "stream_index": 0,
+      "duration": 80000,
+      "duration_time": "0.066667",
+      "size": "1713",
+      "pos": "22772",
+      "flags": "___"
+    }
+  ],
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+      "profile": "Constrained Baseline",
+      "codec_type": "video",
+      "codec_tag_string": "[0][0][0][0]",
+      "codec_tag": "0x0000",
+      "mime_codec_string": "avc1.42c028",
+      "width": 640,
+      "height": 368,
+      "coded_width": 640,
+      "coded_height": 368,
+      "has_b_frames": 0,
+      "pix_fmt": "yuv420p",
+      "level": 40,
+      "chroma_location": "left",
+      "field_order": "progressive",
+      "refs": 1,
+      "is_avc": "false",
+      "nal_length_size": "0",
+      "r_frame_rate": "30/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/1200000",
+      "bits_per_raw_sample": "8",
+      "nb_read_frames": "15",
+      "nb_read_packets": "15",
+      "extradata_size": 37,
+      "disposition": {
+        "default": 0,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0,
+        "multilayer": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,228 @@
+568.911 submit index=0
+576.756 encoder-in bytes=414720 pts=1014482 flags=16448
+586.250 encoder-out bytes=764 pts=1014482 flags=576
+819.558 single-frame-window outputs=0
+819.968 submit index=1
+820.090 encoder-in bytes=414720 pts=252026630 flags=16384
+831.887 encoder-out bytes=1122 pts=252026630 flags=8704
+832.895 parser-out bytes=764 pts=1014482 flags=1600
+833.071 collect index=0 bytes=764
+853.647 submit index=2
+853.775 encoder-in bytes=414720 pts=285701296 flags=16384
+866.647 encoder-out bytes=1125 pts=285701296 flags=8704
+866.831 parser-out bytes=1122 pts=252026630 flags=8704
+866.904 collect index=1 bytes=1122
+887.265 submit index=3
+887.386 encoder-in bytes=414720 pts=319323630 flags=16384
+898.778 encoder-out bytes=1124 pts=319323630 flags=8704
+898.975 parser-out bytes=1125 pts=285701296 flags=8704
+899.295 collect index=2 bytes=1125
+920.888 submit index=4
+921.012 encoder-in bytes=414720 pts=352946852 flags=16384
+934.553 encoder-out bytes=1122 pts=352946852 flags=8704
+934.710 parser-out bytes=1124 pts=319323630 flags=8704
+934.786 collect index=3 bytes=1124
+954.516 submit index=5
+954.633 encoder-in bytes=414720 pts=386568481 flags=16384
+966.350 encoder-out bytes=1122 pts=386568481 flags=8704
+966.487 parser-out bytes=1122 pts=352946852 flags=8704
+966.568 collect index=4 bytes=1122
+988.136 submit index=6
+988.252 encoder-in bytes=414720 pts=420192074 flags=16384
+1000.033 encoder-out bytes=1122 pts=420192074 flags=8704
+1000.190 parser-out bytes=1122 pts=386568481 flags=8704
+1000.305 collect index=5 bytes=1122
+1021.760 submit index=7
+1021.887 encoder-in bytes=414720 pts=453818555 flags=16384
+1034.727 encoder-out bytes=1122 pts=453818555 flags=8704
+1034.911 parser-out bytes=1122 pts=420192074 flags=8704
+1034.989 collect index=6 bytes=1122
+1055.357 submit index=8
+1055.485 encoder-in bytes=414720 pts=487410148 flags=16384
+1065.250 encoder-out bytes=1122 pts=487410148 flags=8704
+1065.388 parser-out bytes=1122 pts=453818555 flags=8704
+1065.455 collect index=7 bytes=1122
+1088.977 submit index=9
+1089.100 encoder-in bytes=414720 pts=521034037 flags=16384
+1100.978 encoder-out bytes=1122 pts=521034037 flags=8704
+1101.130 parser-out bytes=1122 pts=487410148 flags=8704
+1101.204 collect index=8 bytes=1122
+1122.602 submit index=10
+1122.719 encoder-in bytes=414720 pts=554657222 flags=16384
+1134.482 encoder-out bytes=1122 pts=554657222 flags=8704
+1134.784 parser-out bytes=1122 pts=521034037 flags=8704
+1134.860 collect index=9 bytes=1122
+1156.265 submit index=11
+1156.388 encoder-in bytes=414720 pts=588319444 flags=16384
+1168.165 encoder-out bytes=1122 pts=588319444 flags=8704
+1168.298 parser-out bytes=1122 pts=554657222 flags=8704
+1168.367 collect index=10 bytes=1122
+1189.907 submit index=12
+1190.038 encoder-in bytes=414720 pts=621963926 flags=16384
+1199.747 encoder-out bytes=1070 pts=621963926 flags=8704
+1199.904 parser-out bytes=1122 pts=588319444 flags=8704
+1199.981 collect index=11 bytes=1122
+1223.530 submit index=13
+1223.646 encoder-in bytes=414720 pts=655582037 flags=16384
+1235.392 encoder-out bytes=1122 pts=655582037 flags=8704
+1235.736 parser-out bytes=1070 pts=621963926 flags=8704
+1235.799 collect index=12 bytes=1070
+1257.194 submit index=14
+1257.315 encoder-in bytes=414720 pts=689249370 flags=16384
+1269.091 encoder-out bytes=1122 pts=689249370 flags=8704
+1269.228 parser-out bytes=1122 pts=655582037 flags=8704
+1269.330 collect index=13 bytes=1122
+1290.815 submit index=15
+1290.931 encoder-in bytes=414720 pts=722868481 flags=16384
+1303.745 encoder-out bytes=1122 pts=722868481 flags=8704
+1303.899 parser-out bytes=1122 pts=689249370 flags=8704
+1303.979 collect index=14 bytes=1122
+1324.446 submit index=16
+1324.593 encoder-in bytes=414720 pts=756527481 flags=16384
+1336.346 encoder-out bytes=1074 pts=756527481 flags=8704
+1336.497 parser-out bytes=1122 pts=722868481 flags=8704
+1336.570 collect index=15 bytes=1122
+1358.135 submit index=17
+1358.256 encoder-in bytes=414720 pts=790190074 flags=16384
+1370.016 encoder-out bytes=1122 pts=790190074 flags=8704
+1370.154 parser-out bytes=1074 pts=756527481 flags=8704
+1370.255 collect index=16 bytes=1074
+1391.756 submit index=18
+1391.891 encoder-in bytes=414720 pts=823813148 flags=16384
+1402.684 encoder-out bytes=1122 pts=823813148 flags=8704
+1402.831 parser-out bytes=1122 pts=790190074 flags=8704
+1402.913 collect index=17 bytes=1122
+1425.383 submit index=19
+1425.501 encoder-in bytes=414720 pts=857436592 flags=16384
+1435.266 encoder-out bytes=1122 pts=857436592 flags=8704
+1435.624 parser-out bytes=1122 pts=823813148 flags=8704
+1435.720 collect index=18 bytes=1122
+1458.985 submit index=20
+1459.102 encoder-in bytes=414720 pts=891041259 flags=16384
+1469.006 encoder-out bytes=765 pts=891041259 flags=512
+1469.152 parser-out bytes=1122 pts=857436592 flags=8704
+1469.230 collect index=19 bytes=1122
+1492.606 submit index=21
+1492.723 encoder-in bytes=414720 pts=924660518 flags=16384
+1504.496 encoder-out bytes=1122 pts=924660518 flags=8704
+1504.853 parser-out bytes=765 pts=891041259 flags=1536
+1504.916 collect index=20 bytes=765
+1526.258 submit index=22
+1526.370 encoder-in bytes=414720 pts=958305148 flags=16384
+1538.157 encoder-out bytes=1122 pts=958305148 flags=8704
+1538.508 parser-out bytes=1122 pts=924660518 flags=8704
+1538.599 collect index=21 bytes=1122
+1559.871 submit index=23
+1559.989 encoder-in bytes=414720 pts=991926296 flags=16384
+1569.704 encoder-out bytes=1122 pts=991926296 flags=8704
+1569.887 parser-out bytes=1122 pts=958305148 flags=8704
+1569.973 collect index=22 bytes=1122
+1593.493 submit index=24
+1593.616 encoder-in bytes=414720 pts=1025553222 flags=16384
+1605.400 encoder-out bytes=1122 pts=1025553222 flags=8704
+1605.544 parser-out bytes=1122 pts=991926296 flags=8704
+1605.617 collect index=23 bytes=1122
+1627.123 submit index=25
+1627.341 encoder-in bytes=414720 pts=1059178814 flags=16384
+1637.050 encoder-out bytes=1122 pts=1059178814 flags=8704
+1637.223 parser-out bytes=1122 pts=1025553222 flags=8704
+1637.302 collect index=24 bytes=1122
+1660.857 submit index=26
+1660.987 encoder-in bytes=414720 pts=1092918074 flags=16384
+1674.563 encoder-out bytes=1122 pts=1092918074 flags=8704
+1674.720 parser-out bytes=1122 pts=1059178814 flags=8704
+1674.790 collect index=25 bytes=1122
+1694.511 submit index=27
+1694.654 encoder-in bytes=414720 pts=1126570518 flags=16384
+1706.436 encoder-out bytes=1122 pts=1126570518 flags=8704
+1706.574 parser-out bytes=1122 pts=1092918074 flags=8704
+1706.649 collect index=26 bytes=1122
+1728.137 submit index=28
+1728.260 encoder-in bytes=414720 pts=1160189814 flags=16384
+1740.046 encoder-out bytes=1070 pts=1160189814 flags=8704
+1740.196 parser-out bytes=1122 pts=1126570518 flags=8704
+1740.284 collect index=27 bytes=1122
+1761.796 submit index=29
+1761.919 encoder-in bytes=414720 pts=1193851777 flags=16384
+1774.545 encoder-out bytes=1122 pts=1193851777 flags=8704
+1774.698 parser-out bytes=1070 pts=1160189814 flags=8704
+1774.769 collect index=28 bytes=1070
+1795.418 submit index=30
+1795.537 encoder-in bytes=414720 pts=1227473962 flags=16384
+1807.304 encoder-out bytes=1122 pts=1227473962 flags=8704
+1807.471 parser-out bytes=1122 pts=1193851777 flags=8704
+1807.640 collect index=29 bytes=1122
+1829.046 submit index=31
+1829.165 encoder-in bytes=414720 pts=1261092703 flags=16384
+1840.909 encoder-out bytes=1122 pts=1261092703 flags=8704
+1841.069 parser-out bytes=1122 pts=1227473962 flags=8704
+1841.145 collect index=30 bytes=1122
+1862.662 submit index=32
+1862.790 encoder-in bytes=414720 pts=1294731777 flags=16384
+1875.705 encoder-out bytes=1074 pts=1294731777 flags=8704
+1875.875 parser-out bytes=1122 pts=1261092703 flags=8704
+1875.956 collect index=31 bytes=1122
+1896.299 submit index=33
+1896.426 encoder-in bytes=414720 pts=1328357481 flags=16384
+1908.130 encoder-out bytes=1122 pts=1328357481 flags=8704
+1908.281 parser-out bytes=1074 pts=1294731777 flags=8704
+1908.372 collect index=32 bytes=1074
+1929.928 submit index=34
+1930.083 encoder-in bytes=414720 pts=1362016184 flags=16384
+1939.826 encoder-out bytes=1122 pts=1362016184 flags=8704
+1939.992 parser-out bytes=1122 pts=1328357481 flags=8704
+1940.108 collect index=33 bytes=1122
+1963.546 submit index=35
+1963.662 encoder-in bytes=414720 pts=1395599407 flags=16384
+1973.360 encoder-out bytes=1122 pts=1395599407 flags=8704
+1973.494 parser-out bytes=1122 pts=1362016184 flags=8704
+1973.565 collect index=34 bytes=1122
+1997.170 submit index=36
+1997.296 encoder-in bytes=414720 pts=1429232333 flags=16384
+2009.044 encoder-out bytes=1122 pts=1429232333 flags=8704
+2009.177 parser-out bytes=1122 pts=1395599407 flags=8704
+2009.248 collect index=35 bytes=1122
+2030.804 submit index=37
+2030.927 encoder-in bytes=414720 pts=1462857110 flags=16384
+2043.754 encoder-out bytes=1122 pts=1462857110 flags=8704
+2043.925 parser-out bytes=1122 pts=1429232333 flags=8704
+2044.026 collect index=36 bytes=1122
+2064.429 submit index=38
+2064.551 encoder-in bytes=414720 pts=1496487518 flags=16384
+2076.704 encoder-out bytes=1122 pts=1496487518 flags=8704
+2076.873 parser-out bytes=1122 pts=1462857110 flags=8704
+2076.953 collect index=37 bytes=1122
+2098.053 submit index=39
+2098.174 encoder-in bytes=414720 pts=1530109481 flags=16384
+2109.955 encoder-out bytes=1122 pts=1530109481 flags=8704
+2110.086 parser-out bytes=1122 pts=1496487518 flags=8704
+2110.163 collect index=38 bytes=1122
+2131.685 submit index=40
+2131.805 encoder-in bytes=414720 pts=1563737814 flags=16384
+2144.166 encoder-out bytes=765 pts=1563737814 flags=512
+2144.322 parser-out bytes=1122 pts=1530109481 flags=8704
+2144.409 collect index=39 bytes=1122
+2165.309 submit index=41
+2165.424 encoder-in bytes=414720 pts=1597364703 flags=16384
+2177.219 encoder-out bytes=1122 pts=1597364703 flags=8704
+2177.520 parser-out bytes=765 pts=1563737814 flags=1536
+2177.602 collect index=40 bytes=765
+2198.943 submit index=42
+2199.067 encoder-in bytes=414720 pts=1631003518 flags=16384
+2210.859 encoder-out bytes=1122 pts=1631003518 flags=8704
+2211.005 parser-out bytes=1122 pts=1597364703 flags=8704
+2211.102 collect index=41 bytes=1122
+2232.607 submit index=43
+2232.728 encoder-in bytes=414720 pts=1664662184 flags=16384
+2244.474 encoder-out bytes=1122 pts=1664662184 flags=8704
+2244.624 parser-out bytes=1122 pts=1631003518 flags=8704
+2244.717 collect index=42 bytes=1122
+2266.230 submit index=44
+2266.351 encoder-in bytes=414720 pts=1698286851 flags=16384
+2278.275 encoder-out bytes=1070 pts=1698286851 flags=8704
+2278.430 parser-out bytes=1122 pts=1664662184 flags=8704
+2278.531 collect index=43 bytes=1122
+2299.732 eos-submit outputs=44
+2300.125 parser-out bytes=1070 pts=1698286851 flags=8704
+2300.226 collect index=44 bytes=1070
+2344.787 finish status=0 outputs=45

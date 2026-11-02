@@ -1,0 +1,13 @@
+{
+  "before": {
+    "enabled": false,
+    "senderRunning": false,
+    "error": null
+  },
+  "after": {
+    "enabled": false,
+    "senderRunning": false,
+    "error": null
+  },
+  "config_unchanged": true
+}

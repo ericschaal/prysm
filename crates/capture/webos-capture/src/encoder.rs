@@ -65,8 +65,8 @@ impl H264 {
                 bitrate,
             } => match encoder.encode(header, pixels, output) {
                 Ok(kind) => {
-                    *emitted |= kind.is_some();
-                    Ok(kind)
+                    *emitted = true;
+                    Ok(Some(kind))
                 }
                 Err(error) if *emitted => Err(error.context(HardwareFailed)),
                 Err(error) => {
@@ -94,11 +94,7 @@ pub struct EncodedFrame<'a> {
 pub enum Encoder {
     Raw,
     Lz4(Vec<u8>),
-    H264 {
-        encoder: H264,
-        output: Vec<u8>,
-        pending: Option<(Header, Content)>,
-    },
+    H264 { encoder: H264, output: Vec<u8> },
 }
 
 impl Encoder {
@@ -126,7 +122,6 @@ impl Encoder {
                     )?))
                 },
                 output: Vec::new(),
-                pending: None,
             },
         })
     }
@@ -139,9 +134,9 @@ impl Encoder {
         &'a mut self,
         mut header: Header,
         pixels: &'a [u8],
-        mut content: Content,
+        content: Content,
     ) -> Result<Option<EncodedFrame<'a>>> {
-        let mut raw_len = header.raw_len().inspect_err(|_| {
+        let raw_len = header.raw_len().inspect_err(|_| {
             prysm_metrics::event(EncoderEvent::InputRejected);
         })?;
         if raw_len != pixels.len() {
@@ -163,29 +158,14 @@ impl Encoder {
                     pixels
                 }
             }
-            Self::H264 {
-                encoder,
-                output,
-                pending,
-            } => {
-                let previous = pending.replace((header, content));
+            Self::H264 { encoder, output } => {
                 let Some(kind) = encoder.encode(header, pixels, output).inspect_err(|_| {
                     prysm_metrics::event(EncoderEvent::H264EncodeFailed);
                 })?
                 else {
-                    if !encoder.hardware_active() {
-                        *pending = None;
-                        prysm_metrics::event(EncoderEvent::H264RateControlSkipped);
-                    }
+                    prysm_metrics::event(EncoderEvent::H264RateControlSkipped);
                     return Ok(None);
                 };
-                if encoder.hardware_active() {
-                    (header, content) = previous
-                        .ok_or_else(|| anyhow::anyhow!("missing hardware input metadata"))?;
-                    raw_len = header.raw_len()?;
-                } else {
-                    *pending = None;
-                }
                 prysm_metrics::event(match kind {
                     h264::FrameKind::Idr => EncoderEvent::H264IdrEncoded,
                     h264::FrameKind::Intra => EncoderEvent::H264IntraFrameEncoded,

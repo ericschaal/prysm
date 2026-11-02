@@ -6,19 +6,7 @@ use std::{fmt, net::SocketAddr, str::FromStr};
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Video,
-    Ui,
     Both,
-}
-
-impl Source {
-    #[must_use]
-    pub const fn includes_video(self) -> bool {
-        matches!(self, Self::Video | Self::Both)
-    }
-    #[must_use]
-    pub const fn includes_ui(self) -> bool {
-        matches!(self, Self::Ui | Self::Both)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,7 +138,7 @@ mod tests {
         assert!(!WorkerConfig::decode(&legacy.to_string()).unwrap().metrics);
         for payload in [
             r#"{"receiver":"127.0.0.1:0","source":"both","compression":"h264-software"}"#,
-            r#"{"receiver":"127.0.0.1:19400","source":"unknown","compression":"h264-software"}"#,
+            r#"{"receiver":"127.0.0.1:19400","source":"ui","compression":"h264-software"}"#,
             r#"{"receiver":"127.0.0.1:19400","source":"both","compression":"h264-software","args":[]}"#,
         ] {
             assert!(WorkerConfig::decode(payload).is_err());

@@ -82,6 +82,7 @@ mod tests {
             ..Config::default()
         }
     }
+
     #[test]
     fn hardware_compression_requires_the_build_feature() {
         let config = Config {
@@ -151,11 +152,7 @@ mod tests {
         assert_eq!(serde_json::to_value(&empty).unwrap(), json);
         assert_eq!(serde_json::from_value::<Config>(json).unwrap(), empty);
         assert!(empty.worker_config().is_err());
-        for (source, source_name) in [
-            (Source::Video, "video"),
-            (Source::Ui, "ui"),
-            (Source::Both, "both"),
-        ] {
+        for (source, source_name) in [(Source::Video, "video"), (Source::Both, "both")] {
             for (compression, compression_name) in [
                 (Compression::None, "none"),
                 (Compression::Lz4, "lz4"),

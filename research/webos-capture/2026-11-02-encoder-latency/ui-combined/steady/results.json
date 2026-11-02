@@ -1,0 +1,20 @@
+[
+  {
+    "name": "baseline-640x360",
+    "frames": 240,
+    "steady_cpu_percent": 38.751592355515555,
+    "steady_wall_seconds": 7.844838921999326,
+    "first_frame_ms": 773.8821100065252,
+    "frame_interval_ms": 35.743627586337176,
+    "teardown_ms": 165.07207399990875
+  },
+  {
+    "name": "combined-640x360",
+    "frames": 240,
+    "steady_cpu_percent": 14.317754463150836,
+    "steady_wall_seconds": 7.333552217998658,
+    "first_frame_ms": 269.849926000461,
+    "frame_interval_ms": 33.353279272738625,
+    "teardown_ms": 166.32422199472785
+  }
+]

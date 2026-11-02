@@ -1,0 +1,107 @@
+{
+  "worker_runs": [
+    {
+      "name": "hardware-640x280",
+      "frames": 300,
+      "steady_cpu_percent": 24.821382980730142,
+      "steady_wall_seconds": 9.830233882996254,
+      "first_frame_ms": 243.3336660033092,
+      "frame_interval_ms": 33.32433657628441,
+      "teardown_ms": 165.9232219972182
+    },
+    {
+      "name": "hardware-320x180",
+      "frames": 35,
+      "steady_cpu_percent": 13.036445809030827,
+      "steady_wall_seconds": 1.9944086280011106,
+      "first_frame_ms": 218.0829629942309,
+      "frame_interval_ms": 66.4947592333192,
+      "teardown_ms": 168.48651799955405
+    },
+    {
+      "name": "software-640x280",
+      "frames": 35,
+      "steady_cpu_percent": 36.1367253239084,
+      "steady_wall_seconds": 0.9962164440003107,
+      "first_frame_ms": 170.95996299758554,
+      "frame_interval_ms": 33.21971476689214,
+      "teardown_ms": 114.45222200563876
+    },
+    {
+      "name": "software-320x180",
+      "frames": 35,
+      "steady_cpu_percent": 9.991686736798426,
+      "steady_wall_seconds": 2.001664035997237,
+      "first_frame_ms": 170.73870300373528,
+      "frame_interval_ms": 66.7340135332779,
+      "teardown_ms": 164.64803700364428
+    }
+  ],
+  "hardware_640x280_phases": {
+    "FrameEncoder/HardwareSyncStart": {
+      "count": 302,
+      "mean_ms": 0.007188605960264907
+    },
+    "UiCapture/Acquire": {
+      "count": 300,
+      "mean_ms": 11.78383390333333
+    },
+    "FrameEncoder/HardwareWait": {
+      "count": 300,
+      "mean_ms": 9.781666196666672
+    },
+    "VideoCapture/Acquire": {
+      "count": 301,
+      "mean_ms": 0.3634268305647842
+    },
+    "FrameEncoder/HardwareUpload": {
+      "count": 300,
+      "mean_ms": 0.09550022333333331
+    },
+    "FrameEncoder/HardwareConvert": {
+      "count": 1,
+      "mean_ms": 3.651037
+    },
+    "FrameEncoder/HardwareSubmit": {
+      "count": 300,
+      "mean_ms": 0.06962520333333334
+    },
+    "FrameEncoder/HardwareNormalize": {
+      "count": 300,
+      "mean_ms": 0.19671013666666667
+    },
+    "FrameEncoder/PreparePayload": {
+      "count": 300,
+      "mean_ms": 10.415821210000004
+    },
+    "Composer/Convert": {
+      "count": 1,
+      "mean_ms": 1.676926
+    },
+    "FrameSender/WriteFrame": {
+      "count": 300,
+      "mean_ms": 0.1864987666666666
+    },
+    "CaptureLoop/Iterate": {
+      "count": 300,
+      "mean_ms": 23.987191089999992
+    },
+    "FrameSender/Connect": {
+      "count": 1,
+      "mean_ms": 0.265111
+    },
+    "FrameEncoder/HardwareSyncEnd": {
+      "count": 302,
+      "mean_ms": 0.0026283774834437077
+    },
+    "FrameEncoder/HardwareCollect": {
+      "count": 300,
+      "mean_ms": 0.01632222333333334
+    }
+  },
+  "final_sender_enabled": false,
+  "configuration_unchanged": true,
+  "service_error": null,
+  "wire_decoded_frames": 405,
+  "qualification_passed": true
+}

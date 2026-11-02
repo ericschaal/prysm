@@ -1,5 +1,18 @@
 # Experimental webOS hardware H.264
 
+Current source uses only native NV12 capture: combined or video-only. Legacy
+UI fallback, blending and RGB/NV16 hardware conversion have been removed. Both
+sources wait when video is unavailable. Earlier release measurements below
+describe the implementation at the time. See the
+[single-tap cleanup audit](../../../research/webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md).
+
+Version 0.1.22 supplies the native blended NV12 tap to this encoder for Both
+capture. Visible UI no longer requires a separate HAL copy or CPU composition
+when that tap is available. Readiness-driven UI fallback remains supported.
+The deployed 640×360/30 fps sample averaged 12.9 ms per whole iteration; hardware
+output wait remained dominant at 11.9 ms. See
+[combined capture deployment](../../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
+
 Hardware H.264 is excluded from default builds. Build with
 `./packaging/webos/build-ipk.sh --hardware-h264` to enable the `hardware-h264`
 Cargo feature in both the worker and supervisor. The TV app always offers
@@ -22,21 +35,23 @@ missing libraries prevent startup before software fallback can run. The checked
 build SDK supplies GStreamer 1.20.4 and GLib 2.72.3. No newer API version features
 are enabled. Non-Linux builds use an unavailable-backend stub for host tests.
 
-The pipeline uses `rvenc` and
-`h264parse`, and copies validated RGB/NV12/NV16 capture input into two persistent
-192-byte-pitch NV12 DMA-BUFs. RGB conversion and NV16 vertical chroma averaging
-produce limited-range BT.709. Padding is initialized. A slot is reused only after
-GStreamer releases its input reference. Per-frame allocate/free caused reproduced
+The pipeline connects `rvenc` directly to `appsink` with two persistent, CPU-mapped
+192-byte-pitch NV12 DMA-BUFs. Native NV12 rows upload directly into the selected
+slot without conversion scratch or an intermediate image copy. Hardware input
+is validated as native limited-range BT.709 NV12. DMA padding is initialized once per slot; direct NV12
+uploads preserve it. Cache synchronization remains paired around every CPU
+write. A slot is reused only after GStreamer releases its input reference. Per-frame allocate/free caused reproduced
 picture corruption; persistent allocations fixed the changing-input regression.
 The vendor's internal cause has not been established.
 
-GStreamer needs the next input to delimit the previous access unit on this
-firmware. There is exactly one pending input header/content record and at most
-two submitted frames. This adds one frame interval (66.7 ms at 15 FPS). Output
-pairing uses submission order, not the vendor's repeated PTS. B/SP/SI slices and
-multiple pictures per access unit are rejected. Session termination drains EOS
-and discards the final unsent picture; references never continue into a new
-connection.
+The TV's `h264parse` stage waits for the next input even after `rvenc` has emitted
+a complete picture. Removing it lets every encode call return its own picture,
+including the first input. There is one submitted picture awaiting output;
+header/content metadata belongs to that same input, without a pending record.
+The vendor advertises AVC statically but emits Annex B, so the direct graph has
+no forced output caps. Actual bitstreams still pass the normalizer's validation:
+B/SP/SI slices and multiple pictures per access unit are rejected. Session
+termination drains EOS; references never continue into a new connection.
 
 SPS correction changes only cropping and video-signal metadata. Cropping is
 derived from coded versus visible dimensions; other SPS/VUI data is preserved.
@@ -61,6 +76,68 @@ including creation, fallback teardown and final NULL transition are covered by
 the supervisor's five-second encoder watchdog and subsequent kill deadline;
 a blocking vendor call is not assumed interruptible. A watchdog-killed process
 cannot perform in-process software fallback; a subsequent worker with hardware compression selected may attempt hardware again.
+
+## Direct output qualification on 2026-11-02
+
+The direct pipeline and current-frame header/content pairing passed the updated
+ARM qualification on the TV. Every synthetic input, including the first, decoded
+as its current picture. RGB/NV12/NV16, 640×280 at 30 FPS, repeated initialization,
+geometry failure and an independently decodable software recovery were checked.
+Default and hardware-enabled host tests, ARM cross-builds, and strict Clippy
+checks passed. DMA ownership, normalization and fallback protections remain.
+
+A staged production worker using both video and UI capture sent 300 hardware
+frames at 640×280/30 FPS with no software fallback. Mean steady output interval
+was 33.32 ms. Mean capture/encode/send iteration was 23.99 ms, including startup;
+UI acquisition averaged 11.78 ms and encoding 10.42 ms. Metrics identify 299 video
+frames and one startup UI frame. Steady worker CPU was 24.82% of one logical CPU,
+including capture, encoding, metrics and TV-local TCP send; vendor debug logging
+was enabled. This is a roughly ten-second sample of the TV's current content,
+not a sustained workload or end-to-end LAN latency measurement.
+
+Additional hardware/software worker sessions at 320×180/15 FPS and a software
+640×280/30 FPS session passed. All 405 wire frames decoded with the unchanged
+host receiver, including the first picture with fresh decoder state. Receiver
+disconnect and SIGTERM exited cleanly. Temporary capture authorization and test
+files were removed; installed settings were unchanged and the sender stayed
+disabled during qualification. Subsequently, at the user's explicit request,
+version 0.1.21 was installed and the sender enabled toward the current computer.
+All 21 package files matched; the service reported connected/capturing without
+error, and the host receiver decoded incoming H.264 frames. Other settings were
+preserved. [Deployment evidence](../../../work/webos-encoder-latency/deployment/evidence/deployment.json).
+
+The preceding controlled probe measured approximately 34 ms less frame latency
+at 640×360/30 FPS after removing the parser; its encoder hardware time stayed
+unchanged. See [integration evidence](../../../research/webos-capture/2026-11-02-encoder-latency/integration-results.md)
+and [controlled latency experiment](../../../research/webos-capture/2026-11-02-encoder-latency/live-results.md).
+Standby/resume, prolonged load, other firmware, 60 FPS and 4K remain unqualified.
+
+## Persistent DMA mapping qualification on 2026-11-02
+
+Version 0.1.20 retains each DMA mapping for its slot's lifetime, uploads native
+NV12 directly, and allocates conversion scratch only when RGB/NV16 needs it.
+Eight hardware phase histograms expose conversion, upload, synchronization start
+and end, submission, output wait, collection and normalization. Grafana's
+expanded **Hardware H.264** section below stream health separates preparation
+and collection from output wait, so the smaller phases remain readable.
+The [metric catalog](../../../observability/CATALOG.md) defines their boundaries.
+
+On the project TV, a baseline → updated → baseline experiment used the same
+changing 640×360 inputs, 30 FPS and 2 Mbit/s. Each format had five warmup inputs
+and forty measured outputs. Native NV12 encode wall time fell from
+13.52–13.75 ms to 12.49 ms; CPU time during encode calls fell from 3.25–3.29 ms
+to 2.01 ms. Measured native NV12 bitstreams were byte-identical. Updated RGB/NV16
+wall times were 15.55/13.71 ms versus baseline 16.10–16.11/14.05–14.10 ms.
+These are short synthetic samples, not whole-worker CPU or live latency results.
+
+The updated NV12 phases measured 12.13 ms waiting for output, 0.12 ms uploading,
+0.12 ms normalizing and 0.06 ms submitting; synchronization and output collection
+were smaller. That leaves pipeline output wait as the dominant encoder duration.
+The existing changing-input, color, format/geometry transition, metadata, fallback
+and teardown qualification passed on the TV. Tests used the shared capture lock
+and external watchdogs; saved settings and the enabled sender state were restored.
+Evidence is under `work/webos-hardware-dma/`. That DMA-only revision retained
+the extra frame of pipeline latency; the later direct-output change removes it.
 
 ## Rust bindings qualification on 2026-11-01
 

@@ -5,7 +5,10 @@ use super::ffi::{
     prysm_vt_preprocess, prysm_vt_release,
 };
 use super::{library, status};
-use crate::{config::CaptureOptions, pixels};
+use crate::{
+    config::{CaptureOptions, Source},
+    pixels,
+};
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
 use prysm_webos_protocol::{Header, PixelFormat};
@@ -68,9 +71,9 @@ macro_rules! vt_call {
 }
 
 impl VtCapture {
-    pub(super) fn open(options: &CaptureOptions) -> Result<Self> {
+    pub fn open(options: &CaptureOptions, source: Source) -> Result<Self> {
         let properties = Properties {
-            dump: 2, // LG display capture tap.
+            dump: if source == Source::Both { 3 } else { 2 }, // LG blended/display capture tap.
             width: i16::try_from(options.width)?,
             height: i16::try_from(options.height)?,
             buffers: 3,
@@ -174,6 +177,7 @@ impl VtCapture {
         tracing::info!(
             width = self.plane.region[2],
             height = self.plane.region[3],
+            includes_ui = self.properties.dump == 3,
             "video capture started"
         );
         Ok(true)
@@ -195,11 +199,12 @@ impl VtCapture {
         Ok(false)
     }
 
-    pub(super) fn capture(
+    pub fn capture(
         &mut self,
         output: &mut Vec<u8>,
         events: &mut crate::events::Events,
     ) -> Result<Option<Header>> {
+        output.clear();
         if self.stage <= Stage::Initialized {
             if Instant::now() < self.prepare_at {
                 return Ok(None);
@@ -270,11 +275,7 @@ impl Drop for VtCapture {
 mod tests {
     use super::*;
     use crate::{events::Events, native::Video};
-    use std::{
-        io::Read,
-        net::TcpListener,
-        sync::atomic::{AtomicBool, Ordering},
-    };
+    use std::io::Read;
 
     struct Driver {
         code: i32,
@@ -357,7 +358,7 @@ mod tests {
             release: fake_release,
             _library: libloading::os::unix::Library::this().into(),
         };
-        Video::Vt(VtCapture {
+        VtCapture {
             api,
             driver: NonNull::from(driver).cast(),
             client: [0; 128],
@@ -370,7 +371,7 @@ mod tests {
             properties: Properties::default(),
             prepare_at: Instant::now(),
             pending_since: None,
-        })
+        }
     }
 
     unsafe extern "C" fn fake_preprocess(
@@ -420,7 +421,8 @@ mod tests {
             cleanup: Vec::new(),
         };
         let mut capture = fake_capture(&mut driver);
-        if let Video::Vt(vt) = &mut capture {
+        {
+            let vt = &mut capture;
             vt.stage = Stage::Initialized;
         }
         let mut output = vec![255; 6];
@@ -430,13 +432,15 @@ mod tests {
         driver.code = 99;
         assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         driver.code = 1;
-        if let Video::Vt(vt) = &mut capture {
+        {
+            let vt = &mut capture;
             vt.prepare_at = Instant::now();
         }
         assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         assert_eq!(driver.initializations, 1);
         driver.code = 0;
-        if let Video::Vt(vt) = &mut capture {
+        {
+            let vt = &mut capture;
             vt.prepare_at = Instant::now();
         }
         assert!(capture.capture(&mut output, &mut events).unwrap().is_some());
@@ -460,19 +464,16 @@ mod tests {
             cleanup: Vec::new(),
         };
         let mut video = fake_capture(&mut driver);
-        if let Video::Vt(vt) = &mut video {
+        {
+            let vt = &mut video;
             vt.stage = Stage::Initialized;
             vt.prepare_at = Instant::now();
             vt.pending_since = Instant::now().checked_sub(Duration::from_secs(11));
         }
         let mut video = Some(video);
         let mut capture = crate::capture::Capture::new(&config);
-        let mut ui = Some(|width, height, bgra: &mut crate::pixels::Bgra8Pixels| {
-            bgra.bytes_mut().resize((width * height * 4) as usize, 0);
-            Ok(())
-        });
         let error = capture
-            .capture(&mut |_| Ok(video.take().unwrap()), &mut ui, &mut events)
+            .capture(&mut |_| Ok(video.take().unwrap()), &mut events)
             .err()
             .expect("a permanently unready client must request worker recovery");
         assert!(error.is::<crate::native::FatalVideo>());
@@ -516,23 +517,20 @@ mod tests {
             cleanup: Vec::new(),
         };
         let mut video = fake_capture(&mut driver);
-        if let Video::Vt(vt) = &mut video {
+        {
+            let vt = &mut video;
             vt.api.stop = observe_stop;
         }
         let (writer, mut reader) = UnixStream::pair().unwrap();
         reader.set_nonblocking(true).unwrap();
         let writer: OwnedFd = writer.into();
         let mut events = Events::from_file(writer.into());
-        let config = crate::config::Config {
-            source: prysm_webos_protocol::Source::Video,
-            ..crate::config::Config::new("127.0.0.1:19400".parse().unwrap())
-        };
+        let config = crate::config::Config::new("127.0.0.1:19400".parse().unwrap());
         let mut capture = crate::capture::Capture::new(&config);
         let mut video = Some(video);
-        let mut ui = None::<fn(u32, u32, &mut crate::pixels::Bgra8Pixels) -> Result<()>>;
         assert!(
             capture
-                .capture(&mut |_| Ok(video.take().unwrap()), &mut ui, &mut events)
+                .capture(&mut |_| Ok(video.take().unwrap()), &mut events)
                 .unwrap()
                 .is_some()
         );
@@ -544,11 +542,7 @@ mod tests {
         driver.code = 99;
         assert!(
             capture
-                .capture(
-                    &mut |_| panic!("reopened before backoff"),
-                    &mut ui,
-                    &mut events
-                )
+                .capture(&mut |_| panic!("reopened before backoff"), &mut events)
                 .unwrap()
                 .is_none()
         );
@@ -577,7 +571,8 @@ mod tests {
             cleanup: Vec::new(),
         };
         let mut video = fake_capture(&mut driver);
-        if let Video::Vt(vt) = &mut video {
+        {
+            let vt = &mut video;
             vt.stage = Stage::Initialized;
             vt.prepare_at = Instant::now();
             vt.pending_since = Instant::now().checked_sub(Duration::from_secs(11));
@@ -625,63 +620,6 @@ mod tests {
     }
 
     #[test]
-    fn initial_status_two_keeps_driver_alive_until_frames_arrive() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let config =
-            crate::config::Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
-        let mut driver = Driver {
-            code: 0,
-            initialized: true,
-            initializations: 0,
-            pending_polls: 2,
-            y: [235; 8],
-            uv: [128; 4],
-            cleanup: Vec::new(),
-        };
-        let mut capture = Some(fake_capture(&mut driver));
-        let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 30));
-        let stop = AtomicBool::new(false);
-        let mut ui_frames = 0;
-        crate::session::capture_loop(
-            &config,
-            &stop,
-            |_| {
-                Ok(capture
-                    .take()
-                    .expect("status 2 must not restart the driver"))
-            },
-            Some(|_, _, bgra: &mut crate::pixels::Bgra8Pixels| {
-                ui_frames += 1;
-                bgra.bytes_mut().resize(16, 0);
-                if ui_frames == 3 {
-                    stop.store(true, Ordering::Relaxed);
-                }
-                Ok(())
-            }),
-        )
-        .unwrap();
-        let mut socket = receiver.join().unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        for expected in [0, 0, 255] {
-            let mut header = [0; prysm_webos_protocol::HEADER_LEN];
-            socket.read_exact(&mut header).unwrap();
-            let header = Header::decode(&header).unwrap();
-            let mut pixels = vec![0; header.payload_len];
-            socket.read_exact(&mut pixels).unwrap();
-            let mut rgb = Vec::new();
-            crate::pixels::to_rgb(header, &pixels, &mut rgb).unwrap();
-            assert!(
-                rgb.iter().all(|value| value.abs_diff(expected) <= 1),
-                "expected UI-only black while waiting, then white video; got {rgb:?}"
-            );
-        }
-        assert_eq!(driver.pending_polls, 0);
-        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
-    }
-
-    #[test]
     fn status_two_wait_is_bounded_and_resets_after_success() {
         let mut events = Events::disabled();
         let mut driver = Driver {
@@ -697,7 +635,8 @@ mod tests {
         let mut output = vec![255; 6];
         assert!(capture.capture(&mut output, &mut events).unwrap().is_none());
         assert_eq!(output, [] as [u8; 0]);
-        if let Video::Vt(vt) = &mut capture {
+        {
+            let vt = &mut capture;
             vt.pending_since = Some(Instant::now().checked_sub(Duration::from_secs(3)).unwrap());
         }
         assert!(

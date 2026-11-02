@@ -1,0 +1,461 @@
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.434: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXMPEGVideoDec-omxmpegvideodec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.435: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXMPEGVideoDec-omxmpegvideodec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.436: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH263Dec-omxh263dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.436: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH263Dec-omxh263dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.437: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH264Dec-omxh264dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.438: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH264Dec-omxh264dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.439: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXVP8Dec-omxvp8dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.439: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXVP8Dec-omxvp8dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.440: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXMJPEGDec-omxmjpegdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.440: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXMJPEGDec-omxmjpegdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.441: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXWMVDec-omxvc1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.442: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXWMVDec-omxvc1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.443: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH265Dec-omxh265dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.443: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH265Dec-omxh265dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.444: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAVSDec-omxavsdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.444: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAVSDec-omxavsdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.445: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAVS2Dec-omxavs2dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.445: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAVS2Dec-omxavs2dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.447: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXVP9Dec-omxvp9dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.447: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXVP9Dec-omxvp9dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.448: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXFLV1Dec-omxflv1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.448: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXFLV1Dec-omxflv1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.449: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAutoVideoDec-omxautovideodec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.449: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAutoVideoDec-omxautovideodec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.451: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXMP3Dec-omxmp3dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.452: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAutoAudioDec-omxautoaudiodec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.454: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAACDec-omxaacdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.455: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAC3Dec-omxac3dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.457: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXVorbisDec-omxvorbisdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.459: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXFLACDec-omxflacdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.460: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXG726Dec-omxg726dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.462: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXG711Dec-omxg711dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.463: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRNBDec-omxamrnbdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.465: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRWBDec-omxamrwbdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.466: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRWBPlusDec-omxamrwbplusdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.468: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXOPUSDec-omxopusdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.469: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXIAMFDec-omxiamfdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.471: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXMPEGHDec-omxmpeghdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.472: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAC4Dec-omxac4dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.474: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXLPCMDec-omxlpcmdec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.475: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAV1Dec-omxav1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.475: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAV1Dec-omxav1dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.480: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH266Dec-omxh266dec1'
+
+** (gst-plugin-scanner:28675): WARNING **: 10:13:53.480: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH266Dec-omxh266dec1'
+>> [gst.tracer][INFO ][default] [28675][ 0x1fcf200] cooltracer registered
+capture_to_au_us=16339
+hardware 640x360 frame=0 encode_us=16382
+capture_to_au_us=15389
+hardware 640x360 frame=1 encode_us=15443
+capture_to_au_us=13358
+hardware 640x360 frame=2 encode_us=13395
+capture_to_au_us=15338
+hardware 640x360 frame=3 encode_us=15375
+capture_to_au_us=13292
+hardware 640x360 frame=4 encode_us=13347
+capture_to_au_us=14443
+hardware 640x360 frame=5 encode_us=14482
+capture_to_au_us=15799
+hardware 640x360 frame=6 encode_us=15836
+capture_to_au_us=15320
+hardware 640x360 frame=7 encode_us=15361
+capture_to_au_us=13458
+hardware 640x360 frame=8 encode_us=13514
+capture_to_au_us=13293
+hardware 640x360 frame=9 encode_us=13345
+capture_to_au_us=15362
+hardware 640x360 frame=10 encode_us=15403
+capture_to_au_us=15340
+hardware 640x360 frame=11 encode_us=15380
+capture_to_au_us=13367
+hardware 640x360 frame=12 encode_us=13406
+capture_to_au_us=15336
+hardware 640x360 frame=13 encode_us=15378
+capture_to_au_us=13312
+hardware 640x360 frame=14 encode_us=13351
+capture_to_au_us=15500
+hardware 640x360 frame=15 encode_us=15553
+capture_to_au_us=15540
+hardware 640x360 frame=16 encode_us=15582
+capture_to_au_us=13301
+hardware 640x360 frame=17 encode_us=13342
+capture_to_au_us=13567
+hardware 640x360 frame=18 encode_us=13607
+capture_to_au_us=16497
+hardware 640x360 frame=19 encode_us=16540
+capture_to_au_us=13696
+hardware 640x360 frame=20 encode_us=13774
+capture_to_au_us=15710
+hardware 640x360 frame=21 encode_us=15751
+capture_to_au_us=15557
+hardware 640x360 frame=22 encode_us=15596
+capture_to_au_us=13283
+hardware 640x360 frame=23 encode_us=13325
+capture_to_au_us=13326
+hardware 640x360 frame=24 encode_us=13365
+capture_to_au_us=15499
+hardware 640x360 frame=25 encode_us=15540
+capture_to_au_us=15610
+hardware 640x360 frame=26 encode_us=15651
+capture_to_au_us=13240
+hardware 640x360 frame=27 encode_us=13280
+capture_to_au_us=14419
+hardware 640x360 frame=28 encode_us=14459
+capture_to_au_us=15373
+hardware 640x360 frame=29 encode_us=15415
+hardware Rgb 640x360 cpu_ticks=54 wall_ms=2068 (includes receiver decode)
+hardware teardown_us=43300
+software 640x360 encode_us=18127
+software 640x360 encode_us=10445
+software 640x360 encode_us=8455
+software 640x360 encode_us=8417
+software 640x360 encode_us=8009
+software 640x360 encode_us=7893
+software 640x360 encode_us=7957
+software 640x360 encode_us=10960
+software 640x360 encode_us=7931
+software 640x360 encode_us=7862
+software 640x360 encode_us=8114
+software 640x360 encode_us=8281
+software 640x360 encode_us=8093
+software 640x360 encode_us=7985
+software 640x360 encode_us=7924
+software 640x360 encode_us=7794
+software 640x360 encode_us=7755
+software 640x360 encode_us=10938
+software 640x360 encode_us=7968
+software 640x360 encode_us=7781
+software 640x360 encode_us=8407
+software 640x360 encode_us=7975
+software 640x360 encode_us=10813
+software 640x360 encode_us=7941
+software 640x360 encode_us=7798
+software 640x360 encode_us=8439
+software 640x360 encode_us=8318
+software 640x360 encode_us=8332
+software 640x360 encode_us=8308
+software 640x360 encode_us=8362
+software Rgb 640x360 cpu_ticks=52 wall_ms=2052
+capture_to_au_us=10575
+hardware 320x180 frame=0 encode_us=10610
+capture_to_au_us=6371
+hardware 320x180 frame=1 encode_us=6410
+capture_to_au_us=7680
+hardware 320x180 frame=2 encode_us=7716
+capture_to_au_us=8817
+hardware 320x180 frame=3 encode_us=8858
+capture_to_au_us=6656
+hardware 320x180 frame=4 encode_us=6694
+capture_to_au_us=8766
+hardware 320x180 frame=5 encode_us=8806
+capture_to_au_us=8804
+hardware 320x180 frame=6 encode_us=8848
+capture_to_au_us=7668
+hardware 320x180 frame=7 encode_us=7710
+capture_to_au_us=6696
+hardware 320x180 frame=8 encode_us=6738
+capture_to_au_us=5641
+hardware 320x180 frame=9 encode_us=5679
+capture_to_au_us=8037
+hardware 320x180 frame=10 encode_us=8076
+capture_to_au_us=7708
+hardware 320x180 frame=11 encode_us=7752
+capture_to_au_us=6643
+hardware 320x180 frame=12 encode_us=6680
+capture_to_au_us=8818
+hardware 320x180 frame=13 encode_us=8861
+capture_to_au_us=7682
+hardware 320x180 frame=14 encode_us=7722
+capture_to_au_us=7784
+hardware 320x180 frame=15 encode_us=7834
+capture_to_au_us=7677
+hardware 320x180 frame=16 encode_us=7716
+capture_to_au_us=7719
+hardware 320x180 frame=17 encode_us=7772
+capture_to_au_us=5609
+hardware 320x180 frame=18 encode_us=5650
+capture_to_au_us=5716
+hardware 320x180 frame=19 encode_us=5757
+capture_to_au_us=8665
+hardware 320x180 frame=20 encode_us=8718
+capture_to_au_us=7731
+hardware 320x180 frame=21 encode_us=7777
+capture_to_au_us=7650
+hardware 320x180 frame=22 encode_us=7690
+capture_to_au_us=8727
+hardware 320x180 frame=23 encode_us=8764
+capture_to_au_us=8824
+hardware 320x180 frame=24 encode_us=8863
+capture_to_au_us=7646
+hardware 320x180 frame=25 encode_us=7686
+capture_to_au_us=10833
+hardware 320x180 frame=26 encode_us=10887
+capture_to_au_us=6725
+hardware 320x180 frame=27 encode_us=6760
+capture_to_au_us=7696
+hardware 320x180 frame=28 encode_us=7732
+capture_to_au_us=7717
+hardware 320x180 frame=29 encode_us=7759
+hardware Nv12 320x180 cpu_ticks=24 wall_ms=2030 (includes receiver decode)
+hardware teardown_us=42929
+software 320x180 encode_us=4421
+software 320x180 encode_us=2179
+software 320x180 encode_us=1695
+software 320x180 encode_us=1703
+software 320x180 encode_us=1648
+software 320x180 encode_us=1568
+software 320x180 encode_us=1529
+software 320x180 encode_us=1558
+software 320x180 encode_us=4713
+software 320x180 encode_us=1538
+software 320x180 encode_us=1544
+software 320x180 encode_us=1534
+software 320x180 encode_us=1684
+software 320x180 encode_us=1523
+software 320x180 encode_us=1536
+software 320x180 encode_us=1572
+software 320x180 encode_us=1401
+software 320x180 encode_us=1461
+software 320x180 encode_us=1457
+software 320x180 encode_us=1482
+software 320x180 encode_us=1435
+software 320x180 encode_us=1486
+software 320x180 encode_us=1508
+software 320x180 encode_us=1724
+software 320x180 encode_us=1505
+software 320x180 encode_us=1558
+software 320x180 encode_us=1505
+software 320x180 encode_us=1448
+software 320x180 encode_us=1430
+software 320x180 encode_us=1483
+software Nv12 320x180 cpu_ticks=13 wall_ms=2033
+capture_to_au_us=11636
+hardware 640x360 frame=0 encode_us=11674
+capture_to_au_us=14376
+hardware 640x360 frame=1 encode_us=14417
+capture_to_au_us=14352
+hardware 640x360 frame=2 encode_us=14390
+capture_to_au_us=12386
+hardware 640x360 frame=3 encode_us=12425
+capture_to_au_us=11189
+hardware 640x360 frame=4 encode_us=11292
+capture_to_au_us=13892
+hardware 640x360 frame=5 encode_us=13933
+capture_to_au_us=13277
+hardware 640x360 frame=6 encode_us=13319
+capture_to_au_us=13376
+hardware 640x360 frame=7 encode_us=13415
+capture_to_au_us=13371
+hardware 640x360 frame=8 encode_us=13412
+capture_to_au_us=13325
+hardware 640x360 frame=9 encode_us=13365
+capture_to_au_us=11338
+hardware 640x360 frame=10 encode_us=11391
+capture_to_au_us=12309
+hardware 640x360 frame=11 encode_us=12347
+capture_to_au_us=11201
+hardware 640x360 frame=12 encode_us=11252
+capture_to_au_us=13274
+hardware 640x360 frame=13 encode_us=13317
+capture_to_au_us=13454
+hardware 640x360 frame=14 encode_us=13498
+capture_to_au_us=11280
+hardware 640x360 frame=15 encode_us=11320
+capture_to_au_us=12293
+hardware 640x360 frame=16 encode_us=12326
+capture_to_au_us=13351
+hardware 640x360 frame=17 encode_us=13390
+capture_to_au_us=11166
+hardware 640x360 frame=18 encode_us=11207
+capture_to_au_us=11294
+hardware 640x360 frame=19 encode_us=11333
+capture_to_au_us=10573
+hardware 640x360 frame=20 encode_us=10652
+capture_to_au_us=11250
+hardware 640x360 frame=21 encode_us=11291
+capture_to_au_us=11140
+hardware 640x360 frame=22 encode_us=11190
+capture_to_au_us=14370
+hardware 640x360 frame=23 encode_us=14411
+capture_to_au_us=13529
+hardware 640x360 frame=24 encode_us=13568
+capture_to_au_us=13447
+hardware 640x360 frame=25 encode_us=13491
+capture_to_au_us=12295
+hardware 640x360 frame=26 encode_us=12334
+capture_to_au_us=13263
+hardware 640x360 frame=27 encode_us=13309
+capture_to_au_us=16487
+hardware 640x360 frame=28 encode_us=16528
+capture_to_au_us=11238
+hardware 640x360 frame=29 encode_us=11281
+hardware Nv16 640x360 cpu_ticks=57 wall_ms=2155 (includes receiver decode)
+hardware teardown_us=44103
+software 640x360 encode_us=12560
+software 640x360 encode_us=8730
+software 640x360 encode_us=6177
+software 640x360 encode_us=9287
+software 640x360 encode_us=5680
+software 640x360 encode_us=8765
+software 640x360 encode_us=5663
+software 640x360 encode_us=5683
+software 640x360 encode_us=5771
+software 640x360 encode_us=5598
+software 640x360 encode_us=5714
+software 640x360 encode_us=5613
+software 640x360 encode_us=5618
+software 640x360 encode_us=5756
+software 640x360 encode_us=5623
+software 640x360 encode_us=5682
+software 640x360 encode_us=5591
+software 640x360 encode_us=8920
+software 640x360 encode_us=5772
+software 640x360 encode_us=5722
+software 640x360 encode_us=5777
+software 640x360 encode_us=5609
+software 640x360 encode_us=5730
+software 640x360 encode_us=5774
+software 640x360 encode_us=5665
+software 640x360 encode_us=5742
+software 640x360 encode_us=5688
+software 640x360 encode_us=5807
+software 640x360 encode_us=5861
+software 640x360 encode_us=5737
+software Nv16 640x360 cpu_ticks=49 wall_ms=2113
+capture_to_au_us=11819
+hardware 640x280 frame=0 encode_us=11874
+capture_to_au_us=9504
+hardware 640x280 frame=1 encode_us=9544
+capture_to_au_us=8134
+hardware 640x280 frame=2 encode_us=8171
+capture_to_au_us=9921
+hardware 640x280 frame=3 encode_us=9965
+capture_to_au_us=11011
+hardware 640x280 frame=4 encode_us=11070
+capture_to_au_us=7865
+hardware 640x280 frame=5 encode_us=8120
+capture_to_au_us=7810
+hardware 640x280 frame=6 encode_us=7907
+capture_to_au_us=9886
+hardware 640x280 frame=7 encode_us=9925
+capture_to_au_us=9987
+hardware 640x280 frame=8 encode_us=10026
+capture_to_au_us=11002
+hardware 640x280 frame=9 encode_us=11046
+capture_to_au_us=7078
+hardware 640x280 frame=10 encode_us=7125
+capture_to_au_us=9936
+hardware 640x280 frame=11 encode_us=9981
+capture_to_au_us=10896
+hardware 640x280 frame=12 encode_us=10935
+capture_to_au_us=7788
+hardware 640x280 frame=13 encode_us=7828
+capture_to_au_us=9880
+hardware 640x280 frame=14 encode_us=9918
+capture_to_au_us=9877
+hardware 640x280 frame=15 encode_us=9918
+capture_to_au_us=9912
+hardware 640x280 frame=16 encode_us=9952
+capture_to_au_us=8904
+hardware 640x280 frame=17 encode_us=8944
+capture_to_au_us=12021
+hardware 640x280 frame=18 encode_us=12058
+capture_to_au_us=8930
+hardware 640x280 frame=19 encode_us=8978
+capture_to_au_us=11008
+hardware 640x280 frame=20 encode_us=11046
+capture_to_au_us=10977
+hardware 640x280 frame=21 encode_us=11017
+capture_to_au_us=9873
+hardware 640x280 frame=22 encode_us=9912
+capture_to_au_us=9895
+hardware 640x280 frame=23 encode_us=9934
+capture_to_au_us=9046
+hardware 640x280 frame=24 encode_us=9090
+capture_to_au_us=7959
+hardware 640x280 frame=25 encode_us=8008
+capture_to_au_us=7896
+hardware 640x280 frame=26 encode_us=7933
+capture_to_au_us=9894
+hardware 640x280 frame=27 encode_us=9935
+capture_to_au_us=9969
+hardware 640x280 frame=28 encode_us=10006
+capture_to_au_us=7869
+hardware 640x280 frame=29 encode_us=7907
+hardware Nv12 640x280 cpu_ticks=29 wall_ms=1085 (includes receiver decode)
+hardware teardown_us=42656
+software 640x280 encode_us=8030
+software 640x280 encode_us=5364
+software 640x280 encode_us=4464
+software 640x280 encode_us=4255
+software 640x280 encode_us=4191
+software 640x280 encode_us=3988
+software 640x280 encode_us=6898
+software 640x280 encode_us=4030
+software 640x280 encode_us=4042
+software 640x280 encode_us=4090
+software 640x280 encode_us=4143
+software 640x280 encode_us=3981
+software 640x280 encode_us=4212
+software 640x280 encode_us=3993
+software 640x280 encode_us=4201
+software 640x280 encode_us=4014
+software 640x280 encode_us=4100
+software 640x280 encode_us=4287
+software 640x280 encode_us=4099
+software 640x280 encode_us=4210
+software 640x280 encode_us=3955
+software 640x280 encode_us=4084
+software 640x280 encode_us=7233
+software 640x280 encode_us=4261
+software 640x280 encode_us=4043
+software 640x280 encode_us=4175
+software 640x280 encode_us=4040
+software 640x280 encode_us=4063
+software 640x280 encode_us=3999
+software 640x280 encode_us=4143
+software Nv12 640x280 cpu_ticks=38 wall_ms=1085

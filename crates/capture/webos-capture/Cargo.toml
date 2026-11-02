@@ -10,7 +10,7 @@ categories.workspace = true
 description = "Native webOS video capture sender for Prysm"
 
 [features]
-hardware-h264 = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
+hardware-h264 = ["dep:memmap2", "dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
 
 [dependencies]
 prysm-metrics = { path = "../../common/prysm-metrics" }
@@ -19,11 +19,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 libc.workspace = true
 libloading.workspace = true
-memmap2.workspace = true
+memmap2 = { workspace = true, optional = true }
 nix = { workspace = true, features = ["poll", "user", "fs", "signal"] }
 serde_json.workspace = true
 prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
-yuv.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gstreamer = { workspace = true, optional = true }
@@ -32,6 +31,7 @@ gstreamer-video = { workspace = true, optional = true }
 gstreamer-allocators = { workspace = true, optional = true }
 
 [dev-dependencies]
+yuv.workspace = true
 nix = { workspace = true, features = ["socket", "pthread"] }
 
 [build-dependencies]

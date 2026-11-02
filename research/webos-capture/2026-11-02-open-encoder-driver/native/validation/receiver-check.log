@@ -1,0 +1,2 @@
+frames-1: all capture AUs passed unchanged normalize_access_unit and Decoder; all 230400 RGB pixels checked; maximum channel error 1 <= 4
+frames-15: all capture AUs passed unchanged normalize_access_unit and Decoder; all 3456000 RGB pixels checked; maximum channel error 1 <= 4

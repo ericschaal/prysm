@@ -89,6 +89,7 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
     f.el('source').focus();
     f.el('source').click();
     assert.equal(f.focus(), 'choice-both');
+    assert.equal(f.el('choice-ui'), null);
     f.key(40);
     assert.equal(f.focus(), 'choice-video');
     assert.equal(f.el('choice-both').getAttribute('aria-pressed'), 'true');

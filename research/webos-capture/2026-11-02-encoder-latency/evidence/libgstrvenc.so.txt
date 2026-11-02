@@ -1,0 +1,241 @@
+0x0000219c      2de9f04f       push.w {r4, r5, r6, r7, r8, sb, sl, fp, lr}
+0x000021a0      95b0           sub sp, 0x54
+0x000021a2      d0f8f8a1       ldr.w sl, [r0, 0x1f8]
+0x000021a6      bff35b8f       dmb ish
+0x000021aa      dff80496       ldr.w sb, [0x000027b0]                  ; [0x27b0:4]=0x13cf2
+0x000021ae      daf83830       ldr.w r3, [sl, 0x38]
+0x000021b2      bff35b8f       dmb ish
+0x000021b6      f944           add sb, pc
+0x000021b8      002b           cmp r3, 0
+0x000021ba      00f0ab82       beq.w 0x2714
+0x000021be      8346           mov fp, r0
+0x000021c0      daf80400       ldr.w r0, [sl, 4]
+0x000021c4      fff780e8       blx 0x12c8 ; relocation-verified: g_async_queue_try_pop
+0x000021c8      0546           mov r5, r0
+0x000021ca      0028           cmp r0, 0
+0x000021cc      00f03082       beq.w 0x2630
+0x000021d0      0af13403       add.w r3, sl, 0x34
+0x000021d4      bff35b8f       dmb ish
+0x000021d8      53e8001f       ldrex r1, [r3]
+0x000021dc      0131           adds r1, 1
+0x000021de      43e80012       strex r2, r1, [r3]
+0x000021e2      002a           cmp r2, 0
+0x000021e4      f8d1           bne 0x21d8
+0x000021e6      5846           mov r0, fp
+0x000021e8      bff35b8f       dmb ish
+0x000021ec      fff7e0e8       blx 0x13b0 ; relocation-verified: gst_video_encoder_get_oldest_frame
+0x000021f0      0446           mov r4, r0
+0x000021f2      0028           cmp r0, 0
+0x000021f4      00f09b82       beq.w 0x272e
+0x000021f8      ea68           ldr r2, [r5, 0xc]
+0x000021fa      4368           ldr r3, [r0, 4]
+0x000021fc      8563           str r5, [r0, 0x38]
+0x000021fe      9104           lsls r1, r2, 0x12
+0x00002200      4cbf           ite mi
+0x00002202      23f00203       bicpl r3, r3, 2
+0x00002206      43f00203       orr r3, r3, 2
+0x0000220a      4360           str r3, [r0, 4]
+0x0000220c      dff8a435       ldr.w r3, [0x000027b4]                  ; [0x27b4:4]=0x13e3c
+0x00002210      7b44           add r3, pc
+0x00002212      d868           ldr r0, [r3, 0xc]
+0x00002214      fff70cea       blx 0x1630 ; relocation-verified: gst_debug_category_get_threshold
+0x00002218      0628           cmp r0, 6
+0x0000221a      00f0e280       beq.w 0x23e2
+0x00002334      2146           mov r1, r4
+0x00002336      5846           mov r0, fp
+0x00002338      fff716e9       blx 0x1568 ; relocation-verified: gst_video_encoder_finish_frame
+0x0000233c      0546           mov r5, r0
+0x0000233e      2046           mov r0, r4
+0x00002340      fff7eee8       blx 0x1520 ; relocation-verified: gst_video_codec_frame_unref
+0x00002630      6425           movs r5, 0x64                           ; 'd'
+0x00002632      2846           mov r0, r5
+0x00002634      15b0           add sp, 0x54
+0x00002636      bde8f08f       pop.w {r4, r5, r6, r7, r8, sb, sl, fp, pc}
+0x00003052      4846           mov r0, sb
+0x00003054      fef7a0ea       blx 0x1598 ; relocation-verified: g_mutex_lock
+0x00003058      5946           mov r1, fp
+0x0000305a      2078           ldrb r0, [r4]
+0x0000305c      fef76cea       blx 0x1538 ; relocation-verified: RVEncoderQueueBuffer
+0x00003060      0746           mov r7, r0
+0x00003062      4846           mov r0, sb
+0x00003064      fef716ea       blx 0x1494 ; relocation-verified: g_mutex_unlock
+0x00003068      4ff4fa60       mov.w r0, 0x7d0
+0x0000306c      002f           cmp r7, 0
+0x0000306e      00f0d180       beq.w 0x3214
+0x00003072      17f10b0f       cmn.w r7, 0xb
+0x00003076      40f01a81       bne.w 0x32ae
+0x00003214      b846           mov r8, r7
+0x00003216      04f13003       add.w r3, r4, 0x30
+0x0000321a      bff35b8f       dmb ish
+0x0000321e      53e8001f       ldrex r1, [r3]
+0x00003222      0131           adds r1, 1
+0x00003224      43e80012       strex r2, r1, [r3]
+0x00003228      002a           cmp r2, 0
+0x0000322a      f8d1           bne 0x321e
+0x0000322c      bff35b8f       dmb ish
+0x00003230      d6f8bc00       ldr.w r0, [r6, 0xbc]
+0x00003234      fef790e8       blx 0x1358 ; relocation-verified: gst_pad_get_task_state
+0x00003238      0138           subs r0, 1
+0x0000323a      0128           cmp r0, 1
+0x0000323c      3ff667af       bhi.w 0x310e
+0x00003240      e649           ldr r1, [0x000035dc]                    ; [0x35dc:4]=0x423
+0x00003242      4346           mov r3, r8
+0x00003244      d6f8bc00       ldr.w r0, [r6, 0xbc]
+0x00003248      3246           mov r2, r6
+0x0000324a      7944           add r1, pc
+0x0000324c      fef7e6e8       blx 0x141c ; relocation-verified: gst_pad_start_task
+0x00003670      38b5           push {r3, r4, r5, lr}
+0x00003672      0446           mov r4, r0
+0x00003674      fdf7eeef       blx 0x1654 ; relocation-verified: gst_video_encoder_get_type
+0x00003678      0146           mov r1, r0
+0x0000367a      2046           mov r0, r4
+0x0000367c      fdf768ef       blx 0x1550 ; relocation-verified: g_type_check_instance_cast
+0x00003680      c030           adds r0, 0xc0
+0x00003682      fdf7c0ee       blx 0x1404 ; relocation-verified: g_rec_mutex_lock
+0x00003686      2046           mov r0, r4
+0x00003688      fef788fd       bl 0x219c
+0x0000368c      0546           mov r5, r0
+0x0000368e      fdf7e2ef       blx 0x1654 ; relocation-verified: gst_video_encoder_get_type
+0x00003692      0146           mov r1, r0
+0x00003694      2046           mov r0, r4
+0x00003696      fdf75cef       blx 0x1550 ; relocation-verified: g_type_check_instance_cast
+0x0000369a      c030           adds r0, 0xc0
+0x0000369c      fdf78eef       blx 0x15bc ; relocation-verified: g_rec_mutex_unlock
+0x000036a0      642d           cmp r5, 0x64                            ; 'd'
+0x000036a2      07d0           beq 0x36b4
+0x000036a4      05b9           cbnz r5, 0x36a8
+0x000036a6      38bd           pop {r3, r4, r5, pc}
+0x000036a8      d4f8bc00       ldr.w r0, [r4, 0xbc]
+0x000036ac      bde83840       pop.w {r3, r4, r5, lr}
+0x000036b0      fdf710bf       b.w 0x14d4 ; relocation-verified: gst_pad_pause_task
+0x000036b4      bde83840       pop.w {r3, r4, r5, lr}
+0x000036b8      4ff4fa60       mov.w r0, 0x7d0
+0x000036bc      fdf78cbf       b.w 0x15d8 ; relocation-verified: g_usleep
+0x00003750      1423           movs r3, 0x14
+0x00003752      0122           movs r2, 1
+0x00003754      c4e90723       strd r2, r3, [r4, 0x1c]
+0x00003758      1e23           movs r3, 0x1e
+0x0000375a      6362           str r3, [r4, 0x24]
+0x0000375c      2369           ldr r3, [r4, 0x10]
+0x0000375e      316c           ldr r1, [r6, 0x40]
+0x00003760      a361           str r3, [r4, 0x18]
+0x00003762      3369           ldr r3, [r6, 0x10]
+0x00003764      a362           str r3, [r4, 0x28]
+0x00003766      7369           ldr r3, [r6, 0x14]
+0x00003768      e362           str r3, [r4, 0x2c]
+0x0000376a      0323           movs r3, 3
+0x0000376c      6361           str r3, [r4, 0x14]
+0x0000376e      0029           cmp r1, 0
+0x00003770      49d1           bne 0x3806
+0x00003772      04f10808       add.w r8, r4, 8
+0x00003776      4046           mov r0, r8
+0x00003778      fdf70eef       blx 0x1598 ; relocation-verified: g_mutex_lock
+0x0000377c      2146           mov r1, r4
+0x0000377e      11f8140b       ldrb r0, [r1], 0x14
+0x00003782      fdf79cee       blx 0x14bc ; relocation-verified: RVEncoderSetResourceInfo
+0x00003786      061e           subs r6, r0, 0
+0x00003788      c0f2bb80       blt.w 0x3902
+0x0000378c      2078           ldrb r0, [r4]
+0x0000378e      fdf722ee       blx 0x13d4 ; relocation-verified: RVEncoderStart
+0x00003792      061e           subs r6, r0, 0
+0x00003794      c0f28680       blt.w 0x38a4
+0x00003798      4046           mov r0, r8
+0x0000379a      fdf77cee       blx 0x1494 ; relocation-verified: g_mutex_unlock
+0x00003806      b368           ldr r3, [r6, 8]
+0x00003808      f06b           ldr r0, [r6, 0x3c]
+0x0000380a      042b           cmp r3, 4
+0x0000380c      08bf           it eq
+0x0000380e      4000           lsls r0, r0, 1
+0x00003810      01f0c2f8       bl 0x4998
+0x00003814      1928           cmp r0, 0x19
+0x00003816      0646           mov r6, r0
+0x00003818      c4bf           itt gt
+0x0000381a      0023           movgt r3, 0
+0x0000381c      6361           str r3, [r4, 0x14]
+0x0000381e      0edc           bgt 0x383e
+0x00003820      04bf           itt eq
+0x00003822      0123           moveq r3, 1
+0x00003824      6361           str r3, [r4, 0x14]
+0x00003826      0ad0           beq 0x383e
+0x00003828      0f28           cmp r0, 0xf
+0x0000382a      c4bf           itt gt
+0x0000382c      0223           movgt r3, 2
+0x0000382e      6361           str r3, [r4, 0x14]
+0x00003830      05dc           bgt 0x383e
+0x00003832      431e           subs r3, r0, 1
+0x00003834      092b           cmp r3, 9
+0x00003836      8ebf           itee hi
+0x00003838      0323           movls r3, 3
+0x0000383a      0423           movs r3, 4
+0x0000383c      6361           str r3, [r4, 0x14]
+0x00003fe4      2de9f04f       push.w {r4, r5, r6, r7, r8, sb, sl, fp, lr}
+0x00003fe8      8db0           sub sp, 0x34
+0x00003fea      dff82892       ldr.w sb, [0x00004214]                  ; [0x4214:4]=0x11eb8
+0x00003fee      8a4b           ldr r3, [0x00004218]                    ; [0x4218:4]=332
+0x00003ff0      f944           add sb, pc
+0x00003ff2      0991           str r1, [sp, 0x24]
+0x00003ff4      d1f8f881       ldr.w r8, [r1, 0x1f8]
+0x00003ff8      59f80330       ldr.w r3, [sb, r3]
+0x00003ffc      0a93           str r3, [sp, 0x28]
+0x00003ffe      1b68           ldr r3, [r3]
+0x00004000      002a           cmp r2, 0
+0x00004002      00f0d480       beq.w 0x41ae
+0x00004006      052b           cmp r3, 5
+0x00004008      0646           mov r6, r0
+0x0000400a      1446           mov r4, r2
+0x0000400c      47d8           bhi 0x409e
+0x0000400e      6769           ldr r7, [r4, 0x14]
+0x00004010      08f1080b       add.w fp, r8, 8
+0x00004014      07f1040a       add.w sl, r7, 4
+0x00004018      5046           mov r0, sl
+0x0000401a      fdf7b8e9       blx 0x138c ; relocation-verified: g_malloc
+0x0000401e      2369           ldr r3, [r4, 0x10]
+0x00004020      0546           mov r5, r0
+0x00004022      5846           mov r0, fp
+0x00004024      03f00303       and r3, r3, 3
+0x00004028      0893           str r3, [sp, 0x20]
+0x0000402a      fdf7b6ea       blx 0x1598 ; relocation-verified: g_mutex_lock
+0x0000402e      e369           ldr r3, [r4, 0x1c]
+0x00004030      3046           mov r0, r6
+0x00004032      0193           str r3, [sp, 4]
+0x00004034      a369           ldr r3, [r4, 0x18]
+0x00004036      0093           str r3, [sp]
+0x00004038      089b           ldr r3, [sp, 0x20]
+0x0000403a      2269           ldr r2, [r4, 0x10]
+0x0000403c      e918           adds r1, r5, r3
+0x0000403e      3b46           mov r3, r7
+0x00004040      fdf748e9       blx 0x12d4 ; relocation-verified: RVEncoderCopyData
+0x00004044      021e           subs r2, r0, 0
+0x00004046      0b92           str r2, [sp, 0x2c]
+0x00004048      7cdb           blt 0x4144
+0x0000404a      3046           mov r0, r6
+0x0000404c      94f82030       ldrb.w r3, [r4, 0x20]
+0x00004050      2169           ldr r1, [r4, 0x10]
+0x00004052      3a46           mov r2, r7
+0x00004054      fdf774e9       blx 0x1340 ; relocation-verified: RVEncoderReleaseData
+0x00004058      061e           subs r6, r0, 0
+0x0000405a      3fdb           blt 0x40dc
+0x0000405c      5846           mov r0, fp
+0x0000405e      fdf71aea       blx 0x1494 ; relocation-verified: g_mutex_unlock
+0x00004062      6e49           ldr r1, [0x0000421c]                    ; [0x421c:4]=312
+0x00004064      5246           mov r2, sl
+0x00004066      089b           ldr r3, [sp, 0x20]
+0x00004068      0020           movs r0, 0
+0x0000406a      59f80110       ldr.w r1, [sb, r1]
+0x0000406e      0097           str r7, [sp]
+0x00004070      cde90151       strd r5, r1, [sp, 4]
+0x00004074      2946           mov r1, r5
+0x00004076      fdf708ea       blx 0x1488 ; relocation-verified: gst_buffer_new_wrapped_full
+0x0000407a      2379           ldrb r3, [r4, 4]
+0x0000407c      0146           mov r1, r0
+0x0000407e      032b           cmp r3, 3
+0x00004080      c368           ldr r3, [r0, 0xc]
+0x00004082      d8f80400       ldr.w r0, [r8, 4]
+0x00004086      0cbf           ite eq
+0x00004088      23f40053       bicne r3, r3, 0x2000
+0x0000408c      43f40053       orr r3, r3, 0x2000
+0x00004090      cb60           str r3, [r1, 0xc]
+0x00004092      fdf788ea       blx 0x15a4 ; relocation-verified: g_async_queue_push
+0x00004096      0020           movs r0, 0
+0x00004098      0db0           add sp, 0x34
+0x0000409a      bde8           invalid

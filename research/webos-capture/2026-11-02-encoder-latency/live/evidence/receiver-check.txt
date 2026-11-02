@@ -1,0 +1,3 @@
+0-parsed: all45 complete access units normalized and decoded; every RGB pixel matches its submitted frame within4
+1-direct: all45 complete access units normalized and decoded; every RGB pixel matches its submitted frame within4
+2-parsed: all45 complete access units normalized and decoded; every RGB pixel matches its submitted frame within4

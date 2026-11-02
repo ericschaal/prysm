@@ -5,7 +5,7 @@
     "prysm"
   ],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "timezone": "browser",
   "refresh": "5s",
@@ -315,7 +315,7 @@
       "id": 24,
       "type": "gauge",
       "title": "TV capture budget",
-      "description": "Mean capture iteration wall time divided by the requested frame period. Includes capture, composition, encoding and socket writes, excluding pacing sleep. At 30 FPS the budget is 33.3 ms. Yellow \u226580%; red \u2265100%. This measures wall time, not CPU utilization.",
+      "description": "Mean capture iteration wall time divided by the requested frame period. Includes capture, encoding and socket writes, excluding pacing sleep. At 30 FPS the budget is 33.3 ms. Yellow \u226580%; red \u2265100%. This measures wall time, not CPU utilization.",
       "datasource": {
         "type": "prometheus",
         "uid": "prysm-prometheus"
@@ -550,13 +550,122 @@
       }
     },
     {
+      "id": 32,
+      "type": "row",
+      "title": "Hardware H.264",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Hardware H.264 \u00b7 preparation and collection",
+      "description": "Mean wall time per hardware operation. Output wait is shown separately so the smaller phases stay readable. Synchronization includes initial buffer padding writes. These phases are inside PreparePayload; do not add them to that total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 16,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node,operation) (rate(prysm_operation_duration_seconds_sum{node=~\"$node\",role=\"Capturer\",component=\"FrameEncoder\",operation=~\"HardwareUpload|HardwareSyncStart|HardwareSyncEnd|HardwareSubmit|HardwareCollect|HardwareNormalize\"}[$__rate_interval])) / sum by (node,operation) (rate(prysm_operation_duration_seconds_count{node=~\"$node\",role=\"Capturer\",component=\"FrameEncoder\",operation=~\"HardwareUpload|HardwareSyncStart|HardwareSyncEnd|HardwareSubmit|HardwareCollect|HardwareNormalize\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 {{operation}}",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Hardware H.264 \u00b7 output wait",
+      "description": "Mean wall time waiting for an encoded sample from appsink. Includes vendor encoder and parser delay, not just silicon encoding. Does not measure the separate one-frame pipeline lookahead or screen-to-light latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prysm-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 18,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node,operation) (rate(prysm_operation_duration_seconds_sum{node=~\"$node\",role=\"Capturer\",component=\"FrameEncoder\",operation=~\"HardwareWait\"}[$__rate_interval])) / sum by (node,operation) (rate(prysm_operation_duration_seconds_count{node=~\"$node\",role=\"Capturer\",component=\"FrameEncoder\",operation=~\"HardwareWait\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} \u00b7 mean wait",
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 28,
       "type": "row",
       "title": "Machine resources",
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 29,
         "w": 24,
         "h": 1
       },
@@ -572,7 +681,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 18,
+            "y": 30,
             "w": 12,
             "h": 5
           },
@@ -651,7 +760,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 18,
+            "y": 30,
             "w": 12,
             "h": 5
           },
@@ -730,7 +839,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 23,
+            "y": 35,
             "w": 12,
             "h": 9
           },
@@ -778,7 +887,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 23,
+            "y": 35,
             "w": 12,
             "h": 9
           },
@@ -826,7 +935,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 32,
+            "y": 44,
             "w": 12,
             "h": 9
           },
@@ -874,7 +983,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 32,
+            "y": 44,
             "w": 12,
             "h": 9
           },
@@ -922,7 +1031,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 41,
+            "y": 53,
             "w": 24,
             "h": 9
           },
@@ -975,7 +1084,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 30,
         "w": 24,
         "h": 1
       },
@@ -984,14 +1093,14 @@
           "id": 9,
           "type": "timeseries",
           "title": "Pipeline frame rates",
-          "description": "Frames at explicit component boundaries. These are distinct populations: video/UI acquisition, composition, encoder output, complete local TCP acceptance, complete remote payload, decoded RGB, input dispatch, processed frame, preview publication and WLED DDP write.",
+          "description": "Frames at explicit component boundaries. These are distinct populations: native capture, encoder output, complete local TCP acceptance, complete remote payload, decoded RGB, input dispatch, processed frame, preview publication and WLED DDP write.",
           "datasource": {
             "type": "prometheus",
             "uid": "prysm-prometheus"
           },
           "gridPos": {
             "x": 0,
-            "y": 19,
+            "y": 31,
             "w": 24,
             "h": 9
           },
@@ -1039,7 +1148,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 28,
+            "y": 40,
             "w": 12,
             "h": 9
           },
@@ -1087,7 +1196,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 28,
+            "y": 40,
             "w": 12,
             "h": 9
           },
@@ -1135,7 +1244,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 37,
+            "y": 49,
             "w": 12,
             "h": 9
           },
@@ -1183,7 +1292,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 37,
+            "y": 49,
             "w": 12,
             "h": 9
           },
@@ -1236,7 +1345,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 46,
+            "y": 58,
             "w": 12,
             "h": 7
           },
@@ -1277,14 +1386,14 @@
           "id": 18,
           "type": "table",
           "title": "Selected native backends",
-          "description": "Actual currently selected native backend by layer; Disabled means no open capture backend.",
+          "description": "Actual currently selected native capture backend; Disabled means no open capture backend.",
           "datasource": {
             "type": "prometheus",
             "uid": "prysm-prometheus"
           },
           "gridPos": {
             "x": 12,
-            "y": 46,
+            "y": 58,
             "w": 12,
             "h": 7
           },
@@ -1330,7 +1439,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 31,
         "w": 24,
         "h": 1
       },
@@ -1346,7 +1455,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 20,
+            "y": 32,
             "w": 12,
             "h": 10
           },
@@ -1394,7 +1503,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 20,
+            "y": 32,
             "w": 12,
             "h": 10
           },
@@ -1442,7 +1551,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 30,
+            "y": 42,
             "w": 12,
             "h": 10
           },
@@ -1497,7 +1606,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 30,
+            "y": 42,
             "w": 12,
             "h": 10
           },
@@ -1552,7 +1661,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 40,
+            "y": 52,
             "w": 12,
             "h": 9
           },
@@ -1607,7 +1716,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 40,
+            "y": 52,
             "w": 12,
             "h": 9
           },
@@ -1655,7 +1764,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 49,
+            "y": 61,
             "w": 24,
             "h": 10
           },

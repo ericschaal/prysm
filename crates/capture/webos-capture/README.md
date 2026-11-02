@@ -1,7 +1,7 @@
 # Prysm webOS capture worker
 
 Native Rust worker for `prysm-webos-service` on a rooted LG TV. Configure the
-receiver, capture layers, and compression through the packaged **Prysm Capture**
+receiver, capture source, and compression through the packaged **Prysm Capture**
 TV app. The worker has no command-line interface or standalone mode.
 When **Prometheus metrics** is checked and saved in the TV app, the running worker
 exposes metrics at `http://<tv-ip>:9101/metrics`. The setting defaults off.
@@ -57,7 +57,7 @@ LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 The service starts the worker without arguments and supplies:
 
 - `PRYSM_WORKER_CONFIG`: bounded JSON containing a validated receiver address,
-  `source` (`video`, `ui`, `both`), `compression` (`none`, `lz4`, `h264-software`, `h264-hardware`), and
+  `source` (`video`, `both`), `compression` (`none`, `lz4`, `h264-software`, `h264-hardware`), and
   `metrics` (boolean, defaults off).
 - `PRYSM_EVENTS_FD`: an owned inherited pipe for typed lifecycle events.
 - stdin: the required private readiness/reset control pipe.
@@ -69,7 +69,7 @@ executable path authorized by the installed capture role. Install and register i
 using the [TV package](../../../packaging/webos/README.md).
 
 Each worker owns exactly one receiver connection. It connects and negotiates
-before opening native resources. An idle receiver opens no video or UI devices.
+before opening native resources. An idle receiver opens no native capture devices.
 Prysm owns the requested frame rate and resolution; stopping capture or changing
 settings ends that session. The worker exits, and the supervisor owns retries.
 
@@ -77,23 +77,23 @@ Internal modules have separate jobs:
 
 - `config`: startup choices and negotiated native capture dimensions/rate.
 - `control` and `events`: private supervisor IPC.
-- `capture`, `native`, and `pixels`: acquire, release, and compose LG frames.
+- `capture`, `native`, and `pixels`: acquire, release, and pack LG frames.
 - `encoder`: raw/LZ4/H.264 encoding and reusable codec buffers.
 - `transport`: bounded TCP negotiation and writes, with one owned socket.
 - `session`: negotiation state, frame scheduling, and coordination.
 
-The worker uses automatic VTCapture → DILE and GM → HAL fallback. A poisoned
-video constructor is fatal rather than a reason to try another backend. Native
-hardware defaults retain display capture, stride/geometry checks, DILE freezing,
-and bounded initialization retries. The removed CLI's backend selectors, capture
-point overrides, force-capture ioctl, and composition-format switches are not
-part of the service contract.
+Combined capture uses VTCapture's blended tap (mode 3), supplying video and
+visible menus together as NV12. Video-only uses its display tap (mode 2).
+These are the only two capture sources. DILE, GM/HAL, UI-only capture and CPU
+blending have been removed. A poisoned constructor remains fatal. The native
+adapter retains stride/geometry checks and bounded initialization retries.
 
 ## Capture and recovery
 
 MAIN-sink readiness arrives from the service's Luna subscription. Unavailable
-video defers initialization; UI frames continue on the same connection when
-selected. Unknown readiness permits bounded native retry. Source/context changes
+video defers acquisition and initialization for both sources. On the tested TV,
+the blended tap cannot initialize on Home without active video; capture waits
+until video returns. There is no separate UI fallback. Unknown readiness permits bounded native retry. Source/context changes
 reset the video client, and rapid loss/return transitions remain latched until
 consumed. Muted black video does not expire.
 
@@ -119,12 +119,9 @@ configuration. Hardware remains an explicit choice after the earlier native
 binding implementation showed higher CPU use and an extra frame of latency.
 See [hardware integration and measurements](HARDWARE-H264.md).
 
-Video-only capture packs native NV12/NV16 without RGB conversion. Combined capture
-also passes native video directly to the encoder when every UI pixel has zero
-alpha. Any visible UI pixel restores RGB composition for that frame; UI capture
-continues every iteration so menus and subtitles appear immediately. All paths
-use reusable buffers and checked, tightly packed planes;
-failed acquisition never publishes stale pixels.
+Both capture sources pass native NV12 directly to the encoder. Combined capture
+reports Blended content; video-only reports Video. Reusable buffers and checked,
+tightly packed planes remain; failed acquisition never publishes stale pixels.
 
 LZ4 compresses each frame independently and sends raw data when compression grows
 it. H.264 uses one low-complexity encoder at a fixed 2 Mbit/s target, with limited

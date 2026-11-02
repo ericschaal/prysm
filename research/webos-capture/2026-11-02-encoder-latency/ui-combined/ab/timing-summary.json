@@ -1,0 +1,76 @@
+{
+  "combined-640x360": {
+    "means_ms": {
+      "CaptureLoop/Iterate": 14.573678635761597,
+      "FrameSender/WriteFrame": 0.14039180666666662,
+      "FrameSender/Connect": 0.219926,
+      "UiCapture/Acquire": 0.0011346490066225163,
+      "FrameEncoder/HardwareSyncStart": 0.006951013157894738,
+      "FrameEncoder/HardwareWait": 12.116389166666663,
+      "FrameEncoder/HardwareSyncEnd": 0.0029561447368421034,
+      "FrameEncoder/HardwareUpload": 0.12865332666666668,
+      "FrameEncoder/HardwareSubmit": 0.06866566666666665,
+      "VideoCapture/Acquire": 0.557289715231788,
+      "FrameEncoder/HardwareCollect": 0.01481878666666667,
+      "FrameEncoder/HardwareNormalize": 0.12507158000000007,
+      "FrameEncoder/PreparePayload": 12.909652866666672
+    },
+    "counts": {
+      "CaptureLoop/Iterate": 151.0,
+      "FrameSender/WriteFrame": 150.0,
+      "FrameSender/Connect": 1.0,
+      "UiCapture/Acquire": 151.0,
+      "FrameEncoder/HardwareSyncStart": 152.0,
+      "FrameEncoder/HardwareWait": 150.0,
+      "FrameEncoder/HardwareSyncEnd": 152.0,
+      "FrameEncoder/HardwareUpload": 150.0,
+      "FrameEncoder/HardwareSubmit": 150.0,
+      "VideoCapture/Acquire": 151.0,
+      "FrameEncoder/HardwareCollect": 150.0,
+      "FrameEncoder/HardwareNormalize": 150.0,
+      "FrameEncoder/PreparePayload": 150.0
+    }
+  },
+  "baseline-640x360": {
+    "means_ms": {
+      "UiCapture/Acquire": 15.271280986666651,
+      "FrameSender/Connect": 0.237037,
+      "FrameSender/WriteFrame": 0.13837283333333328,
+      "FrameEncoder/HardwareConvert": 3.6855970091743133,
+      "FrameEncoder/HardwareUpload": 0.1279728,
+      "UiCapture/NativeCapture": 12.325148180000005,
+      "FrameEncoder/HardwareSubmit": 0.07447531333333333,
+      "CaptureLoop/Iterate": 41.49122780000002,
+      "FrameEncoder/HardwareSyncStart": 0.00752849342105263,
+      "FrameEncoder/PreparePayload": 19.30505776666668,
+      "VideoCapture/Acquire": 0.4810799536423841,
+      "UiCapture/CopyPixels": 2.926915806666667,
+      "Composer/Convert": 3.118194724770642,
+      "FrameEncoder/HardwareSyncEnd": 0.00276778947368421,
+      "FrameEncoder/HardwareNormalize": 0.18770984666666662,
+      "FrameEncoder/HardwareWait": 12.130317506666668,
+      "Composer/Blend": 3.06782162037037,
+      "FrameEncoder/HardwareCollect": 0.015968659999999982
+    },
+    "counts": {
+      "UiCapture/Acquire": 150.0,
+      "FrameSender/Connect": 1.0,
+      "FrameSender/WriteFrame": 150.0,
+      "FrameEncoder/HardwareConvert": 109.0,
+      "FrameEncoder/HardwareUpload": 150.0,
+      "UiCapture/NativeCapture": 150.0,
+      "FrameEncoder/HardwareSubmit": 150.0,
+      "CaptureLoop/Iterate": 150.0,
+      "FrameEncoder/HardwareSyncStart": 152.0,
+      "FrameEncoder/PreparePayload": 150.0,
+      "VideoCapture/Acquire": 151.0,
+      "UiCapture/CopyPixels": 150.0,
+      "Composer/Convert": 109.0,
+      "FrameEncoder/HardwareSyncEnd": 152.0,
+      "FrameEncoder/HardwareNormalize": 150.0,
+      "FrameEncoder/HardwareWait": 150.0,
+      "Composer/Blend": 108.0,
+      "FrameEncoder/HardwareCollect": 150.0
+    }
+  }
+}

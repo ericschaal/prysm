@@ -1,9 +1,9 @@
 use anyhow::{Result, ensure};
+use prysm_metrics::Stage;
 use prysm_webos_protocol::{
     Header, PixelFormat,
     h264::{FrameKind, hardware::normalize_access_unit},
 };
-use yuv::{BufferStoreMut, YuvBiPlanarImageMut, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
 #[allow(unsafe_code)]
 #[path = "gst.rs"]
@@ -13,13 +13,15 @@ pub(crate) struct Hardware {
     pipeline: gst::Pipeline,
     width: u32,
     height: u32,
-    stride: usize,
-    pixels: Vec<u8>,
     encoded: Vec<u8>,
     first: bool,
 }
 impl Hardware {
     pub(super) fn new(header: Header, fps: u8, bitrate: u32) -> Result<Self> {
+        ensure!(
+            header.format == PixelFormat::Nv12,
+            "hardware capture requires NV12"
+        );
         header.raw_len()?;
         ensure!(
             header.width.is_multiple_of(2) && header.height.is_multiple_of(2),
@@ -30,8 +32,6 @@ impl Hardware {
             pipeline: gst::Pipeline::new(header.width, header.height, stride, fps, bitrate)?,
             width: header.width,
             height: header.height,
-            stride,
-            pixels: vec![0; stride * header.height as usize * 3 / 2],
             encoded: Vec::new(),
             first: true,
         })
@@ -41,73 +41,49 @@ impl Hardware {
         header: Header,
         pixels: &[u8],
         output: &mut Vec<u8>,
-    ) -> Result<Option<FrameKind>> {
+    ) -> Result<FrameKind> {
         ensure!(
             header.width == self.width && header.height == self.height,
             "hardware input dimensions changed"
         );
-        prepare_nv12(header, pixels, self.stride, &mut self.pixels)?;
-        if !self.pipeline.encode(&self.pixels, &mut self.encoded)? {
-            return Ok(None);
-        }
+        ensure!(
+            header.format == PixelFormat::Nv12 && pixels.len() == header.raw_len()?,
+            "invalid hardware NV12 input"
+        );
+        self.pipeline
+            .encode(pixels, header.width as usize, &mut self.encoded)?;
+        let _time = prysm_metrics::timer(Stage::HardwareNormalize);
         let kind =
             normalize_access_unit(&self.encoded, self.width, self.height, self.first, output)?;
         self.first = false;
-        Ok(Some(kind))
+        Ok(kind)
     }
 }
 
-fn prepare_nv12(header: Header, input: &[u8], stride: usize, output: &mut [u8]) -> Result<()> {
-    let width = header.width as usize;
-    let height = header.height as usize;
+#[cfg(any(target_os = "linux", test))]
+fn copy_nv12(
+    width: usize,
+    height: usize,
+    stride: usize,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<()> {
     ensure!(
-        input.len() == header.raw_len()?
+        (2..=1920).contains(&width)
+            && (2..=1080).contains(&height)
             && width.is_multiple_of(2)
             && height.is_multiple_of(2)
             && stride >= width
             && stride <= 1920
+            && input.len() == width * height * 3 / 2
             && output.len() == stride * height * 3 / 2,
-        "invalid NV12 conversion layout"
+        "invalid NV12 copy layout"
     );
-    let (y, uv) = output.split_at_mut(stride * height);
-    y.fill(16);
-    uv.fill(128);
-    if header.format == PixelFormat::Rgb {
-        let mut image = YuvBiPlanarImageMut {
-            y_plane: BufferStoreMut::Borrowed(y),
-            y_stride: u32::try_from(stride)?,
-            uv_plane: BufferStoreMut::Borrowed(uv),
-            uv_stride: u32::try_from(stride)?,
-            width: header.width,
-            height: header.height,
-        };
-        yuv::rgb_to_yuv_nv12(
-            &mut image,
-            input,
-            header.width * 3,
-            YuvRange::Limited,
-            YuvStandardMatrix::Bt709,
-            YuvConversionMode::Balanced,
-        )?;
-    } else {
-        for row in 0..height {
-            y[row * stride..row * stride + width]
-                .copy_from_slice(&input[row * width..(row + 1) * width]);
-        }
-        let input = &input[width * height..];
-        for row in 0..height / 2 {
-            for col in 0..width {
-                uv[row * stride + col] = if header.format == PixelFormat::Nv16 {
-                    u8::try_from(
-                        (u16::from(input[row * 2 * width + col])
-                            + u16::from(input[(row * 2 + 1) * width + col]))
-                        .div_ceil(2),
-                    )?
-                } else {
-                    input[row * width + col]
-                };
-            }
-        }
+    for (source, destination) in input
+        .chunks_exact(width)
+        .zip(output.chunks_exact_mut(stride))
+    {
+        destination[..width].copy_from_slice(source);
     }
     Ok(())
 }
@@ -116,67 +92,30 @@ fn prepare_nv12(header: Header, input: &[u8], stride: usize, output: &mut [u8]) 
 mod tests {
     use super::*;
     #[test]
-    fn nv16_chroma_rows_are_averaged_with_rounding() {
-        let header = Header {
-            width: 2,
-            height: 2,
-            format: PixelFormat::Nv16,
-            codec: prysm_webos_protocol::Codec::Raw,
-            payload_len: 8,
-        };
-        let mut output = vec![0; 192 * 3];
-        prepare_nv12(header, &[16, 16, 16, 16, 10, 12, 11, 15], 192, &mut output).unwrap();
-        assert_eq!(&output[384..386], &[11, 14]);
-    }
-    #[test]
-    fn converts_capture_formats_and_initializes_every_padding_byte() {
-        for format in [PixelFormat::Rgb, PixelFormat::Nv12, PixelFormat::Nv16] {
-            let header = Header {
-                width: 64,
-                height: 34,
-                format,
-                codec: prysm_webos_protocol::Codec::Raw,
-                payload_len: 0,
-            };
-            let mut input = if format == PixelFormat::Rgb {
-                [255, 0, 0].repeat(64 * 34)
-            } else {
-                [
-                    vec![63; 64 * 34],
-                    [102, 240].repeat((header.raw_len().unwrap() - 64 * 34) / 2),
-                ]
-                .concat()
-            };
-            let mut output = vec![255; 192 * 34 * 3 / 2];
-            prepare_nv12(header, &input, 192, &mut output).unwrap();
-            for row in 0..34 {
-                assert!(
-                    output[row * 192..row * 192 + 64]
-                        .iter()
-                        .all(|v| v.abs_diff(63) <= 1)
-                );
-                assert!(
-                    output[row * 192 + 64..(row + 1) * 192]
-                        .iter()
-                        .all(|v| *v == 16)
-                );
+    fn direct_nv12_upload_rewrites_active_rows_and_preserves_padding() {
+        for stride in [64, 192] {
+            let mut destination = vec![0xa5; stride * 34 * 3 / 2];
+            for value in [16, 235] {
+                let input = vec![value; 64 * 34 * 3 / 2];
+                copy_nv12(64, 34, stride, &input, &mut destination).unwrap();
+                for row in destination.chunks_exact(stride) {
+                    assert_eq!(&row[..64], &[value; 64]);
+                    assert!(row[64..].iter().all(|v| *v == 0xa5));
+                }
             }
-            for row in 0..17 {
+            let unchanged = destination.clone();
+            for (width, height, pitch, length) in [
+                (0, 34, stride, 0),
+                (63, 34, stride, 63 * 34 * 3 / 2),
+                (64, 33, stride, 64 * 33 * 3 / 2),
+                (64, 34, 63, 64 * 34 * 3 / 2),
+                (64, 34, stride, 64 * 34 * 3 / 2 - 1),
+            ] {
                 assert!(
-                    output[192 * 34 + row * 192..192 * 34 + row * 192 + 64]
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .all(|v| v[0].abs_diff(102) <= 1 && v[1].abs_diff(240) <= 1)
+                    copy_nv12(width, height, pitch, &vec![0; length], &mut destination).is_err()
                 );
-                assert!(
-                    output[192 * 34 + row * 192 + 64..192 * 34 + (row + 1) * 192]
-                        .iter()
-                        .all(|v| *v == 128)
-                );
+                assert_eq!(destination, unchanged);
             }
-            input.pop();
-            assert!(prepare_nv12(header, &input, 192, &mut output).is_err());
         }
     }
 }
@@ -196,30 +135,31 @@ mod qualification {
         fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
     }
     fn capture_input(header: Header, rgb: &[u8]) -> Vec<u8> {
-        if header.format == PixelFormat::Rgb {
-            return rgb.to_vec();
-        }
+        use yuv::{
+            BufferStoreMut, YuvBiPlanarImageMut, YuvConversionMode, YuvRange, YuvStandardMatrix,
+        };
+        assert_eq!(header.format, PixelFormat::Nv12);
         let n = header.width as usize * header.height as usize;
-        let mut nv12 = vec![0; n * 3 / 2];
-        prepare_nv12(
-            Header {
-                format: PixelFormat::Rgb,
-                ..header
-            },
+        let mut pixels = vec![0; n * 3 / 2];
+        let (y, uv) = pixels.split_at_mut(n);
+        let mut image = YuvBiPlanarImageMut {
+            y_plane: BufferStoreMut::Borrowed(y),
+            y_stride: header.width,
+            uv_plane: BufferStoreMut::Borrowed(uv),
+            uv_stride: header.width,
+            width: header.width,
+            height: header.height,
+        };
+        yuv::rgb_to_yuv_nv12(
+            &mut image,
             rgb,
-            header.width as usize,
-            &mut nv12,
+            header.width * 3,
+            YuvRange::Limited,
+            YuvStandardMatrix::Bt709,
+            YuvConversionMode::Balanced,
         )
         .unwrap();
-        if header.format == PixelFormat::Nv12 {
-            return nv12;
-        }
-        let mut nv16 = nv12[..n].to_vec();
-        for row in nv12[n..].chunks_exact(header.width as usize) {
-            nv16.extend_from_slice(row);
-            nv16.extend_from_slice(row);
-        }
-        nv16
+        pixels
     }
     fn metadata_and_failure_reset() {
         use crate::encoder::{Encoder, HardwareFailed};
@@ -235,45 +175,40 @@ mod qualification {
         let red = [255, 0, 0].repeat(320 * 180);
         let input = capture_input(header, &red);
         let mut encoder = Encoder::new(Compression::H264Hardware, 15, 2_000_000).unwrap();
+        let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
+        let packet = encoder
+            .encode(header, &input, Content::Video)
+            .unwrap()
+            .expect("first hardware input must produce its own picture");
+        assert_eq!(packet.content, Content::Video);
+        assert_eq!((packet.header.width, packet.header.height), (320, 180));
+        let rgb = decoder.decode(packet.header, packet.pixels).unwrap();
         assert!(
-            encoder
-                .encode(header, &input, Content::Video)
-                .unwrap()
-                .is_none()
+            rgb[0] > 240 && rgb[2] < 15,
+            "first wire picture must be the current red input"
         );
         assert!(encoder.hardware_active());
-        let blue = [0, 0, 255].repeat(320 * 180);
+        let blue = capture_input(header, &[0, 0, 255].repeat(320 * 180));
         let packet = encoder
-            .encode(
-                Header {
-                    format: PixelFormat::Rgb,
-                    ..header
-                },
-                &blue,
-                Content::Ui,
-            )
+            .encode(header, &blue, Content::Blended)
             .unwrap()
             .unwrap();
         assert_eq!(
             packet.content,
-            Content::Video,
-            "delayed metadata must belong to the previous input"
+            Content::Blended,
+            "metadata must belong to the current input"
         );
-        let rgb = prysm_webos_protocol::h264::Decoder::new()
-            .unwrap()
-            .decode(packet.header, packet.pixels)
-            .unwrap();
+        let rgb = decoder.decode(packet.header, packet.pixels).unwrap();
         assert!(
-            rgb[0] > 240 && rgb[2] < 15,
-            "first wire picture must be the prior red input"
+            rgb[2] > 240 && rgb[0] < 15,
+            "second wire picture must be the current blue input"
         );
         let changed = Header {
             width: 640,
             height: 360,
-            format: PixelFormat::Rgb,
             ..header
         };
-        let green = [0, 255, 0].repeat(640 * 360);
+        let green = capture_input(changed, &[0, 255, 0].repeat(640 * 360));
         let error = encoder
             .encode(changed, &green, Content::Video)
             .err()
@@ -300,11 +235,12 @@ mod qualification {
     fn hardware_capture_qualification() {
         let _lock = crate::capture_lock(std::path::Path::new("/tmp/prysm-capture.lock")).unwrap();
         // Recreate both codec and decoder at every geometry change/reconnect.
-        for (width, height, format) in [
-            (640, 360, PixelFormat::Rgb),
-            (320, 180, PixelFormat::Nv12),
-            (640, 360, PixelFormat::Nv16),
+        for (width, height, format, fps) in [
+            (640, 360, PixelFormat::Nv12, 15),
+            (320, 180, PixelFormat::Nv12, 15),
+            (640, 360, PixelFormat::Nv12, 30),
         ] {
+            let interval = Duration::from_secs_f64(1.0 / f64::from(fps));
             let header = Header {
                 width,
                 height,
@@ -322,12 +258,11 @@ mod qualification {
                     })
                 })
                 .collect();
-            let mut hardware = Hardware::new(header, 15, 2_000_000).unwrap();
+            let mut hardware = Hardware::new(header, fps, 2_000_000).unwrap();
             let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
             let mut output = Vec::new();
             let cpu = ticks();
             let start = Instant::now();
-            let mut submitted = None;
             for index in 0..30 {
                 for row in pixels.chunks_exact_mut(width as usize * 3) {
                     row[width as usize * 9 / 4..].fill(if index < 15 {
@@ -338,18 +273,11 @@ mod qualification {
                 }
                 let input = capture_input(header, &pixels);
                 let now = Instant::now();
-                let previous = submitted.replace(now);
                 let kind = hardware.encode(header, &input, &mut output).unwrap();
                 if index == 0 {
-                    assert!(kind.is_none());
-                    std::thread::sleep(Duration::from_millis(67));
-                    continue;
+                    assert_eq!(kind, FrameKind::Idr);
                 }
-                assert!(kind.is_some());
-                eprintln!(
-                    "capture_to_au_us={}",
-                    previous.unwrap().elapsed().as_micros()
-                );
+                eprintln!("capture_to_au_us={}", now.elapsed().as_micros());
                 eprintln!(
                     "hardware {width}x{height} frame={index} encode_us={}",
                     now.elapsed().as_micros()
@@ -368,15 +296,7 @@ mod qualification {
                 for x in [width / 8, width * 3 / 8, width * 5 / 8, width * 7 / 8] {
                     let offset = ((height / 2 * width + x) * 3) as usize;
                     for c in 0..3 {
-                        let expected = if x >= width * 3 / 4 {
-                            if index <= 15 {
-                                64 + (index - 1) * 5
-                            } else {
-                                32 + ((index - 1) % 2) * 160
-                            }
-                        } else {
-                            pixels[offset + c]
-                        };
+                        let expected = pixels[offset + c];
                         let mut sum = 0u32;
                         for y in height / 2 - 12..height / 2 + 12 {
                             for col in x - 12..x + 12 {
@@ -390,7 +310,7 @@ mod qualification {
                         );
                     }
                 }
-                std::thread::sleep(Duration::from_millis(67).saturating_sub(now.elapsed()));
+                std::thread::sleep(interval.saturating_sub(now.elapsed()));
             }
             eprintln!(
                 "hardware {format:?} {width}x{height} cpu_ticks={} wall_ms={} (includes receiver decode)",
@@ -400,7 +320,7 @@ mod qualification {
             let now = Instant::now();
             drop(hardware);
             eprintln!("hardware teardown_us={}", now.elapsed().as_micros());
-            let mut software = prysm_webos_protocol::h264::Encoder::new(2_000_000, 15).unwrap();
+            let mut software = prysm_webos_protocol::h264::Encoder::new(2_000_000, fps).unwrap();
             let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
             let cpu = ticks();
             let start = Instant::now();
@@ -430,7 +350,7 @@ mod qualification {
                         &output,
                     )
                     .unwrap();
-                std::thread::sleep(Duration::from_millis(67).saturating_sub(now.elapsed()));
+                std::thread::sleep(interval.saturating_sub(now.elapsed()));
             }
             eprintln!(
                 "software {format:?} {width}x{height} cpu_ticks={} wall_ms={}",
@@ -440,11 +360,14 @@ mod qualification {
         }
         metadata_and_failure_reset();
         if std::env::var_os("PRYSM_QUALIFY_REAL_CAPTURE").is_some() {
-            let mut video = crate::native::Video::open(&crate::config::CaptureOptions {
-                width: 640,
-                height: 360,
-                fps: 15,
-            })
+            let mut video = crate::native::Video::open(
+                &crate::config::CaptureOptions {
+                    width: 640,
+                    height: 360,
+                    fps: 15,
+                },
+                crate::config::Source::Both,
+            )
             .unwrap();
             let mut events = crate::events::Events::disabled();
             let mut pixels = Vec::new();
@@ -460,15 +383,11 @@ mod qualification {
                         encoder = Some(Hardware::new(header, 15, 2_000_000).unwrap());
                     }
                     let now = Instant::now();
-                    if encoder
+                    encoder
                         .as_mut()
                         .unwrap()
                         .encode(header, &pixels, &mut output)
-                        .unwrap()
-                        .is_none()
-                    {
-                        continue;
-                    }
+                        .unwrap();
                     eprintln!(
                         "real capture {:?} encode_us={}",
                         header.format,

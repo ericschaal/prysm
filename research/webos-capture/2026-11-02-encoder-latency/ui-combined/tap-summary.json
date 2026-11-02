@@ -1,0 +1,38 @@
+{
+  "tap-2-after": {
+    "samples": 80,
+    "mean": {
+      "video_ms": 0.29791345,
+      "hal_ms": 12.2856550125,
+      "copy_ms": 2.9098537625,
+      "nonzero_alpha": 12373.6375
+    }
+  },
+  "tap-2": {
+    "samples": 80,
+    "mean": {
+      "video_ms": 0.2944860625,
+      "hal_ms": 12.23274945,
+      "copy_ms": 2.8582348375,
+      "nonzero_alpha": 12763.0
+    }
+  },
+  "tap-3": {
+    "samples": 80,
+    "mean": {
+      "video_ms": 0.3167152125,
+      "hal_ms": 12.24166755,
+      "copy_ms": 3.0982398,
+      "nonzero_alpha": 8097.05
+    }
+  },
+  "tap-4": {
+    "samples": 80,
+    "mean": {
+      "video_ms": 0.3054536375,
+      "hal_ms": 12.2426462375,
+      "copy_ms": 2.9295634375,
+      "nonzero_alpha": 12392.9375
+    }
+  }
+}

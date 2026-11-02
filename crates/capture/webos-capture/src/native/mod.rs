@@ -1,12 +1,8 @@
 //! Capture lifecycle ported from hyperion-webos; see LICENSE.hyperion.
 //! Native libraries stay loaded until all their resources have been released.
 mod ffi;
-use crate::config::CaptureOptions;
-use crate::pixels;
 use anyhow::{Context, Result, ensure};
 use libloading::Library;
-use prysm_webos_protocol::Header;
-use std::fs::File;
 
 fn library(names: &[&str]) -> Result<Library> {
     let mut last_error = None;
@@ -45,18 +41,6 @@ fn status(code: i32, operation: &str) -> Result<()> {
     Ok(())
 }
 
-type Mapping = memmap2::MmapRaw;
-fn mapping(file: &File, offset: u32, length: usize) -> Result<Mapping> {
-    ensure!(
-        length > 0 && length <= 64 * 1024 * 1024,
-        "invalid native mapping size"
-    );
-    Ok(memmap2::MmapOptions::new()
-        .offset(u64::from(offset))
-        .len(length)
-        .map_raw_read_only(file)?)
-}
-
 /// # Safety
 /// The driver must provide a readable allocation of `length` bytes that remains
 /// valid and stable until the returned borrow has been copied, before release.
@@ -69,26 +53,9 @@ unsafe fn driver_plane<T>(_: &T, pointer: *const u8, length: usize) -> Result<&[
     Ok(unsafe { std::slice::from_raw_parts(pointer, length) })
 }
 
-fn copy_mapping(
-    mapping: &Mapping,
-    stride: usize,
-    row_bytes: usize,
-    rows: usize,
-    output: &mut Vec<u8>,
-) -> Result<()> {
-    // SAFETY: the fixed device mapping remains live during this copy. The driver
-    // cannot release the surface or unfreeze the video until capture returns.
-    let source = unsafe { driver_plane(mapping, mapping.as_ptr(), mapping.len())? };
-    pixels::copy_plane(source, stride, row_bytes, rows, output)
-}
-
-mod dile;
 mod permissions;
-mod ui;
 mod vtcapture;
-use dile::DileCapture;
-pub use ui::Ui;
-use vtcapture::VtCapture;
+pub use vtcapture::VtCapture as Video;
 
 #[derive(Debug)]
 pub struct FatalVideo(pub anyhow::Error);
@@ -98,42 +65,6 @@ impl std::fmt::Display for FatalVideo {
     }
 }
 impl std::error::Error for FatalVideo {}
-
-pub enum Video {
-    Vt(VtCapture),
-    Dile(DileCapture),
-}
-impl Video {
-    pub fn metrics_backend(&self) -> prysm_metrics::Backend {
-        match self {
-            Self::Vt(_) => prysm_metrics::Backend::Vtcapture,
-            Self::Dile(_) => prysm_metrics::Backend::Dile,
-        }
-    }
-
-    pub fn open(options: &CaptureOptions) -> Result<Self> {
-        match VtCapture::open(options) {
-            Ok(vt) => Ok(Self::Vt(vt)),
-            Err(error) if error.is::<FatalVideo>() => Err(error),
-            Err(error) => {
-                tracing::warn!(error = %format!("{error:#}"), "vtcapture unavailable; trying dile_vt");
-                Ok(Self::Dile(DileCapture::open(options)?))
-            }
-        }
-    }
-
-    pub fn capture(
-        &mut self,
-        output: &mut Vec<u8>,
-        events: &mut crate::events::Events,
-    ) -> Result<Option<Header>> {
-        output.clear();
-        match self {
-            Self::Vt(vt) => vt.capture(output, events),
-            Self::Dile(dile) => dile.capture(output).map(Some),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

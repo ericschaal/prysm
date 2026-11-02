@@ -1,0 +1,41 @@
+[
+  {
+    "name": "both-640x360",
+    "frames": 240,
+    "phases": [
+      {
+        "Video": 0,
+        "Ui": 1.0,
+        "Blended": 89.0
+      },
+      {
+        "Video": 0,
+        "Ui": 31.0,
+        "Blended": 89.0
+      },
+      {
+        "Video": 0,
+        "Ui": 33.0,
+        "Blended": 147.0
+      },
+      {
+        "Video": 0,
+        "Ui": 34.0,
+        "Blended": 206.0
+      }
+    ],
+    "mean_frame_interval_ms": 34.90353693723972
+  },
+  {
+    "name": "video-640x360",
+    "frames": 30,
+    "phases": [],
+    "mean_frame_interval_ms": 32.65132820675278
+  },
+  {
+    "name": "ui-320x180",
+    "frames": 30,
+    "phases": [],
+    "mean_frame_interval_ms": 32.6461876895086
+  }
+]

@@ -51,8 +51,10 @@ this directory. Select nodes at the top. Capture configuration and codec-specifi
 panels retain requested codec, capture mode, width and height filters for
 live and historical TV series. The overview gives the health instruments two roomy
 rows: stream status, cadence and capture budget above frame regularity and faults.
-Expand **Machine resources**, **Throughput & encoding**, or **Timing & reliability**
-for detailed charts. Idle capture is displayed separately from stalled capture.
+The expanded **Hardware H.264** section separates mean preparation/collection
+costs from output wait. It shows no samples while the worker is off or hardware
+encoding is inactive. Expand **Machine resources**, **Throughput & encoding**, or
+**Timing & reliability** for the remaining detailed charts. Idle capture is displayed separately from stalled capture.
 
 [Prometheus targets](http://localhost:9090/targets) shows scrape errors. Check the
 endpoint directly if Prysm is DOWN:
@@ -86,7 +88,7 @@ Use the same release build, capture dimensions, FPS, source, backend and playbac
 sequence. Let CPU sampling and rate calculations warm up, then compare at least
 one minute of static menus, motion, grain, dark scenes and scene changes. Compare
 encoding bytes/frame alongside actual frame rates and failure counts: dropping
-frames is not a compression gain. UI failures can change the emitted format;
+frames is not a compression gain. Compare the selected native tap and actual encoded format;
 inspect the format and backend panels before comparing runs.
 
 The system collector uses `sysinfo`, refreshed once a second on the exporter

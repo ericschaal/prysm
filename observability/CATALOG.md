@@ -20,18 +20,19 @@ and `outcome` its classified result. These are source-code-defined enum values.
 No frame IDs, error messages, peer addresses, or timestamps become labels.
 
 Pixel counts carry `boundary`, `format`, `codec`, `content`, `width`, and `height`.
-`format` comes from actual Frame/Header formats, or domain-owned Bgra8Pixels /
-Rgb8Payload contracts which also own conversion/serialization. On Encoded,
+`format` comes from actual Frame/Header formats or the owned RGB payload contract. On Encoded,
 SocketAccepted and PayloadReceived, codec/dimensions describe the actual header,
-including None for an LZ4 raw fallback. TV wire content is Video, Ui, or Blended
-according to the layers actually available that iteration. Receiver content is
+including None for an LZ4 raw fallback. TV wire content is Video or Blended
+according to the selected native tap. Blended includes the combined tap even
+when its current UI pixels are transparent. Receiver content is
 Unspecified: the protocol does not convey layer provenance. Other frame boundaries
 have codec/content=Unspecified and width/height=0 (not measured there), never an
 invented encoding or resolution. Unspecified is not a codec or pixel format.
 
 Requested configuration is separate from actual wire data. Native backend info
-comes from the opened backend variant; Disabled means no open backend. Incoming
-frames can change formats/resolutions; keep those dimensions separate when
+comes from the opened backend variant; Disabled means no open backend. The
+video backend `VtcaptureBlended` identifies the tap supplying both video and UI.
+Incoming frames can change formats/resolutions; keep those dimensions separate when
 comparing counts. Device names identify OS network interfaces and are the only
 OS-enumerated label values. Counters reset on process restart. All other labels
 are bounded enums or protocol-validated dimensions, not unbounded per-frame data.
@@ -43,8 +44,6 @@ are bounded enums or protocol-validated dimensions, not unbounded per-frame data
 | Boundary | Owning emitter | Counted exactly when |
 |---|---|---|
 | VideoCaptured | TV / VideoCapture | Native acquisition returns a new usable frame; native call wall time may include copying/conversion |
-| UiCaptured | TV / UiCapture | Native UI acquisition successfully fills the typed BGRA8 buffer |
-| Composited | TV / Composer | Video conversion and UI blend finish, with the composed Header constructed |
 | Encoded | TV / FrameEncoder | Payload preparation and header encoding succeed, before attempting socket write |
 | SocketAccepted | TV / FrameSender | Entire header and payload accepted by local TCP writes; no delivery acknowledgement |
 | PayloadReceived | Prysm / FrameReceiver | All validated-header payload bytes read, before any decompression or conversion |
@@ -54,9 +53,8 @@ are bounded enums or protocol-validated dimensions, not unbounded per-frame data
 | PreviewPublished | Prysm / PreviewPublisher | Actor publishes the frame to egui's watch channel; not screen presentation |
 | WledTransmitted | Prysm / WledSender | DDP write returns success for a complete nonempty, non-throttled frame; UDP delivery is not acknowledged |
 
-Composition, capture, encoding and decoding populations differ. A video duplicate
-can still produce a new UI-only frame. Watch channels intentionally replace old
-frames without queues; upstream/downstream rates can differ without an error.
+Capture, encoding and decoding populations differ. Watch channels intentionally
+replace old frames without queues; upstream/downstream rates can differ without an error.
 WLED rate-limited and empty calls do not count as transmitted frames.
 
 ## Operation outcomes
@@ -84,7 +82,6 @@ WLED rate-limited and empty calls do not count as transmitted frames.
 | FrameDecoder | Decompress / Convert | Failed at the corresponding LZ4 decompressor/color converter |
 | VideoCapture | Initialize | Attempted and Failed for native video initialization/retry |
 | VideoCapture | Acquire | Failed for native acquisition errors; SkippedDuplicate when native backend has no new video frame |
-| UiCapture | Acquire | Failed at native UI acquisition |
 | CaptureLoop | Iterate | SkippedDeadline once per iteration that misses pacing deadline; not the number of elapsed periods |
 | InputDispatcher | Acquire | Failed when host capture stream yields an error |
 | InputDispatcher | DispatchProcessor | SkippedMailboxFull when the incoming frame is dropped |
@@ -95,8 +92,7 @@ Timeout is a mutually exclusive failure classification, not a second generic
 failure. Attempt and result events describe different boundaries; do not add them
 together as a count of failures. There is no aggregate SendFailure/ReceiveFailure
 catch-all. Connection setup, encoding, writes, reads, validation and decoding
-remain distinguishable. SkippedBackoff describes calls, not retry duration: the
-UI-only capture path intentionally avoids calling send during backoff.
+remain distinguishable. SkippedBackoff describes calls, not retry duration.
 
 ## Local timing and byte boundaries
 
@@ -108,14 +104,18 @@ instrumentation avoids clock reads. Histogram buckets span 100 μs to 5 s plus
 | Component / operation | Start → finish |
 |---|---|
 | VideoCapture / Acquire | Entire native video capture call |
-| UiCapture / Acquire | Entire native UI capture call |
-| Composer / Convert | Video→RGB or UI→RGB conversion, including output allocation/resize |
-| Composer / Blend | Premultiplied BGRA blend into video RGB |
-| FrameEncoder / PreparePayload | Raw payload selection or LZ4 compression; excludes header encoding |
+| FrameEncoder / PreparePayload | Raw payload selection, LZ4 compression or complete H.264 preparation/encoding; excludes header encoding |
+| FrameEncoder / HardwareUpload | Copy prepared pixels into the persistent DMA-BUF mapping |
+| FrameEncoder / HardwareSyncStart | DMA-BUF synchronization ioctl starting CPU write access |
+| FrameEncoder / HardwareSyncEnd | DMA-BUF synchronization ioctl ending CPU write access |
+| FrameEncoder / HardwareSubmit | GStreamer buffer/video metadata construction and appsrc submission |
+| FrameEncoder / HardwareWait | Timed appsink pull waiting for the encoded sample |
+| FrameEncoder / HardwareCollect | Copy encoded sample bytes and check for unexpected extra output |
+| FrameEncoder / HardwareNormalize | Validate the access unit and repair SPS cropping/color metadata |
 | FrameSender / Connect | TCP connect call only; excludes socket configuration |
 | FrameSender / WriteFrame | Entire header+payload write loop, including blocked waits |
 | FrameSender / WaitWritable | Each poll waiting for socket readiness, nested inside WriteFrame |
-| CaptureLoop / Iterate | Whole capture/composition/encoding/send iteration, excluding pacing sleep |
+| CaptureLoop / Iterate | Whole capture/encoding/send iteration, excluding pacing sleep |
 | FrameReceiver / ReadHeader | Wait for frame header, including idle time until the next frame arrives |
 | FrameReceiver / ReadPayload | Complete payload read, including socket wait |
 | FrameDecoder / Decompress | LZ4 decompression; compressed RGB includes only decompressor, chroma also includes decoded-buffer resize |
@@ -129,6 +129,14 @@ Grafana separates processing durations from waiting and socket I/O. The displaye
 queries. Whole capture iteration totals have their own panel because they include both.
 Native capture acquisition can include driver waits; processing durations are wall time,
 not CPU time.
+
+The hardware encoder phases above do not overlap each other, but are inside
+PreparePayload. They cover steady frame work; pipeline creation, DMA allocation
+and teardown are not separate phase samples. HardwareWait includes vendor encoder
+and parser delay, not just time spent encoding on silicon. Phase sample counts can
+differ (for example, conversion can be skipped and the first submission has no
+output wait). Synchronization phases also include each slot's initial padding
+write; exclude startup when comparing steady frame costs. Grafana displays their separate means rather than summing percentiles.
 
 Timings overlap: Iterate includes capture, conversion, encoding and writes;
 WaitWritable is inside WriteFrame. Never sum overlapping histograms or average
@@ -156,8 +164,8 @@ the actual wire cohort panel and keep dimensions/mode constant when comparing ru
 |---|---|---|
 | prysm_capture_requested_frames_per_second | FPS; active target rate on receiver or TV; zero when idle. Receiver request lifetime spans reconnects | none |
 | prysm_receiver_last_decoded_frame_timestamp_seconds | Unix seconds; host time of the last complete, successfully decoded frame; reset to zero on a new receiver request | none |
-| prysm_capture_requested_info | 1; historical TV settings; current worker composition is RGB | source, compression, composition_format, width, height, fps |
-| prysm_capture_backend_info | 1 selected, 0 unselected; TV actual opened backend per layer | layer, backend |
+| prysm_capture_requested_info | 1; current TV settings | source, compression, width, height, fps, target_bitrate_bps |
+| prysm_capture_backend_info | 1 selected, 0 unselected; TV actual opened capture backend | backend |
 | prysm_process_cpu_cores | cores; emitting process including its native threads, 1 = one full core | none |
 | prysm_process_resident_memory_bytes | bytes; emitting process RSS | none |
 | prysm_system_cpu_ratio | ratio 0–1 across all machine cores | none |

@@ -17,7 +17,7 @@ var app = document.getElementById('app');
 var modal = document.getElementById('modal');
 var body = document.getElementById('dialog-body');
 var names = {
-    source: { both: 'Video + TV menus', video: 'Video only', ui: 'TV menus only' },
+    source: { both: 'Video + TV menus', video: 'Video only' },
     compression: { lz4: 'LZ4', none: 'None', 'h264-software': 'H.264 (software)', 'h264-hardware': 'H.264 (hardware)' }
 };
 function element(id) { return document.getElementById(id); }
@@ -303,8 +303,7 @@ element('receiver').onclick = receiver;
 element('source').onclick = function () {
     choices('source', 'What to capture', 'Choose a source, then save your changes on the main screen.', [
         ['both', 'Video + TV menus', 'Include the picture and on-screen menus.'],
-        ['video', 'Video only', 'Capture the video picture.'],
-        ['ui', 'TV menus only', 'Capture the TV interface.']
+        ['video', 'Video only', 'Capture the video picture.']
     ]);
 };
 element('compression').onclick = function () {

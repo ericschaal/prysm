@@ -1,0 +1,39 @@
+--- baseline/gst.rs
++++ candidate/gst.rs
+@@ -52,7 +52,6 @@
+         width: u32,
+         height: u32,
+         stride: usize,
+-        pending: bool,
+         // Stable DMA-BUF identities prevent the corruption seen with per-frame allocation/free.
+         buffers: Vec<Dma>,
+         slot: usize,
+@@ -86,7 +85,7 @@
+                 .write(true)
+                 .open("/dev/dma_heap/dvr")?;
+             let graph = gst::parse::launch(&format!(
+-                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
++                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
+             ))?.downcast::<gst::Pipeline>().map_err(|_| anyhow::anyhow!("hardware graph is not a pipeline"))?;
+             let source = graph
+                 .by_name("input")
+@@ -109,7 +108,6 @@
+                 width,
+                 height,
+                 stride,
+-                pending: false,
+                 buffers: Vec::new(),
+                 slot: 0,
+             };
+@@ -177,11 +175,6 @@
+                 .push_buffer(buffer)
+                 .context("hardware input rejected")?;
+             drop(submit_time);
+-            // shortcut: one frame of lookahead, revisit after isolating the pipeline output delay.
+-            if !self.pending {
+-                self.pending = true;
+-                return Ok(false);
+-            }
+             let sample = {
+                 let _time = prysm_metrics::timer(Stage::HardwareWait);
+                 self.sink

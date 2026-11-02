@@ -1,187 +1,95 @@
 use super::*;
-use crate::events::Events;
 use prysm_webos_protocol::PixelFormat;
 
+type Frames = fn(&mut Vec<u8>) -> Result<Option<Header>>;
+fn frame(output: &mut Vec<u8>) -> Result<Option<Header>> {
+    *output = vec![16, 16, 16, 16, 128, 128];
+    Ok(Some(crate::pixels::header(2, 2, PixelFormat::Nv12)?))
+}
 fn config(source: Source) -> Config {
-    let mut config = Config {
-        source,
-        ..Config::new("127.0.0.1:19400".parse().unwrap())
-    };
+    let mut config = Config::new("127.0.0.1:19400".parse().unwrap());
+    config.source = source;
     config.capture.width = 2;
     config.capture.height = 2;
     config
 }
 
 #[test]
-fn ui_frames_keep_their_metadata_and_reuse_storage_without_publishing_stale_pixels() {
-    let mut events = Events::disabled();
-    let mut capture = Capture::new(&config(Source::Ui));
-    let mut open_video = |_: &CaptureOptions| panic!("UI-only capture opened video");
-    let mut count = 0;
-    let mut ui = Some(|width, height, bgra: &mut Bgra8Pixels| {
-        assert_eq!((width, height), (2, 2));
-        count += 1;
-        if count == 3 {
-            anyhow::bail!("UI unavailable");
+fn both_taps_wait_for_video_then_preserve_native_pixels_and_provenance() {
+    for source in [Source::Both, Source::Video] {
+        let mut events = Events::disabled();
+        let mut capture = Capture::<Frames>::new(&config(source));
+        capture.set_video_available(false);
+        let attempts = std::cell::Cell::new(0);
+        let mut open = |_: &CaptureOptions| {
+            attempts.set(attempts.get() + 1);
+            Ok(frame as Frames)
+        };
+        for _ in 0..3 {
+            assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
         }
-        *bgra.bytes_mut() = [0, 0, count * 40, 255].repeat(4);
-        Ok(())
-    });
-    let first = capture
-        .capture(&mut open_video, &mut ui, &mut events)
-        .unwrap()
-        .unwrap();
-    assert_eq!(first.content, Content::Ui);
-    assert_eq!(first.header.format, PixelFormat::Rgb);
-    assert_eq!((first.header.width, first.header.height), (2, 2));
-    assert_eq!(first.pixels, [40, 0, 0].repeat(4));
-    let storage = first.pixels.as_ptr();
-    let second = capture
-        .capture(&mut open_video, &mut ui, &mut events)
-        .unwrap()
-        .unwrap();
-    assert_eq!(second.pixels, [80, 0, 0].repeat(4));
-    assert_eq!(second.pixels.as_ptr(), storage);
-    assert!(
-        capture
-            .capture(&mut open_video, &mut ui, &mut events)
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
-fn video_startup_backoff_keeps_ui_available_until_a_retry_is_due() {
-    let mut events = Events::disabled();
-    let mut capture = Capture::new(&config(Source::Both));
-    let mut attempts = 0;
-    let mut open_video = |_: &CaptureOptions| {
-        attempts += 1;
-        anyhow::bail!("video unavailable")
-    };
-    let mut ui = Some(|_, _, bgra: &mut Bgra8Pixels| {
-        *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
-        Ok(())
-    });
-    assert_eq!(
-        capture
-            .capture(&mut open_video, &mut ui, &mut events)
-            .unwrap()
-            .unwrap()
-            .content,
-        Content::Ui
-    );
-    capture.video_retry = Instant::now() + Duration::from_secs(60);
-    assert_eq!(
-        capture
-            .capture(&mut open_video, &mut ui, &mut events)
-            .unwrap()
-            .unwrap()
-            .content,
-        Content::Ui
-    );
-    capture.video_retry = Instant::now();
-    assert_eq!(
-        capture
-            .capture(&mut open_video, &mut ui, &mut events)
-            .unwrap()
-            .unwrap()
-            .content,
-        Content::Ui
-    );
-    assert_eq!(attempts, 2);
-}
-
-#[test]
-fn a_new_rate_retries_video_immediately_with_the_negotiated_options() {
-    let mut events = Events::disabled();
-    let mut capture = Capture::new(&config(Source::Video));
-    let mut ui = None::<fn(u32, u32, &mut Bgra8Pixels) -> Result<()>>;
-    capture.video_retry = Instant::now() + Duration::from_secs(60);
-    capture.configure(30, [2, 2], &mut ui, &mut events).unwrap();
-    assert!(
-        capture
-            .capture(
-                &mut |_| panic!("same rate reset backoff"),
-                &mut ui,
-                &mut events
-            )
-            .unwrap()
-            .is_none()
-    );
-    capture.configure(15, [2, 2], &mut ui, &mut events).unwrap();
-    let mut rates = Vec::new();
-    let mut open_video = |options: &CaptureOptions| {
-        rates.push(options.fps);
-        anyhow::bail!("video unavailable")
-    };
-    assert!(
-        capture
-            .capture(&mut open_video, &mut ui, &mut events)
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(rates, [15]);
-}
-
-#[test]
-fn resolution_changes_reconfigure_ui_and_retry_video_without_changing_rate() {
-    struct RecordingUi {
-        configured: Vec<[u32; 2]>,
+        assert_eq!(attempts.get(), 0);
+        capture.video_retry = Instant::now() + Duration::from_secs(60);
+        capture.set_video_available(true);
+        let first = capture.capture(&mut open, &mut events).unwrap().unwrap();
+        assert_eq!(
+            first.content,
+            if source == Source::Both {
+                Content::Blended
+            } else {
+                Content::Video
+            }
+        );
+        assert_eq!(first.header.format, PixelFormat::Nv12);
+        assert_eq!(first.pixels, [16, 16, 16, 16, 128, 128]);
+        assert_eq!(attempts.get(), 1);
+        capture.set_video_available(false);
+        assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
+        assert_eq!(attempts.get(), 1);
     }
-    impl UiCapture for RecordingUi {
-        fn configure(&mut self, options: &CaptureOptions) -> Result<()> {
-            self.configured.push([options.width, options.height]);
-            Ok(())
-        }
-        fn capture(&mut self, width: u32, height: u32, output: &mut Bgra8Pixels) -> Result<bool> {
-            assert_eq!(self.configured.last(), Some(&[width, height]));
-            *output.bytes_mut() = [0, 0, 255, 255].repeat((width * height) as usize);
-            Ok(true)
-        }
-    }
+}
+
+#[test]
+fn failed_startup_backs_off_and_settings_changes_retry_with_new_geometry() {
     let mut events = Events::disabled();
-    let mut capture = Capture::new(&config(Source::Both));
-    let mut ui = Some(RecordingUi {
-        configured: Vec::new(),
-    });
+    let mut capture = Capture::<Frames>::new(&config(Source::Both));
     let mut attempts = Vec::new();
-    let mut open_video = |options: &CaptureOptions| {
-        attempts.push([options.width, options.height]);
-        anyhow::bail!("test video unavailable")
+    let mut open = |options: &CaptureOptions| {
+        attempts.push(*options);
+        anyhow::bail!("not ready")
     };
-    capture.configure(30, [2, 2], &mut ui, &mut events).unwrap();
-    let first = capture
-        .capture(&mut open_video, &mut ui, &mut events)
-        .unwrap()
-        .unwrap();
-    assert_eq!((first.header.width, first.header.height), (2, 2));
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
     capture.video_retry = Instant::now() + Duration::from_secs(60);
-    capture.configure(30, [4, 2], &mut ui, &mut events).unwrap();
-    let next = capture
-        .capture(&mut open_video, &mut ui, &mut events)
-        .unwrap()
-        .unwrap();
-    assert_eq!((next.header.width, next.header.height), (4, 2));
-    assert_eq!(next.pixels.len(), 4 * 2 * 3);
-    capture.configure(15, [4, 2], &mut ui, &mut events).unwrap();
-    assert_eq!(ui.unwrap().configured, [[2, 2], [4, 2]]);
-    assert_eq!(attempts, [[2, 2], [4, 2]]);
+    capture.configure(30, [2, 2], &mut events).unwrap();
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
+    capture.configure(15, [4, 2], &mut events).unwrap();
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
+    assert_eq!(
+        attempts,
+        [
+            CaptureOptions {
+                width: 2,
+                height: 2,
+                fps: 30
+            },
+            CaptureOptions {
+                width: 4,
+                height: 2,
+                fps: 15
+            }
+        ]
+    );
 }
 
 #[test]
-fn constructor_failure_exits_instead_of_retrying_or_sending_ui() {
-    let mut events = Events::disabled();
-    let mut capture = Capture::new(&config(Source::Both));
-    let mut ui =
-        Some(|_, _, _: &mut Bgra8Pixels| panic!("UI continued after poisoned video construction"));
+fn constructor_failure_exits_instead_of_retrying_another_backend() {
+    let mut capture = Capture::<Frames>::new(&config(Source::Both));
     let error = capture
         .capture(
             &mut |_| {
                 Err(crate::native::FatalVideo(anyhow::anyhow!("constructor exception")).into())
             },
-            &mut ui,
-            &mut events,
+            &mut Events::disabled(),
         )
         .err()
         .unwrap();
@@ -189,27 +97,23 @@ fn constructor_failure_exits_instead_of_retrying_or_sending_ui() {
 }
 
 #[test]
-fn absent_video_defers_initialization_keeps_ui_and_retries_immediately_on_return() {
+fn pending_and_failed_capture_do_not_republish_the_previous_frame() {
+    let calls = std::cell::Cell::new(0);
+    let mut capture = Capture::new(&config(Source::Both));
+    let mut open = |_: &CaptureOptions| {
+        Ok(|output: &mut Vec<u8>| {
+            calls.set(calls.get() + 1);
+            match calls.get() {
+                1 => frame(output),
+                2 => Ok(None),
+                _ => anyhow::bail!("capture failed"),
+            }
+        })
+    };
     let mut events = Events::disabled();
-    for source in [Source::Both, Source::Video] {
-        let mut capture = Capture::new(&config(source));
-        capture.set_video_available(false);
-        let mut ui = (source == Source::Both).then_some(|_, _, bgra: &mut Bgra8Pixels| {
-            *bgra.bytes_mut() = [0, 0, 255, 255].repeat(4);
-            Ok(())
-        });
-        let mut attempts = 0;
-        let mut open = |_: &CaptureOptions| {
-            attempts += 1;
-            anyhow::bail!("test unavailable")
-        };
-        for _ in 0..3 {
-            let frame = capture.capture(&mut open, &mut ui, &mut events).unwrap();
-            assert_eq!(frame.is_some(), source == Source::Both);
-        }
-        capture.video_retry = Instant::now() + Duration::from_secs(60);
-        capture.set_video_available(true);
-        capture.capture(&mut open, &mut ui, &mut events).unwrap();
-        assert_eq!(attempts, 1);
-    }
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_some());
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
+    assert!(capture.capture(&mut open, &mut events).unwrap().is_none());
+    assert!(capture.video.is_none());
+    assert!(capture.video_retry > Instant::now());
 }

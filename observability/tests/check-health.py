@@ -63,6 +63,19 @@ for fps, expected in [(30, [sample(.9375, 'tv')]), (0, [])]:
         series('prysm_operation_duration_seconds_sum{component="CaptureLoop",operation="Iterate",node="tv"}', '0+0.03125x60'),
         series('prysm_operation_duration_seconds_count{component="CaptureLoop",operation="Iterate",node="tv"}', '0+1x60'),
     ], 24, expected))
+hardware_inputs = []
+for operation, total, count in [('HardwareWait', .0078125, 2), ('HardwareUpload', .00390625, 4)]:
+    labels = f'role="Capturer",component="FrameEncoder",operation="{operation}",node="tv"'
+    hardware_inputs += [
+        series(f'prysm_operation_duration_seconds_sum{{{labels}}}', f'0+{total}x60'),
+        series(f'prysm_operation_duration_seconds_count{{{labels}}}', f'0+{count}x60'),
+    ]
+tests.append(check('hardware preparation excludes output wait and uses its own count', hardware_inputs, 31, [
+    {'labels': '{node="tv",operation="HardwareUpload"}', 'value': .0009765625},
+]))
+tests.append(check('hardware output wait is displayed separately', hardware_inputs, 33, [
+    {'labels': '{node="tv",operation="HardwareWait"}', 'value': .00390625},
+]))
 all_panels = flatten(dashboard['panels'])
 assert len({p['id'] for p in all_panels}) == len(all_panels)
 def check_layout(items):

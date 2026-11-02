@@ -30,77 +30,6 @@ pub struct BufferInfo {
     pub uv_len: i32,
 }
 
-#[repr(C)]
-pub struct GmSurface {
-    pub dummy: u32,
-    pub framebuffer: *mut u8,
-    pub reserved: [u32; 261],
-    pub id: u32,
-    pub tail: [u32; 2],
-}
-
-#[repr(C)]
-pub struct HalSurface {
-    pub offset: u32,
-    pub physical_address: *mut u32,
-    pub pitch: u16,
-    pub bpp: u16,
-    pub width: u16,
-    pub height: u16,
-    pub pixel_format: u16,
-    pub palette: [u32; 257],
-    pub property: u32,
-    pub vendor_data: u32,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct OutputState {
-    pub enabled: u8,
-    pub frozen: u8,
-    pub pq: u8,
-    pub unknown: u8,
-    pub framerate: u32,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct Framebuffer {
-    pub format: u32,
-    pub stride: u32,
-    pub width: u32,
-    pub height: u32,
-    pub offsets: *mut *mut u32,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct Capability {
-    pub buffers: u32,
-    pub planes: u32,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct Rect {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub struct Limitation {
-    pub max_resolution: Rect,
-    pub flags: [u8; 4],
-    pub scale_up_width: u32,
-    pub scale_up_height: u32,
-    pub scale_down_flags: [u8; 4],
-    pub scale_down_width: u32,
-    pub scale_down_height: u32,
-}
-
 pub type VtCreate = unsafe extern "C" fn() -> *mut c_void;
 pub type VtInit = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_char) -> c_int;
 pub type VtPreprocess = unsafe extern "C" fn(*mut c_void, *mut c_char, *mut Properties) -> c_int;
@@ -151,36 +80,6 @@ unsafe extern "C" {
     pub fn prysm_vt_release(function: VtRelease, driver: *mut c_void, error: *mut c_char) -> c_int;
 }
 
-// These structs contain only integer fields and nullable raw pointers.
-impl Default for GmSurface {
-    fn default() -> Self {
-        Self {
-            dummy: 0,
-            framebuffer: std::ptr::null_mut(),
-            reserved: [0; 261],
-            id: 0,
-            tail: [0; 2],
-        }
-    }
-}
-
-impl Default for HalSurface {
-    fn default() -> Self {
-        Self {
-            offset: 0,
-            physical_address: std::ptr::null_mut(),
-            pitch: 0,
-            bpp: 0,
-            width: 0,
-            height: 0,
-            pixel_format: 0,
-            palette: [0; 257],
-            property: 0,
-            vendor_data: 0,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,23 +103,9 @@ mod tests {
             offset_of!(PlaneInfo, active),
             size_of::<BufferInfo>(),
             offset_of!(BufferInfo, y_len),
-            size_of::<GmSurface>(),
-            offset_of!(GmSurface, framebuffer),
-            offset_of!(GmSurface, id),
-            size_of::<HalSurface>(),
-            offset_of!(HalSurface, pitch),
-            offset_of!(HalSurface, vendor_data),
-            size_of::<OutputState>(),
-            offset_of!(OutputState, framerate),
-            size_of::<Framebuffer>(),
-            offset_of!(Framebuffer, offsets),
-            size_of::<Capability>(),
-            size_of::<Rect>(),
-            size_of::<Limitation>(),
-            offset_of!(Limitation, scale_down_width),
         ];
-        let mut actual = [0; 20];
-        // SAFETY: C++ writes exactly 20 size_t entries into this array.
+        let mut actual = [0; 6];
+        // SAFETY: C++ writes exactly 6 size_t entries into this array.
         unsafe {
             prysm_abi_layout(actual.as_mut_ptr());
         }

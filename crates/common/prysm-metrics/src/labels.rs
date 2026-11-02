@@ -21,8 +21,6 @@ pub enum Flow {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum Component {
     VideoCapture,
-    UiCapture,
-    Composer,
     FrameEncoder,
     FrameSender,
     FrameReceiver,
@@ -38,10 +36,16 @@ pub enum Operation {
     Initialize,
     Acquire,
     Convert,
-    Blend,
     Compress,
     EncodeH264,
     PreparePayload,
+    HardwareUpload,
+    HardwareSyncStart,
+    HardwareSyncEnd,
+    HardwareSubmit,
+    HardwareWait,
+    HardwareCollect,
+    HardwareNormalize,
     ValidateInput,
     EncodeHeader,
     ConfigureSocket,
@@ -131,10 +135,6 @@ pub enum VideoCaptureEvent {
     InitFailed,
     AcquireFailed,
     Duplicate,
-}
-#[derive(Clone, Copy, Debug)]
-pub enum UiCaptureEvent {
-    AcquireFailed,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum PipelineEvent {
@@ -255,16 +255,6 @@ impl From<VideoCaptureEvent> for Event {
         }
     }
 }
-impl From<UiCaptureEvent> for Event {
-    fn from(_: UiCaptureEvent) -> Self {
-        Self {
-            flow: Flow::CaptureFrames,
-            component: Component::UiCapture,
-            operation: Operation::Acquire,
-            outcome: Outcome::Failed,
-        }
-    }
-}
 impl From<PipelineEvent> for Event {
     fn from(event: PipelineEvent) -> Self {
         let (flow, component, operation, outcome) = match event {
@@ -315,10 +305,14 @@ impl From<WledEvent> for Event {
 #[derive(Clone, Copy, Debug)]
 pub enum Stage {
     VideoAcquire,
-    UiAcquire,
-    CompositionConvert,
-    CompositionBlend,
     FrameEncode,
+    HardwareUpload,
+    HardwareSyncStart,
+    HardwareSyncEnd,
+    HardwareSubmit,
+    HardwareWait,
+    HardwareCollect,
+    HardwareNormalize,
     FrameWrite,
     FrameWriteWait,
     FrameConnect,
@@ -339,6 +333,10 @@ pub(crate) struct StageLabels {
     operation: Operation,
 }
 impl From<Stage> for StageLabels {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keep the metric ownership table together"
+    )]
     fn from(stage: Stage) -> Self {
         let (flow, component, operation) = match stage {
             Stage::VideoAcquire => (
@@ -346,19 +344,45 @@ impl From<Stage> for StageLabels {
                 Component::VideoCapture,
                 Operation::Acquire,
             ),
-            Stage::UiAcquire => (
-                Flow::CaptureFrames,
-                Component::UiCapture,
-                Operation::Acquire,
-            ),
-            Stage::CompositionConvert => {
-                (Flow::CaptureFrames, Component::Composer, Operation::Convert)
-            }
-            Stage::CompositionBlend => (Flow::CaptureFrames, Component::Composer, Operation::Blend),
             Stage::FrameEncode => (
                 Flow::CaptureFrames,
                 Component::FrameEncoder,
                 Operation::PreparePayload,
+            ),
+            Stage::HardwareUpload => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareUpload,
+            ),
+            Stage::HardwareSyncStart => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareSyncStart,
+            ),
+            Stage::HardwareSyncEnd => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareSyncEnd,
+            ),
+            Stage::HardwareSubmit => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareSubmit,
+            ),
+            Stage::HardwareWait => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareWait,
+            ),
+            Stage::HardwareCollect => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareCollect,
+            ),
+            Stage::HardwareNormalize => (
+                Flow::CaptureFrames,
+                Component::FrameEncoder,
+                Operation::HardwareNormalize,
             ),
             Stage::FrameWrite => (
                 Flow::CaptureFrames,
@@ -428,8 +452,6 @@ impl From<Stage> for StageLabels {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum FrameStage {
     VideoCaptured,
-    UiCaptured,
-    Composited,
     Encoded,
     SocketAccepted,
     PayloadReceived,
@@ -447,7 +469,6 @@ pub enum Format {
     Mjpeg,
     Nv12,
     Nv16,
-    Bgra,
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub(crate) struct FrameLabels {
@@ -464,8 +485,6 @@ impl FrameLabels {
     pub fn new(boundary: FrameStage, format: Format) -> Self {
         let (flow, component) = match boundary {
             FrameStage::VideoCaptured => (Flow::CaptureFrames, Component::VideoCapture),
-            FrameStage::UiCaptured => (Flow::CaptureFrames, Component::UiCapture),
-            FrameStage::Composited => (Flow::CaptureFrames, Component::Composer),
             FrameStage::Encoded => (Flow::CaptureFrames, Component::FrameEncoder),
             FrameStage::SocketAccepted => (Flow::CaptureFrames, Component::FrameSender),
             FrameStage::PayloadReceived => (Flow::CaptureFrames, Component::FrameReceiver),
@@ -598,14 +617,12 @@ impl From<BytesKind> for ByteLabels {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum CaptureSource {
     Video,
-    Ui,
     Both,
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum Content {
     Unspecified,
     Video,
-    Ui,
     Blended,
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
@@ -616,16 +633,9 @@ pub enum Codec {
     H264,
 }
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
-pub enum Layer {
-    Video,
-    Ui,
-}
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EncodeLabelValue)]
 pub enum Backend {
     Vtcapture,
-    Dile,
-    Gm,
-    Halgal,
+    VtcaptureBlended,
     Disabled,
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -634,7 +644,6 @@ pub(crate) struct Device {
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub(crate) struct BackendInfo {
-    pub layer: Layer,
     pub backend: Backend,
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -644,7 +653,6 @@ pub(crate) struct CaptureInfo {
     pub width: u32,
     pub height: u32,
     pub fps: u8,
-    pub composition_format: Format,
     pub target_bitrate_bps: u32,
 }
 

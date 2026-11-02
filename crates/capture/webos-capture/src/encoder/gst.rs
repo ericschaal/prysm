@@ -10,7 +10,7 @@ impl Pipeline {
         anyhow::bail!("hardware H.264 requires Linux DMA-BUF support")
     }
     #[allow(clippy::unused_self, reason = "same pipeline API on unsupported hosts")]
-    pub(super) fn encode(&mut self, _: &[u8], _: &mut Vec<u8>) -> anyhow::Result<bool> {
+    pub(super) fn encode(&mut self, _: &[u8], _: usize, _: &mut Vec<u8>) -> anyhow::Result<()> {
         anyhow::bail!("hardware H.264 requires Linux DMA-BUF support")
     }
 }
@@ -22,6 +22,7 @@ mod linux {
     use gstreamer_allocators::{DmaBufAllocator, prelude::*};
     use gstreamer_app::{AppSink, AppSrc};
     use gstreamer_video::{VideoFormat, VideoFrameFlags, VideoMeta};
+    use prysm_metrics::Stage;
     use std::{
         fs::File,
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
@@ -37,6 +38,7 @@ mod linux {
 
     struct Dma {
         memory: gst::Memory,
+        mapping: memmap2::MmapMut,
         fd: OwnedFd,
     }
 
@@ -50,7 +52,6 @@ mod linux {
         width: u32,
         height: u32,
         stride: usize,
-        pending: bool,
         // Stable DMA-BUF identities prevent the corruption seen with per-frame allocation/free.
         buffers: Vec<Dma>,
         slot: usize,
@@ -83,8 +84,10 @@ mod linux {
                 .read(true)
                 .write(true)
                 .open("/dev/dma_heap/dvr")?;
+            // rvenc emits complete Annex B pictures; h264parse adds a next-input wait on the TV.
+            // Static AVC caps prevent forcing byte-stream caps; hardware.rs validates actual output.
             let graph = gst::parse::launch(&format!(
-                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
+                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
             ))?.downcast::<gst::Pipeline>().map_err(|_| anyhow::anyhow!("hardware graph is not a pipeline"))?;
             let source = graph
                 .by_name("input")
@@ -107,7 +110,6 @@ mod linux {
                 width,
                 height,
                 stride,
-                pending: false,
                 buffers: Vec::new(),
                 slot: 0,
             };
@@ -120,25 +122,44 @@ mod linux {
         pub(in crate::encoder::hardware) fn encode(
             &mut self,
             pixels: &[u8],
+            input_stride: usize,
             output: &mut Vec<u8>,
-        ) -> Result<bool> {
+        ) -> Result<()> {
             let size = self.stride * self.height as usize * 3 / 2;
-            ensure!(pixels.len() == size, "invalid padded NV12 length");
+            ensure!(
+                (input_stride == self.width as usize || input_stride == self.stride)
+                    && pixels.len() == input_stride * self.height as usize * 3 / 2,
+                "invalid NV12 input layout"
+            );
             if self.buffers.len() < 2 {
                 self.buffers
                     .push(allocate_dma(&self.heap, &self.allocator, size)?);
             }
-            let dma = &self.buffers[self.slot];
+            let dma = &mut self.buffers[self.slot];
             ensure!(
                 dma.memory.is_writable(),
                 "hardware retained an input buffer"
             );
-            // SAFETY: this slot has no in-flight users, is size bytes long, and is not exposed to callers.
-            let mut map = unsafe { memmap2::MmapOptions::new().len(size).map_mut(&dma.fd)? };
             dma_sync(&dma.fd, 2)?;
-            map.copy_from_slice(pixels);
-            dma_sync(&dma.fd, 6)?;
-            drop(map);
+            let copied = {
+                let _time = prysm_metrics::timer(Stage::HardwareUpload);
+                if input_stride == self.stride {
+                    dma.mapping.copy_from_slice(pixels);
+                    Ok(())
+                } else {
+                    super::super::copy_nv12(
+                        self.width as usize,
+                        self.height as usize,
+                        self.stride,
+                        pixels,
+                        &mut dma.mapping,
+                    )
+                }
+            };
+            let synchronized = dma_sync(&dma.fd, 6);
+            copied?;
+            synchronized?;
+            let submit_time = prysm_metrics::timer(Stage::HardwareSubmit);
             let mut buffer = gst::Buffer::new();
             let buffer_ref = buffer.get_mut().context("hardware buffer is shared")?;
             buffer_ref.append_memory(dma.memory.clone());
@@ -155,15 +176,14 @@ mod linux {
             self.source
                 .push_buffer(buffer)
                 .context("hardware input rejected")?;
-            // shortcut: one frame of lookahead, replace when the vendor emits reliable AU markers.
-            if !self.pending {
-                self.pending = true;
-                return Ok(false);
-            }
-            let sample = self
-                .sink
-                .try_pull_sample(gst::ClockTime::SECOND)
-                .context("hardware output timeout")?;
+            drop(submit_time);
+            let sample = {
+                let _time = prysm_metrics::timer(Stage::HardwareWait);
+                self.sink
+                    .try_pull_sample(gst::ClockTime::SECOND)
+                    .context("hardware output timeout")?
+            };
+            let _time = prysm_metrics::timer(Stage::HardwareCollect);
             let buffer = sample.buffer().context("hardware sample has no buffer")?;
             let length = buffer.size();
             ensure!(
@@ -178,7 +198,7 @@ mod linux {
                 self.sink.try_pull_sample(gst::ClockTime::ZERO).is_none(),
                 "unexpected extra hardware output"
             );
-            Ok(true)
+            Ok(())
         }
     }
 
@@ -198,12 +218,28 @@ mod linux {
         );
         // SAFETY: successful allocation transferred a new descriptor to us.
         let fd = unsafe { OwnedFd::from_raw_fd(i32::try_from(request.fd)?) };
+        // SAFETY: the new size-byte allocation has no device users; mapping stays private to this slot.
+        let mut mapping = unsafe { memmap2::MmapOptions::new().len(size).map_mut(&fd)? };
+        dma_sync(&fd, 2)?;
+        let (y, uv) = mapping.split_at_mut(size * 2 / 3);
+        y.fill(16);
+        uv.fill(128);
+        dma_sync(&fd, 6)?;
         // SAFETY: live allocator and a duplicate of the size-byte DMA-BUF; GStreamer owns the duplicate.
         let memory = unsafe { allocator.alloc_dmabuf(fd.try_clone()?, size)? };
-        Ok(Dma { memory, fd })
+        Ok(Dma {
+            memory,
+            mapping,
+            fd,
+        })
     }
 
     fn dma_sync(fd: &OwnedFd, flags: u64) -> Result<()> {
+        let _time = prysm_metrics::timer(if flags == 2 {
+            Stage::HardwareSyncStart
+        } else {
+            Stage::HardwareSyncEnd
+        });
         // SAFETY: DMA_BUF_IOCTL_SYNC reads one u64 from a live DMA-BUF descriptor.
         ensure!(
             unsafe { libc::ioctl(fd.as_raw_fd(), 0x4008_6200 as libc::c_ulong, &flags) } == 0,

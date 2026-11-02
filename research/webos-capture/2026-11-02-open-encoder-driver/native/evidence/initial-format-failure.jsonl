@@ -1,0 +1,6 @@
+{"event":"lock_acquired"}
+{"event":"capabilities","driver":"rtk-vea","caps":69226497}
+{"event":"format","type":9,"width":640,"height":360,"fourcc":875967048,"planes":1,"colorspace":3}
+{"event":"plane_format","type":9,"plane":0,"stride":0,"sizeimage":0}
+{"event":"error","stage":"capture_format","errno":22,"t_us":742}
+{"event":"summary","result":1,"requested":1,"submitted":0,"returned":0,"capture_buffers":0,"bytes":0,"t_us":816,"signal":0}

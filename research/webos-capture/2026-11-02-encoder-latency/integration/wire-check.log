@@ -1,0 +1,7 @@
+   Compiling encoder-integration-wire-check v0.0.0 (/Users/eschaal/src/github.com/prysm/work/webos-encoder-latency/integration/wire-check)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running `/private/tmp/prysm-encoder-receiver-check-target/debug/encoder-integration-wire-check work/webos-encoder-latency/integration/evidence`
+hardware-640x280: all 300 wire frames decoded with unchanged receiver; first frame independently decodable
+hardware-320x180: all 35 wire frames decoded with unchanged receiver; first frame independently decodable
+software-640x280: all 35 wire frames decoded with unchanged receiver; first frame independently decodable
+software-320x180: all 35 wire frames decoded with unchanged receiver; first frame independently decodable
