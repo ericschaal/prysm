@@ -56,9 +56,11 @@ The IPK includes MIT notices for the GStreamer Rust and GLib bindings. The nativ
 GStreamer/GLib libraries are supplied by the TV and dynamically linked, not copied
 into the package.
 
-The script requires Python 3.9+ and `ar`, builds both binaries in one Cargo invocation, includes license notices, and creates
+The script requires Node.js 24/npm, Python 3.9+ and `ar`, installs the locked TV UI
+dependencies, typechecks and bundles the TypeScript app with Vite, builds both
+binaries in one Cargo invocation, includes license notices, and creates
 `target/webos-ipk/` (filename `io.prysm.capture_VERSION_all.ipk`). The version comes from
-`app/appinfo.json`. The package suffix follows the
+[the TV app manifest](../../crates/web/prysm-webos/public/appinfo.json). The package suffix follows the
 webOS app packager convention; both executables are ARMv7 soft-float.
 The final archive has root-owned files/directories with no group/other write
 permissions. The packaging check rejects install scripts, links, special files,
@@ -84,6 +86,8 @@ so boot setup and Homebrew Channel execution do not require a terminal.
 ## TV package verification
 
 ```sh
+npm ci --prefix crates/web/prysm-webos
+npm test --prefix crates/web/prysm-webos
 node --test packaging/webos/tests/*.test.js
 python3 -m unittest discover -s packaging/webos/tests
 cargo test --locked -p prysm-webos-service --all-features

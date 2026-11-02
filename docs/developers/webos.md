@@ -1,7 +1,8 @@
 # webOS lifecycle and permissions
 
 Current package: TV web app, native Rust Luna supervisor, and supervised capture
-worker. For installation, see [TV setup](../users/webos.md).
+worker. For local UI development, see the [TV frontend](../../crates/web/prysm-webos/README.md).
+For installation, see [TV setup](../users/webos.md).
 For ABI/IPC contracts, see the [worker](../../apps/prysm-webos-capture/README.md)
 and [supervisor](../../apps/prysm-webos-service/README.md).
 

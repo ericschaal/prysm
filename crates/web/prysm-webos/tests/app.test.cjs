@@ -4,14 +4,28 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { JSDOM } = require('../../../crates/web/prysm-web/control-ui/node_modules/jsdom');
-const html = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
-const script = fs.readFileSync(path.join(__dirname, '../app/app.js'), 'utf8');
+const { JSDOM } = require('jsdom');
+const ts = require('typescript');
+const devService = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/dev-service.ts'), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2015, module: ts.ModuleKind.CommonJS }
+}).outputText;
+const html = fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
+const script = fs.readFileSync(path.join(__dirname, '../dist/' + html.match(/<script[^>]+src="([^"]+)"/)[1]), 'utf8');
 
-function fixture(t, options = {}) {
-    const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
+async function fixture(t, options = {}) {
+    const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'file:///media/developer/apps/usr/palm/applications/io.prysm.capture/index.html' });
     t.after(() => dom.window.close());
     const w = dom.window;
+    const tasks = [];
+    w.setImmediate = callback => { tasks.push(callback); };
+    async function settle(action = () => {}) {
+        action();
+        await new Promise(setImmediate);
+        while (tasks.length) {
+            tasks.shift()();
+            await new Promise(setImmediate);
+        }
+    }
     let now = 0;
     let timerId = 0;
     const timers = new Map();
@@ -53,29 +67,39 @@ function fixture(t, options = {}) {
             this.onservicecallback(JSON.stringify({ ...value, subscribed: method === 'status' }));
         };
     };
+    if (options.devService) {
+        delete w.PalmServiceBridge;
+        w.eval('var exports = {};\n' + devService);
+        w.exports.installDevService();
+    }
     w.eval(script);
+    await settle();
     return {
-        w, calls, advance, options, subscription: () => subscription,
-        notify: () => subscription.onservicecallback(JSON.stringify({ ...value, subscribed: true })),
+        w, calls, options, subscription: () => subscription,
+        advance: milliseconds => settle(() => advance(milliseconds)),
+        click: id => settle(() => w.document.getElementById(id).click()),
+        event: name => settle(() => w.dispatchEvent(new w.Event(name))),
+        reply: (bridge, text) => settle(() => bridge.onservicecallback(text)),
+        notify: () => settle(() => subscription.onservicecallback(JSON.stringify({ ...value, subscribed: true }))),
         get value() { return value; },
         el: id => w.document.getElementById(id),
         focus: () => w.document.activeElement.id,
-        key: code => w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { keyCode: code, bubbles: true, cancelable: true })),
+        key: code => settle(() => w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { keyCode: code, bubbles: true, cancelable: true }))),
         mutations: () => calls.filter(call => call.method !== 'status')
     };
 }
 
-test('remote arrows move through setting rows without changing any setting', t => {
-    const f = fixture(t);
+test('remote arrows move through setting rows without changing any setting', async t => {
+    const f = await fixture(t);
     assert.equal(f.focus(), 'primary');
-    f.key(39);
+    await f.key(39);
     assert.equal(f.focus(), 'receiver');
     for (const row of ['source', 'compression', 'autostart', 'metrics']) {
-        f.key(40);
+        await f.key(40);
         assert.equal(f.focus(), row);
     }
-    f.key(39);
-    f.key(40); // Unchanged settings have no enabled Save action.
+    await f.key(39);
+    await f.key(40); // Unchanged settings have no enabled Save action.
     assert.equal(f.focus(), 'metrics');
     assert.equal(f.w.document.querySelectorAll('select').length, 0);
     assert.equal(f.el('source-value').textContent, 'Video + TV menus');
@@ -84,237 +108,273 @@ test('remote arrows move through setting rows without changing any setting', t =
     assert.deepEqual(f.mutations(), []);
 });
 
-test('OK opens choices, arrows only focus, Back cancels, and Save alone persists', t => {
-    const f = fixture(t);
+test('OK opens choices, arrows only focus, Back cancels, and Save alone persists', async t => {
+    const f = await fixture(t);
     f.el('source').focus();
-    f.el('source').click();
+    await f.click('source');
     assert.equal(f.focus(), 'choice-both');
     assert.equal(f.el('choice-ui'), null);
-    f.key(40);
+    await f.key(40);
     assert.equal(f.focus(), 'choice-video');
     assert.equal(f.el('choice-both').getAttribute('aria-pressed'), 'true');
     assert.equal(f.value.config.source, 'both');
-    f.key(461);
+    await f.key(461);
     assert.equal(f.el('modal').hidden, true);
     assert.equal(f.focus(), 'source');
     assert.equal(f.el('source-value').textContent, 'Video + TV menus');
-    f.el('source').click();
-    f.el('choice-video').click();
+    await f.click('source');
+    await f.click('choice-video');
     assert.equal(f.el('source-value').textContent, 'Video only');
     assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
     assert.equal(f.value.config.source, 'both');
     assert.deepEqual(f.mutations(), []);
-    f.el('save').click();
+    await f.click('save');
     assert.equal(f.value.config.source, 'video');
     assert.equal(f.mutations().length, 1);
     assert.equal(f.mutations()[0].method, 'setConfig');
     assert.equal(f.el('save').disabled, true);
 });
 
-test('receiver editing is explicit and cancels without overwriting the address', t => {
-    const f = fixture(t);
+test('receiver editing is explicit and cancels without overwriting the address', async t => {
+    const f = await fixture(t);
     f.el('receiver').focus();
-    f.el('receiver').click();
+    await f.click('receiver');
     assert.equal(f.focus(), 'receiver-input');
     f.el('receiver-input').value = '192.168.1.50:19400';
-    f.key(461);
+    await f.key(461);
     assert.equal(f.el('receiver-value').textContent, '192.168.18.18:19400');
-    f.el('receiver').click();
+    await f.click('receiver');
     f.el('receiver-input').value = '192.168.1.50:19400';
-    f.key(39);
+    await f.key(39);
     assert.equal(f.focus(), 'receiver-input', 'left/right remain cursor keys inside the editor');
-    f.key(40);
+    await f.key(40);
     assert.equal(f.focus(), 'receiver-apply');
-    f.el('receiver-apply').click();
+    await f.click('receiver-apply');
     assert.equal(f.el('receiver-value').textContent, '192.168.1.50:19400');
     assert.deepEqual(f.mutations(), []);
 });
 
-test('save-and-enable applies the draft before enabling, with no optimistic streaming claim', t => {
-    const f = fixture(t);
-    f.el('compression').click();
-    f.el('choice-h264-software').click();
+test('save-and-enable applies the draft before enabling, with no optimistic streaming claim', async t => {
+    const f = await fixture(t);
+    await f.click('compression');
+    await f.click('choice-h264-software');
     assert.equal(f.el('primary').textContent, 'Save and enable');
-    f.el('primary').click();
+    await f.click('primary');
     assert.deepEqual(f.mutations().map(call => call.method), ['setConfig', 'start']);
     assert.equal(f.value.config.compression, 'h264-software');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
     assert.equal(f.el('primary').textContent, 'Disable sender');
-    f.el('primary').click();
+    await f.click('primary');
     assert.equal(f.value.enabled, false);
 });
 
-test('cleanup is tucked away and requires explicit confirmation; Back returns one level', t => {
-    const f = fixture(t);
+test('cleanup is tucked away and requires explicit confirmation; Back returns one level', async t => {
+    const f = await fixture(t);
     f.el('service-options').focus();
-    f.el('service-options').click();
-    f.el('diagnostics').click();
-    f.key(461);
+    await f.click('service-options');
+    await f.click('diagnostics');
+    await f.key(461);
     assert.equal(f.el('dialog-title').textContent, 'Service options');
-    f.el('cleanup').click();
+    await f.click('cleanup');
     assert.equal(f.focus(), 'keep-setup');
-    f.key(40);
+    await f.key(40);
     assert.equal(f.focus(), 'confirm-cleanup');
     assert.deepEqual(f.mutations(), []);
-    f.key(461);
+    await f.key(461);
     assert.equal(f.el('dialog-title').textContent, 'Service options');
-    f.el('cleanup').click();
-    f.el('confirm-cleanup').click();
+    await f.click('cleanup');
+    await f.click('confirm-cleanup');
     assert.equal(f.mutations().length, 1);
     assert.equal(f.mutations()[0].method, 'cleanup');
     assert.equal(f.el('modal').hidden, true);
 });
 
-test('status subscription preserves an unsaved choice and its focus', t => {
-    const f = fixture(t);
+test('status subscription preserves an unsaved choice and its focus', async t => {
+    const f = await fixture(t);
     f.el('autostart').focus();
-    f.el('autostart').click();
-    f.el('choice-true').click();
+    await f.click('autostart');
+    await f.click('choice-true');
     assert.equal(f.focus(), 'autostart');
-    f.notify();
+    await f.notify();
     assert.equal(f.focus(), 'autostart');
     assert.equal(f.el('autostart-value').textContent, 'On');
     assert.equal(f.value.config.autostart, false);
     assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
 });
 
-test('Back on the main screen asks before closing; modal Tab stays inside', t => {
-    const f = fixture(t);
-    f.key(461);
+test('Back on the main screen asks before closing; modal Tab stays inside', async t => {
+    const f = await fixture(t);
+    await f.key(461);
     assert.equal(f.el('dialog-title').textContent, 'Close Prysm Capture?');
     assert.equal(f.focus(), 'stay');
     f.el('dialog-back').focus();
-    f.key(9);
+    await f.key(9);
     assert.equal(f.focus(), 'stay');
-    f.key(27);
+    await f.key(27);
     assert.equal(f.el('modal').hidden, true);
     assert.equal(f.focus(), 'primary');
 });
 
-test('unavailable service offers setup and keeps the error visible', t => {
-    const f = fixture(t, { offline: true });
+test('unavailable service offers setup and keeps the error visible', async t => {
+    const f = await fixture(t, { offline: true });
     assert.equal(f.el('primary').textContent, 'Set up service');
     assert.equal(f.el('notice').getAttribute('role'), 'alert');
     assert.equal(f.el('save').disabled, true);
 });
 
-test('a waiting sender is described as enabled, rather than actively capturing or paused', t => {
-    const f = fixture(t);
+test('a waiting sender is described as enabled, rather than actively capturing or paused', async t => {
+    const f = await fixture(t);
     assert.equal(f.el('primary').textContent, 'Enable sender');
-    f.el('primary').click();
+    await f.click('primary');
     f.value.lastLog = 'capture handshake failed: Connection refused';
-    f.notify();
+    await f.notify();
     assert.equal(f.el('primary').textContent, 'Disable sender');
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
     assert.match(f.el('status-description').textContent, /192\.168\.18\.18:19400/);
     assert.equal(f.value.enabled, true, 'egui stop must leave the sender available for the next start');
     f.value.receiverConnected = true;
-    f.notify();
+    await f.notify();
     assert.equal(f.el('connection').textContent, 'Connected · Capture off');
     assert.equal(f.el('status-title').textContent, 'Connected · Capture off');
     f.value.capturing = true;
-    f.notify();
+    await f.notify();
     assert.equal(f.el('status-title').textContent, 'Capturing');
     f.value.receiverConnected = false;
-    f.notify();
+    await f.notify();
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
 });
 
-test('one status subscription recovers after service failure without losing draft settings', t => {
-    const f = fixture(t);
+test('one status subscription recovers after service failure without losing draft settings', async t => {
+    const f = await fixture(t);
     assert.deepEqual(f.calls.filter(call => call.method === 'status').map(call => call.payload), [{ subscribe: true }]);
-    f.el('compression').click(); f.el('choice-h264-software').click();
+    await f.click('compression'); await f.click('choice-h264-software');
     const old = f.subscription();
-    old.onservicecallback('{"returnValue":false,"errorText":"service exited"}');
+    await f.reply(old, '{"returnValue":false,"errorText":"service exited"}');
     assert.equal(old.cancelled, true);
     assert.equal(f.el('connection').textContent, 'TV service unavailable');
-    f.advance(2999);
+    await f.advance(2999);
     assert.equal(f.calls.length, 1);
-    f.advance(1);
+    await f.advance(1);
     assert.notEqual(f.subscription(), old);
     assert.equal(f.el('compression-value').textContent, 'H.264 (software)');
     assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
-    old.onservicecallback('{"returnValue":false,"errorText":"late reply"}');
+    await f.reply(old, '{"returnValue":false,"errorText":"late reply"}');
     assert.notEqual(f.el('connection').textContent, 'TV service unavailable');
 });
 
-test('a silent activation times out; hiding the page cancels retries and synchronous cancel callbacks', t => {
-    const f = fixture(t, { silentStatus: true, cancelReentry: true });
-    f.advance(30000);
+test('a silent activation times out; hiding the page cancels retries and synchronous cancel callbacks', async t => {
+    const f = await fixture(t, { silentStatus: true, cancelReentry: true });
+    await f.advance(30000);
     assert.equal(f.el('connection').textContent, 'TV service unavailable');
-    f.w.dispatchEvent(new f.w.Event('pagehide'));
+    await f.event('pagehide');
     const calls = f.calls.length;
-    f.advance(60000);
+    await f.advance(60000);
     assert.equal(f.calls.length, calls);
     f.options.silentStatus = false;
-    f.w.dispatchEvent(new f.w.Event('pageshow'));
+    await f.event('pageshow');
     assert.equal(f.el('connection').textContent, 'Sender disabled');
 });
 
-test('malformed or unsubscribed status replies are cancelled and retried', t => {
-    const f = fixture(t);
-    f.subscription().onservicecallback('{');
+test('malformed or unsubscribed status replies are cancelled and retried', async t => {
+    const f = await fixture(t);
+    await f.reply(f.subscription(), '{');
     assert.equal(f.el('connection').textContent, 'TV service unavailable');
-    f.advance(3000);
-    f.subscription().onservicecallback(JSON.stringify({ ...f.value, subscribed: false }));
+    await f.advance(3000);
+    await f.reply(f.subscription(), JSON.stringify({ ...f.value, subscribed: false }));
     assert.equal(f.el('connection').textContent, 'TV service unavailable');
-    f.advance(3000);
+    await f.advance(3000);
     assert.equal(f.el('connection').textContent, 'Sender disabled');
 });
 
 
-test('metrics checkbox defaults off and only persists on Save', t => {
-    const f = fixture(t);
+test('metrics checkbox defaults off and only persists on Save', async t => {
+    const f = await fixture(t);
     const checkbox = f.el('metrics');
     assert.equal(checkbox.getAttribute('role'), 'checkbox');
     assert.equal(checkbox.getAttribute('aria-checked'), 'false');
     checkbox.focus();
-    checkbox.click();
+    await f.click('metrics');
     assert.equal(f.focus(), 'metrics');
     assert.equal(checkbox.getAttribute('aria-checked'), 'true');
     assert.deepEqual(f.mutations(), []);
-    f.notify();
+    await f.notify();
     assert.equal(checkbox.getAttribute('aria-checked'), 'true');
-    f.key(40);
+    await f.key(40);
     assert.equal(f.focus(), 'save');
-    f.el('save').click();
+    await f.click('save');
     assert.equal(f.value.config.metrics, true);
     assert.equal(f.mutations()[0].payload.metrics, true);
-    checkbox.click();
-    f.el('save').click();
+    await f.click('metrics');
+    await f.click('save');
     assert.equal(f.value.config.metrics, false);
     assert.equal(checkbox.getAttribute('aria-checked'), 'false');
 });
 
 for (const [compression, label] of [['h264-software', 'H.264 (software)'], ['h264-hardware', 'H.264 (hardware)']]) {
-    test(`${label} is saved and restored as a distinct compression choice`, t => {
-        const f = fixture(t, { hardwareH264: true });
-        f.el('compression').click();
-        f.el('choice-' + compression).click();
+    test(`${label} is saved and restored as a distinct compression choice`, async t => {
+        const f = await fixture(t, { hardwareH264: true });
+        await f.click('compression');
+        await f.click('choice-' + compression);
         assert.equal(f.el('compression-value').textContent, label);
         assert.equal(f.value.config.compression, 'lz4');
-        f.el('save').click();
+        await f.click('save');
         assert.equal(f.value.config.compression, compression);
         assert.equal(f.mutations()[0].payload.compression, compression);
-        f.notify();
-        f.el('compression').click();
+        await f.notify();
+        await f.click('compression');
         assert.equal(f.el('choice-' + compression).getAttribute('aria-pressed'), 'true');
+        assert.equal(f.focus(), 'choice-' + compression);
     });
 }
 
-test('hardware compression is offered only when the service advertises support', t => {
-    const f = fixture(t);
+test('hardware compression is offered only when the service advertises support', async t => {
+    const f = await fixture(t);
     for (const capabilities of [undefined, { hardwareH264: false }, { hardwareH264: 'true' }]) {
         f.value.capabilities = capabilities;
-        f.notify();
-        f.el('compression').click();
+        await f.notify();
+        await f.click('compression');
         assert.equal(f.el('choice-h264-hardware'), null);
         assert.ok(f.el('choice-h264-software'));
-        f.key(461);
+        await f.key(461);
     }
     f.value.capabilities = { hardwareH264: true };
-    f.notify();
-    f.el('compression').click();
+    await f.notify();
+    await f.click('compression');
     assert.ok(f.el('choice-h264-hardware'));
+});
+
+test('TV output uses relative classic scripts and excludes the local service simulation', () => {
+    assert.doesNotMatch(html, /type="module"|modulepreload|crossorigin/);
+    const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)];
+    assert.equal(scripts.length, 1);
+    assert.ok(scripts[0][1].startsWith('./'));
+    assert.match(html, /<script defer /);
+    assert.doesNotMatch(script, /Local development: simulated TV service|Simulated TV|import\.meta/);
+    for (const name of ['app.css', 'appinfo.json', 'icon.png']) {
+        assert.ok(fs.existsSync(path.join(__dirname, '../dist', name)));
+    }
+    assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, '../dist/appinfo.json'))).main, 'index.html');
+});
+
+test('local development service supports settings, subscriptions, start, stop and cleanup', async t => {
+    const f = await fixture(t, { devService: true });
+    assert.equal(f.el('status-title').textContent, 'Sender disabled');
+    await f.click('autostart');
+    await f.click('choice-true');
+    await f.click('primary');
+    assert.equal(f.el('saved-state').textContent, 'Saved');
+    assert.equal(f.el('status-title').textContent, 'Capturing');
+    await f.click('primary');
+    assert.equal(f.el('status-title').textContent, 'Sender disabled');
+    await f.click('service-options');
+    await f.click('diagnostics');
+    assert.match(f.el('dialog-body').textContent, /Local development: simulated TV service/);
+    await f.key(27);
+    await f.click('cleanup');
+    await f.click('confirm-cleanup');
+    assert.equal(f.el('autostart-value').textContent, 'Off');
+    await f.event('pagehide');
+    await f.event('pageshow');
+    assert.equal(f.el('status-title').textContent, 'Sender disabled');
 });

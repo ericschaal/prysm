@@ -15,7 +15,7 @@ spec.loader.exec_module(module)
 class PackageTests(unittest.TestCase):
     def test_native_package_metadata_and_browser_permissions_agree(self):
         root = Path(__file__).parents[1]
-        app = json.loads((root / 'app/appinfo.json').read_text())
+        app = json.loads((root.parents[1] / 'crates/web/prysm-webos/public/appinfo.json').read_text())
         service = root / 'service'
         info = json.loads((service / 'services.json').read_text())
         role = json.loads((service / 'supervisor.role.json').read_text())

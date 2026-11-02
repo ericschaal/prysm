@@ -6,4 +6,5 @@
 - [Historical deployments and validation](../../research/webos-capture/deployment-history.md)
 
 The package contains a TV web app, native Rust Luna supervisor and ARMv7 capture worker.
-Build scripts, app assets, permission manifests and packaging tests remain here.
+Build scripts, permission manifests and packaging tests remain here.
+The [TypeScript TV app](../../crates/web/prysm-webos/README.md) lives beside the web portal.

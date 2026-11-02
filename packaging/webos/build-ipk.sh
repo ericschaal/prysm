@@ -32,12 +32,14 @@ export PKG_CONFIG_PATH_armv7_unknown_linux_gnueabi=
 cd "$root"
 cargo build --locked "${features[@]}" -p prysm-webos-capture -p prysm-webos-service \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$root/target"
+npm ci --prefix "$root/crates/web/prysm-webos"
+npm run build --prefix "$root/crates/web/prysm-webos"
 output="$root/target/webos-ipk"
 mkdir -p "$output"
 build=$(mktemp -d "$output/stage.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/app" "$build/service/licenses"
-cp -R "$root/packaging/webos/app/." "$build/app/"
+cp -R "$root/crates/web/prysm-webos/dist/." "$build/app/"
 cp -R "$root/packaging/webos/service/." "$build/service/"
 for binary in prysm-webos-capture prysm-webos-service; do
   cp "$root/target/armv7-unknown-linux-gnueabi/webos/$binary" "$build/service/"
@@ -50,5 +52,5 @@ chmod +x "$build/service/setup.sh"
 chmod -R go-w "$build"
 ares-package "$build/app" "$build/service" -o "$output"
 # Normalize root ownership and permissions, and reject unexpected payload files.
-version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$root/packaging/webos/app/appinfo.json")
+version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$root/crates/web/prysm-webos/public/appinfo.json")
 python3 "$root/packaging/webos/secure-ipk.py" "$output/io.prysm.capture_${version}_all.ipk"

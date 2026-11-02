@@ -51,7 +51,9 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: |
+            crates/web/prysm-web/control-ui/package-lock.json
+            crates/web/prysm-webos/package-lock.json
       - name: Update Rust
         run: rustup update stable --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@v2
@@ -61,6 +63,8 @@ jobs:
         run: npm ci --prefix crates/web/prysm-web/control-ui
       - name: webOS app and package checks
         run: |
+          npm ci --prefix crates/web/prysm-webos
+          npm test --prefix crates/web/prysm-webos
           node --test packaging/webos/tests/*.test.js
           python3 -m unittest discover -s packaging/webos/tests
       - name: Generated API, TypeScript, production bundle, UI and Vite proxy tests

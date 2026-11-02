@@ -45,3 +45,12 @@ and CSS to `dist/`. When building `prysm-web`, its `build.rs` runs `npm ci` and
 required for workspace builds. Both debug and release builds embed the assets.
 
 `npm test` checks generated client drift, type-checks, builds, then runs DOM behavior and development-proxy tests. HTTP calls use `openapi-fetch` and the generated schema to check paths, methods, requests and responses. The UI loads coherent configuration and status revisions, and saves the complete configuration with its expected revision so concurrent changes cannot overwrite one another.
+
+## webOS TV app
+
+The [TV app](../../crates/web/prysm-webos/README.md) is a separate React/TypeScript/Vite
+frontend in `crates/web/prysm-webos`. Run `npm ci` and `npm run dev` there, then
+open http://127.0.0.1:5174. A development-only Luna simulation lets you work on the
+UI without a TV or the native service; Vite provides React Fast Refresh. Production
+builds target Chromium 53 and emit a classic script for the packaged TV app.
+The [IPK build](packaging.md#webos) stages the generated `dist/` assets.
