@@ -245,7 +245,7 @@ test('a waiting sender is described as enabled, rather than actively capturing o
     assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
     assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
     assert.match(f.el('status-description').textContent, /enable webOS input/);
-    assert.equal(f.value.enabled, true, 'egui stop must leave the sender available for the next start');
+    assert.equal(f.value.enabled, true, 'pipeline stop must leave the sender available for the next start');
     f.value.receiverConnected = true;
     await f.notify();
     assert.equal(f.el('connection').textContent, 'Ready to capture');

@@ -1,243 +1,287 @@
-//! Compose a capture session on its own Actix thread.
-use super::{
-    RenderFrame, Stop,
-    capturer::Capturer,
-    processor::{ConfigureProcessor, Processor},
-    wled::Wled,
+//! One owned processing thread and one independently tracked lighting consumer.
+use crate::{
+    config::PipelineConfig,
+    input::{InputSource, InputStream},
 };
-use crate::config::PipelineConfig;
-use actix::{Actor, Arbiter, Recipient};
-use anyhow::{Context as _, Result, anyhow};
-use prysm_contract::{Output, PipelineStatus};
-use std::time::Duration;
+use anyhow::{Context, Result, anyhow};
+use futures::StreamExt;
+use prysm_contract::{ConfigRevision, Output, PipelinePhase, PipelineStatus, ProcessingSettings};
+use prysm_core::ProcessedSnapshot;
+use prysm_processor::PrysmProcessor;
+use prysm_renderer_wled::WledRenderer;
+use std::{sync::Arc, thread::JoinHandle};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
-
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineExit {
     Completed,
     Stopped,
 }
-
-/// Terminal notifications to the async caller. Frame traffic uses Actix recipients.
-pub type Completion = mpsc::Sender<Result<PipelineExit>>;
-type Ready = oneshot::Sender<Result<Recipient<ConfigureProcessor>>>;
-
-pub(super) struct RenderTarget {
-    frames: Recipient<RenderFrame>,
-    stop: Recipient<Stop>,
+pub(crate) struct Configure {
+    pub settings: ProcessingSettings,
+    pub revision: ConfigRevision,
+    pub reply: oneshot::Sender<Result<()>>,
 }
-
-/// Available outputs; the native window supplies its watch channels at startup.
-#[derive(Clone, Default)]
-pub(crate) struct Renderers {
-    #[cfg(feature = "desktop")]
-    pub egui: Option<super::egui::Egui>,
+struct PreparedOutput {
+    backend: WledRenderer,
+    leds: [usize; 4],
 }
-
-impl Renderers {
-    #[cfg_attr(
-        not(feature = "desktop"),
-        allow(
-            clippy::unused_self,
-            reason = "desktop builds use the preview sender stored on self"
-        )
-    )]
-    fn create(&self, output: &Output, completion: Completion) -> Result<RenderTarget> {
-        match output {
-            Output::Wled { leds, .. } => {
-                let renderer = Wled::new(&output.ddp_address()?, *leds, completion)?.start();
-                Ok(RenderTarget {
-                    frames: renderer.clone().recipient(),
-                    stop: renderer.recipient(),
-                })
-            }
-            Output::Egui { .. } => {
-                #[cfg(feature = "desktop")]
-                {
-                    let renderer = self
-                        .egui
-                        .clone()
-                        .context("restart the application to open the egui window")?
-                        .start();
-                    Ok(RenderTarget {
-                        frames: renderer.clone().recipient(),
-                        stop: renderer.recipient(),
-                    })
-                }
-                #[cfg(not(feature = "desktop"))]
-                anyhow::bail!("egui output requires building with --features desktop")
-            }
-        }
+impl PreparedOutput {
+    fn new(output: &Output) -> Result<Self> {
+        let Output::Wled { leds, .. } = output;
+        Ok(Self {
+            backend: WledRenderer::new(output.ddp_address()?)
+                .context("cannot create WLED renderer")?,
+            leds: leds.counts(),
+        })
+    }
+    fn render(&mut self, snapshot: &ProcessedSnapshot) -> Result<()> {
+        self.backend
+            .render_edges(&snapshot.colors, self.leds)
+            .context("cannot send WLED frame")
     }
 }
-
-pub(super) struct Session {
-    arbiter: Option<Arbiter>,
+pub(crate) struct Session {
     pub shutdown: CancellationToken,
-    pub processor: Recipient<ConfigureProcessor>,
-    completion: oneshot::Receiver<Result<PipelineExit>>,
+    pub configure: mpsc::Sender<Configure>,
+    completed: oneshot::Receiver<Result<PipelineExit>>,
+    worker: JoinHandle<()>,
+    output: tokio::task::JoinHandle<Result<()>>,
 }
-
 impl Session {
-    pub async fn wait(mut self) -> Result<PipelineExit> {
-        let result = (&mut self.completion)
+    pub async fn wait(self) -> Result<PipelineExit> {
+        let result = self
+            .completed
             .await
-            .context("pipeline thread ended unexpectedly");
-        let arbiter = self.arbiter.take().expect("session owns its thread");
-        join(arbiter).await?;
+            .context("processing worker ended unexpectedly");
+        let joined = tokio::task::spawn_blocking(move || self.worker.join()).await;
+        let output = self.output.await;
+        joined
+            .context("cannot join processing worker")?
+            .map_err(|_| anyhow!("processing worker panicked"))?;
+        output.context("lighting task panicked")??;
         result?
     }
 }
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.shutdown.cancel();
-    }
-}
-
-async fn join(arbiter: Arbiter) -> Result<()> {
-    arbiter.stop();
-    tokio::task::spawn_blocking(move || arbiter.join())
-        .await
-        .context("cannot join pipeline thread")?
-        .map_err(|_| anyhow!("pipeline thread panicked"))
-}
-
-/// Open input and wire actors on their thread, returning only when setup has succeeded.
-pub(super) async fn start(
+pub(crate) fn launch(
     config: PipelineConfig,
     status: watch::Sender<PipelineStatus>,
-    renderers: Renderers,
-    input: crate::input::InputSource,
-) -> Result<Session> {
-    start_with_output(config, status, input, move |output, completion| {
-        renderers.create(output, completion)
-    })
-    .await
-}
-
-async fn start_with_output<F>(
-    config: PipelineConfig,
-    status: watch::Sender<PipelineStatus>,
-    input: crate::input::InputSource,
-    create_output: F,
-) -> Result<Session>
-where
-    F: FnOnce(&Output, Completion) -> Result<RenderTarget> + Send + 'static,
-{
-    let arbiter = Arbiter::new();
+    preview: Option<crate::preview::Publisher>,
+    input: InputSource,
+) -> Result<(Session, oneshot::Receiver<Result<()>>)> {
     let shutdown = CancellationToken::new();
-    let cancel_on_drop = shutdown.clone().drop_guard();
+    let (configure, commands) = mpsc::channel(8);
+    let (ready, readiness) = oneshot::channel();
+    let (finished, completed) = oneshot::channel();
+    let (prepared, backend) = oneshot::channel();
+    let (publication, frames) = watch::channel(None::<Arc<ProcessedSnapshot>>);
     let worker_shutdown = shutdown.clone();
-    let (ready_tx, ready_rx) = oneshot::channel();
-    let (finished, completion) = oneshot::channel();
-    arbiter.spawn(async move {
-        let mut ready = Some(ready_tx);
-        let result = async {
-            let frames = input.into_stream(worker_shutdown.clone())?;
-            run_session(
-                config,
-                frames,
-                worker_shutdown,
-                status,
-                &mut ready,
-                create_output,
-            )
-            .await
-        }
-        .await;
-        if let Some(ready) = ready {
-            let error = result
-                .err()
-                .unwrap_or_else(|| anyhow!("pipeline ended before startup"));
-            let _ = ready.send(Err(error));
-        } else {
+    let worker = std::thread::Builder::new()
+        .name("prysm-processing".into())
+        .spawn(move || {
+            let mut ready = Some(ready);
+            let result = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(async {
+                    if worker_shutdown.is_cancelled() {
+                        return Ok(PipelineExit::Stopped);
+                    }
+                    let output = PreparedOutput::new(&config.output)?;
+                    if worker_shutdown.is_cancelled() {
+                        return Ok(PipelineExit::Stopped);
+                    }
+                    let frames = input.into_stream(worker_shutdown.clone())?;
+                    // A failed application consumer must still release a successfully opened input.
+                    if prepared.send(output).is_err() {
+                        worker_shutdown.cancel();
+                        let completed = frames.completed.clone();
+                        let cleanup = frames.cleanup;
+                        drop(frames.frames);
+                        if let Some(cleanup) = cleanup {
+                            cleanup.await.context("file cleanup task panicked")??;
+                        }
+                        if let Some(completed) = completed {
+                            completed.cancelled().await;
+                        }
+                        return Err(anyhow!("lighting consumer unavailable during startup"));
+                    }
+                    if let Some(ready) = ready.take() {
+                        let _ = ready.send(Ok(()));
+                    }
+                    process(
+                        config,
+                        frames,
+                        commands,
+                        publication,
+                        worker_shutdown.clone(),
+                        status,
+                        preview,
+                    )
+                    .await
+                }),
+                Err(error) => Err(error).context("cannot create processing runtime"),
+            };
+            worker_shutdown.cancel();
+            if let Some(ready) = ready.take() {
+                let message = result.as_ref().err().map_or_else(
+                    || "processing ended before startup".into(),
+                    |error| format!("{error:#}"),
+                );
+                let _ = ready.send(Err(anyhow!(message)));
+            }
             let _ = finished.send(result);
+        })
+        .context("cannot start processing thread")?;
+    let output_shutdown = shutdown.clone();
+    let output = tokio::spawn(async move {
+        let _cancel_on_exit = output_shutdown.clone().drop_guard();
+        let Ok(mut output) = backend.await else {
+            return Ok(());
+        };
+        let result = consume(&mut output, frames).await;
+        if result.is_err() {
+            output_shutdown.cancel();
         }
-        Arbiter::current().stop();
+        result
     });
-    match ready_rx
-        .await
-        .context("pipeline thread ended during startup")
-        .and_then(|result| result)
-    {
-        Ok(processor) => {
-            cancel_on_drop.disarm();
-            Ok(Session {
-                arbiter: Some(arbiter),
-                shutdown,
-                processor,
-                completion,
-            })
-        }
-        Err(error) => {
-            join(arbiter).await?;
-            Err(error)
-        }
-    }
+    Ok((
+        Session {
+            shutdown,
+            configure,
+            completed,
+            worker,
+            output,
+        },
+        readiness,
+    ))
 }
-
-async fn run_session<F>(
+async fn consume(
+    output: &mut PreparedOutput,
+    mut frames: watch::Receiver<Option<Arc<ProcessedSnapshot>>>,
+) -> Result<()> {
+    // changed() delivers an unseen final value even after the sole publisher closes.
+    while frames.changed().await.is_ok() {
+        let snapshot = frames.borrow_and_update().clone();
+        if let Some(snapshot) = snapshot {
+            output.render(&snapshot)?;
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(())
+}
+fn availability(status: &watch::Sender<PipelineStatus>, available: bool) {
+    status.send_modify(|status| {
+        if !matches!(
+            status.phase,
+            PipelinePhase::Starting | PipelinePhase::Running
+        ) {
+            return;
+        }
+        if available {
+            if status.frames_processed > 0 {
+                status.phase = PipelinePhase::Running;
+            }
+            status.error = None;
+        } else {
+            status.phase = PipelinePhase::Starting;
+            status.error = Some("input unavailable; waiting for frames".into());
+        }
+    });
+}
+async fn process(
     config: PipelineConfig,
-    input: crate::input::InputStream,
+    input: InputStream,
+    mut commands: mpsc::Receiver<Configure>,
+    publication: watch::Sender<Option<Arc<ProcessedSnapshot>>>,
     shutdown: CancellationToken,
     status: watch::Sender<PipelineStatus>,
-    ready: &mut Option<Ready>,
-    create_output: F,
-) -> Result<PipelineExit>
-where
-    F: FnOnce(&Output, Completion) -> Result<RenderTarget>,
-{
-    let result = async {
-        // Each actor reports at most one terminal result.
-        let (completion, mut outcomes) = mpsc::channel(3);
-        let renderer = create_output(&config.output, completion.clone())?;
-        let processor = Processor::new(
-            &config.processing,
-            renderer.frames,
-            completion.clone(),
-            status,
-            input.availability,
-        )
-        .start();
-        let capturer = Capturer::spawn(input.frames, processor.clone().recipient(), completion);
-        if let Some(ready) = ready.take() {
-            let _ = ready.send(Ok(processor.clone().recipient()));
-        }
-        let outcome = tokio::select! {
-            biased;
-            () = shutdown.cancelled() => Ok(PipelineExit::Stopped),
-            outcome = outcomes.recv() => outcome.context("pipeline actors ended unexpectedly")?,
+    preview: Option<crate::preview::Publisher>,
+) -> Result<PipelineExit> {
+    let InputStream {
+        mut frames,
+        completed,
+        cleanup,
+        availability: mut available,
+    } = input;
+    let mut processor = PrysmProcessor::new(&config.processing.to_core());
+    let mut revision = config.revision;
+    status.send_modify(|status| status.applied_revision = Some(revision));
+    availability(
+        &status,
+        available.as_ref().is_none_or(|receiver| *receiver.borrow()),
+    );
+    let result = 'frames: loop {
+        // Keep this future alive through configuration/availability events: rawvideo reads
+        // may have consumed a partial frame already.
+        let next = frames.next();
+        tokio::pin!(next);
+        let frame = loop {
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => break 'frames Ok(PipelineExit::Stopped),
+                command = commands.recv(), if !commands.is_closed() => {
+                    if let Some(command) = command {
+                        processor.configure(&command.settings.to_core());
+                        revision = command.revision;
+                        status.send_modify(|status| status.applied_revision = Some(revision));
+                        let _ = command.reply.send(Ok(()));
+                    }
+                },
+                result = async {
+                    match &mut available {
+                        Some(receiver) => receiver.changed().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if result.is_err() { available = None; }
+                    availability(&status, available.as_ref().is_none_or(|receiver| *receiver.borrow()));
+                },
+                frame = &mut next => break frame,
+            }
         };
-        // Stop the producer before FIFO barriers drain accepted processing and output.
-        let drain = tokio::time::timeout(STOP_TIMEOUT, async {
-            if capturer.connected() {
-                let _ = capturer.send(Stop).await;
-            }
-            let processor_stop = processor.send(Stop).await;
-            let renderer_stop = renderer.stop.send(Stop).await;
-            processor_stop.context("processor stopped while draining")?;
-            renderer_stop.context("renderer stopped while draining")?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .context("pipeline shutdown timed out")?;
-        let mut outcome = outcome;
-        while let Ok(event) = outcomes.try_recv() {
-            if event.is_err() && outcome.is_ok() {
-                outcome = event;
-            }
+        let frame = match frame {
+            Some(Ok(frame)) => frame,
+            Some(Err(error)) => break Err(error),
+            None => break Ok(PipelineExit::Completed),
+        };
+        prysm_metrics::frame(
+            prysm_metrics::FrameStage::InputDelivered,
+            frame.format().into(),
+        );
+        let timer = prysm_metrics::timer(prysm_metrics::Stage::FrameProcess);
+        let colors = processor.process_frame(frame.clone());
+        drop(timer);
+        prysm_metrics::frame(prysm_metrics::FrameStage::Processed, frame.format().into());
+        let snapshot = Arc::new(ProcessedSnapshot {
+            frame,
+            viewport: processor.viewport(),
+            colors,
+        });
+        if let Some(preview) = &preview {
+            preview.publish(Arc::clone(&snapshot), revision);
         }
-        outcome.and_then(|exit| drain.map(|()| exit))
-    }
-    .await;
+        publication.send_replace(Some(snapshot));
+        status.send_modify(|status| {
+            status.frames_processed = status.frames_processed.saturating_add(1);
+        });
+        availability(
+            &status,
+            available.as_ref().is_none_or(|receiver| *receiver.borrow()),
+        );
+        tokio::task::yield_now().await;
+    };
     shutdown.cancel();
-    // Keep this runtime alive until the camera worker releases the device.
-    if let Some(completed) = input.completed {
+    drop(frames);
+    // Closing publication lets lighting drain independently while native cleanup runs.
+    drop(publication);
+    if let Some(completed) = completed {
         completed.cancelled().await;
+    }
+    if let Some(cleanup) = cleanup {
+        cleanup.await.context("file cleanup task panicked")??;
     }
     result
 }
@@ -245,276 +289,335 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{StreamExt, stream, stream::BoxStream};
-    use prysm_capture::{Frame, PixelFormat};
-    use prysm_contract::{ConfigRevision, ProcessingSettings};
-    use std::io::ErrorKind;
+    use futures::{stream, stream::BoxStream};
+    use prysm_core::{Frame, LinearColor, PixelFormat};
+    use std::{io::ErrorKind, time::Duration};
 
-    fn test_renderer(output: &Output, completion: Completion) -> Result<RenderTarget> {
-        let Output::Wled { url, leds } = output else {
-            return Renderers::default().create(output, completion);
-        };
-        // Use an ephemeral fixture port so concurrent session tests remain isolated.
-        let renderer = Wled::new(url.authority(), *leds, completion)?.start();
-        Ok(RenderTarget {
-            frames: renderer.clone().recipient(),
-            stop: renderer.recipient(),
-        })
+    fn config() -> PipelineConfig {
+        let config: prysm_contract::Config =
+            toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+        let mut config = PipelineConfig::from(&config);
+        config.processing.smoothing_seconds = 0.0.try_into().unwrap();
+        config.processing.remove_black_bars = false;
+        config.processing.brightness_percent = 100.try_into().unwrap();
+        config
     }
-
-    async fn test_session(
-        config: PipelineConfig,
-        frames: BoxStream<'static, Result<Frame>>,
-        shutdown: CancellationToken,
-    ) -> Result<PipelineExit> {
-        let (status, _) = watch::channel(super::super::runtime::idle());
-        run_session(
-            config,
-            crate::input::InputStream {
-                frames,
-                completed: None,
-                availability: None,
-            },
-            shutdown,
-            status,
-            &mut None,
-            test_renderer,
-        )
-        .await
-    }
-
-    fn config(address: &str) -> PipelineConfig {
-        PipelineConfig {
-            revision: ConfigRevision::default(),
-            input: prysm_contract::Input::File {
-                capture_resolution: [4, 4].try_into().unwrap(),
-                refresh_rate_hz: 30.try_into().unwrap(),
-                path: "/missing/prysm-pipeline-test.mp4"
-                    .to_owned()
-                    .try_into()
-                    .unwrap(),
-            },
-            processing: ProcessingSettings {
-                smoothing_seconds: 0.0.try_into().unwrap(),
-                remove_black_bars: false,
-                ..ProcessingSettings::default()
-            },
-            output: serde_json::from_value(serde_json::json!({
-                "type": "wled",
-                "url": format!("http://{address}/"),
-                "leds": {"top": 1, "right": 1, "bottom": 1, "left": 1}
-            }))
-            .unwrap(),
+    fn input(frames: BoxStream<'static, Result<Frame>>) -> InputStream {
+        InputStream {
+            frames,
+            completed: None,
+            cleanup: None,
+            availability: None,
         }
     }
-
-    #[cfg(feature = "desktop")]
-    #[actix::test]
-    async fn egui_output_drains_the_final_frame_without_wled() {
-        use super::super::egui::Egui;
-        use prysm_core::{EdgeColors, LinearColor};
-        use prysm_renderer_desktop::DisplayFrame;
-
-        let (colors, colors_rx) = watch::channel(EdgeColors::default());
-        let (frames, frames_rx) = watch::channel(DisplayFrame {
-            frame: Frame::dummy(4, 4).unwrap(),
-            viewport: None,
-        });
-        let renderers = Renderers {
-            egui: Some(Egui { colors, frames }),
+    fn status() -> watch::Sender<PipelineStatus> {
+        watch::channel(PipelineStatus {
+            phase: PipelinePhase::Starting,
+            applied_revision: Some(ConfigRevision::new(1)),
+            ..super::super::runtime::idle()
+        })
+        .0
+    }
+    #[tokio::test]
+    async fn eof_closes_publication_and_output_drains_final_unseen_result() {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut output = PreparedOutput {
+            backend: WledRenderer::new(socket.local_addr().unwrap()).unwrap(),
+            leds: [1; 4],
         };
-        let mut config = config("127.0.0.1:4048");
-        config.output = Output::Egui {};
-        let exit = run_session(
+        let (publish, frames) = watch::channel(None);
+        let (_commands, commands) = mpsc::channel(8);
+        let config = config();
+        let result = process(
             config,
-            crate::input::InputStream {
-                frames: stream::once(async {
-                    Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap())
-                })
-                .boxed(),
-                completed: None,
-                availability: None,
-            },
+            input(
+                stream::once(async { Ok(Frame::fill(255, 4, 2, PixelFormat::RGB24).unwrap()) })
+                    .boxed(),
+            ),
+            commands,
+            publish,
             CancellationToken::new(),
-            watch::channel(super::super::runtime::idle()).0,
-            &mut None,
-            move |output, completion| renderers.create(output, completion),
+            status(),
+            None,
         )
         .await
         .unwrap();
-        assert_eq!(exit, PipelineExit::Completed);
-        assert_eq!(frames_rx.borrow().frame.as_slice(), &[255; 48]);
-        assert_eq!(
-            colors_rx.borrow().top.sample_at(0.5),
-            LinearColor::new(1.0, 1.0, 1.0)
-        );
-    }
-
-    #[actix::test]
-    async fn eof_drains_the_final_accepted_frame() {
-        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(&receiver.local_addr().unwrap().to_string());
-        let frames =
-            stream::once(async { Ok(Frame::fill(255, 4, 4, PixelFormat::RGB24).unwrap()) });
-
-        let exit = test_session(config, frames.boxed(), CancellationToken::new())
-            .await
-            .unwrap();
-
-        assert_eq!(exit, PipelineExit::Completed);
+        assert_eq!(result, PipelineExit::Completed);
+        consume(&mut output, frames).await.unwrap();
         let mut packet = [0; 1500];
-        let size = tokio::time::timeout(Duration::from_secs(1), receiver.recv(&mut packet))
+        let size = tokio::time::timeout(Duration::from_secs(1), socket.recv(&mut packet))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(size, 22);
         assert_eq!(&packet[10..size], &[255; 12]);
         assert_eq!(
-            receiver.try_recv(&mut packet).unwrap_err().kind(),
+            socket.try_recv(&mut packet).unwrap_err().kind(),
             ErrorKind::WouldBlock
         );
     }
-
-    #[actix::test]
-    async fn cancellation_drops_input_and_returns_stopped() {
-        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(&receiver.local_addr().unwrap().to_string());
-        let (resource, dropped) = oneshot::channel::<()>();
-        let frames = stream::once(async move {
-            let _resource = resource;
-            futures::future::pending::<Result<Frame>>().await
-        });
+    #[tokio::test]
+    async fn continuously_ready_input_gives_commands_and_cancellation_progress() {
+        let (publish, mut frames) = watch::channel(None);
+        let (commands, receiver) = mpsc::channel(8);
         let shutdown = CancellationToken::new();
-        shutdown.cancel();
-
+        let stopped = shutdown.clone();
+        let status = status();
+        let observed = status.clone();
+        let processing = tokio::spawn(process(
+            config(),
+            input(
+                stream::repeat_with(|| Ok(Frame::fill(255, 4, 2, PixelFormat::RGB24).unwrap()))
+                    .boxed(),
+            ),
+            receiver,
+            publish,
+            shutdown,
+            status,
+            None,
+        ));
+        frames.changed().await.unwrap();
+        let mut settings = config().processing;
+        settings.brightness_percent = 0.try_into().unwrap();
+        let (reply, applied) = oneshot::channel();
+        commands
+            .send(Configure {
+                settings,
+                revision: ConfigRevision::new(8),
+                reply,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), applied)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            test_session(config, frames.boxed(), shutdown)
+            observed.borrow().applied_revision,
+            Some(ConfigRevision::new(8))
+        );
+        loop {
+            frames.changed().await.unwrap();
+            let black = frames
+                .borrow_and_update()
+                .as_ref()
+                .unwrap()
+                .colors
+                .top
+                .sample_at(0.5)
+                == LinearColor::black();
+            if black {
+                break;
+            }
+        }
+        stopped.cancel();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), processing)
                 .await
+                .unwrap()
+                .unwrap()
                 .unwrap(),
             PipelineExit::Stopped
         );
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), dropped)
-                .await
-                .unwrap()
-                .is_err()
-        );
+    }
+    #[tokio::test]
+    async fn configuration_does_not_cancel_in_flight_source_read() {
+        let (prefix_read, prefix) = oneshot::channel();
+        let (continue_read, suffix) = oneshot::channel();
+        let stream = stream::once(async {
+            prefix_read.send(()).unwrap();
+            suffix.await.unwrap();
+            Ok(Frame::fill(255, 4, 2, PixelFormat::RGB24).unwrap())
+        })
+        .boxed();
+        let (publish, mut frames) = watch::channel(None);
+        let (commands, receiver) = mpsc::channel(8);
+        let processing = tokio::spawn(process(
+            config(),
+            input(stream),
+            receiver,
+            publish,
+            CancellationToken::new(),
+            status(),
+            None,
+        ));
+        prefix.await.unwrap();
+        let (reply, applied) = oneshot::channel();
+        commands
+            .send(Configure {
+                settings: config().processing,
+                revision: ConfigRevision::new(3),
+                reply,
+            })
+            .await
+            .unwrap();
+        applied.await.unwrap().unwrap();
+        continue_read.send(()).unwrap();
+        frames.changed().await.unwrap();
         assert_eq!(
-            receiver.try_recv(&mut [0; 1500]).unwrap_err().kind(),
-            ErrorKind::WouldBlock
+            frames.borrow().as_ref().unwrap().frame.as_slice(),
+            &[255; 24]
+        );
+        assert_eq!(processing.await.unwrap().unwrap(), PipelineExit::Completed);
+    }
+    #[tokio::test]
+    async fn cancellation_keeps_runtime_driven_until_native_release() {
+        let completed = CancellationToken::new();
+        let released = completed.clone();
+        let (release, gate) = oneshot::channel();
+        let monitor = tokio::spawn(async move {
+            gate.await.unwrap();
+            released.cancel();
+        });
+        let mut source = input(stream::pending().boxed());
+        source.completed = Some(completed.clone());
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        let processing = process(
+            config(),
+            source,
+            mpsc::channel(8).1,
+            watch::channel(None).0,
+            shutdown,
+            status(),
+            None,
+        );
+        tokio::pin!(processing);
+        assert!(futures::poll!(&mut processing).is_pending());
+        assert!(!completed.is_cancelled());
+        release.send(()).unwrap();
+        assert_eq!(processing.await.unwrap(), PipelineExit::Stopped);
+        monitor.await.unwrap();
+    }
+    #[tokio::test]
+    async fn output_failure_retains_context_and_cancels_capture() {
+        let mut output = PreparedOutput {
+            backend: WledRenderer::new("255.255.255.255:4048").unwrap(),
+            leds: [1; 4],
+        };
+        let (publish, frames) = watch::channel(None);
+        publish.send_replace(Some(Arc::new(ProcessedSnapshot {
+            frame: Frame::dummy(4, 2).unwrap(),
+            viewport: None,
+            colors: prysm_core::EdgeColors::default(),
+        })));
+        drop(publish);
+        assert!(
+            consume(&mut output, frames)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cannot send WLED frame")
         );
     }
-
-    #[actix::test]
-    async fn shutdown_and_startup_failure_wait_for_camera_release() {
-        for fail_output in [false, true] {
-            let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            let config = config(&receiver.local_addr().unwrap().to_string());
-            let completed = CancellationToken::new();
-            let (release, gate) = std::sync::mpsc::channel();
-            let (resource, mut dropped) = oneshot::channel::<()>();
-            let worker_completed = completed.clone();
-            let worker = std::thread::spawn(move || {
-                let _completed = worker_completed.drop_guard();
-                let _resource = resource;
-                gate.recv().unwrap();
-            });
-            let shutdown = CancellationToken::new();
-            shutdown.cancel();
-            let mut ready = None;
-            let session = run_session(
-                config,
-                crate::input::InputStream {
-                    frames: stream::pending().boxed(),
-                    completed: Some(completed),
-                    availability: None,
-                },
-                shutdown,
-                watch::channel(super::super::runtime::idle()).0,
-                &mut ready,
-                move |output, completion| {
-                    anyhow::ensure!(!fail_output, "test output startup failure");
-                    Renderers::default().create(output, completion)
-                },
-            );
-            futures::pin_mut!(session);
-            assert!(futures::poll!(&mut session).is_pending());
-            assert!(matches!(
-                dropped.try_recv(),
-                Err(oneshot::error::TryRecvError::Empty)
-            ));
-            release.send(()).unwrap();
-            let result = tokio::time::timeout(Duration::from_secs(2), session)
-                .await
-                .unwrap();
-            if fail_output {
-                assert_eq!(
-                    result.unwrap_err().to_string(),
-                    "test output startup failure"
-                );
-            } else {
-                assert_eq!(result.unwrap(), PipelineExit::Stopped);
+    #[test]
+    #[ignore = "local WLED scheduling measurement; run with --ignored --nocapture"]
+    fn measure_synchronous_wled_handler() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let mut renderer = WledRenderer::new(socket.local_addr().unwrap()).unwrap();
+        let colors = prysm_core::EdgeColors::fill(
+            LinearColor::new(0.2, 0.4, 0.8),
+            1920,
+            1080,
+            prysm_core::SampleDensity(50),
+        );
+        for count in [300, 65535] {
+            let mut timings = Vec::new();
+            for _ in 0..100 {
+                let start = std::time::Instant::now();
+                renderer.render_edges(&colors, [count, 0, 0, 0]).unwrap();
+                timings.push(start.elapsed());
+                while socket.recv(&mut [0; 1500]).is_ok() {}
             }
-            assert!(
-                dropped.await.is_err(),
-                "device must be released before returning"
+            timings.sort_unstable();
+            println!(
+                "WLED synchronous resample/pack/nonblocking loopback UDP: {count} LEDs p50={:?} p99={:?} max={:?}",
+                timings[50], timings[98], timings[99]
             );
-            worker.join().unwrap();
         }
     }
-
-    #[actix::test]
-    async fn capture_failure_is_reported() {
-        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = config(&receiver.local_addr().unwrap().to_string());
-        let frames = stream::once(async {
-            Err(std::io::Error::new(ErrorKind::NotConnected, "test capture failure").into())
+    #[tokio::test]
+    #[ignore = "local synthetic delivery/age measurement; run with --ignored --nocapture"]
+    async fn measure_processing_delivery_and_local_age() {
+        use std::{collections::HashMap, sync::Mutex, time::Instant};
+        const COUNT: usize = 240;
+        let originals: Vec<_> = (0..COUNT)
+            .map(|_| Frame::fill(128, 320, 180, PixelFormat::RGB24).unwrap())
+            .collect();
+        let timestamps = Arc::new(Mutex::new(HashMap::<usize, Instant>::new()));
+        let recorded = timestamps.clone();
+        let (gate, started) = oneshot::channel();
+        let mut gate = Some(gate);
+        let mut polled = 0;
+        let source = stream::iter(originals.clone().into_iter().map(Ok))
+            .inspect(move |frame| {
+                recorded.lock().unwrap().insert(
+                    frame.as_ref().unwrap().as_slice().as_ptr() as usize,
+                    Instant::now(),
+                );
+                polled += 1;
+                if polled == 32 {
+                    let _ = gate.take().unwrap().send(());
+                }
+            })
+            .boxed();
+        let (publish, mut frames) = watch::channel(None);
+        let status = status();
+        let observed = status.clone();
+        let (_commands, commands) = mpsc::channel(8);
+        let (finished, done) = oneshot::channel();
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let result = runtime.block_on(process(
+                config(),
+                input(source),
+                commands,
+                publish,
+                CancellationToken::new(),
+                status,
+                None,
+            ));
+            let _ = finished.send(result);
         });
-
-        let error = test_session(config, frames.boxed(), CancellationToken::new())
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let mut output = PreparedOutput {
+            backend: WledRenderer::new(socket.local_addr().unwrap()).unwrap(),
+            leds: [100, 50, 100, 50],
+        };
+        // Deliberately withhold the observer until 32 ready frames: latest-value delivery
+        // must coalesce them instead of accumulating a queue.
+        started.await.unwrap();
+        let mut ages = Vec::new();
+        while frames.changed().await.is_ok() {
+            let snapshot = frames.borrow_and_update().clone().unwrap();
+            output.render(&snapshot).unwrap();
+            let started =
+                timestamps.lock().unwrap()[&(snapshot.frame.as_slice().as_ptr() as usize)];
+            ages.push(started.elapsed());
+            while socket.recv(&mut [0; 1500]).is_ok() {}
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(done.await.unwrap().unwrap(), PipelineExit::Completed);
+        tokio::task::spawn_blocking(move || worker.join())
             .await
-            .unwrap_err();
-
-        assert_eq!(error.to_string(), "test capture failure");
-        assert_eq!(
-            error.downcast_ref::<std::io::Error>().unwrap().kind(),
-            ErrorKind::NotConnected
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed.borrow().frames_processed, COUNT as u64);
+        assert!(!ages.is_empty() && ages.len() <= COUNT - 30);
+        let delivered = ages.len();
+        ages.sort_unstable();
+        println!(
+            "Synthetic ready-source320x180,300LED loopback: processed={COUNT}, output deliveries={delivered}, latest-watch coalesced={}; local source-poll→WLED-render-return age p50={:?} p99={:?} max={:?}; initial32-frame observer gate intentionally stresses coalescing. Excludes source acquisition, hardware/network delivery and browser latency.",
+            COUNT - delivered,
+            ages[delivered / 2],
+            ages[(delivered - 1) * 99 / 100],
+            ages[delivered - 1]
         );
-    }
-
-    #[actix::test]
-    async fn final_render_failure_takes_precedence_over_eof() {
-        // Broadcast sends fail without SO_BROADCAST; no packet leaves the socket.
-        let config = config("255.255.255.255:4048");
-        let frames = stream::once(async { Ok(Frame::dummy(4, 4).unwrap()) });
-
-        let error = test_session(config, frames.boxed(), CancellationToken::new())
-            .await
-            .unwrap_err();
-
-        assert!(
-            error.to_string().contains("cannot send WLED frame"),
-            "{error:#}"
-        );
-    }
-
-    #[actix::test]
-    async fn startup_failure_returns_from_the_dedicated_thread() {
-        let config = config("127.0.0.1:4048");
-        let error = tokio::time::timeout(
-            Duration::from_secs(2),
-            start(
-                config.clone(),
-                watch::channel(super::super::runtime::idle()).0,
-                Renderers::default(),
-                crate::input::InputSource::new(config.input.clone()).unwrap(),
-            ),
-        )
-        .await
-        .unwrap()
-        .err()
-        .expect("startup must fail");
-
-        assert!(error.to_string().contains("Cannot open video"), "{error:#}");
+        drop(originals);
     }
 }

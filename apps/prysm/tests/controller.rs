@@ -215,7 +215,7 @@ left = 1
         asset.headers()["cache-control"],
         "public, max-age=31536000, immutable"
     );
-    for path in ["/", script, "/api/state"] {
+    for path in ["/", script, "/api/state", "/api/preview"] {
         let response = client
             .get(format!("http://{address}{path}"))
             .header("Host", "attacker.test")
@@ -224,6 +224,13 @@ left = 1
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
     }
+    let forbidden_preview = client
+        .get(format!("http://{address}/api/preview"))
+        .header("Origin", "http://attacker.test")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden_preview.status(), reqwest::StatusCode::FORBIDDEN);
     for path in ["/api/state", "/api/config"] {
         let response = client
             .put(format!("http://{address}{path}"))
@@ -304,29 +311,26 @@ left = 1
     })
     .await
     .unwrap();
-    if !cfg!(feature = "desktop") {
-        let before = std::fs::read(&config).unwrap();
-        let mut egui = saved.clone();
-        egui.output = prysm_contract::Output::Egui {};
-        let response = client
-            .put(&config_endpoint)
-            .json(&UpdateConfig {
-                expected_revision: egui.revision,
-                config: egui,
-            })
-            .send()
+    let before = std::fs::read(&config).unwrap();
+    let mut legacy = serde_json::to_value(&saved).unwrap();
+    legacy["output"] = serde_json::json!({"type":"egui"});
+    let response = client
+        .put(&config_endpoint)
+        .json(&serde_json::json!({
+            "expected_revision": saved.revision, "config": legacy,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        response
+            .text()
             .await
-            .unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(
-            response
-                .text()
-                .await
-                .unwrap()
-                .contains("--features desktop")
-        );
-        assert_eq!(std::fs::read(&config).unwrap(), before);
-    }
+            .unwrap()
+            .contains("egui output has been removed")
+    );
+    assert_eq!(std::fs::read(&config).unwrap(), before);
     let mut web_settings = saved;
     web_settings.web.listen = "127.0.0.1:0".parse().unwrap();
     web_settings.web.allowed_hosts = vec!["new-panel.local:8787".into()];
@@ -690,7 +694,8 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     let fixture = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
-    if let prysm_contract::Output::Wled { url: target, .. } = &mut config.output {
+    let prysm_contract::Output::Wled { url: target, .. } = &mut config.output;
+    {
         *target = url.parse().unwrap();
     }
     config.input = prysm_contract::Input::File {

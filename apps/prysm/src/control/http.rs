@@ -47,7 +47,7 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
         ("x-content-type-options", "nosniff"),
         (
             "content-security-policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         ),
     ] {
         response.headers_mut().insert(
@@ -58,12 +58,13 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
     response
 }
 
-pub(crate) fn router(app: App, web: WebConfig) -> Router {
+pub(crate) fn router_with_preview(app: App, web: WebConfig, preview: Router) -> Router {
     prysm_api::router()
         .split_for_parts()
         .0
         .with_state(app)
         .merge(prysm_web::assets_router())
+        .merge(preview)
         .fallback(async || {
             (
                 StatusCode::NOT_FOUND,

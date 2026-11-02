@@ -54,7 +54,7 @@ Upgrades restart services that were running and leave stopped services stopped.
 Service enablement and local systemd overrides are preserved. A service restart
 never restores saved On intent; starting capture remains explicit.
 
-SIGINT/TERM drains the actor pipeline and joins its thread. Normal capture errors
+SIGINT/TERM drains the pipeline and joins its thread. Normal capture errors
 leave the web UI and API running; retry is explicit. systemd restarts a crashed application.
 File input requires FFmpeg 9+ on PATH.
 

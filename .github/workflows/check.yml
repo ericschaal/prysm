@@ -172,13 +172,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libxkbcommon-dev libwayland-dev libgl1-mesa-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust
-      - name: Headless workspace tests and doctests
-        run: cargo +stable test --locked --workspace --no-default-features --exclude prysm-renderer-desktop
-      - name: Desktop workspace tests and doctests
+      - name: Default workspace tests and doctests
+        run: cargo +stable test --locked --workspace --no-default-features
+      - name: All-feature workspace tests and doctests
         run: cargo +stable test --locked --workspace --all-features
       - name: Compile and lint all targets, including examples
         run: |

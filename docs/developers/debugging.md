@@ -10,7 +10,7 @@ Use a disposable configuration when investigating changes; avoid overwriting a l
 3. Run Prysm in the foreground and retain stderr. On Debian use `journalctl -u prysm -f`.
 4. Inspect `GET /api/state` for pipeline phase, errors and operation status; inspect
    `GET /api/config` for the configuration/revision. See [HTTP contracts](control-api.md).
-5. Isolate the boundary: a known video file removes capture hardware; egui removes
+5. Isolate the boundary: a known video file removes capture hardware; browser preview isolates
    WLED transport. Keep resolution, source content and processing settings fixed when comparing.
 
 ```sh
@@ -39,7 +39,7 @@ are scoped to their stated hardware and workload; they are not universal perform
   for the default local device. The example requests 800×600 at 30 Hz and checks
   three frames; choose a supported mode in the example if your device rejects it.
   This is a diagnostic, not an installed application interface.
-- **Desktop:** run the [preview guide](../users/preview.md) in a native desktop session;
+- **Browser preview:** follow the [preview guide](../users/preview.md);
   check start/stop, EOF/replay, window close and agreement with the web panel.
 - **webOS:** use the supervisor's [isolated smoke procedure](../../apps/prysm-webos-service/README.md#isolated-hardware-test).
   The optional capture probe requires root SSH, changes temporary Luna registrations

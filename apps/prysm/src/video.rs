@@ -1,4 +1,4 @@
-//! `FFmpeg` file input shared by the egui and WLED outputs.
+//! `FFmpeg` file input shared by WLED output and browser preview.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -8,6 +8,10 @@ use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 use prysm_capture::{Frame, PixelFormat};
 use prysm_core::CaptureResolution;
+use std::{
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
+};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -21,10 +25,10 @@ pub fn video_feed(
     resolution: CaptureResolution,
     refresh_rate_hz: NonZeroU32,
     shutdown: CancellationToken,
-) -> Result<impl Stream<Item = Result<Frame>> + Send + 'static + use<>> {
+) -> Result<VideoFeed> {
     let [width, height] = resolution.dimensions();
     std::fs::File::open(path).with_context(|| format!("Cannot open video {}", path.display()))?;
-    // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and egui.
+    // FFmpeg 9+ maps HDR to the sRGB colors expected by the processor and browser preview.
     let filter = format!(
         "fps='min(source_fps,{refresh_rate_hz})',scale={width}:{height}:flags=area:intent=perceptual:\
          out_primaries=bt709:out_transfer=srgb:out_range=full,realtime"
@@ -48,20 +52,80 @@ pub fn video_feed(
         .context("FFmpeg stdout is unavailable")?;
     tracing::info!(path = %path.display(), "Playing video");
 
-    let frames =
-        futures::stream::try_unfold((child, stdout), move |(mut child, mut stdout)| async move {
+    let (exited, exit) = tokio::sync::oneshot::channel();
+    let child_shutdown = shutdown.child_token();
+    let stop_child = child_shutdown.clone();
+    let cleanup = tokio::spawn(async move {
+        let status = tokio::select! {
+            status = child.wait() => status.context("Failed to wait for FFmpeg"),
+            () = stop_child.cancelled() => {
+                // Observe reaping after cancellation; kill_on_drop alone is not a barrier.
+                child.start_kill().context("Failed to terminate FFmpeg")?;
+                child.wait().await.context("Failed to reap FFmpeg")
+            }
+        };
+        match status {
+            Ok(status) => {
+                let _ = exited.send(Ok(status));
+                Ok(())
+            }
+            Err(error) => {
+                let message = format!("{error:#}");
+                let _ = exited.send(Err(anyhow::anyhow!(message)));
+                Err(error)
+            }
+        }
+    });
+    let cancel = child_shutdown.drop_guard();
+    let frames = futures::stream::try_unfold(
+        (stdout, exit, cancel),
+        move |(mut stdout, exit, cancel)| async move {
             if let Some(frame) = read_frame(&mut stdout, resolution)
                 .await
                 .context("Failed to read FFmpeg frame")?
             {
-                return Ok(Some((frame, (child, stdout))));
+                return Ok(Some((frame, (stdout, exit, cancel))));
             }
-            let status = child.wait().await.context("Failed to wait for FFmpeg")?;
+            let status = exit.await.context("FFmpeg monitor ended unexpectedly")??;
             anyhow::ensure!(status.success(), "FFmpeg exited with {status}");
             tracing::info!("Video playback complete");
             Ok(None)
-        });
-    Ok(frames.take_until(shutdown.cancelled_owned()))
+        },
+    );
+    Ok(VideoFeed {
+        frames: frames.take_until(shutdown.cancelled_owned()).boxed(),
+        cleanup,
+    })
+}
+
+/// File frames plus the retained child-reaping task. Application composition owns both.
+pub struct VideoFeed {
+    frames: futures::stream::BoxStream<'static, Result<Frame>>,
+    cleanup: tokio::task::JoinHandle<Result<()>>,
+}
+impl VideoFeed {
+    pub(crate) fn into_tracked(
+        self,
+    ) -> (
+        futures::stream::BoxStream<'static, Result<Frame>>,
+        tokio::task::JoinHandle<Result<()>>,
+    ) {
+        (self.frames, self.cleanup)
+    }
+    /// Stop playback and wait until `FFmpeg` has been terminated and reaped.
+    pub async fn finish(self) -> Result<()> {
+        drop(self.frames);
+        self.cleanup.await.context("FFmpeg cleanup task panicked")?
+    }
+}
+impl Stream for VideoFeed {
+    type Item = Result<Frame>;
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        context: &mut TaskContext<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.frames.as_mut().poll_next(context)
+    }
 }
 
 async fn read_frame(
@@ -186,14 +250,13 @@ mod tests {
         }
         assert_eq!(capped_count, 2, "FFmpeg must cap the 10 Hz source at 5 Hz");
         let cancellation = CancellationToken::new();
-        let playback = video_feed(
+        let mut playback = video_feed(
             &path,
             CaptureResolution::new(32, 18).unwrap(),
             30.try_into().unwrap(),
             cancellation.clone(),
         )
         .unwrap();
-        futures::pin_mut!(playback);
         tokio::time::timeout(std::time::Duration::from_secs(10), playback.next())
             .await
             .unwrap()
@@ -201,6 +264,10 @@ mod tests {
             .unwrap();
         cancellation.cancel();
         assert!(playback.next().await.is_none());
+        playback
+            .finish()
+            .await
+            .expect("cancellation must terminate and reap FFmpeg");
         let invalid = directory.join("invalid.mkv");
         std::fs::write(&invalid, b"invalid video data").unwrap();
         let stream = video_feed(

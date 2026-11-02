@@ -7,7 +7,7 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Capture and process video for egui or WLED output"
+description = "Capture and process video for WLED with browser preview"
 
 [package.metadata.deb]
 license-file = "../../LICENSE"
@@ -34,16 +34,11 @@ restart-after-upgrade = true
 [lints]
 workspace = true
 
-[features]
-default = []
-desktop = ["dep:prysm-renderer-desktop", "prysm-api/client"]
-
 [dependencies]
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
-actix.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -53,12 +48,13 @@ prysm-capture = { path = "../../crates/capture/prysm-capture" }
 prysm-core = { path = "../../crates/common/prysm-core" }
 prysm-processor = { path = "../../crates/processing/prysm-processor" }
 prysm-renderer-wled = { path = "../../crates/rendering/prysm-renderer-wled" }
-prysm-renderer-desktop = { path = "../../crates/rendering/prysm-renderer-desktop", optional = true }
 tokio-util.workspace = true
 
 prysm-contract = { path = "../../crates/common/prysm-contract" }
 
-axum.workspace = true
+axum = { workspace = true, features = ["ws"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+base64 = "0.22"
 reqwest = { workspace = true, features = ["json", "rustls"] }
 serde_json.workspace = true
 prysm-api = { path = "../../crates/common/prysm-api" }

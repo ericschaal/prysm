@@ -1,7 +1,7 @@
 # Capture from a rooted LG TV
 
 The TV sender replaces an external capture card. You still need Prysm on a
-Linux or macOS host, and WLED for physical lighting (or a desktop preview).
+Linux or macOS host, and WLED for physical lighting, with optional browser preview.
 
 **Compatibility:** experimental, tested on LG 43QNED87A6D.BEUFLJP,
 webOS 25 (10.3.2-34). Requires a rooted TV and Homebrew Channel root execution.
@@ -17,8 +17,7 @@ It listens for the TV on TCP 19400 at 640×360/30 Hz.
 Run `prysm --config prysm-local.toml`. Allow TCP port 19400 from your TV through
 the host firewall. Note the host's LAN IP; the TV must connect to that address,
 not `localhost` or `0.0.0.0`. Dimensions and frame rate are controlled by Prysm.
-For preview output, build with `desktop` and replace only `[output]` with
-`type = "egui"`, removing `[output.leds]`. Keep the webOS input above.
+Open **Preview & tuning** in the browser to inspect the picture alongside WLED output.
 
 ## 2. Install the TV app
 
@@ -64,7 +63,7 @@ startup; leave it off until you have checked standby/wake and cold boot on your 
 ## 4. Start capture
 
 Wake the TV and show active video. In Prysm's host panel at `http://localhost:8787`,
-select **Screen sync** and turn the lights on (or **Start capture** in the desktop window).
+select **Screen sync** and turn the lights on .
 **Success:** the TV reports **Capturing** and Prysm displays frames or updates the LEDs.
 
 **Ready to capture** is normal while Prysm is idle. Off or WLED effects

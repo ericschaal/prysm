@@ -29,6 +29,7 @@ pub enum PipelinePhase {
     Idle,
     Starting,
     Running,
+    Stopping,
     Failed,
     Completed,
 }

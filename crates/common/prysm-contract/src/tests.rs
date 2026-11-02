@@ -163,10 +163,7 @@ fn every_input_output_pair_is_valid() {
         json!({"type":"file", "capture_resolution":[640,360], "refresh_rate_hz":30, "path":"/tmp/video.mkv"}),
         json!({"type":"webos", "capture_resolution":[640,360], "refresh_rate_hz":30, "listen":"127.0.0.1:19400"}),
     ];
-    let outputs = [
-        serde_json::to_value(&base.output).unwrap(),
-        json!({"type":"egui"}),
-    ];
+    let outputs = [serde_json::to_value(&base.output).unwrap()];
     for input in inputs {
         for output in &outputs {
             let mut config = base.clone();
@@ -178,7 +175,7 @@ fn every_input_output_pair_is_valid() {
                 config
             );
             config.source = Source::Wled;
-            assert_eq!(config.validate().is_ok(), !config.output.is_egui());
+            config.validate().unwrap();
         }
     }
 }
@@ -201,13 +198,9 @@ fn input_rates_are_required_positive_and_output_rates_are_rejected() {
         assert!(serde_json::from_value::<Input>(valid).is_ok());
     }
     let base: Config = toml::from_str(CONFIG).unwrap();
-    for mut output in [
-        serde_json::to_value(base.output).unwrap(),
-        json!({"type":"egui"}),
-    ] {
-        output["refresh_rate_hz"] = json!(30);
-        assert!(serde_json::from_value::<Output>(output).is_err());
-    }
+    let mut output = serde_json::to_value(base.output).unwrap();
+    output["refresh_rate_hz"] = json!(30);
+    assert!(serde_json::from_value::<Output>(output).is_err());
 }
 
 #[test]
@@ -266,7 +259,8 @@ fn wled_url_is_required_and_ddp_uses_its_host_with_fixed_port() {
         .unwrap();
         config.validate().unwrap();
         assert_eq!(config.output.ddp_address().unwrap(), address);
-        if let Output::Wled { url, .. } = &mut config.output {
+        let Output::Wled { url, .. } = &mut config.output;
+        {
             *url = "ftp://wled.local/".parse().unwrap();
         }
         assert!(config.validate().is_err());
@@ -280,5 +274,7 @@ fn wled_url_is_required_and_ddp_uses_its_host_with_fixed_port() {
     let mut legacy = serde_json::to_value(&base.output).unwrap();
     legacy["address"] = json!("wled.local:4048");
     assert!(serde_json::from_value::<Output>(legacy).is_err());
-    assert!(Output::Egui {}.ddp_address().is_err());
+    let legacy = serde_json::from_value::<Output>(json!({"type":"egui"})).unwrap_err();
+    assert!(legacy.to_string().contains("configure [output]"));
+    assert!(legacy.to_string().contains("browser"));
 }

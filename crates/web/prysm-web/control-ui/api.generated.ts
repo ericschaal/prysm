@@ -126,12 +126,9 @@ export interface components {
             /** @enum {string} */
             type: "wled";
             url: string;
-        } | {
-            /** @enum {string} */
-            type: "egui";
         };
         /** @enum {string} */
-        PipelinePhase: "idle" | "starting" | "running" | "failed" | "completed";
+        PipelinePhase: "idle" | "starting" | "running" | "stopping" | "failed" | "completed";
         PipelineStatus: {
             applied_revision?: components["schemas"]["ConfigRevision"] | null;
             error?: string | null;

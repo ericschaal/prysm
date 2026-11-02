@@ -43,12 +43,12 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 ## Set the mood
 
 <p align="center">
-  <img src="docs/images/control-panel.jpg" alt="Prysm control panel showing Set the mood, lights On, Screen sync selected, a WLED effects option, and Customize in WLED." width="400">
+  <img src="docs/images/control-panel.jpg" alt="Prysm Overview showing lights Off, Screen sync and WLED effects, capture status, saved/applied revisions and input/output context." width="400">
 </p>
 
-<p align="center"><sub>The actual control interface, shown with demo connection state.</sub></p>
+<p align="center"><sub>The actual control interface, verified with a local WLED fixture.</sub></p>
 
-One power button. Two color sources. A quiet status indicator.
+Overview controls power and color source. Preview & tuning combines picture inspection with all six live processing settings.
 
 - **Screen sync** lets Prysm supply live colors from your video.
 - **WLED effects** returns control to WLED's effects and presets.
@@ -70,7 +70,7 @@ USB capture device / video file / rooted LG TV → Prysm → WLED → LED strips
 Bring a Linux or macOS host, a video source, and a WLED controller with LED strips.
 A Raspberry Pi with 64-bit Raspberry Pi OS works for the packaged setup. On a
 compatible rooted LG TV, the experimental TV sender replaces the capture card.
-You can also try a video file in a desktop preview before setting up any LEDs.
+Inspect the source image, crop and edge colors in the browser while tuning live processing settings.
 
 ## Get started
 
@@ -80,7 +80,7 @@ Choose one setup guide:
 - **[Raspberry Pi / Debian arm64](docs/users/debian.md)** — install the package and run it as a service.
 - **[Linux or macOS with a capture device](docs/users/quickstart.md)** — configure capture and WLED, then start Prysm.
 - **[Rooted LG TV](docs/users/webos.md)** — install the TV sender and connect it to Prysm.
-- **[Try it without LEDs](docs/users/preview.md)** — preview a video file in a desktop window.
+- **[Preview and tune](docs/users/preview.md)** — inspect the picture and adjust live processing in the browser.
 
 Prysm starts idle. Open the panel, select **Screen sync**, and turn the lights on.
 See [settings and daily use](docs/users/configuration.md) or [troubleshooting](docs/users/troubleshooting.md).

@@ -10,9 +10,13 @@ export const client = createClient<paths>({
   fetch: request => fetch(request, { signal: AbortSignal.timeout(5000) }),
 });
 
+export class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
+
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
   if (result.data !== undefined) return result.data;
   const error = result.error;
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : `Request failed (${result.response.status}).`;
-  throw Error(message);
+  throw new ApiError(message, result.response.status);
 }

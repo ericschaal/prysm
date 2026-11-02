@@ -5,16 +5,12 @@ pub use application::run;
 pub mod config;
 pub mod control;
 mod input;
+mod preview;
 pub mod video;
 
 pub mod actors;
 
-/// Validate saved settings against this executable's enabled features.
+/// Validate saved settings before starting the application or saving a mutation.
 pub fn validate_config(config: &prysm_contract::Config) -> anyhow::Result<()> {
-    config.validate()?;
-    anyhow::ensure!(
-        cfg!(feature = "desktop") || !config.output.is_egui(),
-        "egui output requires building with --features desktop"
-    );
-    Ok(())
+    config.validate()
 }

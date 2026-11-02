@@ -1,7 +1,16 @@
-# Existing transitive version splits in the GUI, capture and HTTP dependency trees.
+# Existing transitive version splits in the capture and HTTP dependency trees.
 # Keep multiple_crate_versions enabled for newly duplicated crate families.
 # Recheck with cargo tree --locked --all-features --target all --duplicates on upgrades.
+# Axum WebSocket (SHA-1), embedded assets (SHA-2), and reqwest currently select
+# different crypto/base64/rand generations; these are transitive splits.
 allowed-duplicate-crates = [
+    "base64",
+    "block-buffer",
+    "cpufeatures",
+    "crypto-common",
+    "digest",
+    "rand_core",
+    "rand",
     "bitflags",
     "block2",
     "calloop",

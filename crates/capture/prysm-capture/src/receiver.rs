@@ -3,7 +3,13 @@ use crate::{Frame, Result, capture_channel};
 use anyhow::{Context, ensure};
 use futures::Stream;
 use prysm_webos_protocol::{ControlMessage, HELLO};
-use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
+use std::{
+    net::SocketAddr,
+    num::NonZeroU32,
+    sync::{Arc, Mutex},
+    thread::JoinHandle,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -17,6 +23,17 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 pub struct WebosReceiver {
     address: SocketAddr,
     requests: mpsc::Sender<Request>,
+    worker: Arc<Worker>,
+}
+struct Worker {
+    shutdown: CancellationToken,
+    completed: CancellationToken,
+    join: Mutex<Option<JoinHandle<()>>>,
+}
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+    }
 }
 
 struct Request {
@@ -60,20 +77,56 @@ impl WebosReceiver {
             .build()
             .context("cannot create webOS receiver runtime")?;
         let (requests, incoming) = mpsc::channel(1);
-        std::thread::Builder::new()
+        let shutdown = CancellationToken::new();
+        let completed = CancellationToken::new();
+        let worker_shutdown = shutdown.clone();
+        let worker_completed = completed.clone();
+        let join = std::thread::Builder::new()
             .name("prysm-webos-receiver".into())
             .spawn(move || {
+                let _completed = worker_completed.drop_guard();
                 let result = runtime.block_on(async move {
                     let listener =
                         TcpListener::from_std(listener).context("cannot attach webOS listener")?;
-                    serve(listener, incoming).await
+                    tokio::select! {
+                        () = worker_shutdown.cancelled() => Ok(()),
+                        result = serve(listener, incoming) => result,
+                    }
                 });
                 if let Err(error) = result {
                     tracing::error!(error = %format!("{error:#}"), "webOS listener failed");
                 }
             })
             .context("cannot start webOS receiver worker")?;
-        Ok(Self { address, requests })
+        Ok(Self {
+            address,
+            requests,
+            worker: Arc::new(Worker {
+                shutdown,
+                completed,
+                join: Mutex::new(Some(join)),
+            }),
+        })
+    }
+
+    /// Cancel the application-scoped listener and observe its worker exiting.
+    /// Pipeline stop does not call this; only replacement or application shutdown does.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        self.worker.shutdown.cancel();
+        self.worker.completed.cancelled().await;
+        let join = self
+            .worker
+            .join
+            .lock()
+            .map_err(|_| anyhow::anyhow!("receiver join lock poisoned"))?
+            .take();
+        if let Some(join) = join {
+            tokio::task::spawn_blocking(move || join.join())
+                .await
+                .context("cannot join webOS receiver")?
+                .map_err(|_| anyhow::anyhow!("webOS receiver worker panicked"))?;
+        }
+        Ok(())
     }
 
     /// The bound listening address.

@@ -11,6 +11,7 @@ use prysm_contract::Input;
 pub(crate) struct InputStream {
     pub frames: BoxStream<'static, Result<Frame>>,
     pub completed: Option<CancellationToken>,
+    pub cleanup: Option<tokio::task::JoinHandle<Result<()>>>,
     pub availability: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
@@ -30,7 +31,7 @@ impl InputSource {
         Ok(Self { config, receiver })
     }
 
-    pub fn reconfigure(&self, config: Input) -> Result<Self> {
+    pub async fn reconfigure(&self, config: Input) -> Result<Self> {
         if matches!((&self.config, &config),
             (Input::Webos { listen: previous, .. }, Input::Webos { listen, .. }) if previous == listen)
         {
@@ -39,8 +40,17 @@ impl InputSource {
                 receiver: self.receiver.clone(),
             })
         } else {
-            Self::new(config)
+            let next = Self::new(config)?;
+            self.shutdown().await?;
+            Ok(next)
         }
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        if let Some(receiver) = &self.receiver {
+            receiver.shutdown().await?;
+        }
+        Ok(())
     }
 
     pub fn into_stream(self, shutdown: CancellationToken) -> Result<InputStream> {
@@ -61,6 +71,7 @@ impl InputSource {
                         .map(|frame| frame.map_err(anyhow::Error::from))
                         .boxed(),
                     completed: Some(completed),
+                    cleanup: None,
                     availability: None,
                 }
             }
@@ -68,11 +79,17 @@ impl InputSource {
                 path,
                 refresh_rate_hz,
                 ..
-            } => InputStream {
-                frames: video_feed(path.as_path(), resolution, refresh_rate_hz, shutdown)?.boxed(),
-                completed: None,
-                availability: None,
-            },
+            } => {
+                let (frames, cleanup) =
+                    video_feed(path.as_path(), resolution, refresh_rate_hz, shutdown)?
+                        .into_tracked();
+                InputStream {
+                    frames,
+                    completed: None,
+                    cleanup: Some(cleanup),
+                    availability: None,
+                }
+            }
             Input::Webos {
                 refresh_rate_hz, ..
             } => {
@@ -84,6 +101,7 @@ impl InputSource {
                         .map(|frame| frame.map_err(anyhow::Error::from))
                         .boxed(),
                     completed: Some(completed),
+                    cleanup: None,
                     availability: Some(availability),
                 }
             }

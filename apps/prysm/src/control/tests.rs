@@ -1,349 +1,257 @@
-//! Exercise the real HTTP router and controller with egui channels, without a window.
-#![cfg(feature = "desktop")]
-
+//! Real command/reply and persistence behavior, with WLED isolated behind a loopback fixture.
 use super::*;
-use crate::{
-    actors::{
-        egui::Egui,
-        pipeline::Renderers,
-        runtime::{Pipeline, StopPipeline},
-    },
-    config::PipelineConfig,
-};
-use axum::{body::Body, http::Request};
-use prysm_api::App;
-use prysm_capture::Frame;
-use prysm_contract::{
-    Config, Input, OperationStatus, PipelinePhase, Source, StateResponse, Target, UpdateConfig,
-};
-use prysm_core::{EdgeColors, LinearColor};
-use prysm_renderer_desktop::DisplayFrame;
+use crate::{actors::runtime::Pipeline, config::PipelineConfig};
+use prysm_api::{App, Command};
+use prysm_contract::{Config, OperationStatus, Source, Target, UpdateConfig};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::watch;
-use tower::ServiceExt;
+use tokio::sync::{oneshot, watch};
 
-struct EguiController {
-    directory: tempfile::TempDir,
-    path: std::path::PathBuf,
-    router: axum::Router,
-    app: App,
-    lighting: Arc<LightingService>,
-    actor: actix::Addr<Controller>,
-    colors: watch::Receiver<EdgeColors>,
-    frames: watch::Receiver<DisplayFrame>,
+async fn settled(app: &mut App) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !matches!(
+                app.state.borrow_and_update().operation,
+                OperationStatus::Pending { .. }
+            ) {
+                break;
+            }
+            app.state.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
 }
 
-impl EguiController {
-    fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("egui.toml");
-        let mut config: Config =
-            toml::from_str(include_str!("../../../../prysm-egui.toml")).unwrap();
-        config.input = Input::File {
-            capture_resolution: [640, 360].try_into().unwrap(),
-            refresh_rate_hz: 30.try_into().unwrap(),
-            path: "/missing/prysm-egui-test.mkv"
-                .to_owned()
-                .try_into()
-                .unwrap(),
-        };
-        if let prysm_contract::Input::File {
-            capture_resolution, ..
-        } = &mut config.input
-        {
-            *capture_resolution = [16, 16].try_into().unwrap();
-        }
-        config.processing.smoothing_seconds = 0.0.try_into().unwrap();
-        config.processing.remove_black_bars = false;
-        std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-        let (config_tx, config_rx) = watch::channel(config.clone());
-        let (colors, colors_rx) = watch::channel(EdgeColors::default());
-        let (frames, frames_rx) = watch::channel(DisplayFrame {
-            frame: Frame::dummy(16, 16).unwrap(),
-            viewport: None,
-        });
-        let (pipeline, status) = Pipeline::with_renderers(
-            PipelineConfig::from(&config),
-            Renderers {
-                egui: Some(Egui { colors, frames }),
-            },
-        )
-        .unwrap();
-        let lighting = Arc::new(LightingService::new(config_rx, pipeline, status).unwrap());
-        let (actor, app) = Controller::spawn(path.clone(), &config, lighting.clone(), config_tx);
-        let router = http::router(app.clone(), config.web);
-        Self {
-            directory,
-            path,
-            router,
-            app,
-            lighting,
-            actor,
-            colors: colors_rx,
-            frames: frames_rx,
-        }
+#[tokio::test]
+async fn disconnected_config_caller_still_saves_applies_and_rejects_stale_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("prysm.toml");
+    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+    // No real hardware/network endpoint is contacted by configuration application.
+    let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+    {
+        *url = "http://127.0.0.1:1/".parse().unwrap();
     }
-
-    async fn request(
-        &self,
-        method: &str,
-        path: &str,
-        body: impl serde::Serialize,
-    ) -> axum::response::Response {
-        self.router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .header("Host", "localhost:8787")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    }
-
-    async fn settled(&mut self) -> StateResponse {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let state = self.app.state.borrow_and_update().clone();
-                if !matches!(
-                    state.operation,
-                    OperationStatus::Idle | OperationStatus::Pending { .. }
-                ) {
-                    return state;
-                }
-                self.app.state.changed().await.unwrap();
-            }
-        })
+    let (config_tx, config_rx) = watch::channel(config.clone());
+    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
+    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
+    let (controller, mut app) = Controller::spawn(path.clone(), &config, lighting, config_tx);
+    config.processing.brightness_percent = 42.try_into().unwrap();
+    let (reply, response) = oneshot::channel();
+    drop(response);
+    app.commands
+        .send(Command::SetConfig(
+            Box::new(UpdateConfig {
+                expected_revision: config.revision,
+                config: config.clone(),
+            }),
+            reply,
+        ))
         .await
-        .unwrap()
-    }
-
-    async fn target(&mut self, power: bool) -> StateResponse {
-        let response = self
-            .request(
-                "PUT",
-                "/api/state",
-                Target {
-                    power,
-                    source: Source::Prysm,
-                },
-            )
-            .await;
-        assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
-        // The previous operation may still be the latest published snapshot.
-        let accepted: prysm_contract::OperationResponse = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), 4096)
-                .await
-                .unwrap(),
-        )
         .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let state = self.settled().await;
-                if matches!(state.operation, OperationStatus::Succeeded { id } | OperationStatus::Failed { id, .. }
-                    if id == accepted.operation_id) {
-                    return state;
-                }
-                self.app.state.changed().await.unwrap();
-            }
-        }).await.unwrap()
-    }
-
-    async fn save(&mut self, config: Config) -> StateResponse {
-        let response = self
-            .request(
-                "PUT",
-                "/api/config",
-                UpdateConfig {
-                    expected_revision: config.revision,
-                    config,
-                },
-            )
-            .await;
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let saved: Config = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), 65536)
-                .await
-                .unwrap(),
-        )
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app.config.borrow_and_update().revision == config.revision {
+            app.config.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    settled(&mut app).await;
+    assert!(matches!(
+        app.state.borrow().operation,
+        OperationStatus::Succeeded { .. }
+    ));
+    let saved = crate::config::load(&path).unwrap();
+    assert_eq!(saved.processing.brightness_percent.get(), 42);
+    assert_eq!(*app.config.borrow(), saved);
+    assert_eq!(
+        app.state.borrow().applied_revision,
+        None,
+        "idle configuration is applied when processing starts"
+    );
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetConfig(
+            Box::new(UpdateConfig {
+                expected_revision: config.revision,
+                config,
+            }),
+            reply,
+        ))
+        .await
         .unwrap();
-        let state = self.settled().await;
-        assert_eq!(state.config_revision, saved.revision);
-        assert_eq!(crate::config::load(&self.path).unwrap(), saved);
-        state
-    }
-
-    async fn shutdown(self) {
-        self.actor.send(Shutdown).await.unwrap();
-        self.lighting
-            .pipeline
-            .send(StopPipeline)
-            .await
-            .unwrap()
-            .unwrap();
-    }
+    assert!(response.await.unwrap().is_err());
+    assert_eq!(crate::config::load(&path).unwrap(), saved);
+    controller.shutdown().await.unwrap();
+    pipeline.shutdown().await.unwrap();
 }
 
-#[actix::test]
-async fn egui_controller_serves_state_handles_failure_and_saves_settings_without_wled() {
-    let mut egui = EguiController::new();
-    let response = egui.request("GET", "/api/state", ()).await;
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    let snapshot = egui.lighting.snapshot().await;
-    assert!(!snapshot.observed.unwrap().power);
-    assert!(snapshot.error.is_none());
-    assert!(egui.app.config.borrow().output.wled_url().is_none());
+#[tokio::test]
+async fn pending_wled_operation_conflicts_and_shutdown_waits_for_accepted_work() {
+    target_transaction(false).await;
+}
 
-    let state = egui.target(true).await;
-    assert!(matches!(state.operation, OperationStatus::Failed { .. }));
-    assert_eq!(state.pipeline.phase, PipelinePhase::Failed);
-    assert!(!state.observed.unwrap().power);
-    assert!(state.observation_error.is_none());
+#[tokio::test]
+async fn source_saved_before_apply_failure_keeps_authoritative_revision() {
+    target_transaction(true).await;
+}
 
-    let mut config = egui.app.config.borrow().clone();
-    config.processing.shadow_lift_percent = 20.try_into().unwrap();
-    let saved = egui.save(config).await;
-    assert!(matches!(saved.operation, OperationStatus::Succeeded { .. }));
-    assert!(!saved.restart_required);
-    let response = egui
-        .request(
-            "PUT",
-            "/api/state",
+#[allow(
+    clippy::too_many_lines,
+    reason = "keep the gated WLED transaction and shutdown assertions together"
+)]
+async fn target_transaction(retire_pipeline: bool) {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let on = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = on.clone();
+    let changed = on.clone();
+    let command_entered = entered.clone();
+    let command_release = release.clone();
+    let router = Router::new().route("/json/si", get(move || {
+        let on = observed.load(std::sync::atomic::Ordering::Relaxed);
+        async move { Json(serde_json::json!({"state":{"on":on,"lor":2},"info":{"live":false,"lm":null}})) }
+    })).route("/json/state", post(move |Json(value): Json<serde_json::Value>| {
+        let (entered, release, changed) = (command_entered.clone(), command_release.clone(), changed.clone());
+        async move {
+            if value["on"] == true {
+                entered.notify_one();
+                release.notified().await;
+                changed.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            Json(serde_json::json!({"success":true}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture_shutdown = tokio_util::sync::CancellationToken::new();
+    let stopped = fixture_shutdown.clone();
+    let fixture = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(stopped.cancelled_owned())
+            .await
+            .unwrap();
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+    let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+    {
+        *url = format!("http://{address}/").parse().unwrap();
+    }
+    let (config_tx, config_rx) = watch::channel(config.clone());
+    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
+    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
+    let (controller, mut app) = Controller::spawn(
+        directory.path().join("prysm.toml"),
+        &config,
+        lighting,
+        config_tx,
+    );
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetTarget(
             Target {
                 power: true,
                 source: Source::Wled,
             },
-        )
-        .await;
-    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
-
-    let state = egui.target(false).await;
-    assert_eq!(state.pipeline.phase, PipelinePhase::Idle);
-    let mut config = egui.app.config.borrow().clone();
-    if let Input::File {
-        refresh_rate_hz, ..
-    } = &mut config.input
-    {
-        *refresh_rate_hz = 15.try_into().unwrap();
+            reply,
+        ))
+        .await
+        .unwrap();
+    let accepted = response.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetConfig(
+            Box::new(UpdateConfig {
+                expected_revision: config.revision,
+                config,
+            }),
+            reply,
+        ))
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+    assert!(
+        matches!(app.state.borrow().operation, OperationStatus::Pending { id } if id == accepted.operation_id)
+    );
+    if retire_pipeline {
+        pipeline.shutdown().await.unwrap();
     }
-    let saved = egui.save(config).await;
-    assert!(!saved.restart_required);
-    let response = egui
-        .request(
-            "PUT",
-            "/api/state",
-            Target {
-                power: true,
-                source: Source::Prysm,
-            },
-        )
-        .await;
-    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
-    egui.shutdown().await;
+    let stopping = controller.shutdown();
+    tokio::pin!(stopping);
+    assert!(
+        futures::poll!(&mut stopping).is_pending(),
+        "shutdown must retain accepted work"
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), stopping)
+        .await
+        .unwrap()
+        .unwrap();
+    settled(&mut app).await;
+    if retire_pipeline {
+        assert!(matches!(
+            app.state.borrow().operation,
+            OperationStatus::Failed { .. }
+        ));
+    } else {
+        assert!(matches!(
+            app.state.borrow().operation,
+            OperationStatus::Succeeded { .. }
+        ));
+    }
+    let saved = crate::config::load(&directory.path().join("prysm.toml")).unwrap();
+    assert_eq!(saved.source, Source::Wled);
+    assert_eq!(*app.config.borrow(), saved);
+    assert_eq!(app.state.borrow().config_revision, saved.revision);
+    assert!(on.load(std::sync::atomic::Ordering::Relaxed));
+    if !retire_pipeline {
+        pipeline.shutdown().await.unwrap();
+    }
+    fixture_shutdown.cancel();
+    fixture.await.unwrap();
 }
 
-#[actix::test]
-#[ignore = "requires FFmpeg 9+ on PATH"]
-async fn egui_controller_processes_file_applies_settings_restarts_and_replays_after_eof() {
-    let mut egui = EguiController::new();
-    let video = egui.directory.path().join("white.mkv");
-    assert!(
-        std::process::Command::new("ffmpeg")
-            .args([
-                "-v",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=white:s=16x16:r=30",
-                "-t",
-                "2",
-                "-c:v",
-                "ffv1",
-            ])
-            .arg(&video)
-            .status()
-            .unwrap()
-            .success()
-    );
-    let mut config = egui.app.config.borrow().clone();
-    config.input = Input::File {
-        capture_resolution: [16, 16].try_into().unwrap(),
-        refresh_rate_hz: 30.try_into().unwrap(),
-        path: video.to_str().unwrap().to_owned().try_into().unwrap(),
-    };
+#[tokio::test]
+async fn persistence_failure_preserves_saved_config_and_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config-is-a-directory");
+    std::fs::create_dir(&path).unwrap();
+    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+    let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+    *url = "http://127.0.0.1:1/".parse().unwrap();
+    let (config_tx, config_rx) = watch::channel(config.clone());
+    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
+    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
+    let (controller, app) = Controller::spawn(path.clone(), &config, lighting, config_tx);
+    let mut changed = config.clone();
+    changed.processing.brightness_percent = 42.try_into().unwrap();
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetConfig(
+            Box::new(UpdateConfig {
+                expected_revision: config.revision,
+                config: changed,
+            }),
+            reply,
+        ))
+        .await
+        .unwrap();
+    assert!(response.await.unwrap().is_err());
+    assert_eq!(*app.config.borrow(), config);
+    assert_eq!(app.state.borrow().config_revision, config.revision);
     assert!(matches!(
-        egui.save(config).await.operation,
-        OperationStatus::Succeeded { .. }
+        app.state.borrow().operation,
+        OperationStatus::Failed { .. }
     ));
-    assert_eq!(egui.lighting.status.borrow().phase, PipelinePhase::Idle);
-
-    assert!(matches!(
-        egui.target(true).await.operation,
-        OperationStatus::Succeeded { .. }
-    ));
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while egui.colors.borrow().top.sample_at(0.5).r < 0.9 {
-            egui.colors.changed().await.unwrap();
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(egui.frames.borrow().frame.width(), 16);
-    let mut config = egui.app.config.borrow().clone();
-    config.processing.brightness_percent = 0.try_into().unwrap();
-    assert!(!egui.save(config).await.restart_required);
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while egui.colors.borrow().top.sample_at(0.5) != LinearColor::black() {
-            egui.colors.changed().await.unwrap();
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(
-        egui.lighting.status.borrow().applied_revision,
-        Some(egui.app.config.borrow().revision)
-    );
-
-    let mut config = egui.app.config.borrow().clone();
-    if let prysm_contract::Input::File {
-        capture_resolution, ..
-    } = &mut config.input
-    {
-        *capture_resolution = [8, 8].try_into().unwrap();
-    }
-    assert!(matches!(
-        egui.save(config).await.operation,
-        OperationStatus::Succeeded { .. }
-    ));
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while egui.frames.borrow().frame.width() != 8 {
-            egui.frames.changed().await.unwrap();
-        }
-        let mut status = egui.lighting.status.clone();
-        while status.borrow().phase != PipelinePhase::Completed {
-            status.changed().await.unwrap();
-        }
-    })
-    .await
-    .unwrap();
-    assert!(egui.lighting.snapshot().await.observed.unwrap().power);
-    assert!(matches!(
-        egui.target(false).await.operation,
-        OperationStatus::Succeeded { .. }
-    ));
-    assert_eq!(egui.lighting.status.borrow().phase, PipelinePhase::Idle);
-    assert!(matches!(
-        egui.target(true).await.operation,
-        OperationStatus::Succeeded { .. }
-    ));
-    assert_ne!(
-        egui.lighting.status.borrow().phase,
-        PipelinePhase::Completed
-    );
-    egui.shutdown().await;
+    assert!(path.is_dir());
+    controller.shutdown().await.unwrap();
+    pipeline.shutdown().await.unwrap();
 }
