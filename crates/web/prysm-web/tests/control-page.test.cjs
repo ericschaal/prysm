@@ -127,6 +127,11 @@ function change(p, selector, value) {
 const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, source_height: 360, width: 480, height: 270,
   viewport: { x: 0, y: 20, width: 640, height: 320 }, colors: { top: [[255,0,0]], right: [[0,255,0]], bottom: [[255,0,0],[0,0,255]], left: [[0,255,0],[255,255,0]] }, jpeg: 'test' };
 (async () => {
+  await check(on, async p => {
+    assert.equal(p.element('.setup-diagnostics').textContent.includes('0.0.0.0'),false,'A listening address is not a video source');
+    assert.deepEqual([...p.document.querySelectorAll('.setup-diagnostics dt')].map(e=>e.textContent),['Light controller']);
+    assert.match(p.element('.setup-diagnostics dd').textContent,/192\.168\.18\.39/);
+  }, {...config(),input:{type:'webos',listen:'0.0.0.0:19400',refresh_rate_hz:30,capture_resolution:[640,360]}});
   await check(wledOn, async p => {
     assert.equal(p.element('.source-options').dataset.selected,'wled');
     assert.equal(p.element('#wled').textContent,'Open WLED ↗');
