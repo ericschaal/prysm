@@ -1,0 +1,25 @@
+{
+  "capabilities": {
+    "hardwareH264": true
+  },
+  "capturing": true,
+  "config": {
+    "autostart": true,
+    "compression": "h264-hardware",
+    "metrics": true,
+    "receiver": "192.168.18.18:19400",
+    "source": "both"
+  },
+  "enabled": true,
+  "error": null,
+  "lastLog": "2026-11-02T10:47:28.427363Z  INFO prysm_webos_capture::native::vtcapture: video capture started width=640 height=360 includes_ui=true\n",
+  "pid": 16424,
+  "power": "Active",
+  "receiverConnected": true,
+  "returnValue": true,
+  "revision": 21,
+  "senderRunning": true,
+  "stopping": false,
+  "subscribed": false,
+  "subscribers": 0
+}

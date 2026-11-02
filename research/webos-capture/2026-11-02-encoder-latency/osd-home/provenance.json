@@ -1,0 +1,19 @@
+{
+  "sha256": {
+    "probe.cpp": "5b5ec2745dbd0d2fe9940e2e2a8e1d8b59c86d0e8fcd0f5f61508c1d78276b1f",
+    "probe": "803764321273719ffba35a9414047be23cbe698ea10bdb8fbd1b11e3af9da86c",
+    "run-tv.py": "5d262f71a6de3e4189bc3b49dc32d4db2c531cb2a7602161ba40b68fbeb3fca3",
+    "build.sh": "e6b0b5de30083f6a663141dc6bbb91b123f9b79cbf39cc63b130a5a46b7c2558"
+  },
+  "installed_version": "0.1.23",
+  "capture_mode": 4,
+  "width": 640,
+  "height": 360,
+  "fps": 30,
+  "hardware_only": true,
+  "home_frames": 0,
+  "attempts_per_process": 11,
+  "retry_interval_seconds": 1,
+  "cold_start_processes": 2,
+  "video_control_frames": 90
+}

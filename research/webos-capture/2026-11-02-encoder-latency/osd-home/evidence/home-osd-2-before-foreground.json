@@ -1,0 +1,19 @@
+{
+  "foregroundAppInfo": [
+    {
+      "appId": "com.webos.app.home",
+      "displayId": 0,
+      "multiview": false,
+      "order": 0,
+      "params": {},
+      "pip": false,
+      "primary": true,
+      "processId": "2994",
+      "viewType": "normal",
+      "windowGroup": false,
+      "windowType": "_WEBOS_WINDOW_TYPE_CARD"
+    }
+  ],
+  "mode": "normal",
+  "returnValue": true
+}

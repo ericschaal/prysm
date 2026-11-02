@@ -153,3 +153,10 @@ Key evidence:
 - [Steady receiver rates and CPU](ui-combined/steady/results.json)
 - [Follow-up unchanged-decoder replay](ui-combined/steady/replay.log)
 - [Tested binary SHA-256 hashes](ui-combined/binary-hashes.json)
+
+## Follow-up: OSD-only cold start on Home
+
+A later [mode-4 Home test](osd-home/README.md) used fresh driver processes with
+MAIN disconnected. Preparation stayed pending through ten seconds of retries
+in both runs; no frames were produced. The same probe captured HDMI video after
+restoration. Mode 4 is not a working Home fallback through this tested API.

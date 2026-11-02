@@ -1,0 +1,77 @@
+{
+  "video": [
+    {
+      "displayOutput": {
+        "width": 0,
+        "y": 0,
+        "x": 0,
+        "height": 0
+      },
+      "extraInfo": null,
+      "sourceInput": {
+        "width": 0,
+        "y": 0,
+        "x": 0,
+        "height": 0
+      },
+      "zOrder": 0,
+      "frameRate": 0,
+      "scanType": "unknown",
+      "fullScreen": false,
+      "connected": false,
+      "height": 0,
+      "connectedSourcePort": 0,
+      "context": "unknown",
+      "muted": false,
+      "sink": "MAIN",
+      "connectedSource": "unknown",
+      "width": 0,
+      "appId": "unknown",
+      "videoInfo": null,
+      "opacity": 255,
+      "contentType": "unknown"
+    },
+    {
+      "displayOutput": {
+        "width": 0,
+        "y": 0,
+        "x": 0,
+        "height": 0
+      },
+      "extraInfo": null,
+      "sourceInput": {
+        "width": 0,
+        "y": 0,
+        "x": 0,
+        "height": 0
+      },
+      "zOrder": 1,
+      "frameRate": 0,
+      "scanType": "unknown",
+      "fullScreen": false,
+      "connected": false,
+      "height": 0,
+      "connectedSourcePort": 0,
+      "context": "",
+      "muted": true,
+      "sink": "SUB0",
+      "connectedSource": "unknown",
+      "width": 0,
+      "appId": "unknown",
+      "videoInfo": null,
+      "opacity": 255,
+      "contentType": "unknown"
+    }
+  ],
+  "clients": [
+    {
+      "activation": false,
+      "appId": "com.webos.app.hdmi1",
+      "sinkName": "MAIN",
+      "sourceName": "HDMI",
+      "clientId": "j6qbh64p5e6hf1l4"
+    }
+  ],
+  "returnValue": true,
+  "subscribed": false
+}
