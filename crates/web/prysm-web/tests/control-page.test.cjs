@@ -21,7 +21,7 @@ const off = { source: 'prysm', observed: { power: false, realtime: false, live_o
   pipeline_phase: 'idle' }, operation: { kind: 'idle' }, config_revision: revision, applied_revision: null, restart_required: false, pipeline: { phase: 'idle', applied_revision: null, frames_processed: 0, error: null },
   observation_error: null, wled_url: 'http://192.168.18.39/' };
 const on = { ...off, observed: { ...off.observed, power: true, realtime: true,
-  live_override: 0, pipeline_phase: 'running' }, applied_revision: revision };
+  live_override: 0, pipeline_phase: 'running' }, pipeline:{...off.pipeline,phase:'running'}, applied_revision: revision };
 const wledOn = { ...off, source: 'wled', observed: { ...off.observed, power: true } };
 const offline = { ...off, observed: null, observation_error: 'WLED offline' };
 const delay = () => new Promise(resolve => setTimeout(resolve, 5));
@@ -117,7 +117,7 @@ async function check(initial, test, initialConfig) {
   finally { await delay(); state.dom.window.close(); }
 }
 
-function button(p, text) { return [...p.document.querySelectorAll('button, .main-nav a')].find(element => element.textContent === text); }
+function button(p, text) { return [...p.document.querySelectorAll('button, .main-nav a')].find(element => (element.getAttribute('aria-label') || element.textContent) === text); }
 function tune(p) { button(p, 'Preview & tuning ').click(); }
 function change(p, selector, value) {
   const input = p.element(selector);
@@ -127,8 +127,34 @@ function change(p, selector, value) {
 const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, source_height: 360, width: 480, height: 270,
   viewport: { x: 0, y: 20, width: 640, height: 320 }, colors: { top: [[255,0,0]], right: [[0,255,0]], bottom: [[255,0,0],[0,0,255]], left: [[0,255,0],[255,255,0]] }, jpeg: 'test' };
 (async () => {
+  await check(wledOn, async p => {
+    assert.equal(p.element('.source-options').dataset.selected,'wled');
+    assert.equal(p.element('#wled').textContent,'Open WLED ↗');
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-pressed'),'true');
+  });
   await check(on, async p => {
     assert.equal(p.sockets.length, 0, 'Overview does no preview work');
+    assert.match(p.element('.led-layout svg title').textContent, /10 top, 10 right, 10 bottom, 10 left/);
+    assert.match(p.element('.screen-label').textContent, /40 LEDs/);
+    assert.equal(p.element('.led-layout figcaption'),null);
+    assert.equal(p.element('.overview-grid').children.length,2,'Overview has one controls card and one setup card');
+    assert.equal(p.element('.power-panel .diagnostics') !== null,true,'Diagnostics stay with the controls');
+    assert.deepEqual([...p.document.querySelectorAll('.power-diagnostics dt')].map(e=>e.textContent),['Capture','Last change','Frames processed','Settings revision']);
+    assert.equal(p.element('.power-diagnostics dd').textContent,'Capturing');
+    assert.match(p.element('.revision-values').textContent,/1 saved1 applied/);
+    assert.equal(p.element('[data-source="prysm"]').textContent.trim(),'Screen sync');
+    assert.equal(p.element('.source-options').dataset.selected,'prysm');
+    assert.equal(p.element('#wled'),null,'WLED link stays with the WLED source');
+    assert.ok(p.element('.setup-flow').compareDocumentPosition(p.element('.led-layout')) & 4,'Signal path comes before the LED layout');
+    assert.equal(p.element('footer'),null);
+    assert.equal(p.element('#remove_black_bars').getAttribute('role'),'switch');
+    assert.ok(p.element('.picture-settings #brightness_percent'));
+    assert.ok(p.element('.picture-settings #smoothing_seconds'));
+    assert.ok(p.element('.advanced #remove_black_bars'));
+    assert.equal(p.element('#color-heading').textContent,'Color & motion');
+    assert.equal(p.element('label[for="remove_black_bars"]').textContent,'Remove black bars');
+    assert.equal(p.element('.diagnostics').open, false, 'Internal counters stay behind disclosure');
+    assert.doesNotMatch(p.element('.settings').textContent, /4,294,967,295|3.402823|Range:/);
     assert.equal(p.document.querySelectorAll('nav a').length, 2);
     tune(p); await delay();
     assert.equal(p.document.querySelectorAll('.settings input').length, 6);
@@ -147,7 +173,7 @@ const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, so
     assert.equal(p.requests.filter(r => r.method === 'PUT').length, 0, 'Live tuning issues no power or restart request');
     assert.match(p.element('#settings-status').textContent, /Saved/);
     await p.refresh({ ...p.data, applied_revision: '2', pipeline: {...p.data.pipeline, applied_revision:'2', phase:'running'} });
-    assert.match(p.element('#settings-status').textContent, /Applied.*2/);
+    assert.match(p.element('#settings-status').textContent, /Applied to your lights/);
   });
   await check(on, async p => {
     tune(p); await delay(); change(p, '#brightness_percent', 40); await delay();
@@ -202,27 +228,119 @@ const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, so
     assert.match(p.element('.tuning-grid').textContent,/Saved values may differ/);
   });
   await check(off, async p => {
+    tune(p); await delay();
+    assert.match(p.element('.preview-note').textContent,/Lights are off/);
+    assert.equal(p.sockets.length,0,'The note does not open preview or change lighting');
+    assert.equal(button(p,'Open preview').matches(':disabled'),true);
+    button(p,'Open preview').click(); await delay();
+    assert.equal(p.sockets.length,0,'Preview cannot be opened while the lights are off');
+    await p.refresh(wledOn);
+    assert.match(p.element('.preview-note').textContent,/WLED effects are selected/);
+    assert.equal(button(p,'Open preview').matches(':disabled'),true);
+    await p.refresh({...on,pipeline:{...on.pipeline,phase:'idle'}});
+    assert.match(p.element('.preview-note').textContent,/Screen sync is stopped/);
+    await p.refresh({...on,pipeline:{...on.pipeline,phase:'running'}});
+    assert.equal(p.element('.preview-note'),null,'No warning while Screen sync is running');
+    assert.equal(p.requests.filter(r=>r.method==='PUT').length,0);
+  });
+  await check(on, async p => {
+    tune(p); await delay(); button(p,'Open preview').click();
+    await until(()=>p.sockets.length===1 && p.sockets[0].sent.length===1);
+    let finishDecode; p.decode=()=>new Promise(resolve=>{finishDecode=resolve;});
+    const pending=p.sockets[0].message(frame); await delay();
+    await p.refresh(off);
+    assert.equal(p.sockets[0].closed,true,'Power off tears down preview transport');
+    assert.equal(button(p,'Open preview').matches(':disabled'),true);
+    assert.equal(p.element('.preview .badge').textContent,'Unavailable');
+    finishDecode(); await pending;
+    assert.equal(p.draws.length,0,'An in-flight decode cannot draw after power off');
+    await p.refresh(on);
+    assert.equal(button(p,'Open preview').matches(':disabled'),false);
+    assert.equal(p.sockets.length,1,'Power on does not reopen preview automatically');
+    assert.equal(p.element('.preview .badge').textContent,'Closed');
+  });
+  await check(off, async p => {
     p.element('#power').click(); p.element('#power').click();
     await until(()=>p.requests.some(r=>r.method==='PUT')); await delay();
     assert.equal(p.requests.filter(r=>r.method==='PUT').length,1);
-    assert.equal(p.element('.power-heading h2').textContent,'Off','202 does not optimistically change power');
+    assert.equal(p.element('.power-heading h2').textContent,'Off','Keep the observed state steady while waiting');
+    assert.equal(p.element('#power').getAttribute('aria-pressed'),'false','202 does not optimistically change power');
+    assert.equal(p.element('#power').getAttribute('aria-busy'),'true','The loading ring follows the pending operation');
+    assert.equal(p.element('.source[aria-busy=true]'),null,'Power changes do not load the source selector');
+    assert.equal(p.element('.power-panel').classList.contains('is-blooming'),false,'Pending power-on does not illuminate the card');
+    assert.equal(p.element('.power-control'),null,'No second progress caption');
+    assert.equal(p.element('#status'),null,'No duplicate steady-state or progress sentence');
     assert.equal(p.element('#power').disabled,true);
     await p.refresh({...on,operation:{kind:'succeeded',id:operationId}});
     assert.equal(p.element('.power-heading h2').textContent,'On');
+    assert.equal(p.element('#power').getAttribute('aria-busy'),'false','Loading stops once the operation completes');
+    await until(()=>p.element('.power-panel').classList.contains('is-blooming'));
+    assert.equal(p.element('.power-panel').classList.contains('is-on'),true,'The bloom starts on observed power-on');
+    await until(()=>!p.element('.power-panel').classList.contains('is-blooming'));
+    await p.refresh({...on,operation:{kind:'succeeded',id:operationId}});
+    assert.equal(p.element('.power-panel').classList.contains('is-blooming'),false,'Polling does not replay the bloom');
     p.element('[data-source="wled"]').click(); await until(()=>p.requests.filter(r=>r.method==='PUT').length===2);
     assert.deepEqual(JSON.parse(p.requests.filter(r=>r.method==='PUT')[1].body),{power:true,source:'wled'});
+    await delay();
+    assert.equal(p.element('#power').getAttribute('aria-busy'),'false','Source changes do not spin the power button');
+    assert.equal(p.element('[data-source="wled"]').getAttribute('aria-busy'),'true');
+    assert.equal(p.element('[data-source="prysm"]').getAttribute('aria-busy'),'false');
+    assert.equal(p.element('#power').disabled,true,'The API still serializes changes');
+    await p.refresh({...wledOn,operation:{kind:'succeeded',id:operationId}});
+    assert.equal(p.element('.source[aria-busy=true]'),null,'Source loading clears on completion');
+    assert.equal(p.element('#power').disabled,false);
+  });
+  await check(on, async p => {
+    p.put=()=>response({message:'Source unavailable'},503);
+    p.element('[data-source="wled"]').click();
+    await until(()=>p.element('.notice.error'));
+    assert.equal(p.element('.source[aria-busy=true]'),null,'A rejected request clears source loading');
+    assert.equal(p.element('#power').getAttribute('aria-busy'),'false');
+  });
+  await check(on, async p => {
+    assert.equal(p.element('.power-panel').classList.contains('is-blooming'),false,'An already-on light does not bloom on page load');
+    p.element('#power').click(); await until(()=>p.requests.some(r=>r.method==='PUT')); await delay();
+    assert.equal(p.element('#power').getAttribute('aria-busy'),'true');
+    assert.equal(p.element('.power-panel').classList.contains('is-blooming'),false,'Turning off never starts a bloom');
+    await p.refresh({...off,operation:{kind:'succeeded',id:operationId}});
+    assert.equal(p.element('.power-panel').classList.contains('is-blooming'),false);
   });
   await check(off, async p => {
     p.element('#power').click(); await until(()=>p.requests.some(r=>r.method==='PUT')); await delay();
-    await p.refresh(off); assert.match(p.element('.status-stack').textContent,/completion is unknown/);
-    p.element('#retry').click(); await until(()=>p.requests.filter(r=>r.method==='PUT').length===2);
+    await p.refresh(off); assert.match(p.element('.power-panel').textContent,/completion is unknown/);
+    p.element('#power').click(); await until(()=>p.requests.filter(r=>r.method==='PUT').length===2);
     assert.deepEqual(JSON.parse(p.requests.filter(r=>r.method==='PUT')[1].body),{power:true,source:'prysm'});
   });
   await check(offline, async p => {
-    assert.equal(p.element('#power').disabled,true);
-    assert.equal(p.element('#off').disabled,false,'Off remains possible without WLED observation');
-    p.element('#off').click(); await until(()=>p.requests.some(r=>r.method==='PUT'));
+    assert.equal(p.element('#power').disabled,false,'The main power button keeps the off fallback available');
+    assert.equal(p.element('#power').getAttribute('aria-label'),'Turn lights off');
+    assert.equal(p.element('#power').hasAttribute('aria-pressed'),false,'Unknown power must not be announced as off');
+    assert.match(p.element('#status').textContent,/off command/);
+    assert.equal(p.element('.sources').disabled,true,'Source changes require a known power state');
+    assert.equal(p.element('.power-panel').querySelectorAll('button:enabled').length,1);
+    assert.equal(p.element('#retry'),null);
+    assert.equal(p.element('#off'),null);
+    p.element('#power').click(); await until(()=>p.requests.some(r=>r.method==='PUT'));
     assert.deepEqual(JSON.parse(p.requests.find(r=>r.method==='PUT').body),{power:false,source:'prysm'});
+  });
+  await check({...off, observed:{...off.observed,live_override:0}}, async p => {
+    assert.equal(p.element('.power-heading h2').textContent,'Off','Sync mismatch must not hide observed power');
+    assert.equal(p.element('#power').getAttribute('aria-label'),'Turn lights on');
+    assert.equal(p.element('#retry'),null,'Mismatch does not add competing actions');
+    p.element('#power').click(); await until(()=>p.requests.some(r=>r.method==='PUT'));
+    assert.deepEqual(JSON.parse(p.requests.find(r=>r.method==='PUT').body),{power:true,source:'prysm'});
+  });
+  await check({...on, observed:{...on.observed,realtime:false,pipeline_phase:'idle'}}, async p => {
+    assert.equal(p.element('.power-heading h2').textContent,'On');
+    assert.match(p.element('#status').textContent,/Select Screen sync/);
+    p.element('[data-source="prysm"]').click(); await until(()=>p.requests.some(r=>r.method==='PUT'));
+    assert.deepEqual(JSON.parse(p.requests.find(r=>r.method==='PUT').body),{power:true,source:'prysm'},'Reselecting the source reconnects without an extra retry button');
+  });
+  await check(on, async p => {
+    p.failure='Network unavailable'; await p.refresh();
+    assert.equal(p.element('#power').disabled,true,'A controller outage disables the off fallback');
+    assert.equal(p.element('.power-panel').querySelectorAll('button:enabled').length,0);
+    assert.match(p.element('#status').textContent,/Reconnecting automatically/);
   });
   await check(on, async p => {
     tune(p); await delay(); button(p,'Open preview').click(); await until(()=>p.sockets.length===1 && p.sockets[0].sent.length===1);
@@ -237,20 +355,23 @@ const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, so
     assert.ok(p.draws.some(draw=>JSON.stringify(draw)===JSON.stringify(['fill','rgb(255,0,0)',12,282,240,12])),'Bottom colors keep source left-to-right coordinates');
     assert.ok(p.draws.some(draw=>JSON.stringify(draw)===JSON.stringify(['fill','rgb(0,255,0)',0,12,12,135])),'Left colors keep source top-to-bottom coordinates');
     await until(()=>socket.sent.length===2);
+    assert.equal(p.element('[aria-label="Preview controls"]').getAttribute('role'), 'group');
     button(p,'Pause preview').click(); await delay(); assert.equal(socket.closed,true);
-    assert.match(p.element('.preview-state').textContent,/Last displayed image retained/);
+    assert.equal(p.element('.preview .badge').textContent,'Paused');
+    assert.equal(p.element('.preview-state'),null,'Pausing does not add a status paragraph');
+    assert.equal(p.element('.preview-rate'),null,'No duplicate state below the picture');
     button(p,'Resume preview').click(); await until(()=>p.sockets.length===2);
     p.hidden=true;p.document.dispatchEvent(new p.dom.window.Event('visibilitychange'));await delay();assert.equal(p.sockets[1].closed,true);
     p.hidden=false;p.document.dispatchEvent(new p.dom.window.Event('visibilitychange'));await until(()=>p.sockets.length===3);
     button(p,'Overview').click(); await delay();assert.equal(p.sockets[2].closed,true,'Navigation tears down preview transport');
     assert.ok(p.element('.preview-meta').textContent.includes('Frame 9'),'Last image metadata is retained');
   });
-  await check(on, async p => {
+  await check({...on,pipeline:{...on.pipeline,phase:'running'}}, async p => {
     tune(p); await delay(); button(p,'Open preview').click(); await until(()=>p.sockets.length===1);
-    await p.sockets[0].message({type:'busy'}); await delay();assert.match(p.element('.preview-state').textContent,/busy/);
+    await p.sockets[0].message({type:'busy'}); await delay();assert.equal(p.element('.preview .badge').textContent,'Waiting');assert.equal(p.element('.preview-state'),null,'Automatic retries do not add status paragraphs');
     await until(()=>p.sockets[0].sent.length===2);
     await p.sockets[0].message({type:'frame',jpeg:'invalid'});await delay();assert.equal(p.sockets[0].closed,true);assert.ok(button(p,'Retry preview'));
-    button(p,'Close preview').click();await delay();assert.match(p.element('.preview-state').textContent,/closed/);
+    button(p,'Close preview').click();await delay();assert.equal(p.element('.preview .badge').textContent,'Closed');
     assert.equal(p.requests.filter(r=>r.method==='PUT').length,0,'Preview failure never changes lighting');
   });
   await check(on, async p => {

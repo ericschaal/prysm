@@ -5,10 +5,11 @@ export function useControl() {
   const [data, setData] = useState<StateResponse | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingControl, setPendingControl] = useState<'power' | Target['source'] | null>(null);
   const [awaiting, setAwaiting] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [requestError, setRequestError] = useState('');
-  const operation = useRef({ busy: false, polling: false, revision: 0, awaiting: null as string | null, requested: null as Target | null });
+  const operation = useRef({ busy: false, polling: false, revision: 0, awaiting: null as string | null });
   const poll = useCallback(async () => {
     const current = operation.current;
     if (document.hidden || current.busy || current.polling) return;
@@ -30,8 +31,8 @@ export function useControl() {
       if (current.awaiting !== null && snapshot.state.operation.kind !== 'pending') {
         current.awaiting = null;
         setAwaiting(null);
+        setPendingControl(null);
         setRequestError(snapshot.state.operation.kind === 'idle' ? 'Prysm restarted; completion is unknown. Check status before retrying.' : '');
-        if (snapshot.state.operation.kind === 'succeeded') current.requested = null;
       }
     } catch (error) {
       if (revision === current.revision) setConnectionError(error instanceof Error ? error.message : 'Request failed.');
@@ -44,17 +45,17 @@ export function useControl() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); operation.current.revision += 1; };
   }, [poll]);
 
-  async function setState(target: Target) {
+  async function setState(target: Target, control: 'power' | 'source') {
     const current = operation.current;
     if (current.busy || data?.operation.kind === 'pending' || current.awaiting !== null) return;
     current.busy = true;
     current.revision += 1;
-    current.requested = target;
-    setBusy(true); setRequestError('');
+    setBusy(true); setPendingControl(control === 'power' ? 'power' : target.source); setRequestError('');
     try {
       const accepted = unwrap(await client.PUT('/api/state', { body: target }));
       current.awaiting = accepted.operation_id; setAwaiting(accepted.operation_id);
     } catch (error) {
+      setPendingControl(null);
       setRequestError(`${error instanceof Error ? error.message : 'Request failed.'} The change may have been accepted. Check status before retrying.`);
     } finally { current.busy = false; setBusy(false); void poll(); }
   }
@@ -70,5 +71,5 @@ export function useControl() {
       return saved;
     } finally { current.busy = false; setBusy(false); void poll(); }
   }
-  return { data, config, busy: busy || awaiting !== null || data?.operation.kind === 'pending', connectionError, requestError, requested: operation.current.requested, poll, setState, saveConfig };
+  return { data, config, pendingControl, busy: busy || awaiting !== null || data?.operation.kind === 'pending', connectionError, requestError, poll, setState, saveConfig };
 }

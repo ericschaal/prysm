@@ -50,8 +50,10 @@ export function Preview({ active, data }: { active: boolean; data: StateResponse
   const metadata = useRef<HTMLParagraphElement>(null);
   const hasFrame = useRef(false);
   const phase = data?.pipeline.phase ?? 'idle';
-  const stale = phase !== 'running';
+  const previewEnabled = data?.observed?.power === true && data.source === 'prysm' && phase === 'running';
+  const previewNote = !data ? '' : data.observed?.power === false ? 'Lights are off. Turn them on in Overview to use Screen sync.' : data.source !== 'prysm' ? 'WLED effects are selected. Choose Screen sync in Overview to follow your picture.' : phase !== 'running' && phase !== 'starting' ? 'Screen sync is stopped. Any displayed picture is from an earlier capture.' : '';
   useEffect(() => {
+    if (!previewEnabled) { setOpened(false); setPaused(false); return; }
     if (!opened || paused || !active || document.hidden) return;
     let disposed = false;
     let outstanding = false;
@@ -97,15 +99,14 @@ export function Preview({ active, data }: { active: boolean; data: StateResponse
     const visibility = () => { if (document.hidden) { socket.close(); clearTimeout(timer); clearTimeout(timeout); } };
     document.addEventListener('visibilitychange', visibility);
     return () => { disposed = true; clearTimeout(timer); clearTimeout(timeout); document.removeEventListener('visibilitychange', visibility); socket.close(); if (image) image.src = ''; };
-  }, [opened, paused, active, attempt]);
+  }, [opened, paused, active, attempt, previewEnabled]);
   useEffect(() => { const resume = () => { if (!document.hidden) setAttempt(previous => previous + 1); }; document.addEventListener('visibilitychange', resume); return () => document.removeEventListener('visibilitychange', resume); }, []);
   return <section className="preview card" aria-labelledby="preview-heading">
-    <div className="section-heading"><div><p className="eyebrow">PICTURE OBSERVER</p><h2 id="preview-heading">Preview</h2></div><span className="badge">{phase}</span></div>
-    <p>The image, detected crop and perimeter colors come from the same processing pass.</p>
-    <div className="preview-surface"><canvas ref={canvas} width="504" height="294" role="img" aria-label="Captured source image with detected crop and computed edge colors" />{!opened && !hasFrame.current ? <span>Preview is closed</span> : null}</div>
-    <p className="preview-meta" ref={metadata}>No frame displayed</p>
-    <p className="preview-state" role="status" aria-live="polite">{!opened ? 'Preview closed.' : paused ? 'Preview paused.' : status} {hasFrame.current && (stale || paused || !opened || failed) ? `Last displayed image retained · capture ${phase}.` : null}</p>
-    <div className="button-row">{!opened ? <button type="button" className="primary" onClick={() => { setOpened(true); setPaused(false); }}>Open preview</button> : <><button type="button" onClick={() => setPaused(previous => !previous)}>{paused ? 'Resume preview' : 'Pause preview'}</button><button type="button" onClick={() => setOpened(false)}>Close preview</button>{failed ? <button type="button" onClick={() => setAttempt(previous => previous + 1)}>Retry preview</button> : null}</>}</div>
-    <p className="caption">Diagnostic preview · up to 8 fps. Capture waiting or stopped? The last image is not live.</p>
+    <div className="section-heading"><div><p className="eyebrow">SEE YOUR COLORS</p><h2 id="preview-heading">Picture preview</h2></div><span role="status" aria-live="polite" className={`badge ${previewEnabled && opened && !paused && !failed && status === 'Preview connected' ? 'live-badge' : ''}`}>{!previewEnabled ? 'Unavailable' : !opened ? 'Closed' : paused ? 'Paused' : failed ? 'Disconnected' : status === 'Preview connected' ? 'Live' : 'Waiting'}</span></div>
+    <p className={previewNote ? "preview-note" : undefined} role={previewNote ? "note" : undefined}>{previewNote || 'Your picture, with the colors sent to each edge.'}</p>
+    <div className="preview-surface"><canvas ref={canvas} width="504" height="294" role="img" aria-label="Captured source image with detected crop and computed edge colors" />{!opened && !hasFrame.current ? <span>See what your lights see</span> : null}</div>
+    <div className="preview-toolbar"><fieldset className="preview-controls" role="group" aria-label="Preview controls" disabled={!previewEnabled}>{!opened ? <button type="button" aria-label="Open preview" onClick={() => { setOpened(true); setPaused(false); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6Z" /></svg>Open preview</button> : <><button type="button" aria-label={paused ? 'Resume preview' : 'Pause preview'} onClick={() => setPaused(previous => !previous)}><svg viewBox="0 0 20 20" aria-hidden="true">{paused ? <path d="m7 4 9 6-9 6Z" /> : <path d="M5 4h4v12H5Zm7 0h4v12h-4Z" />}</svg>{paused ? 'Resume' : 'Pause'}</button><button type="button" aria-label="Close preview" onClick={() => setOpened(false)}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5h10v10H5Z" /></svg>Close</button>{failed ? <button type="button" aria-label="Retry preview" onClick={() => setAttempt(previous => previous + 1)}>Retry</button> : null}</>}</fieldset></div>
+    {previewEnabled && opened && !paused && failed ? <p className="preview-state error" role="alert">{status}</p> : null}
+    <details className="diagnostics"><summary>Frame details</summary><p className="preview-meta" ref={metadata}>No frame displayed</p></details>
   </section>;
 }
