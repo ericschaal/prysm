@@ -215,7 +215,10 @@ jobs:
           dpkg-deb --fsys-tarfile target/debian/*.deb | tar -tf - > /tmp/prysm-package-files
           grep -Eq '^\./usr/bin/prysm$' /tmp/prysm-package-files
           grep -Eq '/prysm\.service$' /tmp/prysm-package-files
-          ! grep -Eq '/prysm-web(\.service)?$' /tmp/prysm-package-files
+          if grep -Eq '/prysm-web(\.service)?$' /tmp/prysm-package-files; then
+            echo 'Standalone web proxy must not be packaged' >&2
+            exit 1
+          fi
           apt-get install -y ./target/debian/*.deb
           runuser -u prysm -- prysm --config /etc/prysm/prysm.toml check
           test "$(stat -c '%U:%G %a' /etc/prysm)" = "prysm:prysm 700"
