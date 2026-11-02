@@ -5,7 +5,7 @@ lock and five-second TERM-to-KILL deadline. It owns all service operations,
 configuration, persistence and permission setup. The browser UI uses native Luna
 subscriptions with reconnect; there is no Node service or setup helper.
 
-The single [package build](../../../packaging/webos/README.md) produces both
+The single [package build](../../packaging/webos/README.md) produces both
 binaries and `target/webos-ipk/io.prysm.capture_0.1.16_all.ipk`. The installed TV
 setup is changed only by an explicit installation, not by building.
 

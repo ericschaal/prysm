@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const output = new URL('openapi.json', import.meta.url);
 const schema = execFileSync('cargo', [
   'run', '--locked', '--quiet', '-p', 'prysm-api', '--bin', 'export-openapi',

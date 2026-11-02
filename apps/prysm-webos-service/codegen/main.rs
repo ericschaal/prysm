@@ -34,7 +34,7 @@ fn main() -> Result<()> {
             "Glib",
         ),
         (
-            "../../../webos-capture/src/native/generated/luna",
+            "../../../prysm-webos-capture/src/native/generated/luna",
             "luna-service2/lunaservice.h",
             "LSError(Init|Free)|LS(Register|Unregister)",
             "Luna",

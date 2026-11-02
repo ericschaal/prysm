@@ -2,11 +2,11 @@
 resolver = "3"
 members = [
     "apps/prysm",
-    "apps/prysm-web",
+    "apps/prysm-webos-capture",
+    "apps/prysm-webos-service",
+    "crates/web/prysm-web",
     "crates/capture/prysm-capture",
     "crates/capture/prysm-webos-protocol",
-    "crates/capture/webos-capture",
-    "crates/capture/webos-service",
     "crates/processing/prysm-processor",
     "crates/common/prysm-core",
     "crates/common/prysm-contract",

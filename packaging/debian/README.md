@@ -1,14 +1,14 @@
 # Debian arm64
 
 One `prysm-led` package installs `prysm` (embedded web UI, REST API, and pipeline)
-and the optional standalone `prysm-web` proxy. Run `prysm.service` for the UI and
+and one systemd unit, `prysm.service`. Run `prysm.service` for the UI and
 API on one address. No Node runtime is needed after building.
 
 ## Build
 
 Pushes and manual runs of [Check and package](../../.github/workflows/check.yml)
 publish `prysm-debian-arm64` under the run's **Artifacts** section. It contains
-the ARM64 `.deb`, including both services and the embedded web UI. Downloads expire
+the ARM64 `.deb`, including the service and embedded web UI. Downloads expire
 after three days; pull requests still build and verify packages without uploading them.
 
 On Debian arm64, install the Rust toolchain, Node 24, and native capture dependencies:
@@ -44,7 +44,7 @@ sudo systemctl daemon-reload
 
 Files owned by the old Debian package, including its binaries, units, and polkit
 rule, are removed by `apt purge`. The unused `prysm-control` system account can
-remain; the new services do not use it.
+remain; the new service does not use it.
 
 ## Install and run
 
@@ -60,16 +60,17 @@ Set `[output].url` to WLED's HTTP base URL; DDP uses the same host on UDP port 4
 device paths. The web UI and API share `127.0.0.1:8787`. Open
 http://localhost:8787 on the host, or configure LAN access below.
 
-Both services are initially disabled and stopped. The engine runs as `prysm`
+The service is initially disabled and stopped. The engine runs as `prysm`
 with video-group access. Installation seeds `/etc/prysm/prysm.toml` from
 `/usr/share/prysm/prysm.toml` only if no configuration exists. The directory is
 owned by `prysm` with mode `0700`, and the file starts with mode `0600`. Prysm
 needs directory write access because UI saves atomically replace the file.
 This is application-managed configuration, not a dpkg conffile. Upgrades preserve it.
 
-The optional `prysm-web.service` is only needed to host a standalone UI for a
-remote engine. It uses a separate dynamic user and forwards API requests; it does
-not read the engine configuration.
+Upgrading from the package with the optional standalone proxy stops and disables
+`prysm-web.service` before removing its binary and packaged unit. Prysm settings
+and the enablement of `prysm.service` are preserved. Remote browsers now connect
+directly to Prysm's configured web address.
 
 ## LAN access
 
@@ -96,6 +97,6 @@ SIGINT/TERM drains the actor pipeline and joins its thread. Normal capture error
 leave the web UI and API running; retry is explicit. systemd restarts a crashed application.
 File input requires FFmpeg 9+ on PATH.
 
-Removal stops both services and preserves `/etc/prysm/prysm.toml`. Purging deletes
+Removal stops the service and preserves `/etc/prysm/prysm.toml`. Purging deletes
 that file and removes `/etc/prysm` if empty. Stopping Prysm lets WLED resume its
 own effect after realtime timeout; it does not issue a lighting Off command.

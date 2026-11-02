@@ -44,7 +44,7 @@ for binary in prysm-webos-capture prysm-webos-service; do
 done
 cp "$root/LICENSE" "$build/service/licenses/prysm.txt"
 for notice in hyperion tv-native-apis openh264 gstreamer-rs gtk-rs; do
-  cp "$root/crates/capture/webos-capture/LICENSE.$notice" "$build/service/licenses/$notice.txt"
+  cp "$root/apps/prysm-webos-capture/LICENSE.$notice" "$build/service/licenses/$notice.txt"
 done
 chmod +x "$build/service/setup.sh"
 chmod -R go-w "$build"

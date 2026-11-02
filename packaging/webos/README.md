@@ -24,7 +24,7 @@ Deployed on the project TV after staged qualification; all 21 installed files
 match the IPK. The user requested starting the sender to the current computer;
 the receiver address was updated and the sender is enabled, connected and
 capturing with hardware H.264. Other settings were preserved. See
-[hardware details](../../crates/capture/webos-capture/HARDWARE-H264.md).
+[hardware details](../../apps/prysm-webos-capture/HARDWARE-H264.md).
 [Deployment evidence](../../work/webos-encoder-latency/deployment/evidence/deployment.json).
 
 Version 0.1.20 keeps hardware DMA buffers mapped and uploads native NV12 directly,
@@ -39,7 +39,7 @@ native NV12 encode wall time improved from 13.52–13.75 ms to 12.49 ms, with CP
 time during encode calls down from 3.25–3.29 ms to 2.01 ms. This is a short
 synthetic benchmark, not total worker CPU or live end-to-end latency. Output wait
 remained dominant at 12.13 ms; that version retained one-frame lookahead. Full hardware
-qualification passed. See [hardware details](../../crates/capture/webos-capture/HARDWARE-H264.md)
+qualification passed. See [hardware details](../../apps/prysm-webos-capture/HARDWARE-H264.md)
 and [deployment evidence](../../work/webos-hardware-dma/deployment/evidence/deployment.json).
 
 Version 0.1.19 passes native video directly to the encoder whenever the UI is
@@ -135,7 +135,7 @@ without uploading it. Hardware H.264 remains an opt-in local build.
 
 Install the [webOS CLI](https://github.com/webos-tools/cli), which supplies
 `ares-package`, and the relocated TV SDK described in the
-[capturer README](../../crates/capture/webos-capture/README.md). From the repo root:
+[capturer README](../../apps/prysm-webos-capture/README.md). From the repo root:
 
 ```sh
 npm install --global @webos-tools/cli@3.2.6

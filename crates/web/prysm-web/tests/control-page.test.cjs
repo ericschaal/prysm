@@ -1,4 +1,4 @@
-// Run after npm ci in apps/prysm-web/control-ui: node apps/prysm-web/tests/control-page.test.cjs
+// Run after npm ci in crates/web/prysm-web/control-ui: node crates/web/prysm-web/tests/control-page.test.cjs
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

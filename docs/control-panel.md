@@ -2,8 +2,8 @@
 
 `prysm` owns configuration, the embedded React web UI, the REST API, and
 capture → processing → rendering. UI and API share `[web].listen` and
-`[web].allowed_hosts`. The optional standalone `prysm-web` can host the UI on a
-separate machine and forward API requests; it never reads or writes Prysm’s TOML.
+`[web].allowed_hosts`. The `prysm-web` library supplies embedded assets; there is
+one application process and one configuration file.
 
 ## Run locally
 
@@ -16,26 +16,19 @@ cargo run -p prysm -- --config prysm.toml
 In another terminal:
 
 ```sh
-cd apps/prysm-web/control-ui
+cd crates/web/prysm-web/control-ui
 npm ci
 npm run dev
 ```
 
 Open http://localhost:5173. Vite refreshes React and proxies `/api/` to port 8787.
 Prysm also serves the production UI at http://localhost:8787. Its build requires
-Node.js 24 and npm to build and embed the assets. To host the UI separately, run
-`cargo run -p prysm-web --
---backend http://127.0.0.1:8787`. The Rust build installs npm dependencies and builds/embeds the UI; Node.js 24
-and npm are required. Open http://localhost:8788.
-For the embedded UI, configure `[web].listen` and `[web].allowed_hosts`, then
-restart Prysm. Only the standalone proxy uses `--listen` and `--allowed-host`.
-Prysm must allow the Host from the backend URL; the web UI validates browser
-Host and uses Tower’s CSRF middleware before forwarding. Cross-site writes are
+Node.js 24 and npm to build and embed the assets. Configure `[web].listen` and
+`[web].allowed_hosts`, then restart Prysm. The same Host policy, CSRF protection,
+security headers, and request limits cover the UI and API. Cross-site writes are
 rejected using `Sec-Fetch-Site` or an Origin/Host comparison; requests without
 browser metadata remain supported for CLI clients. Safe methods such as GET are
-permitted after Host validation. The JSON proxy forwards only content-type,
-uses a 64 KiB request limit and a 65-second timeout, and does not follow redirects.
-Tower also applies the web UI’s security and cache headers to error responses.
+permitted after Host validation.
 Startup observes existing lights and never restores saved On intent.
 
 ## Configuration and HTTP
@@ -60,7 +53,7 @@ disables power, source, and retry actions until the restart is complete.
 
 `cargo run -p prysm-api --bin export-openapi` exports OpenAPI from the actual
 `prysm-api` router. openapi-typescript and openapi-fetch provide the TypeScript
-client. See [frontend tooling](../apps/prysm-web/control-ui/README.md).
+client. See [frontend tooling](../crates/web/prysm-web/control-ui/README.md).
 
 ## egui output
 
@@ -76,8 +69,7 @@ replays the file. These controls call `PUT /api/state` with
 `GET /api/state` every 250 ms. Requests use `prysm-contract` types and run off the
 UI thread, with a three-second timeout and automatic state polling recovery.
 At file EOF the last frame stays visible and the REST API remains available;
-Start capture replays it. Closing the window stops Prysm, including its embedded UI and API. An optional
-standalone `prysm-web` process remains running. WLED output uses the lighting transitions below.
+Start capture replays it. Closing the window stops Prysm, including its embedded UI and API. WLED output uses the lighting transitions below.
 
 ## Lighting transitions
 

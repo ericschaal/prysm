@@ -4049,17 +4049,12 @@ dependencies = [
 name = "prysm-web"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
- "clap",
  "mime_guess",
- "reqwest",
  "rust-embed",
  "tokio",
  "tower",
  "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -5355,7 +5350,6 @@ dependencies = [
  "bitflags 2.13.2",
  "bytes",
  "http",
- "mime",
  "percent-encoding",
  "pin-project-lite",
  "tower-layer",

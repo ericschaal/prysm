@@ -77,7 +77,7 @@ Prysm handles capture and color processing. WLED drives the physical LEDs. The p
 
 Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The web UI runs natively on both platforms.
 
-For a rooted LG TV, the experimental [minimal webOS sender](crates/capture/webos-capture/README.md)
+For a rooted LG TV, the experimental [minimal webOS sender](apps/prysm-webos-capture/README.md)
 captures on the TV and streams raw or LZ4-compressed frames directly to Prysm's `webos` input.
 The initial webOS 25 target still requires hardware validation.
 
@@ -100,26 +100,13 @@ without a browser connected.
 For frontend development, run this in another terminal:
 
 ```sh
-cd apps/prysm-web/control-ui
+cd crates/web/prysm-web/control-ui
 npm ci
 npm run dev
 ```
 
 Open http://localhost:5173. Vite forwards API requests to Prysm. Its Host must
 appear in Prysm's `[web].allowed_hosts` (the sample accepts all hosts).
-
-To use the standalone web UI (requires Node.js 24 and npm at build time):
-
-```sh
-cargo run -p prysm-web -- --backend http://127.0.0.1:8787
-```
-
-`prysm-web` automatically installs locked npm dependencies, builds the frontend,
-and embeds it. Open http://localhost:8788. The web UI can run on another machine; set
-`--backend` to Prysm's URL, `--listen` to the web UI's bind address, and
-repeat `--allowed-host host:port` for accepted browser hosts. Prysm must allow
-the backend URL's Host. Stopping or restarting the web UI leaves Prysm and
-its configuration intact. Only Prysm reads and writes the configuration file.
 
 Validate configuration without starting capture:
 
@@ -149,7 +136,7 @@ again on reconnect. webOS dimensions must be even and
 within 2–1920 × 2–1080.
 Files require FFmpeg 9+ on PATH.
 Capture devices provide video feeds; this does not directly record the desktop.
-See [webOS capture](crates/capture/webos-capture/README.md) for the remote TV sender.
+See [webOS capture](apps/prysm-webos-capture/README.md) for the remote TV sender.
 See [centralized monitoring](observability/README.md) for opt-in process, system and
 stream metrics with a provisioned Prometheus/Grafana Docker Compose stack.
 
@@ -206,9 +193,8 @@ See the [web UI guide](docs/control-panel.md) for HTTP/configuration behavior.
 ## Architecture
 
 `prysm` serves the embedded UI and REST API on one listener configured by `[web]`.
-The optional standalone `prysm-web` forwards same-origin REST requests to a configured
-Prysm URL. It has no dependency on the engine crate and owns no configuration or
-pipeline. `prysm` exposes REST handlers through typed actor messages and owns
+The `prysm-web` library embeds and serves the frontend assets; it has no separate
+executable or service. `prysm` exposes REST handlers through typed actor messages and owns
 configuration persistence, operations, and the capture lifecycle.
 
 Each pipeline session runs on a dedicated Arbiter thread. Capture, processing,
@@ -223,8 +209,9 @@ run Cargo commands from the repository root with `-p <crate-name>`.
 
 | Directory | Crates / components | Responsibility |
 | :--- | :--- | :--- |
-| `apps/` | `prysm`, `prysm-web` | Engine/REST service and independent web UI |
-| `crates/capture/` | `prysm-capture`, `prysm-webos-protocol`, `webos-capture` | Frame streams, wire protocol, and standalone Rust webOS sender |
+| `apps/` | `prysm`, `prysm-webos-capture`, `prysm-webos-service` | Engine/UI/API application and TV capture worker/supervisor |
+| `crates/capture/` | `prysm-capture`, `prysm-webos-protocol` | Frame streams, video transport, and shared TV worker contracts |
+| `crates/web/` | `prysm-web` | Embedded web UI assets and routes |
 | `crates/processing/` | `prysm-processor` | Sampling, black-bar detection, smoothing, brightness |
 | `crates/rendering/` | `prysm-renderer-wled`, `prysm-renderer-desktop` | WLED DDP and optional native egui output |
 | `crates/common/` | `prysm-core`, `prysm-contract`, `prysm-api` | Shared frame/color/config types and pixel conversion, validated REST DTOs, handlers and OpenAPI |
@@ -243,10 +230,10 @@ cargo clippy --workspace --all-targets --locked
 cargo run --locked -p prysm-api --bin export-openapi # print the router’s OpenAPI schema
 ```
 
-From `apps/prysm-web/control-ui`, run `npm run generate-api` after API changes. It runs
+From `crates/web/prysm-web/control-ui`, run `npm run generate-api` after API changes. It runs
 the `prysm-api` schema exporter and regenerates TypeScript. `npm test` verifies both
 against Rust, then checks types, bundling, and UI behavior.
-See [frontend tooling](apps/prysm-web/control-ui/README.md).
+See [frontend tooling](crates/web/prysm-web/control-ui/README.md).
 
 GitHub Actions runs these checks on every push and pull request:
 
@@ -254,8 +241,8 @@ GitHub Actions runs these checks on every push and pull request:
 - Headless and desktop workspace tests (including doctests) on Linux and macOS,
   Clippy across all targets/examples, and API documentation link checks.
   Clippy correctness and suspicious lints fail CI; existing style and metadata warnings remain advisory.
-- Generated API freshness, TypeScript checks, production bundling, and UI/proxy tests.
-- Rust webOS CLI, ABI, exception, pixel and transport tests, including ARM32 under QEMU.
+- Generated API freshness, TypeScript checks, production bundling, UI behavior, and Vite proxy tests.
+- Rust webOS worker startup, ABI, exception, pixel and transport tests, including ARM32 under QEMU.
 - Real FFmpeg playback/controller tests on macOS and ARM64 Debian package build,
   installation, and installed configuration validation.
 
@@ -266,8 +253,8 @@ remain manual; the headless transport, renderer logic, and controller tests run 
 
 ## Debian deployment
 
-Build with `./scripts/build-deb.sh`. The package contains `prysm`, `prysm-web` with its bundled UI,
-and systemd units for the engine and optional standalone UI. Installation seeds a writable configuration under
+Build with `./scripts/build-deb.sh`. The package contains `prysm` with its bundled UI
+and one systemd unit, `prysm.service`. Installation seeds a writable configuration under
 `/etc/prysm/prysm.toml`; the service is disabled until configured.
 See the [Debian guide](packaging/debian/README.md).
 

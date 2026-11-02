@@ -30,7 +30,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck scripts/build-deb.sh packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
+          shellcheck scripts/build-deb.sh packaging/debian/preinst packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
+      - name: Debian upgrade script tests
+        run: python3 -m unittest discover -s packaging/debian/tests
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -43,20 +45,20 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
       - name: Update Rust
         run: rustup update stable --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: frontend
       - name: Install frontend dependencies
-        run: npm ci --prefix apps/prysm-web/control-ui
+        run: npm ci --prefix crates/web/prysm-web/control-ui
       - name: webOS app and package checks
         run: |
           node --test packaging/webos/tests/*.test.js
           python3 -m unittest discover -s packaging/webos/tests
-      - name: Generated API, TypeScript, production bundle, UI and proxy tests
-        run: npm test --prefix apps/prysm-web/control-ui
+      - name: Generated API, TypeScript, production bundle, UI and Vite proxy tests
+        run: npm test --prefix crates/web/prysm-web/control-ui
 
   webos-arm:
     runs-on: ubuntu-24.04
@@ -151,7 +153,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
       - name: Update Rust
         run: |
           rustup update stable --no-self-update
@@ -193,7 +195,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: apps/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
       - name: Linux build dependencies
         run: apt-get update && apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config dpkg-dev
       - uses: Swatinem/rust-cache@v2
@@ -205,11 +207,15 @@ jobs:
         run: ./scripts/build-deb.sh
       - name: Generated contracts must be committed
         # The container user differs from the checkout owner; trust only this workspace.
-        run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code HEAD -- apps/prysm-web/control-ui/openapi.json apps/prysm-web/control-ui/api.generated.ts
+        run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code HEAD -- crates/web/prysm-web/control-ui/openapi.json crates/web/prysm-web/control-ui/api.generated.ts
       - name: Inspect package and verify configuration lifecycle
         run: |
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
+          dpkg-deb --fsys-tarfile target/debian/*.deb | tar -tf - > /tmp/prysm-package-files
+          grep -Eq '^\./usr/bin/prysm$' /tmp/prysm-package-files
+          grep -Eq '/prysm\.service$' /tmp/prysm-package-files
+          ! grep -Eq '/prysm-web(\.service)?$' /tmp/prysm-package-files
           apt-get install -y ./target/debian/*.deb
           runuser -u prysm -- prysm --config /etc/prysm/prysm.toml check
           test "$(stat -c '%U:%G %a' /etc/prysm)" = "prysm:prysm 700"

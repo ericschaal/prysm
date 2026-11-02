@@ -43,7 +43,7 @@ Run locally:
 ```sh
 cargo run -p prysm -- --config prysm.toml
 # In another terminal:
-cd apps/prysm-web/control-ui
+cd crates/web/prysm-web/control-ui
 npm ci
 npm run dev
 ```
@@ -51,8 +51,6 @@ npm run dev
 Open http://localhost:5173 for frontend development. Prysm itself serves the
 production UI and REST API at http://localhost:8787, using the same `[web]`
 settings for both. Its build requires Node.js 24 and npm to embed the UI.
-The optional standalone `prysm-web` process can host the UI separately and
-forward API requests without owning a pipeline or settings file.
 
 ## Native output
 

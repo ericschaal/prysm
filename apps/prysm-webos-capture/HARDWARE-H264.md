@@ -4,14 +4,14 @@ Current source uses only native NV12 capture: combined or video-only. Legacy
 UI fallback, blending and RGB/NV16 hardware conversion have been removed. Both
 sources wait when video is unavailable. Earlier release measurements below
 describe the implementation at the time. See the
-[single-tap cleanup audit](../../../research/webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md).
+[single-tap cleanup audit](../../research/webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md).
 
 Version 0.1.22 supplies the native blended NV12 tap to this encoder for Both
 capture. Visible UI no longer requires a separate HAL copy or CPU composition
 when that tap is available. Readiness-driven UI fallback remains supported.
 The deployed 640×360/30 fps sample averaged 12.9 ms per whole iteration; hardware
 output wait remained dominant at 11.9 ms. See
-[combined capture deployment](../../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
+[combined capture deployment](../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
 
 Hardware H.264 is excluded from default builds. Build with
 `./packaging/webos/build-ipk.sh --hardware-h264` to enable the `hardware-h264`
@@ -104,12 +104,12 @@ disabled during qualification. Subsequently, at the user's explicit request,
 version 0.1.21 was installed and the sender enabled toward the current computer.
 All 21 package files matched; the service reported connected/capturing without
 error, and the host receiver decoded incoming H.264 frames. Other settings were
-preserved. [Deployment evidence](../../../work/webos-encoder-latency/deployment/evidence/deployment.json).
+preserved. [Deployment evidence](../../work/webos-encoder-latency/deployment/evidence/deployment.json).
 
 The preceding controlled probe measured approximately 34 ms less frame latency
 at 640×360/30 FPS after removing the parser; its encoder hardware time stayed
-unchanged. See [integration evidence](../../../research/webos-capture/2026-11-02-encoder-latency/integration-results.md)
-and [controlled latency experiment](../../../research/webos-capture/2026-11-02-encoder-latency/live-results.md).
+unchanged. See [integration evidence](../../research/webos-capture/2026-11-02-encoder-latency/integration-results.md)
+and [controlled latency experiment](../../research/webos-capture/2026-11-02-encoder-latency/live-results.md).
 Standby/resume, prolonged load, other firmware, 60 FPS and 4K remain unqualified.
 
 ## Persistent DMA mapping qualification on 2026-11-02
@@ -120,7 +120,7 @@ Eight hardware phase histograms expose conversion, upload, synchronization start
 and end, submission, output wait, collection and normalization. Grafana's
 expanded **Hardware H.264** section below stream health separates preparation
 and collection from output wait, so the smaller phases remain readable.
-The [metric catalog](../../../observability/CATALOG.md) defines their boundaries.
+The [metric catalog](../../observability/CATALOG.md) defines their boundaries.
 
 On the project TV, a baseline → updated → baseline experiment used the same
 changing 640×360 inputs, 30 FPS and 2 Mbit/s. Each format had five warmup inputs

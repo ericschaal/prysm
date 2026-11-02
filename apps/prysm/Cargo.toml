@@ -18,7 +18,6 @@ section = "video"
 priority = "optional"
 maintainer-scripts = "../../packaging/debian"
 assets = [
-    ["target/release/prysm-web", "usr/bin/prysm-web", "755"],
     ["target/release/prysm", "usr/bin/prysm", "755"],
     ["../../packaging/debian/prysm.conf", "usr/lib/sysusers.d/prysm.conf", "644"],
     ["../../packaging/debian/prysm.toml", "usr/share/prysm/prysm.toml", "644"],
@@ -27,13 +26,6 @@ assets = [
 
 [[package.metadata.deb.systemd-units]]
 unit-name = "prysm"
-enable = false
-start = false
-stop-on-upgrade = false
-restart-after-upgrade = true
-
-[[package.metadata.deb.systemd-units]]
-unit-name = "prysm-web"
 enable = false
 start = false
 stop-on-upgrade = false
@@ -70,7 +62,7 @@ axum.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls"] }
 serde_json.workspace = true
 prysm-api = { path = "../../crates/common/prysm-api" }
-prysm-web = { path = "../prysm-web" }
+prysm-web = { path = "../../crates/web/prysm-web" }
 tower-http = { workspace = true, features = ["csrf"] }
 atomic-write-file.workspace = true
 tempfile.workspace = true

@@ -28,11 +28,11 @@ Error handling policy: see [docs/error-handling.md](docs/error-handling.md).
 
 ### Workspace Structure
 
-**Rust workspace with application binaries and a standalone webOS capture CLI**
+**Rust workspace with host and webOS application binaries**
 
 Applications live in `apps/`. Reusable crates are grouped under
-`crates/{capture,processing,rendering,common}/`; the standalone Rust webOS sender
-and its shared wire protocol live beside the capture crate. See the workspace table in README.md.
+`crates/{capture,processing,rendering,common,web}/`; the supervised webOS capture
+worker and Luna service live under `apps/`, with their shared protocol under capture. See the workspace table in README.md.
 
 Libraries are reusable components for capture, processing and rendering:
 
@@ -255,16 +255,14 @@ worker binaries, private IPC, or service-manager APIs. `AtomicResponse` is used
 only to serialize lifecycle commands across awaits; frame handlers are synchronous.
 
 Run Rust with `cargo run -p prysm -- --config prysm.toml`. Run Vite independently
-from `apps/prysm-web/control-ui` with `npm run dev`. `cargo run -p prysm-api --bin export-openapi` prints OpenAPI from
+from `crates/web/prysm-web/control-ui` with `npm run dev`. `cargo run -p prysm-api --bin export-openapi` prints OpenAPI from
 `prysm-api::router()`; `npm run generate-api` captures that output and generates
 the TypeScript client. Generation stays separate from frontend builds to avoid
 invoking Cargo recursively from `prysm-web/build.rs`.
-openapi-typescript/openapi-fetch supply the TypeScript HTTP client. The independent `prysm-web` binary forwards REST calls to Prysm; it owns no
-configuration or pipeline. Its build script installs locked npm dependencies and
-builds the Vite assets, which are always embedded.
-Run `cargo run -p prysm-web`, then open port 8788 (Prysm REST stays on 8787).
-Building `prysm-web` or the workspace requires Node.js 24 and npm; building
-`prysm` alone requires neither.
+openapi-typescript/openapi-fetch supply the TypeScript HTTP client. The
+`prysm-web` library builds and embeds Vite assets, served by `prysm` on port 8787.
+Building `prysm` or the workspace requires Node.js 24 and npm. Frontend development
+uses Vite independently, with API requests proxied to the running Prysm backend.
 
 Debian seeds `/etc/prysm/prysm.toml` from a packaged template and runs
 as the `prysm` service user. The writable runtime file is authoritative.

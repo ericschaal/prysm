@@ -48,7 +48,7 @@ explicitly includes the SDK's `libglibc_polyfills.a` for `getauxval`. This is a
 webOS compatibility build; runtime behavior still needs hardware validation.
 
 Binaries are in `target/armv7-unknown-linux-gnueabi/webos/`; the IPK and license
-notices are assembled by the [TV package build](../../../packaging/webos/README.md).
+notices are assembled by the [TV package build](../../packaging/webos/README.md).
 There is no separate distribution staging tree or per-crate build script.
 LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 
@@ -66,7 +66,7 @@ The shared types and byte encoding live in `prysm-webos-protocol`. Missing or
 malformed startup configuration, missing event descriptors, and command-line
 arguments fail before native capture begins. The worker must run as root at the
 executable path authorized by the installed capture role. Install and register it
-using the [TV package](../../../packaging/webos/README.md).
+using the [TV package](../../packaging/webos/README.md).
 
 Each worker owns exactly one receiver connection. It connects and negotiates
 before opening native resources. An idle receiver opens no native capture devices.
@@ -106,7 +106,7 @@ are consumed by a separate waiting thread.
 
 The tested TV has a reproduced native release hang. Process isolation remains
 necessary; see the
-[cleanup diagnosis](../../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md).
+[cleanup diagnosis](../../research/webos-capture/2026-11-01-lifecycle/cleanup-diagnosis.md).
 These guards cannot make a blocking vendor call interruptible.
 
 ## Encoding and transport
@@ -138,7 +138,7 @@ before potentially blocking native teardown. Kernel TCP buffering and
 retransmissions can still increase latency.
 
 The sole active version source is
-[`wire-version.txt`](../prysm-webos-protocol/wire-version.txt). It drives the JSON
+[`wire-version.txt`](../../crates/capture/prysm-webos-protocol/wire-version.txt). It drives the JSON
 hello version, four-byte frame magic, Rust fixtures, and TV smoke receiver. This
 refactor does not change the receiver protocol. Frames retain the 24-byte header:
 
