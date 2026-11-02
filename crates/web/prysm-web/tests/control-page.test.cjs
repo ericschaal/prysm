@@ -254,12 +254,14 @@ const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, so
     let finishDecode; p.decode=()=>new Promise(resolve=>{finishDecode=resolve;});
     const pending=p.sockets[0].message(frame); await delay();
     await p.refresh(off);
+    await until(()=>p.sockets[0].closed && button(p,'Open preview')?.matches(':disabled'));
     assert.equal(p.sockets[0].closed,true,'Power off tears down preview transport');
     assert.equal(button(p,'Open preview').matches(':disabled'),true);
     assert.equal(p.element('.preview .badge').textContent,'Unavailable');
     finishDecode(); await pending;
     assert.equal(p.draws.length,0,'An in-flight decode cannot draw after power off');
     await p.refresh(on);
+    await until(()=>button(p,'Open preview')?.matches(':enabled'));
     assert.equal(button(p,'Open preview').matches(':disabled'),false);
     assert.equal(p.sockets.length,1,'Power on does not reopen preview automatically');
     assert.equal(p.element('.preview .badge').textContent,'Closed');
