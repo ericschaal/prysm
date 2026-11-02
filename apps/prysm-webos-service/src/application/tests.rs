@@ -135,7 +135,6 @@ fn scanner_timeout_is_reaped_and_shutdown_cancels_pending_start() {
         false
     );
     assert!(!app.state.running);
-    script(&app.files.scanner, "exec sleep 30");
     app.request(AppRequest::Start, now).unwrap();
     app.shutdown(now);
     assert_eq!(completion(&mut app, now)["returnValue"], false);
