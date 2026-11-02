@@ -8,6 +8,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 
 | Investigation | Finding / status |
 | --- | --- |
+| [Stable black-bar detection](black-bar-detection-2026-11-02/README.md) | Live crop diagnosis, literature review, implemented temporal boundary estimator and offline replay validation; not deployed |
 | [Sampling A/B protocol](sampling-ab-testing.md) | Historical proposal; not run, and based on a superseded edge-band sampler |
 | [webOS colorimetry](webos-capture/2026-11-01-colorimetry/README.md) | Target-TV evidence for limited-range BT.709 capture decoding |
 | [HDR and brightness](webos-capture/2026-11-01-hdr-brightness/README.md) | Capture reflects TV tone/gamut mapping; transfer calibration remains separate |

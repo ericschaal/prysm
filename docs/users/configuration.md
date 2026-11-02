@@ -50,7 +50,7 @@ These are library defaults; your saved configuration may override them.
 | `smoothing_seconds` | 0.1 | Seconds to complete 95% of a color transition; 0 disables smoothing |
 | `sample_density` | 128 | Samples per 1000 pixels of cropped edge length; positive integer |
 | `spatial_reach_percent` | 10 | Influence radius as a percentage of cropped picture height, 1–100 |
-| `remove_black_bars` | true | Follow the picture inside stable black bars |
+| `remove_black_bars` | true | Follow stable picture boundaries; allow about 1.5 seconds to acquire new bars |
 
 Processing changes apply live. Input, resolution, rate, or WLED settings changes
 recreate active capture. Panel listen address or allowed hosts require restarting

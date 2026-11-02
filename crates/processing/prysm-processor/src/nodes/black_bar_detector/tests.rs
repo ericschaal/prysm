@@ -1,107 +1,280 @@
-use super::*;
-use crate::frames::yuyv_frame_from_luma;
+use super::BlackBarDetector;
+use crate::frames::{FrameView, Viewport, yuyv_frame_from_luma};
+use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
+use std::time::{Duration, Instant};
+
+const WIDTH: u32 = 640;
+const HEIGHT: u32 = 360;
+
+fn picture(bars: [u32; 4], pixel: impl Fn(u32, u32) -> u8) -> Frame {
+    let [top, right, bottom, left] = bars;
+    yuyv_frame_from_luma(WIDTH, HEIGHT, |x, y| {
+        if x < left || x >= WIDTH - right || y < top || y >= HEIGHT - bottom {
+            0
+        } else {
+            pixel(x, y)
+        }
+    })
+}
+
+fn with_range(frame: &Frame, range: YuvRange) -> Frame {
+    if range == YuvRange::Full {
+        return frame.clone();
+    }
+    let mut bytes = frame.as_slice().to_vec();
+    for y in bytes.iter_mut().step_by(2) {
+        *y = 16 + u8::try_from(u16::from(*y) * 219 / 255).unwrap();
+    }
+    Frame::new(
+        bytes,
+        WIDTH,
+        HEIGHT,
+        PixelFormat::YUYV {
+            range,
+            matrix: YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap()
+}
+
+fn viewport(bars: [u32; 4]) -> Viewport {
+    let [top, right, bottom, left] = bars;
+    Viewport {
+        x: left,
+        y: top,
+        width: WIDTH - left - right,
+        height: HEIGHT - top - bottom,
+    }
+}
+
+fn at(detector: &mut BlackBarDetector, frame: &Frame, start: Instant, millis: u64) -> Viewport {
+    detector
+        .process(
+            FrameView::new(frame.clone()),
+            start + Duration::from_millis(millis),
+        )
+        .viewport
+}
+
+fn feed(
+    detector: &mut BlackBarDetector,
+    frame: &Frame,
+    start: Instant,
+    first: u64,
+    last: u64,
+) -> Viewport {
+    let mut output = viewport([0; 4]);
+    for millis in (first..=last).step_by(50) {
+        output = at(detector, frame, start, millis);
+    }
+    output
+}
 
 #[test]
-fn a_missing_bar_prevents_and_releases_cropping_on_its_axis() {
-    for thickness in [6, 48] {
-        for missing_edge in 0..4 {
-            let make_frame = |missing| {
-                yuyv_frame_from_luma(640, 360, |x, y| {
-                    if (missing != 0 && y < thickness)
-                        || (missing != 1 && x >= 640 - thickness)
-                        || (missing != 2 && y >= 360 - thickness)
-                        || (missing != 3 && x < thickness)
-                    {
-                        0
-                    } else {
-                        128
-                    }
-                })
-            };
-            let unpaired = make_frame(missing_edge);
-            let paired = make_frame(4);
-            let horizontal = missing_edge == 0 || missing_edge == 2;
-            let expected = Viewport {
-                x: if horizontal { thickness } else { 0 },
-                y: if horizontal { 0 } else { thickness },
-                width: if horizontal { 640 - 2 * thickness } else { 640 },
-                height: if horizontal { 360 } else { 360 - 2 * thickness },
-            };
-            let mut detector = BlackBarDetector::new();
-            let start = Instant::now();
-            for (frame, seconds) in [(&unpaired, 0), (&paired, 1), (&unpaired, 2)] {
-                let now = start + Duration::from_secs(seconds);
-                detector.process(FrameView::new(frame.clone()), now);
-                let actual = detector
-                    .process(FrameView::new(frame.clone()), now + CONFIRM_DURATION)
-                    .viewport;
-                let target = if seconds == 1 {
-                    Viewport {
-                        x: thickness,
-                        y: thickness,
-                        width: 640 - 2 * thickness,
-                        height: 360 - 2 * thickness,
-                    }
-                } else {
-                    expected
-                };
-                assert_eq!(
-                    actual, target,
-                    "missing edge {missing_edge}, thickness {thickness}, phase {seconds}"
-                );
-            }
+fn one_pixel_bottom_noise_never_moves_the_top_edge() {
+    let start = Instant::now();
+    let mut detector = BlackBarDetector::new();
+    let boxed = picture([20, 0, 11, 0], |_, _| 128);
+    assert_eq!(
+        feed(&mut detector, &boxed, start, 0, 2000),
+        viewport([20, 0, 11, 0])
+    );
+    for (phase, bottom) in [10, 11, 10, 11].into_iter().enumerate() {
+        let frame = picture([20, 0, bottom, 0], |_, _| 128);
+        for millis in ((2050 + phase as u64 * 2000)..=(4000 + phase as u64 * 2000)).step_by(50) {
+            let crop = at(&mut detector, &frame, start, millis);
+            assert_eq!(
+                crop.y, 20,
+                "one pixel of bottom noise moved the top: {crop:?}"
+            );
+            assert!((10..=11).contains(&(HEIGHT - crop.y - crop.height)));
         }
     }
 }
 
 #[test]
-fn dark_foreground_does_not_extend_one_bar_into_the_picture() {
-    let frame = create_letterboxed_frame(640, 360, 6, 100);
-    let (horizontal, _) = BlackBarDetector::new().detect_bands(&frame);
-    assert_eq!(horizontal, Some((6, 6)));
-}
-
-#[test]
-fn dark_scene_regions_with_visible_content_are_not_black_bars() {
-    for edge in 0..4 {
-        let frame = yuyv_frame_from_luma(640, 360, |x, y| {
-            let (distance, cross, center) = match edge {
-                0 => (y, x, 320),
-                1 => (639 - x, y, 180),
-                2 => (359 - y, x, 320),
-                _ => (x, y, 180),
-            };
-            if distance >= 120 {
-                128
-            } else if (20..80).contains(&distance) && cross.abs_diff(center) < 12 {
-                12 // Dim detail occupies less than 5% of the row or column.
-            } else {
-                0
-            }
-        });
-        let mut detector = BlackBarDetector::new();
-        let start = Instant::now();
-        detector.process(FrameView::new(frame.clone()), start);
-        let viewport = detector
-            .process(FrameView::new(frame), start + CONFIRM_DURATION)
-            .viewport;
-        let removed = match edge {
-            0 => viewport.y,
-            1 => 640 - viewport.x - viewport.width,
-            2 => 360 - viewport.y - viewport.height,
-            _ => viewport.x,
-        };
-        assert!(
-            removed <= 20,
-            "edge {edge} cropped visible detail: {viewport:?}"
-        );
+fn asymmetric_thin_letter_pillar_and_window_bars_are_detected() {
+    for bars in [
+        [20, 0, 10, 0],
+        [2, 0, 6, 0],
+        [0, 90, 0, 64],
+        [32, 80, 48, 60],
+        [20, 0, 0, 0],
+        [0; 4],
+    ] {
+        let full = picture(bars, |_, _| 128);
+        for range in [YuvRange::Full, YuvRange::Limited] {
+            let frame = with_range(&full, range);
+            let crop = feed(
+                &mut BlackBarDetector::new(),
+                &frame,
+                Instant::now(),
+                0,
+                2000,
+            );
+            assert_eq!(crop, viewport(bars), "{bars:?}, {range:?}");
+        }
     }
 }
 
 #[test]
-fn isolated_highlights_do_not_seed_a_crop() {
+fn dim_picture_edges_do_not_consume_a_confirmed_picture() {
+    let start = Instant::now();
+    let boxed = picture([20, 0, 20, 0], |_, _| 128);
+    let expected = viewport([20, 0, 20, 0]);
+    let dim = picture(
+        [20, 0, 20, 0],
+        |_, y| {
+            if (40..320).contains(&y) { 128 } else { 6 }
+        },
+    );
+    for range in [YuvRange::Full, YuvRange::Limited] {
+        let mut detector = BlackBarDetector::new();
+        let boxed = with_range(&boxed, range);
+        let dim = with_range(&dim, range);
+        assert_eq!(feed(&mut detector, &boxed, start, 0, 2000), expected);
+        for millis in (2050..=12_050).step_by(50) {
+            assert_eq!(
+                at(&mut detector, &dim, start, millis),
+                expected,
+                "dim detail became a bar at {millis}ms, {range:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sustained_wide_subtitles_and_corner_logos_do_not_change_framing() {
+    let start = Instant::now();
+    let expected = viewport([48, 80, 48, 80]);
+    let clean = picture([48, 80, 48, 80], |_, _| 128);
+    let overlay = yuyv_frame_from_luma(WIDTH, HEIGHT, |x, y| {
+        if ((80..560).contains(&x) && (48..312).contains(&y))
+            || ((48..592).contains(&x) && (326..338).contains(&y) && x % 12 < 8)
+            || ((12..56).contains(&x) && (4..18).contains(&y))
+        {
+            128
+        } else {
+            0
+        }
+    });
+    for initial in [&clean, &overlay] {
+        let mut detector = BlackBarDetector::new();
+        assert_eq!(feed(&mut detector, initial, start, 0, 2000), expected);
+        for millis in (2050..=6050).step_by(50) {
+            let frame = if millis < 5050 { &overlay } else { &clean };
+            assert_eq!(
+                at(&mut detector, frame, start, millis),
+                expected,
+                "overlay moved crop at {millis}ms"
+            );
+        }
+    }
+}
+
+#[test]
+fn darkness_and_fades_keep_the_last_crop_without_confirming_new_bars() {
+    let start = Instant::now();
+    let boxed = picture([48, 0, 48, 0], |_, _| 128);
+    let dark = yuyv_frame_from_luma(WIDTH, HEIGHT, |_, _| 0);
+    let faded = picture([48, 0, 48, 0], |_, _| 4);
+    let mut detector = BlackBarDetector::new();
+    assert_eq!(feed(&mut detector, &dark, start, 0, 2000), viewport([0; 4]));
+    assert_eq!(
+        feed(&mut detector, &boxed, start, 2050, 4050),
+        viewport([48, 0, 48, 0])
+    );
+    for (frame, begin) in [(&faded, 4100), (&dark, 7150)] {
+        assert_eq!(
+            feed(&mut detector, frame, start, begin, begin + 3000),
+            viewport([48, 0, 48, 0])
+        );
+    }
+    let mut candidate = BlackBarDetector::new();
+    feed(&mut candidate, &boxed, start, 0, 100);
+    feed(&mut candidate, &dark, start, 150, 3000);
+    assert_eq!(at(&mut candidate, &boxed, start, 3050), viewport([0; 4]));
+}
+
+#[test]
+fn genuine_aspect_changes_are_slow_inward_and_fast_outward_at_different_rates() {
+    let start = Instant::now();
+    let shallow = picture([20, 0, 20, 0], |_, _| 128);
+    let boxed = picture([48, 0, 48, 0], |_, _| 128);
+    let full = picture([0; 4], |_, _| 128);
+    for fps in [24, 30, 60, 120] {
+        let mut detector = BlackBarDetector::new();
+        for (frame, offset, expected, earliest, latest) in [
+            (&shallow, 0.0, viewport([20, 0, 20, 0]), 1.5, 2.0),
+            (&boxed, 2.1, viewport([48, 0, 48, 0]), 1.5, 2.0),
+            (&full, 4.2, viewport([0; 4]), 0.3, 0.55),
+        ] {
+            let mut first_change = None;
+            for i in 0..=2 * fps {
+                let elapsed = f64::from(i) / f64::from(fps);
+                let crop = detector
+                    .process(
+                        FrameView::new(frame.clone()),
+                        start + Duration::from_secs_f64(offset + elapsed),
+                    )
+                    .viewport;
+                if crop == expected && first_change.is_none() {
+                    first_change = Some(elapsed);
+                }
+            }
+            let elapsed = first_change.expect("crop did not follow a genuine aspect change");
+            assert!(
+                (earliest..=latest).contains(&elapsed),
+                "{fps}fps, offset {offset}: changed after {elapsed}s"
+            );
+        }
+    }
+}
+
+#[test]
+fn interrupted_evidence_does_not_turn_elapsed_time_into_confirmation() {
+    let start = Instant::now();
+    let boxed = picture([48, 0, 48, 0], |_, _| 128);
+    let mut detector = BlackBarDetector::new();
+    feed(&mut detector, &boxed, start, 0, 100);
+    assert_eq!(at(&mut detector, &boxed, start, 10_000), viewport([0; 4]));
+    assert_eq!(
+        feed(&mut detector, &boxed, start, 10_050, 11_000),
+        viewport([0; 4])
+    );
+    assert_eq!(
+        feed(&mut detector, &boxed, start, 11_050, 12_000),
+        viewport([48, 0, 48, 0])
+    );
+}
+
+#[test]
+fn repeated_or_earlier_times_do_not_advance_or_reset_evidence() {
+    let start = Instant::now();
+    let boxed = picture([48, 0, 48, 0], |_, _| 128);
+    let full = picture([0; 4], |_, _| 128);
+    let mut detector = BlackBarDetector::new();
+    let before = feed(&mut detector, &boxed, start, 0, 1000);
+    for now in [
+        start.checked_sub(Duration::from_secs(1)).unwrap(),
+        start,
+        start + Duration::from_millis(1000),
+    ] {
+        assert_eq!(
+            detector.process(FrameView::new(full.clone()), now).viewport,
+            before
+        );
+    }
+    assert_eq!(
+        feed(&mut detector, &boxed, start, 1050, 1600),
+        viewport([48, 0, 48, 0])
+    );
+}
+
+#[test]
+fn isolated_highlights_cannot_establish_a_picture_rectangle() {
     for cross in [false, true] {
-        let frame = yuyv_frame_from_luma(640, 360, |x, y| {
+        let frame = yuyv_frame_from_luma(WIDTH, HEIGHT, |x, y| {
             if (270..370).contains(&x)
                 && (130..230).contains(&y)
                 && (if cross {
@@ -115,423 +288,135 @@ fn isolated_highlights_do_not_seed_a_crop() {
                 0
             }
         });
-        assert_eq!(BlackBarDetector::new().detect_bands(&frame), (None, None));
+        assert_eq!(
+            feed(
+                &mut BlackBarDetector::new(),
+                &frame,
+                Instant::now(),
+                0,
+                2000
+            ),
+            viewport([0; 4])
+        );
     }
 }
 
 #[test]
-fn confirmation_and_release_use_elapsed_time() {
+fn alternating_framing_does_not_accumulate_false_support() {
     let start = Instant::now();
-    let boxed = create_letterboxed_frame(640, 360, 48, 48);
-    let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
-    for fps in [24, 30, 60, 120] {
-        let mut detector = BlackBarDetector::new();
-        for (frame, offset, before, after) in [
-            (&boxed, Duration::ZERO, 0, 48),
-            (&full, Duration::from_secs(2), 48, 0),
-        ] {
-            let mut first_change = None;
-            for i in 0..=fps {
-                let elapsed = Duration::from_secs_f64(f64::from(i) / f64::from(fps));
-                let output =
-                    detector.process(FrameView::new(frame.clone()), start + offset + elapsed);
-                if elapsed < CONFIRM_DURATION {
-                    assert_eq!(output.viewport.y, before, "{fps} fps confirmed too early");
-                }
-                if output.viewport.y == after && first_change.is_none() {
-                    first_change = Some(elapsed);
-                }
-            }
-            let elapsed = first_change.expect("crop must converge within one second");
-            let frame_period = Duration::from_secs_f64(1.0 / f64::from(fps));
-            assert!(
-                elapsed <= CONFIRM_DURATION + SCAN_INTERVAL + frame_period,
-                "{fps} fps took {elapsed:?} to converge"
-            );
+    let mut detector = BlackBarDetector::new();
+    let boxed = picture([48, 0, 48, 0], |_, _| 128);
+    let full = picture([0; 4], |_, _| 128);
+    for i in 0..=50 {
+        let frame = if i % 2 == 0 { &boxed } else { &full };
+        assert_eq!(at(&mut detector, frame, start, i * 100), viewport([0; 4]));
+    }
+}
+
+#[test]
+fn low_luma_colored_picture_is_not_a_neutral_black_bar() {
+    let mut bytes = Vec::with_capacity((WIDTH * HEIGHT * 2) as usize);
+    for y in 0..HEIGHT {
+        for _ in (0..WIDTH).step_by(2) {
+            let (luma, chroma) = if (40..320).contains(&y) {
+                (128, 128)
+            } else {
+                (18, 190)
+            };
+            bytes.extend_from_slice(&[luma, 128, luma, chroma]);
         }
     }
-    let mut detector = BlackBarDetector::new();
-    for millis in [0, 70, 150, 230] {
-        let output = detector.process(
-            FrameView::new(boxed.clone()),
-            start + Duration::from_millis(millis),
-        );
-        assert_eq!(output.viewport.y, if millis >= 200 { 48 } else { 0 });
-    }
-}
-
-#[test]
-fn repeated_or_earlier_times_do_not_advance_or_reset_detection() {
-    let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
-    let boxed = create_letterboxed_frame(640, 360, 48, 48);
-    let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
-    for millis in [0, 100] {
-        detector.process(
-            FrameView::new(boxed.clone()),
-            start + Duration::from_millis(millis),
-        );
-    }
-    for now in [
-        start.checked_sub(Duration::from_secs(1)).unwrap(),
-        start,
-        start + Duration::from_millis(100),
-    ] {
-        assert_eq!(
-            detector
-                .process(FrameView::new(full.clone()), now)
-                .viewport
-                .y,
-            0
-        );
-    }
+    let frame = Frame::new(
+        bytes,
+        WIDTH,
+        HEIGHT,
+        PixelFormat::YUYV {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap();
     assert_eq!(
-        detector
-            .process(FrameView::new(boxed), start + CONFIRM_DURATION)
-            .viewport
-            .y,
-        48
+        feed(
+            &mut BlackBarDetector::new(),
+            &frame,
+            Instant::now(),
+            0,
+            2000
+        ),
+        viewport([0; 4])
     );
 }
 
 #[test]
-fn darkness_preserves_crop_but_cannot_confirm_a_candidate() {
-    let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
-    let boxed = create_letterboxed_frame(640, 360, 48, 48);
-    let dark = yuyv_frame_from_luma(640, 360, |_, _| 20);
-    for (frame, millis, expected_y) in [
-        (&boxed, 0, 0),
-        (&dark, 500, 0),
-        (&boxed, 1100, 0),
-        (&boxed, 2100, 48),
-        (&dark, 2200, 48),
-        (&dark, 30200, 48),
-    ] {
-        let output = detector.process(
-            FrameView::new(frame.clone()),
-            start + Duration::from_millis(millis),
-        );
-        assert_eq!(output.viewport.y, expected_y);
-    }
-}
-
-#[test]
-fn alternating_scans_do_not_confirm_a_crop() {
-    let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
-    let boxed = create_letterboxed_frame(640, 360, 48, 48);
-    let full = yuyv_frame_from_luma(640, 360, |_, _| 128);
-    for i in 0..=20 {
-        let frame = if i % 2 == 0 { &boxed } else { &full };
-        assert_eq!(
-            detector
-                .process(
-                    FrameView::new(frame.clone()),
-                    start + Duration::from_millis(i * 100)
-                )
-                .viewport
-                .y,
-            0
-        );
-    }
-    let output = detector.process(FrameView::new(boxed), start + Duration::from_millis(3100));
-    assert_eq!(output.viewport.y, 48);
-}
-
-#[test]
-fn stable_side_bars_confirm_while_subtitles_change_bottom_boundary() {
-    let start = Instant::now();
-    let mut detector = BlackBarDetector::new();
-    for i in 0..=10 {
-        let frame = yuyv_frame_from_luma(640, 360, |x, y| {
-            if (80..560).contains(&x) && (48..312).contains(&y) {
-                128
-            } else if i % 2 == 1 && (160..480).contains(&x) && y == 330 {
-                255
-            } else {
-                0
+fn rgb_and_bgr_frames_detect_the_same_asymmetric_geometry() {
+    for format in [PixelFormat::RGB24, PixelFormat::BGR24] {
+        let mut bytes = Vec::with_capacity((WIDTH * HEIGHT * 3) as usize);
+        for y in 0..HEIGHT {
+            for _ in 0..WIDTH {
+                bytes.extend_from_slice(if (20..350).contains(&y) {
+                    &[80, 120, 160]
+                } else {
+                    &[0, 0, 0]
+                });
             }
-        });
-        let output = detector.process(
-            FrameView::new(frame),
-            start + Duration::from_millis(i * 100),
+        }
+        let frame = Frame::new(bytes, WIDTH, HEIGHT, format).unwrap();
+        assert_eq!(
+            feed(
+                &mut BlackBarDetector::new(),
+                &frame,
+                Instant::now(),
+                0,
+                2000
+            ),
+            viewport([20, 0, 10, 0])
         );
-        assert_eq!(output.viewport.y, 0);
-        assert_eq!(output.viewport.x, if i >= 2 { 80 } else { 0 });
     }
-    let frame = yuyv_frame_from_luma(640, 360, |x, y| {
-        if (80..560).contains(&x) && (48..312).contains(&y) {
+}
+
+#[test]
+fn sparse_sustained_picture_detail_vetoes_a_deeper_crop() {
+    let start = Instant::now();
+    let mut detector = BlackBarDetector::new();
+    let clean = picture([20, 0, 20, 0], |_, _| 128);
+    feed(&mut detector, &clean, start, 0, 2000);
+    let dim = picture([20, 0, 20, 0], |x, y| {
+        if y >= 80 {
             128
+        } else if (308..332).contains(&x) {
+            12
         } else {
             0
         }
     });
-    let output = detector.process(FrameView::new(frame), start + Duration::from_secs(2));
-    assert_eq!(
-        output.viewport,
-        Viewport {
-            x: 80,
-            y: 48,
-            width: 480,
-            height: 264
-        }
-    );
+    for millis in (2050..=12_050).step_by(50) {
+        let crop = at(&mut detector, &dim, start, millis);
+        assert!(
+            crop.y <= 20,
+            "sparse picture detail was cropped at {millis}ms: {crop:?}"
+        );
+    }
 }
 
 #[test]
-fn boundary_jitter_does_not_move_confirmed_crop_or_hide_thin_bars() {
+fn noisy_bars_and_soft_boundary_pixels_stay_within_the_locked_geometry() {
     let start = Instant::now();
-    let mut axis = AxisCrop::default();
-    axis.update(Some((2, 2)), start);
-    axis.update(Some((2, 2)), start + CONFIRM_DURATION);
-    assert_eq!(axis.current, (2, 2));
-    for seconds in 2..10 {
-        axis.update(Some((3, 3)), start + Duration::from_secs(seconds));
-        assert_eq!(axis.current, (2, 2));
-    }
-    axis.update(Some((0, 0)), start + Duration::from_secs(10));
-    axis.update(Some((0, 0)), start + Duration::from_secs(11));
-    assert_eq!(axis.current, (0, 0));
-}
-
-/// Create test frame with letterboxing (black bands top/bottom, gray content)
-fn create_letterboxed_frame(width: u32, height: u32, top_band: u32, bottom_band: u32) -> Frame {
-    yuyv_frame_from_luma(width, height, |_, y| {
-        if y < top_band || y >= height - bottom_band {
-            0
-        } else {
-            128
-        }
-    })
-}
-
-/// Create test frame with pillarboxing (black bands left/right, gray content)
-fn create_pillarboxed_frame(width: u32, height: u32, left_band: u32, right_band: u32) -> Frame {
-    yuyv_frame_from_luma(width, height, |x, _| {
-        if x < left_band || x >= width - right_band {
-            0
-        } else {
-            128
-        }
-    })
-}
-
-/// Create test frame with subtitle in the bottom black band
-fn create_frame_with_subtitles(width: u32, height: u32, subtitle_row: u32) -> Frame {
-    yuyv_frame_from_luma(width, height, |x, y| {
-        if y == subtitle_row && x >= width / 4 && x < 3 * width / 4 {
-            255 // Subtitle text
-        } else if y >= 100 && y < height - 100 {
-            128 // Content
-        } else {
-            0 // Black bands
-        }
-    })
-}
-
-#[test]
-fn sample_percentile_handles_median_bright_tail_and_empty_input() {
-    assert_eq!(percentile(&mut [0, 100, 200], 50), 100);
-
-    let even = percentile(&mut [0, 100, 200, 255], 50);
-    assert!(even == 100 || even == 200); // Either is valid for even length
-
-    assert_eq!(percentile(&mut [], 90), 0);
-    assert_eq!(percentile(&mut [128], 50), 128);
-    assert_eq!(percentile(&mut [0, 0, 0, 0, 0, 0, 0, 0, 128, 255], 90), 255);
-}
-
-#[test]
-fn test_band_boundary_detection() {
-    // Continuous black region larger than minimum
-    let mut brightness = vec![0; 50];
-    brightness.extend([100, 100, 100]);
-    assert_eq!(find_band_from_start(&brightness, 10, 50), 50);
-
-    // Continuous black region smaller than minimum
-    let brightness = vec![0, 0, 0, 0, 0, 100, 100, 100];
-    assert_eq!(find_band_from_start(&brightness, 10, 50), 0);
-
-    // Discontinuous (subtitle case)
-    let brightness = vec![0, 0, 0, 0, 200, 0, 0, 0]; // White pixel breaks continuity
-    assert_eq!(find_band_from_start(&brightness, 10, 50), 0);
-
-    // From end - need at least 50 zeros for minimum band size
-    let mut brightness = vec![100, 100, 100];
-    brightness.extend(vec![0; 50]);
-    assert_eq!(find_band_from_end(&brightness, 10, 50), 50);
-}
-
-#[test]
-fn test_letterbox_detection() {
     let mut detector = BlackBarDetector::new();
-
-    // Create 1920x1080 frame with 240px bands top/bottom (2.35:1 aspect ratio)
-    let frame = create_letterboxed_frame(1920, 1080, 240, 240);
-
-    let (horizontal, vertical) = detector.detect_bands(&frame);
-    let (top, bottom) = horizontal.unwrap();
-    let (left, right) = vertical.unwrap();
-    let viewport = Viewport {
-        x: left,
-        y: top,
-        width: frame.width() - left - right,
-        height: frame.height() - top - bottom,
-    };
-
-    // Should detect both bands (allowing some tolerance)
-    assert!(
-        viewport.y >= 230 && viewport.y <= 250,
-        "Top band: {}",
-        viewport.y
-    );
-    assert!(
-        viewport.height >= 580 && viewport.height <= 620,
-        "Height: {}",
-        viewport.height
-    );
-    assert_eq!(viewport.x, 0);
-    assert_eq!(viewport.width, 1920);
-}
-
-#[test]
-fn test_letterbox_detection_low_res() {
-    let mut detector = BlackBarDetector::new();
-
-    // 640x360 capture with 2.35:1 content: 48px bands top/bottom
-    let frame = create_letterboxed_frame(640, 360, 48, 48);
-
-    let (horizontal, vertical) = detector.detect_bands(&frame);
-    let (top, bottom) = horizontal.unwrap();
-    let (left, right) = vertical.unwrap();
-    let viewport = Viewport {
-        x: left,
-        y: top,
-        width: frame.width() - left - right,
-        height: frame.height() - top - bottom,
-    };
-
-    assert!(
-        viewport.y >= 44 && viewport.y <= 52,
-        "Top band: {}",
-        viewport.y
-    );
-    assert!(
-        viewport.height >= 256 && viewport.height <= 272,
-        "Height: {}",
-        viewport.height
-    );
-    assert_eq!(viewport.x, 0);
-    assert_eq!(viewport.width, 640);
-}
-
-#[test]
-fn test_pillarbox_detection() {
-    let mut detector = BlackBarDetector::new();
-
-    // Create frame with 240px bands left/right
-    let frame = create_pillarboxed_frame(1920, 1080, 240, 240);
-
-    let (horizontal, vertical) = detector.detect_bands(&frame);
-    let (top, bottom) = horizontal.unwrap();
-    let (left, right) = vertical.unwrap();
-    let viewport = Viewport {
-        x: left,
-        y: top,
-        width: frame.width() - left - right,
-        height: frame.height() - top - bottom,
-    };
-
-    // Should detect both bands
-    assert!(
-        viewport.x >= 230 && viewport.x <= 250,
-        "Left band: {}",
-        viewport.x
-    );
-    assert!(
-        viewport.width >= 1420 && viewport.width <= 1460,
-        "Width: {}",
-        viewport.width
-    );
-    assert_eq!(viewport.y, 0);
-    assert_eq!(viewport.height, 1080);
-}
-
-#[test]
-fn test_subtitle_handling() {
-    let mut detector = BlackBarDetector::new();
-
-    // Frame with subtitle in bottom black band
-    let frame = create_frame_with_subtitles(1920, 1080, 1000);
-
-    let (horizontal, vertical) = detector.detect_bands(&frame);
-    let (top, bottom) = horizontal.unwrap();
-    let (left, right) = vertical.unwrap();
-    let viewport = Viewport {
-        x: left,
-        y: top,
-        width: frame.width() - left - right,
-        height: frame.height() - top - bottom,
-    };
-
-    // Should still detect top band correctly
-    assert!(
-        viewport.y >= 90 && viewport.y <= 110,
-        "Top band: {}",
-        viewport.y
-    );
-
-    // Bottom band detection should stop at subtitle or detect reduced band
-    // The exact behavior depends on subtitle density, but should not crash
-    assert!(viewport.height > 0 && viewport.height <= 980);
-}
-
-#[test]
-fn test_no_letterbox() {
-    let mut detector = BlackBarDetector::new();
-
-    // Full frame of gray content
-    let frame = yuyv_frame_from_luma(1920, 1080, |_, _| 128);
-
-    let (horizontal, vertical) = detector.detect_bands(&frame);
-    let (top, bottom) = horizontal.unwrap();
-    let (left, right) = vertical.unwrap();
-    let viewport = Viewport {
-        x: left,
-        y: top,
-        width: frame.width() - left - right,
-        height: frame.height() - top - bottom,
-    };
-
-    // Should detect no bands
-    assert_eq!(viewport.x, 0);
-    assert_eq!(viewport.y, 0);
-    assert_eq!(viewport.width, 1920);
-    assert_eq!(viewport.height, 1080);
-}
-
-#[test]
-fn test_projection_building() {
-    let mut detector = BlackBarDetector::new();
-
-    let frame = create_letterboxed_frame(1920, 1080, 100, 100);
-
-    let row_projection = detector.build_row_projection(&frame, 0..frame.width(), 50);
-    assert_eq!(row_projection.len(), 1080);
-
-    // Top 100 rows should be black (brightness ~0)
-    for (i, &brightness) in row_projection.iter().enumerate().take(100) {
-        assert!(brightness < 20, "Row {i} brightness: {brightness}");
-    }
-
-    // Middle rows should be gray (brightness ~128)
-    for (i, &brightness) in row_projection.iter().enumerate().take(980).skip(100) {
-        assert!(brightness > 100, "Row {i} brightness: {brightness}");
-    }
-
-    // Bottom 100 rows should be black
-    for (i, &brightness) in row_projection.iter().enumerate().take(1080).skip(980) {
-        assert!(brightness < 20, "Row {i} brightness: {brightness}");
+    let clean = picture([20, 0, 11, 0], |_, _| 128);
+    let expected = viewport([20, 0, 11, 0]);
+    assert_eq!(feed(&mut detector, &clean, start, 0, 2000), expected);
+    for i in 0..100 {
+        let frame = yuyv_frame_from_luma(WIDTH, HEIGHT, |x, y| match y {
+            20 => 6 + u8::try_from(i % 9).unwrap(),
+            349 => 6 + u8::try_from((i * 3) % 9).unwrap(),
+            21..=348 => 128,
+            _ => u8::try_from((x + y + i) % 3).unwrap(),
+        });
+        assert_eq!(
+            at(&mut detector, &frame, start, 2050 + u64::from(i) * 100),
+            expected,
+            "compression noise/blur moved confirmed crop, phase {i}"
+        );
     }
 }

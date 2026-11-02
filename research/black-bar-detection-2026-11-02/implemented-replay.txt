@@ -1,0 +1,9 @@
+asymmetry: actual=(20,11), detected=(20, 11)
+asymmetry: actual=(20,10), detected=(20, 11)
+asymmetry: actual=(20,11), detected=(20, 11)
+dark picture: true bars=(20,20), detected=(20,20), dim picture preserved
+full darkness: confirmed crop preserved
+subtitle: true bars=(48,48), detected=(48,48), both boundaries preserved
+same synthetic frame, crop=(20,11), mean top linear red=0.527115
+same synthetic frame, crop=(10,10), mean top linear red=0.356726
+same JPEG preview, scaled crops: top LED max sRGB channel delta=30/255, mean=10.405/255; no smoothing or shadow lift

@@ -60,10 +60,15 @@ fn a_static_letterboxed_picture_does_not_bypass_smoothing_when_crop_confirms() {
     let mut processor = PrysmProcessor::new(&config);
     let start = Instant::now();
     let before = processor.process_frame_at(frame.clone(), start);
-    for millis in (10..200).step_by(10) {
-        processor.process_frame_at(frame.clone(), start + Duration::from_millis(millis));
-    }
-    let after = processor.process_frame_at(frame, start + Duration::from_millis(200));
+    let (confirmed_at, after) = (10..=2500)
+        .step_by(10)
+        .find_map(|millis| {
+            let colors =
+                processor.process_frame_at(frame.clone(), start + Duration::from_millis(millis));
+            (processor.viewport().unwrap().y != 0).then_some((millis, colors))
+        })
+        .expect("clear bars must acquire within 2.5 seconds");
+    assert!((1500..=2200).contains(&confirmed_at));
     let old = before.top.sample_at(0.5).r;
     let target = prysm_core::LinearColor::from_srgb(prysm_core::Color::new(128, 128, 128)).r;
     let actual = after.top.sample_at(0.5).r;
@@ -525,7 +530,10 @@ fn dark_scene_preserves_confirmed_crop() {
         SampleDensity::default().samples_for_length(264)
     );
     for i in 0..60 {
-        let dark = p.process_frame_at(rgb(640, 360, 20), start + Duration::from_secs(4 + i));
+        let dark = p.process_frame_at(
+            rgb(640, 360, 20),
+            start + Duration::from_millis(4000 + i * 50),
+        );
         assert_eq!(dark.left.len(), cropped.left.len());
     }
     let resized = p.process_frame(rgb(320, 180, 128));
@@ -1077,6 +1085,121 @@ fn configuring_bar_removal_only_resets_detection_when_toggled() {
         Some(prysm_core::Viewport::full_frame(160, 90))
     );
     processor.configure(&config);
+    processor.process_frame_at(frame.clone(), start + Duration::from_millis(3150));
+    assert_eq!(
+        processor.viewport(),
+        Some(prysm_core::Viewport::full_frame(160, 90)),
+        "re-enabling detection must acquire fresh evidence"
+    );
     settle(&mut processor, &frame, start + Duration::from_millis(3150));
     assert_eq!(processor.viewport(), Some(cropped));
+}
+
+#[test]
+fn one_pixel_bar_noise_does_not_move_sampling_or_change_led_colors() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        sample_density: SampleDensity(32),
+        ..Config::default()
+    };
+    let picture = |bottom: usize| {
+        let mut data = vec![0; 640 * 360 * 3];
+        for y in 20..360 - bottom {
+            for x in 0..640 {
+                let offset = (y * 640 + x) * 3;
+                data[offset..offset + 3].copy_from_slice(&[
+                    if x < 320 { 180 } else { 60 },
+                    100,
+                    if y < 180 { 60 } else { 180 },
+                ]);
+            }
+        }
+        Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap()
+    };
+    let mut processor = PrysmProcessor::new(&config);
+    let start = Instant::now();
+    let expected = settle(&mut processor, &picture(11), start);
+    let viewport = processor.viewport();
+    assert_eq!(viewport.unwrap().y, 20);
+    assert_eq!(viewport.unwrap().height, 329);
+    // Both frames contain identical pixels inside the committed crop.
+    for (bottom, seconds) in [(10, 4), (11, 8), (10, 12)] {
+        let actual = settle(
+            &mut processor,
+            &picture(bottom),
+            start + Duration::from_secs(seconds),
+        );
+        assert_eq!(processor.viewport(), viewport, "bottom margin {bottom}");
+        assert_eq!(actual, expected, "bar noise changed LED sampling");
+    }
+}
+
+#[test]
+fn layout_changes_and_new_runs_discard_confirmed_crop() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        sample_density: SampleDensity(32),
+        ..Config::default()
+    };
+    let mut data = vec![180; 160 * 90 * 3];
+    data[..160 * 12 * 3].fill(0);
+    data[160 * 78 * 3..].fill(0);
+    let boxed = Frame::new(data, 160, 90, PixelFormat::RGB24).unwrap();
+    let start = Instant::now();
+    for changed in [
+        rgb(320, 180, 0),
+        Frame::fill(0, 160, 90, PixelFormat::BGR24).unwrap(),
+    ] {
+        let mut processor = PrysmProcessor::new(&config);
+        settle(&mut processor, &boxed, start);
+        assert_eq!(processor.viewport().unwrap().y, 12);
+        let expected = prysm_core::Viewport::full_frame(changed.width(), changed.height());
+        processor.process_frame_at(changed, start + Duration::from_secs(4));
+        assert_eq!(processor.viewport(), Some(expected));
+    }
+    let mut restarted = PrysmProcessor::new(&config);
+    restarted.process_frame_at(boxed, start + Duration::from_secs(10));
+    assert_eq!(
+        restarted.viewport(),
+        Some(prysm_core::Viewport::full_frame(160, 90))
+    );
+}
+
+#[test]
+fn tall_subtitle_islands_inside_bars_do_not_release_the_crop() {
+    let config = Config {
+        smoothing_seconds: SmoothingSeconds(0.0),
+        sample_density: SampleDensity(32),
+        ..Config::default()
+    };
+    let mut data = vec![0; 640 * 360 * 3];
+    data[640 * 48 * 3..640 * 312 * 3].fill(128);
+    let clean = Frame::new(data.clone(), 640, 360, PixelFormat::RGB24).unwrap();
+    for y in 322..346 {
+        for x in 48..592 {
+            if x % 12 < 8 {
+                data[(y * 640 + x) * 3..(y * 640 + x + 1) * 3].fill(255);
+            }
+        }
+    }
+    let subtitle = Frame::new(data, 640, 360, PixelFormat::RGB24).unwrap();
+    let mut processor = PrysmProcessor::new(&config);
+    let start = Instant::now();
+    settle(&mut processor, &clean, start);
+    let crop = processor.viewport();
+    settle(&mut processor, &subtitle, start + Duration::from_secs(4));
+    assert_eq!(
+        processor.viewport(),
+        crop,
+        "bounded subtitle became picture"
+    );
+
+    let mut startup = PrysmProcessor::new(&config);
+    settle(&mut startup, &subtitle, start);
+    let cold = startup.viewport().unwrap();
+    let bottom = 360 - cold.y - cold.height;
+    assert!(
+        matches!(bottom, 0 | 48),
+        "startup must abstain or find the picture, not crop to subtitles: {cold:?}"
+    );
 }

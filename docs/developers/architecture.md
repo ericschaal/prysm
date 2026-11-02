@@ -116,9 +116,14 @@ CI/hardware checks; macOS results do not establish those properties.
 `PrysmProcessor` chains BlackBarDetector → SpatialSampler → TemporalSmoother.
 Sampling averages picture areas and projects colors onto the perimeter. Shadow lift
 follows smoothing; brightness scales final colors. Density controls sampling independently
-of LED count. Black-bar confirmation uses elapsed time and retains confirmed crop through
-dark scenes. Live configure preserves temporal history except history specifically
-invalidated by the changed setting.
+of LED count. Black-bar detection tracks the four picture boundaries independently,
+combining distributed observations of a dark exterior and sustained picture interior.
+It rejects small overlays and retains confirmed coordinates through dark or ambiguous
+scenes. Fresh consistent observations confirm deeper cropping in about 1.5 seconds
+and restore visible picture in about 0.4 seconds; capture gaps do not count as evidence.
+Live configure preserves temporal history except history specifically invalidated by
+the changed setting. See the [detector investigation](../../research/black-bar-detection-2026-11-02/README.md)
+for the motivating failures, design and validation limits.
 
 Frames carry YUYV range/matrix metadata. Processing assumes sRGB transfer; BT.2020
 matrix support does not decode PQ/HLG. File input tone-maps first. Use `process_frame_at`
