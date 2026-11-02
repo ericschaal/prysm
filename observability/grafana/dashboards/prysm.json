@@ -688,7 +688,7 @@
           "targets": [
             {
               "refId": "A",
-              "expr": "up{job=\"prysm-nodes\",node=~\"$node\"}",
+              "expr": "max by (node) (up{job=\"prysm-nodes\",node=~\"$node\"})",
               "legendFormat": "{{node}}",
               "instant": true,
               "format": "time_series"

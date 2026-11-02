@@ -26,6 +26,8 @@ def check(name, inputs, panel, expected):
 
 up = series('up{job="prysm-nodes",node="computer"}', '1+0x60')
 offline = series('up{job="prysm-nodes",node="computer"}', '0+0x60')
+migrated = [series('up{job="prysm-nodes",node="computer",instance="old"}', '0+0x60'),
+            series('up{job="prysm-nodes",node="computer",instance="new"}', '1+0x60')]
 
 def receiver(fps, last):
     return [series('prysm_capture_requested_frames_per_second{role="Prysm",node="computer"}', f'{fps}+0x60'),
@@ -44,6 +46,8 @@ tests = [check(name, [up] + receiver(fps, last), 22, [sample(expected)])
 between_scrapes = check('healthy between five-second scrapes', [up] + receiver(30, 59.98), 22, [sample(1)])
 between_scrapes['promql_expr_test'][0]['eval_time'] = '1m4s'
 tests.append(between_scrapes)
+tests += [check('replacement receiver is available despite old target', migrated, 1, [sample(1)]),
+          check('replacement receiver is healthy despite old target', migrated + receiver(30, 59.98), 22, [sample(1)])]
 tests += [check('receiver down overrides cached freshness', [offline] + receiver(30, 59.98), 22, [sample(4)]),
           check('receiver down before instrumentation exists', [offline], 22, [sample(4)]),
           check('missing instrumentation cannot report healthy or idle', [up], 22, []),
