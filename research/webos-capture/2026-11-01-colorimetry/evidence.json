@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-01",
+  "firmware": "Rockhopper 10.3.2-34 (ponytail-papikonda)",
+  "chip": "rtk,rtd2875q",
+  "kernel": "5.4.268-294.24.papikonda.2",
+  "kernel_image_sha256": "e3853cd83ea7bca111bd1eeb03fda29d0576334b332a88355a9b168f3318c9a1",
+  "kernel_lz4_sha256": "499274c3be0a91faf52060c64285f85cb626841e88704ed1ad7fb289c5ee0421",
+  "kernel_image_virtual_base": "0xffffffc010180000",
+  "capture_conversion_function": "0xffffffc010a95584",
+  "nv12_nv16_table_virtual_address": "0xffffffc01182b028",
+  "nv12_nv16_table_u16": [
+    750,
+    2515,
+    254,
+    32354,
+    31384,
+    1798,
+    1798,
+    31134,
+    32604,
+    256,
+    256,
+    256,
+    1,
+    0,
+    1,
+    0,
+    0,
+    0
+  ],
+  "active_capture_register_base": "0x18029c00",
+  "active_capture_registers": [
+    "0xc0080051",
+    "0x09d302ee",
+    "0x7e6200fe",
+    "0x07067a98",
+    "0x799e0706",
+    "0x01007f5c",
+    "0x01000100"
+  ],
+  "video_info": {
+    "colormetry": "ITU709",
+    "ycbcrRange": "LIMITED",
+    "pixelEncoding": "YCbCr420",
+    "hdrType": "none",
+    "width": 3840,
+    "height": 2160,
+    "frameRate": 50
+  },
+  "hdmi_infoframe": {
+    "avi_colorimetry": 2,
+    "avi_pixel_encoding": 3,
+    "avi_ycc_quantization_range": 0
+  },
+  "capture_point": "Display (2)",
+  "capture_format": "NV12",
+  "observed_capture_y_min_max": [
+    19,
+    219
+  ],
+  "conclusion": {
+    "matrix": "BT.709",
+    "range": "limited"
+  },
+  "limits": [
+    "Default display tap and active SDR HDMI source verified; alternate taps and HDR not calibrated.",
+    "The observed pixel extrema alone do not establish range."
+  ]
+}

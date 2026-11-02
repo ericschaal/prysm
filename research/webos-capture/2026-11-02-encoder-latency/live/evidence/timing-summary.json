@@ -1,0 +1,26 @@
+{
+  "0-parsed": {
+    "first_frame_ms": 264.1600000000001,
+    "steady_mean_ms": 45.566102564102536,
+    "steady_min_ms": 43.636999999999944,
+    "steady_max_ms": 47.666999999999916,
+    "encoder_in_out_mean_ms": 11.544425000000029,
+    "frames": 45
+  },
+  "1-direct": {
+    "first_frame_ms": 24.545999999999992,
+    "steady_mean_ms": 11.807871794871797,
+    "steady_min_ms": 9.82899999999995,
+    "steady_max_ms": 13.190000000000055,
+    "encoder_in_out_mean_ms": 11.528574999999996,
+    "frames": 45
+  },
+  "2-parsed": {
+    "first_frame_ms": 264.198,
+    "steady_mean_ms": 45.82992307692305,
+    "steady_min_ms": 41.88200000000006,
+    "steady_max_ms": 49.30099999999993,
+    "encoder_in_out_mean_ms": 11.808974999999997,
+    "frames": 45
+  }
+}

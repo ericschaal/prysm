@@ -1,0 +1,18 @@
+[package]
+name = "prysm-renderer-wled"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "WLED DDP lighting output for Prysm"
+
+[lints]
+workspace = true
+
+[dependencies]
+prysm-metrics = { path = "../../common/prysm-metrics" }
+ddp-rs.workspace = true
+prysm-core = { path = "../../common/prysm-core" }

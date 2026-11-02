@@ -1,0 +1,2 @@
+[probe-runner] sending SIGTERM
+shutdown signal: Ok(SIGTERM)

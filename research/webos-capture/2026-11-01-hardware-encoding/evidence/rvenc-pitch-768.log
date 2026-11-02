@@ -1,0 +1,213 @@
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.810: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXMPEGVideoDec-omxmpegvideodec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.812: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXMPEGVideoDec-omxmpegvideodec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.814: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH263Dec-omxh263dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.814: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH263Dec-omxh263dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.816: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH264Dec-omxh264dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.816: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH264Dec-omxh264dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.818: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXVP8Dec-omxvp8dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.818: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXVP8Dec-omxvp8dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.820: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXMJPEGDec-omxmjpegdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.820: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXMJPEGDec-omxmjpegdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.822: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXWMVDec-omxvc1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.822: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXWMVDec-omxvc1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.824: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH265Dec-omxh265dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.824: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH265Dec-omxh265dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.826: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAVSDec-omxavsdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.826: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAVSDec-omxavsdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.828: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAVS2Dec-omxavs2dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.828: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAVS2Dec-omxavs2dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.830: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXVP9Dec-omxvp9dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.830: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXVP9Dec-omxvp9dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.832: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXFLV1Dec-omxflv1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.832: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXFLV1Dec-omxflv1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.834: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAutoVideoDec-omxautovideodec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.834: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAutoVideoDec-omxautovideodec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.836: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXMP3Dec-omxmp3dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.838: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAutoAudioDec-omxautoaudiodec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.840: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAACDec-omxaacdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.842: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAC3Dec-omxac3dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.845: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXVorbisDec-omxvorbisdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.847: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXFLACDec-omxflacdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.849: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXG726Dec-omxg726dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.851: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXG711Dec-omxg711dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.853: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRNBDec-omxamrnbdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.855: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRWBDec-omxamrwbdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.858: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAMRWBPlusDec-omxamrwbplusdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.861: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXOPUSDec-omxopusdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.863: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXIAMFDec-omxiamfdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.865: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXMPEGHDec-omxmpeghdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.868: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXAC4Dec-omxac4dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.870: ../git/omx/gstomxaudiodec.c:788: invalid property id 20 for "downmix" of type 'GParamBoolean' in 'GstOMXLPCMDec-omxlpcmdec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.873: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXAV1Dec-omxav1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.874: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXAV1Dec-omxav1dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.876: ../git/omx/gstomxvideodec.c:1112: invalid property id 15 for "set-svp-handle" of type 'GParamULong' in 'GstOMXH266Dec-omxh266dec1'
+
+** (gst-plugin-scanner:4261): WARNING **: 17:15:43.876: ../git/omx/gstomxvideodec.c:1112: invalid property id 16 for "GeneratingVideoHash" of type 'GParamBoolean' in 'GstOMXH266Dec-omxh266dec1'
+>> [gst.tracer][INFO ][default] [ 4261][  0x79a600] cooltracer registered
+LAYOUT 640 360 768 414720 [0, 276480, 0, 0]
+0:00:00.714644629  4257  0x1210380 INFO                   rvenc gstrvenc.c:127:gst_rv_enc_init:<GstRvEnc@0x12b2360> port 0 init 0x12b2360
+0:00:00.715412518  4257  0x1210380 INFO                   rvenc gstrvenc.c:164:gst_rv_enc_set_property:<rvenc0> port 0 bitrate bps 2000000 (1953 kbps)
+0:00:00.724737481  4257  0x1210380 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.725257296  4257  0x1210380 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.725838740  4257  0x1210380 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.726558370  4257  0x1210380 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 caps
+0:00:00.726915777  4257  0x1210380 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 custom
+0:00:00.728294814  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 NULL_TO_READY (10)
+0:00:00.728560148  4257  0x1210380 INFO                   rvenc gstrvenc.c:199:gst_rv_enc_open:<rvenc0> port 0 open 0x12b2360
+0:00:00.728715926  4257  0x1210380 INFO                   rvenc gstrvenc.c:204:gst_rv_enc_open:<rvenc0> port 0 done
+0:00:00.728853037  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.730145074  4257  0x1210380 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 scheduling
+0:00:00.730748111  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_PAUSED (19)
+0:00:00.731171814  4257  0x1210380 INFO                   rvenc gstrvenc.c:325:gst_rv_enc_start:<rvenc0> port 0 start
+0:00:00.747063740  4257  0x1210380 INFO                   rvenc gstrvenc.c:342:gst_rv_enc_start:<rvenc0> port 0 done
+0:00:00.747257259  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.748065814  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_PLAYING (28)
+0:00:00.748186111  4257  0x1257618 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 stream-start
+0:00:00.748429444  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:00.748469555  4257  0x1257618 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 allocation
+0:00:00.748706296  4257  0x1257618 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 accept-caps
+0:00:00.748805814  4257  0x1257618 INFO                   rvenc gstrvenc.c:817:gst_rv_enc_sink_query:<rvenc0> port 0 caps
+0:00:00.749226111  4257  0x1257618 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 caps
+0:00:00.749738555  4257  0x1257618 INFO                   rvenc gstrvenc.c:403:gst_rv_enc_set_format:<rvenc0> port 0 caps video/x-raw(memory:DMABuf), format=(string)NV12, width=(int)640, height=(int)360, framerate=(fraction)15/1, colorimetry=(string)bt709
+0:00:00.750594000  4257  0x1257618 INFO                   rvenc gstrvenc.c:415:gst_rv_enc_set_format:<rvenc0> port 0 negotiate caps video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, width=(int)640, height=(int)360, pixel-aspect-ratio=(fraction)1/1, framerate=(fraction)15/1, interlace-mode=(string)progressive, colorimetry=(string)bt709
+0:00:00.750922592  4257  0x1257618 INFO                   rvenc gstrvenc.c:438:gst_rv_enc_set_format:<rvenc0> port 0 fps 15/3
+push 0 0
+0:00:00.760175370  4257  0x1257618 INFO                   rvenc gstrvenc.c:455:gst_rv_enc_set_format:<rvenc0> port 0 done
+0:00:00.760411555  4257  0x1257618 INFO                   rvenc gstrvenc.c:761:gst_rv_enc_sink_event:<rvenc0> port 0 segment time segment start=0:00:00.000000000, offset=0:00:00.000000000, stop=99:99:99.999999999, rate=1.000000, applied_rate=1.000000, flags=0x00, time=0:00:00.000000000, base=0:00:00.000000000, position 0:00:00.000000000, duration 99:99:99.999999999
+0:00:00.760547555  4257  0x1257618 INFO                   rvenc gstrvenc.c:588:gst_rv_enc_handle_frame:<rvenc0> port 0 first-frame pts 0:00:00.005815778 dur 99:99:99.999999999
+0:00:00.760652629  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:00.760678296  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:00.760694926  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:00.768331777  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 0 datalen 756 dma_fd 25
+0:00:00.769163037  4257  0x1257618 INFO                   rvenc gstrvenc.c:698:gst_rv_enc_handle_frame:<rvenc0> port 0 start task
+push 1 0
+0:00:00.824877814  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:00.824915814  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:00.824934222  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:00.834654963  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+0:00:00.837188963  4257  0x1274b20 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 seeking
+0:00:00.839279666  4257 0xf1809690 INFO                   rvenc gstrvenc.c:837:gst_rv_enc_src_query:<rvenc0> port 0 latency
+0:00:00.839501074  4257 0xf1809690 INFO                   rvenc gstrvenc.c:799:gst_rv_enc_src_event:<rvenc0> port 0 latency
+push 2 0
+0:00:00.895768111  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:00.895826222  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:00.895845111  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:00.905515888  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 3 0
+0:00:00.966940777  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:00.967013259  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:00.967078814  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:00.976632259  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 4 0
+0:00:01.037647333  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.037686370  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.037704444  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.047332444  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 5 0
+0:00:01.109410073  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.109465666  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.109485036  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.122397592  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 6 0
+0:00:01.180729073  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.180782481  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.180803110  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.190684703  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 7 0
+0:00:01.252351962  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.252399296  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.252417222  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.262184222  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 8 0
+0:00:01.324011147  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.324048518  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.324067073  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.333488036  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 9 0
+0:00:01.395791481  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.395832147  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.395850036  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.405563481  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 10 0
+0:00:01.466681407  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.466726333  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.466744370  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.476174407  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 11 0
+0:00:01.537436184  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.537472184  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.537490221  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.547261666  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+0:00:01.608330703  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.608402555  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.608422999  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+push 12 0
+0:00:01.618410777  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1061 dma_fd 25
+push 13 0
+0:00:01.679636184  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.679677925  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.679695406  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.690189740  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+push 14 0
+0:00:01.750897036  4257  0x1257618 LOG                    rvenc gstrvenc.c:658:gst_rv_enc_handle_frame:<rvenc0> port 0 planes 2 offset 276480 reset-gop 0
+0:00:01.750939999  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 0 640x360 pitch 768 fd 25
+0:00:01.750958999  4257  0x1257618 LOG                    rvenc gstrvenc.c:662:gst_rv_enc_handle_frame:<rvenc0> port 0 plane 1 640x180 pitch 768 fd 25
+0:00:01.760284703  4257 0xf1701600 LOG                    rvenc gstrvenc.c:279:gst_rv_enc_encode_cb:<rvenc0> recv port 0 pts 6000 datalen 1113 dma_fd 25
+0:00:01.817895555  4257  0x1257618 INFO                   rvenc gstrvenc.c:765:gst_rv_enc_sink_event:<rvenc0> port 0 eos
+0:00:01.818087851  4257  0x1257618 INFO                   rvenc gstrvenc.c:529:gst_rv_enc_finish:<rvenc0> port 0 do
+0:00:01.818122999  4257  0x1257618 INFO                   rvenc gstrvenc.c:552:gst_rv_enc_finish:<rvenc0> port 0 done
+0:00:01.819093221  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PLAYING_TO_PAUSED (35)
+0:00:01.819154999  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:01.819884851  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 PAUSED_TO_READY (26)
+0:00:01.820768295  4257  0x1210380 INFO                   rvenc gstrvenc.c:363:gst_rv_enc_stop:<rvenc0> port 0 stop
+0:00:01.864566777  4257  0x1210380 INFO                   rvenc gstrvenc.c:387:gst_rv_enc_stop:<rvenc0> port 0 stop done
+0:00:01.864715851  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:01.865156777  4257  0x1210380 INFO                   rvenc gstrvenc.c:234:gst_rv_enc_change_state:<rvenc0> port 0 READY_TO_NULL (17)
+0:00:01.865227888  4257  0x1210380 INFO                   rvenc gstrvenc.c:215:gst_rv_enc_close:<rvenc0> port 0 close 0x12b2360
+0:00:01.865275332  4257  0x1210380 INFO                   rvenc gstrvenc.c:222:gst_rv_enc_close:<rvenc0> port 0 done
+0:00:01.865307666  4257  0x1210380 INFO                   rvenc gstrvenc.c:249:gst_rv_enc_change_state:<rvenc0> port 0 done (1)
+0:00:01.865917703  4257  0x1210380 INFO                   rvenc gstrvenc.c:138:gst_rv_enc_finalize:<rvenc0> port 0 finalize 0x12b2360
+OUTPUT_BYTES 16286

@@ -1,0 +1,164 @@
+{
+  "date": "2026-11-01",
+  "target": "LG webOS TV at 192.168.18.10; ARMv7 executables on aarch64 kernel",
+  "build": {
+    "sdk": "/Users/eschaal/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot",
+    "command": "WEBOS_SDK=/Users/eschaal/webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot bash packaging/webos/build-ipk.sh",
+    "target": "armv7-unknown-linux-gnueabi",
+    "profile": "webos",
+    "artifacts": {
+      "prysm-webos-capture": {
+        "path": "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-capture",
+        "sha256": "4aaf32ba478cff273a66f23766385416a0877ffe3287b3262d76459b6e892e95"
+      },
+      "prysm-webos-service": {
+        "path": "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-service",
+        "sha256": "7684624015c15402ff75c894952d3905c0c1e12ecef4a9ba17a9f61cd18e9ce5"
+      }
+    },
+    "package": "target/webos-ipk/io.prysm.capture_0.1.10_all.ipk",
+    "package_sha256": "21a326a253e112f15cbba1611711beb90b0d4f994991bdfa18a8e13b44958146",
+    "package_contains_tested_binaries": true
+  },
+  "arm_regressions": [
+    {
+      "binary": "prysm-webos-service-tests",
+      "test": "worker::process_tests::control_pipe_deduplicates_readiness_and_preserves_explicit_reset",
+      "passed": true
+    },
+    {
+      "binary": "prysm-webos-capture-tests",
+      "test": "control::tests::rapid_loss_and_return_still_reset_the_old_video_client",
+      "passed": true
+    },
+    {
+      "binary": "prysm-webos-capture-tests",
+      "test": "native::vtcapture::tests::acquisition_error_arms_watchdog_before_native_cleanup",
+      "passed": true
+    },
+    {
+      "binary": "prysm-webos-capture-tests",
+      "test": "native::vtcapture::tests::successful_preparation_clears_the_old_wait_before_buffer_polling",
+      "passed": true
+    },
+    {
+      "binary": "prysm-webos-service-tests",
+      "test": "supervisor::video_reset_tests::completed_reset_keeps_worker_but_stalled_native_release_triggers_recovery",
+      "passed": true
+    }
+  ],
+  "native_validation": {
+    "native_unknown_reset": {
+      "passed": true,
+      "pid": 5933,
+      "frames": 10,
+      "reset_seconds": 0.6,
+      "events": [
+        {
+          "type": "video_resetting"
+        },
+        {
+          "type": "video_reset"
+        },
+        {
+          "type": "video_resetting"
+        },
+        {
+          "type": "video_reset"
+        }
+      ]
+    },
+    "native_acquisition_watchdog": {
+      "passed": true,
+      "real_frames": 4,
+      "worker_pid": 5951,
+      "watchdog_seconds_after_injection": 5.201,
+      "kill_and_reap_seconds": 4.953,
+      "observations": [
+        {
+          "seconds": 0.047,
+          "error": null,
+          "stopping": false,
+          "log": null,
+          "worker_pids": [
+            5951
+          ]
+        },
+        {
+          "seconds": 0.272,
+          "error": null,
+          "stopping": false,
+          "log": "2026-11-01T14:08:18.760540Z  INFO prysm_webos_capture::capture: video source availability changed available=true\n",
+          "worker_pids": [
+            5951
+          ]
+        },
+        {
+          "seconds": 0.49,
+          "error": null,
+          "stopping": false,
+          "log": "2026-11-01T14:08:18.904375Z  INFO prysm_webos_capture::native::vtcapture: video capture started width=320 height=180\n",
+          "worker_pids": [
+            5951
+          ]
+        },
+        {
+          "seconds": 0.708,
+          "error": null,
+          "stopping": false,
+          "log": "TEST: injecting acquisition error after real video frames\n2026-11-01T14:08:19.253383Z  WARN prysm_webos_capture::capture: video interrupted; restarting error=vtCapture_currentCaptureBuffInfo failed: 99\nTEST: blocking native release until supervisor recovery\n",
+          "worker_pids": [
+            5951
+          ]
+        },
+        {
+          "seconds": 5.908,
+          "error": "Native video reset timed out",
+          "stopping": true,
+          "log": "TEST: injecting acquisition error after real video frames\n2026-11-01T14:08:19.253383Z  WARN prysm_webos_capture::capture: video interrupted; restarting error=vtCapture_currentCaptureBuffInfo failed: 99\nTEST: blocking native release until supervisor recovery\n",
+          "worker_pids": [
+            5951
+          ]
+        }
+      ]
+    },
+    "restored": {
+      "enabled": true,
+      "config": {
+        "autostart": true,
+        "compression": "h264",
+        "receiver": "192.168.18.18:19400",
+        "source": "both"
+      },
+      "power": "Active",
+      "senderRunning": true,
+      "receiverConnected": true,
+      "capturing": true,
+      "error": null
+    }
+  },
+  "cleanup": {
+    "temporary_registration_removed": true,
+    "temporary_files_removed": true,
+    "production_status": {
+      "pid": 7035,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "receiverConnected": true,
+      "capturing": true,
+      "error": null
+    },
+    "installed_hashes": "7331042626d2957b6343de0dfc70770285e9c766197f3c895085633a158d1ccb  /media/developer/apps/usr/palm/services/io.prysm.capture.service/prysm-webos-capture\ne78857a62868a4bc3e307d54eb12e6b271ca276b6510cc7fc5f48b6e3d95279a  /media/developer/apps/usr/palm/services/io.prysm.capture.service/prysm-webos-service\n",
+    "host_frames": [
+      101075,
+      101099
+    ]
+  },
+  "method": {
+    "reset": "Production worker encoder and capture decoder regressions ran as ARM executables on the TV. A temporary real LG capture worker then received unknown readiness and explicit reset on its private stdin, retained its PID/TCP connection, and resumed frames.",
+    "watchdog": "A temporary libvtcapture wrapper forwarded real LG calls. After five successful acquisitions it returned status 99 and blocked release. The bounded sandbox supervisor detected the acquisition-error teardown hang and killed/reaped the worker. Receiver frames stayed on TV loopback.",
+    "isolation": "Saved configuration and boot hook bytes were preserved. Temporary Luna roles/service descriptor and fault library were removed. Installed production executables were unchanged and production capture resumed.",
+    "test_harness_correction": "The first native attempt passed reset validation but could not query the temporary supervisor because its Luna service descriptor was missing. Production was restored, the temporary descriptor was added, and both native tests passed on the second attempt."
+  }
+}

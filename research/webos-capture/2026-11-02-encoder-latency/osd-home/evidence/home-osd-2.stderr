@@ -1,0 +1,15 @@
+CALL init 0
+PREPARE attempt=1 code=1
+PREPARE attempt=2 code=1
+PREPARE attempt=3 code=1
+PREPARE attempt=4 code=1
+PREPARE attempt=5 code=1
+PREPARE attempt=6 code=1
+PREPARE attempt=7 code=1
+PREPARE attempt=8 code=1
+PREPARE attempt=9 code=1
+PREPARE attempt=10 code=1
+PREPARE attempt=11 code=1
+CALL preprocess 1
+ERROR mode=4 preprocess
+CALL finalize 0

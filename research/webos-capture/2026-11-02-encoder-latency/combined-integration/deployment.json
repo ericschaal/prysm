@@ -1,0 +1,24 @@
+{
+  "version": "0.1.22",
+  "package_sha256": "94d18d4963cf60396365e3501410bc64159d6641bd9e2390d5bd41cfd90daaae",
+  "verified_files": 21,
+  "binary_sha256": {
+    "prysm-webos-capture": "afcfedfa5c187eed20baffa424fc8a25029a6cf26c8df4a77de484e7fbd043cb",
+    "prysm-webos-service": "644d020f00fdc0daeee5bf9e3a3cfad80fb38bcefae4d5413b8de05423c00ded"
+  },
+  "state": {
+    "enabled": true,
+    "receiverConnected": true,
+    "capturing": true,
+    "error": null,
+    "capabilities": {
+      "hardwareH264": true
+    }
+  },
+  "config": {
+    "autostart": true,
+    "compression": "h264-hardware",
+    "metrics": true,
+    "source": "both"
+  }
+}

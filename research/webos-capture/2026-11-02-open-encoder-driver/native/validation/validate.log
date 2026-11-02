@@ -1,0 +1,60 @@
+{
+  "frames-1": {
+    "decoded_frames": 1,
+    "exact_capture_packet_boundaries": true,
+    "input_to_capture_us": [
+      24142
+    ],
+    "first_capture_from_streamon_us": 11412,
+    "steady_latency_median_us": null,
+    "steady_latency_range_us": null,
+    "steady_submission_intervals_us": [],
+    "observed_submission_fps_excluding_first_gap": null,
+    "h264_sha256": "aaef4fe71600db4f7b4622961507127fada06753f7cf43c07f72bd64e3d153b0"
+  },
+  "frames-15": {
+    "decoded_frames": 15,
+    "exact_capture_packet_boundaries": true,
+    "input_to_capture_us": [
+      20710,
+      13656,
+      13880,
+      13766,
+      13781,
+      13786,
+      13855,
+      13874,
+      15232,
+      12497,
+      19771,
+      13857,
+      17773,
+      17702,
+      17906
+    ],
+    "first_capture_from_streamon_us": 9877,
+    "steady_latency_median_us": 13865.5,
+    "steady_latency_range_us": [
+      12497,
+      19771
+    ],
+    "steady_submission_intervals_us": [
+      35766,
+      36107,
+      35987,
+      35993,
+      35942,
+      35974,
+      36027,
+      37350,
+      44737,
+      41940,
+      36075,
+      40077,
+      39810
+    ],
+    "observed_submission_fps_excluding_first_gap": 26.43431580873756,
+    "h264_sha256": "341a8ac9382fa82fc86e816a3ce1a257da81f8dd693467b3cdcff6356f90ed71",
+    "first_capture_before_second_submit_us": 234295
+  }
+}

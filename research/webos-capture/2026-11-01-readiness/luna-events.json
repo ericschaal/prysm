@@ -1,0 +1,275 @@
+[
+  {
+    "seconds": 0.3,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 0.3,
+    "event": "foreground",
+    "returnValue": true,
+    "subscribed": true,
+    "appId": "com.webos.app.hdmi1"
+  },
+  {
+    "seconds": 23.74,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 23.92,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 23.92,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": false,
+        "muted": false,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 23.94,
+    "event": "foreground",
+    "returnValue": true,
+    "subscribed": true,
+    "appId": "com.webos.app.home"
+  },
+  {
+    "seconds": 32.79,
+    "event": "foreground",
+    "returnValue": true,
+    "subscribed": true,
+    "appId": "com.webos.app.hdmi1"
+  },
+  {
+    "seconds": 32.8,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 32.81,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 32.81,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 32.83,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  },
+  {
+    "seconds": 32.86,
+    "event": "video",
+    "returnValue": true,
+    "subscribed": true,
+    "video": [
+      {
+        "sink": "MAIN",
+        "connected": true,
+        "muted": false,
+        "connectedSource": "HDMI",
+        "width": 3840,
+        "height": 2160,
+        "frameRate": 50,
+        "appId": "com.webos.app.hdmi1"
+      },
+      {
+        "sink": "SUB0",
+        "connected": false,
+        "muted": true,
+        "connectedSource": "unknown",
+        "width": 0,
+        "height": 0,
+        "frameRate": 0,
+        "appId": "unknown"
+      }
+    ]
+  }
+]

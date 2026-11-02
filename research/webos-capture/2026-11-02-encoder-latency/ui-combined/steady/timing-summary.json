@@ -1,0 +1,84 @@
+{
+  "baseline-640x360": {
+    "means_ms": {
+      "FrameEncoder/HardwareSyncEnd": 0.004007077272727273,
+      "FrameEncoder/HardwareWait": 12.154483495454553,
+      "FrameEncoder/HardwareNormalize": 0.12948619545454557,
+      "FrameEncoder/HardwareConvert": 3.6296209462365576,
+      "Composer/Convert": 3.238279924731182,
+      "FrameEncoder/HardwareSyncStart": 0.009086377272727274,
+      "UiCapture/CopyPixels": 2.799233497716896,
+      "UiCapture/Acquire": 15.18510926484019,
+      "FrameEncoder/PreparePayload": 14.09744071818181,
+      "FrameEncoder/HardwareCollect": 0.01616178181818181,
+      "CaptureLoop/Iterate": 33.33827874545455,
+      "Composer/Blend": 3.024514559139784,
+      "VideoCapture/Acquire": 0.37628243835616415,
+      "UiCapture/NativeCapture": 12.367203461187213,
+      "FrameSender/WriteFrame": 0.13536653181818173,
+      "FrameEncoder/HardwareUpload": 0.13238154090909096,
+      "FrameEncoder/HardwareSubmit": 0.06973446818181815
+    },
+    "counts": {
+      "FrameEncoder/HardwareSyncEnd": 220.0,
+      "FrameEncoder/HardwareWait": 220.0,
+      "FrameEncoder/HardwareNormalize": 220.0,
+      "FrameEncoder/HardwareConvert": 93.0,
+      "Composer/Convert": 93.0,
+      "FrameEncoder/HardwareSyncStart": 220.0,
+      "UiCapture/CopyPixels": 219.0,
+      "UiCapture/Acquire": 219.0,
+      "FrameEncoder/PreparePayload": 220.0,
+      "FrameEncoder/HardwareCollect": 220.0,
+      "CaptureLoop/Iterate": 220.0,
+      "Composer/Blend": 93.0,
+      "FrameSender/Connect": 0.0,
+      "VideoCapture/Acquire": 219.0,
+      "UiCapture/NativeCapture": 219.0,
+      "FrameSender/WriteFrame": 220.0,
+      "FrameEncoder/HardwareUpload": 220.0,
+      "FrameEncoder/HardwareSubmit": 220.0
+    },
+    "events": {
+      "prysm_pipeline_frames_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"FrameEncoder\",boundary=\"Encoded\",format=\"Rgb24\",codec=\"H264\",content=\"Video\",width=\"640\",height=\"360\"}": 127.0,
+      "prysm_pipeline_frames_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"FrameEncoder\",boundary=\"Encoded\",format=\"Rgb24\",codec=\"H264\",content=\"Ui\",width=\"640\",height=\"360\"}": 0.0,
+      "prysm_pipeline_frames_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"FrameEncoder\",boundary=\"Encoded\",format=\"Rgb24\",codec=\"H264\",content=\"Blended\",width=\"640\",height=\"360\"}": 93.0,
+      "prysm_operation_events_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"CaptureLoop\",operation=\"Iterate\",outcome=\"SkippedDeadline\"}": 93.0
+    }
+  },
+  "combined-640x360": {
+    "means_ms": {
+      "FrameEncoder/HardwareSubmit": 0.07308116363636362,
+      "FrameEncoder/HardwareWait": 11.989047790909083,
+      "FrameEncoder/HardwareCollect": 0.015220177272727278,
+      "FrameEncoder/HardwareNormalize": 0.24738269545454536,
+      "FrameEncoder/PreparePayload": 12.57417587272727,
+      "FrameSender/WriteFrame": 0.1491124681818182,
+      "UiCapture/Acquire": 0.0011476636363636377,
+      "CaptureLoop/Iterate": 13.427218531818184,
+      "FrameEncoder/HardwareUpload": 0.1866471272727272,
+      "VideoCapture/Acquire": 0.45403311818181813,
+      "FrameEncoder/HardwareSyncEnd": 0.0032358045454545445,
+      "FrameEncoder/HardwareSyncStart": 0.007123036363636365
+    },
+    "counts": {
+      "FrameEncoder/HardwareSubmit": 220.0,
+      "FrameEncoder/HardwareWait": 220.0,
+      "FrameEncoder/HardwareCollect": 220.0,
+      "FrameEncoder/HardwareNormalize": 220.0,
+      "FrameEncoder/PreparePayload": 220.0,
+      "FrameSender/WriteFrame": 220.0,
+      "FrameSender/Connect": 0.0,
+      "UiCapture/Acquire": 220.0,
+      "CaptureLoop/Iterate": 220.0,
+      "FrameEncoder/HardwareUpload": 220.0,
+      "VideoCapture/Acquire": 220.0,
+      "FrameEncoder/HardwareSyncEnd": 220.0,
+      "FrameEncoder/HardwareSyncStart": 220.0
+    },
+    "events": {
+      "prysm_pipeline_frames_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"FrameEncoder\",boundary=\"Encoded\",format=\"Rgb24\",codec=\"H264\",content=\"Video\",width=\"640\",height=\"360\"}": 220.0,
+      "prysm_operation_events_total{role=\"Capturer\",flow=\"CaptureFrames\",component=\"CaptureLoop\",operation=\"Iterate\",outcome=\"SkippedDeadline\"}": 0.0
+    }
+  }
+}

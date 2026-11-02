@@ -1,0 +1,21 @@
+{
+  "worker_ids": [
+    "worker=13402"
+  ],
+  "home_duration_seconds": 71.83,
+  "home_frames_advanced": 2124,
+  "home_no_video_device": true,
+  "home_connected": true,
+  "hdmi_samples": 4,
+  "last_video": {
+    "seconds": 79.28,
+    "worker": "worker=13402",
+    "frames": 70582,
+    "connected": true,
+    "error": null
+  },
+  "errors": [
+    null
+  ],
+  "user_confirmation": "Video appeared quickly"
+}

@@ -1,0 +1,13 @@
+# Keep vendor samples, SDKs, decompilation and generated probes outside the archive.
+/build/
+/private/
+/sdk/
+/projects/
+*.so
+*.so.*
+*.a
+*.o
+*.asm
+*.tar.gz
+*.tar.xz
+*-decompiled.c

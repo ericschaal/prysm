@@ -1,0 +1,16 @@
+HARNESS baseline fds=5
+HARNESS create 0
+TRACE 25305.434659 tid=15422 context_new 0x33b5d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25305.434700 tid=15422 loop_new 0x339410 0x33b5d8 /usr/lib/libresource_mgr_client.so.1+0x69c9
+HARNESS exception LSRegisterPubPriv FAILED
+HARNESS after 0 fds=6
+HARNESS create 1
+TRACE 25305.438749 tid=15422 context_new 0x334970 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25305.438777 tid=15422 loop_new 0x3349f0 0x334970 /usr/lib/libresource_mgr_client.so.1+0x69c9
+HARNESS exception LSRegisterPubPriv FAILED
+HARNESS after 1 fds=7
+HARNESS create 2
+TRACE 25305.442252 tid=15422 context_new 0x350920 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25305.442278 tid=15422 loop_new 0x3509a0 0x350920 /usr/lib/libresource_mgr_client.so.1+0x69c9
+HARNESS exception LSRegisterPubPriv FAILED
+HARNESS after 2 fds=8

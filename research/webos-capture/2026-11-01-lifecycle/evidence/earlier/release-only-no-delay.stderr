@@ -1,0 +1,57 @@
+WATCHDOG timed out pid=16794
+/proc/16794/task/16794/comm probe
+
+/proc/16794/task/16794/wchan futex_wait_queue_me
+/proc/16794/task/16794/syscall 240 0xf5bff3e8 0x109 0x419d 0x0 0x0 0xffffffff 0xff924ce0 0xf7481ca6
+
+/proc/16794/task/16794/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16794/task/16795/comm probe
+
+/proc/16794/task/16795/wchan do_sys_poll
+/proc/16794/task/16795/syscall 168 0xf6601a58 0x3 0xffffffff 0x0 0xffffffff 0x3 0xf6f4b910 0xf7481ca6
+
+/proc/16794/task/16795/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16794/task/16796/comm probe
+
+/proc/16794/task/16796/wchan do_sys_poll
+/proc/16794/task/16796/syscall 168 0xf5c071a8 0x2 0xffffffff 0x0 0xffffffff 0x2 0xf65fec48 0xf7481ca6
+
+/proc/16794/task/16796/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/16794/task/16797/comm probe
+
+/proc/16794/task/16797/wchan futex_wait_queue_me
+/proc/16794/task/16797/syscall 240 0xe07398 0x189 0x0 0x0 0x0 0xffffffff 0xf5bfebc8 0xf7481ca6
+
+/proc/16794/task/16797/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+HARNESS baseline fds=5
+HARNESS create 0
+HARNESS created 0xe07010
+HARNESS release 0

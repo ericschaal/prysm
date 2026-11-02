@@ -1,0 +1,39 @@
+TRACE 27244.102965 tid=27196 context_new 0x1f395d8 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 27244.103034 tid=27196 loop_new 0x1f37410 0x1f395d8 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 27244.107317 tid=27196 context_unref 0x1f395d8 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 27244.114905 tid=27197 signal 0x1f394b0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 27244.116166 tid=27198 context_new 0xf6200600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 27244.116220 tid=27198 loop_new 0xf6202f88 0xf6200600 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+TRACE 27244.121686 tid=27199 broadcast 0x1f39348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27244.121747 tid=27199 wait_enter 0x1f39300 0x1f392e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE idle 0 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+TRACE 27244.123832 tid=27196 wait_enter 0x1f56408 0x1f39518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27244.124648 tid=27197 signal 0x1f56408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27244.125088 tid=27196 wait_exit 0x1f56408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27244.213779 tid=27196 signal 0x1f39300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+TRACE 27244.213858 tid=27199 wait_exit 0x1f39300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+REUSE frame cycle=1 dimensions=320x180 ready=1
+TRACE 27244.272344 tid=27199 broadcast 0x1f39348 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 27244.272412 tid=27199 wait_enter 0x1f39300 0x1f392e4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 27244.272433 tid=27199 delay_wait_500ms 0x1f39300 0x2 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE stop result=0
+REUSE postprocess result=0
+REUSE finalize result=0
+REUSE idle 1 fds=10 threads=4 maps=128
+REUSE device /dev/shm/pmloglib.lock
+TRACE 27244.276246 tid=27196 wait_enter 0x1f56408 0x1f39518 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 27244.276731 tid=27197 signal 0x1f56408 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 27244.277039 tid=27196 wait_exit 0x1f56408 (nil) /usr/lib/libstdc++.so.6+0x974d5
+REUSE init result=0
+TRACE 27244.371029 tid=27196 signal 0x1f39300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+REUSE preprocess result=0
+REUSE process result=0
+REUSE plane result=0
+TRACE 27244.772542 tid=27199 delay_done 0x1f39300 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+REUSE frame cycle=2 dimensions=160x90 ready=0
+REUSE exception frame deadline; exit reclaims partial state

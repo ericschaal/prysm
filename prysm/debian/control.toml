@@ -1,5 +1,0 @@
-listen = "0.0.0.0:8787"
-wled_url = "http://192.168.18.39/"
-# "*" allows any browser host; use exact host:port entries to restrict access.
-allowed_hosts = ["*"]
-state_dir = "/var/lib/prysm-control"

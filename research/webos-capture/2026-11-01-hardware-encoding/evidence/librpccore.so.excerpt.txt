@@ -1,0 +1,15 @@
+  ╎╎╎└────< 0x0001c1e8      ecf706b8       b.w plt.KADP_VENC_EXT_Open
+  ────────< 0x0001c1ec      ecf73cbd       b.w plt.KADP_VENC_EXT_Close
+  └───────< 0x0001c1f0      ecf7d0ba       b.w plt.KADP_VENC_EXT_Start
+   ╎╎ └───< 0x0001c1f4      ebf7f2bf       b.w plt.KADP_VENC_EXT_Stop
+   ╎╎  ╎╎   0x0001c1f8      08b5           push {r3, lr}
+   ╎╎  ╎╎   0x0001c1fa      ebf732ef       blx plt.KADP_VENC_EXT_Qbuf
+   ╎╎  ╎╎   0x0001c1fe      10f1080f       cmn.w r0, 8
+   ╎╎  ╎╎   0x0001c202      08bf           it eq
+   ╎╎  ╎╎   0x0001c204      6ff00a00       mvn r0, 0xa
+   ╎╎  ╎╎   0x0001c208      08bd           pop {r3, pc}
+   ╎╎  ╎╎   0x0001c20a      00bf           nop
+   ╎└─────< 0x0001c20c      ecf7a2b8       b.w plt.KADP_VENC_EXT_SetParam
+   └──────< 0x0001c210      ecf74eba       b.w plt.KADP_VENC_EXT_RegisterEncoderCallback
+       └──< 0x0001c214      ebf76cbf       b.w plt.KADP_VENC_EXT_CopyData
+        └─< 0x0001c218      ebf7d8bd       b.w plt.KADP_VENC_EXT_ReleaseData

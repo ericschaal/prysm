@@ -1,0 +1,419 @@
+0x00075b24      cf4b           ldr r3, [0x00075e64]                    ; [0x75e64:4]=0xf04ca
+0x00075b26      4ff08071       mov.w r1, 0x1000000
+0x00075b2a      cf4a           ldr r2, [0x00075e68]                    ; [0x75e68:4]=0xae057
+0x00075b2c      2de9f04f       push.w {r4, r5, r6, r7, r8, sb, sl, fp, lr}
+0x00075b30      9fb0           sub sp, 0x7c
+0x00075b32      7b44           add r3, pc
+0x00075b34      0546           mov r5, r0
+0x00075b36      7a44           add r2, pc
+0x00075b38      12a8           add r0, sp, 0x48
+0x00075b3a      0993           str r3, [sp, 0x24]
+0x00075b3c      e2f792e8       blx 0x57c64 ; relocation-verified: _ZN13CRTKTraceCallC1EjPKc
+0x00075b40      d5f83432       ldr.w r3, [r5, 0x234]
+0x00075b44      0893           str r3, [sp, 0x20]
+0x00075b46      e0f7c2ee       blx 0x568cc ; relocation-verified: pli_getPTS
+0x00075b4a      cde90d01       strd r0, r1, [sp, 0x34]
+0x00075b4e      2822           movs r2, 0x28                           ; '('
+0x00075b50      0021           movs r1, 0
+0x00075b52      14a8           add r0, sp, 0x50
+0x00075b54      dff7d8eb       blx 0x55308 ; relocation-verified: memset
+0x00075b58      c44a           ldr r2, [0x00075e6c]                    ; [0x75e6c:4]=0xae04a
+0x00075b5a      4ff08071       mov.w r1, 0x1000000
+0x00075b5e      2b78           ldrb r3, [r5]
+0x00075b60      0420           movs r0, 4
+0x00075b62      7a44           add r2, pc
+0x00075b64      def7c2ef       blx 0x54aec ; relocation-verified: RTD_Log
+0x00075b68      54e1           b 0x75e14
+0x00075b6a      05f5b477       add.w r7, r5, 0x168
+0x00075b6e      3846           mov r0, r7
+0x00075b70      e2f706ed       blx 0x58580 ; relocation-verified: osal_MutexLock
+0x00075b74      05f50c74       add.w r4, r5, 0x230
+0x00075b78      2046           mov r0, r4
+0x00075b7a      def72aef       blx 0x549d0 ; relocation-verified: rhal_ring_GetWritePtr
+0x00075b7e      8046           mov r8, r0
+0x00075b80      0021           movs r1, 0
+0x00075b82      2046           mov r0, r4
+0x00075b84      e0f72aee       blx 0x567dc ; relocation-verified: rhal_ring_GetReadPtr
+0x00075b88      8045           cmp r8, r0
+0x00075b8a      d5f888b1       ldr.w fp, [r5, 0x188]
+0x00075b8e      34bf           ite lo
+0x00075b90      d5f85832       ldrhs.w r3, [r5, 0x258]
+0x00075b94      0023           movs r3, 0
+0x00075b96      0446           mov r4, r0
+0x00075b98      9844           add r8, r3
+0x00075b9a      4045           cmp r0, r8
+0x00075b9c      00f00981       beq.w 0x75db2
+0x00075ba0      e1f71eed       blx 0x575e0 ; relocation-verified: pli_IPCReadULONG
+0x00075ba4      0528           cmp r0, 5
+0x00075ba6      00f2ca80       bhi.w 0x75d3e
+0x00075baa      dfe810f0       tbh [pc, r0, lsl 1]
+0x00075c6e      079b           ldr r3, [sp, 0x1c]
+0x00075c70      0021           movs r1, 0
+0x00075c72      05f50170       add.w r0, r5, 0x204
+0x00075c76      1491           str r1, [sp, 0x50]
+0x00075c78      cde916a9       strd sl, sb, [sp, 0x58]
+0x00075c7c      1993           str r3, [sp, 0x64]
+0x00075c7e      0c9b           ldr r3, [sp, 0x30]
+0x00075c80      8df87030       strb.w r3, [sp, 0x70]
+0x00075c84      e0f7aaed       blx 0x567dc ; relocation-verified: rhal_ring_GetReadPtr
+0x00075c88      d5f81832       ldr.w r3, [r5, 0x218]
+0x00075c8c      b8f1010f       cmp.w r8, 1
+0x00075c90      1890           str r0, [sp, 0x60]
+0x00075c92      1a93           str r3, [sp, 0x68]
+0x00075c94      d5f81c32       ldr.w r3, [r5, 0x21c]
+0x00075c98      1b93           str r3, [sp, 0x6c]
+0x00075c9a      1ed1           bne 0x75cda
+0x00075c9c      0823           movs r3, 8
+0x00075c9e      8df85430       strb.w r3, [sp, 0x54]
+0x00075ca2      2ce0           b 0x75cfe
+0x00075ca4      724a           ldr r2, [0x00075e70]                    ; [0x75e70:4]=0xadf32
+0x00075ca6      5b46           mov r3, fp
+0x00075ca8      4ff08071       mov.w r1, 0x1000000
+0x00075cac      0720           movs r0, 7
+0x00075cae      0096           str r6, [sp]
+0x00075cb0      7a44           add r2, pc
+0x00075cb2      def71cef       blx 0x54aec ; relocation-verified: RTD_Log
+0x00075cb6      079b           ldr r3, [sp, 0x1c]
+0x00075cb8      4ff08071       mov.w r1, 0x1000000
+0x00075cbc      6d4a           ldr r2, [0x00075e74]                    ; [0x75e74:4]=0xadf56 ; "V\xdf\n"
+0x00075cbe      0420           movs r0, 4
+0x00075cc0      cde90089       strd r8, sb, [sp]
+0x00075cc4      0593           str r3, [sp, 0x14]
+0x00075cc6      0b9b           ldr r3, [sp, 0x2c]
+0x00075cc8      7a44           add r2, pc
+0x00075cca      0493           str r3, [sp, 0x10]
+0x00075ccc      0a9b           ldr r3, [sp, 0x28]
+0x00075cce      cde902a3       strd sl, r3, [sp, 8]
+0x00075cd2      3346           mov r3, r6
+0x00075cd4      def70aef       blx 0x54aec ; relocation-verified: RTD_Log
+0x00075cd8      c9e7           b 0x75c6e
+0x00075cda      b8f1020f       cmp.w r8, 2
+0x00075cde      19d0           beq 0x75d14
+0x00075ce0      b8f1000f       cmp.w r8, 0
+0x00075ce4      0bd1           bne 0x75cfe
+0x00075ce6      644a           ldr r2, [0x00075e78]                    ; [0x75e78:4]=0xf9376 ; "v\x93\x0f"
+0x00075ce8      0423           movs r3, 4
+0x00075cea      8df85430       strb.w r3, [sp, 0x54]
+0x00075cee      7a44           add r2, pc
+0x00075cf0      d2e91031       ldrd r3, r1, [r2, 0x40]
+0x00075cf4      0133           adds r3, 1
+0x00075cf6      41f10001       adc r1, r1, 0
+0x00075cfa      c2e91031       strd r3, r1, [r2, 0x40]
+0x00075cfe      5f4b           ldr r3, [0x00075e7c]                    ; [0x75e7c:4]=0x2334 ; "4#"
+0x00075d00      099a           ldr r2, [sp, 0x24]
+0x00075d02      2878           ldrb r0, [r5]
+0x00075d04      d158           ldr r1, [r2, r3]
+0x00075d06      14aa           add r2, sp, 0x50
+0x00075d08      d5f88030       ldr.w r3, [r5, 0x80]
+0x00075d0c      51f82010       ldr.w r1, [r1, r0, lsl 2]
+0x00075d10      9847           blx r3
+0x00075d12      0ce0           b 0x75d2e
+0x00075db2      44f62063       movw r3, 0x4e20                         ; ' N'
+0x00075db6      9e42           cmp r6, r3
+0x00075db8      14dd           ble 0x75de4
+0x00075dba      0f9a           ldr r2, [sp, 0x3c]
+0x00075dbc      4ff08071       mov.w r1, 0x1000000
+0x00075dc0      0420           movs r0, 4
+0x00075dc2      def794ee       blx 0x54aec ; relocation-verified: RTD_Log
+0x00075dc6      2b78           ldrb r3, [r5]
+0x00075dc8      4ff08071       mov.w r1, 0x1000000
+0x00075dcc      119a           ldr r2, [sp, 0x44]
+0x00075dce      0420           movs r0, 4
+0x00075dd0      52f82320       ldr.w r2, [r2, r3, lsl 2]
+0x00075dd4      0192           str r2, [sp, 4]
+0x00075dd6      d5f88821       ldr.w r2, [r5, 0x188]
+0x00075dda      0092           str r2, [sp]
+0x00075ddc      109a           ldr r2, [sp, 0x40]
+0x00075dde      def786ee       blx 0x54aec ; relocation-verified: RTD_Log
+0x00075de2      0026           movs r6, 0
+0x00075de4      6420           movs r0, 0x64                           ; 'd'
+0x00075de6      0136           adds r6, 1
+0x00075de8      e1f77aee       blx 0x57ae0 ; relocation-verified: usleep
+0x00075dec      3846           mov r0, r7
+0x00075dee      dff732eb       blx 0x55454 ; relocation-verified: osal_MutexUnlock
+0x00075df2      03e0           b 0x75dfc
+0x00075df4      3846           mov r0, r7
+0x00075df6      dff72eeb       blx 0x55454 ; relocation-verified: osal_MutexUnlock
+0x00075dfa      0026           movs r6, 0
+0x00075dfc      2b7b           ldrb r3, [r5, 0xc]
+0x00075dfe      9a07           lsls r2, r3, 0x1e
+0x00075e00      7ff5b3ae       bpl.w 0x75b6a
+0x00075e04      43f00403       orr r3, r3, 4
+0x00075e08      d5f88841       ldr.w r4, [r5, 0x188]
+0x00075e0c      2b73           strb r3, [r5, 0xc]
+0x00075e0e      e0f75eed       blx 0x568cc ; relocation-verified: pli_getPTS
+0x00075e12      0ae0           b 0x75e2a
+0x00075e14      204b           ldr r3, [0x00075e98]                    ; [0x75e98:4]=0xae1da
+0x00075e16      0026           movs r6, 0
+0x00075e18      7b44           add r3, pc
+0x00075e1a      0f93           str r3, [sp, 0x3c]
+0x00075e1c      1f4b           ldr r3, [0x00075e9c]                    ; [0x75e9c:4]=0xae20d
+0x00075e1e      7b44           add r3, pc
+0x00075e20      1093           str r3, [sp, 0x40]
+0x00075e22      1f4b           ldr r3, [0x00075ea0]                    ; [0x75ea0:4]=0xf91cc
+0x00075e24      7b44           add r3, pc
+0x00075e26      1193           str r3, [sp, 0x44]
+0x00075e28      e8e7           b 0x75dfc
+0x00076342      8071           strb r0, [r0, 6]
+0x00076344      0420           movs r0, 4
+0x00076346      e5e7           b 0x76314
+0x00076348      b869           ldr r0, [r7, 0x18]
+0x0007634a      c021           movs r1, 0xc0
+0x0007634c      def742e9       blx 0x545d4 ; relocation-verified: __aeabi_uidivmod
+0x00076350      0d46           mov r5, r1
+0x00076352      39b1           cbz r1, 0x76364
+0x00076354      bb4a           ldr r2, [0x00076644]                    ; [0x76644:4]=0xae074
+0x00076356      7a44           add r2, pc
+0x00076358      4ff08071       mov.w r1, 0x1000000
+0x0007635c      0420           movs r0, 4
+0x0007635e      def7c6eb       blx 0x54aec ; relocation-verified: RTD_Log
+0x00076362      d9e7           b 0x76318
+0x00076364      d7e90432       ldrd r3, r2, [r7, 0x10]
+0x00076368      a3f1b001       sub.w r1, r3, 0xb0
+0x0007636c      b1f5da6f       cmp.w r1, 0x6d0
+0x00076370      04d8           bhi 0x7637c
+0x00076372      a2f19001       sub.w r1, r2, 0x90
+0x00076376      b1f56c7f       cmp.w r1, 0x3b0
+0x0007637a      03d9           bls 0x76384
+0x0007637c      0092           str r2, [sp]
+0x0007637e      b24a           ldr r2, [0x00076648]                    ; [0x76648:4]=0xae086
+0x00076380      7a44           add r2, pc
+0x00076382      dde7           b 0x76340
+0x00076384      7b68           ldr r3, [r7, 4]
+0x00076386      13b9           cbnz r3, 0x7638e
+0x00076388      b04a           ldr r2, [0x0007664c]                    ; [0x7664c:4]=0xae0bd
+0x0007638a      7a44           add r2, pc
+0x0007638c      e4e7           b 0x76358
+0x0007638e      b04e           ldr r6, [0x00076650]                    ; [0x76650:4]=0xf8c84
+0x00076390      04eb4403       add.w r3, r4, r4, lsl 1
+0x00076394      7e44           add r6, pc
+0x00076396      06ebc306       add.w r6, r6, r3, lsl 3
+0x0007639a      3046           mov r0, r6
+0x0007639c      ddf7b8ea       blx 0x53910 ; relocation-verified: pthread_mutex_lock
+0x000763a0      ac4b           ldr r3, [0x00076654]                    ; [0x76654:4]=0x2858 ; "X("
+0x000763a2      fa69           ldr r2, [r7, 0x1c]
+0x00076442      8b4a           ldr r2, [0x00076670]                    ; [0x76670:4]=0xf8c7c
+0x00076444      d9f81000       ldr.w r0, [sb, 0x10]
+0x00076448      7a44           add r2, pc
+0x0007644a      52f82430       ldr.w r3, [r2, r4, lsl 2]
+0x0007644e      0133           adds r3, 1
+0x00076450      42f82430       str.w r3, [r2, r4, lsl 2]
+0x00076454      4ff0c063       mov.w r3, 0x6000000
+0x00076458      fff762fb       bl 0x75b20
+0x0007645c      c9f81000       str.w r0, [sb, 0x10]
+0x00076460      0022           movs r2, 0
+0x00076462      d9f83400       ldr.w r0, [sb, 0x34]
+0x00076466      1146           mov r1, r2
+0x00076468      fff75afb       bl 0x75b20
+0x0007646c      c9f83400       str.w r0, [sb, 0x34]
+0x00076470      3869           ldr r0, [r7, 0x10]
+0x00076472      c9f80030       str.w r3, [sb]
+0x00076476      4ff48673       mov.w r3, 0x10c
+0x0007647a      fff751fb       bl 0x75b20
+0x0007647e      c9f80400       str.w r0, [sb, 4]
+0x00076482      7869           ldr r0, [r7, 0x14]
+0x00076484      fff74cfb       bl 0x75b20
+0x00076488      c9f80800       str.w r0, [sb, 8]
+0x0007648c      3868           ldr r0, [r7]
+0x0007648e      fff747fb       bl 0x75b20
+0x00076492      c9f80c00       str.w r0, [sb, 0xc]
+0x00076496      b869           ldr r0, [r7, 0x18]
+0x00076498      fff742fb       bl 0x75b20
+0x0007649c      c9f81800       str.w r0, [sb, 0x18]
+0x000764a0      f869           ldr r0, [r7, 0x1c]
+0x000764a2      fff73dfb       bl 0x75b20
+0x000764a6      c9f83000       str.w r0, [sb, 0x30]
+0x000764aa      4046           mov r0, r8
+0x000764ac      0093           str r3, [sp]
+0x000764ae      4b46           mov r3, sb
+0x000764b0      e1f784ed       blx 0x57fbc ; relocation-verified: rhal_ring_write
+0x000764b4      0028           cmp r0, 0
+0x000764b6      08da           bge 0x764ca
+0x000764b8      6e4a           ldr r2, [0x00076674]                    ; [0x76674:4]=0xae084
+0x000764ba      0125           movs r5, 1
+0x000764bc      0123           movs r3, 1
+0x000764be      4ff08071       mov.w r1, 0x1000000
+0x000764c2      0420           movs r0, 4
+0x000764c4      7a44           add r2, pc
+0x000764c6      def712eb       blx 0x54aec ; relocation-verified: RTD_Log
+0x000764ca      4ff41879       mov.w sb, 0x260
+0x000764ce      6a48           ldr r0, [0x00076678]                    ; [0x76678:4]=0xf8c26
+0x000764d0      09fb04f9       mul sb, sb, r4
+0x000764d4      dff8a4b1       ldr.w fp, [0x0007667c]                  ; [0x7667c:4]=0xf8c24
+0x000764d8      5146           mov r1, sl
+0x000764da      4ff0000a       mov.w sl, 0
+0x000764de      7844           add r0, pc
+0x000764e0      fb44           add fp, pc
+0x000764e2      4844           add r0, sb
+0x000764e4      d0e96823       ldrd r2, r3, [r0, 0x1a0]
+0x000764e8      4068           ldr r0, [r0, 4]
+0x000764ea      ddf70cec       blx 0x53d04 ; relocation-verified: _Z19rhal_venc_InbandPtsiP21RHAL_RING_ALLOCATOR_Tx
+0x000764ee      4046           mov r0, r8
+0x000764f0      dff7cce9       blx 0x5588c ; relocation-verified: _Z28rhal_venc_check_read_pointerP21RHAL_RING_ALLOCATOR_T
+0x000764f4      0128           cmp r0, 1
+0x000764f6      3cd1           bne 0x76572
+0x000764f8      002d           cmp r5, 0
+0x000764fa      73d0           beq 0x765e4
+0x000764fc      3046           mov r0, r6
+0x000764fe      e2f748ec       blx 0x58d90 ; relocation-verified: pthread_mutex_unlock
+0x00076502      6ff00700       mvn r0, 7
+0x00076506      09e7           b 0x7631c
+0x00076572      4ff47a70       mov.w r0, 0x3e8
+0x00076576      0af1010a       add.w sl, sl, 1
+0x0007657a      e1f7b2ea       blx 0x57ae0 ; relocation-verified: usleep
+0x0007657e      baf57a7f       cmp.w sl, 0x3e8
+0x00076582      b4dd           ble 0x764ee
+0x00076584      0beb0907       add.w r7, fp, sb
+0x00077afe      504b           ldr r3, [0x00077c40]                    ; [0x77c40:4]=0xf75fe
+0x00077b00      4ff41879       mov.w sb, 0x260
+0x00077b04      0521           movs r1, 5
+0x00077b06      7b44           add r3, pc
+0x00077b08      09fb0433       mla r3, sb, r4, r3
+0x00077b0c      5868           ldr r0, [r3, 4]
+0x00077b0e      dcf718ed       blx 0x54540 ; relocation-verified: _Z25rhal_venc_SetEncodeFormati17VIDEO_STREAM_TYPE
+0x00077b12      4c4b           ldr r3, [0x00077c44]                    ; [0x77c44:4]=0xf75f0
+0x00077b14      7b44           add r3, pc
+0x00077b16      09fb0433       mla r3, sb, r4, r3
+0x00077b1a      d3e91312       ldrd r1, r2, [r3, 0x4c]
+0x00077b1e      5868           ldr r0, [r3, 4]
+0x00077b20      ddf758eb       blx 0x551d4 ; relocation-verified: _Z23rhal_venc_SetResolutioniii
+0x00077b24      484b           ldr r3, [0x00077c48]                    ; [0x77c48:4]=0xf75de
+0x00077b26      7b44           add r3, pc
+0x00077b28      09fb0433       mla r3, sb, r4, r3
+0x00077b2c      596d           ldr r1, [r3, 0x54]
+0x00077b2e      5868           ldr r0, [r3, 4]
+0x00077b30      dcf726e9       blx 0x53d80 ; relocation-verified: _Z22rhal_venc_SetFrameRateii
+0x00077b34      454b           ldr r3, [0x00077c4c]                    ; [0x77c4c:4]=0xf75ce
+0x00077b36      7b44           add r3, pc
+0x00077b38      09fb0433       mla r3, sb, r4, r3
+0x00077b3c      9a6d           ldr r2, [r3, 0x58]
+0x00077b3e      196e           ldr r1, [r3, 0x60]
+0x00077b40      5868           ldr r0, [r3, 4]
+0x00077b42      e1f7dce8       blx 0x58cfc ; relocation-verified: _Z20rhal_venc_SetBitRatei23VIDEO_RATE_CONTROL_MODEl
+0x00077b46      424b           ldr r3, [0x00077c50]                    ; [0x77c50:4]=0xf75ba
+0x00077b48      0121           movs r1, 1
+0x00077b4a      7b44           add r3, pc
+0x00077b4c      09fb0433       mla r3, sb, r4, r3
+0x00077b50      da6d           ldr r2, [r3, 0x5c]
+0x00077b52      5868           ldr r0, [r3, 4]
+0x00077b54      ddf700e8       blx 0x54b58 ; relocation-verified: _Z25rhal_venc_SetGOPStructureill
+0x00077b58      3e4b           ldr r3, [0x00077c54]                    ; [0x77c54:4]=0xf75aa
+0x00077b5a      7b44           add r3, pc
+0x00077b5c      09fb0433       mla r3, sb, r4, r3
+0x00077b60      596e           ldr r1, [r3, 0x64]
+0x00077b62      5868           ldr r0, [r3, 4]
+0x00077b64      ddf7aaed       blx 0x556bc ; relocation-verified: _Z20rhal_venc_SetProfilei17VIDEO_ENC_PROFILE
+0x00077b68      3b4b           ldr r3, [0x00077c58]                    ; [0x77c58:4]=0xf7596
+0x00077b6a      0222           movs r2, 2
+0x00077b6c      4146           mov r1, r8
+0x00077b6e      7b44           add r3, pc
+0x00077b70      09fb0433       mla r3, sb, r4, r3
+0x00077b74      5868           ldr r0, [r3, 4]
+0x00077b76      dcf7caec       blx 0x5450c ; relocation-verified: _Z28rhal_venc_din_InbandCopyModeiP21RHAL_RING_ALLOCATOR_Th
+0x00077b7a      3848           ldr r0, [0x00077c5c]                    ; [0x77c5c:4]=0xf7586
+0x00077b7c      4146           mov r1, r8
+0x00077b7e      7844           add r0, pc
+0x00077b80      09fb0400       mla r0, sb, r4, r0
+0x00077b84      d0e91323       ldrd r2, r3, [r0, 0x4c]
+0x00077b88      4068           ldr r0, [r0, 4]
+0x00077b8a      dcf754ed       blx 0x54634 ; relocation-verified: _Z30rhal_venc_din_InbandResolutioniP21RHAL_RING_ALLOCATOR_Tii
+0x00077b8e      344b           ldr r3, [0x00077c60]                    ; [0x77c60:4]=0xf7574
+0x00077b90      7b44           add r3, pc
+0x00077b92      09fb0433       mla r3, sb, r4, r3
+0x00077b96      5868           ldr r0, [r3, 4]
+0x00077b98      e0f716e9       blx 0x57dc8 ; relocation-verified: _Z21rhal_venc_StartRecordi
+0x00077b9c      314b           ldr r3, [0x00077c64]                    ; [0x77c64:4]=0xf7566
+0x00077b9e      7b44           add r3, pc
+0x00077ba0      09fb0433       mla r3, sb, r4, r3
+0x00077ba4      5868           ldr r0, [r3, 4]
+0x00077ba6      def714ee       blx 0x567d0 ; relocation-verified: _Z13rhal_venc_Runi
+0x00077baa      2f49           ldr r1, [0x00077c68]                    ; [0x77c68:4]=0xf7550
+0x00077bac      05f58473       add.w r3, r5, 0x108
+0x00077bb0      2e48           ldr r0, [0x00077c6c]                    ; [0x77c6c:4]=0xffffdf69
+0x00077bb2      0022           movs r2, 0
+0x00077bb4      7944           add r1, pc
+0x00077bb6      0b44           add r3, r1
+0x00077bb8      7844           add r0, pc
+0x00077bba      0193           str r3, [sp, 4]
+0x00077bbc      1423           movs r3, 0x14
+0x00077bbe      0093           str r3, [sp]
+0x00077bc0      2944           add r1, r5
+0x00077bc2      0223           movs r3, 2
+0x00077bc4      def780e9       blx 0x55ec8 ; relocation-verified: osal_ThreadBeginEx
+0x00077bc8      294b           ldr r3, [0x00077c70]                    ; [0x77c70:4]=0xf7536
+0x00077bca      0222           movs r2, 2
+0x00077bcc      3046           mov r0, r6
+0x00077bce      7b44           add r3, pc
+0x00077bd0      09fb0433       mla r3, sb, r4, r3
+0x00077bd4      9a60           str r2, [r3, 8]
+0x00077bd6      0122           movs r2, 1
+0x00077bd8      1a73           strb r2, [r3, 0xc]
+0x00077d86      2b68           ldr r3, [r5]
+0x00077d88      052b           cmp r3, 5
+0x00077d8a      0ad9           bls 0x77da2
+0x00077d8c      374a           ldr r2, [0x00077e6c]                    ; [0x77e6c:4]=0xad803
+0x00077d8e      7a44           add r2, pc
+0x00077d90      4ff08071       mov.w r1, 0x1000000
+0x00077d94      0420           movs r0, 4
+0x00077d96      dcf7aaee       blx 0x54aec ; relocation-verified: RTD_Log
+0x00077d9a      2046           mov r0, r4
+0x00077d9c      e0f7f8ef       blx 0x58d90 ; relocation-verified: pthread_mutex_unlock
+0x00077da0      dde7           b 0x77d5e
+0x00077da2      042b           cmp r3, 4
+0x00077da4      19d8           bhi 0x77dda
+0x00077da6      dfe803f0       tbb [0x00077dac]
+0x00077daa      031a           subs r3, r0, r0
+0x00077dac      1418           adds r4, r2, r0
+0x00077dae      1600           movs r6, r2
+0x00077db0      1e23           movs r3, 0x1e
+0x00077db2      2f48           ldr r0, [0x00077e70]                    ; [0x77e70:4]=0xf734c
+0x00077db4      4ff41872       mov.w r2, 0x260
+0x00077db8      7844           add r0, pc
+0x00077dba      02fb0600       mla r0, r2, r6, r0
+0x00077dbe      4365           str r3, [r0, 0x54]
+0x00077dc0      6b69           ldr r3, [r5, 0x14]
+0x00077dc2      a3f1b002       sub.w r2, r3, 0xb0
+0x00077dc6      b2f5da6f       cmp.w r2, 0x6d0
+0x00077dca      0ad9           bls 0x77de2
+0x00077dcc      294a           ldr r2, [0x00077e74]                    ; [0x77e74:4]=0xad7fa
+0x00077dce      7a44           add r2, pc
+0x00077dd0      dee7           b 0x77d90
+0x00077dd2      1823           movs r3, 0x18
+0x00077dd4      ede7           b 0x77db2
+0x00077dd6      0a23           movs r3, 0xa
+0x00077dd8      ebe7           b 0x77db2
+0x00077dda      0f23           movs r3, 0xf
+0x00077ddc      e9e7           b 0x77db2
+0x00077dde      1923           movs r3, 0x19
+0x00077de0      e7e7           b 0x77db2
+0x00077de2      4361           str r3, [r0, 0x14]
+0x00077de4      0f33           adds r3, 0xf
+0x00077de6      23f00f03       bic r3, r3, 0xf
+0x00077dea      c364           str r3, [r0, 0x4c]
+0x00077dec      ab69           ldr r3, [r5, 0x18]
+0x00077dee      a3f19002       sub.w r2, r3, 0x90
+0x00077df2      b2f56c7f       cmp.w r2, 0x3b0
+0x00077df6      02d9           bls 0x77dfe
+0x00077df8      1f4a           ldr r2, [0x00077e78]                    ; [0x77e78:4]=0xad7fd
+0x00077dfa      7a44           add r2, pc
+0x00077dfc      c8e7           b 0x77d90
+0x00077dfe      8361           str r3, [r0, 0x18]
+0x00077e00      0f33           adds r3, 0xf
+0x00077e02      23f00f03       bic r3, r3, 0xf
+0x00077e06      0365           str r3, [r0, 0x50]
+;-- rhal_venc_check_read_pointer(RHAL_RING_ALLOCATOR_T*):
+0x00110dbc      70b5           push {r4, r5, r6, lr}                   ; rhal_venc_check_read_pointer(RHAL_RING_ALLOCATOR_T*)
+0x00110dbe      0446           mov r4, r0
+0x00110dc0      4668           ldr r6, [r0, 4]
+0x00110dc2      06f11000       add.w r0, r6, 0x10
+0x00110dc6      46f70cec       blx 0x575e0 ; relocation-verified: pli_IPCReadULONG
+0x00110dca      236a           ldr r3, [r4, 0x20]
+0x00110dcc      c51a           subs r5, r0, r3
+0x00110dce      06f12000       add.w r0, r6, 0x20
+0x00110dd2      46f706ec       blx 0x575e0 ; relocation-verified: pli_IPCReadULONG
+0x00110dd6      236a           ldr r3, [r4, 0x20]
+0x00110dd8      c01a           subs r0, r0, r3
+0x00110dda      2b1a           subs r3, r5, r0
+0x00110ddc      5842           rsbs r0, r3, 0
+0x00110dde      5841           adcs r0, r3
+0x00110de0      70bd           pop {r4, r5, r6, pc}

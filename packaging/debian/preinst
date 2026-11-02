@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# Retire the optional proxy before an old package removes its executable on upgrade.
+if [ "$1" = upgrade ]; then
+    deb-systemd-invoke stop prysm-web.service || true
+    deb-systemd-helper disable prysm-web.service || true
+fi
+#DEBHELPER#

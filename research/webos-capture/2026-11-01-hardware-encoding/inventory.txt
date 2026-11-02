@@ -1,0 +1,239 @@
+ID=starfish
+NAME="webOS TV"
+VERSION="10.3.2"
+VERSION_ID=10.3.2
+PRETTY_NAME="webOS TV 10.3.2"
+Rockhopper release 10.3.2-34 (ponytail-papikonda)
+Linux lgwebostv 5.4.268-294.24.papikonda.2 #1 SMP PREEMPT Mon Jan 19 10:08:01 UTC 2026 aarch64 GNU/Linux
+crw-rw----    1 root     composit  251,   3 Jan  1  1970 /dev/dma_heap/dvr
+crwxrwxrwx    1 root     root      162,   0 Jan  1  2023 /dev/lg/venc0
+crw-rw----    1 root     composit   81,  13 Jan  1  1970 /dev/video24
+Factory Details:
+  Rank                     none (0)
+  Long-name                Realtek Video Encoder
+  Klass                    Codec/Encoder/Video/Hardware
+  Description              Realtek Soc H.264 video encoder
+  Author                   EuiHyun Oh <hyun.oh@reatlek.com>
+
+Plugin Details:
+  Name                     rvenc
+  Description              Realtek GStreamer Encoder Plugins
+  Filename                 /usr/lib/gstreamer-1.0/libgstrvenc.so
+  Version                  0.9.0
+  License                  LGPL
+  Source module            gst-plugins-rtk
+  Binary package           GStreamer RTK Plug-ins prerelease
+  Origin URL               http://www.realtek.com/
+
+GObject
+ +----GInitiallyUnowned
+       +----GstObject
+             +----GstElement
+                   +----GstVideoEncoder
+                         +----GstRvEnc
+
+Implemented Interfaces:
+  GstPreset
+
+Pad Templates:
+  SINK template: 'sink'
+    Availability: Always
+    Capabilities:
+      video/x-raw(memory:DMABuf)
+                 format: { (string)NV12 }
+                  width: [ 2, 8192 ]
+                 height: [ 2, 8192 ]
+              framerate: [ 0/1, 60/1 ]
+      video/x-raw
+                 format: { (string)NV12 }
+                  width: [ 2, 8192 ]
+                 height: [ 2, 8192 ]
+              framerate: [ 0/1, 60/1 ]
+
+  SRC template: 'src'
+    Availability: Always
+    Capabilities:
+      video/x-h264
+              alignment: au
+          stream-format: { (string)avc }
+              framerate: [ 0/1, 30/1 ]
+                  width: [ 0, 1280 ]
+                 height: [ 0, 720 ]
+
+Element has no clocking capabilities.
+Element has no URI handling capabilities.
+
+Pads:
+  SINK: 'sink'
+    Pad Template: 'sink'
+  SRC: 'src'
+    Pad Template: 'src'
+
+Element Properties:
+
+  min-force-key-unit-interval: Minimum interval between force-keyunit requests in nanoseconds
+                        flags: readable, writable
+                        Unsigned Integer64. Range: 0 - 18446744073709551615 Default: 0
+
+  name                : The name of the object
+                        flags: readable, writable
+                        String. Default: "rvenc0"
+
+  parent              : The parent of the object
+                        flags: readable, writable
+                        Object of type "GstObject"
+
+  port                : Set the port number of input
+                        flags: readable, writable, changeable only in NULL or READY state
+                        Unsigned Integer. Range: 0 - 4294967295 Default: 0
+
+  qos                 : Handle Quality-of-Service events from downstream
+                        flags: readable, writable
+                        Boolean. Default: false
+
+  target-bitrate      : Target bitrate in bits per second (0xffffffff=component default)
+                        flags: readable, writable, changeable in NULL, READY, PAUSED or PLAYING state
+                        Unsigned Integer. Range: 0 - 4294967295 Default: 3647488
+
+Factory Details:
+  Rank                     primary + 1 (257)
+  Long-name                V4L2 H.264 Encoder
+  Klass                    Codec/Encoder/Video/Hardware
+  Description              Encode H.264 video streams via V4L2 API
+  Author                   ayaka <ayaka@soulik.info>
+  Documentation            https://gstreamer.freedesktop.org/documentation/video4linux2/v4l2h264enc.html
+
+Plugin Details:
+  Name                     video4linux2
+  Description              elements for Video 4 Linux
+  Filename                 /usr/lib/gstreamer-1.0/libgstvideo4linux2.so
+  Version                  1.24.0
+  License                  LGPL
+  Source module            gst-plugins-good
+  Documentation            https://gstreamer.freedesktop.org/documentation/video4linux2/
+  Source release date      2024-03-04
+  Binary package           GStreamer Good Plug-ins source release
+  Origin URL               Unknown package origin
+
+GObject
+ +----GInitiallyUnowned
+       +----GstObject
+             +----GstElement
+                   +----GstVideoEncoder
+                         +----GstV4l2VideoEnc
+                               +----GstV4l2H264Enc
+                                     +----v4l2h264enc
+
+Implemented Interfaces:
+  GstPreset
+
+Pad Templates:
+  SINK template: 'sink'
+    Availability: Always
+    Capabilities:
+      video/x-raw
+                 format: NV12
+                  width: [ 1, 32768 ]
+                 height: [ 1, 32768 ]
+              framerate: [ 0/1, 2147483647/1 ]
+
+  SRC template: 'src'
+    Availability: Always
+    Capabilities:
+      video/x-h264
+          stream-format: byte-stream
+              alignment: au
+                  level: { (string)1, (string)1b, (string)1.1, (string)1.2, (string)1.3, (string)2, (string)2.1, (string)2.2, (string)3, (string)3.1, (string)3.2, (string)4, (string)4.1, (string)4.2, (string)5, (string)5.1 }
+                profile: { (string)baseline, (string)constrained-baseline, (string)main, (string)extended, (string)high }
+
+Element has no clocking capabilities.
+Element has no URI handling capabilities.
+
+Pads:
+  SINK: 'sink'
+    Pad Template: 'sink'
+  SRC: 'src'
+    Pad Template: 'src'
+
+Element Properties:
+
+  capture-io-mode     : Capture I/O mode (matches src pad)
+                        flags: readable, writable
+                        Enum "GstV4l2IOMode" Default: 0, "auto"
+                           (0): auto             - GST_V4L2_IO_AUTO
+                           (1): rw               - GST_V4L2_IO_RW
+                           (2): mmap             - GST_V4L2_IO_MMAP
+                           (3): userptr          - GST_V4L2_IO_USERPTR
+                           (4): dmabuf           - GST_V4L2_IO_DMABUF
+                           (5): dmabuf-import    - GST_V4L2_IO_DMABUF_IMPORT
+
+  device              : Device location
+                        flags: readable
+                        String. Default: "/dev/video24"
+
+  device-fd           : File descriptor of the device
+                        flags: readable
+                        Integer. Range: -1 - 2147483647 Default: -1
+
+  device-name         : Name of the device
+                        flags: readable
+                        String. Default: null
+
+  extra-controls      : Extra v4l2 controls (CIDs) for the device
+                        flags: readable, writable
+                        Boxed pointer of type "GstStructure"
+
+  min-force-key-unit-interval: Minimum interval between force-keyunit requests in nanoseconds
+                        flags: readable, writable
+                        Unsigned Integer64. Range: 0 - 18446744073709551615 Default: 0
+
+  name                : The name of the object
+                        flags: readable, writable
+                        String. Default: "v4l2h264enc0"
+
+  output-io-mode      : Output side I/O mode (matches sink pad)
+                        flags: readable, writable
+                        Enum "GstV4l2IOMode" Default: 0, "auto"
+                           (0): auto             - GST_V4L2_IO_AUTO
+                           (1): rw               - GST_V4L2_IO_RW
+                           (2): mmap             - GST_V4L2_IO_MMAP
+                           (3): userptr          - GST_V4L2_IO_USERPTR
+                           (4): dmabuf           - GST_V4L2_IO_DMABUF
+                           (5): dmabuf-import    - GST_V4L2_IO_DMABUF_IMPORT
+
+  parent              : The parent of the object
+                        flags: readable, writable
+                        Object of type "GstObject"
+
+  qos                 : Handle Quality-of-Service events from downstream
+                        flags: readable, writable
+                        Boolean. Default: false
+
+lrwxrwxrwx    1 root     root            29 Apr  6  2011 /usr/lib/libgstrtkdmaheap-1.0.so.0 -> libgstrtkdmaheap-1.0.so.0.9.0
+-rwxr-xr-x    1 root     root         25916 Apr  6  2011 /usr/lib/libgstrtkdmaheap-1.0.so.0.9.0
+lrwxrwxrwx    1 root     root            20 Apr  6  2011 /usr/lib/libhal_venc.so -> libhal_venc.so.1.0.0
+lrwxrwxrwx    1 root     root            20 Apr  6  2011 /usr/lib/libhal_venc.so.1 -> libhal_venc.so.1.0.0
+-rwxr-xr-x    1 root     root         34548 Apr  6  2011 /usr/lib/libhal_venc.so.1.0.0
+-rwxr-xr-x    1 root     root        169336 Apr  6  2011 /usr/lib/librpccore.so
+RVEncoderStop
+RVEncoderStart
+RVEncoderQueueBuffer
+RVEncoderSetResourceInfo
+RVEncoderClose
+RVEncoderOpen
+RVEncoderSetCallback
+RVEncoderCopyData
+RVEncoderReleaseData
+libgstrtkutils-1.0.so.0
+libgstallocators-1.0.so.0
+libgstreamer-1.0.so.0
+libgobject-2.0.so.0
+libglib-2.0.so.0
+libgstvideo-1.0.so.0
+librpccore.so
+libgcc_s.so.1
+libc.so.6
+libgstrvenc.so
+libgstrvenc.so
+23968 ?        00:00:02 prysm-webos-ser
+28736 ?        00:00:40 prysm-webos-cap

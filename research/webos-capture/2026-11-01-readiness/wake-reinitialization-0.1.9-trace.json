@@ -1,0 +1,477 @@
+[
+  {
+    "seconds": 0.326,
+    "event": "process",
+    "value": {
+      "online": true,
+      "service": "18338",
+      "worker": "18355",
+      "video": "18355"
+    }
+  },
+  {
+    "seconds": 0.578,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:27:14.715667Z  INFO prysm_webos_capture::native::vtcapture: video capture started width=640 height=360\n"
+    }
+  },
+  {
+    "seconds": 0.58,
+    "event": "foreground",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "appId": "com.webos.app.hdmi1"
+    }
+  },
+  {
+    "seconds": 0.582,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 3840,
+          "height": 2160,
+          "frameRate": 50,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 0.587,
+    "event": "signal_subscribe",
+    "value": "97jlv0har498hnpk"
+  },
+  {
+    "seconds": 0.795,
+    "event": "signal",
+    "value": {
+      "returnValue": true,
+      "pipelineId": "97jlv0har498hnpk",
+      "signalState": {
+        "videoSignalState": "good",
+        "screensaverType": "NO_SCREEN_SAVER"
+      }
+    }
+  },
+  {
+    "seconds": 19.922,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 3840,
+          "height": 2160,
+          "frameRate": 50,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 20.862,
+    "event": "process",
+    "value": {
+      "online": true,
+      "service": "18338",
+      "worker": "18355",
+      "video": ""
+    }
+  },
+  {
+    "seconds": 20.862,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:28:53.418856Z  INFO prysm_webos_capture::capture: video source availability changed available=false\n"
+    }
+  },
+  {
+    "seconds": 20.863,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 20.863,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": false,
+          "connectedSource": "unknown",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "unknown",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 20.864,
+    "event": "foreground",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "appId": "com.webos.app.home"
+    }
+  },
+  {
+    "seconds": 20.864,
+    "event": "signal",
+    "value": {
+      "returnValue": true,
+      "pipelineId": "97jlv0har498hnpk",
+      "signalState": {
+        "videoSignalState": "unknown",
+        "screensaverType": "UNKNOWN"
+      }
+    }
+  },
+  {
+    "seconds": 26.585,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active Standby",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": true,
+      "error": null,
+      "lastLog": "2026-11-01T13:28:53.418856Z  INFO prysm_webos_capture::capture: video source availability changed available=false\n"
+    }
+  },
+  {
+    "seconds": 26.645,
+    "event": "foreground",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "appId": ""
+    }
+  },
+  {
+    "seconds": 26.762,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active Standby",
+      "senderRunning": false,
+      "capturing": false,
+      "receiverConnected": false,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:28:53.418856Z  INFO prysm_webos_capture::capture: video source availability changed available=false\n"
+    }
+  },
+  {
+    "seconds": 27.37,
+    "event": "process",
+    "value": {
+      "online": true,
+      "service": "18338",
+      "worker": "",
+      "video": ""
+    }
+  },
+  {
+    "seconds": 30.363,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Suspend",
+      "senderRunning": false,
+      "capturing": false,
+      "receiverConnected": false,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:28:53.418856Z  INFO prysm_webos_capture::capture: video source availability changed available=false\n"
+    }
+  },
+  {
+    "seconds": 33.206,
+    "event": "process",
+    "value": {
+      "online": false
+    }
+  },
+  {
+    "seconds": 40.114,
+    "event": "process",
+    "value": {
+      "online": true,
+      "service": "18338",
+      "worker": "19274",
+      "video": ""
+    }
+  },
+  {
+    "seconds": 42.091,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:29:11.302613Z  INFO prysm_webos_capture::capture: video source availability changed available=false\n"
+    }
+  },
+  {
+    "seconds": 42.092,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": false,
+          "connectedSource": "unknown",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "unknown",
+          "context": "unknown"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 42.092,
+    "event": "foreground",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "appId": "com.webos.app.home"
+    }
+  },
+  {
+    "seconds": 44.516,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 44.52,
+    "event": "signal_subscribe",
+    "value": "97jlv0har498hnpk"
+  },
+  {
+    "seconds": 44.521,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 44.521,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 0,
+          "height": 0,
+          "frameRate": 0,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 44.521,
+    "event": "foreground",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "appId": "com.webos.app.hdmi1"
+    }
+  },
+  {
+    "seconds": 46.203,
+    "event": "signal",
+    "value": {
+      "returnValue": true,
+      "pipelineId": "97jlv0har498hnpk",
+      "signalState": {
+        "videoSignalState": "unknown",
+        "screensaverType": "UNKNOWN"
+      }
+    }
+  },
+  {
+    "seconds": 48.087,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:29:20.849716Z  INFO prysm_webos_capture::capture: video source availability changed available=true\n"
+    }
+  },
+  {
+    "seconds": 48.087,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:29:21.099136Z  INFO prysm_webos_capture::native::vtcapture: video session finalized; retrying initialization\n"
+    }
+  },
+  {
+    "seconds": 48.087,
+    "event": "video",
+    "value": {
+      "returnValue": true,
+      "subscribed": true,
+      "main": [
+        {
+          "connected": true,
+          "connectedSource": "HDMI",
+          "connectedSourcePort": 0,
+          "width": 3840,
+          "height": 2160,
+          "frameRate": 50,
+          "appId": "com.webos.app.hdmi1",
+          "context": "97jlv0har498hnpk"
+        }
+      ]
+    }
+  },
+  {
+    "seconds": 48.087,
+    "event": "signal",
+    "value": {
+      "returnValue": true,
+      "pipelineId": "97jlv0har498hnpk",
+      "signalState": {
+        "videoSignalState": "good",
+        "screensaverType": "NO_SCREEN_SAVER"
+      }
+    }
+  },
+  {
+    "seconds": 49.119,
+    "event": "process",
+    "value": {
+      "online": true,
+      "service": "18338",
+      "worker": "19274",
+      "video": "19274"
+    }
+  },
+  {
+    "seconds": 49.12,
+    "event": "status",
+    "value": {
+      "pid": 18338,
+      "enabled": true,
+      "power": "Active",
+      "senderRunning": true,
+      "capturing": true,
+      "receiverConnected": true,
+      "stopping": false,
+      "error": null,
+      "lastLog": "2026-11-01T13:29:22.190510Z  INFO prysm_webos_capture::native::vtcapture: video capture started width=640 height=360\n"
+    }
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "exeName": "/media/developer/apps/usr/palm/services/io.prysm.capture.service/prysm-webos-service",
+  "type": "regular",
+  "allowedNames": [
+    "io.prysm.capture.service"
+  ],
+  "permissions": [
+    {
+      "service": "io.prysm.capture.service",
+      "inbound": [
+        "*"
+      ],
+      "outbound": [
+        "com.webos.service.tvpower",
+        "com.webos.service.videooutput"
+      ]
+    }
+  ]
+}

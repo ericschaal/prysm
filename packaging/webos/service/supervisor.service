@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=io.prysm.capture.service
+Exec=/media/developer/apps/usr/palm/services/io.prysm.capture.service/prysm-webos-service
+Type=dynamic

@@ -1,0 +1,29 @@
+device=/dev/video24
+driver=rtk-vea
+card=platform:rtk-vea
+bus=platform:rtk-vea
+caps=0x84205001 device_caps=0x4205001
+format type=9 fourcc=H264 desc=H.264 flags=0x1
+formats_end type=9 errno=22
+format type=10 fourcc=NM12 desc=Y/CbCr 4:2:0 (N-C) flags=0x0
+formats_end type=10 errno=22
+control id=0x990001 name=Codec Controls min=0 max=0 default=0 flags=0x44
+control id=0x9909ca name=Video B Frames min=0 max=4 default=2 flags=0x8
+control id=0x9909cb name=Video GOP Size min=0 max=65535 default=12 flags=0x0
+control id=0x9909cf name=Video Bitrate min=1 max=1073741823 default=1 flags=0x0
+control id=0x9909d7 name=Frame Level Rate Control Enable min=0 max=1 default=0 flags=0x0
+control id=0x9909d8 name=Sequence Header Mode min=0 max=1 default=0 flags=0x0
+control id=0x9909da name=H264 MB Level Rate Control min=0 max=1 default=0 flags=0x0
+control id=0x9909e5 name=Force Key Frame min=0 max=0 default=0 flags=0x240
+control id=0x990a61 name=H264 Minimum QP Value min=1 max=51 default=1 flags=0x0
+control id=0x990a62 name=H264 Maximum QP Value min=1 max=51 default=51 flags=0x0
+control id=0x990a63 name=H264 8x8 Transform Enable min=0 max=1 default=0 flags=0x0
+control id=0x990a65 name=H264 Entropy Mode min=0 max=1 default=0 flags=0x0
+control id=0x990a66 name=H264 I-Frame Period min=0 max=65535 default=0 flags=0x0
+control id=0x990a67 name=H264 Level min=0 max=15 default=0 flags=0x0
+control id=0x990a6a name=H264 Loop Filter Mode min=0 max=2 default=0 flags=0x0
+control id=0x990a6b name=H264 Profile min=0 max=4 default=0 flags=0x0
+control id=0x990afb name=VPX Minimum QP Value min=1 max=128 default=1 flags=0x0
+control id=0x990afc name=VPX Maximum QP Value min=1 max=128 default=128 flags=0x0
+control id=0x990b84 name=Prepend SPS and PPS to IDR min=0 max=1 default=0 flags=0x0
+controls_end errno=22

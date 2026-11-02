@@ -1,0 +1,9 @@
+input=16 prysm_ddp=16 wled_gamma28=0 expected_srgb_pwm=1 gamma22_pwm=1
+input=32 prysm_ddp=32 wled_gamma28=1 expected_srgb_pwm=4 gamma22_pwm=3
+input=64 prysm_ddp=64 wled_gamma28=5 expected_srgb_pwm=13 gamma22_pwm=12
+input=96 prysm_ddp=96 wled_gamma28=17 expected_srgb_pwm=30 gamma22_pwm=30
+input=128 prysm_ddp=128 wled_gamma28=37 expected_srgb_pwm=55 gamma22_pwm=56
+input=160 prysm_ddp=160 wled_gamma28=69 expected_srgb_pwm=90 gamma22_pwm=91
+input=192 prysm_ddp=192 wled_gamma28=115 expected_srgb_pwm=134 gamma22_pwm=137
+input=224 prysm_ddp=224 wled_gamma28=177 expected_srgb_pwm=190 gamma22_pwm=192
+input=255 prysm_ddp=255 wled_gamma28=255 expected_srgb_pwm=255 gamma22_pwm=255

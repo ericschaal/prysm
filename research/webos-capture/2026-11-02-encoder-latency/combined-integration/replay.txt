@@ -1,0 +1,3 @@
+both-640x360: all 240 wire frames decoded with unchanged receiver; first frame independently decodable
+video-640x360: all 30 wire frames decoded with unchanged receiver; first frame independently decodable
+ui-320x180: all 30 wire frames decoded with unchanged receiver; first frame independently decodable

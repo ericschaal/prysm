@@ -1,0 +1,344 @@
+--- a/crates/capture/webos-capture/src/encoder.rs
++++ b/crates/capture/webos-capture/src/encoder.rs
+@@ -65,8 +65,8 @@
+                 bitrate,
+             } => match encoder.encode(header, pixels, output) {
+                 Ok(kind) => {
+-                    *emitted |= kind.is_some();
+-                    Ok(kind)
++                    *emitted = true;
++                    Ok(Some(kind))
+                 }
+                 Err(error) if *emitted => Err(error.context(HardwareFailed)),
+                 Err(error) => {
+@@ -94,11 +94,7 @@
+ pub enum Encoder {
+     Raw,
+     Lz4(Vec<u8>),
+-    H264 {
+-        encoder: H264,
+-        output: Vec<u8>,
+-        pending: Option<(Header, Content)>,
+-    },
++    H264 { encoder: H264, output: Vec<u8> },
+ }
+ 
+ impl Encoder {
+@@ -126,7 +122,6 @@
+                     )?))
+                 },
+                 output: Vec::new(),
+-                pending: None,
+             },
+         })
+     }
+@@ -139,9 +134,9 @@
+         &'a mut self,
+         mut header: Header,
+         pixels: &'a [u8],
+-        mut content: Content,
++        content: Content,
+     ) -> Result<Option<EncodedFrame<'a>>> {
+-        let mut raw_len = header.raw_len().inspect_err(|_| {
++        let raw_len = header.raw_len().inspect_err(|_| {
+             prysm_metrics::event(EncoderEvent::InputRejected);
+         })?;
+         if raw_len != pixels.len() {
+@@ -163,29 +158,14 @@
+                     pixels
+                 }
+             }
+-            Self::H264 {
+-                encoder,
+-                output,
+-                pending,
+-            } => {
+-                let previous = pending.replace((header, content));
++            Self::H264 { encoder, output } => {
+                 let Some(kind) = encoder.encode(header, pixels, output).inspect_err(|_| {
+                     prysm_metrics::event(EncoderEvent::H264EncodeFailed);
+                 })?
+                 else {
+-                    if !encoder.hardware_active() {
+-                        *pending = None;
+-                        prysm_metrics::event(EncoderEvent::H264RateControlSkipped);
+-                    }
++                    prysm_metrics::event(EncoderEvent::H264RateControlSkipped);
+                     return Ok(None);
+                 };
+-                if encoder.hardware_active() {
+-                    (header, content) = previous
+-                        .ok_or_else(|| anyhow::anyhow!("missing hardware input metadata"))?;
+-                    raw_len = header.raw_len()?;
+-                } else {
+-                    *pending = None;
+-                }
+                 prysm_metrics::event(match kind {
+                     h264::FrameKind::Idr => EncoderEvent::H264IdrEncoded,
+                     h264::FrameKind::Intra => EncoderEvent::H264IntraFrameEncoded,
+--- a/crates/capture/webos-capture/src/encoder/gst.rs
++++ b/crates/capture/webos-capture/src/encoder/gst.rs
+@@ -10,7 +10,7 @@
+         anyhow::bail!("hardware H.264 requires Linux DMA-BUF support")
+     }
+     #[allow(clippy::unused_self, reason = "same pipeline API on unsupported hosts")]
+-    pub(super) fn encode(&mut self, _: &[u8], _: usize, _: &mut Vec<u8>) -> anyhow::Result<bool> {
++    pub(super) fn encode(&mut self, _: &[u8], _: usize, _: &mut Vec<u8>) -> anyhow::Result<()> {
+         anyhow::bail!("hardware H.264 requires Linux DMA-BUF support")
+     }
+ }
+@@ -52,7 +52,6 @@
+         width: u32,
+         height: u32,
+         stride: usize,
+-        pending: bool,
+         // Stable DMA-BUF identities prevent the corruption seen with per-frame allocation/free.
+         buffers: Vec<Dma>,
+         slot: usize,
+@@ -85,8 +84,10 @@
+                 .read(true)
+                 .write(true)
+                 .open("/dev/dma_heap/dvr")?;
++            // rvenc emits complete Annex B pictures; h264parse adds a next-input wait on the TV.
++            // Static AVC caps prevent forcing byte-stream caps; hardware.rs validates actual output.
+             let graph = gst::parse::launch(&format!(
+-                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
++                "appsrc name=input is-live=true do-timestamp=true format=time block=false caps=\"video/x-raw(memory:DMABuf),format=NV12,width={width},height={height},framerate={fps}/1,colorimetry=bt709\" ! rvenc target-bitrate={bitrate} ! appsink name=output async=false sync=false max-buffers=1 drop=false wait-on-eos=false"
+             ))?.downcast::<gst::Pipeline>().map_err(|_| anyhow::anyhow!("hardware graph is not a pipeline"))?;
+             let source = graph
+                 .by_name("input")
+@@ -109,7 +110,6 @@
+                 width,
+                 height,
+                 stride,
+-                pending: false,
+                 buffers: Vec::new(),
+                 slot: 0,
+             };
+@@ -124,7 +124,7 @@
+             pixels: &[u8],
+             input_stride: usize,
+             output: &mut Vec<u8>,
+-        ) -> Result<bool> {
++        ) -> Result<()> {
+             let size = self.stride * self.height as usize * 3 / 2;
+             ensure!(
+                 (input_stride == self.width as usize || input_stride == self.stride)
+@@ -177,11 +177,6 @@
+                 .push_buffer(buffer)
+                 .context("hardware input rejected")?;
+             drop(submit_time);
+-            // shortcut: one frame of lookahead, revisit after isolating the pipeline output delay.
+-            if !self.pending {
+-                self.pending = true;
+-                return Ok(false);
+-            }
+             let sample = {
+                 let _time = prysm_metrics::timer(Stage::HardwareWait);
+                 self.sink
+@@ -203,7 +198,7 @@
+                 self.sink.try_pull_sample(gst::ClockTime::ZERO).is_none(),
+                 "unexpected extra hardware output"
+             );
+-            Ok(true)
++            Ok(())
+         }
+     }
+ 
+--- a/crates/capture/webos-capture/src/encoder/hardware.rs
++++ b/crates/capture/webos-capture/src/encoder/hardware.rs
+@@ -42,7 +42,7 @@
+         header: Header,
+         pixels: &[u8],
+         output: &mut Vec<u8>,
+-    ) -> Result<Option<FrameKind>> {
++    ) -> Result<FrameKind> {
+         ensure!(
+             header.width == self.width && header.height == self.height,
+             "hardware input dimensions changed"
+@@ -56,17 +56,13 @@
+             prepare_nv12(header, pixels, self.stride, &mut self.pixels)?;
+             (self.pixels.as_slice(), self.stride)
+         };
+-        if !self
+-            .pipeline
+-            .encode(input, input_stride, &mut self.encoded)?
+-        {
+-            return Ok(None);
+-        }
++        self.pipeline
++            .encode(input, input_stride, &mut self.encoded)?;
+         let _time = prysm_metrics::timer(Stage::HardwareNormalize);
+         let kind =
+             normalize_access_unit(&self.encoded, self.width, self.height, self.first, output)?;
+         self.first = false;
+-        Ok(Some(kind))
++        Ok(kind)
+     }
+ }
+ 
+@@ -302,11 +298,17 @@
+         let red = [255, 0, 0].repeat(320 * 180);
+         let input = capture_input(header, &red);
+         let mut encoder = Encoder::new(Compression::H264Hardware, 15, 2_000_000).unwrap();
++        let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
++        let packet = encoder
++            .encode(header, &input, Content::Video)
++            .unwrap()
++            .expect("first hardware input must produce its own picture");
++        assert_eq!(packet.content, Content::Video);
++        assert_eq!((packet.header.width, packet.header.height), (320, 180));
++        let rgb = decoder.decode(packet.header, packet.pixels).unwrap();
+         assert!(
+-            encoder
+-                .encode(header, &input, Content::Video)
+-                .unwrap()
+-                .is_none()
++            rgb[0] > 240 && rgb[2] < 15,
++            "first wire picture must be the current red input"
+         );
+         assert!(encoder.hardware_active());
+         let blue = [0, 0, 255].repeat(320 * 180);
+@@ -323,16 +325,13 @@
+             .unwrap();
+         assert_eq!(
+             packet.content,
+-            Content::Video,
+-            "delayed metadata must belong to the previous input"
++            Content::Ui,
++            "metadata must belong to the current input"
+         );
+-        let rgb = prysm_webos_protocol::h264::Decoder::new()
+-            .unwrap()
+-            .decode(packet.header, packet.pixels)
+-            .unwrap();
++        let rgb = decoder.decode(packet.header, packet.pixels).unwrap();
+         assert!(
+-            rgb[0] > 240 && rgb[2] < 15,
+-            "first wire picture must be the prior red input"
++            rgb[2] > 240 && rgb[0] < 15,
++            "second wire picture must be the current blue input"
+         );
+         let changed = Header {
+             width: 640,
+@@ -367,11 +366,13 @@
+     fn hardware_capture_qualification() {
+         let _lock = crate::capture_lock(std::path::Path::new("/tmp/prysm-capture.lock")).unwrap();
+         // Recreate both codec and decoder at every geometry change/reconnect.
+-        for (width, height, format) in [
+-            (640, 360, PixelFormat::Rgb),
+-            (320, 180, PixelFormat::Nv12),
+-            (640, 360, PixelFormat::Nv16),
++        for (width, height, format, fps) in [
++            (640, 360, PixelFormat::Rgb, 15),
++            (320, 180, PixelFormat::Nv12, 15),
++            (640, 360, PixelFormat::Nv16, 15),
++            (640, 280, PixelFormat::Nv12, 30),
+         ] {
++            let interval = Duration::from_secs_f64(1.0 / f64::from(fps));
+             let header = Header {
+                 width,
+                 height,
+@@ -389,12 +390,11 @@
+                     })
+                 })
+                 .collect();
+-            let mut hardware = Hardware::new(header, 15, 2_000_000).unwrap();
++            let mut hardware = Hardware::new(header, fps, 2_000_000).unwrap();
+             let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
+             let mut output = Vec::new();
+             let cpu = ticks();
+             let start = Instant::now();
+-            let mut submitted = None;
+             for index in 0..30 {
+                 for row in pixels.chunks_exact_mut(width as usize * 3) {
+                     row[width as usize * 9 / 4..].fill(if index < 15 {
+@@ -405,7 +405,6 @@
+                 }
+                 let input = capture_input(header, &pixels);
+                 let now = Instant::now();
+-                let previous = submitted.replace(now);
+                 let kind = hardware.encode(header, &input, &mut output).unwrap();
+                 if format == PixelFormat::Nv12 {
+                     assert!(
+@@ -414,15 +413,9 @@
+                     );
+                 }
+                 if index == 0 {
+-                    assert!(kind.is_none());
+-                    std::thread::sleep(Duration::from_millis(67));
+-                    continue;
+-                }
+-                assert!(kind.is_some());
+-                eprintln!(
+-                    "capture_to_au_us={}",
+-                    previous.unwrap().elapsed().as_micros()
+-                );
++                    assert_eq!(kind, FrameKind::Idr);
++                }
++                eprintln!("capture_to_au_us={}", now.elapsed().as_micros());
+                 eprintln!(
+                     "hardware {width}x{height} frame={index} encode_us={}",
+                     now.elapsed().as_micros()
+@@ -441,15 +434,7 @@
+                 for x in [width / 8, width * 3 / 8, width * 5 / 8, width * 7 / 8] {
+                     let offset = ((height / 2 * width + x) * 3) as usize;
+                     for c in 0..3 {
+-                        let expected = if x >= width * 3 / 4 {
+-                            if index <= 15 {
+-                                64 + (index - 1) * 5
+-                            } else {
+-                                32 + ((index - 1) % 2) * 160
+-                            }
+-                        } else {
+-                            pixels[offset + c]
+-                        };
++                        let expected = pixels[offset + c];
+                         let mut sum = 0u32;
+                         for y in height / 2 - 12..height / 2 + 12 {
+                             for col in x - 12..x + 12 {
+@@ -463,7 +448,7 @@
+                         );
+                     }
+                 }
+-                std::thread::sleep(Duration::from_millis(67).saturating_sub(now.elapsed()));
++                std::thread::sleep(interval.saturating_sub(now.elapsed()));
+             }
+             eprintln!(
+                 "hardware {format:?} {width}x{height} cpu_ticks={} wall_ms={} (includes receiver decode)",
+@@ -473,7 +458,7 @@
+             let now = Instant::now();
+             drop(hardware);
+             eprintln!("hardware teardown_us={}", now.elapsed().as_micros());
+-            let mut software = prysm_webos_protocol::h264::Encoder::new(2_000_000, 15).unwrap();
++            let mut software = prysm_webos_protocol::h264::Encoder::new(2_000_000, fps).unwrap();
+             let mut decoder = prysm_webos_protocol::h264::Decoder::new().unwrap();
+             let cpu = ticks();
+             let start = Instant::now();
+@@ -503,7 +488,7 @@
+                         &output,
+                     )
+                     .unwrap();
+-                std::thread::sleep(Duration::from_millis(67).saturating_sub(now.elapsed()));
++                std::thread::sleep(interval.saturating_sub(now.elapsed()));
+             }
+             eprintln!(
+                 "software {format:?} {width}x{height} cpu_ticks={} wall_ms={}",
+@@ -533,15 +518,11 @@
+                         encoder = Some(Hardware::new(header, 15, 2_000_000).unwrap());
+                     }
+                     let now = Instant::now();
+-                    if encoder
++                    encoder
+                         .as_mut()
+                         .unwrap()
+                         .encode(header, &pixels, &mut output)
+-                        .unwrap()
+-                        .is_none()
+-                    {
+-                        continue;
+-                    }
++                        .unwrap();
+                     eprintln!(
+                         "real capture {:?} encode_us={}",
+                         header.format,

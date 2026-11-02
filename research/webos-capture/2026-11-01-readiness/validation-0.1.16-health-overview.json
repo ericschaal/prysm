@@ -1,0 +1,184 @@
+{
+  "version": "0.1.16",
+  "installed_binary_sha256": {
+    "prysm-webos-capture": "b271d27b4ffcecf74e48f52ac2d77b8ccbb58e82bdb6dd9eae6943df3ca42bc4",
+    "prysm-webos-service": "215df303a398d4ee5755ee449a8cd47b396580b37a249d4ae7870e5546df0288"
+  },
+  "configuration_preserved": true,
+  "enabled_state_preserved": true,
+  "boot_hook_preserved": true,
+  "permission_mounts_preserved": true,
+  "status": {
+    "pid": 23968,
+    "enabled": true,
+    "power": "Active",
+    "senderRunning": true,
+    "receiverConnected": true,
+    "capturing": true,
+    "error": null,
+    "config": {
+      "autostart": true,
+      "compression": "h264",
+      "metrics": true,
+      "receiver": "192.168.18.18:19400",
+      "source": "both"
+    }
+  },
+  "host_frames": [
+    44180,
+    44211
+  ],
+  "worker_pid": 24017,
+  "worker_has_no_arguments": true,
+  "worker_startup_config": {
+    "receiver": "192.168.18.18:19400",
+    "source": "both",
+    "compression": "h264",
+    "metrics": true
+  },
+  "host": {
+    "pid": 6637,
+    "state_preserved": true,
+    "config_preserved": true,
+    "initial_idle_requested_fps": 0,
+    "initial_idle_last_decoded_timestamp": 0,
+    "state": {
+      "source": "prysm",
+      "observed": {
+        "pipeline_phase": "running",
+        "power": true,
+        "realtime": true,
+        "realtime_source": null,
+        "live_override": 0
+      },
+      "observation_error": null,
+      "operation": {
+        "kind": "succeeded",
+        "id": "870ac16c-c44f-426b-9175-5d3c6312d9c8"
+      },
+      "wled_url": "",
+      "config_revision": "21",
+      "applied_revision": "21",
+      "pipeline": {
+        "applied_revision": "21",
+        "phase": "running",
+        "frames_processed": 266,
+        "error": null
+      },
+      "restart_required": false
+    },
+    "frame_progress": [
+      236,
+      266
+    ]
+  },
+  "dashboard": {
+    "dashboard_version": 8,
+    "dashboard_matches_repository": true,
+    "synthetic_query_scenarios": 19,
+    "panels": [
+      {
+        "panel": "Stream status",
+        "target": "A",
+        "result": [
+          {
+            "metric": {
+              "node": "computer"
+            },
+            "value": [
+              1793546591.25,
+              "1"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "Frame cadence",
+        "target": "A",
+        "result": [
+          {
+            "metric": {
+              "node": "computer"
+            },
+            "value": [
+              1793546591.257,
+              "0.9975757575757576"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "TV capture budget",
+        "target": "A",
+        "result": [
+          {
+            "metric": {
+              "node": "tv"
+            },
+            "value": [
+              1793546591.262,
+              "0.9011971918651198"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "Frame regularity",
+        "target": "A",
+        "result": [
+          {
+            "metric": {
+              "node": "computer"
+            },
+            "value": [
+              1793546591.266,
+              "0.09262499999999999"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "Frame regularity",
+        "target": "B",
+        "result": [
+          {
+            "metric": {
+              "node": "computer"
+            },
+            "value": [
+              1793546591.271,
+              "0.03333333333333333"
+            ]
+          }
+        ]
+      },
+      {
+        "panel": "Recent faults \u00b7 5 minutes",
+        "target": "A",
+        "result": [
+          {
+            "metric": {
+              "node": "computer"
+            },
+            "value": [
+              1793546591.275,
+              "0"
+            ]
+          },
+          {
+            "metric": {
+              "node": "tv"
+            },
+            "value": [
+              1793546591.275,
+              "0"
+            ]
+          }
+        ]
+      }
+    ],
+    "layout": "Large health instruments in two rows; three expandable diagnostic sections",
+    "browser_layout_verified": true,
+    "diagnostic_row_expansion_verified": true
+  }
+}

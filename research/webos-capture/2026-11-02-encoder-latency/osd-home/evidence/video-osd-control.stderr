@@ -1,0 +1,10 @@
+CALL init 0
+PREPARE attempt=1 code=0
+CALL preprocess 0
+CALL plane 0
+PLANE mode=4 stride=640 region=0,0,640,360
+CALL process 0
+RESULT mode=4 frames=90 elapsed_ms=3030.212
+CALL stop 0
+CALL postprocess 0
+CALL finalize 0

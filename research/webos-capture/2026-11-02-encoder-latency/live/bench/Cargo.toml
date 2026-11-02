@@ -1,0 +1,30 @@
+[package]
+name = "prysm-encoder-latency-bench"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[features]
+baseline = []
+hardware-h264 = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+tracing = "0.1"
+libc = "0.2"
+memmap2 = "0.9"
+yuv = { version = "0.8", default-features = false }
+prysm-metrics = { path = "../../../../../crates/common/prysm-metrics" }
+prysm-webos-protocol = { path = "../../../../../crates/capture/prysm-webos-protocol", features = ["h264"] }
+gstreamer = { version = "0.25", optional = true }
+gstreamer-app = { version = "0.25", optional = true }
+gstreamer-video = { version = "0.25", optional = true }
+gstreamer-allocators = { version = "0.25", optional = true }
+
+[profile.webos]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

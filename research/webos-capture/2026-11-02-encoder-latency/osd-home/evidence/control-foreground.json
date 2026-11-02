@@ -1,0 +1,21 @@
+{
+  "foregroundAppInfo": [
+    {
+      "appId": "com.webos.app.hdmi1",
+      "displayId": 0,
+      "multiview": false,
+      "order": 0,
+      "params": {},
+      "pip": false,
+      "primary": true,
+      "processId": "1033",
+      "viewType": "normal",
+      "windowGroup": true,
+      "windowGroupOwner": true,
+      "windowGroupOwnerId": "",
+      "windowType": "_WEBOS_WINDOW_TYPE_CARD"
+    }
+  ],
+  "mode": "normal",
+  "returnValue": true
+}

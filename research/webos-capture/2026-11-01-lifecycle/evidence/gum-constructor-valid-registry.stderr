@@ -1,0 +1,26 @@
+GUM attach kind=4 result=0
+GUM smoke passed
+GUM attach kind=1 result=0
+GUM attach kind=2 result=0
+GUM create begin
+GUM register 0xbbc0a8
+GUM create returned
+GUM release begin
+GUM unregister 0xbbc0a8
+GUM release returned
+GUM cycle=1 threw=0 registrations=1 unregistrations=1 deletes=0 list_size=0 retains_deleted=0
+GUM create begin
+GUM register 0xbbc0a8
+GUM create returned
+GUM release begin
+GUM unregister 0xbbc0a8
+GUM release returned
+GUM cycle=2 threw=0 registrations=2 unregistrations=2 deletes=0 list_size=0 retains_deleted=0
+GUM create begin
+GUM register 0xbbc0a8
+GUM create returned
+GUM release begin
+GUM unregister 0xbbc0a8
+GUM release returned
+GUM cycle=3 threw=0 registrations=3 unregistrations=3 deletes=0 list_size=0 retains_deleted=0
+GUM assertions passed; process exit reclaims diagnostic state

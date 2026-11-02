@@ -1,0 +1,288 @@
+{
+  "frame_geometry": [
+    320,
+    180
+  ],
+  "format": "NV12",
+  "roi": [
+    120,
+    80,
+    264,
+    170
+  ],
+  "conditions": {
+    "baseline": {
+      "1": {
+        "sha256": [
+          "851824c330ffde4b3b10407b6ef9b04f25b544f1557a6753ad69f261f62cde6c",
+          "014ebca7dbe23cf2e0ecd436eafe013cd3a1d667e7c0d5e8de4f2f270d38e6b9",
+          "9523bf6a531816042a23521324b28caca09b405353db6c98d1f421d667d4897f"
+        ],
+        "temporal_mae": [
+          0.05644675925925926,
+          0.22380787037037037
+        ]
+      },
+      "2": {
+        "sha256": [
+          "8e1dc3769b546056b708988a30c68a08247498f7624421f75b28945ddf74132a",
+          "7a68e033de257fa33f535db574af8e6899c474d69d34db6746eceeac87a1d8d3",
+          "26008e57468440596790ace3c1250cc3ba13838a504f8a2e9ee4a2d9896efc2c"
+        ],
+        "temporal_mae": [
+          0.046099537037037036,
+          0.14600694444444445
+        ]
+      },
+      "3": {
+        "sha256": [
+          "dc6400c82e718c89756798e09cc64a46300ea41ef215632faacc1deaa46d0f58",
+          "889a58fa1acaa4d4d698efb9781f02eb72ec582aa989d46f6da49222eaffa66c",
+          "a08356ad32cbfd6a1f211b4adf0152b76cea6db9c927d21f76eb5a9c3fdb971d"
+        ],
+        "temporal_mae": [
+          0.04866898148148148,
+          0.1637962962962963
+        ]
+      }
+    },
+    "tone-off": {
+      "1": {
+        "sha256": [
+          "c6f2adc43e31394f5f1904b23444c4aef39dfc1fc796e9c4928f2052ce47ddcb",
+          "ccf0b074bf696997cdda43269241ce63c9394babcaa676fa7cccdca2402d9723",
+          "690b93860193a170dd17d386a23261a5628d1cbbb719fc39b529ff398c4eec32"
+        ],
+        "temporal_mae": [
+          0.021145833333333332,
+          0.16541666666666666
+        ]
+      },
+      "2": {
+        "sha256": [
+          "f8b12e90dba5f3ac63464f19a4bc9e45626a11dc2ebe3441d47df2a9b198c041",
+          "39bd3001be68235adfc20cc609a87eeafd85660976dad4057ec6250bccf139f8",
+          "c5ca1797d46e6f7b59a175545fa6e0236f1d35b60c1f517d0ae74a0b4ee6da51"
+        ],
+        "temporal_mae": [
+          0.023935185185185184,
+          0.0921412037037037
+        ]
+      },
+      "3": {
+        "sha256": [
+          "afde0c1bf4d2361f935b5dc34a8c7c7b023d1ea0701791b3b80e64eebac57c87",
+          "5837ab044c41ecfa1ddc51ec1273ef4248e002ec7df49fd882baeea1e3de9b33",
+          "bded5c9d1b8339c94e7f11bfaf693fd75b3db70dd27f381211f91219df6474b2"
+        ],
+        "temporal_mae": [
+          0.008715277777777778,
+          0.07289351851851852
+        ]
+      }
+    },
+    "gamut-native": {
+      "1": {
+        "sha256": [
+          "3a3351e908bdecb05c6affd2eaa6588c5e8fa641810cd678e3d9b3f559c5d796",
+          "0c8cbdfb521843abac2dbb990dcb3056c4ea38a195a6b65d1d9992d9aac77578",
+          "08d7105455d8ded21a589e3242ca064d0451da4743cafc3f4c55f0d8b5313617"
+        ],
+        "temporal_mae": [
+          0.0240625,
+          0.17884259259259258
+        ]
+      },
+      "2": {
+        "sha256": [
+          "8e856b930fd8e1910bb594ee80e41d6364f9861056d19bb95088dddb0f07df1c",
+          "07081763fbff5366fbacfc25d065f3404d639d5dbb5ba50a2ea1d34bcdb8e049",
+          "2abd447c8ea7f43e53fa2409be7ef9438e5d659cd4b9a2a95d45efbdaaea5e96"
+        ],
+        "temporal_mae": [
+          0.022534722222222223,
+          0.11646990740740741
+        ]
+      },
+      "3": {
+        "sha256": [
+          "e45f0c846120f8fea5a98c08669ddc8475288199c470e981aa0566a41eed9294",
+          "9007fb4ddcec88e5901ec05dab016c0551dae45692e7fbd257a815d03d4180d4",
+          "a1be28d07099fa5816722bda642374be2a0e70d6ccafebe5fc4dba4c8e468d4c"
+        ],
+        "temporal_mae": [
+          0.022488425925925926,
+          0.10864583333333333
+        ]
+      }
+    },
+    "restored": {
+      "1": {
+        "sha256": [
+          "52e244ccc4f7f76723de4c62b7f0efb81582dbe1de38677dce6a08e1adab2664",
+          "41268852d5c16ccc98ec91a58c6090d549f6cbe556d46dcadff19632f97489e4",
+          "eaf6d39a9b1cbafe54434b44ff0db0bf85b1c49fc92d46ca42d99c4f3dfdca70"
+        ],
+        "temporal_mae": [
+          0.0422337962962963,
+          0.22425925925925927
+        ]
+      },
+      "2": {
+        "sha256": [
+          "077aa7e733c815dadb55e306b92058cfaad633a15383b9128db82d55a60e0623",
+          "59c9fd849676ccfe225dee75b8c3fcc6eb5c49f5085b32e5062d5973ee6c1db5",
+          "cc49dccc29b7a9a87cf8004f4e92b2f785d738d96006eec187fcde3ea1213298"
+        ],
+        "temporal_mae": [
+          0.03925925925925926,
+          0.1339699074074074
+        ]
+      },
+      "3": {
+        "sha256": [
+          "af8d5aaf69c29051ae77f418888182dca5f3fac67940453bb5ab9bbac5c0496f",
+          "a6eaf1b4fb4fda1e5a2249f1916978c0f0abc94aff06d4bf1ecc578951a0cfdb",
+          "42788a27a3057061ee7129e3afb0f175399524422abafa92da6086a2aaa0f698"
+        ],
+        "temporal_mae": [
+          0.03803240740740741,
+          0.12855324074074073
+        ]
+      }
+    },
+    "gamut-p3": {
+      "1": {
+        "sha256": [
+          "cfeff804f7ce38ce9d2c12e1f4277a2405350a284173b2902f53b5d7906b6df5",
+          "4de1dc10a2bfb3882287de0fd411663068140042378250e856dac86e770fbda3",
+          "3edd316baa0f31234f576da42a7918eeadbc77fa0f61d38570f0615d339394ff"
+        ],
+        "temporal_mae": [
+          0.05559027777777778,
+          0.24842592592592594
+        ]
+      },
+      "2": {
+        "sha256": [
+          "eb849cbf7e3e9f654bf06cce5de78c1a9ac9421be46dbcaaa346030883d15bcf",
+          "e27d62192ae3d3d70079fbbe0f78379f881a6b39e0ab1e634a2c4237224077bb",
+          "4909937f668b500e4c99823810455d07dc630ae136f80ec7aa36ec1add54cd30"
+        ],
+        "temporal_mae": [
+          0.058368055555555555,
+          0.14542824074074073
+        ]
+      },
+      "3": {
+        "sha256": [
+          "4486a149d2cf5104d1ec51409b0e43a7c93b9c42a920fab2350827fd9799d366",
+          "fe1aa1064d41f99aee203f88193c4bb4cee627532494e66b2b313cfabc07a0e0",
+          "d8eb917067558e4055a8b14ca83e474e5f74fb3db646eafb71e65f606af56d10"
+        ],
+        "temporal_mae": [
+          0.06189814814814815,
+          0.17033564814814814
+        ]
+      }
+    }
+  },
+  "comparisons": [
+    {
+      "reference": "baseline",
+      "condition": "tone-off",
+      "tap": 1,
+      "roi_y_mae": 11.275077160493828,
+      "roi_uv_mae": 1.0509259259259258,
+      "roi_changed_bytes": 16089
+    },
+    {
+      "reference": "baseline",
+      "condition": "tone-off",
+      "tap": 2,
+      "roi_y_mae": 10.830787037037037,
+      "roi_uv_mae": 1.3537037037037036,
+      "roi_changed_bytes": 16492
+    },
+    {
+      "reference": "baseline",
+      "condition": "tone-off",
+      "tap": 3,
+      "roi_y_mae": 10.830092592592592,
+      "roi_uv_mae": 1.3530864197530865,
+      "roi_changed_bytes": 16507
+    },
+    {
+      "reference": "baseline",
+      "condition": "restored",
+      "tap": 1,
+      "roi_y_mae": 0.14405864197530865,
+      "roi_uv_mae": 0.07299382716049382,
+      "roi_changed_bytes": 2336
+    },
+    {
+      "reference": "baseline",
+      "condition": "restored",
+      "tap": 2,
+      "roi_y_mae": 0.15925925925925927,
+      "roi_uv_mae": 0.13564814814814816,
+      "roi_changed_bytes": 2938
+    },
+    {
+      "reference": "baseline",
+      "condition": "restored",
+      "tap": 3,
+      "roi_y_mae": 0.15925925925925927,
+      "roi_uv_mae": 0.13564814814814816,
+      "roi_changed_bytes": 2938
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-native",
+      "tap": 1,
+      "roi_y_mae": 0.13996913580246914,
+      "roi_uv_mae": 0.07654320987654321,
+      "roi_changed_bytes": 2308
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-native",
+      "tap": 2,
+      "roi_y_mae": 0.09899691358024691,
+      "roi_uv_mae": 0.42854938271604937,
+      "roi_changed_bytes": 3651
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-native",
+      "tap": 3,
+      "roi_y_mae": 0.17608024691358024,
+      "roi_uv_mae": 0.4561728395061728,
+      "roi_changed_bytes": 4827
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-p3",
+      "tap": 1,
+      "roi_y_mae": 0,
+      "roi_uv_mae": 0,
+      "roi_changed_bytes": 0
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-p3",
+      "tap": 2,
+      "roi_y_mae": 0.41728395061728396,
+      "roi_uv_mae": 1.0483024691358025,
+      "roi_changed_bytes": 8522
+    },
+    {
+      "reference": "restored",
+      "condition": "gamut-p3",
+      "tap": 3,
+      "roi_y_mae": 0.41172839506172837,
+      "roi_uv_mae": 1.0510802469135803,
+      "roi_changed_bytes": 8474
+    }
+  ]
+}

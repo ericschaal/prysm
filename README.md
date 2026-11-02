@@ -13,7 +13,7 @@
   <a href="#what-it-does">What it does</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#set-the-mood">Control panel</a> ·
-  <a href="#under-the-hood">Under the hood</a>
+  <a href="#develop-prysm">Develop Prysm</a>
 </p>
 
 ## In action
@@ -43,12 +43,12 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 ## Set the mood
 
 <p align="center">
-  <img src="docs/images/control-panel.jpg" alt="Prysm control panel showing Set the mood, lights On, Screen sync selected, a WLED effects option, and Customize in WLED." width="400">
+  <img src="docs/images/control-panel.jpg" alt="Prysm Overview showing lights Off, Screen sync and WLED effects, capture status, saved/applied revisions and input/output context." width="400">
 </p>
 
-<p align="center"><sub>The actual control interface, shown with demo connection state.</sub></p>
+<p align="center"><sub>The actual control interface, verified with a local WLED fixture.</sub></p>
 
-One power button. Two color sources. A quiet status indicator.
+Overview controls power and color source. Preview & tuning combines picture inspection with all six live processing settings.
 
 - **Screen sync** lets Prysm supply live colors from your video.
 - **WLED effects** returns control to WLED's effects and presets.
@@ -56,173 +56,48 @@ One power button. Two color sources. A quiet status indicator.
 
 The panel remembers your selected source while the lights are off. It stays available when capture stops, and shows connection problems with retry controls. Keyboard navigation, visible focus, generous touch targets, and reduced-motion support are built in.
 
-The controller requires Linux with systemd and a compatible WLED JSON API. See the [control-panel guide](docs/control-panel.md) for behavior and configuration.
+Prysm runs on macOS and Linux with the panel built in. One application handles
+capture, colors, and control. See [settings and daily use](docs/users/configuration.md).
 
 ## How it connects
 
 ```text
-Capture device → Prysm → DDP over your LAN → WLED → LED strips
-                   ↑
-            Phone control panel
+USB capture device / video file / rooted LG TV → Prysm → WLED → LED strips
+                                                  ↑
+                                            Phone control panel
 ```
 
-Prysm handles capture and color processing. WLED drives the physical LEDs. The phone panel switches the capture service and WLED's power/source state.
-
-### What you need
-
-- A Linux or macOS machine for capture and processing; a Raspberry Pi with 64-bit Raspberry Pi OS works for the packaged setup.
-- A compatible video capture device, such as a USB capture card exposing your video feed.
-- A WLED controller, addressable LED strips, a suitable power supply, and a local network connection.
-- For building: a Rust toolchain supporting edition 2024.
-
-Capture uses V4L2 on Linux and AVFoundation on macOS. It reads from a video capture device; it does not capture your desktop directly. The browser controller is Linux-only.
+Bring a Linux or macOS host, a video source, and a WLED controller with LED strips.
+A Raspberry Pi with 64-bit Raspberry Pi OS works for the packaged setup. On a
+compatible rooted LG TV, the experimental TV sender replaces the capture card.
+Inspect the source image, crop and edge colors in the browser while tuning live processing settings.
 
 ## Get started
 
-### 1. Build
 
-```sh
-git clone https://github.com/ericschaal/prysm.git
-cd prysm
-cargo build --locked --release -p prysm --bins
-```
+Choose one setup guide:
 
-On Linux, install the native capture and graphics build dependencies first; the [Raspberry Pi / Debian guide](prysm/debian/README.md) lists them. Desktop dependencies are currently compiled for the headless application too.
+- **[Raspberry Pi / Debian arm64](docs/users/debian.md)** — install the package and run it as a service.
+- **[Linux or macOS with a capture device](docs/users/quickstart.md)** — configure capture and WLED, then start Prysm.
+- **[Rooted LG TV](docs/users/webos.md)** — install the TV sender and connect it to Prysm.
+- **[Preview and tune](docs/users/preview.md)** — inspect the picture and adjust live processing in the browser.
 
-### 2. Configure your setup
+Prysm starts idle. Open the panel, select **Screen sync**, and turn the lights on.
+See [settings and daily use](docs/users/configuration.md) or [troubleshooting](docs/users/troubleshooting.md).
 
-Edit [`prysm.toml`](prysm.toml). The checked-in values describe a specific setup; replace the device, WLED address, and LED counts with yours. For example:
+## Develop Prysm
 
-```toml
-brightness_percent = 100
-sample_density = 128
-capture_resolution = [640, 360]
+[Build and test](docs/developers/README.md), understand the
+[architecture](docs/developers/architecture.md), or read the
+[technical decisions](docs/developers/decisions/README.md) and
+[contribution guidelines](docs/developers/guidelines.md).
 
-[input]
-type = "device"
-device = "/dev/video0" # On macOS, use the AVFoundation device UID.
+## Dive deeper
 
-[output]
-type = "wled"
-address = "wled.local:4048"
-refresh_rate_hz = 30
+[Research and experiments](research/README.md) explain what was investigated,
+what was measured, and which approaches were superseded. For all three audiences,
+start at the [documentation index](docs/README.md).
 
-[output.leds]
-top = 96
-right = 54
-bottom = 96
-left = 54
-```
+## License
 
-LED counts refer to the screen viewed from the front. Wiring starts at **bottom-left**, then runs up the left, across the top, down the right, and back along the bottom. Set an absent edge to `0`.
-
-In WLED, enable DDP input under **Config → Sync Interfaces** and match the LED count to your strip. Prysm sends sRGB colors: enable **Use Gamma for color** and leave **Disable realtime gamma correction** unchecked. The [WLED setup guide](renderers/led-renderer/README.md) covers mapping, brightness, and transport details.
-
-### 3. Turn it on
-
-```sh
-cargo run --locked --release -p prysm
-# Or load another configuration:
-cargo run --locked --release -p prysm -- --config /path/to/prysm.toml
-```
-
-Configuration is read at startup; restart after editing it. `Ctrl+C` stops processing. Once live input times out, WLED returns to its normal effect.
-
-## Put it on a Raspberry Pi
-
-The Debian package installs the capture application, the independent web controller, and their systemd units. Follow the [build and installation guide](prysm/debian/README.md) first; services are disabled on installation so you can configure your hardware.
-
-To let the panel manage screen sync after installing and configuring the package:
-
-```sh
-sudo systemctl disable --now prysm-led
-sudo nano /etc/prysm/control.toml
-sudo systemctl enable --now prysm-control
-```
-
-Set `wled_url` to WLED's **HTTP address**, such as `http://wled.local/`; the capture output separately uses DDP port `4048`. Configure WLED's boot preset to Off, then open `http://YOUR_PI_IP:8787` on your phone.
-
-The panel has no login: use a trusted LAN or private VPN and keep its port off the public internet. Off is a software lighting command, not a physical power disconnect. Verify power and source switching on your installed WLED firmware before relying on it.
-
-## Under the hood
-
-Prysm is a Rust workspace with a straightforward **capture → process → render** pipeline.
-
-| Component | Responsibility |
-| :--- | :--- |
-| [`prysm`](prysm/) | Configuration, application, web controller, and file input for debugging. |
-| [`prysm-capture`](prysm-capture/) | Linux V4L2 and macOS AVFoundation capture. |
-| [`prysm-core`](prysm-core/) | Colors, gradients, and processing settings; no external dependencies. |
-| [`prysm-processor`](prysm-processor/) | Black-bar detection, edge sampling, and temporal smoothing. |
-| [`desktop-renderer`](renderers/desktop-renderer/) | On-screen egui preview for debugging. |
-| [`led-renderer`](renderers/led-renderer/) | WLED output over DDP/UDP with a configurable send-rate cap. |
-
-Processing settings such as smoothing and sampling depth are available through the core library; the application's TOML exposes brightness, sample density, capture resolution, and input/output settings.
-
-### Development
-
-Start in `prysm/src/main.rs`: it parses CLI arguments, configures logging, and
-calls `prysm::run_from_config`. Application setup is split by responsibility:
-
-| File in `prysm/src/` | Responsibility |
-| :--- | :--- |
-| [`app.rs`](prysm/src/app.rs) | Load configuration and select desktop or WLED output. |
-| [`config.rs`](prysm/src/config.rs) | Parse TOML and validate settings, input identifiers, and LED counts. |
-| [`input.rs`](prysm/src/input.rs) | Open a device or file as a fallible frame stream. |
-| [`desktop.rs`](prysm/src/desktop.rs) | Keep the GUI on the main thread and async processing on a worker thread. |
-| [`wled.rs`](prysm/src/wled.rs) | Run headless processing, WLED output, and Ctrl+C handling. |
-| [`stream.rs`](prysm/src/stream.rs) | Publish processed frames and colors to the desktop watch channels. |
-| [`video.rs`](prysm/src/video.rs) | Decode file input with FFmpeg. |
-
-Tests live beside the code they cover. Output runners own runtime and shutdown
-handling; input adapters preserve source errors. The existing `prysm::run` API
-runs a desktop preview with a caller-provided frame source.
-
-```sh
-cargo test --workspace --locked
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked
-```
-
-For control-panel changes, use Node 20.19+ and the existing frontend tooling:
-
-```sh
-npm ci --prefix prysm/control-ui
-# Edit prysm/control-ui/app.jsx or style.css, then:
-npm run build --prefix prysm/control-ui
-npm test --prefix prysm/control-ui
-```
-
-Commit the generated `prysm/src/control.html` alongside its source changes. The deployed panel needs no Node runtime.
-
-### Desktop debugging
-
-The egui renderer shows the captured video and sampled colors so you can inspect the processing pipeline. File input is a debugging tool, usually paired with this renderer to replay recorded footage.
-
-For a recorded-video preview, replace `[input]` and the entire `[output]` configuration, including `[output.leds]`, with:
-
-```toml
-[input]
-type = "file"
-path = "/path/to/video.mp4"
-
-[output]
-type = "egui"
-refresh_rate_hz = 30
-```
-
-`refresh_rate_hz` sets the preview refresh rate (positive integer, default 30).
-Each refresh displays the latest available frame and colors; intermediate updates are skipped.
-
-Run `cargo run --locked --release -p prysm`. File input requires **FFmpeg 9+** on your `PATH` and a readable video file. Playback runs at the source frame rate, converts HDR to sRGB, and stops at the end of the video. Relative file paths resolve from your working directory. To inspect live capture instead, keep your device input and use the same egui output.
-
-## If something looks off
-
-| Symptom | Check |
-| :--- | :--- |
-| Capture won't start | Device path/UID, permissions, and support for the configured resolution. On Linux, `/dev/v4l/by-id/` provides stable device paths. |
-| LEDs stay dark | WLED address, DDP input, LED counts, power, and the selected source. |
-| Colors look washed out | WLED's gamma settings described above; avoid applying gamma twice. |
-| Panel shows Unknown | WLED connectivity and controller logs: `journalctl -u prysm-control -f`. |
-
-For more detail: [WLED output](renderers/led-renderer/README.md) · [Pi deployment](prysm/debian/README.md) · [Control panel](docs/control-panel.md) · [Visual A/B testing](docs/ambilight-ab-testing.md) · [Error handling](docs/error-handling.md).
+[Apache License, Version 2.0](LICENSE).

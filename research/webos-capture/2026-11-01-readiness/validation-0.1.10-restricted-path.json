@@ -1,0 +1,8 @@
+{
+  "version": "0.1.10",
+  "restricted_path": "/usr/bin:/bin",
+  "setup_succeeded": true,
+  "native_service_activated": true,
+  "autostart": true,
+  "error": null
+}

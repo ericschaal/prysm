@@ -1,0 +1,14 @@
+{
+  "version": "0.1.10",
+  "full_os_reboot_verified": true,
+  "observer_sent_luna_calls": false,
+  "tv_app_opened": false,
+  "user_confirmation": "Capture started automatically; delay more than 30 seconds, possibly less than 90",
+  "first_hdmi_frames_observed_at_uptime_seconds": 66.54,
+  "service_pid": "7035",
+  "worker_pid": "7051",
+  "native_setup_returned_success": true,
+  "setup_status_subscribers": 0,
+  "frames_advanced_during_final_check": 93,
+  "error": null
+}

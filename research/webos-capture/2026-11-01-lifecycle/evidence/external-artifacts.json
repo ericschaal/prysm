@@ -1,0 +1,57 @@
+[
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/E-004-ums-decompiled.c",
+    "sha256": "62f7c604611583e87753fb73a39e3c91b451f0e55e237d8e4c843c962c769a0e",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/00029eb8.c",
+    "sha256": "7a8f2c14ee912573cc21b846e6ceab7b4dfcb6d2d3b9981016e6a123558db4e8",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/0001d78c.c",
+    "sha256": "dc26496847225184033871ab6ac6bb9e89f8650bb9c8fff2f66eec3da409aeea",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/0001f7b0.c",
+    "sha256": "276e3943e7807e11a20f4c036acc2d5f164c8cb59a19f12fdb8111b00910bbf4",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/00021628.c",
+    "sha256": "5b75339631e0cdb48beaa27f0df9fdfe03c33982b14390aac49bab3c20170895",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/E-003-rmc-decompiled.c",
+    "sha256": "849c42ca06b55bc5177ed311c04eb285ae6485d5d1408a1d06b536068377329f",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/E-002-vt-decompiled.c",
+    "sha256": "ba9cde646f2d20fae57d8b4f72940332a05f30e78cb4b7f4aaad9abc49ded77c",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/0002143c.c",
+    "sha256": "efa31656a49f0312c36454a783a6bb7d211383b3e7ff7102db8a1d4e8de0fef7",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/0001f17c.c",
+    "sha256": "de7e89b1d356b4330e1e1b7b7a321575c1338d5b0ead67b282e77fe87deb024b",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/00020720.c",
+    "sha256": "67ce82aff263d9ea490b78893883ba633f9f8f11633ad0a90af669fb9eb4a1cc",
+    "reason": "Vendor decompilation retained outside repository"
+  },
+  {
+    "path": "/tmp/prysm-reverse/work/vt-lifecycle/evidence/0002a418.c",
+    "sha256": "50d3a0cefc89811b087ffa977e3e6fc38b5eb101089f4ab5076c72df60448384",
+    "reason": "Vendor decompilation retained outside repository"
+  }
+]

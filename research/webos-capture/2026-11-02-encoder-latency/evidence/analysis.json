@@ -1,0 +1,115 @@
+{
+  "vendor_fps_by_enum": {
+    "0": 30,
+    "1": 25,
+    "2": 24,
+    "3": 15,
+    "4": 10,
+    "5": 15
+  },
+  "rvenc_empty_queue_sleep_us": 2000,
+  "kadaptor_empty_ring_sleep_us": 100,
+  "kadaptor_submit_ring_wait_sleep_us": 1000,
+  "historical_plane1_log_to_callback_ms": {
+    "samples": [
+      7.636851,
+      9.720740999999977,
+      9.670777000000076,
+      9.553444999999993,
+      9.62799999999997,
+      12.912556000000075,
+      9.881593000000022,
+      9.76699999999986,
+      9.420963000000171,
+      9.713445000000043,
+      9.430037000000002,
+      9.771444999999934,
+      9.987777999999947,
+      10.494334000000105,
+      9.32570399999988
+    ],
+    "mean": 9.79431126666667,
+    "min": 7.636851,
+    "max": 12.912556000000075,
+    "meaning": "logged submission boundary to callback; not pure silicon time"
+  },
+  "retained_current_benchmark": [
+    {
+      "build": "current",
+      "bytes": 334249,
+      "checksum": "46c0f978a55e4db4",
+      "cpu_mean_ms": 2.01218975,
+      "encoded": 40,
+      "format": "Nv12",
+      "frames": 40,
+      "input_checksum": "6a4764479992ef86",
+      "mean_ms": 12.492428675,
+      "p50_ms": 12.38426,
+      "p95_ms": 13.464222,
+      "phase_mean_ms": {
+        "HardwareCollect": 0.010742624999999995,
+        "HardwareNormalize": 0.11921395,
+        "HardwareSubmit": 0.06357210000000002,
+        "HardwareSyncEnd": 0.003006475000000001,
+        "HardwareSyncStart": 0.007065774999999999,
+        "HardwareUpload": 0.12128982500000003,
+        "HardwareWait": 12.130881549999994
+      },
+      "skipped": 0,
+      "startup_ms": 67.616704,
+      "teardown_ms": 43.852556
+    },
+    {
+      "build": "current",
+      "bytes": 312636,
+      "checksum": "9179af2d49bf32d0",
+      "cpu_mean_ms": 5.680088575,
+      "encoded": 40,
+      "format": "Rgb",
+      "frames": 40,
+      "input_checksum": "6034f36a5d1aa356",
+      "mean_ms": 15.551487049999997,
+      "p50_ms": 15.533519,
+      "p95_ms": 16.73226,
+      "phase_mean_ms": {
+        "HardwareCollect": 0.010897325000000008,
+        "HardwareConvert": 3.2288414750000007,
+        "HardwareNormalize": 0.11399457500000003,
+        "HardwareSubmit": 0.060746350000000005,
+        "HardwareSyncEnd": 0.0026480749999999997,
+        "HardwareSyncStart": 0.007663825000000004,
+        "HardwareUpload": 0.12254717499999995,
+        "HardwareWait": 11.9633397
+      },
+      "skipped": 0,
+      "startup_ms": 8.433074000000001,
+      "teardown_ms": 47.995926000000004
+    },
+    {
+      "build": "current",
+      "bytes": 324499,
+      "checksum": "0966a03110482ea7",
+      "cpu_mean_ms": 3.7943239249999996,
+      "encoded": 40,
+      "format": "Nv16",
+      "frames": 40,
+      "input_checksum": "762e9e7cbea4cefb",
+      "mean_ms": 13.707810150000004,
+      "p50_ms": 13.772333,
+      "p95_ms": 14.864222,
+      "phase_mean_ms": {
+        "HardwareCollect": 0.010538925000000003,
+        "HardwareConvert": 1.4578593250000003,
+        "HardwareNormalize": 0.11755739999999996,
+        "HardwareSubmit": 0.06121199999999998,
+        "HardwareSyncEnd": 0.0025944000000000023,
+        "HardwareSyncStart": 0.008263975000000002,
+        "HardwareUpload": 0.19418144999999995,
+        "HardwareWait": 11.814483325000014
+      },
+      "skipped": 0,
+      "startup_ms": 7.875889000000001,
+      "teardown_ms": 42.993148000000005
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+if [ "$1" = purge ]; then
+    rm -f /etc/prysm/prysm.toml
+    if [ -d /etc/prysm ]; then
+        rmdir --ignore-fail-on-non-empty /etc/prysm
+    fi
+fi
+#DEBHELPER#

@@ -1,0 +1,14 @@
+{
+  "subscribed": false,
+  "category": "picture",
+  "method": "getSystemSettings",
+  "dimension": {
+    "pictureMode": "hdrGame",
+    "input": "hdmi1"
+  },
+  "settings": {
+    "colorGamut": "auto",
+    "hdrDynamicToneMapping": "on"
+  },
+  "returnValue": true
+}

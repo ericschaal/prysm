@@ -1,0 +1,38 @@
+[
+  {
+    "name": "gst_plugin_rvenc_get_desc",
+    "flagname": "sym.gst_plugin_rvenc_get_desc",
+    "realname": "gst_plugin_rvenc_get_desc",
+    "ordinal": 83,
+    "bind": "GLOBAL",
+    "size": 12,
+    "type": "FUNC",
+    "vaddr": 18736,
+    "paddr": 18736,
+    "is_imported": false
+  },
+  {
+    "name": "GST_CAT_RV_ENC",
+    "flagname": "obj.GST_CAT_RV_ENC",
+    "realname": "GST_CAT_RV_ENC",
+    "ordinal": 84,
+    "bind": "GLOBAL",
+    "size": 4,
+    "type": "OBJ",
+    "vaddr": 90212,
+    "paddr": 18446744073709551615,
+    "is_imported": false
+  },
+  {
+    "name": "gst_plugin_rvenc_register",
+    "flagname": "sym.gst_plugin_rvenc_register",
+    "realname": "gst_plugin_rvenc_register",
+    "ordinal": 85,
+    "bind": "GLOBAL",
+    "size": 92,
+    "type": "FUNC",
+    "vaddr": 18748,
+    "paddr": 18748,
+    "is_imported": false
+  }
+]

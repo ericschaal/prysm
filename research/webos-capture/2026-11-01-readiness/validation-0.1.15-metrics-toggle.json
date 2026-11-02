@@ -1,0 +1,95 @@
+{
+  "version": "0.1.15",
+  "installed_binary_sha256": {
+    "prysm-webos-capture": "c053c2ffe25821b1ba5ec0887e915d214bf1b70af3132d93e1a8485c6575eee4",
+    "prysm-webos-service": "215df303a398d4ee5755ee449a8cd47b396580b37a249d4ae7870e5546df0288"
+  },
+  "configuration_preserved": true,
+  "enabled_state_preserved": true,
+  "boot_hook_preserved": true,
+  "permission_mounts_preserved": true,
+  "status": {
+    "pid": 20511,
+    "enabled": true,
+    "power": "Active",
+    "senderRunning": true,
+    "receiverConnected": true,
+    "capturing": true,
+    "error": null,
+    "config": {
+      "autostart": true,
+      "compression": "h264",
+      "metrics": false,
+      "receiver": "192.168.18.18:19400",
+      "source": "both"
+    }
+  },
+  "host_frames": [
+    20989,
+    21019
+  ],
+  "worker_pid": 20528,
+  "worker_has_no_arguments": true,
+  "worker_startup_config": {
+    "receiver": "192.168.18.18:19400",
+    "source": "both",
+    "compression": "h264",
+    "metrics": false
+  },
+  "metrics_toggle_validation": [
+    {
+      "metrics": false,
+      "endpoint_open": false,
+      "default_for_legacy_config": true
+    },
+    {
+      "metrics": true,
+      "endpoint_open": true,
+      "old_worker_pid": 20528,
+      "worker_pid": 20654,
+      "config_persisted": true,
+      "capturing": true,
+      "host_frames": [
+        21387,
+        21418
+      ]
+    },
+    {
+      "metrics": false,
+      "endpoint_open": false,
+      "old_worker_pid": 20654,
+      "worker_pid": 20697,
+      "config_persisted": true,
+      "capturing": true,
+      "host_frames": [
+        21467,
+        21498
+      ]
+    },
+    {
+      "metrics": true,
+      "endpoint_open": true,
+      "old_worker_pid": 20697,
+      "worker_pid": 20722,
+      "config_persisted": true,
+      "capturing": true,
+      "host_frames": [
+        21528,
+        21548
+      ]
+    }
+  ],
+  "final_metrics_enabled": true,
+  "other_settings_preserved": true,
+  "final_prometheus_encoder_output_bytes_per_second": [
+    {
+      "metric": {
+        "node": "tv"
+      },
+      "value": [
+        1793545524.981,
+        "24092.740395978402"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+[package]
+name = "prysm-capture"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Camera, file and webOS video capture for Prysm"
+
+[lints]
+workspace = true
+
+[[example]]
+name = "capture_smoke"
+test = true
+
+[dependencies]
+prysm-core = { path = "../../common/prysm-core" }
+prysm-metrics = { path = "../../common/prysm-metrics" }
+futures.workspace = true
+yuv = { workspace = true, default-features = true, features = ["fast_mode"] }
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros", "net", "io-util", "time"] }
+tokio-util.workspace = true
+prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = { git = "https://github.com/raymanfx/libv4l-rs.git", rev = "30f6dbaeed5cdb1b33760fc5b35c1b545cfe0e46", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+av-foundation.workspace = true
+core-foundation.workspace = true
+core-media = { workspace = true, features = ["objc"] }
+core-video = { workspace = true, features = ["objc"] }
+dispatch2.workspace = true
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }

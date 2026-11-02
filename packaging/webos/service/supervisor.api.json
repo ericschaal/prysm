@@ -1,0 +1,9 @@
+{
+  "public": [
+    "io.prysm.capture.service/status",
+    "io.prysm.capture.service/start",
+    "io.prysm.capture.service/stop",
+    "io.prysm.capture.service/setConfig",
+    "io.prysm.capture.service/cleanup"
+  ]
+}

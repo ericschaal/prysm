@@ -1,0 +1,452 @@
+{
+  "frames-1": {
+    "decoded_frames": 1,
+    "exact_capture_packet_boundaries": true,
+    "stream": {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+      "profile": "Constrained Baseline",
+      "codec_type": "video",
+      "codec_tag_string": "[0][0][0][0]",
+      "codec_tag": "0x0000",
+      "mime_codec_string": "avc1.42c028",
+      "width": 640,
+      "height": 368,
+      "coded_width": 640,
+      "coded_height": 368,
+      "has_b_frames": 0,
+      "pix_fmt": "yuv420p",
+      "level": 40,
+      "chroma_location": "left",
+      "field_order": "progressive",
+      "refs": 1,
+      "is_avc": "false",
+      "nal_length_size": "0",
+      "r_frame_rate": "30/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/1200000",
+      "bits_per_raw_sample": "8",
+      "nb_read_frames": "1",
+      "nb_read_packets": "1",
+      "extradata_size": 37,
+      "disposition": {
+        "default": 0,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0,
+        "multilayer": 0
+      }
+    },
+    "input_to_capture_us": [
+      24142
+    ],
+    "first_capture_from_streamon_us": 11412,
+    "steady_latency_median_us": null,
+    "steady_latency_range_us": null,
+    "steady_submission_intervals_us": [],
+    "observed_submission_fps_excluding_first_gap": null,
+    "frame_content": [
+      {
+        "frame": 0,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      }
+    ],
+    "h264_sha256": "aaef4fe71600db4f7b4622961507127fada06753f7cf43c07f72bd64e3d153b0"
+  },
+  "frames-15": {
+    "decoded_frames": 15,
+    "exact_capture_packet_boundaries": true,
+    "stream": {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+      "profile": "Constrained Baseline",
+      "codec_type": "video",
+      "codec_tag_string": "[0][0][0][0]",
+      "codec_tag": "0x0000",
+      "mime_codec_string": "avc1.42c028",
+      "width": 640,
+      "height": 368,
+      "coded_width": 640,
+      "coded_height": 368,
+      "has_b_frames": 0,
+      "pix_fmt": "yuv420p",
+      "level": 40,
+      "chroma_location": "left",
+      "field_order": "progressive",
+      "refs": 1,
+      "is_avc": "false",
+      "nal_length_size": "0",
+      "r_frame_rate": "30/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/1200000",
+      "bits_per_raw_sample": "8",
+      "nb_read_frames": "15",
+      "nb_read_packets": "15",
+      "extradata_size": 37,
+      "disposition": {
+        "default": 0,
+        "dub": 0,
+        "original": 0,
+        "comment": 0,
+        "lyrics": 0,
+        "karaoke": 0,
+        "forced": 0,
+        "hearing_impaired": 0,
+        "visual_impaired": 0,
+        "clean_effects": 0,
+        "attached_pic": 0,
+        "timed_thumbnails": 0,
+        "non_diegetic": 0,
+        "captions": 0,
+        "descriptions": 0,
+        "metadata": 0,
+        "dependent": 0,
+        "still_image": 0,
+        "multilayer": 0
+      }
+    },
+    "input_to_capture_us": [
+      20710,
+      13656,
+      13880,
+      13766,
+      13781,
+      13786,
+      13855,
+      13874,
+      15232,
+      12497,
+      19771,
+      13857,
+      17773,
+      17702,
+      17906
+    ],
+    "first_capture_from_streamon_us": 9877,
+    "steady_latency_median_us": 13865.5,
+    "steady_latency_range_us": [
+      12497,
+      19771
+    ],
+    "steady_submission_intervals_us": [
+      35766,
+      36107,
+      35987,
+      35993,
+      35942,
+      35974,
+      36027,
+      37350,
+      44737,
+      41940,
+      36075,
+      40077,
+      39810
+    ],
+    "observed_submission_fps_excluding_first_gap": 26.43431580873756,
+    "frame_content": [
+      {
+        "frame": 0,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 1,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 2,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 3,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 4,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 5,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 6,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 7,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 8,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 9,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 10,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 11,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 12,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 13,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      },
+      {
+        "frame": 14,
+        "max_error_yuv": [
+          0,
+          0,
+          0
+        ],
+        "mean_error_yuv": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "samples_checked_yuv": [
+          230400,
+          57600,
+          57600
+        ]
+      }
+    ],
+    "h264_sha256": "341a8ac9382fa82fc86e816a3ce1a257da81f8dd693467b3cdcff6356f90ed71",
+    "first_capture_before_second_submit_us": 234295
+  }
+}

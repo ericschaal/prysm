@@ -1,0 +1,84 @@
+WATCHDOG timed out pid=15832
+/proc/15832/task/15832/comm probe
+
+/proc/15832/task/15832/wchan futex_wait_queue_me
+/proc/15832/task/15832/syscall 240 0xf5bff368 0x109 0x3ddc 0x0 0x0 0xffffffff 0xfffcb158 0xf7911ca6
+
+/proc/15832/task/15832/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/15832/task/15833/comm shutdown
+
+/proc/15832/task/15833/wchan do_sigtimedwait
+/proc/15832/task/15833/syscall 177 0xf73cdb74 0xf73cd9d0 0x0 0x8 0x0 0xf73cd9d0 0xf73cd988 0xf7911ca6
+
+/proc/15832/task/15833/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sigtimedwait+0x100/0x174
+[<0>] __arm64_compat_sys_rt_sigtimedwait_time32+0x60/0xa8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/15832/task/15834/comm probe
+
+/proc/15832/task/15834/wchan do_sys_poll
+/proc/15832/task/15834/syscall 168 0xf6601a58 0x3 0xffffffff 0x0 0xffffffff 0x3 0xf6ffe890 0xf7911ca6
+
+/proc/15832/task/15834/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/15832/task/15835/comm probe
+
+/proc/15832/task/15835/wchan do_sys_poll
+/proc/15832/task/15835/syscall 168 0xf5c071a8 0x2 0xffffffff 0x0 0xffffffff 0x2 0xf65febc8 0xf7911ca6
+
+/proc/15832/task/15835/stack [<0>] __switch_to+0xf0/0x158
+[<0>] do_sys_poll+0x1ec/0x3e8
+[<0>] __arm64_sys_poll+0x60/0xc8
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+/proc/15832/task/15836/comm probe
+
+/proc/15832/task/15836/wchan futex_wait_queue_me
+/proc/15832/task/15836/syscall 240 0x14beeec 0x189 0x0 0x0 0x0 0xffffffff 0xf5bfeb20 0xf7911ca6
+
+/proc/15832/task/15836/stack [<0>] __switch_to+0xf0/0x158
+[<0>] futex_wait_queue_me+0xbc/0x10c
+[<0>] futex_wait+0xa0/0x17c
+[<0>] do_futex+0xdc/0x884
+[<0>] __arm64_sys_futex_time32+0xe8/0x154
+[<0>] el0_svc_common.constprop.0+0x11c/0x1dc
+[<0>] el0_svc_compat_handler+0x34/0x44
+[<0>] el0_svc_compat+0x10/0x50
+
+TRACE 25358.688367 tid=15832 context_new 0x14c4b60 (nil) /usr/lib/libresource_mgr_client.so.1+0x69bf
+TRACE 25358.688417 tid=15832 loop_new 0x14c4858 0x14c4b60 /usr/lib/libresource_mgr_client.so.1+0x69c9
+TRACE 25358.695697 tid=15832 context_unref 0x14c4b60 (nil) /usr/lib/libums_connector_impl.so.1+0x883d
+TRACE 25358.700421 tid=15834 signal 0x14c4dd0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6417
+TRACE 25358.702473 tid=15835 context_new 0xf5c00600 (nil) /usr/lib/libvtcapture.so.1.0.0+0xdee3
+TRACE 25358.702752 tid=15835 loop_new 0xf5c02f88 0xf5c00600 /usr/lib/libvtcapture.so.1.0.0+0xdeed
+TRACE 25358.709289 tid=15832 wait_enter 0x14e3ef0 0x14c4e38 /usr/lib/libstdc++.so.6+0x974d5
+TRACE 25358.709996 tid=15836 broadcast 0x14bef08 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25358.710210 tid=15836 wait_enter 0x14beec0 0x14beea4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25358.710812 tid=15834 signal 0x14e3ef0 (nil) /usr/lib/libresource_mgr_client.so.1+0x6661
+TRACE 25358.711265 tid=15832 wait_exit 0x14e3ef0 (nil) /usr/lib/libstdc++.so.6+0x974d5
+TRACE 25358.793732 tid=15832 signal 0x14beec0 (nil) /usr/lib/libvtcapture.so.1.0.0+0x116e9
+TRACE 25358.793803 tid=15836 wait_exit 0x14beec0 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25358.948852 tid=15836 broadcast 0x14bef08 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1152f
+TRACE 25358.948917 tid=15836 wait_enter 0x14beec0 0x14beea4 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25358.948938 tid=15836 delay_wait_500ms 0x14beec0 0x2 /usr/lib/libvtcapture.so.1.0.0+0x1153b
+TRACE 25358.950654 tid=15832 signal 0x14beec0 (nil) /usr/lib/libvtcapture.so.1.0.0+0x10767
+TRACE 25358.950726 tid=15832 join_enter 0xf5bff300 (nil) /usr/lib/libvtcapture.so.1.0.0+0xbb45
+TRACE 25359.449042 tid=15836 delay_done 0x14beec0 (nil) /usr/lib/libvtcapture.so.1.0.0+0x1153b

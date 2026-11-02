@@ -1,0 +1,3 @@
+Original at 640x360 rejected: H.264 SPS dimensions disagree with header
+Original at 640x368 rejected: H.264 must signal limited-range BT.709
+All 15 SPS-adjusted hardware access units passed unchanged Prysm validation and RGB content assertions.
