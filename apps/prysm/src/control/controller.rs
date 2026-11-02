@@ -433,7 +433,7 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actors::runtime::Pipeline;
+    use crate::pipeline::runtime::Pipeline;
 
     #[tokio::test]
     async fn retired_observations_cannot_replace_current_config_or_pipeline_status() {

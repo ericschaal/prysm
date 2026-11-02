@@ -274,7 +274,6 @@ fn wled_url_is_required_and_ddp_uses_its_host_with_fixed_port() {
     let mut legacy = serde_json::to_value(&base.output).unwrap();
     legacy["address"] = json!("wled.local:4048");
     assert!(serde_json::from_value::<Output>(legacy).is_err());
-    let legacy = serde_json::from_value::<Output>(json!({"type":"egui"})).unwrap_err();
-    assert!(legacy.to_string().contains("configure [output]"));
-    assert!(legacy.to_string().contains("browser"));
+    let invalid = serde_json::from_value::<Output>(json!({"type":"unknown"})).unwrap_err();
+    assert!(invalid.to_string().contains("unknown variant `unknown`"));
 }

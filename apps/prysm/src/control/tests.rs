@@ -1,6 +1,6 @@
 //! Real command/reply and persistence behavior, with WLED isolated behind a loopback fixture.
 use super::*;
-use crate::{actors::runtime::Pipeline, config::PipelineConfig};
+use crate::{config::PipelineConfig, pipeline::runtime::Pipeline};
 use prysm_api::{App, Command};
 use prysm_contract::{Config, OperationStatus, Source, Target, UpdateConfig};
 use std::{sync::Arc, time::Duration};

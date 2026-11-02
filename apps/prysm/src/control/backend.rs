@@ -1,5 +1,5 @@
 //! Capture lifecycle and WLED control used by the switching logic.
-use crate::actors::runtime::Pipeline;
+use crate::pipeline::runtime::Pipeline;
 use anyhow::{Context, Result, bail};
 use prysm_contract::{Config, Observation, PipelineStatus, Source, Target, WledStatus};
 use serde::{Deserialize, Serialize};

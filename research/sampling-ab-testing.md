@@ -30,7 +30,7 @@ Relevant code:
 - [Desktop rendering](https://github.com/ericschaal/prysm/blob/343b0c698a68ff0efe268c7cc73987c2e57545e8/crates/rendering/prysm-renderer-desktop/src/lib.rs)
 - [Existing pipeline regression tests](../crates/processing/prysm-processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../crates/rendering/prysm-renderer-wled/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../crates/rendering/prysm-renderer-wled/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Open **Preview & tuning** in the browser panel for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
 Both outputs use FFmpeg 9+ for file input (`type = "file"` with a required `path` in `[input]`), delivering sRGB RGB24 frames at the configured capture resolution (default 640×360), playing once and completing capture at EOF while the UI/API remain available. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 
@@ -220,7 +220,7 @@ Existing checks and inspection entry points, run from the repository root:
 cargo test -p prysm-core -p prysm-processor
 cargo run --release -p prysm-processor --example bench
 # Set input.type = "file", input.path = "/absolute/path/to/clip.mp4",
-# and output.type = "egui" in prysm.toml.
+# and configure WLED output in prysm.toml; open Preview & tuning in the browser.
 cargo run --release -p prysm
 ```
 

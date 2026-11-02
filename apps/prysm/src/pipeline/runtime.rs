@@ -1,5 +1,5 @@
 //! One lifecycle owner; resources remain attached until completion and join are observed.
-use super::pipeline::{self, Configure, PipelineExit};
+use super::worker::{self, Configure, PipelineExit};
 use crate::{config::PipelineConfig, input::InputSource};
 use anyhow::{Context, Result, anyhow, bail};
 use prysm_contract::{PipelinePhase, PipelineStatus};
@@ -205,7 +205,7 @@ async fn own(
                             State::Starting { .. } | State::Stopping { .. } => { let _ = reply.send(Err(anyhow!("pipeline lifecycle change already running"))); },
                             _ => {
                                 status.send_replace(PipelineStatus { phase:PipelinePhase::Starting,..idle() });
-                                match pipeline::launch(config.clone(),status.clone(),preview.clone(),input.clone()) {
+                                match worker::launch(config.clone(),status.clone(),preview.clone(),input.clone()) {
                                     Ok((session,ready)) => {
                                         let run = Run {shutdown:session.shutdown.clone(),configure:session.configure.clone(),task:tokio::spawn(session.wait())};
                                         state = State::Starting {run,ready,reply:Some(reply)};

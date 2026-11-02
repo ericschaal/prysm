@@ -24,7 +24,6 @@ Saved and processor-applied revisions are shown separately. If someone else edit
 settings, review/reload the newer revision before saving; errors retain your draft.
 Input/output/service settings are shown as context and are not editable in this UI.
 
-Old `type = "egui"` configurations must be changed to a real `type = "wled"`
-output with its HTTP URL and LED counts. There is no native preview window or
-preview-only output. Closing the browser leaves Prysm running. File HDR is tone-mapped
+Configure `type = "wled"` output with its HTTP URL and LED counts. There is no native
+preview window or preview-only output. Closing the browser leaves Prysm running. File HDR is tone-mapped
 to sRGB before processing; preview does not calibrate physical LEDs or the wall.

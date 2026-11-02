@@ -9,7 +9,7 @@ available after EOF or capture/output failure. No multithread Tokio runtime is u
 
 The controller owns saved configuration, requested source, operation IDs and
 revision state. Bounded reliable commands with oneshot replies connect the HTTP
-adapter to it; `prysm-api` has no Actix dependency. Accepted mutations continue
+adapter in `prysm-api` to it. Accepted mutations continue
 when their callers disconnect. The controller retains startup/application,
 persistence and WLED work while it observes status and handles shutdown. Competing
 mutations conflict. Atomic file writes finish before saved configuration is published;

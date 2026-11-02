@@ -54,9 +54,8 @@ one outstanding request each, at most 8 fps. One global encoder has one active a
 queued job. Hidden/closed previews stop requests. The last image survives capture stop
 and is labeled stale. No image work occurs without demand. See [runtime ownership](architecture.md).
 
-Existing WLED configuration representation is unchanged. Legacy egui output is rejected
-with a migration message requiring a real WLED URL and LED counts; the browser replaces
-the native window. There is no preview-only production output.
+Configure a WLED output with its HTTP URL and LED counts. Unsupported output types
+are rejected. There is no preview-only production output.
 
 ## Lighting transitions
 

@@ -8,7 +8,7 @@ mod input;
 mod preview;
 pub mod video;
 
-pub mod actors;
+pub mod pipeline;
 
 /// Validate saved settings before starting the application or saving a mutation.
 pub fn validate_config(config: &prysm_contract::Config) -> anyhow::Result<()> {

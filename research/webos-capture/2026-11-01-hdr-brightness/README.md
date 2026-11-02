@@ -100,7 +100,7 @@ should remain enabled. WLED settings were inspected only, not changed.
 Spatial averaging also reduces brightness/saturation around small highlights
 and mixed colors by design. Uniform fixtures do not exhibit attenuation. Any
 sampling change or shadow lift should be evaluated after the transfer response.
-The active receiver used egui preview, brightness 100%, shadow lift 0 and
+The active receiver used a local preview, brightness 100%, shadow lift 0 and
 smoothing 0.1 s. No LED output was enabled or overridden.
 
 ## Limits

@@ -1,12 +1,12 @@
 use prysm_contract::Config;
 
 #[test]
-fn check_and_startup_explain_legacy_egui_migration() {
+fn check_and_startup_reject_unknown_output() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("legacy.toml");
-    let mut legacy: toml::Value = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
-    legacy["output"] = toml::Value::try_from(serde_json::json!({"type":"egui"})).unwrap();
-    std::fs::write(&path, toml::to_string(&legacy).unwrap()).unwrap();
+    let path = directory.path().join("invalid.toml");
+    let mut invalid: toml::Value = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+    invalid["output"] = toml::Value::try_from(serde_json::json!({"type":"unknown"})).unwrap();
+    std::fs::write(&path, toml::to_string(&invalid).unwrap()).unwrap();
     for check in [false, true] {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"));
         command.arg("--config").arg(&path);
@@ -16,8 +16,8 @@ fn check_and_startup_explain_legacy_egui_migration() {
         let output = command.output().unwrap();
         assert!(!output.status.success());
         let error = String::from_utf8(output.stderr).unwrap();
-        assert!(error.contains("egui output has been removed"), "{error}");
-        assert!(error.contains("WLED url and LED counts"), "{error}");
+        assert!(error.contains("unknown variant `unknown`"), "{error}");
+        assert!(error.contains("expected `wled`"), "{error}");
     }
 }
 

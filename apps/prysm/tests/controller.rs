@@ -312,12 +312,12 @@ left = 1
     .await
     .unwrap();
     let before = std::fs::read(&config).unwrap();
-    let mut legacy = serde_json::to_value(&saved).unwrap();
-    legacy["output"] = serde_json::json!({"type":"egui"});
+    let mut invalid = serde_json::to_value(&saved).unwrap();
+    invalid["output"] = serde_json::json!({"type":"unknown"});
     let response = client
         .put(&config_endpoint)
         .json(&serde_json::json!({
-            "expected_revision": saved.revision, "config": legacy,
+            "expected_revision": saved.revision, "config": invalid,
         }))
         .send()
         .await
@@ -328,7 +328,7 @@ left = 1
             .text()
             .await
             .unwrap()
-            .contains("egui output has been removed")
+            .contains("unknown variant `unknown`")
     );
     assert_eq!(std::fs::read(&config).unwrap(), before);
     let mut web_settings = saved;

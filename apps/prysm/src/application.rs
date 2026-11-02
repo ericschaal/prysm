@@ -1,8 +1,8 @@
 //! Compose the pipeline, lighting control, and REST API; own application shutdown.
 use crate::{
-    actors::runtime::Pipeline,
     config::PipelineConfig,
     control::{Controller, LightingService},
+    pipeline::runtime::Pipeline,
 };
 use anyhow::{Context as _, Result};
 use prysm_contract::Config;

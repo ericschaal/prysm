@@ -27,23 +27,21 @@ Unrelated untracked research Python cache is outside this change.
 ## Work partition and integration
 
 Lead owns core snapshot, shared contract/generated API/manifests, application composition,
-controller/API migration, egui removal coordination, documentation and combined verification.
-Backend agent owns apps/prysm/src/actors/, new apps/prysm/src/preview.rs, input.rs/video.rs
+controller/API migration, browser preview integration, documentation and combined verification.
+Backend agent owns apps/prysm/src/pipeline/, new apps/prysm/src/preview.rs, input.rs/video.rs
 and targeted backend tests. Coordinate composition and manifests through lead.
 Web agent owns control-ui source (except generated OpenAPI/types) and web UI tests.
 No concurrent lockfile/generated changes. Agents run targeted checks; lead runs combined builds.
 
 Order: baseline → shared snapshot → real live-settings UI → integrated bounded preview →
-verify parity → remove egui → pipeline workers → controller commands → final verification.
+verify parity → integrate browser preview → pipeline workers → controller commands → final verification.
 Existing API contracts remain authoritative during transition. Every milestone must build.
 
 ## Baseline inventory
 
-Baseline application: Actix system on main thread (WLED); optional egui on main plus API thread.
-Pipeline: dedicated Actix Arbiter, capture/processor/output actors, capacity-one mailboxes
-that drop incoming frames. Controller serializes accepted writes via AtomicResponse.
-Session stop drains actor FIFO barriers, waits native completion token, joins Arbiter via
-spawn_blocking. webOS receiver listener belongs to InputSource and survives run stop.
+The baseline used capacity-one processing queues that dropped incoming frames,
+serialized accepted configuration writes, and waited for native completion during stop.
+The webOS receiver listener belongs to InputSource and survives run stop.
 File stream uses FFmpeg rawvideo; partial-read cancellation requires particular care.
 Hardware and physical screen-to-light measurements are unavailable unless explicitly recorded.
 
@@ -66,9 +64,9 @@ No native camera/TV/WLED hardware or physical end-to-end latency was measured.
 | 2. Paired result | Core ProcessedSnapshot, shared through Arc; source pixels/crop/colors from one processor pass |
 | 3. Web application | Overview and Preview & tuning, all six live controls, one saved config/draft transaction, explicit conflict review/reload, accessible responsive controls |
 | 4. Browser preview | Bounded lazy JPEG worker, same-policy WebSocket, one outstanding request/viewer, four-viewer cap, hidden/closed teardown, final-image retention |
-| 5. egui removal | Native renderer, controls/client, feature/dependencies, examples and CI branches removed; actionable legacy-config rejection, unchanged WLED tagged representation |
+| 5. Browser-only preview | Native renderer, controls/client, feature/dependencies, examples and CI branches removed; unchanged WLED tagged representation |
 | 6. Pipeline workers | Owned current-thread processing runtime, tracked WLED task, finite lifecycle with retained resources/deadline failures, final-result drain and native/FFmpeg/thread joins |
-| 7. Controller/API | Bounded typed application commands/oneshot replies, retained accepted operations, serialized atomic persistence, conflicts/revisions/rollback, stale-observation rejection; no Actix dependency |
+| 7. Controller/API | Bounded typed application commands/oneshot replies, retained accepted operations, serialized atomic persistence, conflicts/revisions/rollback, stale-observation rejection |
 | 8. Verification/docs | Local checks and browser/protocol evidence below; platform limitations explicitly retained |
 
 No production outputs array, preview-only/null output, session registry, generic graph,
@@ -93,7 +91,7 @@ The unrelated research Python cache remains untouched.
   notice; current checks pass.
 - `npm test --prefix crates/web/prysm-web/control-ui`: generated OpenAPI/type freshness,
   TypeScript, production build, DOM behavior and actual Vite proxy all passed.
-- Browser checked the actual egui-free executable with synthetic FFmpeg video and a
+- Browser checked the actual executable with synthetic FFmpeg video and a
   loopback WLED fixture at desktop 1440px and narrow 390px. Narrow scroll width stayed
   390px; keyboard Tab moved from brightness to shadow lift. Real Save & apply advanced
   the applied revision without resetting processed frame count. Stop and natural EOF
