@@ -96,6 +96,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("prysm.toml");
         let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+        // This HTTP drain test must not wait on the repository's real LAN WLED endpoint.
+        let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+        *url = "http://127.0.0.1:0/".parse().unwrap();
         config.web.listen = "127.0.0.1:0".parse().unwrap();
         config.web.allowed_hosts = vec!["*".into()];
         let shutdown = CancellationToken::new();
