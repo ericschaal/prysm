@@ -17,15 +17,15 @@ as a starting point; repository-root samples contain local device IDs and paths.
 | --- | --- |
 | `[web]` | Panel/API listen address and allowed `host:port` values |
 | `[input]` | Device, file, or webOS input; resolution and frame rate |
-| `[output]` | `wled` with its HTTP base `url`, or `egui` with a desktop-enabled build |
-| `[output.leds]` | Top, right, bottom, left LED counts; omit for egui |
+| `[output]` | `wled` with its HTTP base `url` |
+| `[output.leds]` | Top, right, bottom, left LED counts |
 | `[processing]` | Brightness, shadow lift, smoothing, sampling, black-bar removal |
 | `source` | `prysm` for screen sync, `wled` for effects (WLED output only) |
 | `revision` | Managed by Prysm for concurrent saves; start a new file with `"0"` |
 
 ## Input and output
 
-All three inputs work with WLED or egui output:
+All three inputs work with WLED and the optional browser preview:
 
 | Input type | Required fields | Notes |
 | --- | --- | --- |
@@ -53,8 +53,10 @@ These are library defaults; your saved configuration may override them.
 | `remove_black_bars` | true | Follow the picture inside stable black bars |
 
 Processing changes apply live. Input, resolution, rate, or WLED settings changes
-recreate active capture. Changing output kind, panel listen address, or allowed
-hosts requires restarting Prysm; the panel indicates when this is necessary.
+recreate active capture. Panel listen address or allowed hosts require restarting
+Prysm; the panel indicates when this is necessary. Only the six live processing
+settings are editable in Preview & tuning; input/output/service settings remain
+read-only context. Save & apply and Discard operate on one shared draft.
 
 ## Access from your phone
 

@@ -1,10 +1,7 @@
 //! Capture lifecycle and WLED control used by the switching logic.
-use crate::actors::runtime::{ConfigurePipeline, Pipeline, StartPipeline, StopPipeline};
-use actix::Addr;
+use crate::actors::runtime::Pipeline;
 use anyhow::{Context, Result, bail};
-use prysm_contract::{
-    Config, Observation, Output, PipelinePhase, PipelineStatus, Source, Target, WledStatus,
-};
+use prysm_contract::{Config, Observation, PipelineStatus, Source, Target, WledStatus};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -71,58 +68,32 @@ pub(super) struct LightingSnapshot {
 pub(crate) struct LightingService {
     pub(super) client: reqwest::Client,
     pub(super) config: watch::Receiver<Config>,
-    pub(super) pipeline: Addr<Pipeline>,
+    pub(super) pipeline: Pipeline,
     pub(super) status: watch::Receiver<PipelineStatus>,
-    active_output: Output,
 }
 impl LightingService {
     pub fn new(
         config: watch::Receiver<Config>,
-        pipeline: Addr<Pipeline>,
+        pipeline: Pipeline,
         status: watch::Receiver<PipelineStatus>,
     ) -> Result<Self> {
-        let active_output = config.borrow().output.clone();
         Ok(Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(3))
                 .redirect(reqwest::redirect::Policy::none())
                 .no_proxy()
                 .build()?,
-            active_output,
             config,
             pipeline,
             status,
         })
     }
-    pub(super) fn requires_restart(&self, output: &Output) -> bool {
-        self.active_output.is_egui() != output.is_egui()
-    }
-
-    fn has_wled_control(&self) -> bool {
-        !self.active_output.is_egui()
-    }
-
     pub(super) async fn switch(&self, target: Target) -> Result<()> {
         if target.power && target.source == Source::Prysm {
             let config = crate::config::PipelineConfig::from(&*self.config.borrow());
-            self.pipeline
-                .send(ConfigurePipeline(config))
-                .await
-                .context("pipeline unavailable")??;
+            self.pipeline.configure(config).await?;
         }
-        if self.has_wled_control() {
-            return super::switching::switch(self, target).await;
-        }
-        anyhow::ensure!(
-            target.source == Source::Prysm,
-            "this output supports only screen sync"
-        );
-        self.capture(if target.power {
-            CaptureAction::Start
-        } else {
-            CaptureAction::Stop
-        })
-        .await
+        super::switching::switch(self, target).await
     }
 
     fn url(&self) -> Result<reqwest::Url> {
@@ -166,27 +137,6 @@ impl LightingService {
         })
     }
     pub(super) async fn snapshot(&self) -> LightingSnapshot {
-        if !self.has_wled_control() {
-            let pipeline = self.status.borrow().clone();
-            let power = matches!(
-                pipeline.phase,
-                PipelinePhase::Starting | PipelinePhase::Running | PipelinePhase::Completed
-            );
-            return LightingSnapshot {
-                observed: Some(Observation {
-                    pipeline_phase: pipeline.phase,
-                    power,
-                    realtime: matches!(
-                        pipeline.phase,
-                        PipelinePhase::Running | PipelinePhase::Completed
-                    ),
-                    realtime_source: None,
-                    live_override: if power { 0 } else { 2 },
-                }),
-                pipeline,
-                error: None,
-            };
-        }
         let wled = self.wled_status().await;
         let pipeline = self.status.borrow().clone();
         let (observed, error) = match wled {
@@ -213,16 +163,8 @@ impl LightingService {
 impl LightingBackend for LightingService {
     async fn capture(&self, action: CaptureAction) -> Result<()> {
         match action {
-            CaptureAction::Start => self
-                .pipeline
-                .send(StartPipeline)
-                .await
-                .context("pipeline unavailable")?,
-            CaptureAction::Stop => self
-                .pipeline
-                .send(StopPipeline)
-                .await
-                .context("pipeline unavailable")?,
+            CaptureAction::Start => self.pipeline.start().await,
+            CaptureAction::Stop => self.pipeline.stop().await,
         }
     }
     async fn wled(&self, value: WledCommand) -> Result<()> {
@@ -257,14 +199,17 @@ impl LightingBackend for LightingService {
 mod tests {
     use super::*;
     use crate::config::PipelineConfig;
+    use prysm_contract::PipelinePhase;
 
-    #[actix::test]
+    #[tokio::test]
     async fn webos_disconnect_reports_waiting_and_reconnect_restores_running() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = available.local_addr().unwrap();
         drop(available);
         let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+        let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+        *url = "http://127.0.0.1/".parse().unwrap();
         config.input = prysm_contract::Input::Webos {
             listen: address,
             capture_resolution: [4, 2].try_into().unwrap(),

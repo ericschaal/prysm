@@ -12,7 +12,7 @@ pub fn load(path: &Path) -> anyhow::Result<Config> {
     Ok(config)
 }
 
-/// The configuration needed to create one actor pipeline session.
+/// The configuration needed to create one pipeline session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
     pub revision: ConfigRevision,
@@ -74,7 +74,10 @@ mod tests {
         };
         assert!(current.requires_restart(&next));
         let mut next = current.clone();
-        next.output = Output::Egui {};
+        let Output::Wled { url, .. } = &mut next.output;
+        {
+            *url = "http://changed-wled.local/".parse().unwrap();
+        }
         assert!(current.requires_restart(&next));
     }
 }

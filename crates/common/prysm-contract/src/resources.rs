@@ -169,16 +169,35 @@ impl Input {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Output {
     Wled {
-        #[serde(deserialize_with = "crate::config::deserialize_http_base_url")]
         #[schema(value_type = String)]
         url: url::Url,
         leds: LedCounts,
     },
-    Egui {},
+}
+
+impl<'de> Deserialize<'de> for Output {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+        enum SavedOutput {
+            Wled {
+                #[serde(deserialize_with = "crate::config::deserialize_http_base_url")]
+                url: url::Url,
+                leds: LedCounts,
+            },
+            Egui {},
+        }
+        match SavedOutput::deserialize(deserializer)? {
+            SavedOutput::Wled { url, leds } => Ok(Self::Wled { url, leds }),
+            SavedOutput::Egui {} => Err(serde::de::Error::custom(
+                "egui output has been removed; configure [output] type = \"wled\" with your WLED url and LED counts, then open Preview & tuning in the browser",
+            )),
+        }
+    }
 }
 
 impl Output {
@@ -186,22 +205,14 @@ impl Output {
     pub fn wled_url(&self) -> Option<&url::Url> {
         match self {
             Self::Wled { url, .. } => Some(url),
-            Self::Egui {} => None,
         }
     }
 
     /// DDP uses the WLED host and its fixed UDP port, independently of the HTTP port.
     pub fn ddp_address(&self) -> anyhow::Result<String> {
         use anyhow::Context;
-        let host = self
-            .wled_url()
-            .and_then(url::Url::host)
-            .context("no WLED host configured")?;
+        let Self::Wled { url, .. } = self;
+        let host = url.host().context("no WLED host configured")?;
         Ok(format!("{host}:4048"))
-    }
-
-    #[must_use]
-    pub const fn is_egui(&self) -> bool {
-        matches!(self, Self::Egui { .. })
     }
 }

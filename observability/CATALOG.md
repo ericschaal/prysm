@@ -50,7 +50,7 @@ are bounded enums or protocol-validated dimensions, not unbounded per-frame data
 | Decoded | Prysm / FrameDecoder | Valid payload is fully decoded/converted into the actual host Frame |
 | InputDelivered | Prysm / InputDispatcher | Capture stream yields a usable Frame to the dispatcher, before processor mailbox submission |
 | Processed | Prysm / FrameProcessor | Core processing returns edge colors; this does not mean rendered |
-| PreviewPublished | Prysm / PreviewPublisher | Actor publishes the frame to egui's watch channel; not screen presentation |
+| PreviewPublished | Prysm / PreviewPublisher | Application publishes a paired snapshot to preview observation; not browser presentation |
 | WledTransmitted | Prysm / WledSender | DDP write returns success for a complete nonempty, non-throttled frame; UDP delivery is not acknowledged |
 
 Capture, encoding and decoding populations differ. Watch channels intentionally

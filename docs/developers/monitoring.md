@@ -4,7 +4,7 @@ Prometheus and Grafana run on your computer. Prysm exposes an opt-in metrics
 endpoint with its process and machine statistics. The supervised TV worker exposes
 its encoder, capture, process and machine metrics on port 9101 while running,
 when **Prometheus metrics** is checked and saved in the TV app (defaults off).
-Prometheus pulls both endpoints every five seconds; egui is not involved in collection.
+Prometheus pulls both endpoints every five seconds; browser preview is independent of collection.
 
 ## Start the nodes
 
@@ -15,7 +15,7 @@ cargo run --release -p prysm -- \
   --config prysm-local.toml --metrics-listen 0.0.0.0:9102
 ```
 
-Add `--features desktop` before `--` if your configuration uses egui. The metrics
+The metrics
 listener is separate from the REST API and does not change your saved TOML.
 Enable Screen sync as usual to open the video receiver.
 Use your working configuration path; [TV setup](../users/webos.md) includes a portable example.

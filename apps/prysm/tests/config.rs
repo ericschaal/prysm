@@ -1,35 +1,23 @@
 use prysm_contract::Config;
 
 #[test]
-fn check_validates_the_executables_output_support() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
-        .args([
-            "--config",
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../../prysm-egui.toml"),
-            "check",
-        ])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.success(), cfg!(feature = "desktop"));
-    if !cfg!(feature = "desktop") {
-        assert!(
-            String::from_utf8(output.stderr)
-                .unwrap()
-                .contains("--features desktop")
-        );
-        let startup = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
-            .args([
-                "--config",
-                concat!(env!("CARGO_MANIFEST_DIR"), "/../../prysm-egui.toml"),
-            ])
-            .output()
-            .unwrap();
-        assert!(!startup.status.success());
-        assert!(
-            String::from_utf8(startup.stderr)
-                .unwrap()
-                .contains("--features desktop")
-        );
+fn check_and_startup_explain_legacy_egui_migration() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy.toml");
+    let mut legacy: toml::Value = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+    legacy["output"] = toml::Value::try_from(serde_json::json!({"type":"egui"})).unwrap();
+    std::fs::write(&path, toml::to_string(&legacy).unwrap()).unwrap();
+    for check in [false, true] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"));
+        command.arg("--config").arg(&path);
+        if check {
+            command.arg("check");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("egui output has been removed"), "{error}");
+        assert!(error.contains("WLED url and LED counts"), "{error}");
     }
 }
 

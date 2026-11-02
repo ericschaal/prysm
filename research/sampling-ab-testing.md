@@ -27,7 +27,7 @@ Relevant code:
 - [Processor configuration](../crates/common/prysm-core/src/config.rs)
 - [Temporal smoothing](../crates/processing/prysm-processor/src/nodes/temporal_smoother.rs)
 - [Video playback](../apps/prysm/src/video.rs)
-- [Desktop rendering](../crates/rendering/prysm-renderer-desktop/src/lib.rs)
+- [Desktop rendering](https://github.com/ericschaal/prysm/blob/343b0c698a68ff0efe268c7cc73987c2e57545e8/crates/rendering/prysm-renderer-desktop/src/lib.rs)
 - [Existing pipeline regression tests](../crates/processing/prysm-processor/tests/pipeline.rs)
 
 The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../crates/rendering/prysm-renderer-wled/src/lib.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured in `prysm.toml` with `output.type = "wled"`). Select `output.type = "egui"` for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.

@@ -58,10 +58,6 @@ impl Config {
                     .all(|host| !host.trim().is_empty()),
             "configure at least one allowed panel host"
         );
-        anyhow::ensure!(
-            self.source == Source::Prysm || !self.output.is_egui(),
-            "WLED effects require WLED output"
-        );
         if let Input::Webos {
             refresh_rate_hz,
             capture_resolution,

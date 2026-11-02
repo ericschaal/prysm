@@ -1,31 +1,22 @@
-//! Serialize settings and lighting changes through one actor.
+//! One owner serializes accepted mutations while observations and shutdown keep progressing.
 use super::{
     backend::{CaptureAction, LightingBackend, LightingService, LightingSnapshot},
     persistence,
 };
-use crate::actors::runtime::ConfigurePipeline;
 use crate::config::PipelineConfig;
-use actix::{
-    Actor, ActorContext, ActorFutureExt, AsyncContext, AtomicResponse, Handler, Message,
-    ResponseActFuture, StreamHandler, WrapFuture,
-};
 use anyhow::{Context as _, Result};
 use axum::http::StatusCode;
-use prysm_api::{ApiFailure, App, SetConfig, SetTarget};
+use prysm_api::{ApiFailure, App, Command};
 use prysm_contract::{
     ApiError, Config, ErrorCode, OperationId, OperationResponse, OperationStatus, PipelinePhase,
     PipelineStatus, StateResponse, Target, WebConfig,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::watch;
-
-#[derive(Message)]
-#[rtype(result = "()")]
-struct Finished(OperationId, Target, Result<()>);
-
-#[derive(Message)]
-#[rtype(result = "()")]
-pub(crate) struct Shutdown;
+use tokio::{
+    sync::{mpsc, oneshot, watch},
+    task::JoinHandle,
+};
+use tokio_util::sync::CancellationToken;
 
 fn initial_state(config: &Config) -> StateResponse {
     StateResponse {
@@ -75,6 +66,37 @@ pub(crate) struct Controller {
     stopping: bool,
     lighting: Arc<LightingService>,
 }
+
+pub(crate) struct ControllerHandle {
+    shutdown: CancellationToken,
+    task: JoinHandle<Result<()>>,
+}
+impl ControllerHandle {
+    pub async fn shutdown(self) -> Result<()> {
+        self.shutdown.cancel();
+        self.task.await.context("controller task panicked")?
+    }
+}
+enum Finished {
+    Saved {
+        id: OperationId,
+        previous: Config,
+        result: Result<Config>,
+        reply: oneshot::Sender<Result<Config, ApiFailure>>,
+    },
+    Target {
+        id: OperationId,
+        saved: Option<Config>,
+        result: Result<()>,
+        snapshot: LightingSnapshot,
+    },
+    Applied {
+        id: OperationId,
+        result: Result<()>,
+        snapshot: LightingSnapshot,
+    },
+}
+
 impl Controller {
     async fn save(path: PathBuf, mut config: Config) -> Result<Config> {
         crate::validate_config(&config)?;
@@ -83,6 +105,10 @@ impl Controller {
         Ok(config)
     }
     fn record_saved_config(&mut self, config: Config) {
+        if self.config.output != config.output {
+            self.state.observed = None;
+            self.state.observation_error = None;
+        }
         self.config = config;
         self.config_tx.send_replace(self.config.clone());
         self.state.config_revision = self.config.revision;
@@ -93,11 +119,22 @@ impl Controller {
             .wled_url()
             .map(ToString::to_string)
             .unwrap_or_default();
-        self.state.restart_required = self.config.web != self.active_web
-            || self.lighting.requires_restart(&self.config.output);
+        self.state.restart_required = self.config.web != self.active_web;
     }
-    fn publish_state(&self) {
+    fn publish_state(&mut self) {
+        self.state.pipeline = self.lighting.status.borrow().clone();
+        self.state.applied_revision = self.state.pipeline.applied_revision;
         self.state_tx.send_replace(self.state.clone());
+    }
+    fn record_observation(
+        &mut self,
+        revision: prysm_contract::ConfigRevision,
+        snapshot: LightingSnapshot,
+    ) {
+        if revision == self.config.revision {
+            update_observation(&mut self.state, snapshot);
+            self.publish_state();
+        }
     }
     fn ensure_available(&self) -> Result<(), ApiFailure> {
         if self.stopping {
@@ -126,9 +163,6 @@ impl Controller {
         previous: &Config,
         config: &Config,
     ) -> Result<()> {
-        if lighting.requires_restart(&config.output) {
-            return lighting.capture(CaptureAction::Stop).await;
-        }
         let running = matches!(
             lighting.status.borrow().phase,
             PipelinePhase::Starting | PipelinePhase::Running
@@ -146,9 +180,8 @@ impl Controller {
         }
         lighting
             .pipeline
-            .send(ConfigurePipeline(PipelineConfig::from(config)))
-            .await
-            .context("pipeline unavailable")??;
+            .configure(PipelineConfig::from(config))
+            .await?;
         if (running && reconnect) || source_changed {
             lighting
                 .switch(Target {
@@ -159,205 +192,17 @@ impl Controller {
         }
         Ok(())
     }
-}
-
-impl Actor for Controller {
-    type Context = actix::Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(32);
-        let mut tick = tokio::time::interval(Duration::from_secs(1));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        ctx.add_stream(futures::stream::unfold(
-            (self.lighting.clone(), tick),
-            |(lighting, mut tick)| async move {
-                tick.tick().await;
-                let snapshot = lighting.snapshot().await;
-                Some((snapshot, (lighting, tick)))
-            },
-        ));
-    }
-}
-
-impl StreamHandler<LightingSnapshot> for Controller {
-    fn handle(&mut self, snapshot: LightingSnapshot, _: &mut Self::Context) {
-        update_observation(&mut self.state, snapshot);
-        self.publish_state();
-    }
-}
-
-impl Handler<SetTarget> for Controller {
-    type Result = Result<OperationResponse, ApiFailure>;
-
-    fn handle(&mut self, SetTarget(target): SetTarget, ctx: &mut Self::Context) -> Self::Result {
-        self.ensure_available()?;
-        if self.lighting.requires_restart(&self.config.output) {
-            return Err(ApiFailure::conflict(
-                "restart the application to apply output settings",
-            ));
-        }
-        if self.config.output.is_egui() && target.source != prysm_contract::Source::Prysm {
-            return Err(ApiFailure::conflict(
-                "this output supports only screen sync",
-            ));
-        }
-        let id = OperationId::new();
-        self.state.operation = OperationStatus::Pending { id };
-        self.publish_state();
-        let lighting = self.lighting.clone();
-        ctx.spawn(
-            async move { lighting.switch(target).await }
-                .into_actor(self)
-                .map(move |result, _, ctx| ctx.notify(Finished(id, target, result))),
-        );
-        Ok(OperationResponse { operation_id: id })
-    }
-}
-
-impl Handler<SetConfig> for Controller {
-    type Result = AtomicResponse<Self, Result<Config, ApiFailure>>;
-
-    fn handle(&mut self, SetConfig(update): SetConfig, _: &mut Self::Context) -> Self::Result {
-        let validation = self.ensure_available().and_then(|()| {
-            if update.expected_revision != self.config.revision
-                || update.config.revision != update.expected_revision
-            {
-                return Err(ApiFailure::conflict(
-                    "configuration changed; refresh before saving",
-                ));
-            }
-            crate::validate_config(&update.config).map_err(|error| {
-                ApiFailure::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    ErrorCode::InvalidRequest,
-                    error.to_string(),
-                )
-            })
-        });
-        if let Err(error) = validation {
-            return AtomicResponse::new(Box::pin(async { Err(error) }.into_actor(self)));
-        }
-        let previous = self.config.clone();
-        AtomicResponse::new(Box::pin(
-            Self::save(self.path.clone(), update.config)
-                .into_actor(self)
-                .map(move |result, actor, ctx| {
-                    let config = result.map_err(|error| {
-                        tracing::error!(error=%format!("{error:#}"), "cannot save configuration");
-                        ApiFailure::new(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            ErrorCode::Persistence,
-                            "could not save configuration",
-                        )
-                    })?;
-                    actor.record_saved_config(config.clone());
-                    let id = OperationId::new();
-                    actor.state.operation = OperationStatus::Pending { id };
-                    actor.publish_state();
-                    let lighting = actor.lighting.clone();
-                    let applied = config.clone();
-                    ctx.spawn(
-                        async move {
-                            let result = Self::apply_config(&lighting, &previous, &applied).await;
-                            (result, lighting.snapshot().await)
-                        }
-                        .into_actor(actor)
-                        .map(move |(result, snapshot), actor, _| {
-                            actor.finish_operation(id, result, snapshot);
-                        }),
-                    );
-                    Ok(config)
-                }),
-        ))
-    }
-}
-
-impl Handler<Finished> for Controller {
-    type Result = AtomicResponse<Self, ()>;
-
-    fn handle(
-        &mut self,
-        Finished(id, target, result): Finished,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        let mut config = self.config.clone();
-        let source_changed = config.source != target.source;
-        config.source = target.source;
-        let path = self.path.clone();
-        AtomicResponse::new(Box::pin(
-            async move {
-                result?;
-                if source_changed {
-                    Self::save(path, config)
-                        .await
-                        .context("lights changed but source could not be saved")
-                } else {
-                    Ok(config)
-                }
-            }
-            .into_actor(self)
-            .then(move |result, actor, _| {
-                let result = result.map(|config| actor.record_saved_config(config));
-                let lighting = actor.lighting.clone();
-                let config = PipelineConfig::from(&actor.config);
-                async move {
-                    let configured = lighting
-                        .pipeline
-                        .send(ConfigurePipeline(config))
-                        .await
-                        .context("pipeline unavailable")
-                        .and_then(|result| result);
-                    let result = match configured {
-                        Ok(()) => result,
-                        Err(error) => Err(error),
-                    };
-                    (result, lighting.snapshot().await)
-                }
-                .into_actor(actor)
-            })
-            .map(move |(result, snapshot), actor, _| actor.finish_operation(id, result, snapshot)),
-        ))
-    }
-}
-
-impl Handler<Shutdown> for Controller {
-    type Result = ResponseActFuture<Self, ()>;
-
-    fn handle(&mut self, _: Shutdown, _: &mut Self::Context) -> Self::Result {
-        self.stopping = true;
-        let mut state = self.state_tx.subscribe();
-        Box::pin(
-            async move {
-                while matches!(state.borrow().operation, OperationStatus::Pending { .. }) {
-                    if state.changed().await.is_err() {
-                        break;
-                    }
-                }
-            }
-            .into_actor(self)
-            .map(|(), _, ctx| ctx.stop()),
-        )
-    }
-}
-
-impl Handler<crate::actors::Stop> for Controller {
-    type Result = ();
-
-    fn handle(&mut self, _: crate::actors::Stop, ctx: &mut Self::Context) {
-        ctx.stop();
-    }
-}
-
-impl Controller {
     pub(crate) fn spawn(
         path: PathBuf,
         config: &Config,
         lighting: Arc<LightingService>,
         config_tx: watch::Sender<Config>,
-    ) -> (actix::Addr<Self>, App) {
+    ) -> (ControllerHandle, App) {
         let config_rx = config_tx.subscribe();
         let state = initial_state(config);
         let (state_tx, state_rx) = watch::channel(state.clone());
+        let (commands, receiver) = mpsc::channel(32);
+        let shutdown = CancellationToken::new();
         let controller = Self {
             path,
             active_web: config.web.clone(),
@@ -367,14 +212,274 @@ impl Controller {
             state_tx,
             stopping: false,
             lighting,
-        }
-        .start();
-        let app = App {
-            set_target: controller.clone().recipient(),
-            set_config: controller.clone().recipient(),
-            config: config_rx,
-            state: state_rx,
         };
-        (controller, app)
+        let task = tokio::spawn(controller.run(receiver, shutdown.clone()));
+        (
+            ControllerHandle { shutdown, task },
+            App {
+                commands,
+                config: config_rx,
+                state: state_rx,
+            },
+        )
+    }
+
+    fn begin_operation(&mut self) -> OperationId {
+        let id = OperationId::new();
+        self.state.operation = OperationStatus::Pending { id };
+        self.publish_state();
+        id
+    }
+
+    fn accept(&mut self, command: Command) -> Option<JoinHandle<Finished>> {
+        match command {
+            Command::SetTarget(target, reply) => {
+                let available = self.ensure_available();
+                if let Err(error) = available {
+                    let _ = reply.send(Err(error));
+                    return None;
+                }
+                let id = self.begin_operation();
+                let _ = reply.send(Ok(OperationResponse { operation_id: id }));
+                let lighting = self.lighting.clone();
+                let previous = self.config.clone();
+                let path = self.path.clone();
+                Some(tokio::spawn(async move {
+                    let mut saved = None;
+                    let result = async {
+                        lighting.switch(target).await?;
+                        let mut config = previous.clone();
+                        if config.source != target.source {
+                            config.source = target.source;
+                            config = Self::save(path, config)
+                                .await
+                                .context("lights changed but source could not be saved")?;
+                        }
+                        saved = Some(config.clone());
+                        lighting
+                            .pipeline
+                            .configure(PipelineConfig::from(&config))
+                            .await?;
+                        Ok(())
+                    }
+                    .await;
+                    let snapshot = lighting.snapshot().await;
+                    Finished::Target {
+                        id,
+                        saved,
+                        result,
+                        snapshot,
+                    }
+                }))
+            }
+            Command::SetConfig(update, reply) => {
+                let validation = self.ensure_available().and_then(|()| {
+                    if update.expected_revision != self.config.revision
+                        || update.config.revision != update.expected_revision
+                    {
+                        return Err(ApiFailure::conflict(
+                            "configuration changed; refresh before saving",
+                        ));
+                    }
+                    crate::validate_config(&update.config).map_err(|error| {
+                        ApiFailure::new(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            ErrorCode::InvalidRequest,
+                            error.to_string(),
+                        )
+                    })
+                });
+                if let Err(error) = validation {
+                    let _ = reply.send(Err(error));
+                    return None;
+                }
+                let id = self.begin_operation();
+                let previous = self.config.clone();
+                let path = self.path.clone();
+                Some(tokio::spawn(async move {
+                    let result = Self::save(path, update.config).await;
+                    Finished::Saved {
+                        id,
+                        previous,
+                        result,
+                        reply,
+                    }
+                }))
+            }
+        }
+    }
+
+    fn finished(&mut self, event: Finished) -> Option<JoinHandle<Finished>> {
+        match event {
+            Finished::Saved {
+                id,
+                previous,
+                result,
+                reply,
+            } => match result {
+                Ok(config) => {
+                    self.record_saved_config(config.clone());
+                    self.publish_state();
+                    let _ = reply.send(Ok(config.clone()));
+                    let lighting = self.lighting.clone();
+                    Some(tokio::spawn(async move {
+                        let result = Self::apply_config(&lighting, &previous, &config).await;
+                        let snapshot = lighting.snapshot().await;
+                        Finished::Applied {
+                            id,
+                            result,
+                            snapshot,
+                        }
+                    }))
+                }
+                Err(error) => {
+                    self.state.operation = failed_operation(id, &error);
+                    self.publish_state();
+                    let _ = reply.send(Err(ApiFailure::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorCode::Persistence,
+                        "could not save configuration",
+                    )));
+                    None
+                }
+            },
+            Finished::Target {
+                id,
+                saved,
+                result,
+                snapshot,
+            } => {
+                if let Some(config) = saved {
+                    self.record_saved_config(config);
+                }
+                self.finish_operation(id, result, snapshot);
+                None
+            }
+            Finished::Applied {
+                id,
+                result,
+                snapshot,
+            } => {
+                self.finish_operation(id, result, snapshot);
+                None
+            }
+        }
+    }
+
+    async fn run(
+        mut self,
+        mut commands: mpsc::Receiver<Command>,
+        shutdown: CancellationToken,
+    ) -> Result<()> {
+        let mut operation: Option<JoinHandle<Finished>> = None;
+        let mut observation: Option<
+            JoinHandle<(prysm_contract::ConfigRevision, LightingSnapshot)>,
+        > = None;
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            if self.stopping && operation.is_none() {
+                break;
+            }
+            tokio::select! {
+                () = shutdown.cancelled(), if !self.stopping => {
+                    self.stopping = true;
+                    commands.close();
+                }
+                result = async { match operation.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }} => {
+                    operation = self.finished(result.context("accepted operation task panicked")?);
+                }
+                command = commands.recv(), if !self.stopping => match command {
+                    Some(command) => {
+                        if let Some(task) = self.accept(command) { operation = Some(task); }
+                    }
+                    None => self.stopping = true,
+                },
+                result = async { match observation.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }} => {
+                    observation = None;
+                    let (revision, snapshot) = result.context("WLED observation task panicked")?;
+                    self.record_observation(revision, snapshot);
+                }
+                _ = tick.tick(), if observation.is_none() && !self.stopping => {
+                    let lighting = self.lighting.clone();
+                    let revision = self.config.revision;
+                    observation = Some(tokio::spawn(async move { (revision, lighting.snapshot().await) }));
+                }
+            }
+        }
+        while let Ok(command) = commands.try_recv() {
+            match command {
+                Command::SetTarget(_, reply) => {
+                    let _ = reply.send(Err(ApiFailure::unavailable()));
+                }
+                Command::SetConfig(_, reply) => {
+                    let _ = reply.send(Err(ApiFailure::unavailable()));
+                }
+            }
+        }
+        if let Some(task) = observation {
+            task.await.context("WLED observation task panicked")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::runtime::Pipeline;
+
+    #[tokio::test]
+    async fn retired_observations_cannot_replace_current_config_or_pipeline_status() {
+        let config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+        let (pipeline, _) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
+        let (config_tx, config_rx) = watch::channel(config.clone());
+        let mut state = initial_state(&config);
+        state.pipeline.phase = PipelinePhase::Failed;
+        state.pipeline.error = Some("current run failed".into());
+        let (_, status) = watch::channel(state.pipeline.clone());
+        let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
+        let (state_tx, state_rx) = watch::channel(state.clone());
+        let mut controller = Controller {
+            path: PathBuf::new(),
+            active_web: config.web.clone(),
+            config: config.clone(),
+            config_tx,
+            state,
+            state_tx,
+            stopping: false,
+            lighting,
+        };
+        let retired_snapshot = || LightingSnapshot {
+            observed: None,
+            error: Some("old device error".into()),
+            pipeline: PipelineStatus {
+                phase: PipelinePhase::Running,
+                applied_revision: Some(config.revision),
+                frames_processed: 10,
+                error: None,
+            },
+        };
+        controller.record_observation(config.revision, retired_snapshot());
+        assert_eq!(state_rx.borrow().pipeline.phase, PipelinePhase::Failed);
+        assert_eq!(
+            state_rx.borrow().pipeline.error.as_deref(),
+            Some("current run failed")
+        );
+        controller.config.revision = config.revision.next().unwrap();
+        controller.state.observation_error = None;
+        controller.publish_state();
+        controller.record_observation(config.revision, retired_snapshot());
+        assert!(
+            state_rx.borrow().observation_error.is_none(),
+            "old config observations must be ignored"
+        );
+        pipeline.shutdown().await.unwrap();
     }
 }

@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     // Preserve the browser Host so the controller can validate its Origin.
-    proxy: { '/api/': { target: 'http://127.0.0.1:8787', changeOrigin: false } },
+    proxy: { '/api/': { target: 'http://127.0.0.1:8787', changeOrigin: false, ws: true } },
   },
   build: { target: 'es2020' },
 });

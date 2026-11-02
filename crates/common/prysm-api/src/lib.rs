@@ -1,8 +1,4 @@
 //! The real HTTP handlers and the `OpenAPI` document generated from their router.
-#[cfg(feature = "client")]
-pub mod client;
-
-use actix::{Message, Recipient};
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
@@ -12,24 +8,28 @@ use axum::{
 use prysm_contract::{
     ApiError, Config, ErrorCode, OperationResponse, StateResponse, Target, UpdateConfig,
 };
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 #[derive(Clone)]
 pub struct App {
-    pub set_target: Recipient<SetTarget>,
-    pub set_config: Recipient<SetConfig>,
+    pub commands: mpsc::Sender<Command>,
     pub config: watch::Receiver<Config>,
     pub state: watch::Receiver<StateResponse>,
 }
 
-#[derive(Message)]
-#[rtype(result = "Result<OperationResponse, ApiFailure>")]
-pub struct SetTarget(pub Target);
-
-#[derive(Message)]
-#[rtype(result = "Result<Config, ApiFailure>")]
-pub struct SetConfig(pub UpdateConfig);
+/// Reliable application mutations; replies may be dropped without cancelling accepted work.
+#[derive(Debug)]
+pub enum Command {
+    SetTarget(
+        Target,
+        oneshot::Sender<Result<OperationResponse, ApiFailure>>,
+    ),
+    SetConfig(
+        Box<UpdateConfig>,
+        oneshot::Sender<Result<Config, ApiFailure>>,
+    ),
+}
 
 #[derive(Debug)]
 pub struct ApiFailure(StatusCode, ApiError);
@@ -76,11 +76,12 @@ async fn set_state(
     State(app): State<App>,
     body: Result<Json<Target>, JsonRejection>,
 ) -> Result<(StatusCode, Json<OperationResponse>), ApiFailure> {
-    let response = app
-        .set_target
-        .send(SetTarget(payload(body)?))
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetTarget(payload(body)?, reply))
         .await
-        .map_err(|_| ApiFailure::unavailable())??;
+        .map_err(|_| ApiFailure::unavailable())?;
+    let response = response.await.map_err(|_| ApiFailure::unavailable())??;
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
 #[utoipa::path(get,path="/api/config",operation_id="getConfig",responses((status=200,body=Config),(status=403,body=ApiError)))]
@@ -92,13 +93,16 @@ async fn set_config(
     State(app): State<App>,
     body: Result<Json<UpdateConfig>, JsonRejection>,
 ) -> Result<Json<Config>, ApiFailure> {
+    let (reply, response) = oneshot::channel();
+    app.commands
+        .send(Command::SetConfig(Box::new(payload(body)?), reply))
+        .await
+        .map_err(|_| ApiFailure::unavailable())?;
     Ok(Json(
-        app.set_config
-            .send(SetConfig(payload(body)?))
-            .await
-            .map_err(|_| ApiFailure::unavailable())??,
+        response.await.map_err(|_| ApiFailure::unavailable())??,
     ))
 }
+
 pub fn router() -> OpenApiRouter<App> {
     let mut api = OpenApiRouter::new()
         .routes(routes!(get_state, set_state))

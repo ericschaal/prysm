@@ -5,6 +5,6 @@ cd "$(dirname "$0")/.."
 npm ci --prefix crates/web/prysm-web/control-ui
 npm run generate-api --prefix crates/web/prysm-web/control-ui
 npm test --prefix crates/web/prysm-web/control-ui
-cargo test --locked --workspace --no-default-features --exclude prysm-renderer-desktop
+cargo test --locked --workspace --no-default-features
 cargo build --locked --release -p prysm --no-default-features --bins
 cargo deb -p prysm --no-build

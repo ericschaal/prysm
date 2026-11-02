@@ -12,7 +12,7 @@ contract. Do not introduce a workspace-wide error enum.
 - `prysm-processor::into_stream` preserves the source's error type. Processing
   remains infallible: zero-sized and MJPEG frames log an error and produce black
   edge colors. Change this only as an explicit behavior/API decision.
-- Renderers retain dependency errors (`DDPError`, `eframe::Error`).
+- Renderers retain dependency errors (`DDPError`).
 - Binaries and application orchestration use `anyhow`, adding context about the
   operation, device, file or destination. Convert typed errors here, not in
   processing adapters. `prysm-core` stays dependency-free.
@@ -20,9 +20,8 @@ contract. Do not introduce a workspace-wide error enum.
 Preserve sources with `#[source]`, `#[from]` and `anyhow::Context`; avoid converting
 errors into strings. macOS device input and runtime notification failures retain
 `NSError` when supplied by AVFoundation. Notifications without a native error
-retain their notification details. Desktop
-errors retain `eframe::Error` until the application boundary, where they become
-text because eframe errors may not be `Send + Sync`, as required by `anyhow`.
+retain their notification details. Preview encoding/connection failures stay local to
+preview; capture/output failures retain terminal causes in application lifecycle state.
 
 Cancellation and successful file EOF are normal completion. A terminal source
 failure must reach the consumer, even if frames were skipped. Recover locally

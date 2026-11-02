@@ -516,20 +516,6 @@
                 "type": "string"
               }
             }
-          },
-          {
-            "type": "object",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "egui"
-                ]
-              }
-            }
           }
         ]
       },
@@ -539,6 +525,7 @@
           "idle",
           "starting",
           "running",
+          "stopping",
           "failed",
           "completed"
         ]

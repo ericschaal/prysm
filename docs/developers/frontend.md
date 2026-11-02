@@ -3,7 +3,7 @@
 React + TypeScript, bundled with Vite. Node 24 is required for building; production runs in the single `prysm` executable.
 
 Create `prysm-local.toml` from a [user setup guide](../users/README.md).
-From the repository root, start the Rust application (HTTP plus an actor pipeline on its own thread):
+From the repository root, start the Rust application (HTTP plus a processing worker on its own thread):
 
 ```sh
 cargo run -p prysm --no-default-features -- --config prysm-local.toml

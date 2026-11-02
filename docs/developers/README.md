@@ -13,15 +13,11 @@ On Linux, install native capture/build dependencies:
 sudo apt install build-essential pkg-config clang libclang-dev libudev-dev
 ```
 
-Desktop builds also need the platform's windowing/OpenGL development libraries;
-on Debian/Ubuntu install `libxkbcommon-dev libwayland-dev libgl1-mesa-dev`.
 On macOS, install Xcode Command Line Tools. FFmpeg 9+ is needed at runtime only
 for file input. Hardware H.264 for webOS has [separate SDK requirements](packaging.md#webos).
 
 ```sh
 cargo build --locked --release -p prysm
-# Optional native preview window:
-cargo build --locked --release -p prysm --features desktop
 ```
 
 The executable is `target/release/prysm`. To use user-guide commands verbatim in
@@ -35,7 +31,7 @@ to create your configuration, then run:
 ```
 
 For development, use `cargo run -p prysm -- --config prysm-local.toml` instead.
-Add `--features desktop` before `--` for egui output. The repository-root TOML files
+The repository-root TOML files
 are local examples, not portable defaults. Startup is idle for every output.
 
 ## Test
@@ -51,9 +47,8 @@ Run checks for the crate you changed first. Full Linux workspace builds with all
 features also need GStreamer development libraries, as configured in
 [CI](../../.github/workflows/check.yml). See [frontend tests](frontend.md) for UI/API changes.
 
-CI covers Linux/macOS, headless/desktop, generated API freshness, ARM webOS tests,
-Miri, and Debian/IPK packaging. Physical capture devices, a native desktop session,
-and TV firmware behavior need [manual checks](debugging.md#hardware-checks).
+CI covers Linux/macOS, default/all-features, generated API freshness, ARM webOS tests,
+Miri, and Debian/IPK packaging. Physical capture devices and TV firmware behavior need [manual checks](debugging.md#hardware-checks).
 
 ## Find the right guide
 
