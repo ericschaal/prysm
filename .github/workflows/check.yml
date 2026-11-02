@@ -154,8 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # shortcut: hosted macOS ARM64 runners exhaust capacity; restore ARM64 CI when reliable.
-        os: [ubuntu-24.04, macos-15-intel]
+        os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
