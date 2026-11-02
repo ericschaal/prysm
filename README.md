@@ -43,16 +43,27 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 ## Set the mood
 
 <p align="center">
-  <img src="docs/images/control-panel.jpg" alt="Prysm Overview showing lights Off, Screen sync and WLED effects, capture status, saved/applied revisions and input/output context." width="400">
+  <img src="docs/images/control-panel.jpg" alt="Prysm Overview with the lights on and Screen sync selected, alongside the WLED effects option." width="520">
+  <br><sub>Overview — power and color source at a glance.</sub>
 </p>
 
-<p align="center"><sub>The actual control interface, verified with a local WLED fixture.</sub></p>
+<p align="center">
+  <img src="docs/images/picture-preview.jpg" alt="Live picture preview with a dashed detected-crop outline and the colors sent to each LED edge." width="520">
+  <br><sub>Picture preview — see the active picture and computed edge colors.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/picture-tuning.jpg" alt="Picture tuning with brightness, shadow lift, smoothing, black-bar removal, sample density, spatial reach, and Save & apply controls." width="520">
+  <br><sub>Live tuning — adjust color, motion, and sampling, then save to apply.</sub>
+</p>
+
+<p align="center"><sub>Captured from the running Prysm web app with LG webOS screen sync and WLED lights.</sub></p>
 
 Overview controls power and color source. Preview & tuning combines picture inspection with all six live processing settings.
 
 - **Screen sync** lets Prysm supply live colors from your video.
 - **WLED effects** returns control to WLED's effects and presets.
-- **Customize in WLED** opens WLED's own interface for the finer details.
+- **Open WLED** opens WLED's own interface for the finer details when WLED effects is selected.
 
 The panel remembers your selected source while the lights are off. It stays available when capture stops, and shows connection problems with retry controls. Keyboard navigation, visible focus, generous touch targets, and reduced-motion support are built in.
 
