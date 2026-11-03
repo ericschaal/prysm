@@ -1,18 +1,18 @@
-revision = "2"
-source = "prysm"
+revision = "3"
+source = "wled"
 
 [web]
 listen = "127.0.0.1:8787"
 allowed_hosts = ["*"]
 
 [input]
+type = "device"
+device = "0x2200000345f2131"
+refresh_rate_hz = 30
 capture_resolution = [
     640,
     360,
 ]
-refresh_rate_hz = 30
-type = "device"
-device = "0x2200000345f2131"
 
 [output]
 type = "wled"

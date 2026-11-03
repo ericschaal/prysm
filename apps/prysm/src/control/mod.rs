@@ -2,6 +2,7 @@
 mod backend;
 mod controller;
 pub(crate) mod http;
+mod observation;
 mod persistence;
 mod switching;
 

@@ -8,8 +8,8 @@ use anyhow::{Context as _, Result};
 use axum::http::StatusCode;
 use prysm_api::{ApiFailure, App, Command};
 use prysm_contract::{
-    ApiError, Config, ErrorCode, OperationId, OperationResponse, OperationStatus, PipelinePhase,
-    PipelineStatus, StateResponse, Target, WebConfig,
+    ApiError, Config, ConfigRevision, ErrorCode, OperationId, OperationResponse, OperationStatus,
+    PipelinePhase, PipelineStatus, StateResponse, Target, WebConfig,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
@@ -17,6 +17,8 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+
+type Observations = watch::Receiver<Option<(ConfigRevision, LightingSnapshot)>>;
 
 fn initial_state(config: &Config) -> StateResponse {
     StateResponse {
@@ -89,11 +91,13 @@ enum Finished {
         saved: Option<Config>,
         result: Result<()>,
         snapshot: LightingSnapshot,
+        observations: Observations,
     },
     Applied {
         id: OperationId,
         result: Result<()>,
         snapshot: LightingSnapshot,
+        observations: Observations,
     },
 }
 
@@ -128,6 +132,9 @@ impl Controller {
     }
     fn publish_state(&mut self) {
         self.state.pipeline = self.lighting.status.borrow().clone();
+        if let Some(observed) = &mut self.state.observed {
+            observed.pipeline_phase = self.state.pipeline.phase;
+        }
         self.state.applied_revision = self.state.pipeline.applied_revision;
         self.state_tx.send_replace(self.state.clone());
     }
@@ -155,6 +162,7 @@ impl Controller {
         id: OperationId,
         result: Result<()>,
         snapshot: LightingSnapshot,
+        observations: &Observations,
     ) {
         self.state.operation = match result {
             Ok(()) => {
@@ -163,7 +171,9 @@ impl Controller {
             }
             Err(error) => failed_operation(id, &error),
         };
-        update_observation(&mut self.state, snapshot);
+        if !observations.has_changed().unwrap_or(true) {
+            update_observation(&mut self.state, snapshot);
+        }
         self.publish_state();
     }
     async fn apply_config(
@@ -239,7 +249,11 @@ impl Controller {
         id
     }
 
-    fn accept(&mut self, command: Command) -> Option<JoinHandle<Finished>> {
+    fn accept(
+        &mut self,
+        command: Command,
+        observations: &Observations,
+    ) -> Option<JoinHandle<Finished>> {
         match command {
             Command::SetTarget(target, reply) => {
                 let available = self.ensure_available();
@@ -253,6 +267,7 @@ impl Controller {
                 let lighting = self.lighting.clone();
                 let previous = self.config.clone();
                 let path = self.path.clone();
+                let mut observations = observations.clone();
                 Some(tokio::spawn(async move {
                     let mut saved = None;
                     let result = async {
@@ -272,12 +287,14 @@ impl Controller {
                         Ok(())
                     }
                     .await;
+                    observations.borrow_and_update();
                     let snapshot = lighting.snapshot().await;
                     Finished::Target {
                         id,
                         saved,
                         result,
                         snapshot,
+                        observations,
                     }
                 }))
             }
@@ -319,7 +336,11 @@ impl Controller {
         }
     }
 
-    fn finished(&mut self, event: Finished) -> Option<JoinHandle<Finished>> {
+    fn finished(
+        &mut self,
+        event: Finished,
+        observations: &Observations,
+    ) -> Option<JoinHandle<Finished>> {
         match event {
             Finished::Saved {
                 id,
@@ -332,13 +353,16 @@ impl Controller {
                     self.publish_state();
                     let _ = reply.send(Ok(config.clone()));
                     let lighting = self.lighting.clone();
+                    let mut observations = observations.clone();
                     Some(tokio::spawn(async move {
                         let result = Self::apply_config(&lighting, &previous, &config).await;
+                        observations.borrow_and_update();
                         let snapshot = lighting.snapshot().await;
                         Finished::Applied {
                             id,
                             result,
                             snapshot,
+                            observations,
                         }
                     }))
                 }
@@ -358,19 +382,21 @@ impl Controller {
                 saved,
                 result,
                 snapshot,
+                observations,
             } => {
                 if let Some(config) = saved {
                     self.record_saved_config(config);
                 }
-                self.finish_operation(id, result, snapshot);
+                self.finish_operation(id, result, snapshot, &observations);
                 None
             }
             Finished::Applied {
                 id,
                 result,
                 snapshot,
+                observations,
             } => {
-                self.finish_operation(id, result, snapshot);
+                self.finish_operation(id, result, snapshot, &observations);
                 None
             }
         }
@@ -382,9 +408,10 @@ impl Controller {
         shutdown: CancellationToken,
     ) -> Result<()> {
         let mut operation: Option<JoinHandle<Finished>> = None;
-        let mut observation: Option<
-            JoinHandle<(prysm_contract::ConfigRevision, LightingSnapshot)>,
-        > = None;
+        let lighting = self.lighting.clone();
+        let (updates, mut observations) = watch::channel(None);
+        let observer = lighting.observations(updates);
+        tokio::pin!(observer);
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -400,27 +427,25 @@ impl Controller {
                     Some(task) => task.await,
                     None => std::future::pending().await,
                 }} => {
-                    operation = self.finished(result.context("accepted operation task panicked")?);
+                    operation = self.finished(result.context("accepted operation task panicked")?, &observations);
                 }
                 command = commands.recv(), if !self.stopping => match command {
                     Some(command) => {
-                        if let Some(task) = self.accept(command) { operation = Some(task); }
+                        if let Some(task) = self.accept(command, &observations) { operation = Some(task); }
                     }
                     None => self.stopping = true,
                 },
-                result = async { match observation.as_mut() {
-                    Some(task) => task.await,
-                    None => std::future::pending().await,
-                }} => {
-                    observation = None;
-                    let (revision, snapshot) = result.context("WLED observation task panicked")?;
-                    self.record_observation(revision, snapshot);
+                () = &mut observer => {
+                    anyhow::bail!("WLED observer stopped unexpectedly");
                 }
-                _ = tick.tick(), if observation.is_none() && !self.stopping => {
-                    let lighting = self.lighting.clone();
-                    let revision = self.config.revision;
-                    observation = Some(tokio::spawn(async move { (revision, lighting.snapshot().await) }));
+                result = observations.changed() => {
+                    result.context("WLED observation channel closed")?;
+                    let update = observations.borrow_and_update().clone();
+                    if let Some((revision, snapshot)) = update {
+                        self.record_observation(revision, snapshot);
+                    }
                 }
+                _ = tick.tick(), if !self.stopping => self.publish_state(),
             }
         }
         while let Ok(command) = commands.try_recv() {
@@ -432,9 +457,6 @@ impl Controller {
                     let _ = reply.send(Err(ApiFailure::unavailable()));
                 }
             }
-        }
-        if let Some(task) = observation {
-            task.await.context("WLED observation task panicked")?;
         }
         Ok(())
     }

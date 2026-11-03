@@ -674,6 +674,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     let address = available.local_addr().unwrap();
     drop(available);
     let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+    config.source = Source::Prysm;
     config.web.listen = address;
     config.web.allowed_hosts = vec!["*".into()];
     let router = Router::new()

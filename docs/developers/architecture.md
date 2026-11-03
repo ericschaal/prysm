@@ -16,6 +16,18 @@ mutations conflict. Atomic file writes finish before saved configuration is publ
 saved and processor-applied revisions remain distinct. WLED switching preserves
 its compensation/rollback and observation checks.
 
+WLED observations use one `/ws` connection for pushed state/info snapshots, with
+an immediate HTTP `/json/si` read and a 30-second HTTP resynchronization interval.
+The socket sends WLED's `p`/`pong` heartbeat every 15 seconds and reconnects after
+30 seconds without a reply. Failed connections retry with exponential delays from
+one to 30 seconds; a valid snapshot resets the delay. HTTP observation continues
+while WebSocket is unavailable. Delayed HTTP responses cannot replace a newer
+pushed snapshot. Configuration changes retire the previous observation session;
+revision checks reject retired updates. The controller owns and cancels the
+observer future on shutdown, while draining accepted operations as before. Local
+pipeline status refreshes every second without a WLED request. Switching still
+uses direct HTTP observations to confirm commands and preserve rollback behavior.
+
 A pipeline lifecycle owner holds the configured input and explicit Idle, Starting,
 Running, Stopping, Completed and Failed states. Active resources are attached to
 states until their terminal result and joins are observed. Every run has a fresh

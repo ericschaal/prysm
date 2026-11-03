@@ -49,6 +49,7 @@ prysm-core = { path = "../../crates/common/prysm-core" }
 prysm-processor = { path = "../../crates/processing/prysm-processor" }
 prysm-renderer-wled = { path = "../../crates/rendering/prysm-renderer-wled" }
 tokio-util.workspace = true
+tokio-tungstenite.workspace = true
 
 prysm-contract = { path = "../../crates/common/prysm-contract" }
 
@@ -64,5 +65,6 @@ atomic-write-file.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol" }
 tower = { workspace = true, features = ["util"] }

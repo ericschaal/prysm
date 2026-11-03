@@ -65,11 +65,20 @@ pub(super) struct LightingSnapshot {
     pub pipeline: PipelineStatus,
     pub error: Option<String>,
 }
-struct WledStatus {
-    power: bool,
-    realtime: bool,
-    realtime_source: Option<String>,
-    live_override: u8,
+#[derive(Deserialize)]
+pub(super) struct WledStatus {
+    state: WledState,
+    info: WledInfo,
+}
+#[derive(Deserialize)]
+struct WledState {
+    on: bool,
+    lor: u8,
+}
+#[derive(Deserialize)]
+struct WledInfo {
+    live: bool,
+    lm: Option<String>,
 }
 pub(crate) struct LightingService {
     pub(super) client: reqwest::Client,
@@ -110,49 +119,34 @@ impl LightingService {
             .cloned()
             .context("no WLED HTTP endpoint configured")
     }
-    async fn wled_status(&self) -> Result<WledStatus> {
-        #[derive(Deserialize)]
-        struct Document {
-            state: State,
-            info: Info,
-        }
-        #[derive(Deserialize)]
-        struct State {
-            on: bool,
-            lor: u8,
-        }
-        #[derive(Deserialize)]
-        struct Info {
-            live: bool,
-            lm: Option<String>,
-        }
-        let document: Document = self
-            .client
-            .get(self.url()?.join("json/si")?)
+    pub(super) async fn wled_status(&self, url: &reqwest::Url) -> Result<WledStatus> {
+        self.client
+            .get(url.join("json/si")?)
             .send()
             .await
             .context("cannot reach WLED")?
             .error_for_status()?
             .json()
-            .await?;
-        Ok(WledStatus {
-            power: document.state.on,
-            realtime: document.info.live,
-            realtime_source: document.info.lm,
-            live_override: document.state.lor,
-        })
+            .await
+            .context("invalid WLED status")
     }
     pub(super) async fn snapshot(&self) -> LightingSnapshot {
-        let wled = self.wled_status().await;
+        let wled = match self.url() {
+            Ok(url) => self.wled_status(&url).await,
+            Err(error) => Err(error),
+        };
+        self.status_snapshot(wled)
+    }
+    pub(super) fn status_snapshot(&self, wled: Result<WledStatus>) -> LightingSnapshot {
         let pipeline = self.status.borrow().clone();
         let (observed, error) = match wled {
             Ok(wled) => (
                 Some(Observation {
                     pipeline_phase: pipeline.phase,
-                    power: wled.power,
-                    realtime: wled.realtime,
-                    realtime_source: wled.realtime_source,
-                    live_override: wled.live_override,
+                    power: wled.state.on,
+                    realtime: wled.info.live,
+                    realtime_source: wled.info.lm,
+                    live_override: wled.state.lor,
                 }),
                 None,
             ),

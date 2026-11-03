@@ -138,6 +138,7 @@ async fn target_transaction(retire_pipeline: bool) {
     });
     let directory = tempfile::tempdir().unwrap();
     let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+    config.source = Source::Prysm;
     let prysm_contract::Output::Wled { url, .. } = &mut config.output;
     {
         *url = format!("http://{address}/").parse().unwrap();

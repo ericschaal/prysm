@@ -81,6 +81,7 @@ tempfile = "3"
 thiserror = "2"
 tiny_http = { version = "0.12", default-features = false }
 tokio = "1"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 tokio-util = "0.7"
 toml = "1"
 tower = "0.5"
