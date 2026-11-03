@@ -2098,6 +2098,8 @@ dependencies = [
  "prysm-webos-protocol",
  "sysinfo",
  "tiny_http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -93,6 +93,7 @@ impl Preview {
                 .context("cannot start preview encoder")?;
             worker.jobs = Some(jobs);
             worker.join = Some(join);
+            tracing::debug!("preview encoder started");
         }
         let (reply, receiver) = oneshot::channel();
         worker
@@ -134,6 +135,7 @@ fn encode_jobs(
     mut encode_snapshot: impl FnMut(&PublishedSnapshot) -> Result<String>,
 ) {
     let mut cached: Option<(u64, Arc<str>)> = None;
+    let mut stats = prysm_metrics::TraceStats::new("preview_encode");
     while let Ok(reply) = receiver.recv() {
         if reply.is_closed() {
             continue;
@@ -145,15 +147,25 @@ fn encode_jobs(
                 if let Some((previous, encoded)) = &cached
                     && *previous == current.id
                 {
+                    stats.cache_hit();
                     let _ = reply.send(encoded.clone());
                     continue;
                 }
+                let started = stats.start();
                 let encoded = match encode_snapshot(&current) {
-                    Ok(encoded) => Arc::from(encoded),
-                    Err(error) => Arc::from(
-                        serde_json::json!({"type":"error", "message":format!("{error:#}")})
-                            .to_string(),
-                    ),
+                    Ok(encoded) => {
+                        stats.record(started, encoded.len(), None);
+                        Arc::from(encoded)
+                    }
+                    Err(error) => {
+                        if stats.failure() {
+                            tracing::warn!(error = %error, "preview encoding failed");
+                        }
+                        Arc::from(
+                            serde_json::json!({"type":"error", "message":format!("{error:#}")})
+                                .to_string(),
+                        )
+                    }
                 };
                 cached = Some((current.id, Arc::clone(&encoded)));
                 encoded
@@ -181,6 +193,12 @@ async fn upgrade(State(preview): State<Preview>, ws: WebSocketUpgrade) -> Respon
         })
 }
 async fn connection(preview: Preview, mut socket: WebSocket) {
+    tracing::debug!(
+        viewers = 4 - preview.0.clients.available_permits(),
+        "preview viewer connected"
+    );
+    let mut responses = 0_u64;
+    let mut busy = 0_u64;
     let mut next = tokio::time::Instant::now();
     loop {
         let request = tokio::select! {
@@ -196,22 +214,29 @@ async fn connection(preview: Preview, mut socket: WebSocket) {
             () = preview.0.shutdown.cancelled() => break,
             () = tokio::time::sleep_until(next) => {},
         }
-        let response = match preview.request() {
-            Ok(reply) => tokio::select! {
+        let response = if let Ok(reply) = preview.request() {
+            tokio::select! {
                 () = preview.0.shutdown.cancelled() => break,
                 result = reply => match result { Ok(value) => value, Err(_) => break },
-            },
-            Err(_) => Arc::from(r#"{"type":"busy"}"#),
+            }
+        } else {
+            busy += 1;
+            Arc::from(r#"{"type":"busy"}"#)
         };
         next = tokio::time::Instant::now() + Duration::from_millis(125);
         let send = socket.send(Message::Text(response.to_string().into()));
         tokio::select! {
             () = preview.0.shutdown.cancelled() => break,
             result = tokio::time::timeout(Duration::from_secs(3), send) => {
-                if !matches!(result, Ok(Ok(()))) { break; }
+                if !matches!(result, Ok(Ok(()))) {
+                    tracing::debug!("preview viewer send failed or timed out");
+                    break;
+                }
+                responses += 1;
             },
         }
     }
+    tracing::debug!(responses, busy, "preview viewer disconnected");
 }
 fn strip(strip: &ColorStrip) -> Vec<[u8; 3]> {
     // Diagnostic perimeter resolution stays bounded independently of input/sample settings.

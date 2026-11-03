@@ -1,5 +1,3 @@
-use crate::SampleDensity;
-
 /// Controls ambient light processing. Start with [`Config::default()`]
 /// and change only the settings you need; black-bar detection uses built-in tuning.
 ///
@@ -108,63 +106,38 @@ impl SmoothingSeconds {
     }
 }
 
-/// Positive capture dimensions up to 4K UHD (3840 × 2160).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CaptureResolution([u32; 2]);
-
-impl CaptureResolution {
-    pub fn new(width: u32, height: u32) -> Result<Self, &'static str> {
-        if width == 0 || height == 0 {
-            return Err("capture resolution width and height must be positive");
-        }
-        if width > 3840 || height > 2160 {
-            return Err("capture resolution must not exceed 3840 × 2160 (4K UHD)");
-        }
-        Ok(Self([width, height]))
-    }
-
-    #[must_use]
-    pub const fn dimensions(self) -> [u32; 2] {
-        self.0
-    }
-
-    #[must_use]
-    pub fn rgb24_bytes(self) -> usize {
-        self.0[0] as usize * self.0[1] as usize * 3
-    }
-}
-
-impl Default for CaptureResolution {
-    fn default() -> Self {
-        Self([640, 360])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolutions_reject_invalid_dimensions_and_accept_odd_rgb_widths() {
-        for (width, height) in [
-            (0, 360),
-            (640, 0),
-            (3841, 2160),
-            (3840, 2161),
-            (1_000_000_000, 1_000_000_000),
-            (u32::MAX, u32::MAX),
-        ] {
-            assert!(CaptureResolution::new(width, height).is_err());
-        }
-        let uhd = CaptureResolution::new(3840, 2160).unwrap();
-        assert_eq!(uhd.dimensions(), [3840, 2160]);
-        assert_eq!(uhd.rgb24_bytes(), 24_883_200);
-        let resolution = CaptureResolution::new(3, 2).unwrap();
-        assert_eq!(resolution.dimensions(), [3, 2]);
-        assert_eq!(resolution.rgb24_bytes(), 18);
-    }
-}
-
 /// Shadow boost strength; zero preserves the original output.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ShadowLiftPercent(pub u8);
+
+/// Sample density representing samples per 1000 pixels of edge length
+///
+/// Example: `SampleDensity(50)` means 50 samples per 1000px, so a 1920px edge gets ~96 samples
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SampleDensity(pub usize);
+
+impl SampleDensity {
+    /// Calculate samples, capped at one per pixel (at least one for empty edges).
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "sample counts use approximate geometry and saturate to the edge length"
+    )]
+    pub fn samples_for_length(self, length_px: usize) -> usize {
+        (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
+    }
+
+    /// Get the raw density value (samples per 1000px)
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Default for SampleDensity {
+    fn default() -> Self {
+        Config::default().sample_density
+    }
+}

@@ -264,10 +264,12 @@ impl PrysmCapturer for V4lCapturer {
                 };
                 tracing::info!("Stream started with format: {:?}", pixel_format);
                 let mut pool = FramePool::default();
+                let mut stats = prysm_metrics::TraceStats::new("v4l_capture");
                 loop {
                     if self.shutdown_token.is_cancelled() || tx.is_closed() {
                         return Ok(());
                     }
+                    let started = stats.start();
                     match input_stream.next() {
                         Ok((buffer, metadata)) => {
                             let Some(frame) =
@@ -282,20 +284,29 @@ impl PrysmCapturer for V4lCapturer {
                                     )
                                 })
                             else {
-                                tracing::warn!("Discarding corrupt or incomplete capture frame");
+                                if stats.failure() {
+                                    tracing::warn!(
+                                        "Discarding corrupt or incomplete capture frames; further failures counted in statistics"
+                                    );
+                                }
                                 continue;
                             };
+                            stats.record(started, frame.len(), Some(pool.stats()));
                             if tx.send(Some(frame)).is_err() {
                                 return Ok(());
                             }
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            if stats.failure() {
+                                tracing::warn!("V4L capture timed out; restarting stream");
+                            }
                             // next() queues a buffer before waiting; restart to avoid queueing it twice.
                             input_stream
                                 .stop()
                                 .context("Failed to stop stalled capture stream")?;
                         }
                         Err(e) => {
+                            stats.failure();
                             return Err(e).context("Error capturing frame").map_err(Into::into);
                         }
                     }

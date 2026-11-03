@@ -78,13 +78,24 @@ pub fn video_feed(
     });
     let cancel = child_shutdown.drop_guard();
     let frames = futures::stream::try_unfold(
-        (stdout, exit, cancel, FramePool::default()),
-        move |(mut stdout, exit, cancel, mut pool)| async move {
+        (
+            stdout,
+            exit,
+            cancel,
+            FramePool::default(),
+            prysm_metrics::TraceStats::new("file_read"),
+        ),
+        move |(mut stdout, exit, cancel, mut pool, mut stats)| async move {
+            let started = stats.start();
             if let Some(frame) = read_frame(&mut stdout, resolution, &mut pool)
                 .await
+                .inspect_err(|_| {
+                    stats.failure();
+                })
                 .context("Failed to read FFmpeg frame")?
             {
-                return Ok(Some((frame, (stdout, exit, cancel, pool))));
+                stats.record(started, frame.len(), Some(pool.stats()));
+                return Ok(Some((frame, (stdout, exit, cancel, pool, stats))));
             }
             let status = exit.await.context("FFmpeg monitor ended unexpectedly")??;
             anyhow::ensure!(status.success(), "FFmpeg exited with {status}");

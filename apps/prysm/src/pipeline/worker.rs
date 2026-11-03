@@ -70,6 +70,18 @@ pub(crate) fn launch(
     preview: Option<crate::preview::Publisher>,
     input: InputSource,
 ) -> Result<(Session, oneshot::Receiver<Result<()>>)> {
+    let (source, rate) = match &config.input {
+        prysm_contract::Input::Device {
+            refresh_rate_hz, ..
+        } => ("device", refresh_rate_hz.get()),
+        prysm_contract::Input::File {
+            refresh_rate_hz, ..
+        } => ("file", refresh_rate_hz.get()),
+        prysm_contract::Input::Webos {
+            refresh_rate_hz, ..
+        } => ("webos", refresh_rate_hz.get()),
+    };
+    tracing::info!(source, requested_fps = rate, resolution = ?config.input.capture_resolution(), revision = config.revision.get(), "pipeline starting");
     let shutdown = CancellationToken::new();
     let (configure, commands) = mpsc::channel(8);
     let (ready, readiness) = oneshot::channel();
@@ -162,11 +174,17 @@ async fn consume(
     output: &mut PreparedOutput,
     mut frames: watch::Receiver<Option<EdgeColors>>,
 ) -> Result<()> {
+    let mut stats = prysm_metrics::TraceStats::new("wled_output");
+    let payload_bytes = output.leds.iter().sum::<usize>() * 3;
     // changed() delivers an unseen final value even after the sole publisher closes.
     while frames.changed().await.is_ok() {
         let snapshot = frames.borrow_and_update().clone();
         if let Some(snapshot) = snapshot {
-            output.render(&snapshot)?;
+            let started = stats.start();
+            output.render(&snapshot).inspect_err(|_| {
+                stats.failure();
+            })?;
+            stats.record(started, payload_bytes, None);
         }
         tokio::task::yield_now().await;
     }
@@ -179,6 +197,9 @@ fn availability(status: &watch::Sender<PipelineStatus>, available: bool) {
             PipelinePhase::Starting | PipelinePhase::Running
         ) {
             return;
+        }
+        if status.error.is_none() != available {
+            tracing::info!(available, "input availability changed");
         }
         if available {
             if status.frames_processed > 0 {
@@ -208,6 +229,8 @@ async fn process(
     } = input;
     let mut processor = PrysmProcessor::new(&config.processing.to_core());
     let mut revision = config.revision;
+    let mut diagnostics = prysm_metrics::TraceStats::new("processing");
+    let mut layout = None;
     status.send_modify(|status| status.applied_revision = Some(revision));
     availability(
         &status,
@@ -226,6 +249,7 @@ async fn process(
                     if let Some(command) = command {
                         processor.configure(&command.settings.to_core());
                         revision = command.revision;
+                        tracing::info!(revision = revision.get(), settings = ?command.settings, "processing settings applied");
                         status.send_modify(|status| status.applied_revision = Some(revision));
                         let _ = command.reply.send(Ok(()));
                     }
@@ -244,16 +268,26 @@ async fn process(
         };
         let frame = match frame {
             Some(Ok(frame)) => frame,
-            Some(Err(error)) => break Err(error),
+            Some(Err(error)) => {
+                diagnostics.failure();
+                break Err(error);
+            }
             None => break Ok(PipelineExit::Completed),
         };
         prysm_metrics::frame(
             prysm_metrics::FrameStage::InputDelivered,
             frame.format().into(),
         );
+        let next_layout = (frame.width(), frame.height(), frame.format());
+        if layout != Some(next_layout) {
+            tracing::info!(width = frame.width(), height = frame.height(), format = %frame.format(), "input frame layout");
+            layout = Some(next_layout);
+        }
+        let started = diagnostics.start();
         let timer = prysm_metrics::timer(prysm_metrics::Stage::FrameProcess);
         let colors = processor.process_frame(frame.clone());
         drop(timer);
+        diagnostics.record(started, frame.len(), None);
         prysm_metrics::frame(prysm_metrics::FrameStage::Processed, frame.format().into());
         if let Some(preview) = &preview {
             preview.publish(

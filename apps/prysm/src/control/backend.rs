@@ -1,7 +1,7 @@
 //! Capture lifecycle and WLED control used by the switching logic.
 use crate::pipeline::runtime::Pipeline;
 use anyhow::{Context, Result, bail};
-use prysm_contract::{Config, Observation, PipelineStatus, Source, Target, WledStatus};
+use prysm_contract::{Config, Observation, PipelineStatus, Source, Target};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -64,6 +64,12 @@ pub(super) struct LightingSnapshot {
     pub observed: Option<Observation>,
     pub pipeline: PipelineStatus,
     pub error: Option<String>,
+}
+struct WledStatus {
+    power: bool,
+    realtime: bool,
+    realtime_source: Option<String>,
+    live_override: u8,
 }
 pub(crate) struct LightingService {
     pub(super) client: reqwest::Client,

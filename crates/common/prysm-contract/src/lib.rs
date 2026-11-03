@@ -14,7 +14,7 @@ pub use processing::{
 pub use resources::{CaptureResolution, DeviceId, Input, LedCounts, Output, VideoPath};
 pub use state::{
     ApiError, ErrorCode, Observation, OperationResponse, OperationStatus, PipelinePhase,
-    PipelineStatus, Source, StateResponse, Target, WledStatus,
+    PipelineStatus, Source, StateResponse, Target,
 };
 
 #[cfg(test)]

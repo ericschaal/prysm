@@ -43,8 +43,14 @@ use crate::{
     CaptureError, Frame, FramePool, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix,
 };
 
+struct CaptureState {
+    sender: tokio::sync::watch::Sender<Option<Frame>>,
+    pool: FramePool,
+    stats: prysm_metrics::TraceStats,
+}
+
 struct DelegateIvars {
-    capture: Mutex<Option<(tokio::sync::watch::Sender<Option<Frame>>, FramePool)>>,
+    capture: Mutex<Option<CaptureState>>,
     failure: CancellationToken,
     error: Mutex<Option<CaptureError>>,
 }
@@ -73,10 +79,15 @@ define_class!(
                 return;
             };
             if let Ok(mut capture) = self.ivars().capture.lock()
-                && let Some((sender, pool)) = capture.as_mut()
-                && let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, pool)
+                && let Some(capture) = capture.as_mut()
             {
-                let _ = sender.send(Some(frame));
+                let started = capture.stats.start();
+                if let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, &mut capture.pool) {
+                    capture.stats.record(started, frame.len(), Some(capture.pool.stats()));
+                    let _ = capture.sender.send(Some(frame));
+                } else {
+                    capture.stats.failure();
+                }
             }
         }
     }
@@ -117,8 +128,11 @@ define_class!(
 impl Delegate {
     fn new(sender: tokio::sync::watch::Sender<Option<Frame>>) -> Retained<Self> {
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
-        *this.ivars().capture.lock().expect("capture mutex poisoned") =
-            Some((sender, FramePool::default()));
+        *this.ivars().capture.lock().expect("capture mutex poisoned") = Some(CaptureState {
+            sender,
+            pool: FramePool::default(),
+            stats: prysm_metrics::TraceStats::new("avfoundation_copy"),
+        });
         this
     }
 

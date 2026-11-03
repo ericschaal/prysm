@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 #[command(about = "Prysm capture, processing, rendering, and REST API")]
@@ -21,8 +22,13 @@ enum Command {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+    let filter = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info".into())
+        .parse::<tracing_subscriber::filter::Targets>()
+        .context("invalid RUST_LOG target filter")?;
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
     let config = prysm::config::load(&args.config)?;
     prysm::validate_config(&config)?;

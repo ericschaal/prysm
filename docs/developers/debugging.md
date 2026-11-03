@@ -22,6 +22,47 @@ Capture failures should leave HTTP available. EOF and cancellation are normal
 completion. A pending operation or restart requirement can explain disabled controls;
 do not bypass the controller to force another lifecycle operation.
 
+## Runtime logs
+
+The host application logs to stderr at INFO by default. Lifecycle events include
+pipeline start/ready/stop/failure, configuration changes, operations, webOS sender
+connections, input format changes and signal loss/recovery.
+
+The `prysm::stats` target summarizes each active stage roughly every 30 seconds
+and once when its worker exits. Reporting happens on activity, so idle workers do
+not emit heartbeats. `final_report=true` identifies the closing summary.
+
+- `frames`, `fps`, `bytes`, `failures` and `cached` describe the current window;
+  `total_frames`, `total_failures` and `total_cached` cover the worker's lifetime.
+  Preview cache hits avoid an encode and are counted separately from frames.
+- `mean_ms` and `max_ms` measure successful operations' wall time. `file_read`,
+  `webos_receive` and `v4l_capture` include input waits; `avfoundation_copy` measures
+  copying a delivered frame. These are not CPU utilization measurements.
+- Processing bytes describe input pixels, preview bytes describe encoded JSON,
+  and WLED bytes describe RGB payloads, excluding packet headers. A successful
+  WLED write means local socket acceptance, not confirmed delivery to the lights.
+- `pool` is the buffer snapshot from the last successful frame. Its cumulative
+  `created`, `reused` and `grown` counters distinguish new storage, reuse without
+  growth and capacity growth. `exhausted` counts acquisitions when every slot was
+  held by a consumer, requiring replacement storage; it is not an allocation error.
+  `retained_buffers` and `retained_bytes` cover the pool's current slots, excluding
+  displaced buffers still held by consumers. Counts describe buffers, not allocator
+  calls, and include abandoned writes.
+
+Use `RUST_LOG` to select levels by target prefix:
+
+```sh
+# Keep lifecycle events, silence periodic statistics.
+RUST_LOG=info,prysm::stats=off prysm --config PATH
+# Also show preview viewer connections, response counts and busy responses.
+RUST_LOG=info,prysm::preview=debug prysm --config PATH
+```
+
+The filter accepts comma-separated levels and `target=level` directives, not span
+expressions. Invalid level directives fail startup. Disabling `prysm::stats`
+skips per-frame timing; producer-local pool counters remain available. Repeated
+capture/encode warnings are limited to the first failure per reporting window.
+
 ## Metrics and performance
 
 Follow [monitoring](monitoring.md) to enable the host exporter and optional TV metrics.

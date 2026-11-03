@@ -1,3 +1,4 @@
+mod capture_resolution;
 mod color;
 mod color_strip;
 mod config;
@@ -5,13 +6,14 @@ mod frame;
 mod linear;
 pub mod yuyv;
 
-pub use frame::{Frame, FrameError, FramePool, FrameWriter, PixelFormat};
+pub use frame::{Frame, FrameError, FramePool, FramePoolStats, FrameWriter, PixelFormat};
 pub use yuv::{YuvRange, YuvStandardMatrix};
 
+pub use capture_resolution::CaptureResolution;
 pub use color::Color;
-pub use color_strip::{ColorStrip, EdgeColors, EmptyColorStrip, SampleDensity};
+pub use color_strip::{ColorStrip, EdgeColors, EmptyColorStrip};
 pub use config::{
-    BrightnessPercent, CaptureResolution, Config, ShadowLiftPercent, SmoothingSeconds,
+    BrightnessPercent, Config, SampleDensity, ShadowLiftPercent, SmoothingSeconds,
     SpatialReachPercent,
 };
 pub use linear::LinearColor;

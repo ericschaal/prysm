@@ -54,6 +54,7 @@ async fn serve(
         () = shutdown_signal() => None,
         () = shutdown.cancelled() => None,
     };
+    tracing::info!("application shutdown requested");
     shutdown.cancel();
     let controller_result = controller.shutdown().await;
     let pipeline_result = pipeline.shutdown().await;
@@ -61,6 +62,7 @@ async fn serve(
     controller_result?;
     pipeline_result?;
     preview_result?;
+    tracing::info!("capture, lighting and preview stopped");
     if let Some(result) = result {
         return result.context("HTTP server failed");
     }

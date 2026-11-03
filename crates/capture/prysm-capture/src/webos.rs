@@ -21,7 +21,10 @@ pub(super) async fn receive_frames(
     let mut scratch = [Vec::new(), Vec::new()];
     let mut decoder = None;
     let mut pool = FramePool::default();
+    let mut stats = prysm_metrics::TraceStats::new("webos_receive");
+    tracing::info!(%peer, "webOS receiving frames");
     loop {
+        let started = stats.start();
         // A stalled or partial frame must not hold the only TV connection forever.
         match tokio::time::timeout(
             Duration::from_secs(5),
@@ -30,6 +33,7 @@ pub(super) async fn receive_frames(
         .await
         {
             Ok(Ok(frame)) => {
+                stats.record(started, frame.len(), Some(pool.stats()));
                 if prysm_metrics::enabled() {
                     let now = Instant::now();
                     if let Some(last) = last_decoded.replace(now) {
@@ -47,10 +51,12 @@ pub(super) async fn receive_frames(
                 });
             }
             Ok(Err(error)) => {
-                tracing::debug!(%peer, error = %format!("{error:#}"), "webOS connection ended");
+                stats.failure();
+                tracing::info!(%peer, error = %format!("{error:#}"), "webOS connection ended");
                 break;
             }
             Err(_) => {
+                stats.failure();
                 prysm_metrics::event(FrameReceiverEvent::FrameTimedOut);
                 tracing::warn!(%peer, "webOS frame timed out");
                 break;

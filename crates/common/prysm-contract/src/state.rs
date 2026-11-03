@@ -34,13 +34,6 @@ pub enum PipelinePhase {
     Completed,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct WledStatus {
-    pub power: bool,
-    pub realtime: bool,
-    pub realtime_source: Option<String>,
-    pub live_override: u8,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Observation {
     pub pipeline_phase: PipelinePhase,
     pub power: bool,

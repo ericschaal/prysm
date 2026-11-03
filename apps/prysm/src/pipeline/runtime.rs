@@ -152,9 +152,13 @@ impl Pipeline {
     }
 }
 fn fail(status: &watch::Sender<PipelineStatus>, error: &anyhow::Error) {
+    let message = format!("{error:#}");
+    if status.borrow().error.as_deref() != Some(message.as_str()) {
+        tracing::error!(error = %message, "pipeline failed");
+    }
     status.send_modify(|status| {
         status.phase = PipelinePhase::Failed;
-        status.error = Some(format!("{error:#}"));
+        status.error = Some(message);
     });
 }
 async fn configure_run(
@@ -242,11 +246,13 @@ async fn own(
                             State::Starting {run,reply:start,..} => {
                                 run.shutdown.cancel();
                                 if let Some(start)=start { let _ = start.send(Err(anyhow!("pipeline startup cancelled"))); }
+                                tracing::info!("pipeline stopping");
                                 status.send_modify(|status|status.phase=PipelinePhase::Stopping);
                                 state=State::Stopping {run,replies:reply.into_iter().collect(),shutdown:shutting_down,deadline:Some(tokio::time::Instant::now()+std::time::Duration::from_secs(5)),timed_out:false};
                             },
                             State::Running(run) => {
                                 run.shutdown.cancel();
+                                tracing::info!("pipeline stopping");
                                 status.send_modify(|status|status.phase=PipelinePhase::Stopping);
                                 state=State::Stopping {run,replies:reply.into_iter().collect(),shutdown:shutting_down,deadline:Some(tokio::time::Instant::now()+std::time::Duration::from_secs(5)),timed_out:false};
                             },
@@ -274,6 +280,7 @@ async fn own(
                 let previous = std::mem::replace(&mut state,State::Idle);
                 match (previous,event) {
                     (State::Starting {run,mut reply,..}, Event::Ready(Ok(()))) => {
+                        tracing::info!("pipeline ready; waiting for input frames");
                         if let Some(reply)=reply.take() { let _=reply.send(Ok(())); }
                         state=State::Running(run);
                     },
@@ -293,6 +300,7 @@ async fn own(
                         if matches!(&previous,State::Stopping {timed_out:true,..}) && result.is_ok() {
                             result=Err(anyhow!("pipeline cleanup exceeded its deadline; resources have now stopped"));
                         }
+                        tracing::info!(outcome = ?result.as_ref().ok(), frames_processed = status.borrow().frames_processed, "pipeline workers stopped");
                         let (replies,shutting_down)=match previous {
                             State::Starting {reply,..}=>(reply.into_iter().collect(),false),
                             State::Stopping {replies,shutdown,..}=>(replies,shutdown),

@@ -230,6 +230,7 @@ async fn accept(listener: &TcpListener) -> anyhow::Result<(TcpStream, SocketAddr
             continue;
         }
         prysm_metrics::event(prysm_metrics::FrameReceiverEvent::ConnectionAccepted);
+        tracing::info!(%peer, "webOS sender connected");
         return Ok((socket, peer));
     }
 }

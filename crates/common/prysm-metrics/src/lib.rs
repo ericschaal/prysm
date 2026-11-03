@@ -1,4 +1,5 @@
-//! Opt-in, process-wide Prometheus telemetry. Collection and HTTP run off the pipeline.
+//! Periodic tracing summaries and opt-in Prometheus telemetry.
+//! Prometheus collection and HTTP run off the pipeline.
 #![forbid(unsafe_code)]
 
 use anyhow::{Context, Result};
@@ -23,12 +24,14 @@ use sysinfo::{
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 mod labels;
+mod trace_stats;
 pub use labels::{
     Backend, BytesKind, CaptureSource, Codec, Content, DecoderEvent, EncoderEvent, Event, Format,
     FrameReceiverEvent, FrameSenderEvent, FrameStage, PipelineEvent, Role, Stage,
     VideoCaptureEvent, WireBoundary, WledEvent,
 };
 use labels::{BackendInfo, ByteLabels, CaptureInfo, Device, FrameLabels, StageLabels};
+pub use trace_stats::TraceStats;
 
 type FloatGauge = Gauge<f64, AtomicU64>;
 type BytesGauge = Gauge<u64, AtomicU64>;

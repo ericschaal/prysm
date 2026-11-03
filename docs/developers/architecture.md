@@ -67,6 +67,45 @@ The consumer clones the latest edge colors, releases watch borrows, resamples/pa
 and sends nonblocking UDP. `WouldBlock` remains a rendering error. This task shares
 scheduling with HTTP; it does not provide strict HTTP isolation.
 
+## Type ownership
+
+Shared image and processing concepts belong in `prysm-core`: frames and pixel
+metadata, capture resolution, viewport/edges, color strips, processing settings,
+and paired processing snapshots. Core has an existing `yuv` dependency for color
+conversion; it does not depend on serialization, HTTP, the runtime, or webOS.
+Move a type here when its meaning and invariants are shared, not just its name or
+field layout.
+
+The November 2026 type audit covered the maintained applications and capture,
+processing, rendering, contract/API, metrics, and frontend code. These boundaries
+deliberately retain distinct types:
+
+| Similar types | Why they remain separate |
+| --- | --- |
+| Core `Config`/setting scalars and contract `ProcessingSettings`/scalars | Core clamps percentages and disables invalid smoothing; disk/HTTP settings reject invalid input. Sample density uses `usize` in core and `u32` on the wire. Contract defaults already come from core. |
+| Core and contract `CaptureResolution` | The contract wrapper delegates validation/defaults to core and adds serialization/schema ownership. webOS additionally restricts dimensions to even values up to 1080p. |
+| Core, webOS, and metrics pixel formats | Core describes processing storage and YUYV color metadata; the wire has fixed RGB/NV12/NV16 IDs; metrics combine formats into labels. A merged enum would admit unsupported states. |
+| webOS `Compression` and `Codec` | Compression selects a configured encoder backend; codec identifies the actual payload. Metrics codec labels also include an unspecified value. |
+| Application and webOS `Source` | Prysm/WLED lighting selection and video/blended capture selection are different decisions. |
+| `Config`, `PipelineConfig`, and runtime state | Saved application configuration, a pipeline configuration subset, and owned running resources have different lifetimes and responsibilities. `PipelinePhase` is an observation of runtime state. |
+| Contract `LedCounts` and renderer counts | Configuration requires a positive total; the renderer permits empty output and enforces the WLED limit at its boundary. |
+| `Frame`, `FrameView`, `ProcessedSnapshot`, and private `FrameLayout` | Immutable pixels, processor sampling/cropping access, a published result, and a layout-change cache key serve different purposes. |
+| `CapturedFrame` and `EncodedFrame` | Borrowed raw capture pixels and encoded transport bytes mark distinct pipeline stages despite matching fields. |
+| `Color`, `LinearColor`, and renderer `Rgb8Payload` | sRGB values, linear-light arithmetic, and packed DDP bytes must retain their color/encoding semantics. |
+| `ApiError` and `ApiFailure` | Serialized error data belongs to the contract; HTTP status and response behavior belong to the API adapter. |
+
+Keep platform handles, worker commands, WLED response projections, and metrics
+labels with their adapters. REST frontend models derive from OpenAPI; the webOS
+frontend describes the separate Luna interface.
+
+Within core, `frame/mod.rs` owns immutable frames and format/geometry validation;
+`frame/pool.rs` owns reusable producer storage and its exclusive writer. Keeping
+the writer with the pool preserves private frame construction without exposing an
+unchecked constructor. Capture resolution has its own module, while processing
+settings live together in `config.rs`. The webOS protocol separates bounded JSON
+control messages in `control.rs` from binary headers and payload compression in
+`frame.rs`. Crate-root exports keep callers independent of these file boundaries.
+
 ## Preview observation
 
 The application owns a small latest-snapshot bridge that retains the final image

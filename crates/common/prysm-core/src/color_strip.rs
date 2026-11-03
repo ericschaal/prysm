@@ -1,39 +1,7 @@
-use crate::LinearColor;
+use crate::{LinearColor, SampleDensity};
 use std::num::NonZeroUsize;
 use std::ops::{Add, Mul};
 use std::sync::Arc;
-
-/// Sample density representing samples per 1000 pixels of edge length
-///
-/// Example: `SampleDensity(50)` means 50 samples per 1000px, so a 1920px edge gets ~96 samples
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SampleDensity(pub usize);
-
-impl SampleDensity {
-    /// Calculate samples, capped at one per pixel (at least one for empty edges).
-    #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss,
-        reason = "sample counts use approximate geometry and saturate to the edge length"
-    )]
-    pub fn samples_for_length(self, length_px: usize) -> usize {
-        (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
-    }
-
-    /// Get the raw density value (samples per 1000px)
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for SampleDensity {
-    fn default() -> Self {
-        crate::Config::default().sample_density
-    }
-}
 
 /// Gradient of colors along an edge, in linear RGB space.
 #[derive(Debug, Clone, PartialEq)]

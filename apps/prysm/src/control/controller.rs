@@ -47,7 +47,7 @@ fn update_observation(state: &mut StateResponse, snapshot: LightingSnapshot) {
     state.pipeline = snapshot.pipeline;
 }
 fn failed_operation(id: OperationId, error: &anyhow::Error) -> OperationStatus {
-    tracing::error!(error=%format!("{error:#}"),"operation failed");
+    tracing::error!(operation_id = ?id, error=%format!("{error:#}"),"operation failed");
     OperationStatus::Failed {
         id,
         error: ApiError {
@@ -120,6 +120,11 @@ impl Controller {
             .map(ToString::to_string)
             .unwrap_or_default();
         self.state.restart_required = self.config.web != self.active_web;
+        tracing::info!(
+            revision = self.config.revision.get(),
+            restart_required = self.state.restart_required,
+            "configuration saved"
+        );
     }
     fn publish_state(&mut self) {
         self.state.pipeline = self.lighting.status.borrow().clone();
@@ -152,7 +157,10 @@ impl Controller {
         snapshot: LightingSnapshot,
     ) {
         self.state.operation = match result {
-            Ok(()) => OperationStatus::Succeeded { id },
+            Ok(()) => {
+                tracing::info!(operation_id = ?id, "operation completed");
+                OperationStatus::Succeeded { id }
+            }
             Err(error) => failed_operation(id, &error),
         };
         update_observation(&mut self.state, snapshot);
@@ -240,6 +248,7 @@ impl Controller {
                     return None;
                 }
                 let id = self.begin_operation();
+                tracing::info!(operation_id = ?id, ?target, "lighting change requested");
                 let _ = reply.send(Ok(OperationResponse { operation_id: id }));
                 let lighting = self.lighting.clone();
                 let previous = self.config.clone();
@@ -294,6 +303,7 @@ impl Controller {
                     return None;
                 }
                 let id = self.begin_operation();
+                tracing::info!(operation_id = ?id, expected_revision = update.expected_revision.get(), "configuration change requested");
                 let previous = self.config.clone();
                 let path = self.path.clone();
                 Some(tokio::spawn(async move {
