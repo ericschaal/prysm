@@ -6,10 +6,10 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use futures::StreamExt;
 use prysm_contract::{ConfigRevision, Output, PipelinePhase, PipelineStatus, ProcessingSettings};
-use prysm_core::ProcessedSnapshot;
+use prysm_core::{EdgeColors, ProcessedSnapshot};
 use prysm_processor::PrysmProcessor;
 use prysm_renderer_wled::WledRenderer;
-use std::{sync::Arc, thread::JoinHandle};
+use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -36,9 +36,9 @@ impl PreparedOutput {
             leds: leds.counts(),
         })
     }
-    fn render(&mut self, snapshot: &ProcessedSnapshot) -> Result<()> {
+    fn render(&mut self, colors: &EdgeColors) -> Result<()> {
         self.backend
-            .render_edges(&snapshot.colors, self.leds)
+            .render_edges(colors, self.leds)
             .context("cannot send WLED frame")
     }
 }
@@ -75,7 +75,7 @@ pub(crate) fn launch(
     let (ready, readiness) = oneshot::channel();
     let (finished, completed) = oneshot::channel();
     let (prepared, backend) = oneshot::channel();
-    let (publication, frames) = watch::channel(None::<Arc<ProcessedSnapshot>>);
+    let (publication, frames) = watch::channel(None::<EdgeColors>);
     let worker_shutdown = shutdown.clone();
     let worker = std::thread::Builder::new()
         .name("prysm-processing".into())
@@ -160,7 +160,7 @@ pub(crate) fn launch(
 }
 async fn consume(
     output: &mut PreparedOutput,
-    mut frames: watch::Receiver<Option<Arc<ProcessedSnapshot>>>,
+    mut frames: watch::Receiver<Option<EdgeColors>>,
 ) -> Result<()> {
     // changed() delivers an unseen final value even after the sole publisher closes.
     while frames.changed().await.is_ok() {
@@ -195,7 +195,7 @@ async fn process(
     config: PipelineConfig,
     input: InputStream,
     mut commands: mpsc::Receiver<Configure>,
-    publication: watch::Sender<Option<Arc<ProcessedSnapshot>>>,
+    publication: watch::Sender<Option<EdgeColors>>,
     shutdown: CancellationToken,
     status: watch::Sender<PipelineStatus>,
     preview: Option<crate::preview::Publisher>,
@@ -255,15 +255,17 @@ async fn process(
         let colors = processor.process_frame(frame.clone());
         drop(timer);
         prysm_metrics::frame(prysm_metrics::FrameStage::Processed, frame.format().into());
-        let snapshot = Arc::new(ProcessedSnapshot {
-            frame,
-            viewport: processor.viewport(),
-            colors,
-        });
         if let Some(preview) = &preview {
-            preview.publish(Arc::clone(&snapshot), revision);
+            preview.publish(
+                ProcessedSnapshot {
+                    frame,
+                    viewport: processor.viewport(),
+                    colors: colors.clone(),
+                },
+                revision,
+            );
         }
-        publication.send_replace(Some(snapshot));
+        publication.send_replace(Some(colors));
         status.send_modify(|status| {
             status.frames_processed = status.frames_processed.saturating_add(1);
         });
@@ -317,6 +319,30 @@ mod tests {
             ..super::super::runtime::idle()
         })
         .0
+    }
+    #[tokio::test]
+    async fn lighting_publication_does_not_retain_source_pixels() {
+        let mut pool = prysm_core::FramePool::default();
+        let mut writer = pool.acquire(4, 2, PixelFormat::RGB24).unwrap();
+        writer.as_mut_slice().fill(255);
+        let frame = writer.finish();
+        let pixels = frame.as_slice().as_ptr();
+        let (publish, frames) = watch::channel(None);
+        process(
+            config(),
+            input(stream::once(async move { Ok(frame) }).boxed()),
+            mpsc::channel(8).1,
+            publish,
+            CancellationToken::new(),
+            status(),
+            None,
+        )
+        .await
+        .unwrap();
+        // An unread output still owns its colors, but the source allocation is reusable.
+        assert!(frames.borrow().is_some());
+        let writer = pool.acquire(4, 2, PixelFormat::RGB24).unwrap();
+        assert_eq!(writer.finish().as_slice().as_ptr(), pixels);
     }
     #[tokio::test]
     async fn eof_closes_publication_and_output_drains_final_unseen_result() {
@@ -402,7 +428,6 @@ mod tests {
                 .borrow_and_update()
                 .as_ref()
                 .unwrap()
-                .colors
                 .top
                 .sample_at(0.5)
                 == LinearColor::black();
@@ -455,8 +480,18 @@ mod tests {
         continue_read.send(()).unwrap();
         frames.changed().await.unwrap();
         assert_eq!(
-            frames.borrow().as_ref().unwrap().frame.as_slice(),
-            &[255; 24]
+            frames
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .top
+                .sample_at(0.5)
+                .to_srgb(),
+            prysm_core::Color {
+                r: 255,
+                g: 255,
+                b: 255
+            }
         );
         assert_eq!(processing.await.unwrap().unwrap(), PipelineExit::Completed);
     }
@@ -496,11 +531,7 @@ mod tests {
             leds: [1; 4],
         };
         let (publish, frames) = watch::channel(None);
-        publish.send_replace(Some(Arc::new(ProcessedSnapshot {
-            frame: Frame::dummy(4, 2).unwrap(),
-            viewport: None,
-            colors: prysm_core::EdgeColors::default(),
-        })));
+        publish.send_replace(Some(EdgeColors::default()));
         drop(publish);
         assert!(
             consume(&mut output, frames)
@@ -540,10 +571,14 @@ mod tests {
     #[tokio::test]
     #[ignore = "local synthetic delivery/age measurement; run with --ignored --nocapture"]
     async fn measure_processing_delivery_and_local_age() {
-        use std::{collections::HashMap, sync::Mutex, time::Instant};
+        use std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+            time::Instant,
+        };
         const COUNT: usize = 240;
         let originals: Vec<_> = (0..COUNT)
-            .map(|_| Frame::fill(128, 320, 180, PixelFormat::RGB24).unwrap())
+            .map(|i| Frame::fill(u8::try_from(i).unwrap(), 320, 180, PixelFormat::RGB24).unwrap())
             .collect();
         let timestamps = Arc::new(Mutex::new(HashMap::<usize, Instant>::new()));
         let recorded = timestamps.clone();
@@ -553,7 +588,7 @@ mod tests {
         let source = stream::iter(originals.clone().into_iter().map(Ok))
             .inspect(move |frame| {
                 recorded.lock().unwrap().insert(
-                    frame.as_ref().unwrap().as_slice().as_ptr() as usize,
+                    usize::from(frame.as_ref().unwrap().as_slice()[0]),
                     Instant::now(),
                 );
                 polled += 1;
@@ -572,8 +607,10 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
+            let mut configuration = config();
+            configuration.processing.shadow_lift_percent = 0.try_into().unwrap();
             let result = runtime.block_on(process(
-                config(),
+                configuration,
                 input(source),
                 commands,
                 publish,
@@ -597,7 +634,7 @@ mod tests {
             let snapshot = frames.borrow_and_update().clone().unwrap();
             output.render(&snapshot).unwrap();
             let started =
-                timestamps.lock().unwrap()[&(snapshot.frame.as_slice().as_ptr() as usize)];
+                timestamps.lock().unwrap()[&usize::from(snapshot.top.sample_at(0.0).to_srgb().r)];
             ages.push(started.elapsed());
             while socket.recv(&mut [0; 1500]).is_ok() {}
             tokio::task::yield_now().await;

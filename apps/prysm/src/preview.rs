@@ -27,21 +27,22 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub(crate) struct Publisher {
-    latest: watch::Sender<Option<Arc<PublishedSnapshot>>>,
+    latest: watch::Sender<Option<PublishedSnapshot>>,
     sequence: Arc<AtomicU64>,
 }
+#[derive(Clone)]
 struct PublishedSnapshot {
     id: u64,
     revision: ConfigRevision,
-    snapshot: Arc<ProcessedSnapshot>,
+    snapshot: ProcessedSnapshot,
 }
 impl Publisher {
-    pub(crate) fn publish(&self, snapshot: Arc<ProcessedSnapshot>, revision: ConfigRevision) {
-        self.latest.send_replace(Some(Arc::new(PublishedSnapshot {
+    pub(crate) fn publish(&self, snapshot: ProcessedSnapshot, revision: ConfigRevision) {
+        self.latest.send_replace(Some(PublishedSnapshot {
             id: self.sequence.fetch_add(1, Ordering::Relaxed),
             revision,
             snapshot,
-        })));
+        }));
     }
 }
 
@@ -129,10 +130,10 @@ impl Preview {
 }
 fn encode_jobs(
     receiver: &mpsc::Receiver<Job>,
-    latest: &watch::Receiver<Option<Arc<PublishedSnapshot>>>,
+    latest: &watch::Receiver<Option<PublishedSnapshot>>,
     mut encode_snapshot: impl FnMut(&PublishedSnapshot) -> Result<String>,
 ) {
-    let mut cached: Option<(Arc<PublishedSnapshot>, Arc<str>)> = None;
+    let mut cached: Option<(u64, Arc<str>)> = None;
     while let Ok(reply) = receiver.recv() {
         if reply.is_closed() {
             continue;
@@ -142,7 +143,7 @@ fn encode_jobs(
             None => Arc::from(r#"{"type":"idle"}"#),
             Some(current) => {
                 if let Some((previous, encoded)) = &cached
-                    && Arc::ptr_eq(previous, &current)
+                    && *previous == current.id
                 {
                     let _ = reply.send(encoded.clone());
                     continue;
@@ -154,7 +155,7 @@ fn encode_jobs(
                             .to_string(),
                     ),
                 };
-                cached = Some((current, Arc::clone(&encoded)));
+                cached = Some((current.id, Arc::clone(&encoded)));
                 encoded
             }
         };
@@ -287,12 +288,44 @@ fn encode(published: &PublishedSnapshot) -> Result<String> {
 mod tests {
     use super::*;
     use prysm_core::{EdgeColors, Frame, Viewport};
+
+    #[tokio::test]
+    async fn cached_response_does_not_pin_the_previous_raw_frame() {
+        let preview = Preview::new();
+        let mut pool = prysm_core::FramePool::default();
+        let mut writer = pool.acquire(4, 2, PixelFormat::RGB24).unwrap();
+        writer.as_mut_slice().fill(42);
+        let frame = writer.finish();
+        let pixels = frame.as_slice().as_ptr();
+        preview.publisher().publish(
+            ProcessedSnapshot {
+                frame,
+                viewport: None,
+                colors: EdgeColors::default(),
+            },
+            ConfigRevision::new(1),
+        );
+        let response = preview.request().unwrap().await.unwrap();
+        assert!(response.contains("\"frame_id\":1"));
+        preview.publisher().publish(
+            ProcessedSnapshot {
+                frame: Frame::dummy(4, 2).unwrap(),
+                viewport: None,
+                colors: EdgeColors::default(),
+            },
+            ConfigRevision::new(2),
+        );
+        // The response remains held while the encoder has no further demand.
+        let writer = pool.acquire(4, 2, PixelFormat::RGB24).unwrap();
+        assert_eq!(writer.finish().as_slice().as_ptr(), pixels);
+        preview.shutdown().await.unwrap();
+    }
     #[tokio::test]
     async fn lazy_worker_encodes_paired_result_and_reuses_same_frame() {
         let preview = Preview::new();
         assert!(preview.0.worker.lock().unwrap().join.is_none());
         preview.publisher().publish(
-            Arc::new(ProcessedSnapshot {
+            ProcessedSnapshot {
                 frame: Frame::fill(255, 8, 4, PixelFormat::RGB24).unwrap(),
                 viewport: Some(Viewport {
                     x: 2,
@@ -301,7 +334,7 @@ mod tests {
                     height: 4,
                 }),
                 colors: EdgeColors::default(),
-            }),
+            },
             ConfigRevision::new(7),
         );
         assert!(preview.0.worker.lock().unwrap().join.is_none());
@@ -346,7 +379,7 @@ mod tests {
         let published = PublishedSnapshot {
             id: 1,
             revision: ConfigRevision::new(2),
-            snapshot: Arc::new(ProcessedSnapshot {
+            snapshot: ProcessedSnapshot {
                 frame: Frame::new(data, 600, 1200, PixelFormat::BGR24).unwrap(),
                 viewport: Some(Viewport {
                     x: 10,
@@ -355,7 +388,7 @@ mod tests {
                     height: 1000,
                 }),
                 colors: EdgeColors::default(),
-            }),
+            },
         };
         let value: serde_json::Value = serde_json::from_str(&encode(&published).unwrap()).unwrap();
         assert_eq!(value["width"], 240);
@@ -374,11 +407,11 @@ mod tests {
     async fn stalled_encoder_does_not_hold_snapshot_or_accumulate_old_frames() {
         let preview = Preview::new();
         let publisher = preview.publisher();
-        let snapshot = Arc::new(ProcessedSnapshot {
+        let snapshot = ProcessedSnapshot {
             frame: Frame::dummy(4, 2).unwrap(),
             viewport: None,
             colors: EdgeColors::default(),
-        });
+        };
         publisher.publish(snapshot.clone(), ConfigRevision::new(1));
         let (jobs, receiver) = mpsc::sync_channel(1);
         let latest = publisher.latest.subscribe();

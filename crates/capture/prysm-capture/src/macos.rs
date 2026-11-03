@@ -39,10 +39,12 @@ use objc2_foundation::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{CaptureError, Frame, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix};
+use crate::{
+    CaptureError, Frame, FramePool, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix,
+};
 
 struct DelegateIvars {
-    sender: Mutex<Option<tokio::sync::watch::Sender<Option<Frame>>>>,
+    capture: Mutex<Option<(tokio::sync::watch::Sender<Option<Frame>>, FramePool)>>,
     failure: CancellationToken,
     error: Mutex<Option<CaptureError>>,
 }
@@ -70,11 +72,9 @@ define_class!(
             let Some(pixel_buffer) = image_buffer.downcast::<CVPixelBuffer>() else {
                 return;
             };
-            let Some(frame) = frame_from_pixel_buffer(&pixel_buffer) else {
-                return;
-            };
-            if let Ok(sender) = self.ivars().sender.lock()
-                && let Some(sender) = sender.as_ref()
+            if let Ok(mut capture) = self.ivars().capture.lock()
+                && let Some((sender, pool)) = capture.as_mut()
+                && let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, pool)
             {
                 let _ = sender.send(Some(frame));
             }
@@ -105,7 +105,7 @@ define_class!(
         #[unsafe(method_id(init))]
         fn init(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(DelegateIvars {
-                sender: Mutex::new(None),
+                capture: Mutex::new(None),
                 failure: CancellationToken::new(),
                 error: Mutex::new(None),
             });
@@ -117,7 +117,8 @@ define_class!(
 impl Delegate {
     fn new(sender: tokio::sync::watch::Sender<Option<Frame>>) -> Retained<Self> {
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
-        *this.ivars().sender.lock().expect("sender mutex poisoned") = Some(sender);
+        *this.ivars().capture.lock().expect("capture mutex poisoned") =
+            Some((sender, FramePool::default()));
         this
     }
 
@@ -144,7 +145,7 @@ impl Drop for Delegate {
 /// Copies a `yuvs` (YUYV) pixel buffer into a [`Frame`], stripping any row
 /// padding so the data matches the tightly-packed layout produced by the v4l
 /// capturer on Linux.
-fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
+fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -> Option<Frame> {
     let range = if pixel_buffer.get_pixel_format() == kCVPixelFormatType_422YpCbCr8_yuvs {
         YuvRange::Limited
     } else if pixel_buffer.get_pixel_format() == kCVPixelFormatType_422YpCbCr8FullRange {
@@ -191,24 +192,35 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer) -> Option<Frame> {
     let frame = if base.is_null() {
         None
     } else {
-        let row_size = width * 2; // YUYV: 2 bytes per pixel
-        let data = if stride == row_size {
-            // No row padding: copy the whole plane in one memcpy
-            unsafe { slice::from_raw_parts(base, height * row_size) }.to_vec()
-        } else {
-            let mut data = Vec::with_capacity(height * row_size);
-            for row in 0..height {
-                let row = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
-                data.extend_from_slice(row);
+        (|| {
+            let row_size = width.checked_mul(2)?;
+            let size = stride
+                .checked_mul(height.checked_sub(1)?)?
+                .checked_add(row_size)?;
+            if row_size == 0 || stride < row_size || size > isize::MAX as usize {
+                return None;
             }
-            data
-        };
-        match (u32::try_from(width), u32::try_from(height)) {
-            (Ok(width), Ok(height)) => {
-                Frame::new(data, width, height, PixelFormat::YUYV { range, matrix }).ok()
+            let mut frame = pool
+                .acquire(
+                    u32::try_from(width).ok()?,
+                    u32::try_from(height).ok()?,
+                    PixelFormat::YUYV { range, matrix },
+                )
+                .ok()?;
+            if stride == row_size {
+                // SAFETY: the locked packed plane contains exactly these pixel bytes.
+                frame
+                    .as_mut_slice()
+                    .copy_from_slice(unsafe { slice::from_raw_parts(base, size) });
+            } else {
+                for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
+                    // SAFETY: row bounds were checked above; skip native padding bytes.
+                    let pixels = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
+                    target.copy_from_slice(pixels);
+                }
             }
-            _ => None,
-        }
+            Some(frame.finish())
+        })()
     };
 
     pixel_buffer.unlock_base_address(kCVPixelBufferLock_ReadOnly);
@@ -635,7 +647,7 @@ mod tests {
             }
         }
         buffer.unlock_base_address(0);
-        let frame = frame_from_pixel_buffer(&buffer).unwrap();
+        let frame = frame_from_pixel_buffer(&buffer, &mut FramePool::default()).unwrap();
         assert_eq!(
             frame.as_slice(),
             [16, 128, 235, 128, 16, 128, 235, 128].repeat(2)

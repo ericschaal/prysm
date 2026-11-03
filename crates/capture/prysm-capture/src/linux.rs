@@ -1,4 +1,6 @@
-use crate::{CaptureError, Frame, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix};
+use crate::{
+    CaptureError, Frame, FramePool, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix,
+};
 use anyhow::Context;
 use futures::Stream;
 use std::num::NonZeroU32;
@@ -261,6 +263,7 @@ impl PrysmCapturer for V4lCapturer {
                     }
                 };
                 tracing::info!("Stream started with format: {:?}", pixel_format);
+                let mut pool = FramePool::default();
                 loop {
                     if self.shutdown_token.is_cancelled() || tx.is_closed() {
                         return Ok(());
@@ -269,7 +272,7 @@ impl PrysmCapturer for V4lCapturer {
                         Ok((buffer, metadata)) => {
                             let Some(frame) =
                                 buffer.get(..metadata.bytesused as usize).and_then(|data| {
-                                    Frame::from_strided_buffer(
+                                    pool.copy_from_strided(
                                         data,
                                         format.width,
                                         format.height,

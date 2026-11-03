@@ -145,6 +145,17 @@ impl Decoder {
     }
     pub fn decode(&mut self, header: Header, payload: &[u8]) -> Result<Vec<u8>> {
         header.validate()?;
+        let mut rgb = vec![0; header.width as usize * header.height as usize * 3];
+        self.decode_into(header, payload, &mut rgb)?;
+        Ok(rgb)
+    }
+    /// Decode into an exact-sized RGB24 destination, preserving the decoder's reference frames.
+    pub fn decode_into(&mut self, header: Header, payload: &[u8], rgb: &mut [u8]) -> Result<()> {
+        header.validate()?;
+        ensure!(
+            rgb.len() == header.width as usize * header.height as usize * 3,
+            "invalid H.264 RGB destination length"
+        );
         ensure!(
             payload.len() == header.payload_len && header.codec == crate::Codec::H264,
             "invalid H.264 payload"
@@ -216,7 +227,6 @@ impl Decoder {
             decoded.dimensions() == (header.width as usize, header.height as usize),
             "H.264 dimensions disagree with header"
         );
-        let mut rgb = vec![0; header.width as usize * header.height as usize * 3];
         let (ys, us, vs) = decoded.strides();
         let image = yuv::YuvPlanarImage {
             y_plane: decoded.y(),
@@ -230,12 +240,12 @@ impl Decoder {
         };
         yuv::yuv420_to_rgb(
             &image,
-            &mut rgb,
+            rgb,
             header.width * 3,
             YuvRange::Limited,
             YuvStandardMatrix::Bt709,
         )?;
-        Ok(rgb)
+        Ok(())
     }
 }
 
@@ -408,6 +418,7 @@ mod tests {
         for format in [PixelFormat::Rgb, PixelFormat::Nv12, PixelFormat::Nv16] {
             let mut encoder = Encoder::new(2_000_000, 30).unwrap();
             let mut decoder = Decoder::new().unwrap();
+            let mut rgb = vec![0; 64 * 34 * 3];
             for i in 0..35 {
                 let mut input = Header {
                     width: 64,
@@ -444,7 +455,10 @@ mod tests {
                     payload_len: payload.len(),
                     ..input
                 };
-                let rgb = decoder.decode(wire, &payload).unwrap();
+                if i == 0 {
+                    assert!(decoder.decode_into(wire, &payload, &mut rgb[..10]).is_err());
+                }
+                decoder.decode_into(wire, &payload, &mut rgb).unwrap();
                 assert!(
                     rgb.as_chunks::<3>()
                         .0

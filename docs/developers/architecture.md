@@ -25,11 +25,31 @@ changes recreate a run. Web listen/access-policy changes require application res
 
 Each active run owns a dedicated OS thread with a Tokio current-thread runtime.
 It polls the selected fallible input stream, runs one sequential `PrysmProcessor`,
-and publishes `Arc<ProcessedSnapshot>` containing source Frame, optional source-pixel
-Viewport, and EdgeColors from the same pass. Frame pixels and color strips are
-already shared immutable buffers. Core data and processing do not know about HTTP,
+and publishes only `EdgeColors` to lighting. Preview receives a `ProcessedSnapshot`
+containing source Frame, optional source-pixel Viewport, and EdgeColors from the
+same pass. Cloning these values shares their immutable pixel/color buffers without
+allocating wrappers. Core data and processing do not know about HTTP,
 preview wire formats, runtime workers or application commands. There is one
 capturer, one processor and one configured lighting output; no processing graph.
+
+Each native capture session, webOS connection and file reader owns a `FramePool`
+with at most four retained pixel buffers. It acquires a fixed-length writable
+buffer, fills it directly, then publishes an immutable Frame. `Arc::get_mut`
+allows reuse only after every consumer has released that buffer. There are no
+return queues or custom destructors. If all four buffers are held, capture replaces
+one pool reference with a fresh allocation; existing readers retain their old
+pixels and capture never waits for them. The cap bounds retained pool entries,
+not buffers still owned by consumers. Four 1080p RGB buffers occupy about 25 MB;
+capacities grow as needed. Ending the producer releases its pool references;
+observers may still retain the final frame.
+
+Steady-state reuse avoids pixel allocation and clearing, not the copy from native
+capture storage or required color conversion. `FrameWriter` keeps validated
+geometry separate from fixed-length mutable pixels; reads/conversions must finish
+successfully before publication. Cancelling a partial read publishes nothing.
+Lighting never retains source pixels. Preview retains its latest snapshot and any
+currently encoding snapshot, but its encoded-response cache stores only the
+publication ID and encoded response.
 
 The processing loop retains its in-flight stream read across configuration events,
 services cancellation/configuration/availability, and yields even for continuously
@@ -43,7 +63,7 @@ WLED implements the single tagged production Output variant. Its DDP adapter sta
 in `prysm-renderer-wled`; WLED HTTP power/effect capabilities stay in the application
 backend rather than a universal renderer interface. Hostname resolution occurs on
 the processing/setup worker before the renderer moves into the application task.
-The consumer clones the latest snapshot, releases watch borrows, resamples/packs
+The consumer clones the latest edge colors, releases watch borrows, resamples/packs
 and sends nonblocking UDP. `WouldBlock` remains a rendering error. This task shares
 scheduling with HTTP; it does not provide strict HTTP isolation.
 
@@ -56,7 +76,7 @@ the per-run output channel. Opening preview never starts capture.
 The encoder is one synchronous OS worker, started on first demand, with a bounded
 channel allowing one active and one queued request. It reads the freshest paired
 snapshot when work starts, downscales to at most 480px on either axis, encodes JPEG,
-and reuses an encoded response for the same publication. No encoder runs without
+and reuses an encoded response for the same publication ID. No encoder runs without
 demand. At most four WebSocket viewers may connect; each requests the next response
 after decode/display, with at most 8 fps. Hidden/closed views stop requesting. Slow,
 disconnected and malformed clients affect only preview. Image/crop/edge drawing
@@ -97,6 +117,16 @@ include synchronous packing/socket acceptance, not physical screen-to-light late
 Backend/native libraries may create auxiliary threads; this documents owned contexts,
 not an exact process thread count. Linux and physical device behavior require target
 CI/hardware checks; macOS results do not establish those properties.
+
+`cargo run --release -p prysm-processor --example frame_recycling` compares fresh
+and pooled input buffers while retaining the previous frame, then repeats with
+processing enabled. It asserts zero steady-state capture allocations and matching
+output checksums. On the development Mac, three runs at 1080p RGB/density 128
+reduced copy-plus-processing allocations from 18 to 16 per frame and allocated
+bytes from 6,239,544 to 18,704. Median time was 6.006ms versus 5.986ms: no convincing
+CPU gain. This is an allocation-volume improvement; pixel copying, processing
+allocations and decoder-internal allocations remain. The benchmark excludes device
+I/O, preview encoding and publication wrappers (which no longer allocate).
 
 ## Workspace map
 

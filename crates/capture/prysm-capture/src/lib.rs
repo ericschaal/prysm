@@ -1,5 +1,7 @@
 //! Capture interfaces, latest-frame delivery, and platform adapters.
-pub use prysm_core::{Frame, FrameError, PixelFormat, YuvRange, YuvStandardMatrix, yuyv};
+pub use prysm_core::{
+    Frame, FrameError, FramePool, PixelFormat, YuvRange, YuvStandardMatrix, yuyv,
+};
 mod receiver;
 mod webos;
 pub use receiver::WebosReceiver;

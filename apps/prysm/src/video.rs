@@ -6,7 +6,7 @@ use std::{io, num::NonZeroU32};
 
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
-use prysm_capture::{Frame, PixelFormat};
+use prysm_capture::{Frame, FramePool, PixelFormat};
 use prysm_core::CaptureResolution;
 use std::{
     pin::Pin,
@@ -78,13 +78,13 @@ pub fn video_feed(
     });
     let cancel = child_shutdown.drop_guard();
     let frames = futures::stream::try_unfold(
-        (stdout, exit, cancel),
-        move |(mut stdout, exit, cancel)| async move {
-            if let Some(frame) = read_frame(&mut stdout, resolution)
+        (stdout, exit, cancel, FramePool::default()),
+        move |(mut stdout, exit, cancel, mut pool)| async move {
+            if let Some(frame) = read_frame(&mut stdout, resolution, &mut pool)
                 .await
                 .context("Failed to read FFmpeg frame")?
             {
-                return Ok(Some((frame, (stdout, exit, cancel))));
+                return Ok(Some((frame, (stdout, exit, cancel, pool))));
             }
             let status = exit.await.context("FFmpeg monitor ended unexpectedly")??;
             anyhow::ensure!(status.success(), "FFmpeg exited with {status}");
@@ -131,17 +131,18 @@ impl Stream for VideoFeed {
 async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     resolution: CaptureResolution,
+    pool: &mut FramePool,
 ) -> io::Result<Option<Frame>> {
     let [width, height] = resolution.dimensions();
-    let mut data = vec![0; resolution.rgb24_bytes()];
+    let mut frame = pool
+        .acquire(width, height, PixelFormat::RGB24)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let data = frame.as_mut_slice();
     if reader.read(&mut data[..1]).await? == 0 {
         return Ok(None);
     }
     reader.read_exact(&mut data[1..]).await?;
-    Ok(Some(
-        Frame::new(data, width, height, PixelFormat::RGB24)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-    ))
+    Ok(Some(frame.finish()))
 }
 
 #[cfg(test)]
@@ -149,33 +150,86 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn file_reads_reuse_released_frames_and_preserve_retained_frames() {
+        let resolution = CaptureResolution::new(8, 4).unwrap();
+        let mut pool = FramePool::default();
+        let bytes: Vec<_> = [1, 2, 3, 4]
+            .into_iter()
+            .flat_map(|value| [value; 96])
+            .collect();
+        let mut reader = bytes.as_slice();
+        let first = read_frame(&mut reader, resolution, &mut pool)
+            .await
+            .unwrap()
+            .unwrap();
+        let pixels = first.as_slice().as_ptr();
+        let second = read_frame(&mut reader, resolution, &mut pool)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(second.as_slice().as_ptr(), pixels);
+        drop(first);
+        let third = read_frame(&mut reader, resolution, &mut pool)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(third.as_slice().as_ptr(), pixels);
+        assert_eq!(second.as_slice(), &[2; 96]);
+        assert_eq!(third.as_slice(), &[3; 96]);
+        drop(third);
+        assert!(
+            read_frame(&mut &[99; 95][..], resolution, &mut pool)
+                .await
+                .is_err()
+        );
+        let fourth = read_frame(&mut reader, resolution, &mut pool)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fourth.as_slice().as_ptr(), pixels);
+        assert_eq!(fourth.as_slice(), &[4; 96]);
+    }
+
+    #[tokio::test]
     async fn reads_complete_frames_and_clean_eof() {
         let mut bytes = vec![42; 96];
         bytes.extend(vec![123; 96]);
         let mut reader = bytes.as_slice();
         for expected in [42, 123] {
-            let frame = read_frame(&mut reader, CaptureResolution::new(8, 4).unwrap())
-                .await
-                .unwrap()
-                .unwrap();
+            let frame = read_frame(
+                &mut reader,
+                CaptureResolution::new(8, 4).unwrap(),
+                &mut FramePool::default(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!((frame.width(), frame.height()), (8, 4));
             assert_eq!(frame.format(), PixelFormat::RGB24);
             assert!(frame.as_slice().iter().all(|&byte| byte == expected));
         }
         assert!(
-            read_frame(&mut reader, CaptureResolution::new(8, 4).unwrap())
-                .await
-                .unwrap()
-                .is_none()
+            read_frame(
+                &mut reader,
+                CaptureResolution::new(8, 4).unwrap(),
+                &mut FramePool::default()
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
     }
 
     #[tokio::test]
     async fn truncated_frame_is_an_error() {
         let bytes = vec![0; CaptureResolution::default().rgb24_bytes() - 1];
-        let error = read_frame(&mut bytes.as_slice(), CaptureResolution::default())
-            .await
-            .unwrap_err();
+        let error = read_frame(
+            &mut bytes.as_slice(),
+            CaptureResolution::default(),
+            &mut FramePool::default(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     }
 

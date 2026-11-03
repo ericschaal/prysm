@@ -5,7 +5,7 @@ mod frame;
 mod linear;
 pub mod yuyv;
 
-pub use frame::{Frame, FrameError, PixelFormat};
+pub use frame::{Frame, FrameError, FramePool, FrameWriter, PixelFormat};
 pub use yuv::{YuvRange, YuvStandardMatrix};
 
 pub use color::Color;
@@ -47,7 +47,7 @@ impl Viewport {
 }
 
 /// Source image and the crop/colors produced by one processing pass.
-/// Share this value with `Arc` when publishing to independent observers.
+/// Cloning shares the pixel and color storage without copying their contents.
 #[derive(Debug, Clone)]
 pub struct ProcessedSnapshot {
     pub frame: Frame,
