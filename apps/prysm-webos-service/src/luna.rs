@@ -262,17 +262,15 @@ impl Callbacks {
             self.luna
                 .LSSubscriptionGetHandleSubscribersCount(self.handle.as_ptr(), c"/status".as_ptr())
         };
-        let mut value = self.status.borrow().snapshot(subscribed, count);
         if let Some(app) = self.app.borrow().as_ref() {
-            value.as_object_mut().expect("status object").extend(
-                app.state
-                    .snapshot()
-                    .as_object()
-                    .expect("supervisor object")
-                    .clone(),
-            );
+            serde_json::to_value(prysm_webos_service::contract::ServiceStatus {
+                observation: self.status.borrow().observation(subscribed, count),
+                supervisor: app.state.contract(),
+            })
+            .expect("serializable service status")
+        } else {
+            self.status.borrow().snapshot(subscribed, count)
         }
-        value
     }
 
     fn status(&self, message: &Message<'_>) -> Result<()> {
@@ -314,9 +312,9 @@ impl Callbacks {
                 *self.pending.borrow_mut() = Some(message.retain());
                 Ok(())
             }
-            Err(error) => {
-                message.respond(&json!({"returnValue":false, "errorText":error.to_string()}))
-            }
+            Err(error) => message.respond(&serde_json::to_value(
+                prysm_webos_service::contract::ErrorReply::new(error.to_string()),
+            )?),
         };
         if changed {
             self.status.borrow_mut().bump();

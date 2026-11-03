@@ -571,6 +571,226 @@
           }
         }
       },
+      "PreviewColor": {
+        "type": "array",
+        "items": {},
+        "prefixItems": [
+          {
+            "type": "integer",
+            "maximum": 255,
+            "minimum": 0
+          },
+          {
+            "type": "integer",
+            "maximum": 255,
+            "minimum": 0
+          },
+          {
+            "type": "integer",
+            "maximum": 255,
+            "minimum": 0
+          }
+        ],
+        "maxItems": 3,
+        "minItems": 3
+      },
+      "PreviewColors": {
+        "type": "object",
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "properties": {
+          "bottom": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            }
+          },
+          "left": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            }
+          },
+          "right": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            }
+          },
+          "top": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            }
+          }
+        }
+      },
+      "PreviewFrame": {
+        "type": "object",
+        "required": [
+          "frame_id",
+          "revision",
+          "source_width",
+          "source_height",
+          "width",
+          "height",
+          "viewport",
+          "colors",
+          "jpeg"
+        ],
+        "properties": {
+          "colors": {
+            "$ref": "#/components/schemas/PreviewColors"
+          },
+          "frame_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "jpeg": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ConfigRevision"
+          },
+          "source_height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source_width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "viewport": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PreviewViewport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "PreviewMessage": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PreviewFrame"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "frame"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "idle"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "busy"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "message",
+              "type"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PreviewViewport": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "x": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "y": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ProcessingSettings": {
         "type": "object",
         "required": [

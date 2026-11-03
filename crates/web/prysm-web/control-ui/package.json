@@ -4,11 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "generate-api": "node generate-schema.mjs && openapi-typescript openapi.json -o api.generated.ts",
-    "check-api": "node generate-schema.mjs --check && openapi-typescript openapi.json -o api.generated.ts --check",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
-    "test": "npm run check-api && npm run build && node ../tests/control-page.test.cjs && node --test dev-proxy.test.mjs"
+    "test": "npm run build && node ../tests/control-page.test.cjs && node --test dev-proxy.test.mjs"
   },
   "dependencies": {
     "openapi-fetch": "^0.17.0",
@@ -24,5 +22,8 @@
     "@types/react-dom": "^19.2.0",
     "@types/node": "^24.0.0",
     "openapi-typescript": "^7.13.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

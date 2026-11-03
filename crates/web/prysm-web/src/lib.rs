@@ -18,9 +18,7 @@ pub fn assets_router() -> Router {
     )
 }
 
-#[derive(rust_embed::Embed)]
-#[folder = "control-ui/dist/"]
-struct Assets;
+include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
 fn asset(path: &str) -> Response {
     match Assets::get(path) {

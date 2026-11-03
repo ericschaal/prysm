@@ -5,7 +5,7 @@ For installation and everyday use, see [Run Prysm](../users/README.md).
 
 ## Build
 
-Install a current stable Rust toolchain supporting edition 2024, Node.js 24, and npm.
+Install a current stable Rust toolchain supporting edition 2024, Node.js 24 or newer, and npm.
 Node builds the embedded web panel; it is not needed to run the built executable.
 On Linux, install native capture/build dependencies:
 
@@ -17,7 +17,8 @@ On macOS, install Xcode Command Line Tools. FFmpeg 9+ is needed at runtime only
 for file input. Hardware H.264 for webOS has [separate SDK requirements](packaging.md#webos).
 
 ```sh
-cargo build --locked --release -p prysm
+cargo xtask setup host
+cargo build --locked --release
 ```
 
 The executable is `target/release/prysm`. To use user-guide commands verbatim in
@@ -37,12 +38,13 @@ are local examples, not portable defaults. Startup is idle for every output.
 ## Test
 
 ```sh
-cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked
-python3 scripts/check-doc-links.py
+cargo xtask setup
+cargo xtask check
 ```
 
+Use `cargo xtask check rust` or `cargo xtask check frontend` for one group.
+The root [task guide](../../xtask/README.md) lists setup, generation and packaging commands.
+Bare `cargo build` targets the host app; `--workspace` explicitly includes TV apps and tooling.
 Run checks for the crate you changed first. Full Linux workspace builds with all
 features also need GStreamer development libraries, as configured in
 [CI](../../.github/workflows/check.yml). See [frontend tests](frontend.md) for UI/API changes.

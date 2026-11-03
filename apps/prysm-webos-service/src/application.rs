@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Result, ensure};
 use prysm_webos_protocol::worker::{VideoAvailability, VideoUpdate};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -182,9 +182,12 @@ impl App {
             Err(error) => {
                 self.state.error = Some(format!("{error:#}"));
                 self.scan = None;
-                self.pending
-                    .take()
-                    .map(|_| json!({"returnValue":false,"errorText":format!("{error:#}")}))
+                self.pending.take().map(|_| {
+                    serde_json::to_value(prysm_webos_service::contract::ErrorReply::new(format!(
+                        "{error:#}"
+                    )))
+                    .expect("serializable service error")
+                })
             }
         }
     }

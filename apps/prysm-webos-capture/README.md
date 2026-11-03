@@ -30,8 +30,9 @@ then from the repository root:
 
 ```sh
 rustup target add armv7-unknown-linux-gnueabi
+cargo xtask setup
 WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
-  ./packaging/webos/build-ipk.sh
+  cargo xtask package webos
 ```
 
 Hardware H.264 is excluded by default. Add `--hardware-h264` to the package
@@ -51,7 +52,7 @@ webOS compatibility build; each target firmware and hardware change needs its ow
 
 Binaries are in `target/armv7-unknown-linux-gnueabi/webos/`; the IPK and license
 notices are assembled by the [TV package build](../../docs/developers/packaging.md#webos).
-There is no separate distribution staging tree or per-crate build script.
+The package task builds both native binaries together; assembly lives in `packaging/webos`.
 LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 
 ## Worker startup and ownership

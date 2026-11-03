@@ -1,29 +1,9 @@
-export interface Config {
-    receiver: string;
-    source: 'both' | 'video';
-    compression: 'lz4' | 'none' | 'h264-software' | 'h264-hardware';
-    autostart: boolean;
-    metrics: boolean;
-}
+import type { components } from './service.generated';
 
-export interface Status {
-    config: Config;
-    enabled: boolean;
-    receiverConnected: boolean;
-    capturing: boolean;
-    videoAvailable?: boolean | null;
-    senderRunning: boolean;
-    stopping: boolean;
-    power: string | null;
-    error: string | null;
-    lastLog: string | null;
-    capabilities?: { hardwareH264?: boolean };
-}
-
-export type Reply = Partial<Status> & {
-    returnValue?: boolean;
-    subscribed?: boolean;
-    errorText?: string;
+export type Config = components['schemas']['Config'];
+export type Status = components['schemas']['ServiceStatus'];
+// The bridge also receives partial failures and Homebrew Channel's exec replies.
+export type Reply = Partial<Status> & Partial<components['schemas']['ErrorReply']> & {
     stderrString?: string;
 };
 

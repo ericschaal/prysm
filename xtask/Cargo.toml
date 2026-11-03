@@ -1,0 +1,21 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license.workspace = true
+repository.workspace = true
+description = "Prysm development and packaging commands"
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

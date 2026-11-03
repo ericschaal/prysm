@@ -5,13 +5,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Config {
     #[serde(with = "receiver")]
+    #[cfg_attr(feature = "schema", schema(value_type = String, required = true))]
     pub receiver: Option<ReceiverAddress>,
     pub source: Source,
     pub compression: Compression,
     pub autostart: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schema(required = true))]
     pub metrics: bool,
 }
 

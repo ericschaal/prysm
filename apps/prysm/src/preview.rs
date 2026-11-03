@@ -11,7 +11,9 @@ use axum::{
     routing::get,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use prysm_contract::ConfigRevision;
+use prysm_contract::{
+    ConfigRevision, PreviewColor, PreviewColors, PreviewFrame, PreviewMessage, PreviewViewport,
+};
 use prysm_core::{ColorStrip, PixelFormat, ProcessedSnapshot};
 use std::{
     sync::{
@@ -142,7 +144,9 @@ fn encode_jobs(
         }
         let current = latest.borrow().clone();
         let response = match current {
-            None => Arc::from(r#"{"type":"idle"}"#),
+            None => Arc::from(
+                serde_json::to_string(&PreviewMessage::Idle).expect("serializable preview message"),
+            ),
             Some(current) => {
                 if let Some((previous, encoded)) = &cached
                     && *previous == current.id
@@ -162,8 +166,10 @@ fn encode_jobs(
                             tracing::warn!(error = %error, "preview encoding failed");
                         }
                         Arc::from(
-                            serde_json::json!({"type":"error", "message":format!("{error:#}")})
-                                .to_string(),
+                            serde_json::to_string(&PreviewMessage::Error {
+                                message: format!("{error:#}"),
+                            })
+                            .expect("serializable preview message"),
                         )
                     }
                 };
@@ -221,7 +227,9 @@ async fn connection(preview: Preview, mut socket: WebSocket) {
             }
         } else {
             busy += 1;
-            Arc::from(r#"{"type":"busy"}"#)
+            Arc::from(
+                serde_json::to_string(&PreviewMessage::Busy).expect("serializable preview message"),
+            )
         };
         next = tokio::time::Instant::now() + Duration::from_millis(125);
         let send = socket.send(Message::Text(response.to_string().into()));
@@ -238,7 +246,7 @@ async fn connection(preview: Preview, mut socket: WebSocket) {
     }
     tracing::debug!(responses, busy, "preview viewer disconnected");
 }
-fn strip(strip: &ColorStrip) -> Vec<[u8; 3]> {
+fn strip(strip: &ColorStrip) -> Vec<PreviewColor> {
     // Diagnostic perimeter resolution stays bounded independently of input/sample settings.
     (0..strip.len().min(256))
         .map(|i| {
@@ -246,7 +254,7 @@ fn strip(strip: &ColorStrip) -> Vec<[u8; 3]> {
                 .color_at(i, strip.len().min(256))
                 .expect("bounded strip index")
                 .to_srgb();
-            [color.r, color.g, color.b]
+            PreviewColor([color.r, color.g, color.b])
         })
         .collect()
 }
@@ -296,17 +304,31 @@ fn encode(published: &PublishedSnapshot) -> Result<String> {
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 75)
         .encode(&rgb, width, height, image::ExtendedColorType::Rgb8)
         .context("cannot encode preview JPEG")?;
-    let viewport = snapshot
-        .viewport
-        .map(|v| serde_json::json!({"x":v.x,"y":v.y,"width":v.width,"height":v.height}));
+    let viewport = snapshot.viewport.map(|v| PreviewViewport {
+        x: v.x,
+        y: v.y,
+        width: v.width,
+        height: v.height,
+    });
     let colors = &snapshot.colors;
-    Ok(serde_json::json!({
-        "type":"frame", "frame_id":published.id, "revision":published.revision,
-        "source_width":frame.width(), "source_height":frame.height(), "width":width, "height":height,
-        "viewport":viewport,
-        "colors":{"top":strip(&colors.top),"right":strip(&colors.right),"bottom":strip(&colors.bottom),"left":strip(&colors.left)},
-        "jpeg": STANDARD.encode(jpeg)
-    }).to_string())
+    Ok(serde_json::to_string(&PreviewMessage::Frame(
+        PreviewFrame {
+            frame_id: published.id,
+            revision: published.revision,
+            source_width: frame.width(),
+            source_height: frame.height(),
+            width,
+            height,
+            viewport,
+            colors: PreviewColors {
+                top: strip(&colors.top),
+                right: strip(&colors.right),
+                bottom: strip(&colors.bottom),
+                left: strip(&colors.left),
+            },
+            jpeg: STANDARD.encode(jpeg),
+        },
+    ))?)
 }
 
 #[cfg(test)]

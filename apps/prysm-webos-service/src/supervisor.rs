@@ -1,7 +1,8 @@
 //! Deterministic lifecycle; only the process adapter executes these actions.
 use crate::config::Config;
 pub use prysm_webos_protocol::worker::WorkerEvent as Event;
-use serde_json::{Value, json};
+use prysm_webos_service::contract::{Capabilities, SupervisorStatus};
+use serde_json::Value;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,8 +55,24 @@ impl Supervisor {
     fn wanted(&self) -> bool {
         self.enabled && self.power.as_deref() == Some("Active") && self.config.receiver.is_some()
     }
+    pub fn contract(&self) -> SupervisorStatus {
+        SupervisorStatus {
+            enabled: self.enabled,
+            power: self.power.clone(),
+            sender_running: self.running,
+            receiver_connected: self.connected,
+            capturing: self.capturing,
+            stopping: self.stopping,
+            error: self.error.clone(),
+            last_log: self.log.clone(),
+            config: self.config.clone(),
+            capabilities: Capabilities {
+                hardware_h264: cfg!(feature = "hardware-h264"),
+            },
+        }
+    }
     pub fn snapshot(&self) -> Value {
-        json!({"enabled":self.enabled, "power":self.power, "senderRunning":self.running, "receiverConnected":self.connected, "capturing":self.capturing, "stopping":self.stopping, "error":self.error, "lastLog":self.log, "config":self.config, "capabilities":{"hardwareH264":cfg!(feature = "hardware-h264")}})
+        serde_json::to_value(self.contract()).expect("serializable supervisor status")
     }
     pub fn reconcile(&mut self, now: Instant) {
         if !self.wanted() {

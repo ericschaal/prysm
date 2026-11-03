@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck scripts/build-deb.sh packaging/debian/preinst packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
+          shellcheck packaging/debian/preinst packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
       - name: Debian upgrade script tests
         run: python3 -m unittest discover -s packaging/debian/tests
       - name: Documentation checker tests and repository links
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: |
             crates/web/prysm-web/control-ui/package-lock.json
@@ -60,15 +60,9 @@ jobs:
         with:
           key: frontend
       - name: Install frontend dependencies
-        run: npm ci --prefix crates/web/prysm-web/control-ui
-      - name: webOS app and package checks
-        run: |
-          npm ci --prefix crates/web/prysm-webos
-          npm test --prefix crates/web/prysm-webos
-          node --test packaging/webos/tests/*.test.js
-          python3 -m unittest discover -s packaging/webos/tests
-      - name: Generated API, TypeScript, production bundle, UI and Vite proxy tests
-        run: npm test --prefix crates/web/prysm-web/control-ui
+        run: cargo xtask setup
+      - name: Generated contracts, frontend and packaging checks
+        run: cargo xtask check frontend
 
   webos-arm:
     runs-on: ubuntu-24.04
@@ -100,7 +94,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
       - name: webOS build dependencies
         run: |
           sudo apt-get update
@@ -120,8 +114,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: webos-package-2026.08-webos
+      - name: Install frontend dependencies
+        run: cargo xtask setup
       - name: Build and validate webOS app package
-        run: ./packaging/webos/build-ipk.sh
+        run: cargo xtask package webos
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:
@@ -161,7 +157,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
       - name: Update Rust
@@ -176,6 +172,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust
+      - name: Install host UI dependencies
+        run: cargo +stable xtask setup host
       - name: Default workspace tests and doctests
         run: cargo +stable test --locked --workspace --no-default-features
       - name: All-feature workspace tests and doctests
@@ -203,7 +201,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
       - name: Linux build dependencies
@@ -213,11 +211,12 @@ jobs:
           key: debian-arm64
       - name: Packaging tool
         run: cargo install cargo-deb --version 3.8.0 --locked
-      - name: Verify and build package
-        run: ./scripts/build-deb.sh
-      - name: Generated contracts must be committed
-        # The container user differs from the checkout owner; trust only this workspace.
-        run: git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code HEAD -- crates/web/prysm-web/control-ui/openapi.json crates/web/prysm-web/control-ui/api.generated.ts
+      - name: Install host UI dependencies
+        run: cargo xtask setup host
+      - name: Verify Rust on arm64
+        run: cargo test --locked --workspace --no-default-features
+      - name: Verify contracts and build package
+        run: cargo xtask package deb
       - name: Inspect package and verify configuration lifecycle
         run: |
           dpkg-deb --info target/debian/*.deb

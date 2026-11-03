@@ -1,0 +1,193 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "prysm-webos-service",
+    "description": "Native Luna service for Prysm webOS capture",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "hardwareH264"
+        ],
+        "properties": {
+          "hardwareH264": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Compression": {
+        "type": "string",
+        "enum": [
+          "none",
+          "lz4",
+          "h264-software",
+          "h264-hardware"
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "required": [
+          "receiver",
+          "source",
+          "compression",
+          "autostart",
+          "metrics"
+        ],
+        "properties": {
+          "autostart": {
+            "type": "boolean"
+          },
+          "compression": {
+            "$ref": "#/components/schemas/Compression"
+          },
+          "metrics": {
+            "type": "boolean"
+          },
+          "receiver": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorReply": {
+        "type": "object",
+        "required": [
+          "returnValue",
+          "errorText"
+        ],
+        "properties": {
+          "errorText": {
+            "type": "string"
+          },
+          "returnValue": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Observation": {
+        "type": "object",
+        "required": [
+          "returnValue",
+          "subscribed",
+          "videoAvailable",
+          "revision",
+          "subscribers",
+          "pid"
+        ],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "returnValue": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "subscribed": {
+            "type": "boolean"
+          },
+          "subscribers": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "videoAvailable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "ServiceStatus": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Observation"
+          },
+          {
+            "$ref": "#/components/schemas/SupervisorStatus"
+          }
+        ]
+      },
+      "Source": {
+        "type": "string",
+        "enum": [
+          "video",
+          "both"
+        ]
+      },
+      "SupervisorStatus": {
+        "type": "object",
+        "required": [
+          "config",
+          "enabled",
+          "receiverConnected",
+          "capturing",
+          "senderRunning",
+          "stopping",
+          "power",
+          "error",
+          "lastLog",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          },
+          "capturing": {
+            "type": "boolean"
+          },
+          "config": {
+            "$ref": "#/components/schemas/Config"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastLog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "power": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "receiverConnected": {
+            "type": "boolean"
+          },
+          "senderRunning": {
+            "type": "boolean"
+          },
+          "stopping": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

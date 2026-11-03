@@ -4,6 +4,7 @@ use std::{fmt, net::SocketAddr, str::FromStr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Source {
     Video,
     Both,
@@ -11,6 +12,7 @@ pub enum Source {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Compression {
     None,
     Lz4,

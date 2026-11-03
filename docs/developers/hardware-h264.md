@@ -7,7 +7,7 @@ describe the implementation at the time. See the
 [single-tap cleanup audit](../../research/webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md).
 
 Hardware H.264 is excluded from default builds. Build with
-`./packaging/webos/build-ipk.sh --hardware-h264` to enable the `hardware-h264`
+`cargo xtask package webos --hardware-h264` to enable the `hardware-h264`
 Cargo feature in both the worker and supervisor. The TV app always offers
 **H.264 (software)** (`h264-software`, OpenH264), and adds **H.264 (hardware)**
 (`h264-hardware`) when status reports `capabilities.hardwareH264: true`.

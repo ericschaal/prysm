@@ -12,6 +12,7 @@ categories.workspace = true
 [features]
 hardware-h264 = []
 codegen = ["dep:bindgen"]
+schema = ["dep:utoipa", "prysm-webos-protocol/schema"]
 
 [dependencies]
 prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol" }
@@ -25,6 +26,7 @@ libloading.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true
 bindgen = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -33,6 +35,11 @@ tempfile.workspace = true
 name = "generate-luna-bindings"
 path = "codegen/main.rs"
 required-features = ["codegen"]
+
+[[bin]]
+name = "export-service-schema"
+path = "src/bin/export-service-schema.rs"
+required-features = ["schema"]
 
 [lints]
 workspace = true

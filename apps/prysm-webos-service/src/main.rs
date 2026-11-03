@@ -3,7 +3,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 mod application;
-mod config;
+use prysm_webos_service::config;
 mod files;
 #[allow(unsafe_code)]
 mod luna;

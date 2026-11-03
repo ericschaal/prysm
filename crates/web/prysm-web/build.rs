@@ -1,4 +1,4 @@
-use std::{error::Error, process::Command};
+use std::{error::Error, path::PathBuf, process::Command};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
@@ -9,18 +9,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("cargo::rerun-if-changed={}", path.display());
         }
     }
-    for args in [
-        &["ci", "--no-audit", "--no-fund"][..],
-        &["run", "build"][..],
-    ] {
-        let status = Command::new("npm")
-            .args(args)
-            .current_dir("control-ui")
-            .status()
-            .map_err(|error| format!("cannot run npm; install Node.js 24 and npm: {error}"))?;
-        if !status.success() {
-            return Err(format!("npm {} failed: {status}", args.join(" ")).into());
-        }
+    if !std::path::Path::new("control-ui/node_modules").is_dir() {
+        return Err("frontend dependencies missing; run cargo xtask setup host".into());
     }
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
+    let assets = output.join("dist");
+    let status = Command::new("npm")
+        .args(["run", "build", "--", "--outDir"])
+        .arg(&assets)
+        .arg("--emptyOutDir")
+        .current_dir("control-ui")
+        .status()
+        .map_err(|error| format!("cannot run npm; install Node.js 24 and npm: {error}"))?;
+    if !status.success() {
+        return Err(format!("frontend build failed: {status}").into());
+    }
+    #[allow(
+        clippy::unnecessary_debug_formatting,
+        reason = "the path must be an escaped Rust string literal"
+    )]
+    let declaration =
+        format!("#[derive(rust_embed::Embed)]\n#[folder = {assets:?}]\nstruct Assets;\n");
+    std::fs::write(output.join("assets.rs"), declaration)?;
     Ok(())
 }

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StateResponse } from './api';
 
-type RGB = [number, number, number];
-type PreviewFrame = { type: 'frame'; frame_id: number | string; revision: string; source_width: number; source_height: number; width: number; height: number; viewport: null | { x: number; y: number; width: number; height: number }; colors: Record<'top' | 'right' | 'bottom' | 'left', RGB[]>; jpeg: string };
+import type { components } from './api.generated';
+
+type PreviewMessage = components['schemas']['PreviewMessage'];
+type PreviewFrame = Extract<PreviewMessage, { type: 'frame' }>;
 const edges = ['top', 'right', 'bottom', 'left'] as const;
 function isFrame(value: PreviewFrame): boolean {
   const crop = value.viewport;
@@ -77,7 +79,7 @@ export function Preview({ active, data }: { active: boolean; data: StateResponse
       if (disposed || !outstanding || document.hidden) return;
       try {
         if (typeof event.data !== 'string' || event.data.length > 2_100_000) throw Error('Invalid preview response.');
-        const value = JSON.parse(event.data);
+        const value: PreviewMessage = JSON.parse(event.data);
         if (value.type === 'frame') {
           if (!isFrame(value)) throw Error('Invalid preview frame.');
           image = new Image(); image.src = `data:image/jpeg;base64,${value.jpeg}`;

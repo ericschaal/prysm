@@ -6,6 +6,7 @@ export function installDevService() {
     document.title = 'Prysm Capture · Simulated TV';
     const subscriptions = new Set<DevBridge>();
     const status: Status = {
+        returnValue: true, subscribed: false, revision: 0, subscribers: 0, pid: 0,
         config: { receiver: '192.168.1.10:19400', source: 'both', compression: 'lz4', autostart: false, metrics: false },
         enabled: false, receiverConnected: false, capturing: false, senderRunning: false,
         stopping: false, videoAvailable: true, power: 'Active', error: null, lastLog: 'Local development: simulated TV service.',

@@ -1,6 +1,9 @@
 use anyhow::{Result, bail};
 use prysm_webos_protocol::worker::VideoAvailability;
-use serde_json::{Value, json};
+use prysm_webos_service::contract::{Observation, ProbeStatus};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 #[derive(Default)]
 pub struct Status {
@@ -49,17 +52,23 @@ impl Status {
     pub fn bump(&mut self) {
         self.revision += 1;
     }
+    pub fn observation(&self, subscribed: bool, subscribers: u32) -> Observation {
+        Observation {
+            return_value: true,
+            subscribed,
+            video_available: self.video_available,
+            revision: self.revision,
+            subscribers,
+            pid: std::process::id(),
+        }
+    }
     pub fn snapshot(&self, subscribed: bool, subscribers: u32) -> Value {
-        json!({
-            "returnValue": true,
-            "subscribed": subscribed,
-            "power": self.power,
-            "videoAvailable": self.video_available,
-            "error": self.error,
-            "revision": self.revision,
-            "subscribers": subscribers,
-            "pid": std::process::id(),
+        serde_json::to_value(ProbeStatus {
+            observation: self.observation(subscribed, subscribers),
+            power: self.power.clone(),
+            error: self.error.clone(),
         })
+        .expect("serializable probe status")
     }
 }
 

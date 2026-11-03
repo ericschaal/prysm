@@ -5,15 +5,16 @@ Building does not install or deploy a package.
 
 ## Debian arm64
 
-On Debian arm64, install Rust, Node.js 24/npm and the native capture dependencies:
+On Debian arm64, install Rust, Node.js 24+/npm and the native capture dependencies:
 
 ```sh
 sudo apt install build-essential pkg-config clang libclang-dev libudev-dev dpkg-dev
 cargo install cargo-deb --version 3.8.0 --locked
-./scripts/build-deb.sh
+cargo xtask setup host
+cargo xtask package deb
 ```
 
-The script checks generated API freshness, frontend tests and Rust, then writes
+The task checks generated API freshness, builds the release executable, then writes
 `target/debian/`. Metadata lives in [apps/prysm/Cargo.toml](../../apps/prysm/Cargo.toml);
 maintainer scripts, service and seed configuration live in
 [packaging/debian](../../packaging/debian). The installed package includes a
@@ -24,7 +25,8 @@ Preserve configuration ownership, atomic writes, upgrade behavior and disabled-b
 python3 -m unittest discover -s packaging/debian/tests
 ```
 
-CI also installs, upgrades, removes and purges the package to check configuration lifecycle.
+Run `cargo xtask check` separately for tests. CI tests Rust on arm64 and also
+installs, upgrades, removes and purges the package to check configuration lifecycle.
 
 ## webOS
 
@@ -40,8 +42,9 @@ Install the [webOS CLI](https://github.com/webos-tools/cli), which supplies
 
 ```sh
 npm install --global @webos-tools/cli@3.2.6
+cargo xtask setup
 WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
-  ./packaging/webos/build-ipk.sh
+  cargo xtask package webos
 ```
 
 The default package uses software H.264 and has no GStreamer library dependency.
@@ -56,8 +59,8 @@ The IPK includes MIT notices for the GStreamer Rust and GLib bindings. The nativ
 GStreamer/GLib libraries are supplied by the TV and dynamically linked, not copied
 into the package.
 
-The script requires Node.js 24/npm, Python 3.9+ and `ar`, installs the locked TV UI
-dependencies, typechecks and bundles the TypeScript app with Vite, builds both
+The task requires Node.js 24+/npm, Python 3.9+ and `ar`, checks the generated TV
+service contract, typechecks and bundles the TypeScript app with Vite, builds both
 binaries in one Cargo invocation, includes license notices, and creates
 `target/webos-ipk/` (filename `io.prysm.capture_VERSION_all.ipk`). The version comes from
 [the TV app manifest](../../crates/web/prysm-webos/public/appinfo.json). The package suffix follows the

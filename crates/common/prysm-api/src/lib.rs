@@ -103,10 +103,17 @@ async fn set_config(
     ))
 }
 
+#[derive(utoipa::OpenApi)]
+#[openapi(components(schemas(prysm_contract::PreviewMessage)))]
+struct PreviewSchema;
+
 pub fn router() -> OpenApiRouter<App> {
     let mut api = OpenApiRouter::new()
         .routes(routes!(get_state, set_state))
         .routes(routes!(get_config, set_config));
+    // WebSocket payloads share the client schema, without pretending to be HTTP responses.
+    api.get_openapi_mut()
+        .merge(<PreviewSchema as utoipa::OpenApi>::openapi());
     let info = &mut api.get_openapi_mut().info;
     *info = utoipa::openapi::Info::new("Prysm", env!("CARGO_PKG_VERSION"));
     info.description = Some("Ambient lighting controller".into());
