@@ -272,11 +272,15 @@ jobs:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
         run: cargo +stable doc --locked --workspace --all-features --no-deps
       - name: Install FFmpeg
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      - name: Real FFmpeg playback and controller tests
-        if: runner.os == 'macOS'
         run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          fi
+          brew install ffmpeg
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Real FFmpeg playback and controller tests
+        run: |
+          ffmpeg -version
           cargo +stable test --locked -p prysm --all-features --lib video::tests::file_stream_preserves_ordered_eof_and_decoder_failure -- --ignored --exact
           cargo +stable test --locked -p prysm --all-features --test controller file_capture_live_settings_restart_and_shutdown -- --ignored --exact
 
