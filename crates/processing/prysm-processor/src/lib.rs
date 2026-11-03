@@ -1,7 +1,7 @@
 use frames::{FrameView, Viewport};
 use futures::{Stream, StreamExt};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
-use prysm_core::{ColorStrip, Config, EdgeColors, Frame, PixelFormat};
+use prysm_core::{Config, EdgeColors, Frame, PixelFormat};
 use std::time::Instant;
 
 mod frames;
@@ -9,8 +9,8 @@ mod nodes;
 
 /// Stateful frame processor.
 ///
-/// Frames stay in their raw capture format; the sampler reduces the active
-/// picture directly to a small linear RGB grid before projecting onto the perimeter.
+/// Detection keeps the raw capture format; sampling converts YUYV into reusable
+/// RGB storage before reducing the picture to a grid and projecting onto the perimeter.
 #[derive(Debug)]
 pub struct PrysmProcessor {
     config: Config,
@@ -85,10 +85,6 @@ impl PrysmProcessor {
     /// Both black-bar confirmation and smoothing use this clock.
     /// Use a shared clock origin plus source timestamps when replaying video.
     /// Repeated or earlier times do not advance smoothing.
-    #[allow(
-        clippy::missing_panics_doc,
-        reason = "resampling a nonempty strip preserves its nonempty invariant"
-    )]
     pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
         let layout = FrameLayout {
             width: frame.width(),
@@ -127,24 +123,20 @@ impl PrysmProcessor {
             edge_colors = smoother.process(edge_colors, now);
         }
 
-        if self.config.shadow_lift_percent.0 != 0 {
+        if self.config.shadow_lift_percent.0 != 0 || self.config.brightness_percent.0 < 100 {
             for strip in [
                 &mut edge_colors.top,
                 &mut edge_colors.right,
                 &mut edge_colors.bottom,
                 &mut edge_colors.left,
             ] {
-                *strip = ColorStrip::new(
-                    strip
-                        .resample(strip.len())
-                        .into_iter()
-                        .map(|color| color.lift_shadows(self.config.shadow_lift_percent))
-                        .collect(),
-                )
-                .expect("sample count is nonzero");
+                strip.map_colors(|color| {
+                    color.lift_shadows(self.config.shadow_lift_percent)
+                        * self.config.brightness_percent.as_ratio()
+                });
             }
         }
-        edge_colors * self.config.brightness_percent.as_ratio()
+        edge_colors
     }
 
     /// Convert into a stream processor

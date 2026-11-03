@@ -6,7 +6,7 @@ const numeric = [
   { key: 'brightness_percent', label: 'Brightness', min: 0, max: 100, step: 1, unit: '%', help: 'Set how brightly your screen colors glow.' },
   { key: 'shadow_lift_percent', label: 'Shadow lift', min: 0, max: 100, step: 1, unit: '%', help: 'Bring out dark-scene colors while keeping black off.' },
   { key: 'smoothing_seconds', label: 'Smoothing duration', min: 0, max: 3.4028234663852886e38, step: 'any', unit: 'seconds', help: 'Soften color changes. Try 0.1–1 second, or 0 for instant changes.' },
-  { key: 'sample_density', label: 'Sample density', min: 1, max: 4294967295, step: 1, unit: 'samples / 1000 px', help: 'Samples per 1,000 pixels. Increase for more detail, up to one sample per pixel.' },
+  { key: 'sample_density', label: 'Sample density', min: 1, max: 4294967295, step: 1, unit: 'samples / 1000 px', help: 'Higher density increases CPU and memory use. Start at 128; increase only if it visibly improves the lights.' },
   { key: 'spatial_reach_percent', label: 'Spatial reach', min: 1, max: 100, step: 1, unit: '%', help: 'How far colors inside the picture influence each edge.' },
 ] as const;
 type NumericKey = typeof numeric[number]['key'];

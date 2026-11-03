@@ -1,5 +1,5 @@
 use crate::frames::FrameView;
-use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, SampleDensity};
+use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity};
 
 /// Projects the whole picture onto the perimeter using a smooth distance falloff.
 #[derive(Debug)]
@@ -9,6 +9,7 @@ pub struct SpatialSampler {
     dimensions: Option<(u32, u32)>,
     cells: Vec<[u32; 4]>,
     cell_colors: Vec<LinearColor>,
+    rgb: Vec<u8>,
     // One row of normalized cell weights per output sample, in strip order.
     sample_weights: [Vec<f32>; 4],
 }
@@ -21,6 +22,7 @@ impl SpatialSampler {
             dimensions: None,
             cells: Vec::new(),
             cell_colors: Vec::new(),
+            rgb: Vec::new(),
             sample_weights: std::array::from_fn(|_| Vec::new()),
         }
     }
@@ -114,8 +116,18 @@ impl SpatialSampler {
         if self.dimensions != Some((width, height)) {
             self.prepare_geometry(width, height);
         }
+        // shortcut: full-frame SIMD is slower for tiny crops; revisit if they are common in real use.
+        let rgb = if matches!(view.frame.format(), PixelFormat::YUYV { .. }) {
+            if let Err(error) = prysm_core::yuyv::yuyv_to_rgb_into(&view.frame, &mut self.rgb) {
+                tracing::error!(%error, "Cannot convert sampling frame");
+                return EdgeColors::black(width as usize, height as usize, self.sample_density);
+            }
+            Some(self.rgb.as_slice())
+        } else {
+            None
+        };
         for (color, &[x0, y0, x1, y1]) in self.cell_colors.iter_mut().zip(&self.cells) {
-            *color = view.average_linear(x0, y0, x1, y1);
+            *color = view.average_linear(x0, y0, x1, y1, rgb);
         }
         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
             ColorStrip::new(
@@ -158,6 +170,51 @@ mod tests {
 
     fn strips(colors: &EdgeColors) -> [&ColorStrip; 4] {
         [&colors.top, &colors.right, &colors.bottom, &colors.left]
+    }
+
+    #[test]
+    fn yuyv_conversion_reuses_storage_and_matches_rgb_with_an_offset_crop() {
+        use prysm_core::{YuvRange, YuvStandardMatrix};
+        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        for range in [YuvRange::Full, YuvRange::Limited] {
+            for matrix in [
+                YuvStandardMatrix::Bt601,
+                YuvStandardMatrix::Bt709,
+                YuvStandardMatrix::Bt2020,
+                YuvStandardMatrix::Smpte240,
+            ] {
+                for seed in [13_u8, 91] {
+                    let data = (0..66 * 34 * 2)
+                        .map(|i: usize| i.to_le_bytes()[0].wrapping_add(seed))
+                        .collect();
+                    let mut raw = FrameView::new(
+                        Frame::new(data, 66, 34, PixelFormat::YUYV { range, matrix }).unwrap(),
+                    );
+                    raw.viewport = Viewport {
+                        x: 3,
+                        y: 5,
+                        width: 45,
+                        height: 19,
+                    };
+                    let mut rgb = FrameView::new(
+                        Frame::new(
+                            prysm_core::yuyv::yuyv_to_rgb(&raw.frame).unwrap(),
+                            66,
+                            34,
+                            PixelFormat::RGB24,
+                        )
+                        .unwrap(),
+                    );
+                    rgb.viewport = raw.viewport;
+                    let actual = sampler.process(&raw);
+                    let allocation = sampler.rgb.as_ptr();
+                    let expected = sampler.process(&rgb);
+                    assert_eq!(actual, expected, "{range:?} {matrix:?}");
+                    assert_eq!(sampler.process(&raw), expected);
+                    assert_eq!(sampler.rgb.as_ptr(), allocation);
+                }
+            }
+        }
     }
 
     #[test]

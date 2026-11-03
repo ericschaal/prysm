@@ -125,6 +125,12 @@ Live configure preserves temporal history except history specifically invalidate
 the changed setting. See the [detector investigation](../../research/black-bar-detection-2026-11-02/README.md)
 for the motivating failures, design and validation limits.
 
+Black-bar detection reads the original frame. For sampling, YUYV is converted
+with the existing SIMD converter into one reusable RGB buffer, using its range
+and matrix metadata; RGB/BGR inputs need no conversion buffer. Shadow lift and
+brightness share one sample pass after smoothing, with copy-on-write preserving
+the unadjusted history and published snapshots. Identity adjustments share colors.
+
 Frames carry YUYV range/matrix metadata. Processing assumes sRGB transfer; BT.2020
 matrix support does not decode PQ/HLG. File input tone-maps first. Use `process_frame_at`
 with shared clock origin/source timestamps for deterministic replay; `process_frame`

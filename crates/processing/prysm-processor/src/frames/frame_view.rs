@@ -29,7 +29,7 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
 
 /// A raw frame plus the viewport that downstream nodes should read from.
 ///
-/// Pixels stay in the capture format; consumers decode only what they touch.
+/// Detection reads raw pixels; sampling can use a reusable RGB conversion.
 #[derive(Debug, Clone)]
 pub struct FrameView {
     pub frame: Frame,
@@ -62,6 +62,7 @@ impl FrameView {
         y_start: u32,
         x_end: u32,
         y_end: u32,
+        rgb: Option<&[u8]>,
     ) -> LinearColor {
         let mut sum = [0.0f64; 3];
         let mut count = 0u64;
@@ -76,7 +77,7 @@ impl FrameView {
                 if abs_x >= self.frame.width() {
                     break;
                 }
-                if let Some(color) = self.pixel_srgb(abs_x, abs_y) {
+                if let Some(color) = self.pixel_srgb(abs_x, abs_y, rgb) {
                     let color = LinearColor::from_srgb(color);
                     for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b]) {
                         *channel += f64::from(value);
@@ -94,8 +95,11 @@ impl FrameView {
     }
 
     /// Decode a single pixel (absolute coordinates) to sRGB.
-    fn pixel_srgb(&self, x: u32, y: u32) -> Option<Color> {
-        match self.frame.format() {
+    fn pixel_srgb(&self, x: u32, y: u32, rgb: Option<&[u8]>) -> Option<Color> {
+        let (data, format) = rgb.map_or((self.frame.as_slice(), self.frame.format()), |rgb| {
+            (rgb, PixelFormat::RGB24)
+        });
+        match format {
             PixelFormat::YUYV { range, matrix } => {
                 let (red, green, blue) = prysm_core::yuyv::yuyv_pixel_to_rgb(
                     self.frame.as_slice(),
@@ -109,8 +113,8 @@ impl FrameView {
             }
             PixelFormat::RGB24 | PixelFormat::BGR24 => {
                 let idx = ((y * self.frame.width() + x) * 3) as usize;
-                let px = self.frame.as_slice().get(idx..idx + 3)?;
-                Some(if self.frame.format() == PixelFormat::BGR24 {
+                let px = data.get(idx..idx + 3)?;
+                Some(if format == PixelFormat::BGR24 {
                     Color::new(px[2], px[1], px[0])
                 } else {
                     Color::new(px[0], px[1], px[2])
@@ -163,7 +167,7 @@ pub mod tests {
     fn average_linear_uniform_region() {
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 128);
         let view = FrameView::new(frame);
-        let avg = view.average_linear(0, 0, 8, 8);
+        let avg = view.average_linear(0, 0, 8, 8, None);
         let expected = LinearColor::from_srgb(Color::new(128, 128, 128));
         assert!((avg.r - expected.r).abs() < 0.01, "r = {}", avg.r);
         assert!((avg.g - expected.g).abs() < 0.01);
@@ -186,7 +190,7 @@ pub mod tests {
             width: 4,
             height: 4,
         };
-        let avg = view.average_linear(0, 0, 4, 2);
+        let avg = view.average_linear(0, 0, 4, 2, None);
         // Both rows count equally, including black pixels.
         assert!(
             (avg.r - 0.5).abs() < 1e-6,

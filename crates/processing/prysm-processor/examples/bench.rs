@@ -35,14 +35,13 @@ fn bench(label: &str, width: u32, height: u32, vary: bool) {
     let start = Instant::now();
     for (frame, step) in frames.iter().zip(1..) {
         let now = clock + Duration::from_secs_f64(f64::from(step) / 30.0);
-        processor.process_frame_at(frame.clone(), now);
+        std::hint::black_box(processor.process_frame_at(frame.clone(), now));
     }
     let per_frame = start.elapsed() / u32::try_from(frames.len()).unwrap();
     println!("{label}: {per_frame:?}/frame");
 }
 
-/// Reference: what the old pipeline paid per frame just to decode 1080p
-/// to an RGB buffer before sampling anything.
+/// Isolate the reusable SIMD conversion from the rest of the pipeline.
 fn bench_full_decode() {
     let frame = yuyv_frame(1920, 1080, 0);
     let mut rgb = Vec::new();

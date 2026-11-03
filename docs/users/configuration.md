@@ -53,6 +53,12 @@ These are library defaults; your saved configuration may override them.
 | `spatial_reach_percent` | 10 | Influence radius as a percentage of cropped picture height, 1–100 |
 | `remove_black_bars` | true | Follow stable picture boundaries; allow about 1.5 seconds to acquire new bars |
 
+Higher sample density increases CPU and memory use. Start at **128** and increase
+only if it visibly improves the lights. Density controls samples per 1000 pixels
+of cropped edge length, capped at one sample per pixel; it is independent of LED
+count. Higher capture resolutions also increase processing cost. Lower density
+reduces spatial detail, but every pixel in the active picture still contributes.
+
 Processing changes apply live. Input, resolution, rate, or WLED settings changes
 recreate active capture. Panel listen address or allowed hosts require restarting
 Prysm; the panel indicates when this is necessary. Only the six live processing

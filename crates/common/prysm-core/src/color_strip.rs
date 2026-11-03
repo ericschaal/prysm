@@ -128,6 +128,9 @@ impl ColorStrip {
         if index >= count {
             return None;
         }
+        if count == self.samples.len() {
+            return Some(self.samples[index]);
+        }
         let position = if count == 1 {
             0.5
         } else {
@@ -139,31 +142,38 @@ impl ColorStrip {
     /// Resample the strip into exactly N linear colors
     #[must_use]
     pub fn resample(&self, count: usize) -> Vec<LinearColor> {
-        (0..count).filter_map(|i| self.color_at(i, count)).collect()
+        let mut samples = Vec::with_capacity(count);
+        samples.extend((0..count).filter_map(|i| self.color_at(i, count)));
+        samples
     }
 
     /// Blend two strips together with a ratio (0.0 = full self, 1.0 = full other)
     #[must_use]
     #[allow(
-        clippy::cast_precision_loss,
-        reason = "strip blending resamples both operands at normalized floating-point positions"
+        clippy::missing_panics_doc,
+        reason = "indices are within the output count"
     )]
     pub fn blend(&self, other: &ColorStrip, ratio: f32) -> ColorStrip {
         let result_len = self.samples.len().max(other.samples.len());
-        let blended: Vec<LinearColor> = (0..result_len)
+        let blended = (0..result_len)
             .map(|i| {
-                let pos = if result_len == 1 {
-                    0.5
-                } else {
-                    i as f32 / (result_len - 1) as f32
-                };
-                let color1 = self.sample_at(pos);
-                let color2 = other.sample_at(pos);
-                color1.blend(&color2, ratio)
+                self.color_at(i, result_len)
+                    .expect("bounded strip index")
+                    .blend(
+                        &other.color_at(i, result_len).expect("bounded strip index"),
+                        ratio,
+                    )
             })
             .collect();
         Self {
             samples: Arc::new(blended),
+        }
+    }
+
+    /// Transform samples in place, copying only when another observer shares them.
+    pub fn map_colors(&mut self, mut map: impl FnMut(LinearColor) -> LinearColor) {
+        for color in Arc::make_mut(&mut self.samples) {
+            *color = map(*color);
         }
     }
 }
@@ -202,11 +212,15 @@ impl Add for ColorStrip {
 impl Mul<f32> for ColorStrip {
     type Output = Self;
 
-    fn mul(self, scalar: f32) -> Self {
-        let scaled: Vec<LinearColor> = self.samples.iter().map(|&c| c * scalar).collect();
-        Self {
-            samples: Arc::new(scaled),
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact identity avoids copying shared samples"
+    )]
+    fn mul(mut self, scalar: f32) -> Self {
+        if scalar != 1.0 {
+            self.map_colors(|color| color * scalar);
         }
+        self
     }
 }
 
@@ -311,6 +325,45 @@ impl Mul<f32> for EdgeColors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adjustments_reuse_unique_storage_and_preserve_shared_samples() {
+        let original = ColorStrip::new(vec![LinearColor::new(0.02, 0.01, 0.0); 7]).unwrap();
+        let unchanged = original.clone() * 1.0;
+        assert!(Arc::ptr_eq(&original.samples, &unchanged.samples));
+        let mut adjusted = original.clone();
+        adjusted.map_colors(|color| color.lift_shadows(crate::ShadowLiftPercent(30)) * 0.5);
+        assert_eq!(original.samples[0], LinearColor::new(0.02, 0.01, 0.0));
+        assert_eq!(
+            adjusted.samples[0],
+            original.samples[0].lift_shadows(crate::ShadowLiftPercent(30)) * 0.5
+        );
+        let allocation = adjusted.samples.as_ptr();
+        let adjusted = adjusted * 0.5;
+        assert_eq!(adjusted.samples.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn equal_length_sampling_and_blending_preserve_exact_sample_positions() {
+        let values: Vec<_> = (0..655_u16)
+            .map(|i| LinearColor::new(f32::from(i % 7) / 7.0, 0.0, 0.0))
+            .collect();
+        let strip = ColorStrip::new(values.clone()).unwrap();
+        assert_eq!(strip.resample(values.len()), values);
+        let other = ColorStrip::fill(
+            LinearColor::new(0.0, 0.5, 1.0),
+            NonZeroUsize::new(values.len()).unwrap(),
+        );
+        let blended = strip.blend(&other, 0.25);
+        for (i, color) in values.iter().enumerate() {
+            assert_eq!(blended.samples[i], color.blend(&other.samples[i], 0.25));
+        }
+        let single = ColorStrip::black(NonZeroUsize::MIN);
+        let blended = single.blend(&strip, 0.25);
+        for (i, color) in values.iter().enumerate() {
+            assert_eq!(blended.samples[i], LinearColor::black().blend(color, 0.25));
+        }
+    }
 
     #[test]
     fn color_at_checks_output_bounds_and_preserves_resampling() {
