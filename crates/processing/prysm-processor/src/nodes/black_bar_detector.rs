@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 const SCAN_INTERVAL: Duration = Duration::from_millis(50);
 const INWARD_CONFIRM: Duration = Duration::from_millis(1500);
 const OUTWARD_CONFIRM: Duration = Duration::from_millis(400);
+// shortcut: cropping needs at least 5 fps; adapt the gap if low-rate capture becomes useful.
 const EVIDENCE_GAP: Duration = Duration::from_millis(200);
 const DEAD_BAND: u32 = 2;
 const SECTORS: usize = 12;

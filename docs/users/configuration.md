@@ -34,6 +34,7 @@ All three inputs work with WLED and the optional browser preview:
 | `webos` | `listen`, `capture_resolution`, `refresh_rate_hz` | [TV setup](webos.md); even dimensions within 2–1920 × 2–1080, rate 1–60 Hz; hardware may support less |
 
 File output rate is capped at the lower of the source and configured rate.
+Device and file capture resolutions are limited to 3840 × 2160 (4K UHD).
 WLED DDP uses the URL's host on UDP port 4048; an explicit URL port applies only
 to HTTP control. Use an HTTP(S) base URL without credentials, path, query, or fragment.
 LED counts total 1–65535; zero is allowed for an absent edge.
@@ -57,6 +58,11 @@ recreate active capture. Panel listen address or allowed hosts require restartin
 Prysm; the panel indicates when this is necessary. Only the six live processing
 settings are editable in Preview & tuning; input/output/service settings remain
 read-only context. Save & apply and Discard operate on one shared draft.
+
+Black-bar removal needs at least 5 incoming frames per second. Below that rate,
+the crop does not update; increase the capture rate or disable black-bar removal.
+The tuning panel warns when the configured rate is below 5 fps. Video files can
+also fall below this threshold when their source frame rate is lower.
 
 ## Access from your phone
 

@@ -24,6 +24,7 @@ export function Settings({ config, data, disabled, save, onDirty }: {
   const [reset, setReset] = useState(0);
   const [invalid, setInvalid] = useState<Partial<Record<NumericKey, string>>>({});
   const dirty = !equal(draft, base.processing) || Object.keys(invalid).length > 0;
+  const slowBlackBars = draft.remove_black_bars && config.input.refresh_rate_hz < 5;
   const externalChange = config.revision !== base.revision;
   useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   useEffect(() => {
@@ -80,7 +81,8 @@ export function Settings({ config, data, disabled, save, onDirty }: {
     <p className="intro-copy">Find your balance of color and motion. Save to apply your changes live.</p>
     <section className="picture-settings" aria-labelledby="color-heading"><h3 id="color-heading">Color & motion</h3>{numeric.slice(0, 3).map(numberField)}</section>
     <section className="advanced" aria-labelledby="advanced-heading"><h3 id="advanced-heading">Quality & performance</h3>
-      <div className="setting toggle-setting"><div><label htmlFor="remove_black_bars">Remove black bars</label><p id="bars-help">Detect the active picture before sampling colors.</p></div><input id="remove_black_bars" name="remove_black_bars" autoComplete="off" type="checkbox" role="switch" checked={draft.remove_black_bars} disabled={saving} aria-describedby="bars-help" onChange={event => setDraft(previous => ({ ...previous, remove_black_bars: event.target.checked }))} /></div>
+      <div className="setting toggle-setting"><div><label htmlFor="remove_black_bars">Remove black bars</label><p id="bars-help">Detect the active picture before sampling colors.</p></div><input id="remove_black_bars" name="remove_black_bars" autoComplete="off" type="checkbox" role="switch" checked={draft.remove_black_bars} disabled={saving} aria-describedby={slowBlackBars ? 'bars-help bars-warning' : 'bars-help'} onChange={event => setDraft(previous => ({ ...previous, remove_black_bars: event.target.checked }))} /></div>
+      {slowBlackBars ? <p id="bars-warning" className="notice warning" role="note">Black-bar removal needs at least 5 fps. Your capture is set to {config.input.refresh_rate_hz} fps, so the crop will not update. Increase the capture rate or turn off black-bar removal.</p> : null}
       <div className="advanced-fields">{numeric.slice(3).map(numberField)}</div></section>
     {conflict || (externalChange && dirty) ? <div className="notice warning" role="alert"><strong>Saved settings changed elsewhere.</strong><p>Your draft is preserved. Review the latest saved values below, then reload to discard this draft before editing again.</p><dl className="conflict-values">{numeric.map(field => <div key={field.key}><dt>{field.label}</dt><dd>Saved: {config.processing[field.key]} · draft: {draft[field.key]}</dd></div>)}<div><dt>Remove black bars</dt><dd>Saved: {config.processing.remove_black_bars ? 'On' : 'Off'} · draft: {draft.remove_black_bars ? 'On' : 'Off'}</dd></div></dl><button type="button" onClick={discard} disabled={saving}>Reload saved settings & discard draft</button></div> : null}
     {error ? <p className="error" role="alert">{error} Your draft is preserved.</p> : null}

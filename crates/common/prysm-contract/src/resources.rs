@@ -10,12 +10,13 @@ impl utoipa::PartialSchema for CaptureResolution {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
         use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
         ArrayBuilder::new()
-            .items(
+            .prefix_items([3840, 2160].map(|maximum| {
                 ObjectBuilder::new()
                     .schema_type(Type::Integer)
                     .minimum(Some(1.0))
-                    .maximum(Some(f64::from(u32::MAX))),
-            )
+                    .maximum(Some(f64::from(maximum)))
+                    .build()
+            }))
             .min_items(Some(2))
             .max_items(Some(2))
             .into()

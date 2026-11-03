@@ -127,6 +127,20 @@ function change(p, selector, value) {
 const frame = { type: 'frame', frame_id: 9, revision: '1', source_width: 640, source_height: 360, width: 480, height: 270,
   viewport: { x: 0, y: 20, width: 640, height: 320 }, colors: { top: [[255,0,0]], right: [[0,255,0]], bottom: [[255,0,0],[0,0,255]], left: [[0,255,0],[255,255,0]] }, jpeg: 'test' };
 (async () => {
+  for (const fps of [4, 5]) {
+    const settings = config(); settings.input.refresh_rate_hz = fps;
+    await check(on, async p => {
+      tune(p); await delay();
+      assert.equal(!!p.element('#bars-warning'), fps < 5);
+      if (fps < 5) {
+        assert.match(p.element('#bars-warning').textContent, /at least 5 fps/);
+        assert.match(p.element('#remove_black_bars').getAttribute('aria-describedby'), /bars-warning/);
+        p.element('#remove_black_bars').click(); await delay();
+        assert.equal(p.element('#bars-warning'), null);
+        assert.equal(p.element('#remove_black_bars').getAttribute('aria-describedby'), 'bars-help');
+      }
+    }, settings);
+  }
   await check(on, async p => {
     assert.equal(p.element('.setup-diagnostics').textContent.includes('0.0.0.0'),false,'A listening address is not a video source');
     assert.deepEqual([...p.document.querySelectorAll('.setup-diagnostics dt')].map(e=>e.textContent),['Light controller']);

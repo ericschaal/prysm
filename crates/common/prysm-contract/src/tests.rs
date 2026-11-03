@@ -80,9 +80,21 @@ fn one_configuration_round_trips_between_toml_json_and_processor() {
 }
 #[test]
 fn configuration_rejects_invalid_resources() {
-    for invalid in [json!([0, 360]), json!([u32::MAX, u32::MAX]), json!([640])] {
+    for invalid in [
+        json!([0, 360]),
+        json!([3841, 2160]),
+        json!([3840, 2161]),
+        json!([u32::MAX, u32::MAX]),
+        json!([640]),
+    ] {
         assert!(serde_json::from_value::<CaptureResolution>(invalid).is_err());
     }
+    assert_eq!(
+        serde_json::from_value::<CaptureResolution>(json!([3840, 2160]))
+            .unwrap()
+            .dimensions(),
+        [3840, 2160]
+    );
     for invalid in [
         json!({"top":0,"right":0,"bottom":0,"left":0}),
         json!({"top":65535,"right":1,"bottom":0,"left":0}),
@@ -143,6 +155,14 @@ fn schema_matches_serialized_values() {
     assert_eq!(schema(ConfigRevision::schema())["type"], "string");
     assert_eq!(schema(LedCounts::schema())["type"], "object");
     assert_eq!(schema(CaptureResolution::schema())["minItems"], 2);
+    assert_eq!(
+        schema(CaptureResolution::schema())["prefixItems"][0]["maximum"],
+        3840.0
+    );
+    assert_eq!(
+        schema(CaptureResolution::schema())["prefixItems"][1]["maximum"],
+        2160.0
+    );
     assert_eq!(
         schema(ProcessingSettings::schema())["required"]
             .as_array()

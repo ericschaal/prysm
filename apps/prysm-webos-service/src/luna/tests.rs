@@ -677,6 +677,48 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
 }
 
 #[test]
+fn silent_power_subscription_retries_until_a_valid_reply_arrives() {
+    reset(None);
+    let mut service = service().unwrap();
+    service.register().unwrap();
+    let calls = || MOCK.with_borrow(|mock| mock.events.iter().filter(|&&e| e == "call").count());
+    let deadline = service
+        .callbacks
+        .power_retry
+        .get()
+        .expect("initial reply deadline");
+    service
+        .callbacks
+        .tick(deadline.checked_sub(Duration::from_millis(1)).unwrap())
+        .unwrap();
+    assert_eq!(calls(), 1);
+    service.callbacks.tick(deadline).unwrap();
+    assert_eq!(calls(), 2);
+    assert!(MOCK.with_borrow(|mock| mock.events.contains(&"cancel")));
+    assert!(service.callbacks.power_retry.get().is_some());
+    assert_eq!(service.callbacks.power_token.get(), 42);
+
+    for (payload, pending) in [
+        (r#"{"returnValue":false,"errorText":"unavailable"}"#, true),
+        (r#"{"returnValue":true,"state":"Active"}"#, false),
+    ] {
+        let mut raw = MessageData(Some(CString::new(payload).unwrap()));
+        // SAFETY: the test message and callback state remain live throughout dispatch.
+        let message =
+            unsafe { Message::from_callback(&service.callbacks, ptr::from_mut(&mut raw).cast()) }
+                .unwrap();
+        service.callbacks.power(&message).unwrap();
+        assert_eq!(service.callbacks.power_retry.get().is_some(), pending);
+    }
+    service
+        .callbacks
+        .tick(deadline + Duration::from_secs(60))
+        .unwrap();
+    assert_eq!(calls(), 2, "a valid reply must cancel the retry deadline");
+    assert_eq!(service.callbacks.snapshot(false)["power"], "Active");
+}
+
+#[test]
 fn initial_power_subscription_failure_keeps_service_available_and_retries() {
     reset(Some("call"));
     let mut service = service().unwrap();
@@ -689,7 +731,7 @@ fn initial_power_subscription_failure_keeps_service_available_and_retries() {
         .tick(Instant::now() + Duration::from_secs(5))
         .unwrap();
     assert_eq!(service.callbacks.power_token.get(), 42);
-    assert!(service.callbacks.power_retry.get().is_none());
+    assert!(service.callbacks.power_retry.get().is_some());
 }
 
 #[test]

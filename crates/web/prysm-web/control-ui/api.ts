@@ -1,8 +1,8 @@
-import createClient from 'openapi-fetch';
+import createClient, { type MethodResponse } from 'openapi-fetch';
 import type { components, paths } from './api.generated';
 
 export type StateResponse = components['schemas']['StateResponse'];
-export type Config = components['schemas']['Config'];
+export type Config = MethodResponse<typeof client, 'get', '/api/config'>;
 export type Target = components['schemas']['Target'];
 
 export const client = createClient<paths>({

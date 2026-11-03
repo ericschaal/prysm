@@ -342,8 +342,10 @@ impl Callbacks {
     }
     fn subscribe_power(&self, data: *mut c_void) -> Result<()> {
         let mut token = 0;
-        self.power_retry.set(None);
-        let result = check(&self.luna, |error| {
+        // An accepted call can still leave the initial power reply missing.
+        self.power_retry
+            .set(Some(Instant::now() + Duration::from_secs(5)));
+        check(&self.luna, |error| {
             // SAFETY: all strings are static, the output is local, and Service retains
             // this shared callback allocation until every call is cancelled/unregistered.
             unsafe {
@@ -357,12 +359,7 @@ impl Callbacks {
                     error,
                 )
             }
-        });
-        if result.is_err() {
-            self.power_retry
-                .set(Some(Instant::now() + Duration::from_secs(5)));
-        }
-        result?;
+        })?;
         self.power_token.set(token);
         Ok(())
     }
@@ -520,7 +517,9 @@ impl Callbacks {
             let status = self.status.borrow();
             (status.power(), status.error())
         };
-        if error.is_some() && self.power_retry.get().is_none() {
+        if error.is_none() {
+            self.power_retry.set(None);
+        } else if self.power_retry.get().is_none() {
             self.power_retry
                 .set(Some(Instant::now() + Duration::from_secs(5)));
         }

@@ -45,7 +45,10 @@ export interface components {
             message: string;
         };
         BrightnessPercent: number;
-        CaptureResolution: number[];
+        CaptureResolution: [
+            number,
+            number
+        ];
         /** @description The complete saved configuration. Runtime observations and power are never saved. */
         Config: {
             input: components["schemas"]["Input"];
