@@ -10,14 +10,16 @@ no login; keep them on your trusted LAN. Update Prysm and the TV package togethe
 
 ## 1. Start the receiver
 
-[Install Prysm](README.md). Save the [webOS configuration](examples/webos-wled.toml)
-as `prysm-local.toml`, then set the WLED URL and LED counts for your installation.
-It listens for the TV on TCP 19400 at 640×360/30 Hz.
+[Install Prysm](README.md), then open the panel and complete Settings. Choose
+webOS input, capture resolution 640 × 360 and
+30 Hz. Enter the WLED URL and LED counts and save. No initial configuration file
+is needed; the first save creates the settings JSON.
 
-Run `prysm --config prysm-local.toml`. Allow TCP port 19400 from your TV through
-the host firewall. Note the host's LAN IP; the TV must connect to that address,
-not `localhost` or `0.0.0.0`. Dimensions and frame rate are controlled by Prysm.
-Open **Preview & tuning** in the browser to inspect the picture alongside WLED output.
+Allow TCP port 19400 from the TV through the host firewall. The TV must connect
+to the host's LAN IP, not `localhost` or `0.0.0.0`. Dimensions and frame rate are
+controlled by Prysm. For containers, publish TCP 19400 using the
+[Docker](docker.md) or [TrueNAS](truenas.md) guide. Open **Preview** to
+inspect the picture alongside WLED output.
 
 ## 2. Install the TV app
 

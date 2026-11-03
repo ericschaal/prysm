@@ -1,89 +1,106 @@
 # Settings and daily use
 
-Open `http://localhost:8787` on the Prysm host. Select **Screen sync** for captured
-colors, **WLED effects** for WLED's presets/effects, or turn the lights off.
-**Customize in WLED** opens WLED's interface. Selecting a source while off does
-not turn on the lights. Prysm always starts idle after a restart.
+Open the Prysm panel at `http://localhost:8787` or your configured LAN address.
+On first use, Settings asks for the missing input and output. Choose your video
+source, WLED HTTP address and LED counts, then save. The same Settings page edits
+all application properties later; internal revisions are managed automatically.
 
-## Configuration file
+Select **Screen sync** for captured colors, **WLED effects** for WLED's effects,
+or turn the lights off. **Open WLED** opens WLED's interface. Selecting a source
+while off does not turn on the lights. Prysm always starts idle after a restart.
 
-Prysm reads `prysm.toml` unless you pass `--config PATH`. The Debian service uses
-`/etc/prysm/prysm.toml`. Settings saved in the panel replace that file; its parent
-directory must be writable by Prysm. Stop Prysm before editing the file manually.
-Use the [complete portable example](quickstart.md#2-create-your-configuration)
-as a starting point; repository-root samples contain local device IDs and paths.
+## Settings and storage
 
-| Section | What to set |
+Browser settings are stored in `settings.json`, or the file selected with
+`--config PATH` / `PRYSM_CONFIG`. Docker uses `/config/settings.json`; the Debian
+service uses `/etc/prysm/settings.json`. Missing storage starts the setup page.
+There is no template to copy, and no TOML migration. Existing malformed or
+unreadable JSON is reported as an error and is never silently replaced.
+
+Saves atomically replace the settings file; the process needs write and traversal
+access to its parent directory. Back up that directory before updates and stop
+Prysm before editing the file manually. Use one Prysm process per settings file.
+
+| Settings group | What you can edit |
 | --- | --- |
-| `[web]` | Panel/API listen address and allowed `host:port` values |
-| `[input]` | Device, file, or webOS input; resolution and frame rate |
-| `[output]` | `wled` with its HTTP base `url` |
-| `[output.leds]` | Top, right, bottom, left LED counts |
-| `[processing]` | Brightness, shadow lift, smoothing, sampling, black-bar removal |
-| `source` | `prysm` for screen sync, `wled` for effects (WLED output only) |
-| `revision` | Managed by Prysm for concurrent saves; start a new file with `"0"` |
+| Input | Device, file, or webOS source; resolution and frame rate |
+| Output | WLED HTTP base URL and top/right/bottom/left LED counts |
+| Processing | Brightness, shadow lift, smoothing, sampling, and black-bar removal |
+| Source | Screen sync or WLED effects; changing it while off keeps the lights off |
+
+Process options are read on every startup: **CLI arguments → environment →
+explicit defaults**. They never enter the JSON document or browser form. Application
+settings have no override relationship with process options.
+
+| CLI argument | Environment | Default / purpose |
+| --- | --- | --- |
+| `--config PATH` | `PRYSM_CONFIG` | `settings.json`; application settings location |
+| `--listen IP:PORT` | `PRYSM_LISTEN` | `0.0.0.0:8787`; HTTP listener |
+| `--allowed-host HOST:PORT,...` | `PRYSM_ALLOWED_HOSTS` | `localhost:8787,127.0.0.1:8787`; exact browser authorities |
+| `--receiver-listen IP:PORT` | `PRYSM_RECEIVER_LISTEN` | `0.0.0.0:19400`; webOS receiver |
+| `--metrics-listen IP:PORT` | `PRYSM_METRICS_LISTEN` | Disabled; optional metrics endpoint |
+| — | `RUST_LOG` | `info`; logging filter |
+
+`prysm --config PATH check` validates effective settings without starting the
+application or writing a file. Incomplete settings fail this check; start Prysm
+normally to configure them in the browser. Host permissions, Docker mounts,
+port mappings, and USB device access are deployment settings, not browser fields.
 
 ## Input and output
 
-All three inputs work with WLED and the optional browser preview:
-
-| Input type | Required fields | Notes |
+| Input | Required settings | Notes |
 | --- | --- | --- |
-| `device` | `device`, `capture_resolution`, `refresh_rate_hz` | Linux V4L2 path or macOS AVFoundation unique ID; hardware must support the requested mode |
-| `file` | `path`, `capture_resolution`, `refresh_rate_hz` | FFmpeg 9+ on PATH; plays once, retains the last preview frame, and leaves the panel available |
-| `webos` | `listen`, `capture_resolution`, `refresh_rate_hz` | [TV setup](webos.md); even dimensions within 2–1920 × 2–1080, rate 1–60 Hz; hardware may support less |
+| Device | Device path/ID, capture resolution, frame rate | Linux V4L2 path or macOS AVFoundation unique ID; hardware must support the selected mode |
+| File | Absolute video path, capture resolution, frame rate | FFmpeg 9+ on PATH; plays once and retains the last preview frame |
+| webOS | Capture resolution, frame rate | Even dimensions within 2–1920 × 2–1080, rate 1–60 Hz; hardware may support less |
 
-File output rate is capped at the lower of the source and configured rate.
-Device and file capture resolutions are limited to 3840 × 2160 (4K UHD).
-WLED DDP uses the URL's host on UDP port 4048; an explicit URL port applies only
-to HTTP control. Use an HTTP(S) base URL without credentials, path, query, or fragment.
-LED counts total 1–65535; zero is allowed for an absent edge.
-[Wiring orientation](quickstart.md#2-create-your-configuration) is fixed.
+Device and file resolutions are limited to 3840 × 2160. File frame rate is capped
+at the lower of the source and configured rate. Container paths refer to files
+and devices inside the container, so mount them first.
+
+WLED uses its HTTP URL for control and the same host on UDP 4048 for DDP. Use an
+HTTP(S) base URL without credentials, a path, query, or fragment. An explicit URL
+port affects HTTP only. LED counts must total 1–65535; zero marks an absent edge.
+[Wiring orientation](quickstart.md#2-configure-prysm) is fixed.
+
+Processing changes apply live. Input, capture mode and WLED changes recreate
+active capture. Change network bindings and allowed hosts in your deployment,
+then restart Prysm. Keep Docker port mappings consistent with the bindings.
 
 ## Processing
 
-These are library defaults; your saved configuration may override them.
-
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `brightness_percent` | 100 | Output brightness, 0–100 |
-| `shadow_lift_percent` | 0 | Black-preserving shadow boost, 0–100 |
-| `smoothing_seconds` | 0.1 | Seconds to complete 95% of a color transition; 0 disables smoothing |
-| `sample_density` | 128 | Samples per 1000 pixels of cropped edge length; positive integer |
-| `spatial_reach_percent` | 10 | Influence radius as a percentage of cropped picture height, 1–100 |
-| `remove_black_bars` | true | Follow stable picture boundaries; allow about 1.5 seconds to acquire new bars |
+| Brightness | 100% | Output brightness, 0–100 |
+| Shadow lift | 0% | Black-preserving shadow boost, 0–100 |
+| Smoothing | 0.1 seconds | Time to complete 95% of a transition; 0 disables smoothing |
+| Sample density | 128 | Samples per 1000 pixels of cropped edge length; positive integer |
+| Spatial reach | 10% | Influence radius as a percentage of cropped picture height, 1–100 |
+| Remove black bars | On | Follow stable picture boundaries; allow about 1.5 seconds to acquire bars |
 
-Higher sample density increases CPU and memory use. Start at **128** and increase
-only if it visibly improves the lights. Density controls samples per 1000 pixels
-of cropped edge length, capped at one sample per pixel; it is independent of LED
-count. Higher capture resolutions also increase processing cost. Lower density
-reduces spatial detail, but every pixel in the active picture still contributes.
-
-Processing changes apply live. Input, resolution, rate, or WLED settings changes
-recreate active capture. Panel listen address or allowed hosts require restarting
-Prysm; the panel indicates when this is necessary. Only the six live processing
-settings are editable in Preview & tuning; input/output/service settings remain
-read-only context. Save & apply and Discard operate on one shared draft.
-
-Black-bar removal needs at least 5 incoming frames per second. Below that rate,
-the crop does not update; increase the capture rate or disable black-bar removal.
-The tuning panel warns when the configured rate is below 5 fps. Video files can
-also fall below this threshold when their source frame rate is lower.
+Higher sample density and capture resolution increase CPU/memory use. Start at
+128 samples and increase only if the lights improve. Samples are capped at one
+per pixel, independently of LED count. Every active-picture pixel contributes.
+Black-bar removal needs at least 5 incoming frames per second; below that rate,
+the crop does not update. The tuning panel warns about low configured rates.
 
 ## Access from your phone
 
-Set the following in your configuration, replacing `YOUR_PI` with the hostname or
-LAN IP you will type in your browser. Add each actual `host:port` you need.
+For first access from another device, set the bind and allowed browser addresses
+through the deployment. For example:
 
-```toml
-[web]
-listen = "0.0.0.0:8787"
-allowed_hosts = ["YOUR_PI:8787", "localhost:8787", "127.0.0.1:8787"]
+```sh
+PRYSM_LISTEN=0.0.0.0:8787 \
+PRYSM_ALLOWED_HOSTS=192.168.1.20:8787,prysm.example.lan:8787 \
+prysm --config settings.json
 ```
 
-Restart Prysm (`sudo systemctl restart prysm` on Debian), then open
-`http://YOUR_PI:8787` on the same network. The panel has no login; use a trusted
-LAN/private VPN. Allowed hosts protect request handling; they are not authentication.
+Open `http://192.168.1.20:8787`. These environment values stay authoritative every
+startup and are never browser settings. On Debian, configure service environment
+variables with a systemd override. See [Docker](docker.md) and [TrueNAS](truenas.md).
+
+The panel has no login; use a trusted LAN/private VPN. Allowed-host checks protect
+request handling and do not provide authentication.
 
 ## Color calibration
 
@@ -91,5 +108,4 @@ Prysm outputs sRGB. Enable WLED's color gamma and realtime gamma correction.
 Use gamma near 2.2 as a starting point, then calibrate for your LEDs and wall;
 steeper curves darken shadows and midtones. File HDR is tone-mapped before
 processing. TV capture reflects the TV's own rendering and is not independently
-HDR-calibrated. See the [color investigation](../../research/webos-capture/2026-11-01-hdr-brightness/README.md)
-for measured limits.
+HDR-calibrated. See the [color investigation](../../research/webos-capture/2026-11-01-hdr-brightness/README.md).

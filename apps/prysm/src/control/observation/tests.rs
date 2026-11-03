@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    config::PipelineConfig,
     control::{Controller, controller::ControllerHandle},
-    pipeline::runtime::Pipeline,
+    preview::Preview,
+    test_support,
 };
 use axum::{
     Json, Router,
@@ -14,8 +14,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use prysm_api::{App, Command};
-use prysm_contract::{Config, OperationStatus, Source, UpdateConfig};
+use prysm_api::App;
+use prysm_contract::{OperationStatus, Source};
 use std::{
     collections::VecDeque,
     sync::{
@@ -156,34 +156,29 @@ async fn connection(mut socket: WebSocket, state: Arc<DeviceState>) {
 struct Control {
     app: App,
     controller: ControllerHandle,
-    pipeline: Pipeline,
     _directory: tempfile::TempDir,
 }
 impl Control {
     async fn start(device: &Device) -> Self {
         device.state.websocket_enabled.store(false, Relaxed);
         let directory = tempfile::tempdir().unwrap();
-        let mut config: Config = toml::from_str(include_str!("../../../../../prysm.toml")).unwrap();
+        let mut config = test_support::config();
         config.source = Source::Wled;
         let prysm_contract::Output::Wled { url, .. } = &mut config.output;
         *url = device.url.clone();
-        let (config_tx, config_rx) = watch::channel(config.clone());
-        let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
-        let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
-        let (controller, app) = Controller::spawn(
-            directory.path().join("prysm.toml"),
-            &config,
-            lighting,
-            config_tx,
+        let store = test_support::store(&directory, &config);
+        let (controller, app) = Controller::start(
+            store,
+            Preview::new().publisher(),
+            "127.0.0.1:0".parse().unwrap(),
         );
         let control = Self {
             app,
             controller,
-            pipeline,
             _directory: directory,
         };
         until(|| {
-            control.app.state.borrow().observed.is_some()
+            control.app.state().unwrap().observed.is_some()
                 && device.state.attempts.load(Relaxed) == 1
         })
         .await;
@@ -195,8 +190,8 @@ impl Control {
             device.state.connections.load(Relaxed) == 1
                 && control
                     .app
-                    .state
-                    .borrow()
+                    .state()
+                    .unwrap()
                     .observed
                     .as_ref()
                     .is_some_and(|state| state.live_override == 0)
@@ -206,15 +201,14 @@ impl Control {
     }
     fn power(&self) -> Option<bool> {
         self.app
-            .state
-            .borrow()
+            .state()
+            .unwrap()
             .observed
             .as_ref()
             .map(|observed| observed.power)
     }
     async fn stop(self) {
         self.controller.shutdown().await.unwrap();
-        self.pipeline.shutdown().await.unwrap();
     }
 }
 async fn until(mut predicate: impl FnMut() -> bool) {
@@ -237,7 +231,7 @@ async fn pushed_status_reaches_controller_without_an_http_poll() {
     device.push("pong");
     device.push(r#"{"state":{"on":true,"lor":0},"info":{"live":true,"lm":"DDP"}}"#);
     until(|| control.power() == Some(true)).await;
-    let observed = control.app.state.borrow().observed.clone().unwrap();
+    let observed = control.app.state().unwrap().observed.clone().unwrap();
     assert!(observed.realtime);
     assert_eq!(observed.realtime_source.as_deref(), Some("DDP"));
     assert_eq!(observed.live_override, 0);
@@ -346,22 +340,18 @@ async fn delayed_operation_snapshot_cannot_replace_a_newer_pushed_status() {
         .lock()
         .unwrap()
         .extend([poll_gate, operation_gate]);
-    let mut config = control.app.config.borrow().clone();
-    config.processing.brightness_percent = 42.try_into().unwrap();
-    let (reply, response) = oneshot::channel();
-    control
+    let mut config = control
         .app
-        .commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config,
-            }),
-            reply,
-        ))
-        .await
+        .settings()
+        .settings
+        .config(control.app.settings().revision)
         .unwrap();
-    response.await.unwrap().unwrap();
+    config.processing.brightness_percent = 42.try_into().unwrap();
+    let response = control
+        .app
+        .update_settings(test_support::update(&control.app, &config))
+        .await;
+    response.unwrap();
     until(|| {
         device.state.requests.load(Relaxed) == 3 && device.state.connections.load(Relaxed) == 2
     })
@@ -372,7 +362,7 @@ async fn delayed_operation_snapshot_cannot_replace_a_newer_pushed_status() {
     release_operation.send(()).unwrap();
     until(|| {
         matches!(
-            control.app.state.borrow().operation,
+            control.app.state().unwrap().operation,
             OperationStatus::Succeeded { .. }
         )
     })
@@ -388,30 +378,26 @@ async fn configuration_change_retires_the_old_device_connection() {
     let new = Device::start().await;
     let control = Control::start(&old).await;
     new.power(true, false);
-    let mut config = control.app.config.borrow().clone();
+    let mut config = control
+        .app
+        .settings()
+        .settings
+        .config(control.app.settings().revision)
+        .unwrap();
     let prysm_contract::Output::Wled { url, .. } = &mut config.output;
     *url = new.url.clone();
-    let (reply, response) = oneshot::channel();
-    control
+    let response = control
         .app
-        .commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config,
-            }),
-            reply,
-        ))
-        .await
-        .unwrap();
-    let saved = response.await.unwrap().unwrap();
+        .update_settings(test_support::update(&control.app, &config))
+        .await;
+    let saved = response.unwrap();
     until(|| {
         new.state.connections.load(Relaxed) == 1
             && control.power() == Some(true)
             && old.state.closed.load(Relaxed) == 1
     })
     .await;
-    assert_eq!(control.app.state.borrow().config_revision, saved.revision);
+    assert_eq!(control.app.state().unwrap().config_revision, saved.revision);
     new.power(false, true);
     until(|| control.power() == Some(false)).await;
     control.stop().await;

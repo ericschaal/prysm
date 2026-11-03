@@ -1,0 +1,22 @@
+# Only source inputs enter the builder; local settings and recordings stay out.
+**
+!Cargo.toml
+!Cargo.lock
+!README.md
+!LICENSE
+!.cargo/
+!.cargo/config.toml
+!apps/
+!apps/**
+!crates/
+!crates/**
+!xtask/
+!xtask/**
+**/node_modules
+**/target
+**/dist
+**/__pycache__
+**/.DS_Store
+**/.env*
+**/*.pem
+**/*.key

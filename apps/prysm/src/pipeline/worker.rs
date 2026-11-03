@@ -330,8 +330,7 @@ mod tests {
     use std::{io::ErrorKind, time::Duration};
 
     fn config() -> PipelineConfig {
-        let config: prysm_contract::Config =
-            toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+        let config: prysm_contract::Config = crate::test_support::config();
         let mut config = PipelineConfig::from(&config);
         config.processing.smoothing_seconds = 0.0.try_into().unwrap();
         config.processing.remove_black_bars = false;

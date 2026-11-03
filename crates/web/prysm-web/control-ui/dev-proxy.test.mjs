@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer, loadConfigFromFile } from 'vite';
 
-test('development proxy serves api.ts as JavaScript and forwards API routes', async t => {
+test('development proxy serves api.ts as JavaScript and forwards API routes', async (t) => {
   const root = fileURLToPath(new URL('.', import.meta.url));
   const cacheDir = await mkdtemp(join(tmpdir(), 'prysm-vite-'));
   const requests = [];
@@ -23,20 +23,27 @@ test('development proxy serves api.ts as JavaScript and forwards API routes', as
   let vite;
   t.after(async () => {
     await vite?.close();
-    await new Promise(resolve => backend.close(resolve));
+    await new Promise((resolve) => backend.close(resolve));
     await rm(cacheDir, { recursive: true, force: true });
   });
-  await new Promise(resolve => backend.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => backend.listen(0, '127.0.0.1', resolve));
   const target = `http://127.0.0.1:${backend.address().port}`;
   const { config } = await loadConfigFromFile(
-    { command: 'serve', mode: 'development' }, join(root, 'vite.config.ts'),
+    { command: 'serve', mode: 'development' },
+    join(root, 'vite.config.ts'),
   );
   // Keep the actual configured matchers; isolate only the backend destination.
-  const proxy = Object.fromEntries(Object.entries(config.server.proxy).map(([path, options]) => [
-    path, typeof options === 'string' ? target : { ...options, target },
-  ]));
+  const proxy = Object.fromEntries(
+    Object.entries(config.server.proxy).map(([path, options]) => [
+      path,
+      typeof options === 'string' ? target : { ...options, target },
+    ]),
+  );
   vite = await createServer({
-    ...config, configFile: false, root, cacheDir,
+    ...config,
+    configFile: false,
+    root,
+    cacheDir,
     server: { ...config.server, host: '127.0.0.1', port: 0, proxy, hmr: false },
   });
   await vite.listen();

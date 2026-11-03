@@ -1,7 +1,7 @@
 # Pipeline migration plan and verification
 
 Scope: one session, one configured WLED output, optional browser observation. Preserve
-existing WLED TOML, revision/conflict/persistence/rollback semantics and native release barriers.
+WLED settings, revision/conflict/persistence/rollback semantics and native release barriers.
 Unrelated untracked research Python cache is outside this change.
 
 ## Contracts and ownership
@@ -17,9 +17,10 @@ Unrelated untracked research Python cache is outside this change.
   Local errors `{type:"error",message}`. Begin at 480px wide, at most 8 fps/viewer,
   maximum 4 connections, one encoder active plus one queued request globally.
   No encoding until requested; retain last snapshot independently of per-run output channel.
-- Saved configuration/revision comes from GET/PUT /api/config; PUT uses expected_revision.
-  Saving is distinct from operation completion and pipeline.applied_revision. UI edits ONLY
-  six processing fields in one draft; external changes require explicit review/reload.
+- Effective settings/revision come from GET/PUT /api/settings; PUT replaces settings with expected_revision.
+  Saving is distinct from operation completion and pipeline.applied_revision. Settings edits
+  the full application model; external changes require explicit review/reload. CLI/environment
+  configure process options separately; they are never browser settings.
 - Processing owner applies settings between frames. Stop cancels capture, completes accepted
   processing, closes publication, drains final unseen output, observes native release and joins
   processing thread before final WLED command. Preview is outside this stop barrier.

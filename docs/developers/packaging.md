@@ -3,6 +3,47 @@
 For installation, use the [Debian](../users/debian.md) or [TV](../users/webos.md) guide.
 Building does not install or deploy a package.
 
+## Docker
+
+Run `cargo xtask package docker` or `docker build -t prysm:local .` to build the
+local development image. Docker installs locked npm dependencies, checks the
+host contract and embeds the UI in the release binary. Host Node.js and the
+webOS SDK are unnecessary. Deployment uses a versioned image from
+`ghcr.io/ericschaal/prysm`; see [Docker](../users/docker.md) or [TrueNAS](../users/truenas.md).
+
+The [Dockerfile](../../Dockerfile) separates dependency, build and runtime stages.
+Official base images are pinned by manifest-list digest. The context is an
+allowlist; npm/Cargo downloads and architecture-specific compilation use BuildKit
+caches. The runtime contains the binary, certificate roots, required runtime
+libraries and license notices. Native bindings retain their existing generation
+workflow. The image runs as a non-root user with an empty writable `/config`;
+it does not seed a configuration file or change mounted directory ownership.
+
+`PRYSM_CONFIG=/config/settings.json` selects storage. Native and container
+processes share the default `0.0.0.0:8787` bind and loopback-only allowed hosts.
+Process options are read from CLI/environment on every startup, independently
+of browser settings. CLI arguments win over environment values. The process is the direct
+entrypoint, so arguments, help, strict `check`, and signals work normally.
+
+CI builds and smoke-tests native amd64/arm64 images. A push of `vVERSION`, matching
+`apps/prysm/Cargo.toml`, exports those tested images and publishes them to GHCR
+only after quality, frontend, Docker and Rust jobs pass. The final `VERSION`
+manifest is assembled from both tested architectures. Pull requests do not
+publish. No moving `latest` tag is produced. The GHCR package must be public for
+anonymous deployment; publishing permissions and package visibility are repository
+settings. Until a version is published, build `prysm:local` and select that image
+in Compose as described in the user guide.
+
+Run `python3 packaging/docker/smoke.py prysm:local` after a local build. It checks
+empty-volume setup, embedded assets, CLI/environment precedence, deployment-field
+rejection, persistence, UID 568 bind storage, failed writes, malformed files and
+SIGTERM. It uses no capture or WLED hardware and cleans its temporary resources.
+
+Update base tags and digests together. Debian packages still come from current
+repositories at build time. Rebuild with `--pull --no-cache` to refresh runtime
+packages and rerun the smoke test. BuildKit caches speed persistent builders;
+GitHub Actions exports ordinary layers, not cache-mount contents.
+
 ## Debian arm64
 
 On Debian arm64, install Rust, Node.js 24+/npm and the native capture dependencies:
@@ -16,10 +57,12 @@ cargo xtask package deb
 
 The task checks generated API freshness, builds the release executable, then writes
 `target/debian/`. Metadata lives in [apps/prysm/Cargo.toml](../../apps/prysm/Cargo.toml);
-maintainer scripts, service and seed configuration live in
+maintainer scripts and service live in
 [packaging/debian](../../packaging/debian). The installed package includes a
 self-contained [installation handout](../../packaging/debian/README.md).
-Preserve configuration ownership, atomic writes, upgrade behavior and disabled-by-default service setup.
+Installation creates an empty `/etc/prysm` owned by the service user. The first
+browser save writes `settings.json`; no configuration template is packaged.
+Preserve atomic writes, upgrade behavior and disabled-by-default service setup.
 
 ```sh
 python3 -m unittest discover -s packaging/debian/tests

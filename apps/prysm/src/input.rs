@@ -19,28 +19,35 @@ pub(crate) struct InputStream {
 #[derive(Clone)]
 pub(crate) struct InputSource {
     config: Input,
+    receiver_listen: std::net::SocketAddr,
     receiver: Option<WebosReceiver>,
 }
 
 impl InputSource {
-    pub fn new(config: Input) -> Result<Self> {
+    pub fn new(config: Input, receiver_listen: std::net::SocketAddr) -> Result<Self> {
         let receiver = match &config {
-            Input::Webos { listen, .. } => Some(WebosReceiver::new(*listen)?),
+            Input::Webos { .. } => Some(WebosReceiver::new(receiver_listen)?),
             _ => None,
         };
-        Ok(Self { config, receiver })
+        Ok(Self {
+            config,
+            receiver_listen,
+            receiver,
+        })
     }
 
     pub async fn reconfigure(&self, config: Input) -> Result<Self> {
-        if matches!((&self.config, &config),
-            (Input::Webos { listen: previous, .. }, Input::Webos { listen, .. }) if previous == listen)
-        {
+        if matches!(
+            (&self.config, &config),
+            (Input::Webos { .. }, Input::Webos { .. })
+        ) {
             Ok(Self {
                 config,
                 receiver: self.receiver.clone(),
+                receiver_listen: self.receiver_listen,
             })
         } else {
-            let next = Self::new(config)?;
+            let next = Self::new(config, self.receiver_listen)?;
             self.shutdown().await?;
             Ok(next)
         }
@@ -121,7 +128,7 @@ mod tests {
             refresh_rate_hz: 30.try_into().unwrap(),
             path: String::from("/missing/prysm-input.mp4").try_into().unwrap(),
         };
-        let source = InputSource::new(input).unwrap();
+        let source = InputSource::new(input, "127.0.0.1:0".parse().unwrap()).unwrap();
         let error = source.into_stream(CancellationToken::new()).err().unwrap();
         assert_eq!(
             error.to_string(),

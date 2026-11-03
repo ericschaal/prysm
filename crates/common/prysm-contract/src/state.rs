@@ -106,5 +106,4 @@ pub struct StateResponse {
     pub config_revision: ConfigRevision,
     pub applied_revision: Option<ConfigRevision>,
     pub pipeline: PipelineStatus,
-    pub restart_required: bool,
 }

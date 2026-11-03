@@ -14,7 +14,7 @@ and turn the lights on, or click **Start capture** in the preview window.
 | Dark or washed-out colors | Check [gamma and calibration](configuration.md#color-calibration), brightness, and WLED power limits. |
 | File does not play | FFmpeg 9+ must be on PATH for the process running Prysm; check the absolute file path and read permissions. |
 | File finished | EOF is normal. The panel stays available; start capture again to replay. |
-| Settings will not save | Prysm must be able to replace the TOML file and write its parent directory. Reload the panel if another client changed the revision. |
+| Settings will not save | Prysm must be able to replace settings.json and write its parent directory. Reload the panel if another client changed the revision. |
 | Restart required | Restart the Prysm process/service; saved output-kind or web-policy changes cannot apply live. |
 
 ## TV sender

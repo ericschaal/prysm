@@ -7,6 +7,8 @@ Desktop recording is not supported directly; local device input uses a capture c
 | Your setup | Guide |
 | --- | --- |
 | Raspberry Pi / Debian arm64 | [Install the package](debian.md) |
+| Docker, with a TV sender or Linux USB capture | [Run the container](docker.md) |
+| TrueNAS Apps | [Configure a TrueNAS app](truenas.md) |
 | Linux or macOS, USB capture device | [Capture device → WLED](quickstart.md) |
 | Rooted LG TV, no external capture card | [Set up the TV sender](webos.md) |
 | No LEDs yet, or a saved video to test | [Desktop preview](preview.md) |

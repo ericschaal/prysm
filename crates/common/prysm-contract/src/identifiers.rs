@@ -10,6 +10,12 @@ use uuid::Uuid;
 #[schema(value_type = String, pattern = "^(0|[1-9][0-9]*)$")]
 pub struct ConfigRevision(u64);
 impl ConfigRevision {
+    /// A process starts a new revision sequence, invalidating drafts from earlier runs.
+    #[must_use]
+    pub fn new_session() -> Self {
+        Self(Uuid::new_v4().as_u64_pair().0 & (u64::MAX >> 1))
+    }
+
     #[must_use]
     pub const fn new(value: u64) -> Self {
         Self(value)

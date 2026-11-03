@@ -3,75 +3,100 @@ import type { components } from './service.generated';
 export type Config = components['schemas']['Config'];
 export type Status = components['schemas']['ServiceStatus'];
 // The bridge also receives partial failures and Homebrew Channel's exec replies.
-export type Reply = Partial<Status> & Partial<components['schemas']['ErrorReply']> & {
+export type Reply = Partial<Status> &
+  Partial<components['schemas']['ErrorReply']> & {
     stderrString?: string;
-};
+  };
 
 export interface ServiceBridge {
-    onservicecallback: (text: string) => void;
-    call(uri: string, payload: string): void;
-    cancel(): void;
+  onservicecallback: (text: string) => void;
+  call(uri: string, payload: string): void;
+  cancel(): void;
 }
 
 declare global {
-    var PalmServiceBridge: { new(): ServiceBridge };
+  var PalmServiceBridge: { new (): ServiceBridge };
 }
 
-const unavailable = 'Open Prysm Capture on your LG TV to connect to the service.';
-const timedOut = 'The service did not respond. Open Service options to repair setup.';
+const unavailable =
+  'Open Prysm Capture on your LG TV to connect to the service.';
+const timedOut =
+  'The service did not respond. Open Service options to repair setup.';
 
 export function parseReply(text: string): Reply {
-    const value: unknown = JSON.parse(text);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error('The service returned an invalid reply.');
-    }
-    return value as Reply;
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The service returned an invalid reply.');
+  }
+  return value;
 }
 
 function errorReply(error: unknown): Reply {
-    return { returnValue: false, errorText: error instanceof Error ? error.message : String(error) };
+  return {
+    returnValue: false,
+    errorText: error instanceof Error ? error.message : String(error),
+  };
 }
 
 // Keep native bridges alive until completion, scoped to the mounted consumer.
 export function createServiceClient() {
-    const pending = new Set<() => void>();
-    function call(uri: string, payload: object, callback: (value: Reply) => void) {
-        if (typeof PalmServiceBridge === 'undefined') {
-            callback({ returnValue: false, errorText: unavailable });
-            return;
-        }
-        let bridge: ServiceBridge;
-        try { bridge = new PalmServiceBridge(); }
-        catch (error) { callback(errorReply(error)); return; }
-        let active = true;
-        const timer = window.setTimeout(() => {
-            cancel();
-            callback({ returnValue: false, errorText: timedOut });
-        }, 30000);
-        function release() {
-            active = false;
-            clearTimeout(timer);
-            pending.delete(cancel);
-        }
-        function cancel() {
-            if (!active) return;
-            release();
-            bridge.cancel();
-        }
-        function done(value: Reply) {
-            if (!active) return;
-            release();
-            callback(value);
-        }
-        pending.add(cancel);
-        bridge.onservicecallback = text => {
-            let value: Reply;
-            try { value = parseReply(text); }
-            catch (error) { value = errorReply(error); }
-            done(value);
-        };
-        try { bridge.call(uri, JSON.stringify(payload)); }
-        catch (error) { done(errorReply(error)); }
+  const pending = new Set<() => void>();
+  function call(
+    uri: string,
+    payload: object,
+    callback: (value: Reply) => void,
+  ) {
+    if (typeof PalmServiceBridge === 'undefined') {
+      callback({ returnValue: false, errorText: unavailable });
+      return;
     }
-    return { call, cancelAll: () => { for (const cancel of pending) cancel(); } };
+    let bridge: ServiceBridge;
+    try {
+      bridge = new PalmServiceBridge();
+    } catch (error) {
+      callback(errorReply(error));
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      cancel();
+      callback({ returnValue: false, errorText: timedOut });
+    }, 30000);
+    function release() {
+      active = false;
+      clearTimeout(timer);
+      pending.delete(cancel);
+    }
+    function cancel() {
+      if (!active) return;
+      release();
+      bridge.cancel();
+    }
+    function done(value: Reply) {
+      if (!active) return;
+      release();
+      callback(value);
+    }
+    pending.add(cancel);
+    bridge.onservicecallback = (text) => {
+      let value: Reply;
+      try {
+        value = parseReply(text);
+      } catch (error) {
+        value = errorReply(error);
+      }
+      done(value);
+    };
+    try {
+      bridge.call(uri, JSON.stringify(payload));
+    } catch (error) {
+      done(errorReply(error));
+    }
+  }
+  return {
+    call,
+    cancelAll: () => {
+      for (const cancel of pending) cancel();
+    },
+  };
 }

@@ -52,6 +52,7 @@ jobs:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             crates/web/prysm-web/control-ui/package-lock.json
             crates/web/prysm-webos/package-lock.json
       - name: Update Rust
@@ -63,6 +64,88 @@ jobs:
         run: cargo xtask setup
       - name: Generated contracts, frontend and packaging checks
         run: cargo xtask check frontend
+
+  docker:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build deployment image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: prysm:local
+          cache-from: type=gha,scope=prysm-docker-${{ runner.arch }}
+          cache-to: type=gha,mode=max,scope=prysm-docker-${{ runner.arch }}
+      - name: Validate Compose and smoke-test the image
+        run: |
+          docker compose config --quiet
+          docker compose -f packaging/docker/compose.truenas.yaml config --quiet
+          python3 packaging/docker/smoke.py prysm:local
+      - name: Export tested release image
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: docker image save --output "${{ runner.temp }}/prysm-${{ matrix.arch }}.tar" prysm:local
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: prysm-image-${{ matrix.arch }}
+          path: ${{ runner.temp }}/prysm-${{ matrix.arch }}.tar
+          retention-days: 1
+          compression-level: 0
+
+  publish-image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, frontend, docker, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release version
+        run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('apps/prysm/Cargo.toml').read_text())['package']['version']
+          assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Tag must match the Prysm package version'
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: prysm-image-*
+          path: ${{ runner.temp }}/images
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested architectures and version manifest
+        env:
+          IMAGE_DIRECTORY: ${{ runner.temp }}/images
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="${GITHUB_REF_NAME#v}"
+          for arch in amd64 arm64; do
+            docker image load --input "$IMAGE_DIRECTORY/prysm-$arch.tar"
+            docker image tag prysm:local "$image:$version-$arch"
+            docker image push "$image:$version-$arch"
+          done
+          docker buildx imagetools create --tag "$image:$version" "$image:$version-amd64" "$image:$version-arm64"
+          docker buildx imagetools inspect --raw "$image:$version" | python3 -c 'import json,sys; assert {m["platform"]["architecture"] for m in json.load(sys.stdin)["manifests"] if m["platform"].get("os") == "linux"} == {"amd64", "arm64"}'
 
   webos-arm:
     runs-on: ubuntu-24.04
@@ -159,7 +242,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            crates/web/prysm-web/control-ui/package-lock.json
       - name: Update Rust
         run: |
           rustup update stable --no-self-update
@@ -203,7 +288,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: crates/web/prysm-web/control-ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            crates/web/prysm-web/control-ui/package-lock.json
       - name: Linux build dependencies
         run: apt-get update && apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config dpkg-dev
       - uses: Swatinem/rust-cache@v2
@@ -229,17 +316,23 @@ jobs:
             exit 1
           fi
           apt-get install -y ./target/debian/*.deb
-          runuser -u prysm -- prysm --config /etc/prysm/prysm.toml check
+          test ! -e /etc/prysm/settings.json
+          if runuser -u prysm -- prysm --config /etc/prysm/settings.json check > /tmp/prysm-check-output 2>&1; then
+            echo 'check must reject incomplete settings without creating a file' >&2
+            exit 1
+          fi
+          grep -q 'settings are incomplete' /tmp/prysm-check-output
+          test ! -e /etc/prysm/settings.json
           test "$(stat -c '%U:%G %a' /etc/prysm)" = "prysm:prysm 700"
-          test "$(stat -c '%U:%G %a' /etc/prysm/prysm.toml)" = "prysm:prysm 600"
-          echo '# Package upgrade must preserve local settings' >> /etc/prysm/prysm.toml
-          sha256sum /etc/prysm/prysm.toml > /tmp/prysm-config.sha256
+          runuser -u prysm -- sh -c 'umask 077; printf "%s\n" "{}" > /etc/prysm/settings.json'
+          test "$(stat -c '%U:%G %a' /etc/prysm/settings.json)" = "prysm:prysm 600"
+          sha256sum /etc/prysm/settings.json > /tmp/prysm-config.sha256
           apt-get install -y --reinstall ./target/debian/*.deb
           sha256sum --check /tmp/prysm-config.sha256
           apt-get remove -y prysm-led
           sha256sum --check /tmp/prysm-config.sha256
           apt-get purge -y prysm-led
-          test ! -e /etc/prysm/prysm.toml
+          test ! -e /etc/prysm/settings.json
           test ! -d /etc/prysm
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'

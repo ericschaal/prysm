@@ -14,8 +14,10 @@ Preserve validation, cleanup, timeouts, and [error sources](error-handling.md).
 
 `prysm-contract` owns validated disk/HTTP models. After changing routes or DTOs,
 [regenerate and test the frontend client](frontend.md#api-generation).
-Configuration belongs to one application-owned TOML file; do not add a separate
-preferences file or duplicate runtime settings.
+Browser settings are one complete typed JSON document. CLI/environment configure
+only the process on every startup; neither group overrides the other. Keep
+network bindings and allowed hosts outside application settings. Do not add a
+database, generic settings resolver or separate setup-completion marker.
 
 Update affected callers, fixtures, examples and documentation together. Test
 behavior at the changed boundary. Preserve WLED stop/drain/join ordering and

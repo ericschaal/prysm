@@ -9,13 +9,13 @@ Use a disposable configuration when investigating changes; avoid overwriting a l
 2. Validate with `prysm --config PATH check`. This checks configuration, not hardware availability.
 3. Run Prysm in the foreground and retain stderr. On Debian use `journalctl -u prysm -f`.
 4. Inspect `GET /api/state` for pipeline phase, errors and operation status; inspect
-   `GET /api/config` for the configuration/revision. See [HTTP contracts](control-api.md).
+   `GET /api/settings` for the configuration/revision. See [HTTP contracts](control-api.md).
 5. Isolate the boundary: a known video file removes capture hardware; browser preview isolates
    WLED transport. Keep resolution, source content and processing settings fixed when comparing.
 
 ```sh
 curl http://127.0.0.1:8787/api/state
-curl http://127.0.0.1:8787/api/config
+curl http://127.0.0.1:8787/api/settings
 ```
 
 Capture failures should leave HTTP available. EOF and cancellation are normal

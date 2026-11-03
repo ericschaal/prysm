@@ -1,33 +1,17 @@
 //! Validated application configuration and HTTP update types.
 use crate::{ConfigRevision, Input, Output, ProcessingSettings, Source};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use utoipa::ToSchema;
 
-/// The complete saved configuration. Runtime observations and power are never saved.
+/// Complete application configuration for a configured runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub revision: ConfigRevision,
     pub source: Source,
-    pub web: WebConfig,
     pub input: Input,
     pub output: Output,
     pub processing: ProcessingSettings,
-}
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateConfig {
-    pub expected_revision: ConfigRevision,
-    pub config: Config,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WebConfig {
-    #[schema(value_type = String)]
-    pub listen: SocketAddr,
-    pub allowed_hosts: Vec<String>,
 }
 pub(crate) fn deserialize_http_base_url<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -47,22 +31,13 @@ pub(crate) fn deserialize_http_base_url<'de, D: serde::Deserializer<'de>>(
     }
     Ok(value)
 }
-impl Config {
+impl Input {
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.web.allowed_hosts.is_empty()
-                && self
-                    .web
-                    .allowed_hosts
-                    .iter()
-                    .all(|host| !host.trim().is_empty()),
-            "configure at least one allowed panel host"
-        );
-        if let Input::Webos {
+        if let Self::Webos {
             refresh_rate_hz,
             capture_resolution,
             ..
-        } = self.input
+        } = self
         {
             let [width, height] = capture_resolution.dimensions();
             anyhow::ensure!(
@@ -77,8 +52,14 @@ impl Config {
                 "webOS refresh_rate_hz must be between 1 and 60"
             );
         }
+        Ok(())
+    }
+}
+
+impl Output {
+    pub fn validate(&self) -> anyhow::Result<()> {
         // Revalidate programmatically constructed URLs as well as deserialized URLs.
-        if let Some(url) = self.output.wled_url() {
+        if let Some(url) = self.wled_url() {
             anyhow::ensure!(
                 matches!(url.scheme(), "http" | "https")
                     && url.host_str().is_some()
@@ -91,5 +72,12 @@ impl Config {
             );
         }
         Ok(())
+    }
+}
+
+impl Config {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.input.validate()?;
+        self.output.validate()
     }
 }

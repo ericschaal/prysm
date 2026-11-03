@@ -1,0 +1,16 @@
+services:
+  prysm:
+    image: ghcr.io/ericschaal/prysm:0.1.0
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 90s
+    ports:
+      - "127.0.0.1:8787:8787"
+      - "19400:19400"
+    volumes:
+      - prysm-config:/config
+
+volumes:
+  prysm-config:

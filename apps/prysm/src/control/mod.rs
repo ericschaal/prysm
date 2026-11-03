@@ -3,11 +3,10 @@ mod backend;
 mod controller;
 pub(crate) mod http;
 mod observation;
-mod persistence;
+mod ready;
 mod switching;
 
-pub(crate) use backend::LightingService;
-pub(crate) use controller::Controller;
+pub(crate) use controller::{Controller, ControllerHandle};
 
 #[cfg(test)]
 mod tests;

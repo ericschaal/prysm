@@ -1,15 +1,26 @@
-//! Configuration file loading and pipeline reconfiguration policy.
+//! HTTP deployment policy and the application subset owned by a capture pipeline.
 use prysm_contract::{Config, ConfigRevision, Input, Output, ProcessingSettings};
-use std::path::Path;
-
-pub fn load(path: &Path) -> anyhow::Result<Config> {
-    use anyhow::Context;
-    let contents =
-        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let config: Config = toml::from_str(&contents)
-        .with_context(|| format!("invalid configuration {}", path.display()))?;
-    config.validate()?;
-    Ok(config)
+use std::net::SocketAddr;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebConfig {
+    pub listen: SocketAddr,
+    pub allowed_hosts: Vec<String>,
+}
+impl WebConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.allowed_hosts.is_empty()
+                && self.allowed_hosts.iter().all(|host| {
+                    host == "*"
+                        || (host.trim() == host
+                            && !host.is_empty()
+                            && !host.contains(['/', '@', '?', '#'])
+                            && !host.chars().any(char::is_whitespace))
+                }),
+            "configure at least one valid allowed panel host"
+        );
+        Ok(())
+    }
 }
 
 /// The configuration needed to create one pipeline session.
@@ -44,7 +55,7 @@ mod tests {
 
     #[test]
     fn only_capture_and_output_changes_require_a_pipeline_restart() {
-        let config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+        let config: Config = crate::test_support::config();
         let current = PipelineConfig::from(&config);
         assert_eq!(current.processing, config.processing);
         let mut next = current.clone();
@@ -70,7 +81,6 @@ mod tests {
         next.input = Input::Webos {
             capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
-            listen: "0.0.0.0:19400".parse().unwrap(),
         };
         assert!(current.requires_restart(&next));
         let mut next = current.clone();

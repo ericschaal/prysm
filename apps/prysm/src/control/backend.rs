@@ -1,7 +1,7 @@
 //! Capture lifecycle and WLED control used by the switching logic.
 use crate::pipeline::runtime::Pipeline;
 use anyhow::{Context, Result, bail};
-use prysm_contract::{Config, Observation, PipelineStatus, Source, Target};
+use prysm_contract::{Config, Observation, PipelineStatus};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -62,7 +62,6 @@ pub(super) trait LightingBackend {
 #[derive(Clone)]
 pub(super) struct LightingSnapshot {
     pub observed: Option<Observation>,
-    pub pipeline: PipelineStatus,
     pub error: Option<String>,
 }
 #[derive(Deserialize)]
@@ -87,30 +86,28 @@ pub(crate) struct LightingService {
     pub(super) status: watch::Receiver<PipelineStatus>,
 }
 impl LightingService {
+    pub(super) fn client() -> Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .build()
+            .context("cannot initialize WLED HTTP client")
+    }
+
     pub fn new(
+        client: reqwest::Client,
         config: watch::Receiver<Config>,
         pipeline: Pipeline,
         status: watch::Receiver<PipelineStatus>,
-    ) -> Result<Self> {
-        Ok(Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(3))
-                .redirect(reqwest::redirect::Policy::none())
-                .no_proxy()
-                .build()?,
+    ) -> Self {
+        Self {
+            client,
             config,
             pipeline,
             status,
-        })
-    }
-    pub(super) async fn switch(&self, target: Target) -> Result<()> {
-        if target.power && target.source == Source::Prysm {
-            let config = crate::config::PipelineConfig::from(&*self.config.borrow());
-            self.pipeline.configure(config).await?;
         }
-        super::switching::switch(self, target).await
     }
-
     fn url(&self) -> Result<reqwest::Url> {
         self.config
             .borrow()
@@ -152,11 +149,7 @@ impl LightingService {
             ),
             Err(error) => (None, Some(format!("{error:#}"))),
         };
-        LightingSnapshot {
-            observed,
-            pipeline,
-            error,
-        }
+        LightingSnapshot { observed, error }
     }
 }
 
@@ -207,17 +200,25 @@ mod tests {
         let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = available.local_addr().unwrap();
         drop(available);
-        let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+        let mut config: Config = crate::test_support::config();
         let prysm_contract::Output::Wled { url, .. } = &mut config.output;
         *url = "http://127.0.0.1/".parse().unwrap();
         config.input = prysm_contract::Input::Webos {
-            listen: address,
             capture_resolution: [4, 2].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
         };
-        let (pipeline, mut status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
+        let (pipeline, mut status) = Pipeline::with_preview(
+            PipelineConfig::from(&config),
+            address,
+            crate::preview::Preview::new().publisher(),
+        );
         let (_, receiver) = watch::channel(config);
-        let lighting = LightingService::new(receiver, pipeline, status.clone()).unwrap();
+        let lighting = LightingService::new(
+            LightingService::client().unwrap(),
+            receiver,
+            pipeline,
+            status.clone(),
+        );
         lighting.capture(CaptureAction::Start).await.unwrap();
         for count in 1..=2 {
             let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();

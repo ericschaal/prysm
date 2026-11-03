@@ -12,13 +12,13 @@ On your computer, run your normal Prysm configuration with a metrics listener:
 
 ```sh
 cargo run --release -p prysm -- \
-  --config prysm-local.toml --metrics-listen 0.0.0.0:9102
+  --config settings.json --metrics-listen 0.0.0.0:9102
 ```
 
 The metrics
-listener is separate from the REST API and does not change your saved TOML.
+listener is separate from the REST API and does not change your saved JSON settings.
 Enable Screen sync as usual to open the video receiver.
-Use your working configuration path; [TV setup](../users/webos.md) includes a portable example.
+Use your working configuration path; [TV setup](../users/webos.md) describes browser configuration.
 
 Omit `--metrics-listen` to disable all instrumentation and the exporter thread.
 Both nodes require opting in. A metrics bind or exporter failure is reported without

@@ -5,7 +5,8 @@ use axum::{
     routing::{get, post},
 };
 use prysm_contract::{
-    Config, OperationResponse, OperationStatus, Source, StateResponse, Target, UpdateConfig,
+    Config, OperationResponse, OperationStatus, SettingsView, Source, StateResponse, Target,
+    UpdateSettings,
 };
 use std::{
     path::PathBuf,
@@ -123,43 +124,27 @@ async fn exercise_controller(video: Option<PathBuf>) {
     let address = available.local_addr().unwrap();
     drop(available);
     let directory = tempfile::tempdir().unwrap();
-    let config = directory.path().join("dev.toml");
-    std::fs::write(
-        &config,
-        format!(
-            r#"
-revision = "0"
-source = "prysm"
-[processing]
-brightness_percent = 100
-shadow_lift_percent = 0
-smoothing_seconds = 0.0
-sample_density = 128
-spatial_reach_percent = 10
-remove_black_bars = false
-[web]
-listen = "{address}"
-allowed_hosts = ["{address}"]
-[input]
-capture_resolution = [4, 4]
-refresh_rate_hz = 30
-type = "file"
-path = "/missing/prysm-local-controller-test.mp4"
-[output]
-type = "wled"
-url = "http://{wled_address}/"
-[output.leds]
-top = 1
-right = 1
-bottom = 1
-left = 1
-"#
-        ),
-    )
+    let config = directory.path().join("settings.json");
+    let initial: Config = serde_json::from_value(serde_json::json!({
+        "revision":"0","source":"prysm",
+        "processing":{"brightness_percent":100,"shadow_lift_percent":0,"smoothing_seconds":0.0,
+            "sample_density":128,"spatial_reach_percent":10,"remove_black_bars":false},
+        "input":{"type":"file","path":"/missing/prysm-local-controller-test.mp4",
+            "capture_resolution":[4,4],"refresh_rate_hz":30},
+        "output":{"type":"wled","url":format!("http://{wled_address}/"),
+            "leds":{"top":1,"right":1,"bottom":1,"left":1}}
+    }))
     .unwrap();
+    write_config(&config, &initial);
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
         .args(["--config"])
         .arg(&config)
+        .args([
+            "--listen",
+            &address.to_string(),
+            "--allowed-host",
+            &address.to_string(),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -231,7 +216,7 @@ left = 1
         .await
         .unwrap();
     assert_eq!(forbidden_preview.status(), reqwest::StatusCode::FORBIDDEN);
-    for path in ["/api/state", "/api/config"] {
+    for path in ["/api/state", "/api/settings"] {
         let response = client
             .put(format!("http://{address}{path}"))
             .header("Sec-Fetch-Site", "cross-site")
@@ -255,7 +240,7 @@ left = 1
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         let message = response.text().await.unwrap();
         assert!(message.contains("/api/state"));
-        assert!(message.contains("/api/config"));
+        assert!(message.contains("/api/settings"));
     }
     let initial = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -272,34 +257,17 @@ left = 1
         initial.observed.unwrap().pipeline_phase,
         prysm_contract::PipelinePhase::Idle
     );
-    let config_endpoint = format!("http://{address}/api/config");
-    let mut settings: Config = client
-        .get(&config_endpoint)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let config_endpoint = format!("http://{address}/api/settings");
+    let mut settings = fetch_config(&client, &config_endpoint).await;
     let revision = settings.revision;
     settings.processing.brightness_percent = 42.try_into().unwrap();
-    let saved: Config = client
-        .put(&config_endpoint)
-        .json(&UpdateConfig {
-            expected_revision: revision,
-            config: settings,
-        })
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let saved = save_config(&client, &config_endpoint, &endpoint, settings).await;
     assert_eq!(saved.processing.brightness_percent.get(), 42);
     assert_ne!(saved.revision, revision);
-    assert_eq!(prysm::config::load(&config).unwrap(), saved);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&config).unwrap()).unwrap(),
+        settings_value(&saved)
+    );
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = wait(&client, &endpoint).await;
@@ -312,12 +280,12 @@ left = 1
     .await
     .unwrap();
     let before = std::fs::read(&config).unwrap();
-    let mut invalid = serde_json::to_value(&saved).unwrap();
+    let mut invalid = settings_value(&saved);
     invalid["output"] = serde_json::json!({"type":"unknown"});
     let response = client
         .put(&config_endpoint)
         .json(&serde_json::json!({
-            "expected_revision": saved.revision, "config": invalid,
+            "expected_revision": saved.revision, "settings": invalid,
         }))
         .send()
         .await
@@ -331,11 +299,6 @@ left = 1
             .contains("unknown variant `unknown`")
     );
     assert_eq!(std::fs::read(&config).unwrap(), before);
-    let mut web_settings = saved;
-    web_settings.web.listen = "127.0.0.1:0".parse().unwrap();
-    web_settings.web.allowed_hosts = vec!["new-panel.local:8787".into()];
-    let saved = save_config(&client, &config_endpoint, &endpoint, web_settings).await;
-    assert!(wait(&client, &endpoint).await.restart_required);
     assert_eq!(
         client
             .get(&endpoint)
@@ -397,14 +360,7 @@ left = 1
         source: Source::Wled
     }));
     if let Some(video) = video {
-        let mut settings: Config = client
-            .get(&config_endpoint)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let mut settings = fetch_config(&client, &config_endpoint).await;
         settings.input = prysm_contract::Input::File {
             capture_resolution: [640, 360].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
@@ -430,14 +386,7 @@ left = 1
             source: Source::Prysm,
         }));
 
-        let mut settings: Config = client
-            .get(&config_endpoint)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let mut settings = fetch_config(&client, &config_endpoint).await;
         settings.processing.brightness_percent = 0.try_into().unwrap();
         let saved = save_config(&client, &config_endpoint, &endpoint, settings).await;
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -549,14 +498,11 @@ left = 1
             .status(),
         reqwest::StatusCode::CONFLICT,
     );
-    let settings = prysm::config::load(&config).unwrap();
+    let settings = fetch_config(&client, &config_endpoint).await;
     assert_eq!(
         client
             .put(&config_endpoint)
-            .json(&UpdateConfig {
-                expected_revision: settings.revision,
-                config: settings,
-            })
+            .json(&update(&settings))
             .send()
             .await
             .unwrap()
@@ -628,12 +574,9 @@ async fn save_config(
     endpoint: &str,
     config: Config,
 ) -> Config {
-    let saved: Config = client
+    let view: SettingsView = client
         .put(config_endpoint)
-        .json(&UpdateConfig {
-            expected_revision: config.revision,
-            config,
-        })
+        .json(&update(&config))
         .send()
         .await
         .unwrap()
@@ -642,6 +585,7 @@ async fn save_config(
         .json()
         .await
         .unwrap();
+    let saved = view.settings.config(view.revision).unwrap();
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let state = wait(client, endpoint).await;
@@ -673,10 +617,8 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = available.local_addr().unwrap();
     drop(available);
-    let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
+    let mut config: Config = serde_json::from_str(include_str!("fixtures/config.json")).unwrap();
     config.source = Source::Prysm;
-    config.web.listen = address;
-    config.web.allowed_hosts = vec!["*".into()];
     let router = Router::new()
         .route(
             "/json/si",
@@ -705,11 +647,19 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         refresh_rate_hz: 30.try_into().unwrap(),
     };
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("prysm.toml");
-    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let path = directory.path().join("settings.json");
+    write_config(&path, &config);
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
         .arg("--config")
         .arg(&path)
+        .args([
+            "--listen",
+            &address.to_string(),
+            "--allowed-host",
+            "*",
+            "--receiver-listen",
+            &desired.to_string(),
+        ])
         .kill_on_drop(true)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -733,16 +683,15 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     .await
     .unwrap();
     config.input = prysm_contract::Input::Webos {
-        listen: desired,
         capture_resolution: [4, 2].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),
     };
-    let saved: Config = client
-        .put(format!("http://{address}/api/config"))
-        .json(&UpdateConfig {
-            expected_revision: config.revision,
-            config,
-        })
+    let config_endpoint = format!("http://{address}/api/settings");
+    let current = fetch_config(&client, &config_endpoint).await;
+    config.revision = current.revision;
+    let saved: SettingsView = client
+        .put(&config_endpoint)
+        .json(&update(&config))
         .send()
         .await
         .unwrap()
@@ -751,6 +700,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         .json()
         .await
         .unwrap();
+    let saved = saved.settings.config(saved.revision).unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let state = wait(&client, &endpoint).await;
@@ -852,4 +802,35 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     child.kill().await.unwrap();
     fixture.abort();
     tv.abort();
+}
+
+fn settings_value(config: &Config) -> serde_json::Value {
+    let mut value = serde_json::to_value(config).unwrap();
+    value.as_object_mut().unwrap().remove("revision");
+    value
+}
+
+fn write_config(path: &std::path::Path, config: &Config) {
+    std::fs::write(path, serde_json::to_vec(&settings_value(config)).unwrap()).unwrap();
+}
+
+fn update(config: &Config) -> UpdateSettings {
+    UpdateSettings {
+        expected_revision: config.revision,
+        settings: serde_json::from_value(settings_value(config)).unwrap(),
+    }
+}
+
+async fn fetch_config(client: &reqwest::Client, endpoint: &str) -> Config {
+    let view: SettingsView = client
+        .get(endpoint)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    view.settings.config(view.revision).unwrap()
 }

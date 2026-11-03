@@ -1,14 +1,17 @@
 # Architecture
 
 `application` is the composition root. Startup stays idle. The main OS thread runs
-one Tokio current-thread runtime for HTTP, the application controller, pipeline
-lifecycle, asynchronous WLED HTTP, and the tracked WLED DDP consumer. HTTP remains
+one Tokio current-thread runtime for HTTP, the settings owner, application
+controller, pipeline lifecycle, asynchronous WLED HTTP, and the tracked WLED DDP
+consumer. With required settings missing, HTTP serves Settings before lighting
+and capture resources are constructed. HTTP remains
 available after EOF or capture/output failure. No multithread Tokio runtime is used.
 
 ## Ownership and boundaries
 
-The controller owns saved configuration, requested source, operation IDs and
-revision state. Bounded reliable commands with oneshot replies connect the HTTP
+The settings owner owns one browser-saved JSON layer and resolves defaults, saved
+settings, environment and CLI in increasing priority. The controller owns requested
+source, operation IDs and applied revision state. Process options are read from CLI/environment and never enter saved settings. Bounded reliable commands with oneshot replies connect the HTTP
 adapter in `prysm-api` to it. Accepted mutations continue
 when their callers disconnect. The controller retains startup/application,
 persistence and WLED work while it observes status and handles shutdown. Competing
@@ -99,7 +102,7 @@ deliberately retain distinct types:
 | Core, webOS, and metrics pixel formats | Core describes processing storage and YUYV color metadata; the wire has fixed RGB/NV12/NV16 IDs; metrics combine formats into labels. A merged enum would admit unsupported states. |
 | webOS `Compression` and `Codec` | Compression selects a configured encoder backend; codec identifies the actual payload. Metrics codec labels also include an unspecified value. |
 | Application and webOS `Source` | Prysm/WLED lighting selection and video/blended capture selection are different decisions. |
-| `Config`, `PipelineConfig`, and runtime state | Saved application configuration, a pipeline configuration subset, and owned running resources have different lifetimes and responsibilities. `PipelinePhase` is an observation of runtime state. |
+| `Settings`, `Config`, `PipelineConfig`, and runtime state | Application settings (nullable input/output during setup), complete validated configuration, a pipeline subset, and owned running resources have different roles. `PipelinePhase` observes runtime state. |
 | Contract `LedCounts` and renderer counts | Configuration requires a positive total; the renderer permits empty output and enforces the WLED limit at its boundary. |
 | `Frame`, `FrameView`, `ProcessedSnapshot`, and private `FrameLayout` | Immutable pixels, processor sampling/cropping access, a published result, and a layout-change cache key serve different purposes. |
 | `CapturedFrame` and `EncodedFrame` | Borrowed raw capture pixels and encoded transport bytes mark distinct pipeline stages despite matching fields. |

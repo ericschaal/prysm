@@ -2022,10 +2022,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
- "toml",
  "tower",
  "tower-http 0.7.1",
  "tracing",
@@ -2036,8 +2036,10 @@ dependencies = [
 name = "prysm-api"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "prysm-contract",
+ "thiserror 2.0.21",
  "tokio",
  "utoipa",
  "utoipa-axum",

@@ -59,7 +59,10 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 
 <p align="center"><sub>Captured from the running Prysm web app with LG webOS screen sync and WLED lights.</sub></p>
 
-Overview controls power and color source. Preview & tuning combines picture inspection with all six live processing settings.
+Overview controls power and color source. Settings configures the full installation
+in the browser, including video input, WLED, LEDs, processing and color source.
+Network bindings and allowed hosts are configured through CLI/environment.
+Preview shows the source image, detected crop and colors sent to each edge.
 
 - **Screen sync** lets Prysm supply live colors from your video.
 - **WLED effects** returns control to WLED's effects and presets.
@@ -89,11 +92,14 @@ Inspect the source image, crop and edge colors in the browser while tuning live 
 Choose one setup guide:
 
 - **[Raspberry Pi / Debian arm64](docs/users/debian.md)** — install the package and run it as a service.
+- **[Docker](docs/users/docker.md)** — run the TV receiver or Linux USB capture in a container.
+- **[TrueNAS](docs/users/truenas.md)** — deploy the same image with a persistent config dataset.
 - **[Linux or macOS with a capture device](docs/users/quickstart.md)** — configure capture and WLED, then start Prysm.
 - **[Rooted LG TV](docs/users/webos.md)** — install the TV sender and connect it to Prysm.
 - **[Preview and tune](docs/users/preview.md)** — inspect the picture and adjust live processing in the browser.
 
-Prysm starts idle. Open the panel, select **Screen sync**, and turn the lights on.
+Prysm starts idle. On first use, complete Settings in the browser; no configuration
+file is needed. Then select **Screen sync** and turn the lights on.
 See [settings and daily use](docs/users/configuration.md) or [troubleshooting](docs/users/troubleshooting.md).
 
 ## Develop Prysm

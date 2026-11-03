@@ -1,75 +1,159 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { client, unwrap, type StateResponse, type Config, type Target } from './api';
+import {
+  client,
+  unwrap,
+  type StateResponse,
+  type Target,
+  type SettingsView,
+  type SettingsValues,
+} from './api';
+
+type Snapshot = { state: StateResponse | null; settings: SettingsView };
+type PendingOperation = { kind: 'lighting'; id: string } | { kind: 'settings' };
+
+async function readSnapshot(): Promise<Snapshot> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const settings = unwrap(await client.GET('/api/settings'));
+    if (settings.missing_required.length) return { state: null, settings };
+    const state = unwrap(await client.GET('/api/state'));
+    if (state.config_revision === settings.revision) return { state, settings };
+  }
+  throw Error('Settings changed while loading. Checking again automatically.');
+}
 
 export function useControl() {
   const [data, setData] = useState<StateResponse | null>(null);
-  const [config, setConfig] = useState<Config | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [pendingControl, setPendingControl] = useState<'power' | Target['source'] | null>(null);
-  const [awaiting, setAwaiting] = useState<string | null>(null);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [pendingControl, setPendingControl] = useState<
+    'power' | Target['source'] | null
+  >(null);
+  const [pending, setPending] = useState<PendingOperation | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [requestError, setRequestError] = useState('');
-  const operation = useRef({ busy: false, polling: false, revision: 0, awaiting: null as string | null });
+  const operation = useRef({
+    writing: false,
+    polling: false,
+    generation: 0,
+    pending: null as PendingOperation | null,
+  });
   const poll = useCallback(async () => {
     const current = operation.current;
-    if (document.hidden || current.busy || current.polling) return;
+    if (document.hidden || current.writing || current.polling) return;
     current.polling = true;
-    const revision = current.revision;
+    const generation = current.generation;
     try {
-      let snapshot: { state: StateResponse; config: Config } | undefined;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const [stateResult, configResult] = await Promise.all([client.GET('/api/state'), client.GET('/api/config')]);
-        const state = unwrap(stateResult);
-        const config = unwrap(configResult);
-        if (state.config_revision === config.revision) { snapshot = { state, config }; break; }
-      }
-      if (!snapshot) throw Error('Settings changed while loading. Checking again automatically.');
-      if (revision !== current.revision) return;
+      const snapshot = await readSnapshot();
+      if (generation !== current.generation) return;
       setData(snapshot.state);
-      setConfig(snapshot.config);
+      setSettings(snapshot.settings);
       setConnectionError('');
-      if (current.awaiting !== null && snapshot.state.operation.kind !== 'pending') {
-        current.awaiting = null;
-        setAwaiting(null);
+      if (current.pending && snapshot.state?.operation.kind !== 'pending') {
+        const completed = snapshot.state?.operation;
+        const unknown =
+          current.pending.kind === 'lighting' &&
+          (!completed ||
+            completed.kind === 'idle' ||
+            completed.id !== current.pending.id);
+        current.pending = null;
+        setPending(null);
         setPendingControl(null);
-        setRequestError(snapshot.state.operation.kind === 'idle' ? 'Prysm restarted; completion is unknown. Check status before retrying.' : '');
+        setRequestError(
+          unknown
+            ? 'Prysm restarted; completion is unknown. Check status before retrying.'
+            : '',
+        );
       }
     } catch (error) {
-      if (revision === current.revision) setConnectionError(error instanceof Error ? error.message : 'Request failed.');
-    } finally { current.polling = false; }
+      if (generation === current.generation)
+        setConnectionError(
+          error instanceof Error ? error.message : 'Request failed.',
+        );
+    } finally {
+      current.polling = false;
+    }
   }, []);
   useEffect(() => {
-    void poll();
-    const timer = setInterval(poll, 2000);
-    document.addEventListener('visibilitychange', poll);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); operation.current.revision += 1; };
+    const current = operation.current;
+    const refresh = () => {
+      void poll();
+    };
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+      current.generation += 1;
+    };
   }, [poll]);
 
-  async function setState(target: Target, control: 'power' | 'source') {
+  function beginWrite() {
     const current = operation.current;
-    if (current.busy || data?.operation.kind === 'pending' || current.awaiting !== null) return;
-    current.busy = true;
-    current.revision += 1;
-    setBusy(true); setPendingControl(control === 'power' ? 'power' : target.source); setRequestError('');
+    if (
+      current.writing ||
+      current.pending ||
+      data?.operation.kind === 'pending'
+    )
+      return false;
+    current.writing = true;
+    current.generation += 1;
+    setWriting(true);
+    return true;
+  }
+  function accepted(pending: PendingOperation) {
+    operation.current.pending = pending;
+    setPending(pending);
+  }
+  function finishWrite() {
+    operation.current.writing = false;
+    setWriting(false);
+    void poll();
+  }
+  async function setState(target: Target, control: 'power' | 'source') {
+    if (!beginWrite()) return;
+    setPendingControl(control === 'power' ? 'power' : target.source);
+    setRequestError('');
     try {
-      const accepted = unwrap(await client.PUT('/api/state', { body: target }));
-      current.awaiting = accepted.operation_id; setAwaiting(accepted.operation_id);
+      const response = unwrap(await client.PUT('/api/state', { body: target }));
+      accepted({ kind: 'lighting', id: response.operation_id });
     } catch (error) {
       setPendingControl(null);
-      setRequestError(`${error instanceof Error ? error.message : 'Request failed.'} The change may have been accepted. Check status before retrying.`);
-    } finally { current.busy = false; setBusy(false); void poll(); }
+      setRequestError(
+        `${error instanceof Error ? error.message : 'Request failed.'} The change may have been accepted. Check status before retrying.`,
+      );
+    } finally {
+      finishWrite();
+    }
   }
-
-  async function saveConfig(next: Config) {
-    const current = operation.current;
-    if (current.busy || data?.operation.kind === 'pending' || current.awaiting !== null) throw Error('A change is already running.');
-    current.busy = true; current.revision += 1; setBusy(true);
+  async function saveSettings(
+    expected_revision: string,
+    changes: SettingsValues,
+  ) {
+    if (!beginWrite()) throw Error('A change is already running.');
     try {
-      const saved = unwrap(await client.PUT('/api/config', { body: { expected_revision: next.revision, config: next } }));
-      current.revision += 1; setConfig(saved);
-      current.awaiting = `config:${saved.revision}`; setAwaiting(current.awaiting);
+      const saved = unwrap(
+        await client.PUT('/api/settings', {
+          body: { expected_revision, settings: changes },
+        }),
+      );
+      operation.current.generation += 1;
+      setSettings(saved);
+      accepted({ kind: 'settings' });
       return saved;
-    } finally { current.busy = false; setBusy(false); void poll(); }
+    } finally {
+      finishWrite();
+    }
   }
-  return { data, config, pendingControl, busy: busy || awaiting !== null || data?.operation.kind === 'pending', connectionError, requestError, poll, setState, saveConfig };
+  return {
+    data,
+    settings,
+    pendingControl,
+    busy: writing || pending !== null || data?.operation.kind === 'pending',
+    connectionError,
+    requestError,
+    poll,
+    setState,
+    saveSettings,
+  };
 }

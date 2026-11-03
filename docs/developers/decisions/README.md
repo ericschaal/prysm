@@ -6,7 +6,7 @@ record here when a future change needs alternatives and tradeoffs preserved.
 
 | Decision | Reason and consequence | Maintained detail |
 | --- | --- | --- |
-| One host executable, embedded web UI and one TOML file | UI/API share the same listener and policy; configuration and capture lifecycle have one owner. No separate production frontend service or preferences store. | [Control API](../control-api.md) |
+| One host executable, embedded web UI and one saved JSON layer | UI/API share the same listener and policy. CLI/environment configure the process on every startup, separately from browser settings. Missing required settings open the same Settings form; no database or setup marker. | [Control API](../control-api.md) |
 | Ordered lifecycle, bounded best-effort frames | Start/stop/configuration must finish in order; live frames can be dropped rather than building latency under load. Each run owns a current-thread Tokio processing worker and tracked output consumer. | [Architecture](../architecture.md) |
 | Drain before changing WLED state | Accepted DDP output must finish before Off/effects, avoiding a late packet overriding the user's choice. Failed starts compensate where possible. | [Lighting transitions](../control-api.md#lighting-transitions) |
 | Demand-driven browser preview | One bounded encoder observes paired source/crop/colors independently of lighting. Closing preview does not stop capture. No native window or preview output variant. | [Preview observation](../architecture.md#preview-observation) |
@@ -17,3 +17,6 @@ record here when a future change needs alternatives and tradeoffs preserved.
 Experimental alternatives belong in [research](../../../research/README.md) until
 adopted. A decision record should state context, decision, rejected alternatives,
 consequences and the implementation/evidence links that justify it.
+
+[Settings and application ownership](2026-11-03-settings-ownership.md) records the
+encapsulation rules for browser configuration and application control.

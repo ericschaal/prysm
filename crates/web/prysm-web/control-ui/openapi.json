@@ -6,15 +6,15 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/config": {
+    "/api/settings": {
       "get": {
-        "operationId": "getConfig",
+        "operationId": "getSettings",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Config"
+                  "$ref": "#/components/schemas/SettingsView"
                 }
               }
             }
@@ -31,12 +31,12 @@
         }
       },
       "put": {
-        "operationId": "updateConfig",
+        "operationId": "updateSettings",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateConfig"
+                "$ref": "#/components/schemas/UpdateSettings"
               }
             }
           },
@@ -47,7 +47,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Config"
+                  "$ref": "#/components/schemas/SettingsView"
                 }
               }
             }
@@ -71,6 +71,15 @@
             }
           },
           "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
             "content": {
               "application/json": {
                 "schema": {
@@ -105,6 +114,15 @@
             }
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -147,6 +165,15 @@
             }
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
             "content": {
               "application/json": {
                 "schema": {
@@ -207,39 +234,6 @@
         ],
         "maxItems": 2,
         "minItems": 2
-      },
-      "Config": {
-        "type": "object",
-        "description": "The complete saved configuration. Runtime observations and power are never saved.",
-        "required": [
-          "revision",
-          "source",
-          "web",
-          "input",
-          "output",
-          "processing"
-        ],
-        "properties": {
-          "input": {
-            "$ref": "#/components/schemas/Input"
-          },
-          "output": {
-            "$ref": "#/components/schemas/Output"
-          },
-          "processing": {
-            "$ref": "#/components/schemas/ProcessingSettings"
-          },
-          "revision": {
-            "$ref": "#/components/schemas/ConfigRevision"
-          },
-          "source": {
-            "$ref": "#/components/schemas/Source"
-          },
-          "web": {
-            "$ref": "#/components/schemas/WebConfig"
-          }
-        },
-        "additionalProperties": false
       },
       "ConfigRevision": {
         "type": "string",
@@ -319,7 +313,6 @@
           {
             "type": "object",
             "required": [
-              "listen",
               "refresh_rate_hz",
               "capture_resolution",
               "type"
@@ -327,9 +320,6 @@
             "properties": {
               "capture_resolution": {
                 "$ref": "#/components/schemas/CaptureResolution"
-              },
-              "listen": {
-                "type": "string"
               },
               "refresh_rate_hz": {
                 "type": "integer",
@@ -823,10 +813,75 @@
         },
         "additionalProperties": false
       },
+      "RequiredSetting": {
+        "type": "string",
+        "enum": [
+          "input",
+          "output"
+        ]
+      },
       "SampleDensity": {
         "type": "integer",
         "maximum": 4294967295,
         "minimum": 1
+      },
+      "Settings": {
+        "type": "object",
+        "required": [
+          "source",
+          "processing"
+        ],
+        "properties": {
+          "input": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing": {
+            "$ref": "#/components/schemas/ProcessingSettings"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SettingsView": {
+        "type": "object",
+        "required": [
+          "revision",
+          "settings",
+          "missing_required"
+        ],
+        "properties": {
+          "missing_required": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequiredSetting"
+            }
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ConfigRevision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          }
+        }
       },
       "ShadowLiftPercent": {
         "type": "integer",
@@ -857,8 +912,7 @@
           "operation",
           "wled_url",
           "config_revision",
-          "pipeline",
-          "restart_required"
+          "pipeline"
         ],
         "properties": {
           "applied_revision": {
@@ -896,9 +950,6 @@
           "pipeline": {
             "$ref": "#/components/schemas/PipelineStatus"
           },
-          "restart_required": {
-            "type": "boolean"
-          },
           "source": {
             "$ref": "#/components/schemas/Source"
           },
@@ -923,43 +974,24 @@
         },
         "additionalProperties": false
       },
-      "UpdateConfig": {
+      "UpdateSettings": {
         "type": "object",
         "required": [
           "expected_revision",
-          "config"
+          "settings"
         ],
         "properties": {
-          "config": {
-            "$ref": "#/components/schemas/Config"
-          },
           "expected_revision": {
             "$ref": "#/components/schemas/ConfigRevision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
           }
         },
         "additionalProperties": false
       },
       "VideoPath": {
         "type": "string"
-      },
-      "WebConfig": {
-        "type": "object",
-        "required": [
-          "listen",
-          "allowed_hosts"
-        ],
-        "properties": {
-          "allowed_hosts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "listen": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
       }
     }
   }

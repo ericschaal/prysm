@@ -1,4 +1,5 @@
 //! REST routes and host/origin policy.
+use crate::config::WebConfig;
 use axum::{
     Router,
     extract::{DefaultBodyLimit, Request, State},
@@ -7,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use prysm_api::{ApiFailure, App};
-use prysm_contract::{ErrorCode, WebConfig};
+use prysm_contract::ErrorCode;
 use tower_http::csrf::CsrfLayer;
 
 async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Response {
@@ -58,17 +59,22 @@ async fn guard(State(web): State<WebConfig>, request: Request, next: Next) -> Re
     response
 }
 
-pub(crate) fn router_with_preview(app: App, web: WebConfig, preview: Router) -> Router {
-    prysm_api::router()
-        .split_for_parts()
-        .0
-        .with_state(app)
+pub(crate) fn router(app: App, web: WebConfig, preview: Router) -> Router {
+    protect(
+        prysm_api::router().split_for_parts().0.with_state(app),
+        web,
+        preview,
+    )
+}
+
+fn protect(router: Router, web: WebConfig, preview: Router) -> Router {
+    router
         .merge(prysm_web::assets_router())
         .merge(preview)
         .fallback(async || {
             (
                 StatusCode::NOT_FOUND,
-                "404 Not Found\n\nAvailable endpoints: /, /api/state and /api/config.\n",
+                "404 Not Found\n\nAvailable endpoints: /, /api/state and /api/settings.\n",
             )
         })
         .layer(DefaultBodyLimit::max(64 * 1024))

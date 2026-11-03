@@ -20,7 +20,6 @@ maintainer-scripts = "../../packaging/debian"
 assets = [
     ["target/release/prysm", "usr/bin/prysm", "755"],
     ["../../packaging/debian/prysm.conf", "usr/lib/sysusers.d/prysm.conf", "644"],
-    ["../../packaging/debian/prysm.toml", "usr/share/prysm/prysm.toml", "644"],
     ["../../packaging/debian/README.md", "usr/share/doc/prysm-led/README.md", "644"],
 ]
 
@@ -36,13 +35,13 @@ workspace = true
 
 [dependencies]
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive"] }
-toml.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 futures.workspace = true
 prysm-capture = { path = "../../crates/capture/prysm-capture" }
 prysm-core = { path = "../../crates/common/prysm-core" }

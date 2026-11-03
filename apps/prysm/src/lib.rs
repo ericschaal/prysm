@@ -1,16 +1,17 @@
 //! Capture, processing, rendering, configuration ownership, and REST control.
 mod application;
 pub use application::run;
+mod settings;
+pub use settings::{SettingsError, SettingsStore};
 
-pub mod config;
-pub mod control;
+mod config;
+pub use config::WebConfig;
+mod control;
 mod input;
 mod preview;
 pub mod video;
 
-pub mod pipeline;
+mod pipeline;
 
-/// Validate saved settings before starting the application or saving a mutation.
-pub fn validate_config(config: &prysm_contract::Config) -> anyhow::Result<()> {
-    config.validate()
-}
+#[cfg(test)]
+mod test_support;

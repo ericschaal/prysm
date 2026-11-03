@@ -1,21 +1,17 @@
-//! Real command/reply and persistence behavior, with WLED isolated behind a loopback fixture.
+//! The production controller owns persistence, source changes and shutdown.
 use super::*;
-use crate::{config::PipelineConfig, pipeline::runtime::Pipeline};
-use prysm_api::{App, Command};
-use prysm_contract::{Config, OperationStatus, Source, Target, UpdateConfig};
+use crate::{preview::Preview, settings::SettingsStore, test_support};
+use prysm_api::{App, CommandError};
+use prysm_contract::{OperationStatus, Source, Target, UpdateSettings};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{oneshot, watch};
 
-async fn settled(app: &mut App) {
+async fn settled(app: &App) {
     tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if !matches!(
-                app.state.borrow_and_update().operation,
-                OperationStatus::Pending { .. }
-            ) {
-                break;
-            }
-            app.state.changed().await.unwrap();
+        while matches!(
+            app.state().unwrap().operation,
+            OperationStatus::Pending { .. }
+        ) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
@@ -23,67 +19,55 @@ async fn settled(app: &mut App) {
 }
 
 #[tokio::test]
-async fn disconnected_config_caller_still_saves_applies_and_rejects_stale_revision() {
+async fn disconnected_settings_caller_still_saves_and_rejects_stale_revision() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("prysm.toml");
-    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
-    // No real hardware/network endpoint is contacted by configuration application.
-    let prysm_contract::Output::Wled { url, .. } = &mut config.output;
+    let config = test_support::config();
+    let store = test_support::store(&directory, &config);
+    let (controller, app) = Controller::start(
+        store,
+        Preview::new().publisher(),
+        "127.0.0.1:0".parse().unwrap(),
+    );
+    let initial = app.settings();
+    let mut changed = initial.settings.clone();
+    changed.processing.brightness_percent = 42.try_into().unwrap();
+    let update: UpdateSettings = serde_json::from_value(serde_json::json!({
+        "expected_revision":initial.revision,"settings":changed
+    }))
+    .unwrap();
     {
-        *url = "http://127.0.0.1:1/".parse().unwrap();
+        let mut request = Box::pin(app.update_settings(update.clone()));
+        assert!(futures::poll!(&mut request).is_pending());
     }
-    let (config_tx, config_rx) = watch::channel(config.clone());
-    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
-    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
-    let (controller, mut app) = Controller::spawn(path.clone(), &config, lighting, config_tx);
-    config.processing.brightness_percent = 42.try_into().unwrap();
-    let (reply, response) = oneshot::channel();
-    drop(response);
-    app.commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config: config.clone(),
-            }),
-            reply,
-        ))
-        .await
-        .unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while app.config.borrow_and_update().revision == config.revision {
-            app.config.changed().await.unwrap();
+        while app.settings().revision == initial.revision {
+            tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    settled(&mut app).await;
+    settled(&app).await;
+    assert_eq!(
+        app.settings().settings.processing.brightness_percent.get(),
+        42
+    );
     assert!(matches!(
-        app.state.borrow().operation,
+        app.state().unwrap().operation,
         OperationStatus::Succeeded { .. }
     ));
-    let saved = crate::config::load(&path).unwrap();
-    assert_eq!(saved.processing.brightness_percent.get(), 42);
-    assert_eq!(*app.config.borrow(), saved);
+    assert_eq!(app.state().unwrap().applied_revision, None);
+    let settled_operation = serde_json::to_value(app.state().unwrap().operation).unwrap();
+    assert!(matches!(
+        app.update_settings(update).await,
+        Err(CommandError::Conflict(_))
+    ));
     assert_eq!(
-        app.state.borrow().applied_revision,
-        None,
-        "idle configuration is applied when processing starts"
+        serde_json::to_value(app.state().unwrap().operation).unwrap(),
+        settled_operation
     );
-    let (reply, response) = oneshot::channel();
-    app.commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config,
-            }),
-            reply,
-        ))
-        .await
-        .unwrap();
-    assert!(response.await.unwrap().is_err());
-    assert_eq!(crate::config::load(&path).unwrap(), saved);
+    let loaded = SettingsStore::load(directory.path().join("settings.json")).unwrap();
+    assert_eq!(loaded.view().settings, app.settings().settings);
     controller.shutdown().await.unwrap();
-    pipeline.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -96,11 +80,7 @@ async fn source_saved_before_apply_failure_keeps_authoritative_revision() {
     target_transaction(true).await;
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "keep the gated WLED transaction and shutdown assertions together"
-)]
-async fn target_transaction(retire_pipeline: bool) {
+async fn target_transaction(unavailable_input: bool) {
     use axum::{
         Json, Router,
         routing::{get, post},
@@ -112,17 +92,13 @@ async fn target_transaction(retire_pipeline: bool) {
     let changed = on.clone();
     let command_entered = entered.clone();
     let command_release = release.clone();
-    let router = Router::new().route("/json/si", get(move || {
+    let router = Router::new().route("/json/si",get(move || {
         let on = observed.load(std::sync::atomic::Ordering::Relaxed);
-        async move { Json(serde_json::json!({"state":{"on":on,"lor":2},"info":{"live":false,"lm":null}})) }
-    })).route("/json/state", post(move |Json(value): Json<serde_json::Value>| {
-        let (entered, release, changed) = (command_entered.clone(), command_release.clone(), changed.clone());
+        async move {Json(serde_json::json!({"state":{"on":on,"lor":2},"info":{"live":false,"lm":null}}))}
+    })).route("/json/state",post(move |Json(value): Json<serde_json::Value>| {
+        let (entered, release, changed) = (command_entered.clone(),command_release.clone(),changed.clone());
         async move {
-            if value["on"] == true {
-                entered.notify_one();
-                release.notified().await;
-                changed.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
+            if value["on"] == true {entered.notify_one(); release.notified().await; changed.store(true,std::sync::atomic::Ordering::Relaxed);}
             Json(serde_json::json!({"success":true}))
         }
     }));
@@ -137,122 +113,94 @@ async fn target_transaction(retire_pipeline: bool) {
             .unwrap();
     });
     let directory = tempfile::tempdir().unwrap();
-    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
+    let mut config = test_support::config();
     config.source = Source::Prysm;
     let prysm_contract::Output::Wled { url, .. } = &mut config.output;
-    {
-        *url = format!("http://{address}/").parse().unwrap();
+    *url = format!("http://{address}/").parse().unwrap();
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    if unavailable_input {
+        config.input = prysm_contract::Input::Webos {
+            capture_resolution: [4, 2].try_into().unwrap(),
+            refresh_rate_hz: 30.try_into().unwrap(),
+        };
     }
-    let (config_tx, config_rx) = watch::channel(config.clone());
-    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
-    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
-    let (controller, mut app) = Controller::spawn(
-        directory.path().join("prysm.toml"),
-        &config,
-        lighting,
-        config_tx,
+    let store = test_support::store(&directory, &config);
+    let (controller, app) = Controller::start(
+        store,
+        Preview::new().publisher(),
+        occupied.local_addr().unwrap(),
     );
-    let (reply, response) = oneshot::channel();
-    app.commands
-        .send(Command::SetTarget(
-            Target {
-                power: true,
-                source: Source::Wled,
-            },
-            reply,
-        ))
+    let accepted = app
+        .set_target(Target {
+            power: true,
+            source: Source::Wled,
+        })
         .await
         .unwrap();
-    let accepted = response.await.unwrap().unwrap();
     tokio::time::timeout(Duration::from_secs(2), entered.notified())
         .await
         .unwrap();
-    let (reply, response) = oneshot::channel();
-    app.commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config,
-            }),
-            reply,
-        ))
-        .await
-        .unwrap();
-    assert!(response.await.unwrap().is_err());
+    assert!(matches!(
+        app.update_settings(test_support::update(&app, &config))
+            .await,
+        Err(CommandError::Conflict(_))
+    ));
     assert!(
-        matches!(app.state.borrow().operation, OperationStatus::Pending { id } if id == accepted.operation_id)
+        matches!(app.state().unwrap().operation,OperationStatus::Pending {id} if id==accepted.operation_id)
     );
-    if retire_pipeline {
-        pipeline.shutdown().await.unwrap();
-    }
     let stopping = controller.shutdown();
     tokio::pin!(stopping);
     assert!(
         futures::poll!(&mut stopping).is_pending(),
-        "shutdown must retain accepted work"
+        "shutdown retains accepted work"
     );
     release.notify_one();
     tokio::time::timeout(Duration::from_secs(5), stopping)
         .await
         .unwrap()
         .unwrap();
-    settled(&mut app).await;
-    if retire_pipeline {
-        assert!(matches!(
-            app.state.borrow().operation,
-            OperationStatus::Failed { .. }
-        ));
+    let state = app.state().unwrap();
+    if unavailable_input {
+        assert!(matches!(state.operation, OperationStatus::Failed { .. }));
     } else {
-        assert!(matches!(
-            app.state.borrow().operation,
-            OperationStatus::Succeeded { .. }
-        ));
+        assert!(matches!(state.operation, OperationStatus::Succeeded { .. }));
     }
-    let saved = crate::config::load(&directory.path().join("prysm.toml")).unwrap();
-    assert_eq!(saved.source, Source::Wled);
-    assert_eq!(*app.config.borrow(), saved);
-    assert_eq!(app.state.borrow().config_revision, saved.revision);
+    let loaded = SettingsStore::load(directory.path().join("settings.json")).unwrap();
+    assert_eq!(loaded.view().settings.source, Source::Wled);
+    assert_eq!(app.settings().settings, loaded.view().settings);
+    assert_eq!(state.config_revision, app.settings().revision);
     assert!(on.load(std::sync::atomic::Ordering::Relaxed));
-    if !retire_pipeline {
-        pipeline.shutdown().await.unwrap();
-    }
     fixture_shutdown.cancel();
     fixture.await.unwrap();
 }
 
 #[tokio::test]
-async fn persistence_failure_preserves_saved_config_and_revision() {
+async fn persistence_failure_preserves_settings_and_revision() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("config-is-a-directory");
+    let config = test_support::config();
+    let store = test_support::store(&directory, &config);
+    let path = directory.path().join("settings.json");
+    let (controller, app) = Controller::start(
+        store,
+        Preview::new().publisher(),
+        "127.0.0.1:0".parse().unwrap(),
+    );
+    let initial = app.settings();
+    std::fs::remove_file(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
-    let mut config: Config = toml::from_str(include_str!("../../../../prysm.toml")).unwrap();
-    let prysm_contract::Output::Wled { url, .. } = &mut config.output;
-    *url = "http://127.0.0.1:1/".parse().unwrap();
-    let (config_tx, config_rx) = watch::channel(config.clone());
-    let (pipeline, status) = Pipeline::spawn(PipelineConfig::from(&config)).unwrap();
-    let lighting = Arc::new(LightingService::new(config_rx, pipeline.clone(), status).unwrap());
-    let (controller, app) = Controller::spawn(path.clone(), &config, lighting, config_tx);
-    let mut changed = config.clone();
+    let mut changed = config;
     changed.processing.brightness_percent = 42.try_into().unwrap();
-    let (reply, response) = oneshot::channel();
-    app.commands
-        .send(Command::SetConfig(
-            Box::new(UpdateConfig {
-                expected_revision: config.revision,
-                config: changed,
-            }),
-            reply,
-        ))
-        .await
-        .unwrap();
-    assert!(response.await.unwrap().is_err());
-    assert_eq!(*app.config.borrow(), config);
-    assert_eq!(app.state.borrow().config_revision, config.revision);
     assert!(matches!(
-        app.state.borrow().operation,
-        OperationStatus::Failed { .. }
+        app.update_settings(test_support::update(&app, &changed))
+            .await,
+        Err(CommandError::Persistence(_))
+    ));
+    assert_eq!(app.settings().revision, initial.revision);
+    assert_eq!(app.settings().settings, initial.settings);
+    assert!(matches!(
+        app.state().unwrap().operation,
+        OperationStatus::Idle
     ));
     assert!(path.is_dir());
     controller.shutdown().await.unwrap();
-    pipeline.shutdown().await.unwrap();
 }

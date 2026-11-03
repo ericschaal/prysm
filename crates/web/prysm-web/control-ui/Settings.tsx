@@ -1,91 +1,333 @@
-import { useEffect, useState } from 'react';
-import { ApiError, type Config, type StateResponse } from './api';
+import { useEffect, useRef, useState } from 'react';
+import type { SettingsValues, SettingsView, StateResponse } from './api';
+import {
+  InputFields,
+  OutputFields,
+  ProcessingFields,
+  SourceField,
+} from './SettingsFields';
+import { LedLayout } from './LedLayout';
+import { useSettingsForm } from './useSettingsForm';
 
-type Processing = Config['processing'];
-const numeric = [
-  { key: 'brightness_percent', label: 'Brightness', min: 0, max: 100, step: 1, unit: '%', help: 'Set how brightly your screen colors glow.' },
-  { key: 'shadow_lift_percent', label: 'Shadow lift', min: 0, max: 100, step: 1, unit: '%', help: 'Bring out dark-scene colors while keeping black off.' },
-  { key: 'smoothing_seconds', label: 'Smoothing duration', min: 0, max: 3.4028234663852886e38, step: 'any', unit: 'seconds', help: 'Soften color changes. Try 0.1–1 second, or 0 for instant changes.' },
-  { key: 'sample_density', label: 'Sample density', min: 1, max: 4294967295, step: 1, unit: 'samples / 1000 px', help: 'Higher density increases CPU and memory use. Start at 128; increase only if it visibly improves the lights.' },
-  { key: 'spatial_reach_percent', label: 'Spatial reach', min: 1, max: 100, step: 1, unit: '%', help: 'How far colors inside the picture influence each edge.' },
-] as const;
-type NumericKey = typeof numeric[number]['key'];
-const equal = (a: Processing, b: Processing) => JSON.stringify(a) === JSON.stringify(b);
+const steps = ['Video source', 'Your lights', 'Review & finish'];
+const stepDescriptions = [
+  'Choose where your picture comes from. You can fine-tune capture later.',
+  'Connect your WLED controller and map the LEDs around your screen.',
+  'Check your setup. Saving keeps your lights as they are.',
+];
 
-export function Settings({ config, data, disabled, save, onDirty }: {
-  config: Config; data: StateResponse | null; disabled: boolean;
-  save: (config: Config) => Promise<Config>; onDirty: (dirty: boolean) => void;
+export function Settings({
+  settings,
+  data,
+  disabled,
+  save,
+  onDirty,
+}: {
+  settings: SettingsView;
+  data: StateResponse | null;
+  disabled: boolean;
+  save: (revision: string, changes: SettingsValues) => Promise<SettingsView>;
+  onDirty: (dirty: boolean) => void;
 }) {
-  const [base, setBase] = useState(config);
-  const [draft, setDraft] = useState<Processing>(config.processing);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [conflict, setConflict] = useState(false);
-  const [reset, setReset] = useState(0);
-  const [invalid, setInvalid] = useState<Partial<Record<NumericKey, string>>>({});
-  const dirty = !equal(draft, base.processing) || Object.keys(invalid).length > 0;
-  const slowBlackBars = draft.remove_black_bars && config.input.refresh_rate_hz < 5;
-  const externalChange = config.revision !== base.revision;
-  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
+  const form = useSettingsForm(settings, save, onDirty);
+  const [attempted, setAttempted] = useState(false);
+  const [step, setStep] = useState(0);
+  const formElementRef = useRef<HTMLFormElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
+  const setup = settings.missing_required.length > 0;
+  const { draft } = form;
   useEffect(() => {
-    if (!dirty && !saving && config.revision !== base.revision) { setBase(config); setDraft(config.processing); }
-  }, [config, dirty, saving, base.revision]);
+    if (setup) headingRef.current?.focus();
+  }, [step, setup]);
   useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
-  function discard() { setBase(config); setDraft(config.processing); setError(''); setConflict(false); setInvalid({}); setReset(previous => previous + 1); }
+    if (form.error) errorSummaryRef.current?.focus();
+  }, [form.error]);
+  // A later reset of required settings starts a fresh guided setup.
+  const [previousSetup, setPreviousSetup] = useState(setup);
+  if (previousSetup !== setup) {
+    setPreviousSetup(setup);
+    if (setup) setStep(0);
+  }
+  function discard() {
+    form.discard();
+    setAttempted(false);
+  }
+  function focusError(prefix = '') {
+    const field = Object.keys(form.errors).find((path) =>
+      path.startsWith(prefix),
+    );
+    if (!field) return false;
+    const input = formElementRef.current?.querySelector<HTMLElement>(
+      `[name="${field}"]`,
+    );
+    const details = input?.closest('details');
+    if (details) details.open = true;
+    input?.focus();
+    return true;
+  }
+  function goToStep(next: number) {
+    setAttempted(false);
+    setStep(next);
+  }
+  function next() {
+    setAttempted(true);
+    const prefix = step === 0 ? 'input.' : 'output.';
+    if (focusError(prefix)) return;
+    goToStep(step + 1);
+  }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!dirty || disabled || saving || Object.keys(invalid).length || externalChange || conflict) return;
-    setSaving(true); setError('');
-    try {
-      const saved = await save({ ...base, processing: draft });
-      setBase(saved); setDraft(saved.processing); setConflict(false);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Could not save settings.');
-      if (error instanceof ApiError && error.status === 409) setConflict(true);
-    } finally { setSaving(false); }
+    if (setup && step < 2) {
+      next();
+      return;
+    }
+    setAttempted(true);
+    if (disabled) return;
+    if (focusError()) return;
+    const saved = await form.submit();
+    if (saved) {
+      setAttempted(false);
+      if (setup && !saved.missing_required.length)
+        window.location.hash = '#overview';
+    }
   }
-  function numberField(field: typeof numeric[number]) {
-    const { key, label, min, max, step, unit, help } = field;
-    return <div className="setting" key={key}>
-      <label htmlFor={key}>{label} <span className="unit">{unit}</span></label>
-      <p id={`${key}-help`}>{help}</p>
-      <input id={key} name={key} autoComplete="off" type="number" min={min} max={max} step={step} defaultValue={draft[key]}
-        key={`${base.revision}-${reset}-${key}`} disabled={saving} aria-invalid={!!invalid[key]}
-        aria-describedby={`${key}-help${invalid[key] ? ` ${key}-error` : ''}`}
-        onChange={event => {
-          const value = event.target.valueAsNumber;
-          const valid = event.target.validity.valid && Number.isFinite(value) && value >= min && value <= max;
-          setInvalid(previous => { const next = { ...previous }; if (valid) delete next[key]; else next[key] = max > 100 ? `Enter ${step === 1 ? 'a whole number' : 'a number'} of ${min} or more within the supported limit.` : `Enter a whole number from ${min} to ${max}.`; return next; });
-          if (valid) setDraft(previous => ({ ...previous, [key]: value }));
-          setError('');
-        }} />
-      {key === 'smoothing_seconds' ? <button type="button" className="text-button" disabled={saving} onClick={() => {
-        setDraft(previous => ({ ...previous, smoothing_seconds: 0 }));
-        const input = document.getElementById(key) as HTMLInputElement; input.value = '0';
-        setInvalid(previous => { const next = { ...previous }; delete next.smoothing_seconds; return next; });
-      }}>Disable smoothing</button> : null}
-      {invalid[key] ? <p id={`${key}-error`} className="error" role="alert">{invalid[key]}</p> : null}
-    </div>;
-  }
-  const applied = data?.applied_revision === config.revision;
-  const active = data?.pipeline.phase === 'running' || data?.pipeline.phase === 'starting';
-  let status = dirty ? 'Unsaved changes' : saving ? 'Saving…' : data?.restart_required ? 'Saved · application restart required' : data?.operation.kind === 'failed' ? 'Saved · application failed' : applied ? 'Applied to your lights' : active ? 'Saved · applying changes…' : 'Saved · ready for the next screen sync';
-  if (saving) status = 'Saving…';
-  return <form className="settings card" onSubmit={submit} aria-labelledby="settings-heading" aria-busy={saving} noValidate>
-    <div className="section-heading"><div><p className="eyebrow">LIVE PROCESSING</p><h2 id="settings-heading">Tune the picture</h2></div><span className={`badge ${dirty ? 'amber' : ''}`}>{dirty ? 'Draft' : 'Saved'}</span></div>
-    <p className="intro-copy">Find your balance of color and motion. Save to apply your changes live.</p>
-    <section className="picture-settings" aria-labelledby="color-heading"><h3 id="color-heading">Color & motion</h3>{numeric.slice(0, 3).map(numberField)}</section>
-    <section className="advanced" aria-labelledby="advanced-heading"><h3 id="advanced-heading">Quality & performance</h3>
-      <div className="setting toggle-setting"><div><label htmlFor="remove_black_bars">Remove black bars</label><p id="bars-help">Detect the active picture before sampling colors.</p></div><input id="remove_black_bars" name="remove_black_bars" autoComplete="off" type="checkbox" role="switch" checked={draft.remove_black_bars} disabled={saving} aria-describedby={slowBlackBars ? 'bars-help bars-warning' : 'bars-help'} onChange={event => setDraft(previous => ({ ...previous, remove_black_bars: event.target.checked }))} /></div>
-      {slowBlackBars ? <p id="bars-warning" className="notice warning" role="note">Black-bar removal needs at least 5 fps. Your capture is set to {config.input.refresh_rate_hz} fps, so the crop will not update. Increase the capture rate or turn off black-bar removal.</p> : null}
-      <div className="advanced-fields">{numeric.slice(3).map(numberField)}</div></section>
-    {conflict || (externalChange && dirty) ? <div className="notice warning" role="alert"><strong>Saved settings changed elsewhere.</strong><p>Your draft is preserved. Review the latest saved values below, then reload to discard this draft before editing again.</p><dl className="conflict-values">{numeric.map(field => <div key={field.key}><dt>{field.label}</dt><dd>Saved: {config.processing[field.key]} · draft: {draft[field.key]}</dd></div>)}<div><dt>Remove black bars</dt><dd>Saved: {config.processing.remove_black_bars ? 'On' : 'Off'} · draft: {draft.remove_black_bars ? 'On' : 'Off'}</dd></div></dl><button type="button" onClick={discard} disabled={saving}>Reload saved settings & discard draft</button></div> : null}
-    {error ? <p className="error" role="alert">{error} Your draft is preserved.</p> : null}
-    <div className="save-bar"><p id="settings-status" role="status">{status}</p><div className="button-row"><button type="button" onClick={discard} disabled={!dirty || saving}>Discard</button><button className="primary" type="submit" disabled={!dirty || disabled || saving || !!Object.keys(invalid).length || externalChange || conflict}>{saving ? 'Saving…' : 'Save & apply'}</button></div></div>
-  </form>;
+  const fields = {
+    settings,
+    errors: form.errors,
+    attempted,
+    disabled: form.saving,
+  };
+  const applied = data?.applied_revision === settings.revision;
+  const status = form.saving
+    ? 'Saving…'
+    : form.dirty
+      ? 'Unsaved changes'
+      : data?.operation.kind === 'failed'
+        ? 'Saved · application failed'
+        : applied
+          ? 'Applied to your lights'
+          : 'Saved · ready for the next screen sync';
+  const unavailable =
+    disabled || form.saving || form.externalChange || form.conflict;
+  return (
+    <form
+      ref={formElementRef}
+      className={`settings card${setup ? ' setup-wizard' : ''}`}
+      onSubmit={(event) => void submit(event)}
+      aria-labelledby="settings-heading"
+      aria-busy={form.saving}
+      noValidate
+    >
+      {setup ? (
+        <ol className="setup-steps" aria-label="Setup progress">
+          {steps.map((label, index) => (
+            <li
+              key={label}
+              className={index < step ? 'complete' : undefined}
+              aria-current={step === index ? 'step' : undefined}
+            >
+              <span className="step-number" aria-hidden="true">
+                {index < step ? '✓' : index + 1}
+              </span>
+              <span>{label}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">
+            {setup
+              ? `STEP ${step + 1} OF ${steps.length}`
+              : 'YOUR CONFIGURATION'}
+          </p>
+          <h2 id="settings-heading" ref={headingRef} tabIndex={-1}>
+            {setup ? steps[step] : 'Settings'}
+          </h2>
+        </div>
+        {!setup ? (
+          <span className={`badge ${form.dirty ? 'amber' : ''}`}>
+            {form.dirty ? 'Draft' : 'Saved'}
+          </span>
+        ) : null}
+      </div>
+      <p className="intro-copy">
+        {setup
+          ? stepDescriptions[step]
+          : 'Configure capture, lights, processing, and color source. Changes are saved together. Saving does not turn lights on.'}
+      </p>
+      {!setup || step === 0 ? (
+        <InputFields
+          {...fields}
+          value={draft.input}
+          onChange={(value) => form.change('input', value)}
+        />
+      ) : null}
+      {!setup || step === 1 ? (
+        <OutputFields
+          {...fields}
+          value={draft.output}
+          onChange={(value) => form.change('output', value)}
+        />
+      ) : null}
+      {setup && step === 2 ? (
+        <>
+          <section className="setup-review" aria-label="Setup review">
+            <div className="review-details">
+              <div className="review-item">
+                <div className="review-heading">
+                  <h3>Video source</h3>
+                  <button
+                    type="button"
+                    aria-label="Edit video source"
+                    onClick={() => goToStep(0)}
+                    disabled={form.saving}
+                  >
+                    Edit
+                  </button>
+                </div>
+                <p className="review-value">
+                  {draft.input.type === 'webos'
+                    ? 'LG webOS sender'
+                    : draft.input.type === 'device'
+                      ? 'USB capture device'
+                      : 'Video file'}
+                </p>
+                <p>
+                  {draft.input.width} × {draft.input.height} ·{' '}
+                  {draft.input.refresh_rate_hz} fps
+                </p>
+                {draft.input.type !== 'webos' ? (
+                  <p className="review-address">
+                    {draft.input.type === 'device'
+                      ? draft.input.device
+                      : draft.input.path}
+                  </p>
+                ) : null}
+              </div>
+              <div className="review-item">
+                <div className="review-heading">
+                  <h3>Your lights</h3>
+                  <button
+                    type="button"
+                    aria-label="Edit lights"
+                    onClick={() => goToStep(1)}
+                    disabled={form.saving}
+                  >
+                    Edit
+                  </button>
+                </div>
+                <p className="review-value">WLED controller</p>
+                <p className="review-address">{draft.output.url}</p>
+              </div>
+            </div>
+            <LedLayout leds={draft.output.leds} />
+          </section>
+          <p className="setup-note">
+            You can finish setup while your devices are offline.
+          </p>
+        </>
+      ) : null}
+      {!setup || step === 2 ? (
+        <div className={setup ? 'setup-preferences' : undefined}>
+          <SourceField
+            {...fields}
+            value={draft.source}
+            onChange={(value) => form.change('source', value)}
+          />
+          {setup ? (
+            <details className="setup-advanced">
+              <summary>
+                Picture settings <span>Use defaults or fine-tune</span>
+              </summary>
+              <ProcessingFields
+                {...fields}
+                value={draft.processing}
+                frameRate={draft.input.refresh_rate_hz}
+                onChange={(value) => form.change('processing', value)}
+              />
+            </details>
+          ) : (
+            <>
+              <ProcessingFields
+                {...fields}
+                value={draft.processing}
+                frameRate={draft.input.refresh_rate_hz}
+                onChange={(value) => form.change('processing', value)}
+              />
+            </>
+          )}
+        </div>
+      ) : null}
+      {form.conflict || (form.externalChange && form.dirty) ? (
+        <div className="notice warning" role="alert">
+          <strong>Saved settings changed elsewhere.</strong>
+          <p>
+            Your draft is preserved. Reload the current settings before editing
+            again.
+          </p>
+          <button type="button" onClick={discard} disabled={form.saving}>
+            Reload saved settings & discard draft
+          </button>
+        </div>
+      ) : null}
+      {form.error ? (
+        <div
+          className="notice error"
+          role="alert"
+          tabIndex={-1}
+          ref={errorSummaryRef}
+        >
+          {form.error} Your draft is preserved.
+        </div>
+      ) : null}
+      {data?.operation.kind === 'failed' ? (
+        <p className="notice error" role="alert">
+          Application failed: {data.operation.error.message}. Saved values may
+          differ from the processor; check the applied revision.
+        </p>
+      ) : null}
+      <div className="save-bar">
+        <p id="settings-status" role="status">
+          {setup ? 'Nothing is saved until you finish.' : status}
+        </p>
+        <div className="button-row">
+          {setup ? (
+            <>
+              {step > 0 ? (
+                <button
+                  type="button"
+                  disabled={form.saving}
+                  onClick={() => goToStep(step - 1)}
+                >
+                  Back
+                </button>
+              ) : null}
+              <button className="primary" type="submit" disabled={unavailable}>
+                {form.saving ? 'Saving…' : step < 2 ? 'Next' : 'Finish setup'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={discard}
+                disabled={!form.dirty || form.saving}
+              >
+                Discard
+              </button>
+              <button
+                className="primary"
+                type="submit"
+                disabled={!form.dirty || unavailable}
+              >
+                {form.saving ? 'Saving…' : 'Save & apply'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </form>
+  );
 }

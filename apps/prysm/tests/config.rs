@@ -1,12 +1,8 @@
-use prysm_contract::Config;
-
 #[test]
 fn check_and_startup_reject_unknown_output() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("invalid.toml");
-    let mut invalid: toml::Value = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
-    invalid["output"] = toml::Value::try_from(serde_json::json!({"type":"unknown"})).unwrap();
-    std::fs::write(&path, toml::to_string(&invalid).unwrap()).unwrap();
+    let path = directory.path().join("settings.json");
+    std::fs::write(&path, r#"{"output":{"type":"unknown"}}"#).unwrap();
     for check in [false, true] {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"));
         command.arg("--config").arg(&path);
@@ -22,43 +18,26 @@ fn check_and_startup_reject_unknown_output() {
 }
 
 #[test]
-fn loads_current_config_and_rejects_invalid_output() {
-    let tagged = include_str!("../../../prysm.toml");
+fn invalid_saved_settings_are_reported_and_never_replaced() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("prysm.toml");
-    std::fs::write(&path, tagged).unwrap();
-    let config = prysm::config::load(&path).unwrap();
-    assert_eq!(config, toml::from_str::<Config>(tagged).unwrap());
-    let saved = toml::to_string(&config).unwrap();
-    assert!(saved.contains("type = \"wled\""));
-    std::fs::write(&path, saved).unwrap();
-    assert_eq!(prysm::config::load(&path).unwrap(), config);
-
-    let mut invalid_rate = toml::Value::try_from(&config).unwrap();
-    invalid_rate["input"]["refresh_rate_hz"] = toml::Value::Integer(0);
+    let path = directory.path().join("settings.json");
     for invalid in [
-        tagged.replace("type = \"wled\"\n", ""),
-        tagged.replace("type = \"wled\"", "type = \"unknown\""),
-        toml::to_string(&invalid_rate).unwrap(),
-        tagged.replace("[output]\n", "[output]\ntypo = true\n"),
+        "{broken json",
+        r#"{"web":{"allowed_hosts":[]}}"#,
+        r#"{"input":{"type":"device","device":"/dev/video0","capture_resolution":[4,4],"refresh_rate_hz":0}}"#,
+        r#"{"output":{"type":"wled","url":"file:///tmp/wled","leds":{"top":1,"right":0,"bottom":0,"left":0}}}"#,
     ] {
         std::fs::write(&path, invalid).unwrap();
-        assert!(prysm::config::load(&path).is_err());
+        for check in [false, true] {
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_prysm"));
+            command.arg("--config").arg(&path);
+            if check {
+                command.arg("check");
+            }
+            let output = command.output().unwrap();
+            assert!(!output.status.success());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+            assert!(String::from_utf8_lossy(&output.stderr).contains("Error:"));
+        }
     }
-}
-
-#[test]
-fn loading_reports_file_errors_and_validates_application_settings() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("prysm.toml");
-    let error = prysm::config::load(&path).unwrap_err();
-    assert!(error.to_string().contains("cannot read"));
-    assert!(error.to_string().contains(path.to_str().unwrap()));
-    std::fs::write(&path, "invalid toml = [").unwrap();
-    let error = prysm::config::load(&path).unwrap_err();
-    assert!(error.to_string().contains("invalid configuration"));
-    let mut config: Config = toml::from_str(include_str!("../../../prysm.toml")).unwrap();
-    config.web.allowed_hosts.clear();
-    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    assert!(prysm::config::load(&path).is_err());
 }

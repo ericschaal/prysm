@@ -66,6 +66,7 @@ enum Contract {
 #[derive(Clone, Copy, ValueEnum)]
 enum Package {
     Deb,
+    Docker,
     Webos,
 }
 
@@ -180,6 +181,8 @@ fn codegen(contract: Option<Contract>, check: bool) -> Result<()> {
 fn check(suite: Option<Suite>) -> Result<()> {
     if suite.is_none() || matches!(suite, Some(Suite::Frontend)) {
         codegen(None, true)?;
+        npm(".", &["run", "lint"])?;
+        npm(".", &["run", "format:check"])?;
         npm(HOST, &["test"])?;
         npm(WEBOS, &["test"])?;
         run(Command::new("node").args(["--test", "packaging/webos/tests/protocol.test.js"]))?;
@@ -220,6 +223,7 @@ fn main() -> Result<()> {
     )?;
     match cli.task {
         Task::Setup { ui } => {
+            npm(".", &["ci", "--no-audit", "--no-fund"])?;
             if ui.is_none() || matches!(ui, Some(Ui::Host)) {
                 npm(HOST, &["ci", "--no-audit", "--no-fund"])?;
             }
@@ -233,34 +237,39 @@ fn main() -> Result<()> {
         Task::Package {
             target,
             hardware_h264,
-        } => match target {
-            Package::Deb => {
-                ensure!(
-                    !hardware_h264,
-                    "--hardware-h264 is only supported for webos packages"
-                );
-                codegen(Some(Contract::Api), true)?;
-                run(cargo().args([
-                    "build",
-                    "--locked",
-                    "--release",
-                    "-p",
-                    "prysm",
-                    "--no-default-features",
-                    "--bins",
-                ]))?;
-                run(cargo().args(["deb", "-p", "prysm", "--no-build"]))
-            }
-            Package::Webos => {
-                codegen(Some(Contract::Webos), true)?;
-                let mut command = Command::new("bash");
-                command.arg("packaging/webos/build-ipk.sh");
-                if hardware_h264 {
-                    command.arg("--hardware-h264");
+        } => {
+            ensure!(
+                !hardware_h264 || matches!(target, Package::Webos),
+                "--hardware-h264 is only supported for webos packages"
+            );
+            match target {
+                Package::Deb => {
+                    codegen(Some(Contract::Api), true)?;
+                    run(cargo().args([
+                        "build",
+                        "--locked",
+                        "--release",
+                        "-p",
+                        "prysm",
+                        "--no-default-features",
+                        "--bins",
+                    ]))?;
+                    run(cargo().args(["deb", "-p", "prysm", "--no-build"]))
                 }
-                run(&mut command)
+                Package::Docker => {
+                    run(Command::new("docker").args(["build", "--tag", "prysm:local", "."]))
+                }
+                Package::Webos => {
+                    codegen(Some(Contract::Webos), true)?;
+                    let mut command = Command::new("bash");
+                    command.arg("packaging/webos/build-ipk.sh");
+                    if hardware_h264 {
+                        command.arg("--hardware-h264");
+                    }
+                    run(&mut command)
+                }
             }
-        },
+        }
     }
 }
 

@@ -23,17 +23,18 @@ cargo build --locked --release
 
 The executable is `target/release/prysm`. To use user-guide commands verbatim in
 this shell, run `export PATH="$PWD/target/release:$PATH"` from the repository root.
-Use a [user setup guide](../users/README.md)
-to create your configuration, then run:
+Start with an empty writable settings location, then configure the application
+in the browser:
 
 ```sh
-./target/release/prysm --config prysm-local.toml check
-./target/release/prysm --config prysm-local.toml
+./target/release/prysm --config settings.json
 ```
 
-For development, use `cargo run -p prysm -- --config prysm-local.toml` instead.
-The repository-root TOML files
-are local examples, not portable defaults. Startup is idle for every output.
+For development, use `cargo run -p prysm -- --config settings.json`. Open
+`http://localhost:8787` and complete Settings. Use `prysm --config settings.json
+check` to validate saved effective settings without starting anything. Missing
+required values fail `check` but open setup during ordinary startup. Startup is
+idle for every output; settings are JSON and old TOML files are not loaded.
 
 ## Test
 

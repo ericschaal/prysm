@@ -6,14 +6,15 @@ the workspace root and stop when a child command fails.
 
 | Command | Purpose |
 | --- | --- |
-| `cargo xtask setup` | Install locked npm dependencies for both UIs. |
-| `cargo xtask setup host` / `setup webos` | Install dependencies for one UI. |
+| `cargo xtask setup` | Install locked shared lint/format tooling and both UIs. |
+| `cargo xtask setup host` / `setup webos` | Install shared tooling and dependencies for one UI. |
 | `cargo xtask check` | Run frontend, contract, packaging-helper, documentation, and default Rust checks. |
 | `cargo xtask check rust` / `check frontend` | Run one check group. |
 | `cargo xtask codegen` | Regenerate both committed JSON/TypeScript contracts. |
 | `cargo xtask codegen api` / `codegen webos` | Regenerate one contract. |
 | `cargo xtask codegen --check` | Reject stale or missing generated files without writing. |
 | `cargo xtask package deb` | Verify the host contract, build and package on Debian arm64. |
+| `cargo xtask package docker` | Build `prysm:local` for the Docker host's architecture. |
 | `cargo xtask package webos` | Verify the TV contract and build the IPK with `WEBOS_SDK`. |
 | `cargo xtask package webos --hardware-h264` | Include the optional TV hardware encoder. |
 
@@ -36,6 +37,13 @@ Debian packaging invokes Cargo directly. The webOS script under `packaging/`
 handles SDK setup and package assembly. Both tasks verify contracts first.
 Run checks separately before packaging; packaging neither installs nor deploys.
 See [packaging prerequisites](../docs/developers/packaging.md).
+
+Docker packaging needs Docker with BuildKit/Buildx. It installs build dependencies
+and checks the host contract inside the builder; host Node.js and `xtask setup`
+are unnecessary. `docker build -t prysm:local .` also works without host Rust.
+The image starts with empty settings storage and browser configuration. Releases
+publish tested amd64/arm64 images to GHCR; local packaging still tags `prysm:local`.
+See [Docker deployment](../docs/users/docker.md).
 
 The default checks do not require the TV SDK or GStreamer. CI separately runs
 all-feature checks, ARM emulation, Miri, and platform packaging. Native binding

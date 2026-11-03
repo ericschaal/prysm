@@ -1,13 +1,12 @@
 # Control API and lifecycle
 
 `prysm` owns configuration, the embedded React web UI, the REST API, and
-capture → processing → rendering. UI and API share `[web].listen` and
-`[web].allowed_hosts`. The `prysm-web` library supplies embedded assets; there is
+capture → processing → rendering. UI and API share the process HTTP listener and allowed-host policy. The `prysm-web` library supplies embedded assets; there is
 one application process and one configuration file.
 
 ## Access policy
 
-The embedded UI and API share `[web].listen` and `[web].allowed_hosts`.
+The embedded UI and API share the process HTTP listener and allowed-host policy.
 Host validation, CSRF protection, security headers and request limits cover both.
 Cross-site writes are rejected using `Sec-Fetch-Site` or an Origin/Host comparison;
 CLI requests without browser metadata remain supported. Safe methods such as GET
@@ -19,22 +18,31 @@ for operating the panel.
 
 ## Configuration and HTTP
 
-The backend owns one TOML file, specified by `--config`. Configuration saved in
-the UI replaces this file atomically; the process needs write access to its parent
-folder. No separate preferences file exists. All settings have one shared Rust
-model for disk and HTTP. Processing settings update through the processing worker command channel;
-input, capture resolution, and WLED output changes recreate a running session.
-Processing changes apply live without recreating capture/output. Listen-address and allowed-host changes are saved but require an application
-restart. The UI and API keep their original access policy until then. Settings
-that require unavailable build features are rejected before they are saved.
-When `restart_required` is set, the panel explains that Prysm must restart and
-disables power, source, and retry actions until the restart is complete.
+The backend owns one UI-saved JSON file selected by `--config` or `PRYSM_CONFIG`.
+The directory must be writable for atomic replacement and directory syncing.
+Missing files use application defaults with no input or output selected. Process
+options (HTTP/receiver/metrics bindings, allowed hosts, logging and storage path)
+come only from CLI/environment on every startup, never from the saved JSON.
+A malformed or unreadable existing file is reported rather than reset.
 
-- `GET /api/config` returns the configuration and revision.
-- `PUT /api/config` accepts `{expected_revision, config}` and rejects stale writes
-  with 409. Persisted settings are applied as an operation visible in status.
+`input` and `output` may be missing while the panel serves Settings. Required
+values are reported through `missing_required`; capture is unavailable until
+settings resolve to a complete validated configuration. The application stays
+idle after setup. Runtime availability of capture hardware or WLED is distinct
+from settings validity.
+
+- `GET /api/settings` returns `{revision, settings, missing_required}`.
+- `PUT /api/settings` accepts `{expected_revision, settings}` with a complete typed
+  document. Stale revisions return 409; unknown fields and invalid values are rejected.
 - `GET /api/state` returns observed lighting, pipeline status, and operation status.
 - `PUT /api/state` accepts `{power, source}` and returns an operation ID with 202.
+
+The settings store validates and atomically writes the document before changing
+memory or revision. Failed writes retain the previous in-memory settings.
+Processing changes apply live; input/output changes recreate a running session.
+Process options cannot be changed through this API. The controller serializes
+all accepted mutations, including persisted source selection, and drains them
+on shutdown even if the HTTP caller disconnects.
 
 `cargo run -p prysm-api --bin export-openapi` exports OpenAPI from the actual
 `prysm-api` router. openapi-typescript and openapi-fetch provide the TypeScript
@@ -43,9 +51,12 @@ client. See [frontend tooling](frontend.md).
 ## Browser preview and live settings
 
 Overview controls confirmed WLED power/source and shows input/output and operation state.
-Preview & tuning edits all six processing settings in one draft with Save & apply/Discard.
-Conflicts preserve the draft and require explicit review/reload. Input/output/listener forms
-are outside this UI; existing backend configuration capabilities remain available.
+Preview inspects the picture without editing settings. Settings edits input,
+output, source and processing in one draft with Save & apply/Discard.
+Conflicts preserve the draft and require explicit review/reload. All saves use
+the same validated API. The
+initial setup flow uses these same fields and save operation; no separate setup
+endpoint or completion marker exists.
 
 `GET /api/preview` upgrades to a same-origin request/response WebSocket. Send `next`;
 receive one paired JSON frame (JPEG/base64, source/preview dimensions, source-pixel crop,
