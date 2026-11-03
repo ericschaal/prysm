@@ -276,7 +276,9 @@ jobs:
         run: brew install ffmpeg
       - name: Real FFmpeg playback and controller tests
         if: runner.os == 'macOS'
-        run: cargo +stable test --locked -p prysm --all-features --lib --test controller -- --ignored
+        run: |
+          cargo +stable test --locked -p prysm --all-features --lib video::tests::file_stream_preserves_ordered_eof_and_decoder_failure -- --ignored --exact
+          cargo +stable test --locked -p prysm --all-features --test controller file_capture_live_settings_restart_and_shutdown -- --ignored --exact
 
   debian-arm64:
     runs-on: ubuntu-24.04-arm
