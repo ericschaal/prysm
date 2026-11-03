@@ -242,7 +242,7 @@ bounding rectangle and rejects uninformative frames using brightness entropy and
 edge density. Its evaluation measures video identification rather than crop jitter.
 The useful idea is abstention on uninformative input; recency does not make its
 brightness rectangle a demonstrated improvement for this task.
-[Journal paper](https://journal.kci.go.kr/ksavs/archive/articlePdf?artiId=ART003348214).
+[Journal paper](https://journal.kci.go.kr/ksavs/archive/articleView?artiId=ART003348214).
 
 Industrial disclosures provide additional ideas, not peer-reviewed comparisons.
 Dolby's [US20130071034A1](https://patents.google.com/patent/US20130071034A1/en)
