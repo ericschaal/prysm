@@ -2,6 +2,7 @@ use std::{error::Error, path::PathBuf, process::Command};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=../calibration-patterns.json");
     println!("cargo::rerun-if-changed=control-ui/public");
     // Watch source files individually so generated assets and node_modules cannot trigger rebuilds.
     for entry in std::fs::read_dir("control-ui")? {

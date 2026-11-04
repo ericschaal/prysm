@@ -35,16 +35,18 @@ export function calibrationFixture() {
       },
     },
   };
+  const freshProfile = {
+    id: 'local-profile',
+    name: 'Calibration 2',
+    correction: { warmth: 0, tint: 0, midtones: 0 },
+  };
   let view = {
     token: 'local-phone',
     pairing: null,
     connected: true,
     saved: false,
-    draft: {
-      id: 'local-profile',
-      name: 'Calibration 2',
-      correction: { warmth: 0, tint: 0, midtones: 0 },
-    },
+    startup_pending: false,
+    draft: freshProfile,
     step: 'choose',
     shade: 0,
     paused: false,
@@ -52,6 +54,7 @@ export function calibrationFixture() {
     sequence: 0,
     ended: null,
   };
+  let operation = { kind: 'idle' };
   let failSave = false;
   return {
     get view() {
@@ -68,13 +71,14 @@ export function calibrationFixture() {
       if (path === '/api/state') {
         if (method === 'PUT') {
           view = { ...view, compare: false, ended: 'Lighting stopped.' };
-          return { json: { operation_id: 'local-stop' } };
+          operation = { kind: 'succeeded', id: 'local-stop' };
+          return { json: { operation_id: operation.id } };
         }
         return {
           json: {
             config_revision: '1',
             applied_revision: '1',
-            source: 'prysm',
+            source: settings.settings.source,
             calibration_active: !view.ended,
             observed: {
               power: !view.ended,
@@ -82,7 +86,7 @@ export function calibrationFixture() {
               live_override: 0,
               pipeline_phase: view.ended ? 'idle' : 'running',
             },
-            operation: { kind: 'idle' },
+            operation,
             pipeline: {
               phase: view.ended ? 'idle' : 'running',
               frames_processed: 1,
@@ -96,19 +100,25 @@ export function calibrationFixture() {
           status: 404,
           json: { message: 'Not available in the local simulation.' },
         };
-      if (body.action === 'select')
+      if (body.action === 'select') {
+        const draft =
+          body.profile == null
+            ? freshProfile
+            : settings.settings.calibration.profiles.find(
+                (profile) => profile.id === body.profile,
+              );
+        if (!draft)
+          return {
+            status: 409,
+            json: { message: 'Profile no longer exists.' },
+          };
         view = {
           ...view,
           step: 'response',
           sequence: view.sequence + 1,
-          draft: body.profile
-            ? structuredClone(settings.settings.calibration.profiles[0])
-            : {
-                id: 'local-profile',
-                name: 'Calibration 2',
-                correction: { warmth: 0, tint: 0, midtones: 0 },
-              },
+          draft,
         };
+      }
       if (body.action === 'update' && body.sequence > view.sequence)
         view = {
           ...view,

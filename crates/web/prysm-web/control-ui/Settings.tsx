@@ -8,6 +8,7 @@ import {
   SourceField,
 } from './SettingsFields';
 import { LedLayout } from './LedLayout';
+import { inputLabels } from './settings-draft';
 import { useSettingsForm } from './useSettingsForm';
 
 const steps = ['Video source', 'Your lights', 'Review & finish'];
@@ -100,17 +101,17 @@ export function Settings({
     attempted,
     disabled: form.saving || disabled || data?.calibration_active === true,
   };
-  const profiles = draft.calibration ?? { profiles: [], active: null };
-  const applied = data?.applied_revision === settings.revision;
-  const status = form.saving
-    ? 'Saving…'
-    : form.dirty
-      ? 'Unsaved changes'
-      : data?.operation.kind === 'failed'
-        ? 'Saved · application failed'
-        : applied
-          ? 'Applied to your lights'
-          : 'Saved · ready for the next screen sync';
+  const profiles = draft.calibration;
+  function settingsStatus() {
+    if (setup) return 'Nothing is saved until you finish.';
+    if (form.saving) return 'Saving…';
+    if (form.dirty) return 'Unsaved changes';
+    if (data?.operation.kind === 'failed') return 'Saved · application failed';
+    if (data?.applied_revision === settings.revision)
+      return 'Applied to your lights';
+    return 'Saved · ready for the next screen sync';
+  }
+  const setupAction = step < steps.length - 1 ? 'Next' : 'Finish setup';
   const unavailable =
     disabled || form.saving || form.externalChange || form.conflict;
   return (
@@ -195,13 +196,7 @@ export function Settings({
                     Edit
                   </button>
                 </div>
-                <p className="review-value">
-                  {draft.input.type === 'webos'
-                    ? 'LG webOS sender'
-                    : draft.input.type === 'device'
-                      ? 'USB capture device'
-                      : 'Video file'}
-                </p>
+                <p className="review-value">{inputLabels[draft.input.type]}</p>
                 <p>
                   {draft.input.width} × {draft.input.height} ·{' '}
                   {draft.input.refresh_rate_hz} fps
@@ -357,7 +352,7 @@ export function Settings({
       ) : null}
       <div className="save-bar">
         <p id="settings-status" role="status">
-          {setup ? 'Nothing is saved until you finish.' : status}
+          {settingsStatus()}
         </p>
         <div className="button-row">
           {setup ? (
@@ -372,7 +367,7 @@ export function Settings({
                 </button>
               ) : null}
               <button className="primary" type="submit" disabled={unavailable}>
-                {form.saving ? 'Saving…' : step < 2 ? 'Next' : 'Finish setup'}
+                {form.saving ? 'Saving…' : setupAction}
               </button>
             </>
           ) : (

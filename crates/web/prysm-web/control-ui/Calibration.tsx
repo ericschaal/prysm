@@ -1,87 +1,91 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCalibrationSession } from './useCalibrationSession';
+import {
+  CalibrationSlider,
+  WhiteBalanceControls,
+  SwatchPicker,
+} from './CalibrationControls';
 import { Link } from 'react-router';
-import type { SettingsView } from './api';
+import { useControl } from './useControl';
+import patterns from '../../calibration-patterns.json';
 import type { components } from './api.generated';
+
+const { colors, grays, muted } = patterns;
+const pairs = patterns.pairs.map((pair) => ({
+  ...pair,
+  swatch: `linear-gradient(90deg,${pair.leftColor} 50%,${pair.rightColor} 50%)`,
+}));
 type View = components['schemas']['CalibrationView'];
 type Step = View['step'];
-const steps: Step[] = [
-  'choose',
-  'response',
-  'white_balance',
-  'intensity',
-  'colors',
-  'mixed',
-  'review',
+const steps: { id: Exclude<Step, 'grays'>; label: string; title: string }[] = [
+  { id: 'choose', label: 'Profile', title: 'Choose a profile' },
+  { id: 'response', label: 'Response', title: 'Check the response' },
+  {
+    id: 'white_balance',
+    label: 'White balance',
+    title: 'Find a natural white',
+  },
+  { id: 'intensity', label: 'Intensity', title: 'Match color intensity' },
+  { id: 'colors', label: 'Hues', title: 'Fine-tune individual hues' },
+  { id: 'mixed', label: 'Mixed colors', title: 'Check colors together' },
+  { id: 'review', label: 'Save', title: 'Make it yours' },
 ];
-const titles = {
-  choose: 'Choose a profile',
-  response: 'Check the response',
-  white_balance: 'Find a natural white',
-  grays: 'Fine-tune dark tones',
-  intensity: 'Match color intensity',
-  colors: 'Fine-tune individual hues',
-  mixed: 'Check colors together',
-  review: 'Make it yours',
-};
 const neutral: View['draft']['correction'] = {
   warmth: 0,
   tint: 0,
   midtones: 0,
 };
 const wheel = ['Red', 'Yellow', 'Green', 'Cyan', 'Blue', 'Magenta'];
-const colorNames = ['Red', 'Green', 'Blue', 'Cyan', 'Magenta', 'Yellow'];
-const muted = [
-  { label: 'Clay', swatch: '#c4765f' },
-  { label: 'Leaf', swatch: '#78a666' },
-  { label: 'Denim', swatch: '#6d90bd' },
-];
-const pairs = [
-  {
-    label: 'Coast',
-    left: 'Peach',
-    right: 'Teal',
-    swatch: 'linear-gradient(90deg,#e7ad8a 50%,#419ea5 50%)',
-  },
-  {
-    label: 'Garden',
-    left: 'Rose',
-    right: 'Sage',
-    swatch: 'linear-gradient(90deg,#c98b9d 50%,#859b6c 50%)',
-  },
-  {
-    label: 'Dusk',
-    left: 'Amber',
-    right: 'Violet',
-    swatch: 'linear-gradient(90deg,#d59d4a 50%,#8165a9 50%)',
-  },
-];
-
-export function Calibration({
-  pairing,
-  settings,
-}: {
-  pairing: string;
-  settings: SettingsView;
-}) {
+export function Calibration({ pairing }: { pairing: string }) {
+  const control = useControl();
+  const { settings } = control;
   const {
-    view,
+    view: session,
     error,
     busy,
+    saving,
+    canCancel,
+    rejected,
     update,
     comparison,
     selectProfile,
     save,
     cancel,
-    stop,
   } = useCalibrationSession(pairing);
   const [confirmed, setConfirmed] = useState(false);
-  const [trouble, setTrouble] = useState(false);
   const [editedName, setEditedName] = useState<string | null>(null);
+  const view = settings ? session : null;
+  const profiles = settings?.settings.calibration.profiles ?? [];
+  const stopError =
+    control.requestError ||
+    (control.pendingControl ? control.connectionError : '');
+  const atCapacity = profiles.length >= 32;
+  const stopControl = settings && (
+    <>
+      {stopError && <p role="alert">{stopError}</p>}
+      <button
+        className="calibration-text-button danger"
+        disabled={control.busy}
+        onClick={() => {
+          comparison(false);
+          void control.setState(
+            {
+              power: false,
+              source: control.data?.source ?? settings.settings.source,
+            },
+            'power',
+          );
+        }}
+      >
+        {control.busy ? 'Stopping…' : 'Stop lighting'}
+      </button>
+    </>
+  );
   const name = editedName ?? view?.draft.name ?? '';
   function select(profile: string | null) {
+    setConfirmed(false);
     setEditedName(null);
-    void selectProfile(profile);
+    selectProfile(profile);
   }
   function move(step: Step) {
     comparison(false);
@@ -95,93 +99,49 @@ export function Calibration({
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
-  }, [view?.step, view?.ended]);
-  const hueIndex = wheel.indexOf(colorNames[view?.shade ?? 0] ?? 'Red');
+  }, [view?.step, session?.ended, rejected]);
+  const hueIndex = wheel.indexOf(colors[view?.shade ?? 0]?.label ?? 'Red');
   const hue = correction.hue ?? [0, 0, 0, 0, 0, 0];
+  function changeCorrection(patch: Partial<View['draft']['correction']>) {
+    update({ correction: { ...correction, ...patch } });
+  }
   function changeHue(value: number) {
-    update({
-      correction: {
-        ...correction,
-        hue: hue.map((v, i) => (i === hueIndex ? value : v)),
-      },
-    });
+    changeCorrection({ hue: hue.map((v, i) => (i === hueIndex ? value : v)) });
   }
-  function slider(
-    field: 'warmth' | 'tint' | 'midtones' | 'intensity' | 'hue',
-    label: string,
-    low: string,
-    high: string,
-  ) {
-    const value =
-      field === 'hue' ? (hue[hueIndex] ?? 0) : (correction[field] ?? 0);
-    function change(v: number) {
-      if (field === 'hue') changeHue(v);
-      else update({ correction: { ...correction, [field]: v } });
-    }
-    return (
-      <label className={`calibration-slider slider-${field}`}>
-        <span className="slider-heading">
-          <span>{label}</span>
-          <output>
-            {value > 0 ? '+' : ''}
-            {value}
-          </output>
-        </span>
-        <input
-          type="range"
-          min="-100"
-          max="100"
-          step="1"
-          value={value}
-          aria-label={label}
-          onChange={(event) => change(Number(event.target.value))}
-        />
-        <span className="slider-endpoints" aria-hidden="true">
-          <span>{low}</span>
-          <span>{high}</span>
-        </span>
-      </label>
-    );
-  }
-  function whiteBalance() {
-    return (
-      <>
-        {slider('warmth', 'Temperature', 'Cooler', 'Warmer')}
-        {slider('tint', 'Tint', 'Greener', 'More magenta')}
-        <button
-          className="calibration-text-button"
-          onClick={() => {
-            if (view)
-              update({
-                correction: { ...correction, warmth: 0, tint: 0 },
-              });
-          }}
-        >
-          Reset white balance
-        </button>
-      </>
-    );
-  }
-  const stepIndex =
-    view?.step === 'grays'
-      ? steps.indexOf('colors')
-      : steps.indexOf(view?.step ?? 'choose');
-  if (view?.ended)
+  const whiteBalance = (
+    <WhiteBalanceControls value={correction} onChange={changeCorrection} />
+  );
+  const darkTones = view?.step === 'grays';
+  const step = darkTones ? 'colors' : (view?.step ?? 'choose');
+  const stepIndex = steps.findIndex(({ id }) => id === step);
+  const previous = darkTones ? 'colors' : steps[stepIndex - 1]?.id;
+  const next = darkTones ? 'colors' : steps[stepIndex + 1]?.id;
+  let title = 'Connecting to your TV…';
+  if (darkTones) title = 'Fine-tune dark tones';
+  else if (view && steps[stepIndex]) title = steps[stepIndex].title;
+  if (session?.ended || rejected)
     return (
       <section className="calibration-wizard calibration-complete">
         <span className="completion-mark" aria-hidden="true">
-          {view.saved ? '✓' : '—'}
+          {session?.saved ? '✓' : '—'}
         </span>
         <p className="eyebrow">
-          {view.saved ? 'READY FOR YOUR NEXT SCREEN SYNC' : 'SESSION ENDED'}
+          {session?.saved ? 'READY FOR YOUR NEXT SCREEN SYNC' : 'SESSION ENDED'}
         </p>
         <h1 ref={headingRef} tabIndex={-1}>
-          {view.saved ? 'Your light. Your color.' : 'Calibration ended'}
+          {session?.saved ? 'Your light. Your color.' : 'Calibration ended'}
         </h1>
-        <p role="status">{view.ended}</p>
-        {view.saved ? (
+        <p role={rejected ? 'alert' : 'status'}>
+          {rejected ? error : session?.ended}
+        </p>
+        {rejected && (
+          <p>
+            Start Match your lights in the Prysm TV app to get a fresh link.
+          </p>
+        )}
+        {session?.saved ? (
           <>
-            <p className="saved-profile">{view.draft.name}</p>
+            <p className="saved-profile">{session.draft.name}</p>
             <p>
               Press Back on the TV when you’re finished checking your lights.
             </p>
@@ -190,12 +150,7 @@ export function Calibration({
         <Link className="calibration-return" to="/overview">
           Return to Overview
         </Link>
-        <button
-          className="calibration-text-button danger"
-          onClick={() => void stop()}
-        >
-          Stop lighting
-        </button>
+        {stopControl}
       </section>
     );
   return (
@@ -207,15 +162,7 @@ export function Calibration({
         </span>
       </div>
       <ol className="calibration-progress" aria-label="Calibration progress">
-        {[
-          'Profile',
-          'Response',
-          'White balance',
-          'Intensity',
-          'Hues',
-          'Mixed colors',
-          'Save',
-        ].map((label, i) => (
+        {steps.map(({ label }, i) => (
           <li
             key={label}
             aria-current={i === stepIndex ? 'step' : undefined}
@@ -226,7 +173,7 @@ export function Calibration({
         ))}
       </ol>
       <h1 ref={headingRef} tabIndex={-1}>
-        {view ? titles[view.step] : 'Connecting to your TV…'}
+        {title}
       </h1>
       {error ? (
         <p className="notice error" role="alert">
@@ -251,12 +198,18 @@ export function Calibration({
                 </div>
                 <button
                   className="primary calibration-new"
-                  disabled={busy}
+                  disabled={busy || atCapacity}
                   onClick={() => select(null)}
                 >
                   New profile
                 </button>
-                {(settings.settings.calibration?.profiles.length ?? 0) > 0 ? (
+                {atCapacity && (
+                  <p>
+                    All 32 profile slots are in use. Adjust a saved profile, or
+                    exit and delete one in Settings.
+                  </p>
+                )}
+                {profiles.length > 0 ? (
                   <label className="calibration-field">
                     Or adjust a saved profile
                     <select
@@ -267,13 +220,11 @@ export function Calibration({
                       }}
                     >
                       <option value="">Choose a profile</option>
-                      {(settings.settings.calibration?.profiles ?? []).map(
-                        (profile) => (
-                          <option key={profile.id} value={profile.id}>
-                            {profile.name}
-                          </option>
-                        ),
-                      )}
+                      {profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </option>
+                      ))}
                     </select>
                   </label>
                 ) : null}
@@ -304,22 +255,14 @@ export function Calibration({
                     I can see the pattern and the lights are responding
                   </span>
                 </label>
-                <button
-                  className="calibration-text-button"
-                  aria-expanded={trouble}
-                  onClick={() => setTrouble(!trouble)}
-                >
-                  The lights are not responding
-                </button>
-                {trouble ? (
-                  <div className="calibration-note">
-                    <p>
-                      Check that WLED is powered and connected, Prysm uses the
-                      webOS input, and the TV sender says Capturing. If the
-                      video is missing, exit on the TV and try again.
-                    </p>
-                  </div>
-                ) : null}
+                <details className="calibration-details">
+                  <summary>The lights are not responding</summary>
+                  <p>
+                    Check that WLED is powered and connected, Prysm uses the
+                    webOS input, and the TV sender says Capturing. If the video
+                    is missing, exit on the TV and try again.
+                  </p>
+                </details>
               </>
             ) : null}
             {view.step === 'white_balance' ? (
@@ -332,7 +275,7 @@ export function Calibration({
                   Match the tint. The wall does not need to be as bright as the
                   screen.
                 </p>
-                <div className="calibration-adjustments">{whiteBalance()}</div>
+                <div className="calibration-adjustments">{whiteBalance}</div>
                 <details className="calibration-details">
                   <summary>What should I look for?</summary>
                   <p>
@@ -353,51 +296,21 @@ export function Calibration({
                   This is a preference, not a brightness match. Leave it at zero
                   if neither direction looks clearly better.
                 </p>
-                <div
-                  className="calibration-swatches gray-swatches"
-                  role="group"
-                  aria-label="TV shade"
-                >
-                  {[
-                    'Black',
-                    'Very dark',
-                    'Dark',
-                    'Mid gray',
-                    'Light gray',
-                    'White',
-                  ].map((label, i) => (
-                    <button
-                      key={label}
-                      aria-pressed={view.shade === i}
-                      onClick={() => update({ shade: i })}
-                    >
-                      <i
-                        style={{
-                          background: [
-                            '#000',
-                            '#202020',
-                            '#404040',
-                            '#808080',
-                            '#c0c0c0',
-                            '#fff',
-                          ][i],
-                        }}
-                      />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {slider('midtones', 'Dark-tone response', 'Darker', 'Lighter')}
-                <button
-                  className="calibration-text-button"
-                  onClick={() =>
-                    update({
-                      correction: { ...correction, midtones: 0 },
-                    })
-                  }
-                >
-                  Reset dark tones
-                </button>
+                <SwatchPicker
+                  label="TV shade"
+                  options={grays}
+                  selected={view.shade}
+                  onSelect={(shade) => update({ shade })}
+                />
+                <CalibrationSlider
+                  field="midtones"
+                  label="Dark-tone response"
+                  low="Darker"
+                  high="Lighter"
+                  value={correction.midtones}
+                  onChange={(midtones) => changeCorrection({ midtones })}
+                  resetLabel="Reset dark tones"
+                />
                 <p className="calibration-hint">
                   This affects brightness across all colors. It cannot fix a
                   tint that changes with brightness.
@@ -411,41 +324,22 @@ export function Calibration({
                     ? 'Try all three patches. If the wall looks washed out, increase color intensity. If it looks too vivid, lower it.'
                     : 'Compare the left and right sides of the wall with the same sides of the TV. Look for the two colors to stay distinct with your everyday settings.'}
                 </p>
-                <div
-                  className="calibration-swatches"
-                  role="group"
-                  aria-label="TV pattern"
-                >
-                  {(view.step === 'intensity' ? muted : pairs).map(
-                    ({ label, swatch }, i) => (
-                      <button
-                        key={label}
-                        aria-pressed={view.shade === i}
-                        onClick={() => update({ shade: i })}
-                      >
-                        <i style={{ background: swatch }} />
-                        {label}
-                      </button>
-                    ),
-                  )}
-                </div>
+                <SwatchPicker
+                  label="TV pattern"
+                  options={view.step === 'intensity' ? muted : pairs}
+                  selected={view.shade}
+                  onSelect={(shade) => update({ shade })}
+                />
                 {view.step === 'intensity' ? (
-                  <>
-                    {slider(
-                      'intensity',
-                      'Color intensity',
-                      'More muted',
-                      'More vivid',
-                    )}
-                    <button
-                      className="calibration-text-button"
-                      onClick={() =>
-                        update({ correction: { ...correction, intensity: 0 } })
-                      }
-                    >
-                      Reset intensity
-                    </button>
-                  </>
+                  <CalibrationSlider
+                    field="intensity"
+                    label="Color intensity"
+                    low="More muted"
+                    high="More vivid"
+                    value={correction.intensity ?? 0}
+                    onChange={(intensity) => changeCorrection({ intensity })}
+                    resetLabel="Reset intensity"
+                  />
                 ) : (
                   <>
                     <p className="calibration-pattern" role="status">
@@ -474,36 +368,15 @@ export function Calibration({
                   toward the named neighbor until it looks closer to the TV.
                   Leave the others as they are.
                 </p>
-                <div
-                  className="calibration-swatches"
-                  role="group"
-                  aria-label="TV color"
-                >
-                  {colorNames.map((color, i) => (
-                    <button
-                      key={color}
-                      aria-pressed={view.paused && view.shade === i}
-                      onClick={() => update({ shade: i, paused: true })}
-                    >
-                      <i
-                        style={{
-                          background: [
-                            '#ed5454',
-                            '#51b979',
-                            '#5a7fea',
-                            '#55c8ca',
-                            '#cc69bb',
-                            '#edcb64',
-                          ][i],
-                        }}
-                      />
-                      {color}
-                    </button>
-                  ))}
-                </div>
+                <SwatchPicker
+                  label="TV color"
+                  options={colors}
+                  selected={view.paused ? view.shade : null}
+                  onSelect={(shade) => update({ shade, paused: true })}
+                />
                 <p className="calibration-pattern" role="status">
                   {view.paused
-                    ? `${colorNames[view.shade]} on your TV · stays until you change it`
+                    ? `${colors[view.shade]?.label} on your TV · stays until you change it`
                     : 'Cycling through all six colors'}
                 </p>
                 <button
@@ -515,18 +388,15 @@ export function Calibration({
                 </button>
                 {view.paused ? (
                   <div className="calibration-adjustments">
-                    {slider(
-                      'hue',
-                      wheel[hueIndex] + ' hue',
-                      'Toward ' + wheel[(hueIndex + 5) % 6],
-                      'Toward ' + wheel[(hueIndex + 1) % 6],
-                    )}
-                    <button
-                      className="calibration-text-button"
-                      onClick={() => changeHue(0)}
-                    >
-                      Reset {wheel[hueIndex]?.toLowerCase()} hue
-                    </button>
+                    <CalibrationSlider
+                      field="hue"
+                      label={wheel[hueIndex] + ' hue'}
+                      low={'Toward ' + wheel[(hueIndex + 5) % 6]}
+                      high={'Toward ' + wheel[(hueIndex + 1) % 6]}
+                      value={hue[hueIndex] ?? 0}
+                      onChange={changeHue}
+                      resetLabel={`Reset ${wheel[hueIndex]?.toLowerCase()} hue`}
+                    />
                   </div>
                 ) : (
                   <p className="calibration-hint">
@@ -540,7 +410,7 @@ export function Calibration({
                     after a change. Some differences come from the LEDs and wall
                     and cannot be removed by white balance.
                   </p>
-                  {whiteBalance()}
+                  {whiteBalance}
                 </details>
                 <details className="calibration-details">
                   <summary>Dark scenes feel too strong or too faint?</summary>
@@ -612,69 +482,54 @@ export function Calibration({
             </button>
           ) : null}
           <div className="calibration-actions">
-            {view.step !== 'choose' ? (
-              <button
-                disabled={busy}
-                onClick={() =>
-                  move(
-                    view.step === 'grays'
-                      ? 'colors'
-                      : (steps[Math.max(0, steps.indexOf(view.step) - 1)] ??
-                          'choose'),
-                  )
-                }
-              >
+            {previous ? (
+              <button disabled={busy} onClick={() => move(previous)}>
                 Back
               </button>
             ) : null}
-            {view.step === 'review' ? (
+            {view.step === 'review' && (
               <button
                 className="primary"
                 disabled={busy || !name.trim()}
-                onClick={() => void save(name.trim())}
+                onClick={() => save(name.trim())}
               >
-                {busy ? 'Saving…' : 'Save and use'}
+                {saving ? 'Saving…' : 'Save and use'}
               </button>
-            ) : view.step !== 'choose' ? (
+            )}
+            {next && view.step !== 'choose' && (
               <button
                 className="primary"
                 disabled={busy || (view.step === 'response' && !confirmed)}
-                onClick={() =>
-                  move(
-                    view.step === 'grays'
-                      ? 'colors'
-                      : (steps[steps.indexOf(view.step) + 1] ?? 'review'),
-                  )
-                }
+                onClick={() => move(next)}
               >
-                {view.step === 'grays' ? 'Done' : 'Next'}
+                {darkTones ? 'Done' : 'Next'}
               </button>
-            ) : null}
+            )}
           </div>
         </>
       ) : (
-        <p className="calibration-lead">
-          {error
-            ? 'Start Match your lights in the Prysm TV app to get a fresh link.'
-            : 'Keep the Prysm app open on your TV.'}
-        </p>
+        <>
+          <p className="calibration-lead" role="status">
+            {settings
+              ? 'Keep the Prysm app open on your TV.'
+              : control.connectionError || 'Getting your profiles ready.'}
+          </p>
+          {!settings && control.connectionError && (
+            <button onClick={() => void control.poll()}>Try again</button>
+          )}
+        </>
       )}
       <footer className="calibration-footer">
         {view ? (
           <button
             className="calibration-text-button"
-            disabled={busy}
-            onClick={() => void cancel()}
+            disabled={!canCancel}
+            onClick={cancel}
           >
             Cancel
           </button>
         ) : null}
-        <button
-          className="calibration-text-button danger"
-          onClick={() => void stop()}
-        >
-          Stop lighting
-        </button>
+        {stopControl}
       </footer>
     </section>
   );

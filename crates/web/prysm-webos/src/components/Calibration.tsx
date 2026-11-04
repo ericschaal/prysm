@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import patterns from '../../../calibration-patterns.json';
+import PatternVideo, { type PatternPlayback } from './PatternVideo';
 import PairingScreen from './PairingScreen';
 import type { components } from '../../../prysm-web/control-ui/api.generated';
 type View = components['schemas']['CalibrationView'];
-const colors = ['red', 'green', 'blue', 'cyan', 'magenta', 'yellow'];
-const shades = ['black', 'gray-32', 'gray-64', 'gray-128', 'gray-192', 'white'];
+const { colors, grays, muted, pairs } = patterns;
 
 function patternFor(view: View | null) {
   switch (view?.step) {
+    case 'choose':
+      return view.startup_pending ? 'response' : null;
     case 'white_balance':
       return 'gray-192';
     case 'grays':
-      return shades[view.shade];
+      return grays[view.shade]?.clip;
     case 'intensity':
-      return ['clay', 'leaf', 'denim'][view.shade];
+      return muted[view.shade]?.clip;
     case 'mixed':
-      return ['coast', 'garden', 'dusk'][view.shade];
+      return pairs[view.shade]?.clip;
     case 'colors':
-      return view.paused ? colors[view.shade] : 'colors';
+      return view.paused ? colors[view.shade]?.clip : 'colors';
     case 'review':
       return 'colors';
-    default:
+    case 'response':
       return 'response';
+    default:
+      return null;
   }
 }
 
@@ -35,8 +40,7 @@ export default function Calibration({
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState('');
   const relayRef = useRef<HTMLIFrameElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playingRef = useRef(false);
+  const playbackRef = useRef<PatternPlayback>(null);
   const endedRef = useRef(false);
   const connected = !!view?.connected && (!view.ended || view.saved);
   const pattern = patternFor(view);
@@ -57,10 +61,21 @@ export default function Calibration({
   useEffect(() => {
     if (!origin) return;
     endedRef.current = false;
-    let timeout: number;
+    let deadline = window.setTimeout(
+      () =>
+        setError(
+          (reason) =>
+            reason ||
+            'Cannot reach Prysm. Check its web address and allowed hosts.',
+        ),
+      15000,
+    );
     const relayWindow = relayRef.current?.contentWindow;
     function send(action: string) {
-      relayWindow?.postMessage({ action, playing: playingRef.current }, origin);
+      relayWindow?.postMessage(
+        { action, playing: playbackRef.current?.playing ?? false },
+        origin,
+      );
     }
     const receive = (event: MessageEvent<unknown>) => {
       if (endedRef.current) return;
@@ -72,68 +87,64 @@ export default function Calibration({
         !('type' in event.data)
       )
         return;
-      if (event.data.type === 'calibration-ready') send('begin');
-      if (event.data.type === 'calibration-error' && 'message' in event.data)
+      if (event.data.type === 'calibration-error' && 'message' in event.data) {
+        if ('terminal' in event.data && event.data.terminal === true) {
+          endedRef.current = true;
+          clearTimeout(deadline);
+          setView(null);
+        }
         setError(String(event.data.message));
+      }
       if (event.data.type === 'calibration' && 'view' in event.data) {
         const next = event.data.view as View;
         if (
           !next ||
           typeof next.token !== 'string' ||
           typeof next.connected !== 'boolean' ||
-          !shades[next.shade] ||
-          !patternFor(next)
+          !Number.isInteger(next.shade) ||
+          next.shade < 0 ||
+          next.shade >= grays.length ||
+          (next.step !== 'choose' && !patternFor(next))
         )
           return;
-        clearTimeout(timeout);
-        timeout = window.setTimeout(() => {
-          endedRef.current = true;
-          setError('Receiver connection lost. Calibration is ending.');
-          setView(null);
-          send('cancel');
-        }, 15000);
+        clearTimeout(deadline);
         setView(next);
         setError('');
-        if (next.ended) {
-          endedRef.current = true;
-          clearTimeout(timeout);
-        }
+        endedRef.current = !!next.ended;
+        if (!next.ended)
+          deadline = window.setTimeout(() => {
+            if (endedRef.current) return;
+            setError('Receiver connection lost. Reconnecting…');
+            setView(null);
+          }, 30000);
       }
     };
     const timer = window.setInterval(() => {
       if (!endedRef.current) send('poll');
     }, 1000);
-    timeout = window.setTimeout(
-      () =>
-        setError(
-          'Cannot reach Prysm. Check its web address and allowed hosts.',
-        ),
-      15000,
-    );
     const leave = () => {
       endedRef.current = true;
+      clearTimeout(deadline);
       send('cancel');
-      videoRef.current?.pause();
-      videoRef.current?.removeAttribute('src');
-      videoRef.current?.load();
     };
-    const hidden = () => {
-      if (document.hidden) {
-        leave();
-        setView(null);
-        setError('Calibration ended because the TV app was hidden.');
-      }
+    const hide = () => {
+      leave();
+      playbackRef.current?.release();
+      setView(null);
+      setError('Calibration ended because the TV app was hidden.');
+    };
+    const visibility = () => {
+      if (document.hidden) hide();
     };
     window.addEventListener('message', receive);
-    window.addEventListener('pagehide', leave);
-    document.addEventListener('visibilitychange', hidden);
+    window.addEventListener('pagehide', hide);
+    document.addEventListener('visibilitychange', visibility);
     return () => {
-      clearTimeout(timeout);
       clearInterval(timer);
       leave();
       window.removeEventListener('message', receive);
-      window.removeEventListener('pagehide', leave);
-      document.removeEventListener('visibilitychange', hidden);
+      window.removeEventListener('pagehide', hide);
+      document.removeEventListener('visibilitychange', visibility);
     };
   }, [origin]);
   const back = useCallback(() => {
@@ -155,66 +166,28 @@ export default function Calibration({
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, [back]);
-  useEffect(() => {
-    const element = videoRef.current;
-    if (!connected || !element) return;
-    playingRef.current = false;
-    let current = true;
-    const result = element.play();
-    result?.catch((failure: unknown) => {
-      if (
-        current &&
-        !(failure instanceof DOMException && failure.name === 'AbortError')
-      ) {
-        playbackFailed('Video could not play. Exit on the TV and try again.');
-      }
-    });
-    return () => {
-      current = false;
-      playingRef.current = false;
-      element.pause();
-      element.removeAttribute('src');
-      element.load();
-    };
-  }, [connected, pattern, playbackFailed]);
   return (
     <div className="calibration-screen">
       {origin ? (
         <iframe
           ref={relayRef}
           src={`${origin}/calibration-tv.html`}
-          onLoad={() =>
-            relayRef.current?.contentWindow?.postMessage(
-              { action: 'begin' },
-              origin,
-            )
-          }
           title="Prysm calibration connection"
           hidden
         />
       ) : null}
-      {connected ? (
-        <video
-          key={pattern}
-          ref={videoRef}
-          src={`calibration/${pattern}.mp4`}
-          muted
-          loop
-          playsInline
-          onPlaying={() => {
-            playingRef.current = true;
-          }}
-          onError={(event) => {
-            if (event.currentTarget.hasAttribute('src'))
-              playbackFailed('Video failed. Exit and try again.');
-          }}
-          aria-label="Calibration pattern"
+      {connected && pattern ? (
+        <PatternVideo
+          pattern={pattern}
+          ref={playbackRef}
+          failed={playbackFailed}
         />
       ) : (
         <PairingScreen
           receiver={receiver}
           origin={origin}
           url={url}
+          choosing={connected && view?.step === 'choose'}
           ended={view?.ended}
           error={error}
           connect={setOrigin}

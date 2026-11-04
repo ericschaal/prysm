@@ -526,6 +526,7 @@
         "type": "object",
         "required": [
           "saved",
+          "startup_pending",
           "token",
           "connected",
           "draft",
@@ -576,6 +577,9 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "startup_pending": {
+            "type": "boolean"
           },
           "step": {
             "$ref": "#/components/schemas/CalibrationStep"
@@ -1233,6 +1237,7 @@
       "Settings": {
         "type": "object",
         "required": [
+          "calibration",
           "source",
           "processing"
         ],

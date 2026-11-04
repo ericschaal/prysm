@@ -880,7 +880,6 @@ h1,h2  {
 .calibration-actions>.primary { flex:2; }
 .calibration-footer { display:flex; justify-content:space-between; border-top:1px solid #e9e5ee; margin-top:12px; padding-top:8px; gap:16px; }
 .calibration-footer .danger { margin-left:auto; color:#8b5765; }
-.calibration-loading { min-height:460px; }
 .calibration-complete { text-align:center; padding-top:44px; }
 .calibration-complete .eyebrow { font-size:9px; margin-top:28px; }
 .completion-mark { display:grid; place-items:center; width:64px; height:64px; border-radius:50%; background:#e9eee9; color:#5b7963; font-size:30px; margin:auto; }

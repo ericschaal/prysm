@@ -18,6 +18,22 @@ export type Dialog =
   | 'cleanup'
   | 'exit';
 
+// Keep numeric key codes for older TV remotes.
+export function arrowDirection(keyCode: number) {
+  switch (keyCode) {
+    case 37:
+      return 'left';
+    case 38:
+      return 'up';
+    case 39:
+      return 'right';
+    case 40:
+      return 'down';
+    default:
+      return undefined;
+  }
+}
+
 export function useRemoteNavigation(suspended = false) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const wasSuspended = useRef(false);
@@ -85,22 +101,23 @@ export function useRemoteNavigation(suspended = false) {
       ]?.focus();
       return;
     }
-    if ([37, 38, 39, 40].indexOf(key) < 0) return;
-    if (active.tagName === 'INPUT' && (key === 37 || key === 39)) return;
+    const direction = arrowDirection(key);
+    if (!direction) return;
+    if (
+      active.tagName === 'INPUT' &&
+      (direction === 'left' || direction === 'right')
+    )
+      return;
     event.preventDefault();
     if (dialog) {
-      if (key === 38 || key === 40)
-        controls[controls.indexOf(active) + (key === 40 ? 1 : -1)]?.focus();
+      if (direction === 'up' || direction === 'down')
+        controls[
+          controls.indexOf(active) + (direction === 'down' ? 1 : -1)
+        ]?.focus();
     } else {
-      const direction = (
-        { 37: 'left', 38: 'up', 39: 'right', 40: 'down' } as Record<
-          number,
-          string
-        >
-      )[key];
       let target = active.getAttribute('data-' + direction);
       if (
-        key === 39 &&
+        direction === 'right' &&
         (active.id === 'primary' || active.id === 'service-options')
       )
         target = lastSetting.current;

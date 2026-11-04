@@ -17,6 +17,9 @@ service uses `/etc/prysm/settings.json`. Missing storage starts the setup page.
 There is no template to copy, and no TOML migration. Existing malformed or
 unreadable JSON is reported as an error and is never silently replaced.
 
+Settings files created before color profiles existed need a top-level
+`"calibration": {"profiles": [], "active": null}` entry before Prysm can load them.
+
 Saves atomically replace the settings file; the process needs write and traversal
 access to its parent directory. Back up that directory before updates and stop
 Prysm before editing the file manually. Use one Prysm process per settings file.
@@ -27,6 +30,7 @@ Prysm before editing the file manually. Use one Prysm process per settings file.
 | Output | WLED HTTP base URL and top/right/bottom/left LED counts |
 | Processing | Brightness, shadow lift, smoothing, sampling, and black-bar removal |
 | Source | Screen sync or WLED effects; changing it while off keeps the lights off |
+| Calibration | Saved color profiles and the active profile |
 
 Process options are read on every startup: **CLI arguments → environment →
 explicit defaults**. They never enter the JSON document or browser form. Application

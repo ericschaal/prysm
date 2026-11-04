@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('../control-ui/node_modules/jsdom');
+const { calibrationFixture } = require('../control-ui/e2e/fixture.mjs');
 const dist = path.join(__dirname, '../control-ui/dist');
 const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
 const script = fs.readFileSync(
@@ -19,55 +20,21 @@ async function until(check, timeout = 1000) {
 async function fixture(
   t,
   loadingCheck,
-  { storedToken, joinErrors = [], waitForJoin = true } = {},
+  {
+    storedToken,
+    joinErrors = [],
+    waitForJoin = true,
+    profiles = [],
+    source = 'prysm',
+  } = {},
 ) {
   const calls = [];
-  let failSave = false;
+  const receiver = calibrationFixture();
+  receiver.settings.settings.source = source;
+  receiver.settings.settings.calibration = { active: null, profiles };
   let failUpdate = false;
-  let view = {
-    token: 'phone-token',
-    pairing: null,
-    connected: true,
-    draft: {
-      id: 'profile',
-      name: 'Calibration 1',
-      correction: { warmth: 0, tint: 0, midtones: 0 },
-    },
-    step: 'choose',
-    shade: 0,
-    paused: false,
-    compare: false,
-    sequence: 0,
-    ended: null,
-  };
-  const settings = {
-    revision: '1',
-    missing_required: [],
-    settings: {
-      source: 'prysm',
-      input: {
-        type: 'webos',
-        capture_resolution: [640, 360],
-        refresh_rate_hz: 30,
-      },
-      output: {
-        type: 'wled',
-        url: 'http://wled/',
-        leds: { top: 1, right: 1, bottom: 1, left: 1 },
-      },
-      processing: {
-        brightness_percent: 100,
-        shadow_lift_percent: 0,
-        smoothing_seconds: 0.1,
-        sample_density: 128,
-        spatial_reach_percent: 10,
-        remove_black_bars: true,
-      },
-      calibration: { active: null, profiles: [] },
-    },
-  };
   const dom = new JSDOM(html, {
-    url: 'http://localhost:8787/#calibrate=pairing',
+    url: 'http://localhost:8787/#/calibrate/pairing',
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
@@ -86,81 +53,29 @@ async function fixture(
   w.HTMLElement.prototype.setPointerCapture = () => {};
   w.fetch = async (request) => {
     const route = new URL(request.url).pathname;
-    let result;
-    let status = 200;
-    if (route === '/api/settings') {
-      if (loadingCheck) await new Promise((r) => setTimeout(r, 150));
-      result = settings;
-    } else if (route === '/api/state') {
-      if (request.method === 'PUT') {
-        calls.push(JSON.parse(await request.text()));
-        view = { ...view, ended: 'Lighting stopped.' };
-        result = { operation_id: 'stop' };
-      } else
-        result = {
-          config_revision: '1',
-          source: 'prysm',
-          calibration_active: true,
-          observed: null,
-          operation: { kind: 'idle' },
-          pipeline: { phase: 'running', frames_processed: 1 },
-          wled_url: 'http://wled/',
-          applied_revision: '1',
-        };
-    } else {
-      assert.equal(route, '/api/calibration');
-      const body = JSON.parse(await request.text());
-      calls.push(body);
-      if (['pair', 'poll'].includes(body.action) && joinErrors.length) {
-        const failure = joinErrors.shift();
-        if (failure === 'network') throw TypeError('Network unavailable');
-        return new Response(
-          JSON.stringify({
-            message:
-              failure === 409
-                ? 'Session expired; start again on the TV'
-                : 'Receiver unavailable',
-          }),
-          {
-            status: failure,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
-      }
-      if (body.action === 'update' && failUpdate) {
-        failUpdate = false;
-        throw Error('Adjustment request dropped');
-      }
-      if (body.action === 'select')
-        view = {
-          ...view,
-          step: 'response',
-          sequence: view.sequence + 1,
-          draft: {
-            ...view.draft,
-            correction: { warmth: 0, tint: 0, midtones: 0 },
-          },
-        };
-      if (body.action === 'update' && body.sequence > view.sequence)
-        view = {
-          ...view,
-          ...body,
-          draft: { ...view.draft, correction: body.correction },
-        };
-      if (body.action === 'save') {
-        if (failSave) {
-          result = { message: 'Disk is full' };
-          status = 500;
-        } else view = { ...view, ended: 'Calibration saved and active.' };
-      }
-      if (body.action === 'cancel')
-        view = { ...view, ended: 'Calibration ended on the TV.' };
-      result ??= view;
+    if (route === '/api/settings' && loadingCheck)
+      await new Promise((r) => setTimeout(r, 150));
+    const body = request.method === 'GET' ? {} : await request.json();
+    if (request.method !== 'GET') calls.push(body);
+    if (['pair', 'poll'].includes(body.action) && joinErrors.length) {
+      const failure = joinErrors.shift();
+      if (failure === 'network') throw TypeError('Network unavailable');
+      return Response.json(
+        {
+          message:
+            failure === 409
+              ? 'Session expired; start again on the TV'
+              : 'Receiver unavailable',
+        },
+        { status: failure },
+      );
     }
-    return new Response(JSON.stringify(result), {
-      status,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    if (body.action === 'update' && failUpdate) {
+      failUpdate = false;
+      throw Error('Adjustment request dropped');
+    }
+    const { json, status } = receiver.respond(route, request.method, body);
+    return Response.json(json, { status });
   };
   w.eval(script);
   if (loadingCheck) {
@@ -184,21 +99,21 @@ async function fixture(
     calls,
     button,
     click,
-    view: () => view,
+    view: () => receiver.view,
     failUpdate: () => {
       failUpdate = true;
     },
     failSave: () => {
-      failSave = true;
+      receiver.failSave(true);
     },
     allowSave: () => {
-      failSave = false;
+      receiver.failSave(false);
     },
   };
 }
 for (const [label, storedToken, failure] of [
   ['pairing after a network failure', undefined, 'network'],
-  ['rejoining after a network failure', 'phone-token', 'network'],
+  ['rejoining after a network failure', 'local-phone', 'network'],
   ['pairing after a server failure', undefined, 503],
 ]) {
   test(`retries ${label} without reloading`, async (t) => {
@@ -214,7 +129,7 @@ for (const [label, storedToken, failure] of [
     assert.equal(f.w.document.querySelector('[role=alert]'), null);
     assert.equal(
       f.w.sessionStorage.getItem('prysm-calibration-pairing'),
-      'phone-token',
+      'local-phone',
     );
   });
 }
@@ -288,7 +203,7 @@ test('wizard requires physical confirmation, manually advances shades, bypasses 
   assert.equal(f.view().step, 'review');
   f.failSave();
   await f.click('Save and use');
-  await until(() => f.w.document.body.textContent.includes('Disk is full'));
+  await until(() => f.w.document.body.textContent.includes('Could not save'));
   assert.equal(f.view().ended, null);
   await f.click('Back');
   assert.equal(f.view().step, 'mixed');
@@ -302,7 +217,234 @@ test('wizard requires physical confirmation, manually advances shades, bypasses 
   f.w.document.querySelector('a').click();
   await until(() => f.w.document.querySelector('.app-shell'));
 });
-test('a dropped adjustment is retried after polling without another edit', async (t) => {
+test('Stop in the profile chooser preserves the selected WLED source', async (t) => {
+  const f = await fixture(t, undefined, { source: 'wled' });
+  await f.click('Stop lighting');
+  assert.deepEqual(
+    f.calls.find((call) => call.power === false),
+    { power: false, source: 'wled' },
+  );
+});
+
+test('a rejected active session discards the wizard and still offers Stop', async (t) => {
+  const joinErrors = [];
+  const f = await fixture(t, undefined, { joinErrors });
+  await f.click('New profile');
+  joinErrors.push(409);
+  await until(() => f.w.document.querySelector('[role=alert]'), 3000);
+  assert.match(
+    f.w.document.querySelector('h1').textContent,
+    /calibration ended/i,
+  );
+  assert.match(f.w.document.body.textContent, /fresh link/);
+  assert.equal(f.button('Next'), undefined);
+  assert.equal(f.button('Cancel'), undefined);
+  assert.equal(f.w.sessionStorage.length, 0);
+  await f.click('Stop lighting');
+  assert.ok(f.calls.some((call) => call.power === false));
+});
+
+test('a profile selection during a heartbeat runs once after the poll', async (t) => {
+  const f = await fixture(t);
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const fetch = f.w.fetch;
+  f.w.fetch = async (req) => {
+    if (
+      req.url.endsWith('/api/calibration') &&
+      (await req.clone().json()).action === 'poll'
+    ) {
+      started.resolve();
+      await release.promise;
+    }
+    return fetch(req);
+  };
+  await started.promise;
+  await f.click('New profile');
+  assert.equal(f.view().step, 'choose');
+  release.resolve();
+  await until(() => f.view().step === 'response');
+  assert.equal(f.calls.filter((call) => call.action === 'select').length, 1);
+});
+
+test('rapid slider edits send only the newest draft after the in-flight adjustment', async (t) => {
+  const f = await fixture(t);
+  await f.click('New profile');
+  f.w.document.querySelector('input[type=checkbox]').click();
+  await f.click('Next');
+  const release = Promise.withResolvers();
+  const fetch = f.w.fetch;
+  f.w.fetch = async (req) => {
+    if (
+      req.url.endsWith('/api/calibration') &&
+      (await req.clone().json()).correction?.warmth === 10
+    )
+      await release.promise;
+    return fetch(req);
+  };
+  const slider = f.w.document.querySelector('input[type=range]');
+  const { set } = Object.getOwnPropertyDescriptor(
+    f.w.HTMLInputElement.prototype,
+    'value',
+  );
+  for (const value of ['10', '20', '30']) {
+    set.call(slider, value);
+    slider.dispatchEvent(new f.w.Event('input', { bubbles: true }));
+  }
+  release.resolve();
+  await until(() => f.view().draft.correction.warmth === 30);
+  assert.deepEqual(
+    f.calls
+      .filter((call) => call.correction?.warmth)
+      .map((call) => call.correction.warmth),
+    [10, 30],
+  );
+  assert.equal(slider.value, '30');
+});
+
+test('Cancel still runs if an in-flight adjustment fails', async (t) => {
+  const f = await fixture(t);
+  await f.click('New profile');
+  f.w.document.querySelector('input[type=checkbox]').click();
+  const fetch = f.w.fetch;
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  f.w.fetch = async (req) => {
+    if (
+      req.url.endsWith('/api/calibration') &&
+      (await req.clone().json()).action === 'update'
+    ) {
+      started.resolve();
+      await release.promise;
+      throw new f.w.TypeError('Update failed');
+    }
+    return fetch(req);
+  };
+  await f.click('Next');
+  await started.promise;
+  await f.click('Cancel');
+  release.resolve();
+  await until(() => f.view().ended);
+  assert.equal(f.calls.filter((call) => call.action === 'cancel').length, 1);
+});
+
+for (const cancel of [false, true]) {
+  test(
+    cancel
+      ? 'Cancel replaces a Save waiting for a Review retry'
+      : 'Save runs once after a dropped Review update is retried',
+    async (t) => {
+      const f = await fixture(t);
+      await f.click('New profile');
+      f.w.document.querySelector('input[type=checkbox]').click();
+      for (let i = 0; i < 4; i++) await f.click('Next');
+      assert.equal(f.view().step, 'mixed');
+      const fetch = f.w.fetch;
+      const release = Promise.withResolvers();
+      const retry = Promise.withResolvers();
+      const sendSave = Promise.withResolvers();
+      const saveStarted = Promise.withResolvers();
+      let attempts = 0;
+      f.w.fetch = async (req) => {
+        if (req.url.endsWith('/api/calibration')) {
+          const body = await req.clone().json();
+          if (body.action === 'update' && body.step === 'review') {
+            attempts++;
+            if (attempts === 1) {
+              await release.promise;
+              throw new f.w.TypeError('Dropped Review update');
+            }
+            await retry.promise;
+          }
+          if (body.action === 'save') {
+            saveStarted.resolve();
+            await sendSave.promise;
+          }
+        }
+        return fetch(req);
+      };
+      await f.click('Next');
+      await f.click('Save and use');
+      assert.equal(attempts, 1);
+      release.resolve();
+      await until(() => attempts === 2, 3500);
+      if (cancel) await f.click('Cancel');
+      retry.resolve();
+      if (!cancel) {
+        await saveStarted.promise;
+        await until(() => f.button('Cancel').disabled);
+      }
+      sendSave.resolve();
+      await until(() => f.view().ended);
+      assert.equal(attempts, 2);
+      assert.equal(
+        f.calls.filter((call) => call.action === 'save').length,
+        cancel ? 0 : 1,
+      );
+      assert.equal(
+        f.calls.filter((call) => call.action === 'cancel').length,
+        cancel ? 1 : 0,
+      );
+    },
+  );
+}
+
+test('at profile capacity only existing profiles can be selected', async (t) => {
+  const profiles = Array.from({ length: 32 }, (_, i) => ({
+    id: String(i),
+    name: 'Profile ' + i,
+  }));
+  const f = await fixture(t, undefined, { profiles });
+  assert.ok(f.button('New profile').disabled);
+  assert.match(
+    f.w.document.body.textContent,
+    /All 32 profile slots are in use/,
+  );
+  const select = f.w.document.querySelector('select');
+  select.value = '0';
+  select.dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  await until(() =>
+    f.calls.some((call) => call.action === 'select' && call.profile === '0'),
+  );
+});
+
+test('the completion screen reports both rejected and accepted but failed Stops', async (t) => {
+  const f = await fixture(t);
+  await f.click('Cancel');
+  const fetch = f.w.fetch;
+  let reject = true;
+  f.w.fetch = async (req) => {
+    if (!req.url.endsWith('/api/state')) return fetch(req);
+    if (req.method === 'PUT' && reject)
+      throw new f.w.TypeError('Controller unreachable');
+    const response = await fetch(req);
+    if (req.method === 'PUT') return response;
+    const state = await response.json();
+    state.operation = {
+      kind: 'failed',
+      id: 'local-stop',
+      error: { message: 'WLED did not turn off' },
+    };
+    return Response.json(state);
+  };
+  await f.click('Stop lighting');
+  await until(() =>
+    f.w.document
+      .querySelector('[role=alert]')
+      ?.textContent.includes('Controller unreachable'),
+  );
+  reject = false;
+  await f.click('Stop lighting');
+  await until(
+    () =>
+      f.w.document
+        .querySelector('[role=alert]')
+        ?.textContent.includes('WLED did not turn off'),
+    3500,
+  );
+});
+
+test('a failed Stop preserves a dropped adjustment for retry', async (t) => {
   const f = await fixture(t);
   await f.click('New profile');
   f.w.document.querySelector('input[type=checkbox]').click();
@@ -317,10 +459,16 @@ test('a dropped adjustment is retried after polling without another edit', async
   range.dispatchEvent(new f.w.Event('input', { bubbles: true }));
   await until(() => f.w.document.querySelector('[role=alert]'));
   assert.equal(f.view().draft.correction.warmth, 0);
+  const fetch = f.w.fetch;
+  f.w.fetch = (req) =>
+    req.method === 'PUT'
+      ? Promise.reject(new f.w.TypeError('Stop unavailable'))
+      : fetch(req);
+  await f.click('Stop lighting');
+  await until(() => f.w.document.body.textContent.includes('Stop unavailable'));
   await new Promise((resolve) => setTimeout(resolve, 1200));
   await until(() => f.view().draft.correction.warmth === 40);
   assert.equal(range.value, '40');
-  assert.equal(f.w.document.querySelector('[role=alert]'), null);
   const updates = f.calls.filter(
     (c) => c.action === 'update' && c.correction.warmth === 40,
   );
@@ -341,9 +489,14 @@ test('relay accepts webOS named file origins and rejects web pages and unrelated
   t.after(() => dom.window.close());
   const w = dom.window;
   const requests = [];
-  w.fetch = async (_url, options) => {
-    requests.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ token: 'tv-token' }) };
+  const replies = [];
+  w.postMessage = (reply) => replies.push(reply);
+  w.XMLHttpRequest = class {
+    open() {}
+    setRequestHeader() {}
+    send(body) {
+      requests.push({ request: this, body: JSON.parse(body) });
+    }
   };
   w.eval(
     fs.readFileSync(
@@ -356,17 +509,45 @@ test('relay accepts webOS named file origins and rejects web pages and unrelated
       new w.MessageEvent('message', {
         origin,
         source,
-        data: { action: 'begin' },
+        data: { action: 'poll' },
       }),
     );
+  const fileOrigin = 'file://io.prysm.capture-webos';
   send('http://attacker.invalid');
-  send('file://io.prysm.capture-webos', {});
-  await new Promise(setImmediate);
+  send(fileOrigin, {});
   assert.equal(requests.length, 0);
-  send('file://io.prysm.capture-webos');
-  await new Promise(setImmediate);
+  send(fileOrigin);
+  send(fileOrigin);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].action, 'begin');
+  assert.equal(requests[0].request.timeout, 5000);
+  requests[0].request.ontimeout();
+  send(fileOrigin);
+  assert.deepEqual(
+    requests.map(({ body }) => body),
+    [{ action: 'begin' }, { action: 'begin' }],
+  );
+  const begin = requests[1].request;
+  begin.status = 200;
+  begin.response = { token: 'tv-token' };
+  begin.onload();
+  send(fileOrigin);
+  const poll = requests[2].request;
+  assert.equal(poll.timeout, 5000);
+  poll.ontimeout();
+  send(fileOrigin);
+  assert.equal(requests[3].body.token, 'tv-token');
+  const retry = requests[3].request;
+  retry.status = 503;
+  retry.onload();
+  send(fileOrigin);
+  const rejected = requests[4].request;
+  rejected.status = 409;
+  rejected.response = { message: 'Start again on the TV.' };
+  rejected.onload();
+  assert.equal(replies.at(-1).terminal, true);
+  assert.equal(replies.at(-1).message, rejected.response.message);
+  send(fileOrigin);
+  assert.equal(requests.length, 5);
 });
 
 test('returning to Choose and selecting a fresh profile keeps update ordering live', async (t) => {
@@ -380,6 +561,13 @@ test('returning to Choose and selecting a fresh profile keeps update ordering li
   assert.equal(f.view().step, 'choose');
   await f.click('New profile');
   await until(() => f.view().step === 'response');
+  assert.equal(
+    f.w.document.querySelector('input[type=checkbox]').checked,
+    false,
+  );
+  assert.ok(f.button('Next').disabled);
+  f.w.document.querySelector('input[type=checkbox]').click();
+  await until(() => !f.button('Next').disabled);
   await f.click('Next');
   assert.equal(f.view().step, 'white_balance');
 });

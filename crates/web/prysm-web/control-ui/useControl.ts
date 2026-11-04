@@ -9,7 +9,18 @@ import {
 } from './api';
 
 type Snapshot = { state: StateResponse | null; settings: SettingsView };
+type Control = 'power' | Target['source'] | 'settings';
 type PendingOperation = { kind: 'lighting'; id: string } | { kind: 'settings' };
+
+function completionError(
+  pending: PendingOperation,
+  result: StateResponse['operation'] | undefined,
+) {
+  if (pending.kind === 'settings') return '';
+  if (!result || result.kind === 'idle' || result.id !== pending.id)
+    return 'Prysm restarted; completion is unknown. Check status before retrying.';
+  return result.kind === 'failed' ? result.error.message : '';
+}
 
 async function readSnapshot(): Promise<Snapshot> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -24,11 +35,7 @@ async function readSnapshot(): Promise<Snapshot> {
 export function useControl() {
   const [data, setData] = useState<StateResponse | null>(null);
   const [settings, setSettings] = useState<SettingsView | null>(null);
-  const [writing, setWriting] = useState(false);
-  const [pendingControl, setPendingControl] = useState<
-    'power' | Target['source'] | null
-  >(null);
-  const [pending, setPending] = useState<PendingOperation | null>(null);
+  const [activeControl, setActiveControl] = useState<Control | null>(null);
   const [connectionError, setConnectionError] = useState('');
   const [requestError, setRequestError] = useState('');
   const operation = useRef({
@@ -49,20 +56,11 @@ export function useControl() {
       setSettings(snapshot.settings);
       setConnectionError('');
       if (current.pending && snapshot.state?.operation.kind !== 'pending') {
-        const completed = snapshot.state?.operation;
-        const unknown =
-          current.pending.kind === 'lighting' &&
-          (!completed ||
-            completed.kind === 'idle' ||
-            completed.id !== current.pending.id);
-        current.pending = null;
-        setPending(null);
-        setPendingControl(null);
         setRequestError(
-          unknown
-            ? 'Prysm restarted; completion is unknown. Check status before retrying.'
-            : '',
+          completionError(current.pending, snapshot.state?.operation),
         );
+        current.pending = null;
+        setActiveControl(null);
       }
     } catch (error) {
       if (generation === current.generation)
@@ -88,7 +86,7 @@ export function useControl() {
     };
   }, [poll]);
 
-  function beginWrite() {
+  function beginWrite(control: Control) {
     const current = operation.current;
     if (
       current.writing ||
@@ -98,27 +96,24 @@ export function useControl() {
       return false;
     current.writing = true;
     current.generation += 1;
-    setWriting(true);
+    setActiveControl(control);
     return true;
-  }
-  function accepted(pending: PendingOperation) {
-    operation.current.pending = pending;
-    setPending(pending);
   }
   function finishWrite() {
     operation.current.writing = false;
-    setWriting(false);
+    if (!operation.current.pending) setActiveControl(null);
     void poll();
   }
   async function setState(target: Target, control: 'power' | 'source') {
-    if (!beginWrite()) return;
-    setPendingControl(control === 'power' ? 'power' : target.source);
+    if (!beginWrite(control === 'power' ? 'power' : target.source)) return;
     setRequestError('');
     try {
       const response = unwrap(await client.PUT('/api/state', { body: target }));
-      accepted({ kind: 'lighting', id: response.operation_id });
+      operation.current.pending = {
+        kind: 'lighting',
+        id: response.operation_id,
+      };
     } catch (error) {
-      setPendingControl(null);
       setRequestError(
         `${error instanceof Error ? error.message : 'Request failed.'} The change may have been accepted. Check status before retrying.`,
       );
@@ -130,7 +125,7 @@ export function useControl() {
     expected_revision: string,
     changes: SettingsValues,
   ) {
-    if (!beginWrite()) throw Error('A change is already running.');
+    if (!beginWrite('settings')) throw Error('A change is already running.');
     try {
       const saved = unwrap(
         await client.PUT('/api/settings', {
@@ -139,7 +134,7 @@ export function useControl() {
       );
       operation.current.generation += 1;
       setSettings(saved);
-      accepted({ kind: 'settings' });
+      operation.current.pending = { kind: 'settings' };
       return saved;
     } finally {
       finishWrite();
@@ -148,8 +143,8 @@ export function useControl() {
   return {
     data,
     settings,
-    pendingControl,
-    busy: writing || pending !== null || data?.operation.kind === 'pending',
+    pendingControl: activeControl === 'settings' ? null : activeControl,
+    busy: activeControl !== null || data?.operation.kind === 'pending',
     connectionError,
     requestError,
     poll,

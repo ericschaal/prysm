@@ -45,9 +45,11 @@ pub struct CalibrationProfiles {
     pub active: Option<OperationId>,
 }
 impl CalibrationProfiles {
+    pub const LIMIT: usize = 32;
+
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.profiles.len() <= 32,
+            self.profiles.len() <= Self::LIMIT,
             "at most 32 calibration profiles are allowed"
         );
         for (index, profile) in self.profiles.iter().enumerate() {
@@ -196,6 +198,7 @@ pub enum CalibrationRequest {
 )]
 pub struct CalibrationView {
     pub saved: bool,
+    pub startup_pending: bool,
     pub token: OperationId,
     pub pairing: Option<OperationId>,
     pub connected: bool,

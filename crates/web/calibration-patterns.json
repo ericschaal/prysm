@@ -1,0 +1,29 @@
+{
+  "colors": [
+    {"clip": "red", "label": "Red", "swatch": "#ed5454", "reference": "#ff0000"},
+    {"clip": "green", "label": "Green", "swatch": "#51b979", "reference": "#00ff00"},
+    {"clip": "blue", "label": "Blue", "swatch": "#5a7fea", "reference": "#0000ff"},
+    {"clip": "cyan", "label": "Cyan", "swatch": "#55c8ca", "reference": "#00ffff"},
+    {"clip": "magenta", "label": "Magenta", "swatch": "#cc69bb", "reference": "#ff00ff"},
+    {"clip": "yellow", "label": "Yellow", "swatch": "#edcb64", "reference": "#ffff00"}
+  ],
+  "grays": [
+    {"clip": "black", "label": "Black", "swatch": "#000000"},
+    {"clip": "gray-32", "label": "Very dark", "swatch": "#202020"},
+    {"clip": "gray-64", "label": "Dark", "swatch": "#404040"},
+    {"clip": "gray-128", "label": "Mid gray", "swatch": "#808080"},
+    {"clip": "gray-192", "label": "Light gray", "swatch": "#c0c0c0"},
+    {"clip": "white", "label": "White", "swatch": "#ffffff"}
+  ],
+  "muted": [
+    {"clip": "clay", "label": "Clay", "swatch": "#c4765f"},
+    {"clip": "leaf", "label": "Leaf", "swatch": "#78a666"},
+    {"clip": "denim", "label": "Denim", "swatch": "#6d90bd"}
+  ],
+  "pairs": [
+    {"clip": "coast", "label": "Coast", "left": "Peach", "right": "Teal", "leftColor": "#e7ad8a", "rightColor": "#419ea5"},
+    {"clip": "garden", "label": "Garden", "left": "Rose", "right": "Sage", "leftColor": "#c98b9d", "rightColor": "#859b6c"},
+    {"clip": "dusk", "label": "Dusk", "left": "Amber", "right": "Violet", "leftColor": "#d59d4a", "rightColor": "#8165a9"}
+  ],
+  "response": ["gray-64", "gray-192", "red", "green", "blue"]
+}

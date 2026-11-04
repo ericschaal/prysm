@@ -679,7 +679,11 @@ test('no video keeps an enabled sender in a stable waiting state across receiver
 
 test('TV calibration pairs through the same-origin relay, hides QR during video and releases playback on Back', async (t) => {
   const f = await fixture(t);
-  f.w.setInterval = () => 42;
+  let heartbeat;
+  f.w.setInterval = (poll) => {
+    heartbeat = poll;
+    return 42;
+  };
   f.w.clearInterval = () => {};
   f.w.HTMLMediaElement.prototype.play = () => Promise.resolve();
   f.w.HTMLMediaElement.prototype.pause = () => {};
@@ -700,10 +704,16 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
         }),
       ),
     );
-  await send({ type: 'calibration-ready' }, 'http://attacker.invalid');
-  assert.equal(messages.length, 0);
-  await send({ type: 'calibration-ready' });
-  assert.equal(messages[0].message.action, 'begin');
+  await send(
+    { type: 'calibration-error', message: 'untrusted' },
+    'http://attacker.invalid',
+  );
+  assert.equal(f.w.document.querySelector('[role=alert]'), null);
+  heartbeat();
+  assert.deepEqual(
+    { ...messages[0].message },
+    { action: 'poll', playing: false },
+  );
   let view = {
     token: 'tv',
     pairing: 'pair',
@@ -729,10 +739,34 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
   view = { ...view, connected: true, pairing: null };
   await send({ type: 'calibration', view });
   assert.equal(f.w.document.querySelector('img'), null);
+  assert.match(f.w.document.body.textContent, /Calibration in progress/);
+  assert.equal(f.w.document.querySelector('video'), null);
+  assert.equal(f.focus(), 'calibration-exit');
+  await f.settle(() => f.advance(20000));
+  assert.match(f.w.document.body.textContent, /Calibration in progress/);
+  assert.ok(!messages.some(({ message }) => message.action === 'cancel'));
+  view = { ...view, step: 'response' };
+  await send({ type: 'calibration', view });
   assert.equal(
     f.w.document.querySelector('video').getAttribute('src'),
     'calibration/response.mp4',
   );
+  const response = f.w.document.querySelector('video');
+  Object.defineProperties(response, {
+    paused: { value: false },
+    currentTime: { value: 0.5 },
+  });
+  heartbeat();
+  assert.equal(messages.at(-1).message.playing, true);
+  await send({
+    type: 'calibration',
+    view: { ...view, step: 'choose', startup_pending: true },
+  });
+  assert.equal(f.w.document.querySelector('video'), response);
+  assert.equal(response.getAttribute('src'), 'calibration/response.mp4');
+  await send({ type: 'calibration', view: { ...view, step: 'choose' } });
+  assert.equal(f.w.document.querySelector('video'), null);
+  assert.equal(response.hasAttribute('src'), false);
   view = { ...view, step: 'white_balance' };
   await send({ type: 'calibration', view });
   const video = f.w.document.querySelector('video');
@@ -762,6 +796,14 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
       `calibration/${color}.mp4`,
     );
   }
+  const pending = () => f.w.document.querySelector('.pattern-pending');
+  await f.settle(() => video.dispatchEvent(new f.w.Event('playing')));
+  assert.equal(pending(), null);
+  await send({ type: 'calibration', view: { ...view, shade: 0 } });
+  await send({ type: 'calibration', view });
+  assert.ok(pending(), 'returning to the last color still reloads its MP4');
+  await f.settle(() => video.dispatchEvent(new f.w.Event('playing')));
+  assert.equal(pending(), null);
   view = { ...view, paused: false };
   await send({ type: 'calibration', view });
   assert.equal(
@@ -786,5 +828,102 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
   assert.equal(video.hasAttribute('src'), false);
   assert.equal(messages.at(-1).message.action, 'cancel');
   await send({ type: 'calibration', view });
+  assert.equal(f.w.document.querySelector('video'), null);
+});
+
+for (const event of ['pagehide', 'visibilitychange']) {
+  test(`TV playback releases the decoder immediately and only once on ${event}`, async (t) => {
+    const f = await fixture(t);
+    f.w.setInterval = () => 42;
+    f.w.HTMLMediaElement.prototype.play = () => Promise.resolve();
+    let pauses = 0;
+    let loads = 0;
+    f.w.HTMLMediaElement.prototype.pause = () => {
+      pauses++;
+    };
+    f.w.HTMLMediaElement.prototype.load = () => {
+      loads++;
+    };
+    await f.click('calibrate');
+    await f.click('calibration-connect');
+    const relay = f.w.document.querySelector('iframe').contentWindow;
+    const messages = [];
+    relay.postMessage = (message) => messages.push(message);
+    await f.settle(() =>
+      f.w.dispatchEvent(
+        new f.w.MessageEvent('message', {
+          source: relay,
+          origin: 'http://192.168.18.18:8787',
+          data: {
+            type: 'calibration',
+            view: { token: 'tv', step: 'response', shade: 0, connected: true },
+          },
+        }),
+      ),
+    );
+    const video = f.w.document.querySelector('video');
+    assert.ok(video.hasAttribute('src'));
+    await f.settle(() => {
+      if (event === 'pagehide') f.w.dispatchEvent(new f.w.Event(event));
+      else {
+        Object.defineProperty(f.w.document, 'hidden', {
+          value: true,
+          configurable: true,
+        });
+        f.w.document.dispatchEvent(new f.w.Event(event));
+      }
+      assert.equal(video.hasAttribute('src'), false);
+    });
+    assert.ok(messages.some(({ action }) => action === 'cancel'));
+    await f.key(461);
+    assert.deepEqual([pauses, loads], [1, 1]);
+  });
+}
+
+test('the initial connection timeout preserves the reason pairing failed', async (t) => {
+  const f = await fixture(t);
+  f.w.setInterval = () => 42;
+  await f.click('calibrate');
+  await f.click('calibration-connect');
+  const message =
+    'Calibration in progress—finish or exit on the TV to change settings.';
+  await f.settle(() =>
+    f.w.dispatchEvent(
+      new f.w.MessageEvent('message', {
+        source: f.w.document.querySelector('iframe').contentWindow,
+        origin: 'http://192.168.18.18:8787',
+        data: { type: 'calibration-error', terminal: false, message },
+      }),
+    ),
+  );
+  await f.advance(16000);
+  assert.equal(f.w.document.querySelector('[role=alert]').textContent, message);
+});
+test('a terminal playback error stays visible past the reconnect deadline', async (t) => {
+  const f = await fixture(t);
+  f.w.setInterval = () => 42;
+  f.w.HTMLMediaElement.prototype.play = () =>
+    Promise.reject(new Error('Decode failed'));
+  f.w.HTMLMediaElement.prototype.pause = () => {};
+  f.w.HTMLMediaElement.prototype.load = () => {};
+  await f.click('calibrate');
+  await f.click('calibration-connect');
+  const relay = f.w.document.querySelector('iframe').contentWindow;
+  await f.settle(() =>
+    f.w.dispatchEvent(
+      new f.w.MessageEvent('message', {
+        source: relay,
+        origin: 'http://192.168.18.18:8787',
+        data: {
+          type: 'calibration',
+          view: { token: 'tv', step: 'response', shade: 0, connected: true },
+        },
+      }),
+    ),
+  );
+  const alert = () => f.w.document.querySelector('[role=alert]').textContent;
+  assert.equal(alert(), 'Video failed. Exit and try again.');
+  await f.advance(31000);
+  assert.equal(alert(), 'Video failed. Exit and try again.');
   assert.equal(f.w.document.querySelector('video'), null);
 });

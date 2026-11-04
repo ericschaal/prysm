@@ -162,4 +162,5 @@ test('Stop lighting is available before confirmation', async ({ page }) => {
     page.getByRole('heading', { name: 'Calibration ended' }),
   ).toBeVisible();
   expect(fixture.view.ended).toBe('Lighting stopped.');
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });

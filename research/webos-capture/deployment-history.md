@@ -7,6 +7,25 @@ or other models/firmware. Some original local evidence was not committed.
 **Current instructions:** [TV setup](../../docs/users/webos.md) and
 [developer lifecycle](../../docs/developers/webos.md).
 
+Version 0.1.31 and the matching ARM64 receiver were installed on the project LG
+and Pi on 2026-11-04. All 41 installed TV app and service files matched the
+IPK. The test exercised four-way remote navigation and Back, paired the deployed
+phone UI using the TV QR, and confirmed that profile selection left the decoder
+idle and the lights off. During playback, changing red, green, blue and the
+Coast split pattern produced the expected receiver output on both edges.
+Across 77 sampled frames, none were black and the TV reported no stall, seek
+or decoder reset. The phone rejoined after reload and Stop released the decoder.
+The sender reconnected, WLED was off, and the Pi settings file containing all
+three profiles matched its pretest checksum. Local evidence is in
+`work/tv-deploy-031/` and the Pi rollback is in `/var/backups/prysm/tv-deploy-031`.
+
+Version 0.1.30 keeps one H.264 stream open across calibration patterns. On the
+project LG, the receiver sampled 61 preview frames across solid and split-color
+changes with zero black samples. The TV reported no stall, seek, or player reset
+during those transitions. The pending-color indicator appeared during switches
+and cleared during playback. The receiver's saved settings matched the pretest
+snapshot. The 0.1.29 profile-selection screen also stayed quiet until Response.
+
 Version 0.1.28 redesigns the receiver-address and QR screens. Both layouts passed
 local checks at 720p and 1080p for focus, target size, overscan margins and
 space for the system keyboard. On the LG, the receiver address filled in from

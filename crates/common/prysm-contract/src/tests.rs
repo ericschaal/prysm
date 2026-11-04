@@ -139,6 +139,17 @@ fn webos_input_round_trips() {
     }
 }
 #[test]
+fn settings_writes_require_an_explicit_calibration_set() {
+    let mut write = json!({"expected_revision": "0", "settings": Settings::default()});
+    assert!(serde_json::from_value::<UpdateSettings>(write.clone()).is_ok());
+    write["settings"]
+        .as_object_mut()
+        .unwrap()
+        .remove("calibration");
+    assert!(serde_json::from_value::<UpdateSettings>(write).is_err());
+}
+
+#[test]
 fn schema_matches_serialized_values() {
     let schema = |value| serde_json::to_value(value).unwrap();
     let brightness = schema(BrightnessPercent::schema());

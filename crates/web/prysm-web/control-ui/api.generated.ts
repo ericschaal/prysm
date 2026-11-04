@@ -120,6 +120,7 @@ export interface components {
             sequence: number;
             /** Format: int32 */
             shade: number;
+            startup_pending: boolean;
             step: components["schemas"]["CalibrationStep"];
             token: components["schemas"]["OperationId"];
         };
@@ -279,7 +280,7 @@ export interface components {
         RequiredSetting: "input" | "output";
         SampleDensity: number;
         Settings: {
-            calibration?: components["schemas"]["CalibrationProfiles"];
+            calibration: components["schemas"]["CalibrationProfiles"];
             input?: components["schemas"]["Input"] | null;
             output?: components["schemas"]["Output"] | null;
             processing: components["schemas"]["ProcessingSettings"];

@@ -263,7 +263,7 @@ impl Controller {
             if !matches!(self.mode, Mode::Ready(_)) {
                 return Err(CommandError::Conflict("capture is unavailable"));
             }
-            let session = Session::new(&self.settings.view(), now);
+            let session = Session::new(self.settings.view().settings.calibration.profiles, now);
             let view = session.tv_view(now);
             self.calibration = Some(session);
             return Ok(view);
@@ -271,8 +271,7 @@ impl Controller {
         let session = self.calibration.as_mut().ok_or(CommandError::Conflict(
             "calibration has ended; start again on the TV",
         ))?;
-        let (token, effect) =
-            session.transition(request, &self.settings.view(), self.job.is_some(), now)?;
+        let (token, effect) = session.transition(request, now)?;
         match effect {
             Effect::None => {}
             Effect::Start => {
@@ -286,8 +285,18 @@ impl Controller {
                     Finished::CalibrationStarted(operation.await)
                 }));
             }
-            Effect::Save { update, profile } => {
-                self.settings.update(*update).await?;
+            Effect::Save(profile) => {
+                if self.job.is_some()
+                    || !self
+                        .mode
+                        .state(self.operation.clone())
+                        .is_some_and(|s| s.pipeline.phase == prysm_contract::PipelinePhase::Running)
+                {
+                    return Err(CommandError::Conflict(
+                        "wait for TV capture to resume before saving",
+                    ));
+                }
+                self.settings.save_profile(&profile).await?;
                 self.calibration.as_mut().unwrap().saved(profile);
                 self.end_calibration("Calibration saved and active.", false)
                     .await?;
@@ -299,7 +308,7 @@ impl Controller {
             .calibration
             .as_ref()
             .unwrap()
-            .view(token, Instant::now()))
+            .view(token, Instant::now(), self.job.is_some()))
     }
 
     async fn apply_calibration(&mut self) -> Result<(), CommandError> {
@@ -739,7 +748,9 @@ mod tests {
                 .contains("native cleanup failed")
         );
     }
-    async fn calibration_owner() -> (
+    async fn calibration_owner(
+        lighting_on: bool,
+    ) -> (
         tempfile::TempDir,
         Controller,
         App,
@@ -750,7 +761,7 @@ mod tests {
             Json, Router,
             routing::{get, post},
         };
-        let router = Router::new().route("/json/si", get(|| async { Json(serde_json::json!({"state":{"on":false,"lor":2},"info":{"live":false,"lm":null}})) }))
+        let router = Router::new().route("/json/si", get(move || async move { Json(serde_json::json!({"state":{"on":lighting_on,"lor":if lighting_on {0} else {2}},"info":{"live":lighting_on,"lm":null}})) }))
             .route("/json/state", post(|| async { Json(serde_json::json!({"success":true})) }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut config = test_support::config();
@@ -766,16 +777,16 @@ mod tests {
             axum::serve(listener, router).await.unwrap();
         });
         let directory = tempfile::tempdir().unwrap();
-        let (controller, app, receiver) = owner(
-            test_support::store(&directory, &config),
-            "127.0.0.1:0".parse().unwrap(),
-        );
+        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = available.local_addr().unwrap();
+        drop(available);
+        let (controller, app, receiver) = owner(test_support::store(&directory, &config), address);
         (directory, controller, app, receiver, server)
     }
 
     #[tokio::test]
     async fn calibration_startup_keeps_poll_and_stop_responsive() {
-        let (_directory, mut controller, app, receiver, server) = calibration_owner().await;
+        let (_directory, mut controller, app, receiver, server) = calibration_owner(false).await;
         let normal = controller.settings.view();
         let (tv, phone) = paired(&mut controller).await;
         let shutdown = CancellationToken::new();
@@ -863,56 +874,14 @@ mod tests {
         (tv, phone)
     }
 
-    #[tokio::test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "keep the real startup, queued draft and save scenario together"
-    )]
-    async fn calibration_startup_applies_queued_draft_before_save() {
-        use axum::{
-            Json, Router,
-            routing::{get, post},
-        };
+    async fn tv_frame(address: std::net::SocketAddr) -> tokio::net::TcpStream {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut config = test_support::config();
-        config.input = prysm_contract::Input::Webos {
-            capture_resolution: [4, 2].try_into().unwrap(),
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
-        let prysm_contract::Output::Wled { url, .. } = &mut config.output;
-        *url = format!("http://{}/", listener.local_addr().unwrap())
-            .parse()
-            .unwrap();
-        let server = tokio::spawn(async move {
-            let router = Router::new()
-                .route("/json/si", get(|| async { Json(serde_json::json!({"state":{"on":true,"lor":0},"info":{"live":true,"lm":"DDP"}})) }))
-                .route("/json/state", post(|| async { Json(serde_json::json!({"success":true})) }));
-            axum::serve(listener, router).await.unwrap();
-        });
-        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = available.local_addr().unwrap();
-        drop(available);
-        let directory = tempfile::tempdir().unwrap();
-        let (mut controller, app, receiver) =
-            owner(test_support::store(&directory, &config), address);
-        let (tv, phone) = paired(&mut controller).await;
-        let shutdown = CancellationToken::new();
-        let task = tokio::spawn(controller.run(receiver, shutdown.clone()));
-        let mut sender = tokio::net::TcpStream::connect(address).await.unwrap();
-        sender
-            .write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
-            .await
-            .unwrap();
-        app.calibrate(CalibrationRequest::Poll {
-            token: tv.token,
-            compare: false,
-            playing: true,
-        })
-        .await
-        .unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
+            let mut sender = tokio::net::TcpStream::connect(address).await.unwrap();
+            sender
+                .write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
+                .await
+                .unwrap();
             loop {
                 let size = sender.read_u32().await.unwrap();
                 let mut message = vec![0; size as usize];
@@ -923,6 +892,41 @@ mod tests {
                     break;
                 }
             }
+            let mut frame = prysm_webos_protocol::Header {
+                width: 4,
+                height: 2,
+                format: prysm_webos_protocol::PixelFormat::Rgb,
+                codec: prysm_webos_protocol::Codec::Raw,
+                payload_len: 24,
+            }
+            .encode()
+            .unwrap()
+            .to_vec();
+            frame.extend([128; 24]);
+            sender.write_all(&frame).await.unwrap();
+            sender
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keep the real startup, queued draft and save scenario together"
+    )]
+    async fn calibration_startup_applies_queued_draft_before_save() {
+        let (_directory, mut controller, app, receiver, server) = calibration_owner(true).await;
+        let normal = app.settings().settings;
+        let address = controller.receiver_listen;
+        let (tv, phone) = paired(&mut controller).await;
+        assert!(!tv.startup_pending);
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(controller.run(receiver, shutdown.clone()));
+        app.calibrate(CalibrationRequest::Poll {
+            token: tv.token,
+            compare: false,
+            playing: true,
         })
         .await
         .unwrap();
@@ -930,17 +934,19 @@ mod tests {
             warmth: 40.try_into().unwrap(),
             ..prysm_contract::ColorCorrection::default()
         };
-        app.calibrate(CalibrationRequest::Update {
-            token: phone.token,
-            sequence: 1,
-            correction,
-            step: CalibrationStep::Review,
-            shade: 0,
-            paused: false,
-            compare: false,
-        })
-        .await
-        .unwrap();
+        let review = app
+            .calibrate(CalibrationRequest::Update {
+                token: phone.token,
+                sequence: 1,
+                correction,
+                step: CalibrationStep::Review,
+                shade: 0,
+                paused: false,
+                compare: false,
+            })
+            .await
+            .unwrap();
+        assert!(review.startup_pending);
         assert!(matches!(
             app.calibrate(CalibrationRequest::Save {
                 token: phone.token,
@@ -949,18 +955,7 @@ mod tests {
             .await,
             Err(CommandError::Conflict(_))
         ));
-        let mut frame = prysm_webos_protocol::Header {
-            width: 4,
-            height: 2,
-            format: prysm_webos_protocol::PixelFormat::Rgb,
-            codec: prysm_webos_protocol::Codec::Raw,
-            payload_len: 24,
-        }
-        .encode()
-        .unwrap()
-        .to_vec();
-        frame.extend([128; 24]);
-        sender.write_all(&frame).await.unwrap();
+        let sender = tv_frame(address).await;
         tokio::time::timeout(Duration::from_secs(2), async {
             while app.settings().settings.source != Source::Prysm {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -968,6 +963,40 @@ mod tests {
         })
         .await
         .expect("startup completion must persist the source");
+        let running = app
+            .calibrate(CalibrationRequest::Poll {
+                token: tv.token,
+                playing: true,
+                compare: false,
+            })
+            .await
+            .unwrap();
+        assert!(!running.startup_pending);
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while app.state().unwrap().pipeline.phase != prysm_contract::PipelinePhase::Starting {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            app.calibrate(CalibrationRequest::Save {
+                token: phone.token,
+                name: "Disconnected".into(),
+            })
+            .await,
+            Err(CommandError::Conflict(_))
+        ));
+        assert_eq!(app.settings().settings.calibration, normal.calibration);
+        let _sender = tv_frame(address).await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while app.state().unwrap().pipeline.phase != prysm_contract::PipelinePhase::Running {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
         let saved = app
             .calibrate(CalibrationRequest::Save {
                 token: phone.token,
@@ -977,7 +1006,7 @@ mod tests {
             .unwrap();
         assert!(saved.saved);
         assert_eq!(app.settings().settings.calibration.correction(), correction);
-        assert_eq!(app.settings().settings.processing, config.processing);
+        assert_eq!(app.settings().settings.processing, normal.processing);
         assert_eq!(
             app.state().unwrap().pipeline.phase,
             prysm_contract::PipelinePhase::Running
@@ -993,7 +1022,7 @@ mod tests {
         reason = "one session exercises pairing, locking, ordering and exit together"
     )]
     async fn calibration_pairing_lock_stale_updates_and_tv_exit() {
-        let (directory, mut controller, _, _receiver, server) = calibration_owner().await;
+        let (directory, mut controller, _, _receiver, server) = calibration_owner(false).await;
         let before = controller.settings.view();
         let bytes = std::fs::read(directory.path().join("settings.json")).unwrap();
         let (tv, phone) = paired(&mut controller).await;
@@ -1069,7 +1098,7 @@ mod tests {
                 .calibration
                 .as_ref()
                 .unwrap()
-                .view(phone.token, std::time::Instant::now())
+                .view(phone.token, std::time::Instant::now(), false)
                 .draft
                 .correction,
             correction
@@ -1115,7 +1144,6 @@ mod tests {
         server.abort();
     }
 
-    // Persistence/timeout tests stage a draft through session rules without a running capture.
     fn stage_draft(
         controller: &mut Controller,
         tv: &CalibrationView,
@@ -1124,7 +1152,6 @@ mod tests {
         step: CalibrationStep,
     ) {
         let now = std::time::Instant::now();
-        let settings = controller.settings.view();
         let session = controller.calibration.as_mut().unwrap();
         session
             .transition(
@@ -1133,8 +1160,6 @@ mod tests {
                     compare: false,
                     playing: true,
                 },
-                &settings,
-                false,
                 now,
             )
             .unwrap();
@@ -1142,15 +1167,13 @@ mod tests {
             .transition(
                 CalibrationRequest::Update {
                     token: phone.token,
-                    sequence: session.view(phone.token, now).sequence + 1,
+                    sequence: session.view(phone.token, now, false).sequence + 1,
                     correction,
                     step,
                     shade: 0,
                     paused: false,
                     compare: false,
                 },
-                &settings,
-                false,
                 now,
             )
             .unwrap();
@@ -1158,9 +1181,20 @@ mod tests {
 
     #[tokio::test]
     async fn calibration_save_failure_retains_draft_then_atomic_save_activates_and_replaces() {
-        let (directory, mut controller, _, _receiver, server) = calibration_owner().await;
-        let normal = controller.settings.view();
+        let (directory, mut controller, _, _receiver, server) = calibration_owner(true).await;
         let (tv, phone) = paired(&mut controller).await;
+        controller
+            .calibrate(CalibrationRequest::Poll {
+                token: tv.token,
+                playing: true,
+                compare: false,
+            })
+            .await
+            .unwrap();
+        let _sender = tv_frame(controller.receiver_listen).await;
+        let started = controller.job.take().unwrap().await.unwrap();
+        controller.finished(started).await;
+        let normal = controller.settings.view();
         let approved = prysm_contract::ColorCorrection {
             tint: 25.try_into().unwrap(),
             ..prysm_contract::ColorCorrection::default()
@@ -1235,23 +1269,9 @@ mod tests {
             })
             .await
             .unwrap();
-        let mut saved = controller.settings.view();
+        let saved = controller.settings.view();
         assert_eq!(saved.settings.calibration.profiles.len(), 1);
         assert_eq!(saved.settings.calibration.active, Some(id));
-        saved.settings.calibration.profiles.clear();
-        saved.settings.calibration.active = None;
-        controller
-            .settings
-            .update(prysm_contract::UpdateSettings {
-                expected_revision: saved.revision,
-                settings: saved.settings,
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            controller.settings.config().unwrap().correction,
-            prysm_contract::ColorCorrection::default()
-        );
         controller.mode.shutdown().await.unwrap();
         server.abort();
     }
@@ -1260,7 +1280,7 @@ mod tests {
     async fn calibration_timeouts_capture_interruption_and_stop_release_overrides_without_restart()
     {
         for cause in ["tv", "phone", "capture", "stop"] {
-            let (_directory, mut controller, _, _receiver, server) = calibration_owner().await;
+            let (_directory, mut controller, _, _receiver, server) = calibration_owner(false).await;
             let normal = controller.settings.view().settings;
             let (tv, phone) = paired(&mut controller).await;
             stage_draft(
@@ -1274,7 +1294,6 @@ mod tests {
                 CalibrationStep::WhiteBalance,
             );
             if cause == "tv" || cause == "phone" {
-                let settings = controller.settings.view();
                 controller
                     .calibration
                     .as_mut()
@@ -1285,8 +1304,6 @@ mod tests {
                             compare: false,
                             playing: false,
                         },
-                        &settings,
-                        false,
                         std::time::Instant::now()
                             .checked_sub(Duration::from_secs(31))
                             .unwrap(),

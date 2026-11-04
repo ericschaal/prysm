@@ -18,7 +18,6 @@ import { Calibration } from './Calibration';
 
 function CalibrationPage() {
   const { pairing = '' } = useParams();
-  const control = useControl();
   return (
     <main id="content" className="calibration-page">
       <header className="calibration-brand">
@@ -27,43 +26,45 @@ function CalibrationPage() {
         </span>
         <span>LIGHT & COLOR</span>
       </header>
-      {control.settings ? (
-        <Calibration
-          key={pairing}
-          pairing={pairing}
-          settings={control.settings}
-        />
-      ) : (
-        <section
-          className="calibration-wizard calibration-loading"
-          aria-busy={!control.connectionError}
-        >
-          <p className="eyebrow">MATCH YOUR LIGHTS</p>
-          <h1>Connecting to your TV…</h1>
-          <p role="status">
-            {control.connectionError || 'Getting your profiles ready.'}
-          </p>
-          {control.connectionError ? (
-            <button onClick={() => void control.poll()}>Try again</button>
-          ) : null}
-        </section>
-      )}
+      <Calibration key={pairing} pairing={pairing} />
     </main>
   );
 }
+
+const pageIntro = {
+  setup: {
+    eyebrow: 'YOUR FIRST SCREEN SYNC',
+    title: 'Bring your screen to life.',
+    description: 'Choose your video source and tell Prysm about your lights.',
+  },
+  overview: {
+    eyebrow: 'ROOM CONTROL',
+    title: 'Light, in sync.',
+    description: 'Control your lights and see what Prysm is doing.',
+  },
+  preview: {
+    eyebrow: 'PICTURE & COLOR',
+    title: 'See what your lights see.',
+    description:
+      'Inspect the picture, detected crop, and colors sent to each edge.',
+  },
+  settings: {
+    eyebrow: 'SCREEN, LIGHTS & CONNECTIONS',
+    title: 'Make Prysm yours.',
+    description:
+      'Configure everything in one place, then save to apply your changes.',
+  },
+};
 
 function Dashboard({ page }: { page: 'overview' | 'preview' | 'settings' }) {
   const control = useControl();
   const [dirty, setDirty] = useState(false);
   const online = !!control.settings && !control.connectionError;
   const setup = !!control.settings?.missing_required.length;
-  const title = setup
-    ? 'Bring your screen to life.'
-    : page === 'overview'
-      ? 'Light, in sync.'
-      : page === 'preview'
-        ? 'See what your lights see.'
-        : 'Make Prysm yours.';
+  const intro = pageIntro[setup ? 'setup' : page];
+  let connection = 'Connecting';
+  if (control.connectionError) connection = 'Offline';
+  else if (online) connection = 'Connected';
   return (
     <div className={`app-shell${setup ? ' is-setup' : ''}`}>
       <a
@@ -99,11 +100,7 @@ function Dashboard({ page }: { page: 'overview' | 'preview' | 'settings' }) {
           role="status"
         >
           <i />
-          {control.connectionError
-            ? 'Offline'
-            : online
-              ? 'Connected'
-              : 'Connecting'}
+          {connection}
         </span>
       </header>
       {control.settings && !setup ? (
@@ -121,25 +118,9 @@ function Dashboard({ page }: { page: 'overview' | 'preview' | 'settings' }) {
       <main id="content" tabIndex={-1}>
         {control.settings ? (
           <div className="page-intro">
-            <p className="eyebrow">
-              {setup
-                ? 'YOUR FIRST SCREEN SYNC'
-                : page === 'overview'
-                  ? 'ROOM CONTROL'
-                  : page === 'preview'
-                    ? 'PICTURE & COLOR'
-                    : 'SCREEN, LIGHTS & CONNECTIONS'}
-            </p>
-            <h1>{title}</h1>
-            <p>
-              {setup
-                ? 'Choose your video source and tell Prysm about your lights.'
-                : page === 'overview'
-                  ? 'Control your lights and see what Prysm is doing.'
-                  : page === 'preview'
-                    ? 'Inspect the picture, detected crop, and colors sent to each edge.'
-                    : 'Configure everything in one place, then save to apply your changes.'}
-            </p>
+            <p className="eyebrow">{intro.eyebrow}</p>
+            <h1>{intro.title}</h1>
+            <p>{intro.description}</p>
           </div>
         ) : null}
         {control.settings ? (
@@ -206,14 +187,6 @@ export function App() {
       <Route path="/settings" element={<Dashboard page="settings" />} />
       <Route path="*" element={<Navigate to="/overview" replace />} />
     </Routes>
-  );
-}
-// Preserve QR links from TVs running the previous app version.
-if (window.location.hash.startsWith('#calibrate=')) {
-  window.history.replaceState(
-    null,
-    '',
-    `#/calibrate/${encodeURIComponent(window.location.hash.slice(11))}`,
   );
 }
 createRoot(document.getElementById('root')!).render(

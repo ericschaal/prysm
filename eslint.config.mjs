@@ -32,6 +32,7 @@ export default defineConfig(
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
     extends: [tseslint.configs.recommendedTypeChecked],
+    rules: { 'no-nested-ternary': 'error' },
     languageOptions: {
       parserOptions: {
         projectService: true,

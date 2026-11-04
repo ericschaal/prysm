@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate bundled SDR BT.709 calibration video; --check decodes and verifies it."""
 import argparse
+import base64
 import json
 from pathlib import Path
 import subprocess
@@ -8,23 +9,20 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / 'crates/web/prysm-webos/public/calibration'
 WIDTH, HEIGHT, FPS, SECONDS = 640, 360, 30, 2
-COLORS = {
-    'black': (0, 0, 0), 'gray-32': (32, 32, 32),
-    'gray-64': (64, 64, 64), 'gray-128': (128, 128, 128),
-    'gray-192': (192, 192, 192), 'white': (255, 255, 255),
-    'red': (255, 0, 0), 'green': (0, 255, 0), 'blue': (0, 0, 255),
-    'clay': (196, 118, 95), 'leaf': (120, 166, 102), 'denim': (109, 144, 189),
-    'cyan': (0, 255, 255), 'magenta': (255, 0, 255), 'yellow': (255, 255, 0),
-}
-SEQUENCES = {name: [rgb] for name, rgb in COLORS.items()}
-SEQUENCES['response'] = [COLORS[name] for name in ['gray-64', 'gray-192', 'red', 'green', 'blue']]
-SEQUENCES['colors'] = [COLORS[name] for name in ['red', 'green', 'blue', 'cyan', 'magenta', 'yellow']]
+PATTERNS = json.loads((ROOT / 'crates/web/calibration-patterns.json').read_text())
 
-# Each mixed clip holds two unseen colors on opposite edges at the same time.
-SPLIT = {'coast': ((231, 173, 138), (65, 158, 165)),
-         'garden': ((201, 139, 157), (133, 155, 108)),
-         'dusk': ((213, 157, 74), (129, 101, 169))}
-for name, (left, right) in SPLIT.items():
+
+def rgb(hex_color):
+    return bytes.fromhex(hex_color.removeprefix('#'))
+
+
+COLORS = {p['clip']: rgb(p.get('reference', p['swatch']))
+          for group in ('grays', 'colors', 'muted') for p in PATTERNS[group]}
+SPLIT = {p['clip']: (rgb(p['leftColor']), rgb(p['rightColor'])) for p in PATTERNS['pairs']}
+SEQUENCES = {name: [rgb] for name, rgb in COLORS.items()}
+SEQUENCES['response'] = [COLORS[name] for name in PATTERNS['response']]
+SEQUENCES['colors'] = [COLORS[p['clip']] for p in PATTERNS['colors']]
+for name, (left, _) in SPLIT.items():
     SEQUENCES[name] = [left]
 
 
@@ -74,6 +72,18 @@ def check(name, colors):
                     assert max(abs(min(row)-expected[channel]), abs(max(row)-expected[channel])) <= 3, (name, i, channel)
 
 
+def stream_fragments():
+    # Inline the half-second fragments so the packaged file-origin app needs no network request.
+    fragments = {}
+    for name in (*COLORS, *SPLIT):
+        data = subprocess.check_output([
+            'ffmpeg', '-v', 'error', '-i', str(DEST / f'{name}.mp4'), '-frames:v', str(FPS // 2),
+            '-c:v', 'copy', '-movflags', 'empty_moov+default_base_moof+frag_keyframe+skip_trailer',
+            '-f', 'mp4', 'pipe:1'])
+        fragments[name] = base64.b64encode(data).decode()
+    return json.dumps(fragments, indent=2) + '\n'
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -83,4 +93,23 @@ if __name__ == '__main__':
         if not args.check:
             generate(name, colors)
         check(name, colors)
+    bundle = DEST.parents[1] / 'src' / 'pattern-fragments.json'
+    if args.check:
+        fragments = json.loads(bundle.read_text())
+        assert fragments.keys() == (COLORS | SPLIT).keys()
+        # Compare encoded picture packets, independent of the FFmpeg muxer version.
+        probe = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                 'packet=data_hash:stream=duration,avg_frame_rate', '-show_data_hash', 'sha256',
+                 '-of', 'json']
+        for name, fragment in fragments.items():
+            bundled = json.loads(subprocess.check_output([*probe, 'pipe:0'],
+                                                         input=base64.b64decode(fragment)))
+            stream = bundled['streams'][0]
+            assert float(stream['duration']) == 0.5, (name, stream)
+            assert stream['avg_frame_rate'] == f'{FPS}/1', (name, stream)
+            original = json.loads(subprocess.check_output([*probe, str(DEST / f'{name}.mp4')]))
+            packets = bundled['packets']
+            assert len(packets) == FPS // 2 and packets == original['packets'][:FPS // 2], name
+    else:
+        bundle.write_text(stream_fragments())
     print(f'Verified {len(SEQUENCES)} bundled patterns (metadata and decoded RGB, tolerance 3/255).')

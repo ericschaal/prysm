@@ -7,8 +7,9 @@ configured with the webOS input. Keep the phone on the receiver's local network.
 1. Open Prysm on the TV and choose **Match your lights**.
 2. Check the Prysm web address, choose **Show QR code**, and scan the QR code.
    Before pairing, **Back** returns to the address field.
-3. Choose **New profile** or adjust an existing profile. Confirm that you can
-   see the supplied video and the physical lights respond.
+3. The TV waits while you choose **New profile** or select a saved profile on
+   your phone. On the response check, the TV starts cycling through gray, red,
+   green, and blue. Confirm that the wall lights follow the sequence.
 4. Match the light-gray tint using Cooler/Warmer and Greener/More magenta.
    Compare tint, not brightness. Reset returns that step to neutral.
 5. In **Match color intensity**, try Clay, Leaf, and Denim. Increase intensity
@@ -31,7 +32,8 @@ Release it to return to the draft. Brightness, smoothing, shadow lift and
 spatial reach are independent settings and are never stored in a profile.
 
 Choose the active profile in Overview, including **No correction**. In
-Settings you can rename or delete profiles, then save your settings. Deleting
+Settings you can rename or delete profiles, then save your settings. At the
+32-profile limit, adjust an existing profile or delete one before starting a new one. Deleting
 the active profile selects No correction. Labels such as PS5 and Freebox do
 not automatically switch with the HDMI source.
 

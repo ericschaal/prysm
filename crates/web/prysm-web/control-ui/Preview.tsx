@@ -95,6 +95,17 @@ function draw(
   }
 }
 
+function previewAvailabilityNote(data: StateResponse | null) {
+  if (!data) return '';
+  if (data.observed?.power === false)
+    return 'Lights are off. Turn them on in Overview to use Screen sync.';
+  if (data.source !== 'prysm')
+    return 'WLED effects are selected. Choose Screen sync in Overview to follow your picture.';
+  if (data.pipeline.phase === 'running' || data.pipeline.phase === 'starting')
+    return '';
+  return 'Screen sync is stopped. Any displayed picture is from an earlier capture.';
+}
+
 export function Preview({
   active,
   data,
@@ -117,15 +128,7 @@ export function Preview({
     data?.observed?.power === true &&
     data.source === 'prysm' &&
     phase === 'running';
-  const previewNote = !data
-    ? ''
-    : data.observed?.power === false
-      ? 'Lights are off. Turn them on in Overview to use Screen sync.'
-      : data.source !== 'prysm'
-        ? 'WLED effects are selected. Choose Screen sync in Overview to follow your picture.'
-        : phase !== 'running' && phase !== 'starting'
-          ? 'Screen sync is stopped. Any displayed picture is from an earlier capture.'
-          : '';
+  const previewNote = previewAvailabilityNote(data);
   if (!previewEnabled && (opened || paused)) {
     setOpened(false);
     setPaused(false);
@@ -260,6 +263,14 @@ export function Preview({
     document.addEventListener('visibilitychange', resume);
     return () => document.removeEventListener('visibilitychange', resume);
   }, []);
+  function badgeLabel() {
+    if (!previewEnabled) return 'Unavailable';
+    if (!opened) return 'Closed';
+    if (paused) return 'Paused';
+    if (failed) return 'Disconnected';
+    return status === 'Preview connected' ? 'Live' : 'Waiting';
+  }
+  const badge = badgeLabel();
   return (
     <section className="preview card" aria-labelledby="preview-heading">
       <div className="section-heading">
@@ -270,19 +281,9 @@ export function Preview({
         <span
           role="status"
           aria-live="polite"
-          className={`badge ${previewEnabled && opened && !paused && !failed && status === 'Preview connected' ? 'live-badge' : ''}`}
+          className={`badge ${badge === 'Live' ? 'live-badge' : ''}`}
         >
-          {!previewEnabled
-            ? 'Unavailable'
-            : !opened
-              ? 'Closed'
-              : paused
-                ? 'Paused'
-                : failed
-                  ? 'Disconnected'
-                  : status === 'Preview connected'
-                    ? 'Live'
-                    : 'Waiting'}
+          {badge}
         </span>
       </div>
       <p

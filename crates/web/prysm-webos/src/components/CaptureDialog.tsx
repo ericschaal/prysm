@@ -18,6 +18,11 @@ interface Props {
   cleanup: () => void;
 }
 
+function videoAvailability(available: Status['videoAvailable']) {
+  if (available == null) return 'unknown';
+  return available ? 'available' : 'unavailable';
+}
+
 export default function CaptureDialog({
   dialog,
   modal,
@@ -156,7 +161,7 @@ export default function CaptureDialog({
         <pre className="diagnostics">
           {status
             ? `TV power: ${status.power || 'unknown'}
-Video source: ${status.videoAvailable === undefined || status.videoAvailable === null ? 'unknown' : status.videoAvailable ? 'available' : 'unavailable'}
+Video source: ${videoAvailability(status.videoAvailable)}
 Prysm receiver connected: ${!!status.receiverConnected}
 Sender enabled: ${status.enabled}
 Sender process running: ${status.senderRunning}

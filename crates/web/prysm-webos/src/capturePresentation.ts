@@ -26,17 +26,15 @@ export function capturePresentation(
       title = 'Waiting for video';
       description =
         'The sender is enabled. Select an HDMI input or play a video on the TV.';
+    } else if (enabled && !connected) {
+      title = 'Waiting for Prysm';
+      description = 'Open Prysm on your computer and enable webOS input.';
+    } else if (enabled && status.capturing) {
+      title = 'Capturing';
+      description = 'Your TV picture is being sent to Prysm.';
     } else if (enabled) {
-      title = connected
-        ? status.capturing
-          ? 'Capturing'
-          : 'Ready to capture'
-        : 'Waiting for Prysm';
-      description = connected
-        ? status.capturing
-          ? 'Your TV picture is being sent to Prysm.'
-          : 'Start capture in Prysm on your computer.'
-        : 'Open Prysm on your computer and enable webOS input.';
+      title = 'Ready to capture';
+      description = 'Start capture in Prysm on your computer.';
     } else {
       title = 'Sender disabled';
       description = 'Enable the sender to connect to Prysm.';
@@ -45,13 +43,10 @@ export function capturePresentation(
       title = 'Sender needs attention';
       description = 'Open Service options for diagnostics or repair.';
     }
-    label = enabled
-      ? 'Disable sender'
-      : !draft.receiver
-        ? 'Set receiver address'
-        : dirty
-          ? 'Save and enable'
-          : 'Enable sender';
+    if (enabled) label = 'Disable sender';
+    else if (!draft.receiver) label = 'Set receiver address';
+    else if (dirty) label = 'Save and enable';
+    else label = 'Enable sender';
   }
 
   return {

@@ -45,7 +45,7 @@ function settingsView(value) {
   };
   return {
     revision,
-    settings,
+    settings: { calibration: { profiles: [], active: null }, ...settings },
     missing_required: ['input', 'output'].filter((key) => !settings[key]),
   };
 }
@@ -442,6 +442,7 @@ const frame = {
       button(p, 'Finish setup').click();
       await until(() => p.configRequests.length === 1 && p.element('#power'));
       assert.deepEqual(p.configRequests[0], {
+        calibration: { profiles: [], active: null },
         source: 'prysm',
         processing: { ...processing },
         input: {
@@ -629,6 +630,7 @@ const frame = {
     button(p, 'Save & apply').click();
     await until(() => p.configRequests.length === 1);
     assert.deepEqual(p.configRequests[0], {
+      calibration: { profiles: [], active: null },
       source: 'wled',
       input: {
         type: 'device',

@@ -13,12 +13,14 @@ ordering, comparison leases, profile selection, and save eligibility. Its
 transitions return the runtime or persistence work for the controller to perform.
 Saved and discarded outcomes are distinct; a runtime cleanup error cannot make a
 persisted profile appear unsaved.
-`Settings.calibration` defaults to an empty profile list and no active profile
-for older settings. Each profile stores an id, name, and bounded integer controls
+`Settings.calibration` contains the saved profiles and active selection.
+New installations start with an empty list. Each profile stores an id, name, and bounded integer controls
 (-100…100) for warmth, tint, midtones, intensity, and six hue anchors. Older
 profiles default the new controls to zero and serialize as before. It contains no brightness,
 smoothing, shadow lift, spatial reach, capture, or source associations. Up to
-32 profiles and 64 characters per name are allowed. The Overview selector
+32 profiles and 64 characters per name are allowed. Settings writes replace the
+complete revision-checked document. Omitting calibration fails validation.
+An empty profile list with no active profile clears the selection and profiles. The Overview selector
 activates a profile, or the permanent No correction option. Settings stages
 rename/deletion through its existing complete-document save; deleting the
 active profile selects No correction.
@@ -47,14 +49,17 @@ shadow lift. Spatial settings stay as configured. Mixed and Review restore norma
 processing with the draft correction. Returning to a reference step restores its processing.
 Slider updates never persist settings. A monotonic update sequence rejects old
 slider responses. The phone retains the latest unacknowledged update and retries
-it after polling; Save waits until that update is acknowledged. Hold for uncorrected bypasses the complete profile with a
-two-second renewable lease so a lost release cannot leave correction bypassed.
+it after polling. Save waits for that acknowledgment. Cancel can replace a queued
+Save until the phone sends the Save request. If the receiver rejects the session,
+the phone clears its draft and directs the user to the TV for a fresh link.
+Hold for uncorrected bypasses the complete profile with a two-second renewable
+lease so a lost release cannot leave correction bypassed.
 
 Every full-settings write and powered source change is rejected while the
 session is active, with `Calibration in progress—finish or exit on the TV to
 change settings.` Stop cancels the session, drains capture, restores the saved
-processing configuration, and stays stopped. Exit, disconnect timeout, and
-capture failure discard the unsaved correction and stop lighting. These paths
+processing configuration, and preserves the currently selected lighting source.
+Exit, disconnect timeout, and capture failure discard the unsaved correction and stop lighting. These paths
 never switch TV inputs. A successful Save and use goes through the existing
 revision-checked atomic settings store and activates the profile; persistence
 failure keeps the draft editable. The saved review video remains until TV Exit
@@ -64,7 +69,8 @@ Startup runs as a controller job so heartbeats and Stop remain available while
 WLED readiness is pending. Cancellation finishes any accepted WLED write, then
 joins startup before stopping output, preventing a late On from undoing Stop.
 Draft updates received during startup apply when it completes; Save is rejected
-until startup finishes.
+until startup finishes and capture is running. If frames stop, Save keeps the
+draft editable until capture resumes.
 
 ## Correction math and placement
 
@@ -88,17 +94,25 @@ gamut at the original luminance. Neutral inputs bypass both controls.
 
 ## TV transport and patterns
 
-The TV app plays bundled MP4 assets, with the phone controls on a separate
-screen. Gray and individual-color clips loop continuously and change only on
-request; **Cycle colors** selects the six-color sequence. The existing `paused`
-field selects a static color clip at `shade` (red, green, blue, cyan, magenta,
-yellow) during the Colors step. It does not pause the video decoder: capture
-still needs active video. Playback must activate the native video path; standalone HTML fills are
-not sufficient. Asset generation and verification are documented with the
+The phone, TV and video generator share the ordered swatches, clip names and
+cycle definitions in [the pattern catalog](../../crates/web/calibration-patterns.json).
+The shade index therefore selects the same patch in both players. A separate
+reference color in the catalog gives the video generator the exact RGB value
+when the phone uses a more legible swatch.
+
+The TV leaves the decoder idle during initial profile selection. Returning to profile
+selection during capture startup keeps the response pattern playing until startup finishes.
+From Response onward,
+the TV app feeds half-second H.264 fragments to one Media Source Extensions
+player. Static patterns repeat in place. Cycles hold each patch for two seconds.
+When a manual change is queued, a small centered indicator clears as playback
+reaches the new patch. If the stream is unavailable on a TV, the wizard uses the
+individual bundled MP4s. Both paths keep video playing for capture. Asset generation and verification are documented with the
 [capture experiment](../../research/webos-capture/2026-11-03-calibration-playback/README.md).
 
-A tiny classic-script page at `/calibration-tv.html` relays only Begin, Poll,
-and Cancel from its direct file-origin parent to the same-origin API. That page
+A tiny classic-script page at `/calibration-tv.html` accepts Poll and Cancel
+from its direct file-origin parent. The first poll begins the session. Later
+polls use the TV token returned by the same-origin API. That page
 alone allows `frame-ancestors file:`. It recognizes webOS's named file origins
 as well as opaque local-file origins. Other web pages cannot frame it, and
 unrelated windows cannot send commands through it. The API retains the normal
@@ -124,9 +138,8 @@ clips and a cycle. Mixed colors uses three split-field clips to exercise both
 wall edges with colors outside the adjustment set.
 
 React Router owns navigation with a HashRouter, keeping the pairing capability
-in the fragment (`/#/calibrate/:pairing`). The old `#calibrate=...` QR format is
-normalized once for compatibility. Route selection happens before settings
-load, so calibration never renders the dashboard first. Main routes retain
+in the fragment (`/#/calibrate/:pairing`). The calibration route joins the session
+while it loads settings and shows the wizard once both are ready. Main routes retain
 the Settings component and its unsaved draft; preview streaming follows the
 active route.
 

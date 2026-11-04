@@ -31,6 +31,8 @@ export default function Settings({
   edit,
   saveSettings,
 }: Props) {
+  let savedLabel = 'On this TV';
+  if (saved) savedLabel = dirty ? 'Unsaved changes' : 'Saved';
   const rows = [
     ['receiver', 'Prysm receiver', draft.receiver || 'Add address'],
     ['source', 'Capture', names.source[draft.source]],
@@ -46,7 +48,7 @@ export default function Settings({
           id="saved-state"
           className={saved && dirty ? 'unsaved' : undefined}
         >
-          {saved ? (dirty ? 'Unsaved changes' : 'Saved') : 'On this TV'}
+          {savedLabel}
         </span>
       </div>
       <div className="setting-list">

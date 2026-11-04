@@ -6,7 +6,6 @@ use utoipa::ToSchema;
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    #[serde(default)]
     pub calibration: crate::CalibrationProfiles,
     pub source: Source,
     pub input: Option<Input>,

@@ -1,6 +1,12 @@
 import type { SettingsValues } from './api';
 import { LedLayout } from './LedLayout';
 
+const inputTitles = {
+  webos: 'LG webOS',
+  device: 'Video capture',
+  file: 'Video file',
+};
+
 export function SetupCard({
   input,
   output,
@@ -27,13 +33,7 @@ export function SetupCard({
               <path d="M8 21h8m-4-4v4" />
             </svg>
           </span>
-          <strong>
-            {input.type === 'webos'
-              ? 'LG webOS'
-              : input.type === 'device'
-                ? 'Video capture'
-                : 'Video file'}
-          </strong>
+          <strong>{inputTitles[input.type]}</strong>
           <span>
             {input.capture_resolution.join(' × ')} · {input.refresh_rate_hz} fps
           </span>

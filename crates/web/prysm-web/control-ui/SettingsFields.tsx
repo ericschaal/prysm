@@ -4,6 +4,7 @@ import { LedLayout } from './LedLayout';
 import {
   changeInputType,
   edges,
+  inputLabels,
   inputLimits,
   ledLimits,
   numericProcessing,
@@ -113,11 +114,7 @@ export function InputFields({ value, onChange, ...state }: Group<'input'>) {
         field="input.type"
         label="Capture from"
         value={value.type}
-        choices={[
-          ['webos', 'LG webOS sender'],
-          ['device', 'USB capture device'],
-          ['file', 'Video file'],
-        ]}
+        choices={Object.entries(inputLabels)}
         onChange={(type) => {
           if (type === 'device' || type === 'file' || type === 'webos')
             onChange(
@@ -125,7 +122,7 @@ export function InputFields({ value, onChange, ...state }: Group<'input'>) {
             );
         }}
       />
-      {value.type === 'device' ? (
+      {value.type === 'device' && (
         <Field
           {...state}
           field="input.device"
@@ -134,7 +131,8 @@ export function InputFields({ value, onChange, ...state }: Group<'input'>) {
           onChange={(device) => onChange({ ...value, device })}
           help="Linux device path or macOS AVFoundation unique ID. In a container, this is the mapped device path."
         />
-      ) : value.type === 'file' ? (
+      )}
+      {value.type === 'file' && (
         <Field
           {...state}
           field="input.path"
@@ -143,7 +141,7 @@ export function InputFields({ value, onChange, ...state }: Group<'input'>) {
           onChange={(path) => onChange({ ...value, path })}
           help="Path visible to Prysm. File playback requires FFmpeg 9+; the standard Docker image does not include FFmpeg."
         />
-      ) : null}
+      )}
       <div className="setting-grid capture-dimensions">
         <Field
           {...state}

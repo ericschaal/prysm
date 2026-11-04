@@ -2,7 +2,7 @@
 use prysm_api::CommandError;
 use prysm_contract::{
     CalibrationProfile, CalibrationProfiles, CalibrationRequest, CalibrationStep, CalibrationView,
-    Config, OperationId, SettingsView, UpdateSettings,
+    Config, OperationId,
 };
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -15,10 +15,7 @@ const PAIRING: Duration = Duration::from_secs(120);
 pub(super) enum Effect {
     None,
     Start,
-    Save {
-        update: Box<UpdateSettings>,
-        profile: CalibrationProfile,
-    },
+    Save(CalibrationProfile),
     End(&'static str),
 }
 
@@ -37,7 +34,7 @@ pub(super) struct Session {
     phone: Option<OperationId>,
     pairing: OperationId,
     draft: CalibrationProfile,
-    replacing: bool,
+    profiles: Vec<CalibrationProfile>,
     step: CalibrationStep,
     shade: u8,
     paused: bool,
@@ -48,7 +45,7 @@ pub(super) struct Session {
     created: Instant,
 }
 impl Session {
-    pub fn new(settings: &SettingsView, now: Instant) -> Self {
+    pub fn new(profiles: Vec<CalibrationProfile>, now: Instant) -> Self {
         Self {
             startup_cancel: CancellationToken::new(),
             outcome: Outcome::Active,
@@ -57,8 +54,8 @@ impl Session {
             tv: OperationId::new(),
             phone: None,
             pairing: OperationId::new(),
-            draft: Self::new_profile(&settings.settings.calibration),
-            replacing: false,
+            draft: Self::new_profile(&profiles),
+            profiles,
             step: CalibrationStep::Choose,
             shade: 0,
             paused: false,
@@ -70,10 +67,9 @@ impl Session {
         }
     }
 
-    fn new_profile(profiles: &CalibrationProfiles) -> CalibrationProfile {
+    fn new_profile(profiles: &[CalibrationProfile]) -> CalibrationProfile {
         let mut number = 1;
         while profiles
-            .profiles
             .iter()
             .any(|p| p.name == format!("Calibration {number}"))
         {
@@ -159,20 +155,23 @@ impl Session {
     fn select_profile(
         &mut self,
         id: Option<OperationId>,
-        profiles: &CalibrationProfiles,
         now: Instant,
     ) -> Result<(), CommandError> {
         let draft = match id {
-            Some(id) => profiles
+            Some(id) => self
                 .profiles
                 .iter()
                 .find(|p| p.id == id)
                 .cloned()
                 .ok_or(CommandError::Conflict("profile no longer exists"))?,
-            None => Self::new_profile(profiles),
+            None if self.profiles.len() >= CalibrationProfiles::LIMIT => {
+                return Err(CommandError::Conflict(
+                    "profile limit reached; adjust an existing profile or delete one in Settings",
+                ));
+            }
+            None => Self::new_profile(&self.profiles),
         };
         self.draft = draft;
-        self.replacing = id.is_some();
         self.phone_seen = now;
         self.step = CalibrationStep::Response;
         self.sequence = self.sequence.saturating_add(1);
@@ -180,13 +179,8 @@ impl Session {
         Ok(())
     }
 
-    fn prepare_save(
-        &self,
-        name: String,
-        mut settings: SettingsView,
-        startup_pending: bool,
-    ) -> Result<Effect, CommandError> {
-        if self.step != CalibrationStep::Review || !self.started || startup_pending {
+    fn prepare_save(&self, name: String) -> Result<Effect, CommandError> {
+        if self.step != CalibrationStep::Review || !self.started {
             return Err(CommandError::Conflict(
                 "review the calibration before saving",
             ));
@@ -194,31 +188,12 @@ impl Session {
         prysm_contract::validate_name(&name).map_err(CommandError::Invalid)?;
         let mut profile = self.draft.clone();
         profile.name = name;
-        let profiles = &mut settings.settings.calibration;
-        if self.replacing {
-            *profiles
-                .profiles
-                .iter_mut()
-                .find(|p| p.id == profile.id)
-                .ok_or(CommandError::Conflict("profile no longer exists"))? = profile.clone();
-        } else {
-            profiles.profiles.push(profile.clone());
-        }
-        profiles.active = Some(profile.id);
-        Ok(Effect::Save {
-            update: Box::new(UpdateSettings {
-                expected_revision: settings.revision,
-                settings: settings.settings,
-            }),
-            profile,
-        })
+        Ok(Effect::Save(profile))
     }
 
     pub fn transition(
         &mut self,
         request: CalibrationRequest,
-        settings: &SettingsView,
-        startup_pending: bool,
         now: Instant,
     ) -> Result<(OperationId, Effect), CommandError> {
         let token = match &request {
@@ -268,7 +243,7 @@ impl Session {
                 }
             }
             CalibrationRequest::Select { profile, .. } => {
-                self.select_profile(profile, &settings.settings.calibration, now)?;
+                self.select_profile(profile, now)?;
                 Effect::None
             }
             CalibrationRequest::Update {
@@ -299,9 +274,7 @@ impl Session {
                 }
                 Effect::None
             }
-            CalibrationRequest::Save { name, .. } => {
-                self.prepare_save(name, settings.clone(), startup_pending)?
-            }
+            CalibrationRequest::Save { name, .. } => self.prepare_save(name)?,
             CalibrationRequest::Cancel { .. } => Effect::End(if token == self.tv {
                 "Calibration ended on the TV. Unsaved changes discarded."
             } else {
@@ -315,12 +288,13 @@ impl Session {
     }
 
     pub fn tv_view(&self, now: Instant) -> CalibrationView {
-        self.view(self.tv, now)
+        self.view(self.tv, now, false)
     }
 
-    pub fn view(&self, token: OperationId, now: Instant) -> CalibrationView {
+    pub fn view(&self, token: OperationId, now: Instant, startup_pending: bool) -> CalibrationView {
         CalibrationView {
             saved: matches!(self.outcome, Outcome::Saved(_)),
+            startup_pending: self.active() && startup_pending,
             token,
             pairing: (token == self.tv && self.phone.is_none() && self.active())
                 .then_some(self.pairing),
@@ -369,11 +343,6 @@ impl Session {
 mod tests {
     use super::*;
 
-    fn settings() -> SettingsView {
-        let directory = tempfile::tempdir().unwrap();
-        crate::test_support::store(&directory, &crate::test_support::config()).view()
-    }
-
     fn poll(token: OperationId, playing: bool, compare: bool) -> CalibrationRequest {
         CalibrationRequest::Poll {
             token,
@@ -404,68 +373,48 @@ mod tests {
     )]
     fn authorization_ordering_and_comparison_are_session_rules() {
         let now = Instant::now();
-        let settings = settings();
-        let config = settings.settings.config(settings.revision).unwrap();
-        let mut session = Session::new(&settings, now);
+        let config = crate::test_support::config();
+        let mut session = Session::new(vec![], now);
         let tv = session.tv_view(now);
         assert!(
             session
-                .transition(
-                    poll(OperationId::new(), false, false),
-                    &settings,
-                    false,
-                    now
-                )
+                .transition(poll(OperationId::new(), false, false), now)
                 .is_err()
         );
         let pair = CalibrationRequest::Pair {
             pairing: tv.pairing.unwrap(),
         };
-        let (phone, _) = session
-            .transition(pair.clone(), &settings, false, now)
-            .unwrap();
-        assert!(session.transition(pair, &settings, false, now).is_err());
+        let (phone, _) = session.transition(pair.clone(), now).unwrap();
+        assert!(session.transition(pair, now).is_err());
         assert!(
             session
-                .transition(
-                    adjustment(tv.token, 1, CalibrationStep::WhiteBalance),
-                    &settings,
-                    false,
-                    now
-                )
+                .transition(adjustment(tv.token, 1, CalibrationStep::WhiteBalance), now)
                 .is_err()
         );
         assert!(matches!(
             session
-                .transition(poll(tv.token, true, false), &settings, false, now)
+                .transition(poll(tv.token, true, false), now)
                 .unwrap()
                 .1,
             Effect::Start
         ));
         assert!(matches!(
             session
-                .transition(poll(tv.token, true, false), &settings, false, now)
+                .transition(poll(tv.token, true, false), now)
                 .unwrap()
                 .1,
             Effect::None
         ));
         session
-            .transition(
-                adjustment(phone, 2, CalibrationStep::WhiteBalance),
-                &settings,
-                false,
-                now,
-            )
+            .transition(adjustment(phone, 2, CalibrationStep::WhiteBalance), now)
             .unwrap();
         session
-            .transition(
-                adjustment(phone, 1, CalibrationStep::Review),
-                &settings,
-                false,
-                now,
-            )
+            .transition(adjustment(phone, 1, CalibrationStep::Review), now)
             .unwrap();
-        assert_eq!(session.view(phone, now).step, CalibrationStep::WhiteBalance);
+        assert_eq!(
+            session.view(phone, now, false).step,
+            CalibrationStep::WhiteBalance
+        );
         let reference = session.pending_config(config.clone(), now).unwrap();
         assert_eq!(
             reference.correction,
@@ -487,12 +436,7 @@ mod tests {
             50
         );
         session
-            .transition(
-                adjustment(phone, 3, CalibrationStep::Review),
-                &settings,
-                false,
-                later,
-            )
+            .transition(adjustment(phone, 3, CalibrationStep::Review), later)
             .unwrap();
         assert_eq!(
             session
@@ -505,24 +449,15 @@ mod tests {
         if let CalibrationRequest::Update { shade, .. } = &mut invalid {
             *shade = 6;
         }
-        assert!(
-            session
-                .transition(invalid, &settings, false, later)
-                .is_err()
-        );
-        assert_eq!(session.view(phone, later).sequence, 3);
+        assert!(session.transition(invalid, later).is_err());
+        assert_eq!(session.view(phone, later, false).sequence, 3);
         session.finish("Cancelled");
         assert!(session.startup_cancel().is_cancelled());
         assert!(session.pending_config(config, later).is_none());
         session
-            .transition(
-                adjustment(phone, 5, CalibrationStep::Colors),
-                &settings,
-                false,
-                later,
-            )
+            .transition(adjustment(phone, 5, CalibrationStep::Colors), later)
             .unwrap();
-        let ended = session.view(phone, later);
+        let ended = session.view(phone, later, false);
         assert_eq!(ended.sequence, 3);
         assert!(!ended.saved);
         assert!(!ended.compare);
@@ -531,22 +466,18 @@ mod tests {
     #[test]
     fn profile_selection_and_save_wait_for_review_and_persistence() {
         let now = Instant::now();
-        let mut settings = settings();
         let profile = CalibrationProfile {
             id: OperationId::new(),
             name: "Movie".into(),
             correction: prysm_contract::ColorCorrection::default(),
         };
-        settings.settings.calibration.profiles.push(profile.clone());
-        let mut session = Session::new(&settings, now);
+        let mut session = Session::new(vec![profile.clone()], now);
         let tv = session.tv_view(now);
         let (phone, _) = session
             .transition(
                 CalibrationRequest::Pair {
                     pairing: tv.pairing.unwrap(),
                 },
-                &settings,
-                false,
                 now,
             )
             .unwrap();
@@ -556,8 +487,6 @@ mod tests {
                     token: phone,
                     profile: Some(profile.id),
                 },
-                &settings,
-                false,
                 now,
             )
             .unwrap();
@@ -565,68 +494,57 @@ mod tests {
             token: phone,
             name: "Movie updated".into(),
         };
-        assert!(
-            session
-                .transition(save.clone(), &settings, false, now)
-                .is_err()
-        );
+        assert!(session.transition(save.clone(), now).is_err());
         session
-            .transition(poll(tv.token, true, false), &settings, false, now)
+            .transition(poll(tv.token, true, false), now)
             .unwrap();
         session
-            .transition(
-                adjustment(phone, 2, CalibrationStep::Review),
-                &settings,
-                false,
-                now,
-            )
+            .transition(adjustment(phone, 2, CalibrationStep::Review), now)
             .unwrap();
-        assert!(
-            session
-                .transition(save.clone(), &settings, true, now)
-                .is_err()
-        );
-        let (
-            _,
-            Effect::Save {
-                update,
-                profile: saved,
-            },
-        ) = session.transition(save, &settings, false, now).unwrap()
-        else {
-            panic!("save must prepare a settings update")
+        let (_, Effect::Save(saved)) = session.transition(save, now).unwrap() else {
+            panic!("save must prepare a profile")
         };
-        assert_eq!(update.expected_revision, settings.revision);
-        assert_eq!(update.settings.calibration.profiles, vec![saved.clone()]);
-        assert_eq!(update.settings.calibration.active, Some(profile.id));
-        assert_eq!(update.settings.processing, settings.settings.processing);
+        assert_eq!(saved.id, profile.id);
+        assert_eq!(saved.name, "Movie updated");
         assert!(
             session.active(),
             "preparing a write must not finish the session"
         );
-        assert!(!session.view(phone, now).saved);
+        assert!(!session.view(phone, now, false).saved);
         session.saved(saved);
         session.finish("Saved; runtime cleanup failed");
         assert!(!session.active());
         assert!(
-            session.view(phone, now).saved,
+            session.view(phone, now, false).saved,
             "a cleanup error cannot undo persistence"
         );
-        assert!(session.view(phone, now).ended.is_some());
+        assert!(session.view(phone, now, false).ended.is_some());
+    }
+
+    #[test]
+    fn full_profile_list_allows_only_existing_profiles() {
+        let mut profiles = Vec::new();
+        for _ in 0..CalibrationProfiles::LIMIT {
+            profiles.push(Session::new_profile(&profiles));
+        }
+        let now = Instant::now();
+        let id = profiles[0].id;
+        let mut session = Session::new(profiles, now);
+        assert!(session.select_profile(None, now).is_err());
+        assert_eq!(session.step, CalibrationStep::Choose);
+        session.select_profile(Some(id), now).unwrap();
+        assert_eq!(session.draft.id, id);
     }
 
     #[test]
     fn pairing_and_reconnection_expire_without_extending_old_capabilities() {
         let now = Instant::now();
-        let settings = settings();
-        let mut session = Session::new(&settings, now);
+        let mut session = Session::new(vec![], now);
         let tv = session.tv_view(now);
         for seconds in [29, 58, 87, 116] {
             session
                 .transition(
                     poll(tv.token, false, false),
-                    &settings,
-                    false,
                     now + Duration::from_secs(seconds),
                 )
                 .unwrap();
@@ -637,39 +555,30 @@ mod tests {
                     CalibrationRequest::Pair {
                         pairing: tv.pairing.unwrap()
                     },
-                    &settings,
-                    false,
                     now + PAIRING
                 )
                 .is_err()
         );
-        let mut session = Session::new(&settings, now);
+        let mut session = Session::new(vec![], now);
         let tv = session.tv_view(now);
         let (phone, _) = session
             .transition(
                 CalibrationRequest::Pair {
                     pairing: tv.pairing.unwrap(),
                 },
-                &settings,
-                false,
                 now,
             )
             .unwrap();
         for token in [tv.token, phone] {
             session
-                .transition(
-                    poll(token, false, false),
-                    &settings,
-                    false,
-                    now + Duration::from_secs(29),
-                )
+                .transition(poll(token, false, false), now + Duration::from_secs(29))
                 .unwrap();
         }
         assert!(!session.expired(now + Duration::from_secs(58)));
         let expired = now + Duration::from_secs(59);
         assert!(matches!(
             session
-                .transition(poll(phone, false, false), &settings, false, expired)
+                .transition(poll(phone, false, false), expired)
                 .unwrap()
                 .1,
             Effect::End(_)

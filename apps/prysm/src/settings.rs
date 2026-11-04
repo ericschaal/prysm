@@ -1,7 +1,9 @@
 //! Validate and atomically save application settings before publishing them.
 use anyhow::{Context as _, ensure};
 use atomic_write_file::AtomicWriteFile;
-use prysm_contract::{Config, ConfigRevision, Settings, SettingsView, Source, UpdateSettings};
+use prysm_contract::{
+    CalibrationProfile, Config, ConfigRevision, Settings, SettingsView, Source, UpdateSettings,
+};
 use std::{
     io::Write as _,
     path::{Path, PathBuf},
@@ -84,6 +86,26 @@ impl SettingsStore {
         })
         .await?;
         Ok(self.config())
+    }
+
+    pub(crate) async fn save_profile(
+        &mut self,
+        profile: &CalibrationProfile,
+    ) -> Result<(), SettingsError> {
+        let mut settings = self.view.settings.clone();
+        let profiles = &mut settings.calibration.profiles;
+        if let Some(existing) = profiles.iter_mut().find(|p| p.id == profile.id) {
+            existing.clone_from(profile);
+        } else {
+            profiles.push(profile.clone());
+        }
+        settings.calibration.active = Some(profile.id);
+        self.update(UpdateSettings {
+            expected_revision: self.view.revision,
+            settings,
+        })
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn update(

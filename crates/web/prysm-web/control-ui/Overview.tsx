@@ -73,22 +73,22 @@ export function Overview({
         observed.live_override === 0 &&
         observed.pipeline_phase === 'running');
   const mismatch = !!observed && !confirmed;
-  const power = observed ? (observed.power ? 'On' : 'Off') : 'Unknown';
-  const turnOn = data?.calibration_active
-    ? false
-    : observed
-      ? !observed.power
-      : false;
+  let power = 'Unknown';
+  if (observed) power = observed.power ? 'On' : 'Off';
+  const turnOn = !data?.calibration_active && observed?.power === false;
   const disabled = !available || busy;
-  const notice = connectionError
-    ? 'Connection lost. Reconnecting automatically…'
-    : !observed
-      ? data
-        ? 'Light status unavailable. The power button can still send an off command.'
-        : 'Connecting to your lights…'
-      : !busy && mismatch && observed.power
-        ? `Select ${source === 'prysm' ? 'Screen sync' : 'WLED effects'} to reconnect.`
-        : '';
+  let notice = '';
+  if (connectionError) {
+    notice = 'Connection lost. Reconnecting automatically…';
+  } else if (!data) {
+    notice = 'Connecting to your lights…';
+  } else if (!observed) {
+    notice =
+      'Light status unavailable. The power button can still send an off command.';
+  } else if (!busy && mismatch && observed.power) {
+    const name = source === 'prysm' ? 'Screen sync' : 'WLED effects';
+    notice = `Select ${name} to reconnect.`;
+  }
   const operationError =
     data?.operation.kind === 'failed' ? data.operation.error.message : '';
   return (
@@ -154,16 +154,20 @@ export function Overview({
                   className="source"
                   aria-busy={pendingControl === option.value}
                   aria-pressed={source === option.value}
-                  onClick={() =>
-                    (source !== option.value ||
+                  onClick={() => {
+                    if (!observed) return;
+                    if (
+                      source !== option.value ||
                       mismatch ||
-                      !!requestError ||
-                      !!operationError) &&
-                    void setState(
-                      { power: observed!.power, source: option.value },
-                      'source',
-                    )
-                  }
+                      requestError ||
+                      operationError
+                    ) {
+                      void setState(
+                        { power: observed.power, source: option.value },
+                        'source',
+                      );
+                    }
+                  }}
                 >
                   <svg
                     className="source-icon"
@@ -258,7 +262,7 @@ export function Overview({
             Operation failed: {operationError}
           </p>
         ) : null}
-        {requestError ? (
+        {requestError && requestError !== operationError ? (
           <p className="notice error" role="alert">
             {requestError}
           </p>
@@ -317,7 +321,7 @@ export function Overview({
           <label>
             Color profile
             <select
-              value={values?.calibration?.active ?? ''}
+              value={settings.settings.calibration.active ?? ''}
               disabled={disabled || savingProfile || data?.calibration_active}
               onChange={(event) => {
                 const active = event.target.value || null;
@@ -326,7 +330,7 @@ export function Overview({
                 void saveSettings(settings.revision, {
                   ...settings.settings,
                   calibration: {
-                    profiles: settings.settings.calibration?.profiles ?? [],
+                    ...settings.settings.calibration,
                     active,
                   },
                 })
@@ -341,7 +345,7 @@ export function Overview({
               }}
             >
               <option value="">No correction</option>
-              {values?.calibration?.profiles.map((p) => (
+              {settings.settings.calibration.profiles.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
