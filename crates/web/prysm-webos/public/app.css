@@ -138,3 +138,7 @@ button:disabled { cursor: default; color: #737687; }
 @keyframes turn-pending { to { transform: rotate(360deg); } }
 @keyframes show-pending { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pattern-pending span { animation: none; } }
+
+.portal-address { margin: 1rem 0; overflow-wrap: break-word; }
+.portal-address strong, .portal-address code { display: block; }
+.portal-address code { margin: .3rem 0; }

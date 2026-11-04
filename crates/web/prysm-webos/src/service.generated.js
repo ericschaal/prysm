@@ -4,11 +4,12 @@ export const isStatus = validate21;
 const schema32 = {"allOf":[{"$ref":"#/components/schemas/ServiceStatus"},{"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean","const":true}}}]};
 const schema33 = {"allOf":[{"$ref":"#/components/schemas/Observation"},{"$ref":"#/components/schemas/SupervisorStatus"}]};
 const schema34 = {"type":"object","required":["returnValue","subscribed","videoAvailable","revision","subscribers","pid"],"properties":{"pid":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"returnValue":{"type":"boolean"},"revision":{"type":"integer","format":"uint64","minimum":0,"maximum":9007199254740991},"subscribed":{"type":"boolean"},"subscribers":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"videoAvailable":{"type":["boolean","null"]}}};
-const schema35 = {"type":"object","required":["config","enabled","receiverConnected","receiverBusy","capturing","senderRunning","stopping","power","error","lastLog","capabilities"],"properties":{"capabilities":{"$ref":"#/components/schemas/Capabilities"},"capturing":{"type":"boolean"},"config":{"$ref":"#/components/schemas/Config"},"enabled":{"type":"boolean"},"error":{"type":["string","null"]},"lastLog":{"type":["string","null"]},"power":{"type":["string","null"]},"receiverBusy":{"type":"boolean"},"receiverConnected":{"type":"boolean"},"senderRunning":{"type":"boolean"},"stopping":{"type":"boolean"}}};
-const schema36 = {"type":"object","required":["hardwareH264"],"properties":{"hardwareH264":{"type":"boolean"}}};
-const schema37 = {"type":"object","required":["instanceUrl","source","compression","autostart","metrics"],"properties":{"autostart":{"type":"boolean"},"compression":{"$ref":"#/components/schemas/Compression"},"instanceUrl":{"type":["string","null"]},"metrics":{"type":"boolean"},"source":{"$ref":"#/components/schemas/Source"}},"additionalProperties":false};
+const schema35 = {"type":"object","required":["config","enabled","receiverConnected","receiverBusy","capturing","senderRunning","stopping","power","error","lastLog","capabilities"],"properties":{"capabilities":{"$ref":"#/components/schemas/Capabilities"},"capturing":{"type":"boolean"},"config":{"$ref":"#/components/schemas/Config"},"enabled":{"type":"boolean"},"error":{"type":["string","null"]},"lastLog":{"type":["string","null"]},"portalUrl":{"type":["string","null"]},"power":{"type":["string","null"]},"receiverBusy":{"type":"boolean"},"receiverConnected":{"type":"boolean"},"senderRunning":{"type":"boolean"},"stopping":{"type":"boolean"}}};
+const schema36 = {"type":"object","required":["hardwareH264"],"properties":{"embeddedPortal":{"type":"boolean"},"hardwareH264":{"type":"boolean"}}};
+const schema37 = {"type":"object","description":"The stored form includes the inactive mode's preferences and may be incomplete.","required":["instanceUrl","source","compression","autostart","metrics"],"properties":{"autostart":{"type":"boolean"},"compression":{"$ref":"#/components/schemas/Compression"},"instanceUrl":{"type":["string","null"]},"location":{"$ref":"#/components/schemas/ProcessingLocation"},"metrics":{"type":"boolean"},"source":{"$ref":"#/components/schemas/Source"}},"additionalProperties":false};
 const schema38 = {"type":"string","enum":["none","lz4","h264-software","h264-hardware"]};
-const schema39 = {"type":"string","enum":["video","both"]};
+const schema39 = {"type":"string","enum":["remote","embedded"]};
+const schema40 = {"type":"string","enum":["video","both"]};
 
 function validate24(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -30,7 +31,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((((key0 === "autostart") || (key0 === "compression")) || (key0 === "instanceUrl")) || (key0 === "metrics")) || (key0 === "source"))){
+if(!((((((key0 === "autostart") || (key0 === "compression")) || (key0 === "instanceUrl")) || (key0 === "location")) || (key0 === "metrics")) || (key0 === "source"))){
 validate24.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0}}];
 return false;
 break;
@@ -79,10 +80,15 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.metrics !== undefined){
+if(data.location !== undefined){
+let data3 = data.location;
 const _errs9 = errors;
-if(typeof data.metrics !== "boolean"){
-validate24.errors = [{instancePath:instancePath+"/metrics",schemaPath:"#/properties/metrics/type",keyword:"type",params:{type: "boolean"}}];
+if(typeof data3 !== "string"){
+validate24.errors = [{instancePath:instancePath+"/location",schemaPath:"#/components/schemas/ProcessingLocation/type",keyword:"type",params:{type: "string"}}];
+return false;
+}
+if(!((data3 === "remote") || (data3 === "embedded"))){
+validate24.errors = [{instancePath:instancePath+"/location",schemaPath:"#/components/schemas/ProcessingLocation/enum",keyword:"enum",params:{allowedValues: schema39.enum}}];
 return false;
 }
 var valid0 = _errs9 === errors;
@@ -91,21 +97,34 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.source !== undefined){
-let data4 = data.source;
-const _errs11 = errors;
-if(typeof data4 !== "string"){
-validate24.errors = [{instancePath:instancePath+"/source",schemaPath:"#/components/schemas/Source/type",keyword:"type",params:{type: "string"}}];
+if(data.metrics !== undefined){
+const _errs12 = errors;
+if(typeof data.metrics !== "boolean"){
+validate24.errors = [{instancePath:instancePath+"/metrics",schemaPath:"#/properties/metrics/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
-if(!((data4 === "video") || (data4 === "both"))){
-validate24.errors = [{instancePath:instancePath+"/source",schemaPath:"#/components/schemas/Source/enum",keyword:"enum",params:{allowedValues: schema39.enum}}];
-return false;
-}
-var valid0 = _errs11 === errors;
+var valid0 = _errs12 === errors;
 }
 else {
 var valid0 = true;
+}
+if(valid0){
+if(data.source !== undefined){
+let data5 = data.source;
+const _errs14 = errors;
+if(typeof data5 !== "string"){
+validate24.errors = [{instancePath:instancePath+"/source",schemaPath:"#/components/schemas/Source/type",keyword:"type",params:{type: "string"}}];
+return false;
+}
+if(!((data5 === "video") || (data5 === "both"))){
+validate24.errors = [{instancePath:instancePath+"/source",schemaPath:"#/components/schemas/Source/enum",keyword:"enum",params:{allowedValues: schema40.enum}}];
+return false;
+}
+var valid0 = _errs14 === errors;
+}
+else {
+var valid0 = true;
+}
 }
 }
 }
@@ -155,10 +174,28 @@ validate23.errors = [{instancePath:instancePath+"/capabilities",schemaPath:"#/co
 return false;
 }
 else {
+if(data0.embeddedPortal !== undefined){
+const _errs4 = errors;
+if(typeof data0.embeddedPortal !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/capabilities/embeddedPortal",schemaPath:"#/components/schemas/Capabilities/properties/embeddedPortal/type",keyword:"type",params:{type: "boolean"}}];
+return false;
+}
+var valid2 = _errs4 === errors;
+}
+else {
+var valid2 = true;
+}
+if(valid2){
 if(data0.hardwareH264 !== undefined){
+const _errs6 = errors;
 if(typeof data0.hardwareH264 !== "boolean"){
 validate23.errors = [{instancePath:instancePath+"/capabilities/hardwareH264",schemaPath:"#/components/schemas/Capabilities/properties/hardwareH264/type",keyword:"type",params:{type: "boolean"}}];
 return false;
+}
+var valid2 = _errs6 === errors;
+}
+else {
+var valid2 = true;
 }
 }
 }
@@ -175,22 +212,10 @@ var valid0 = true;
 }
 if(valid0){
 if(data.capturing !== undefined){
-const _errs6 = errors;
+const _errs8 = errors;
 if(typeof data.capturing !== "boolean"){
 validate23.errors = [{instancePath:instancePath+"/capturing",schemaPath:"#/properties/capturing/type",keyword:"type",params:{type: "boolean"}}];
 return false;
-}
-var valid0 = _errs6 === errors;
-}
-else {
-var valid0 = true;
-}
-if(valid0){
-if(data.config !== undefined){
-const _errs8 = errors;
-if(!(validate24(data.config, {instancePath:instancePath+"/config",parentData:data,parentDataProperty:"config",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
-errors = vErrors.length;
 }
 var valid0 = _errs8 === errors;
 }
@@ -198,23 +223,22 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.enabled !== undefined){
-const _errs9 = errors;
-if(typeof data.enabled !== "boolean"){
-validate23.errors = [{instancePath:instancePath+"/enabled",schemaPath:"#/properties/enabled/type",keyword:"type",params:{type: "boolean"}}];
-return false;
+if(data.config !== undefined){
+const _errs10 = errors;
+if(!(validate24(data.config, {instancePath:instancePath+"/config",parentData:data,parentDataProperty:"config",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
+errors = vErrors.length;
 }
-var valid0 = _errs9 === errors;
+var valid0 = _errs10 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
-if(data.error !== undefined){
-let data5 = data.error;
+if(data.enabled !== undefined){
 const _errs11 = errors;
-if((typeof data5 !== "string") && (data5 !== null)){
-validate23.errors = [{instancePath:instancePath+"/error",schemaPath:"#/properties/error/type",keyword:"type",params:{type: schema35.properties.error.type}}];
+if(typeof data.enabled !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/enabled",schemaPath:"#/properties/enabled/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
 var valid0 = _errs11 === errors;
@@ -223,11 +247,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.lastLog !== undefined){
-let data6 = data.lastLog;
+if(data.error !== undefined){
+let data6 = data.error;
 const _errs13 = errors;
 if((typeof data6 !== "string") && (data6 !== null)){
-validate23.errors = [{instancePath:instancePath+"/lastLog",schemaPath:"#/properties/lastLog/type",keyword:"type",params:{type: schema35.properties.lastLog.type}}];
+validate23.errors = [{instancePath:instancePath+"/error",schemaPath:"#/properties/error/type",keyword:"type",params:{type: schema35.properties.error.type}}];
 return false;
 }
 var valid0 = _errs13 === errors;
@@ -236,11 +260,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.power !== undefined){
-let data7 = data.power;
+if(data.lastLog !== undefined){
+let data7 = data.lastLog;
 const _errs15 = errors;
 if((typeof data7 !== "string") && (data7 !== null)){
-validate23.errors = [{instancePath:instancePath+"/power",schemaPath:"#/properties/power/type",keyword:"type",params:{type: schema35.properties.power.type}}];
+validate23.errors = [{instancePath:instancePath+"/lastLog",schemaPath:"#/properties/lastLog/type",keyword:"type",params:{type: schema35.properties.lastLog.type}}];
 return false;
 }
 var valid0 = _errs15 === errors;
@@ -249,10 +273,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.receiverBusy !== undefined){
+if(data.portalUrl !== undefined){
+let data8 = data.portalUrl;
 const _errs17 = errors;
-if(typeof data.receiverBusy !== "boolean"){
-validate23.errors = [{instancePath:instancePath+"/receiverBusy",schemaPath:"#/properties/receiverBusy/type",keyword:"type",params:{type: "boolean"}}];
+if((typeof data8 !== "string") && (data8 !== null)){
+validate23.errors = [{instancePath:instancePath+"/portalUrl",schemaPath:"#/properties/portalUrl/type",keyword:"type",params:{type: schema35.properties.portalUrl.type}}];
 return false;
 }
 var valid0 = _errs17 === errors;
@@ -261,10 +286,11 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.receiverConnected !== undefined){
+if(data.power !== undefined){
+let data9 = data.power;
 const _errs19 = errors;
-if(typeof data.receiverConnected !== "boolean"){
-validate23.errors = [{instancePath:instancePath+"/receiverConnected",schemaPath:"#/properties/receiverConnected/type",keyword:"type",params:{type: "boolean"}}];
+if((typeof data9 !== "string") && (data9 !== null)){
+validate23.errors = [{instancePath:instancePath+"/power",schemaPath:"#/properties/power/type",keyword:"type",params:{type: schema35.properties.power.type}}];
 return false;
 }
 var valid0 = _errs19 === errors;
@@ -273,10 +299,10 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.senderRunning !== undefined){
+if(data.receiverBusy !== undefined){
 const _errs21 = errors;
-if(typeof data.senderRunning !== "boolean"){
-validate23.errors = [{instancePath:instancePath+"/senderRunning",schemaPath:"#/properties/senderRunning/type",keyword:"type",params:{type: "boolean"}}];
+if(typeof data.receiverBusy !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/receiverBusy",schemaPath:"#/properties/receiverBusy/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
 var valid0 = _errs21 === errors;
@@ -285,16 +311,41 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.stopping !== undefined){
+if(data.receiverConnected !== undefined){
 const _errs23 = errors;
-if(typeof data.stopping !== "boolean"){
-validate23.errors = [{instancePath:instancePath+"/stopping",schemaPath:"#/properties/stopping/type",keyword:"type",params:{type: "boolean"}}];
+if(typeof data.receiverConnected !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/receiverConnected",schemaPath:"#/properties/receiverConnected/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
 var valid0 = _errs23 === errors;
 }
 else {
 var valid0 = true;
+}
+if(valid0){
+if(data.senderRunning !== undefined){
+const _errs25 = errors;
+if(typeof data.senderRunning !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/senderRunning",schemaPath:"#/properties/senderRunning/type",keyword:"type",params:{type: "boolean"}}];
+return false;
+}
+var valid0 = _errs25 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.stopping !== undefined){
+const _errs27 = errors;
+if(typeof data.stopping !== "boolean"){
+validate23.errors = [{instancePath:instancePath+"/stopping",schemaPath:"#/properties/stopping/type",keyword:"type",params:{type: "boolean"}}];
+return false;
+}
+var valid0 = _errs27 === errors;
+}
+else {
+var valid0 = true;
+}
 }
 }
 }
@@ -316,7 +367,7 @@ return false;
 validate23.errors = vErrors;
 return errors === 0;
 }
-validate23.evaluated = {"props":{"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true},"dynamicProps":false,"dynamicItems":false};
+validate23.evaluated = {"props":{"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"portalUrl":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true},"dynamicProps":false,"dynamicItems":false};
 
 
 function validate22(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -480,7 +531,7 @@ var valid0 = _errs15 === errors;
 validate22.errors = vErrors;
 return errors === 0;
 }
-validate22.evaluated = {"props":{"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true,"pid":true,"returnValue":true,"revision":true,"subscribed":true,"subscribers":true,"videoAvailable":true},"dynamicProps":false,"dynamicItems":false};
+validate22.evaluated = {"props":{"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"portalUrl":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true,"pid":true,"returnValue":true,"revision":true,"subscribed":true,"subscribers":true,"videoAvailable":true},"dynamicProps":false,"dynamicItems":false};
 
 
 function validate21(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
@@ -532,11 +583,11 @@ var valid0 = _errs1 === errors;
 validate21.errors = vErrors;
 return errors === 0;
 }
-validate21.evaluated = {"props":{"returnValue":true,"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true,"pid":true,"revision":true,"subscribed":true,"subscribers":true,"videoAvailable":true},"dynamicProps":false,"dynamicItems":false};
+validate21.evaluated = {"props":{"returnValue":true,"capabilities":true,"capturing":true,"config":true,"enabled":true,"error":true,"lastLog":true,"portalUrl":true,"power":true,"receiverBusy":true,"receiverConnected":true,"senderRunning":true,"stopping":true,"pid":true,"revision":true,"subscribed":true,"subscribers":true,"videoAvailable":true},"dynamicProps":false,"dynamicItems":false};
 
 export const isErrorReply = validate28;
-const schema40 = {"allOf":[{"$ref":"#/components/schemas/ErrorReply"},{"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean","const":false}}}]};
-const schema41 = {"type":"object","required":["returnValue","errorText"],"properties":{"errorText":{"type":"string"},"returnValue":{"type":"boolean"}}};
+const schema41 = {"allOf":[{"$ref":"#/components/schemas/ErrorReply"},{"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean","const":false}}}]};
+const schema42 = {"type":"object","required":["returnValue","errorText"],"properties":{"errorText":{"type":"string"},"returnValue":{"type":"boolean"}}};
 
 function validate28(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -626,7 +677,7 @@ return errors === 0;
 validate28.evaluated = {"props":{"returnValue":true,"errorText":true},"dynamicProps":false,"dynamicItems":false};
 
 export const isExecReply = validate29;
-const schema42 = {"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean"},"errorText":{"type":"string"},"stderrString":{"type":"string"}}};
+const schema43 = {"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean"},"errorText":{"type":"string"},"stderrString":{"type":"string"}}};
 
 function validate29(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;

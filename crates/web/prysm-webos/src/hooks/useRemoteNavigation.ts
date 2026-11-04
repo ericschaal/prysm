@@ -9,6 +9,7 @@ import {
 } from 'react';
 
 export type Dialog =
+  | 'location'
   | 'receiver'
   | 'source'
   | 'compression'
@@ -37,7 +38,7 @@ export function arrowDirection(keyCode: number) {
 export function useRemoteNavigation(suspended = false) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const wasSuspended = useRef(false);
-  const lastSetting = useRef('receiver');
+  const lastSetting = useRef<string | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const modal = useRef<HTMLDivElement>(null);
   function openDialog(next: Dialog) {
@@ -120,11 +121,12 @@ export function useRemoteNavigation(suspended = false) {
         direction === 'right' &&
         (active.id === 'primary' || active.id === 'service-options')
       )
-        target = document
-          .getElementById(lastSetting.current)
-          ?.matches(':enabled')
-          ? lastSetting.current
-          : 'calibrate';
+        target =
+          lastSetting.current &&
+          document.getElementById(lastSetting.current)?.matches(':enabled')
+            ? lastSetting.current
+            : (document.querySelector<HTMLButtonElement>('.setting:enabled')
+                ?.id ?? null);
       const control = target ? document.getElementById(target) : null;
       if (control instanceof HTMLButtonElement && !control.disabled)
         control.focus();

@@ -18,6 +18,9 @@
           "hardwareH264"
         ],
         "properties": {
+          "embeddedPortal": {
+            "type": "boolean"
+          },
           "hardwareH264": {
             "type": "boolean"
           }
@@ -34,6 +37,7 @@
       },
       "Config": {
         "type": "object",
+        "description": "The stored form includes the inactive mode's preferences and may be incomplete.",
         "required": [
           "instanceUrl",
           "source",
@@ -53,6 +57,9 @@
               "string",
               "null"
             ]
+          },
+          "location": {
+            "$ref": "#/components/schemas/ProcessingLocation"
           },
           "metrics": {
             "type": "boolean"
@@ -118,6 +125,13 @@
           }
         }
       },
+      "ProcessingLocation": {
+        "type": "string",
+        "enum": [
+          "remote",
+          "embedded"
+        ]
+      },
       "ServiceStatus": {
         "allOf": [
           {
@@ -170,6 +184,12 @@
             ]
           },
           "lastLog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "portalUrl": {
             "type": [
               "string",
               "null"

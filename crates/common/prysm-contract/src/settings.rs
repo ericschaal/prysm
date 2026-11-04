@@ -59,6 +59,13 @@ pub enum RequiredSetting {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SettingsView {
+    /// This portal owns the native webOS input and accepts no other input type.
+    #[serde(
+        default,
+        rename = "nativeWebos",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub native_webos: bool,
     pub revision: ConfigRevision,
     pub settings: Settings,
     pub missing_required: Vec<RequiredSetting>,

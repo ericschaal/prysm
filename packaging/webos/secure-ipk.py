@@ -21,7 +21,12 @@ def write_ar(destination, members):
                 output.write(b'\n')
 
 
-def secure(package):
+SERVICE = 'usr/palm/services/io.prysm.capture.service/'
+LOCAL_WORKER = SERVICE + 'prysm-webos-local'
+LOCAL_ROLE = SERVICE + 'embedded.role.json'
+
+
+def secure(package, *, embedded=False):
     package = Path(package).resolve()
     members = subprocess.check_output(['ar', '-t', str(package)], text=True).splitlines()
     if members != ['debian-binary', 'control.tar.gz', 'data.tar.gz']:
@@ -30,15 +35,25 @@ def secure(package):
         directory = Path(directory)
         for name in members:
             (directory / name).write_bytes(subprocess.check_output(['ar', '-p', str(package), name]))
+        local_files = set()
+        executables = {SERVICE + leaf for leaf in ('setup.sh', 'prysm-webos-capture', 'prysm-webos-service')}
+        if embedded:
+            executables.add(LOCAL_WORKER)
         for name in members[1:]:
             source = (directory / name).read_bytes()
             with tarfile.open(fileobj=io.BytesIO(source), mode='r:gz') as old, \
                     tarfile.open(directory / name, mode='w:gz', format=tarfile.GNU_FORMAT) as new:
                 for member in old.getmembers():
+                    normalized = member.name.removeprefix('./').rstrip('/')
                     if name == 'control.tar.gz' and member.name not in ['control', './control', '.', './']:
                         raise ValueError('installation scripts are not allowed in the Prysm IPK')
                     if name == 'data.tar.gz':
-                        normalized = member.name.removeprefix('./').rstrip('/')
+                        if any(part in ('', '.', '..') for part in normalized.split('/')):
+                            raise ValueError('unexpected package path: ' + member.name)
+                        if normalized in {LOCAL_WORKER, LOCAL_ROLE}:
+                            if not embedded or not member.isfile() or normalized in local_files:
+                                raise ValueError('unexpected embedded payload: ' + normalized)
+                            local_files.add(normalized)
                         allowed = [
                             'usr/palm/applications/io.prysm.capture',
                             'usr/palm/services/io.prysm.capture.service',
@@ -49,12 +64,16 @@ def secure(package):
                             raise ValueError('unexpected package path: ' + member.name)
                     if not (member.isdir() or member.isfile()):
                         raise ValueError('unexpected link or special file: ' + member.name)
-                    member.mode = 0o755 if member.isdir() or Path(member.name).name in ['setup.sh', 'prysm-webos-capture', 'prysm-webos-service'] else 0o644
+                    member.mode = 0o755 if member.isdir() or normalized in executables else 0o644
                     member.uid = member.gid = 0
                     member.uname = member.gname = 'root'
                     new.addfile(member, old.extractfile(member) if member.isfile() else None)
+        if embedded and local_files != {LOCAL_WORKER, LOCAL_ROLE}:
+            raise ValueError('incomplete embedded payload')
         write_ar(package, {name: (directory / name).read_bytes() for name in members})
 
 
 if __name__ == '__main__':
-    secure(sys.argv[1])
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in ('0', '1')):
+        raise SystemExit('Usage: secure-ipk.py PACKAGE [0|1]')
+    secure(sys.argv[1], embedded=sys.argv[2:] == ['1'])

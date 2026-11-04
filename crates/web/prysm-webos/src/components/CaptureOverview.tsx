@@ -1,3 +1,5 @@
+import { embeddedBuild } from '../processingLocation';
+
 interface Props {
   online: boolean | null;
   title: string;
@@ -5,6 +7,7 @@ interface Props {
   label: string;
   attention: boolean;
   changing: boolean;
+  portalUrl?: string;
   primary: () => void;
   openService: () => void;
 }
@@ -16,6 +19,7 @@ export default function CaptureOverview({
   label,
   attention,
   changing,
+  portalUrl,
   primary,
   openService,
 }: Props) {
@@ -31,6 +35,13 @@ export default function CaptureOverview({
       <p id="status-description" className="description">
         {description}
       </p>
+      {embeddedBuild && portalUrl && (
+        <div className="portal-address" id="portal-address">
+          <strong>Prysm web portal</strong>
+          <code>{portalUrl}</code>
+          Open this address on your phone or computer to configure your lights.
+        </div>
+      )}
       <div className="main-actions">
         <button
           id="primary"

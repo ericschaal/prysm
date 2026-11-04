@@ -24,7 +24,7 @@ const instructions = {
   connecting: {
     kicker: '02  /  Phone',
     title: 'Getting your code.',
-    lead: 'The TV is contacting your receiver for a pairing code.',
+    lead: 'The TV is contacting Prysm for a pairing code.',
   },
   scan: {
     kicker: '02  /  Phone',
@@ -34,7 +34,7 @@ const instructions = {
   interrupted: {
     kicker: '02  /  Phone',
     title: 'Connection interrupted.',
-    lead: 'Go back to check the receiver address and try again.',
+    lead: 'Go back to check the Prysm address and try again.',
   },
   standby: {
     kicker: 'Phone connected',
@@ -88,7 +88,7 @@ export default function PairingScreen(props: PairingProps) {
                 {error ||
                   (ended
                     ? 'Press Return on your remote to exit.'
-                    : 'Connecting to receiver…')}
+                    : 'Connecting to Prysm…')}
               </p>
             )}
             {phase === 'scan' && error && <p role="alert">{error}</p>}

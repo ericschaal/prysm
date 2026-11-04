@@ -11,10 +11,13 @@ categories.workspace = true
 
 [features]
 hardware-h264 = []
+embedded-prysm = ["prysm-webos-protocol/embedded-prysm"]
 codegen = ["dep:bindgen"]
 schema = ["dep:utoipa", "prysm-webos-protocol/schema"]
 
 [dependencies]
+prysm-contract = { path = "../../crates/common/prysm-contract" }
+thiserror.workspace = true
 prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol" }
 anyhow.workspace = true
 atomic-write-file.workspace = true

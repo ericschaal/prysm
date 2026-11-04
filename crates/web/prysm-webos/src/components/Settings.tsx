@@ -1,5 +1,6 @@
 import type { Config } from '../service';
 import type { Dialog } from '../hooks/useRemoteNavigation';
+import { embeddedBuild } from '../processingLocation';
 
 const names = {
   source: { both: 'Video + TV menus', video: 'Video only' },
@@ -13,6 +14,8 @@ const names = {
 interface Props {
   online: boolean | null;
   saved: Config | null;
+  embeddedAvailable: boolean;
+  calibrationAvailable: boolean;
   draft: Config;
   dirty: boolean;
   changing: boolean;
@@ -25,6 +28,8 @@ interface Props {
 export default function Settings({
   online,
   saved,
+  embeddedAvailable,
+  calibrationAvailable,
   draft,
   dirty,
   changing,
@@ -35,12 +40,33 @@ export default function Settings({
 }: Props) {
   let savedLabel = 'On this TV';
   if (saved) savedLabel = dirty ? 'Unsaved changes' : 'Saved';
-  const rows = [
-    ['receiver', 'Prysm instance URL', draft.instanceUrl || 'Add address'],
-    ['source', 'Capture', names.source[draft.source]],
-    ['compression', 'Compression', names.compression[draft.compression]],
-    ['autostart', 'Enable with TV', draft.autostart ? 'On' : 'Off'],
-  ] as const;
+  const embedded =
+    embeddedBuild && embeddedAvailable && draft.location === 'embedded';
+  const showCalibration =
+    (saved?.location === 'embedded') === embedded && calibrationAvailable;
+  const rows: [Dialog, string, string][] = [];
+  if (embeddedBuild && embeddedAvailable) {
+    rows.push([
+      'location',
+      'Processing location',
+      embedded ? 'On this TV (experimental)' : 'Remote instance',
+    ]);
+  }
+  if (!embedded) {
+    rows.push([
+      'receiver',
+      'Prysm instance URL',
+      draft.instanceUrl || 'Add address',
+    ]);
+  }
+  rows.push(['source', 'Capture', names.source[draft.source]]);
+  if (!embedded)
+    rows.push([
+      'compression',
+      'Compression',
+      names.compression[draft.compression],
+    ]);
+  rows.push(['autostart', 'Enable with TV', draft.autostart ? 'On' : 'Off']);
 
   return (
     <section className="settings" aria-labelledby="settings-title">
@@ -57,7 +83,7 @@ export default function Settings({
           className="secondary"
           hidden={!dirty}
           disabled={!online || !dirty || changing}
-          data-down="receiver"
+          data-down={rows[0]?.[0]}
           data-left="primary"
           onClick={saveSettings}
         >
@@ -72,7 +98,10 @@ export default function Settings({
             className="setting"
             aria-haspopup="dialog"
             data-up={rows[index - 1]?.[0] ?? 'save'}
-            data-down={rows[index + 1]?.[0] ?? 'calibrate'}
+            data-down={
+              rows[index + 1]?.[0] ??
+              (showCalibration ? 'calibrate' : 'metrics')
+            }
             data-left="primary"
             disabled={!online || changing}
             onClick={() => openDialog(key)}
@@ -93,28 +122,30 @@ export default function Settings({
             </span>
           </button>
         ))}
-        <button
-          id="calibrate"
-          className="setting"
-          data-up="autostart"
-          data-down="metrics"
-          data-left={
-            online === null || changing ? 'service-options' : 'primary'
-          }
-          onClick={calibrate}
-        >
-          <span className="setting-label">Calibrate Colors</span>
-          <span className="chevron" aria-hidden="true">
-            ›
-          </span>
-        </button>
+        {showCalibration && (
+          <button
+            id="calibrate"
+            className="setting"
+            data-up="autostart"
+            data-down="metrics"
+            data-left={
+              online === null || changing ? 'service-options' : 'primary'
+            }
+            onClick={calibrate}
+          >
+            <span className="setting-label">Calibrate Colors</span>
+            <span className="chevron" aria-hidden="true">
+              ›
+            </span>
+          </button>
+        )}
         <button
           id="metrics"
           className="setting"
           role="checkbox"
           aria-checked={draft.metrics}
           aria-describedby="metrics-description"
-          data-up="calibrate"
+          data-up={showCalibration ? 'calibrate' : 'autostart'}
           data-down="save"
           data-left="primary"
           disabled={!online || changing}

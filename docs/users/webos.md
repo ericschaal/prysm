@@ -1,11 +1,18 @@
 # webOS capturer
 
-Requires a [rooted LG TV](https://www.webosbrew.org/rooting/) with Homebrew Channel root execution, a
-[Prysm host](README.md#1-install-the-prysm-application), and WLED.
+Requires a [rooted LG TV](https://www.webosbrew.org/rooting/) with Homebrew Channel root execution and WLED. Remote mode also requires a [Prysm host](README.md#1-install-the-prysm-application).
 Experimental; tested on LG 43QNED87A6D.BEUFLJP, webOS 25 (10.3.2-34).
 Other models and firmware are unqualified.
 
-## 1. Prepare Prysm
+## Processing on this TV (experimental)
+
+1. Install the IPK built with `--embedded-prysm`. Open **Prysm Capture**, set up its service if prompted, choose **Processing location → On this TV (experimental)** and save.
+2. On a phone or computer connected to the same LAN, open the **Prysm web portal** address shown on the TV. In [browser setup](configuration.md), set the WLED address and LED layout. You can return to this address to change processing settings, view Preview, or calibrate colors.
+3. Allow TV capture, play video, select **Screen sync** in the portal and turn the lights on. The TV processes raw frames locally and sends the resulting colors to WLED.
+
+The portal stays available while the TV is awake, including when capture is paused, video is idle, or the TV app is closed. At startup, **Enable with TV** controls whether capture is allowed. The portal starts whenever embedded mode is selected. Switching to **Remote instance** stops the local portal. Its settings are kept for the next time you select **On this TV**. The standard package offers remote capture. [Building the experimental IPK](../developers/packaging.md#webos)
+
+## 1. Prepare Prysm for remote capture
 
 Open Prysm using its LAN URL, such as `http://192.168.1.20:8787`.
 See [Debian](debian.md#2-open-the-control-panel) or

@@ -4,14 +4,17 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Capabilities: {
+            embeddedPortal?: boolean;
             hardwareH264: boolean;
         };
         /** @enum {string} */
         Compression: "none" | "lz4" | "h264-software" | "h264-hardware";
+        /** @description The stored form includes the inactive mode's preferences and may be incomplete. */
         Config: {
             autostart: boolean;
             compression: components["schemas"]["Compression"];
             instanceUrl: string | null;
+            location?: components["schemas"]["ProcessingLocation"];
             metrics: boolean;
             source: components["schemas"]["Source"];
         };
@@ -30,6 +33,8 @@ export interface components {
             subscribers: number;
             videoAvailable: boolean | null;
         };
+        /** @enum {string} */
+        ProcessingLocation: "remote" | "embedded";
         ServiceStatus: components["schemas"]["Observation"] & components["schemas"]["SupervisorStatus"];
         /** @enum {string} */
         Source: "video" | "both";
@@ -40,6 +45,7 @@ export interface components {
             enabled: boolean;
             error: string | null;
             lastLog: string | null;
+            portalUrl?: string | null;
             power: string | null;
             receiverBusy: boolean;
             receiverConnected: boolean;

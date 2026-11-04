@@ -1,5 +1,5 @@
 //! Private state persistence, Luna registration, and boot-hook ownership.
-use crate::config::Config;
+use crate::config::{Config, ProcessingLocation};
 use anyhow::{Context, Result, ensure};
 use std::{
     fs,
@@ -111,25 +111,99 @@ impl Files {
         })
     }
     pub fn load(&self) -> Result<Config> {
-        let Some(data) = self.config_bytes()? else {
-            return Ok(Config::default());
+        let current = self.root.join("config-v3.json");
+        if let Some(data) = read_file(&current, MAX_CONFIG_BYTES)? {
+            return serde_json::from_slice::<Config>(&data)?.restore();
+        }
+        if let Some(data) = read_file(&self.root.join("config-v2.json"), MAX_CONFIG_BYTES)? {
+            // The portal owns lighting settings. Only this on-disk migration accepts embeddedOutput.
+            let mut saved: serde_json::Value = serde_json::from_slice(&data)?;
+            let output = saved
+                .as_object_mut()
+                .and_then(|o| o.remove("embeddedOutput"));
+            let config: Config = serde_json::from_value(saved)?;
+            config.clone().restore()?;
+            if let Some(output) = output.filter(|o| !o.is_null()) {
+                self.migrate_output(output)?;
+            }
+            // Publish the migration marker last. A crash before this point can retry
+            // without overwriting the portal store or changing the v2 rollback snapshot.
+            self.create_once(&current, &config)?;
+            let data =
+                read_file(&current, MAX_CONFIG_BYTES)?.context("missing migrated preferences")?;
+            return serde_json::from_slice::<Config>(&data)?.restore();
+        }
+        match read_file(&self.root.join("config.json"), MAX_CONFIG_BYTES)? {
+            Some(data) => serde_json::from_slice::<Config>(&data)?.restore(),
+            None => Ok(Config::default()),
+        }
+    }
+
+    pub fn portal_settings_path(&self) -> PathBuf {
+        self.root.join("portal-settings.json")
+    }
+
+    fn migrate_output(&self, legacy: serde_json::Value) -> Result<()> {
+        use prysm_contract::{Input, Settings};
+        let path = self.portal_settings_path();
+        match fs::symlink_metadata(&path) {
+            // An existing store, including a damaged one, belongs to the portal.
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        let settings = Settings {
+            input: Some(Input::Webos {
+                capture_resolution: [1280, 720].try_into().map_err(anyhow::Error::msg)?,
+                refresh_rate_hz: 30.try_into()?,
+            }),
+            output: Some(serde_json::from_value(legacy)?),
+            ..Settings::default()
         };
-        let value: Config = serde_json::from_slice(&data)?;
-        value.validate()?;
-        Ok(value)
+        settings.validate()?;
+        self.create_once(&path, &settings)
     }
-    fn config_bytes(&self) -> Result<Option<Vec<u8>>> {
-        read_file(&self.root.join("config.json"), MAX_CONFIG_BYTES)
+
+    fn create_once(&self, path: &Path, value: &impl serde::Serialize) -> Result<()> {
+        let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        serde_json::to_writer_pretty(&mut file, value)?;
+        file.write_all(b"\n")?;
+        file.as_file().sync_all()?;
+        match file.persist_noclobber(path) {
+            Ok(_) => Ok(fs::File::open(&self.root)?.sync_all()?),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(error.error.into()),
+        }
     }
+
+    pub fn has_versioned_config(&self) -> Result<bool> {
+        Ok(self.root.join("config-v3.json").try_exists()?)
+    }
+
     pub fn persist(&self, value: &Config) -> Result<()> {
-        let previous = self.config_bytes()?;
+        // Older services continue to see their last readable preference snapshot.
+        let versioned = self.root.join("config-v3.json");
+        let extended = read_file(&versioned, MAX_CONFIG_BYTES)?;
+        let (path, previous) =
+            if extended.is_some() || value.location == ProcessingLocation::Embedded {
+                (versioned, extended)
+            } else {
+                let path = self.root.join("config.json");
+                let previous = read_file(&path, MAX_CONFIG_BYTES)?;
+                (path, previous)
+            };
         let mut data = serde_json::to_vec(value)?;
         data.push(b'\n');
-        let file = self.stage_config(&data)?;
+        ensure!(data.len() <= MAX_CONFIG_BYTES, "Oversized configuration");
+        let file = Self::stage_config(&path, &data)?;
         let had_hook = self.has_boot_hook()?;
-        if let Err(error) = self.commit_with_autostart(value.autostart, || Ok(file.commit()?)) {
-            self.commit_with_autostart(had_hook, || self.restore_config(previous.as_deref()))
-                .with_context(|| format!("Rollback after settings save failed: {error}"))?;
+        if let Err(error) =
+            self.commit_with_autostart(value.needs_boot_hook(), || Ok(file.commit()?))
+        {
+            self.commit_with_autostart(had_hook, || {
+                self.restore_config(&path, previous.as_deref())
+            })
+            .with_context(|| format!("Rollback after settings save failed: {error}"))?;
             return Err(error);
         }
         Ok(())
@@ -139,7 +213,7 @@ impl Files {
         enabled: bool,
         commit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        // A committed autostart=true must always have a complete boot hook, even after power loss.
+        // Any saved mode that needs activation must remain bootable after power loss.
         if enabled {
             self.autostart(true)?;
         }
@@ -149,19 +223,19 @@ impl Files {
         }
         Ok(())
     }
-    fn stage_config(&self, data: &[u8]) -> Result<atomic_write_file::AtomicWriteFile> {
-        let mut file = atomic_write_file::AtomicWriteFile::open(self.root.join("config.json"))?;
+    fn stage_config(path: &Path, data: &[u8]) -> Result<atomic_write_file::AtomicWriteFile> {
+        let mut file = atomic_write_file::AtomicWriteFile::open(path)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(data)?;
         Ok(file)
     }
-    fn restore_config(&self, previous: Option<&[u8]>) -> Result<()> {
+    fn restore_config(&self, path: &Path, previous: Option<&[u8]>) -> Result<()> {
         // commit can report a directory sync error after the rename has already succeeded.
-        if self.config_bytes()?.as_deref() != previous {
+        if read_file(path, MAX_CONFIG_BYTES)?.as_deref() != previous {
             if let Some(data) = previous {
-                self.stage_config(data)?.commit()?;
+                Self::stage_config(path, data)?.commit()?;
             } else {
-                Self::remove(&self.root.join("config.json"))?;
+                Self::remove(path)?;
                 fs::File::open(&self.root)?.sync_all()?;
             }
         }
@@ -169,7 +243,16 @@ impl Files {
     }
     pub fn manifest(&self, install: bool) -> Result<()> {
         let value = serde_json::json!({"id":"io.prysm.capture.native", "version":"1.0.0", "roleFiles":[self.capture_role]});
-        registration(&self.manifest_path, &value, install)
+        registration(&self.manifest_path, &value, install)?;
+        // Its own identity lets a standard build remove the role on downgrade.
+        registration(
+            &self
+                .manifest_path
+                .with_file_name("io.prysm.capture.embedded.native.json"),
+            &serde_json::json!({"id":"io.prysm.capture.embedded.native","version":"1.0.0",
+                "roleFiles":[self.capture_role.with_file_name("embedded.role.json")]}),
+            install && cfg!(feature = "embedded-prysm"),
+        )
     }
     pub fn register_supervisor(&self) -> Result<()> {
         let service = self.capture_role.parent().context("service directory")?;
@@ -258,6 +341,90 @@ mod tests {
 
     #[test]
     #[cfg(not(miri))]
+    fn extended_preferences_never_overwrite_the_pre_feature_snapshot() {
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        let legacy = Config {
+            instance_url: Some("https://old.example".parse().unwrap()),
+            ..Config::default()
+        };
+        let mut extended = Config {
+            location: ProcessingLocation::Embedded,
+            ..Config::default()
+        };
+        files.persist(&extended).unwrap();
+        let path = dir.path().join("config.json");
+        assert!(!path.exists(), "legacy install boots unconfigured");
+        let saved = files.load().unwrap();
+        assert_eq!(
+            saved.location,
+            if cfg!(feature = "embedded-prysm") {
+                ProcessingLocation::Embedded
+            } else {
+                ProcessingLocation::Remote
+            }
+        );
+        let snapshot = serde_json::to_vec_pretty(&legacy).unwrap();
+        fs::write(&path, &snapshot).unwrap();
+        extended.instance_url = Some("https://new.example".parse().unwrap());
+        files.persist(&extended).unwrap();
+        assert_eq!(files.load().unwrap().instance_url, extended.instance_url);
+        assert_eq!(fs::read(path).unwrap(), snapshot);
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn migrate_legacy_output_once_without_replacing_even_an_invalid_portal_store() {
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        let mut saved = serde_json::to_value(Config {
+            location: ProcessingLocation::Embedded,
+            ..Config::default()
+        })
+        .unwrap();
+        let output = serde_json::json!({
+            "type":"wled","url":"http://lights.example/",
+            "leds":{"top":1,"right":2,"bottom":3,"left":4}
+        });
+        saved["embeddedOutput"] = output.clone();
+        let old_path = dir.path().join("config-v2.json");
+        let old_bytes = serde_json::to_vec(&saved).unwrap();
+        fs::write(&old_path, &old_bytes).unwrap();
+        let prefs = files.load().unwrap();
+        let path = files.portal_settings_path();
+        let settings: prysm_contract::Settings =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        settings.validate().unwrap();
+        assert_eq!(serde_json::to_value(&settings.output).unwrap(), output);
+        assert!(matches!(
+            settings.input,
+            Some(prysm_contract::Input::Webos { .. })
+        ));
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        // Replaying a half-complete migration must not overwrite portal edits.
+        let current = dir.path().join("config-v3.json");
+        fs::remove_file(&current).unwrap();
+        fs::write(&path, b"damaged existing store").unwrap();
+        files.load().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"damaged existing store");
+        // A deliberately removed portal store is not seeded a second time.
+        fs::remove_file(&path).unwrap();
+        files.persist(&prefs).unwrap();
+        files.load().unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read(old_path).unwrap(), old_bytes);
+        assert!(
+            !fs::read_to_string(current)
+                .unwrap()
+                .contains("embeddedOutput")
+        );
+    }
+    #[test]
+    #[cfg(not(miri))]
     fn cleanup_rejects_a_boot_hook_pipe_without_waiting_for_a_writer() {
         use nix::{sys::stat::Mode, unistd::mkfifo};
         let dir = crate::application::tests::sandbox();
@@ -280,9 +447,11 @@ mod tests {
         files.persist(&config).unwrap();
         for enable in [true, false] {
             config.autostart = enable;
-            let staged = files
-                .stage_config(&serde_json::to_vec(&config).unwrap())
-                .unwrap();
+            let staged = Files::stage_config(
+                &dir.path().join("config.json"),
+                &serde_json::to_vec(&config).unwrap(),
+            )
+            .unwrap();
             files
                 .commit_with_autostart(enable, || {
                     // Inspect both sides of the rename before any further hook operation.
@@ -306,9 +475,9 @@ mod tests {
         let path = dir.path().join("config.json");
         let previous = br#"{ "metrics": false }"#;
         fs::write(&path, b"replacement").unwrap();
-        files.restore_config(Some(previous)).unwrap();
+        files.restore_config(&path, Some(previous)).unwrap();
         assert_eq!(fs::read(&path).unwrap(), previous);
-        files.restore_config(None).unwrap();
+        files.restore_config(&path, None).unwrap();
         assert!(!path.exists());
     }
 

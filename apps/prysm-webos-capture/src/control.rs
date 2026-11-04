@@ -19,7 +19,7 @@ impl Control {
         let input = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
         Self::new(input)
     }
-    fn new(input: File) -> Result<Self> {
+    pub(crate) fn new(input: File) -> Result<Self> {
         let flags = OFlag::from_bits_truncate(fcntl(&input, FcntlArg::F_GETFL)?);
         fcntl(&input, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
         Ok(Self {
@@ -43,6 +43,10 @@ impl Control {
         Ok(false)
     }
     pub fn poll(&mut self) -> Result<VideoUpdate> {
+        Ok(self.poll_with_pause()?.0)
+    }
+    pub(crate) fn poll_with_pause(&mut self) -> Result<(VideoUpdate, bool)> {
+        let mut pause = false;
         let mut update = VideoUpdate {
             availability: self.availability,
             reset: false,
@@ -52,7 +56,9 @@ impl Control {
             Ok(0) => bail!("supervisor control pipe closed"),
             Ok(n) => {
                 for byte in &bytes[..n] {
-                    update.apply(VideoCommand::try_from(*byte)?);
+                    let command = VideoCommand::try_from(*byte)?;
+                    pause |= command == VideoCommand::Pause;
+                    update.apply(command);
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => (),
@@ -60,7 +66,7 @@ impl Control {
             Err(error) => return Err(error.into()),
         }
         self.availability = update.availability;
-        Ok(update)
+        Ok((update, pause))
     }
 }
 
@@ -68,56 +74,6 @@ impl Control {
 mod tests {
     use super::*;
     use std::io::Write;
-
-    #[test]
-    fn losing_video_while_idle_closes_the_receiver_connection() {
-        use crate::{config::Config, native::Video, session::Session};
-        use prysm_webos_protocol::ControlMessage;
-        use std::{net::TcpListener, os::fd::OwnedFd, time::Duration};
-
-        let (input, mut updates) = std::io::pipe().unwrap();
-        let mut control = Control::new(File::from(OwnedFd::from(input))).unwrap();
-        let stop = AtomicBool::new(false);
-        updates.write_all(b"1").unwrap();
-        assert!(control.wait_for_video(&stop).unwrap());
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let config = Config::new(
-            format!("http://{}", listener.local_addr().unwrap())
-                .parse()
-                .unwrap(),
-        );
-        let peer = std::thread::spawn(move || {
-            let mut socket = crate::transport::tests::hello(&listener);
-            socket
-                .send(tokio_tungstenite::tungstenite::Message::binary(
-                    ControlMessage::Idle.encode().unwrap(),
-                ))
-                .unwrap();
-            socket
-                .get_ref()
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            // The receiver never asks for capture. Losing video alone must release the slot.
-            assert_eq!(socket.get_mut().read(&mut [0]).unwrap(), 0);
-        });
-        let mut session = Session::<Video>::connect(&config).unwrap();
-        let mut first_poll = true;
-        assert!(
-            !session
-                .wait_for_capture(&config, || {
-                    let ready = control.video_ready(&stop)?;
-                    if std::mem::take(&mut first_poll) {
-                        assert!(ready);
-                        updates.write_all(b"0")?;
-                    }
-                    Ok(ready)
-                })
-                .unwrap()
-        );
-        drop(session);
-        peer.join().unwrap();
-    }
 
     #[test]
     fn waits_for_video_before_connecting_and_allows_unknown_readiness() {

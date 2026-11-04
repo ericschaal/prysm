@@ -1,0 +1,48 @@
+--- a/apps/prysm-webos-capture/src/local.rs
++++ b/apps/prysm-webos-capture/src/local.rs
+@@ -104,13 +104,19 @@
+     let mut report = start;
+     let mut next_capture = start;
+     while !stop.load(Ordering::Relaxed) {
++        let tick = Instant::now();
+         if let Some(frame) = capture.capture(
+             &mut |opts| native::Video::open(opts, config::Source::Both),
+             &mut events,
+         )? {
++            let t1 = Instant::now();
+             let rgb = rgb(&mut pool, frame.header, frame.pixels)?;
++            let t2 = Instant::now();
+             let edges = processor.process_frame(rgb);
++            let t3 = Instant::now();
+             renderer.render_edges(&edges, leds.counts())?;
++            let end = Instant::now();
++            eprintln!("PROFILE_MAIN {} {} {} {} {}", start.elapsed().as_micros(), (t1-tick).as_micros(), (t2-t1).as_micros(), (t3-t2).as_micros(), (end-t3).as_micros());
+             frames += 1;
+         }
+         if report.elapsed() >= Duration::from_secs(5) {
+--- a/crates/processing/prysm-processor/src/nodes/spatial_sampler.rs
++++ b/crates/processing/prysm-processor/src/nodes/spatial_sampler.rs
+@@ -128,6 +128,7 @@
+         } else {
+             None
+         };
++        let start_grid = std::time::Instant::now();
+         #[cfg(feature = "parallel-projection")]
+         let cells = self.cell_colors.par_iter_mut().zip(&self.cells);
+         #[cfg(not(feature = "parallel-projection"))]
+@@ -135,6 +136,7 @@
+         cells.for_each(|(color, &[x0, y0, x1, y1])| {
+             *color = view.average_linear(x0, y0, x1, y1, rgb);
+         });
++        let start_projection = std::time::Instant::now();
+         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
+             let cell_count = self.cell_colors.len();
+             let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
+@@ -165,6 +167,7 @@
+             });
+             ColorStrip::new(samples).expect("sample count is nonzero")
+         });
++        eprintln!("PROFILE_SAMPLER {} {}", (start_projection-start_grid).as_micros(), start_projection.elapsed().as_micros());
+         EdgeColors::new(top, right, bottom, left)
+     }
+ }

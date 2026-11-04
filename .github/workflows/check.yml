@@ -281,7 +281,7 @@ jobs:
       - name: Real FFmpeg playback and controller tests
         run: |
           ffmpeg -version
-          cargo +stable test --locked -p prysm --all-features --lib video::tests::file_stream_preserves_ordered_eof_and_decoder_failure -- --ignored --exact
+          cargo +stable test --locked -p prysm-runtime --all-features --lib video::tests::file_stream_preserves_ordered_eof_and_decoder_failure -- --ignored --exact
           cargo +stable test --locked -p prysm --all-features --test controller file_capture_live_settings_restart_and_shutdown -- --ignored --exact
 
   debian-arm64:
@@ -308,6 +308,10 @@ jobs:
         run: cargo xtask setup host
       - name: Verify Rust on arm64
         run: cargo test --locked --workspace --no-default-features
+      - name: Test experimental embedded processing and mode switching
+        run: >-
+          cargo test --locked -p prysm-webos-service -p prysm-webos-local
+          --features prysm-webos-service/embedded-prysm,prysm-webos-local/embedded-prysm
       - name: Verify contracts and build package
         run: cargo xtask package deb
       - name: Inspect package and verify configuration lifecycle

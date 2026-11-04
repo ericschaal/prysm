@@ -27,6 +27,25 @@ const timedOut =
 
 export function parseReply(text: string): Reply {
   const value: unknown = JSON.parse(text);
+  // The previous experimental service owns WLED settings in its Luna config.
+  // Don't send it a replacement config without those settings.
+  if (
+    value &&
+    typeof value === 'object' &&
+    'config' in value &&
+    'capabilities' in value &&
+    ((value.capabilities &&
+      typeof value.capabilities === 'object' &&
+      'embeddedPrysm' in value.capabilities &&
+      value.capabilities.embeddedPrysm === true) ||
+      (value.config &&
+        typeof value.config === 'object' &&
+        'embeddedOutput' in value.config))
+  ) {
+    throw new Error(
+      'Install the matching Prysm Capture package to use this service.',
+    );
+  }
   if (isStatus(value) || isErrorReply(value)) return value;
   throw new Error('The service returned an invalid reply.');
 }

@@ -7,10 +7,10 @@ pub use prysm_webos_protocol::worker::WorkerEvent as Event;
 pub struct Events(File);
 impl Events {
     #[cfg(test)]
-    pub fn disabled() -> Self {
+    pub(crate) fn disabled() -> Self {
         Self(File::options().write(true).open("/dev/null").unwrap())
     }
-    #[cfg(test)]
+    #[must_use]
     pub fn from_file(file: File) -> Self {
         Self(file)
     }
@@ -30,7 +30,7 @@ impl Events {
             unsafe { libc::fcntl(descriptor, libc::F_GETFD) } >= 0,
             "invalid events descriptor"
         );
-        Ok(Self(unsafe { File::from_raw_fd(descriptor) }))
+        Ok(Self::from_file(unsafe { File::from_raw_fd(descriptor) }))
     }
 
     pub fn send(&mut self, event: &Event) -> Result<()> {

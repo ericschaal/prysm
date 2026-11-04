@@ -17,7 +17,10 @@ def main():
     parser.add_argument("--host", required=True, help="SSH destination, e.g. root@192.168.18.10")
     parser.add_argument("--supervisor", action="store_true", help="exercise sandbox mutations with fake children")
     parser.add_argument("--capture", action="store_true", help="also acquire bounded 320x180 frames with the temporary worker role")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "target",
+                        help="Cargo target directory of the package variant under test")
     args = parser.parse_args()
+    artifacts = args.build_dir / "armv7-unknown-linux-gnueabi/webos"
     args.supervisor = args.supervisor or args.capture
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", args.host]
 
@@ -83,7 +86,7 @@ def main():
             capture_role = json.loads((ROOT / "packaging/webos/service/capture.role.json").read_text())
             capture_role["exeName"] = directory + "/worker"
             write(directory + "/capture.role.json", json.dumps(capture_role).encode())
-        write(binary, (ROOT / "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-service").read_bytes(), "700")
+        write(binary, (artifacts / "prysm-webos-service").read_bytes(), "700")
         role = {"exeName": binary, "type": "regular", "allowedNames": [SERVICE],
                 "permissions": [{"service": SERVICE, "inbound": ["*"],
                                  "outbound": ["com.webos.service.tvpower"]}]}
@@ -94,7 +97,7 @@ def main():
         write(directory + "/api.json", json.dumps({"public": [SERVICE + "/" + method for method in methods]}).encode())
         options = " --sandbox " + directory if args.supervisor else ""
         if args.capture:
-            write(directory + "/worker", (ROOT / "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-capture").read_bytes(), "700")
+            write(directory + "/worker", (artifacts / "prysm-webos-capture").read_bytes(), "700")
         elif args.supervisor:
             write(directory + "/worker", b"#!/bin/sh\n[ \"$1\" = --verify-instance ] && exit 0\ntrap '' TERM\nprintf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"\nwhile :; do sleep 1; done\n", "700")
         if args.supervisor:
@@ -139,7 +142,7 @@ def main():
             assert request({}, method="start")["returnValue"] is False
             config = {"instanceUrl": "http://127.0.0.1:8787","metrics": False, "source": "both", "compression": "lz4", "autostart": False}
             if args.capture:
-                probe = ROOT / "target/armv7-unknown-linux-gnueabi/webos/examples/loopback-receiver"
+                probe = artifacts / "examples/loopback-receiver"
                 write(directory + "/receiver", probe.read_bytes(), "700")
                 receiver_pid = int(remote(f"cd {directory}; timeout 18 ./receiver </dev/null >receiver.log 2>&1 & echo $!").stdout)
                 remote(f"timeout 4 sh -c 'while [ ! -f {directory}/receiver.port ]; do sleep 0.1; done'")
@@ -193,7 +196,7 @@ def main():
                f"{shlex.quote(directory)}/api.json {shlex.quote(directory)}/service.service {shlex.quote(binary)} "
                f"{shlex.quote(directory)}/worker {shlex.quote(directory)}/scan-services "
                f"{shlex.quote(directory)}/config.json {shlex.quote(directory)}/capture.manifest.json "
-               f"{shlex.quote(directory)}/supervisor.manifest.json "
+               f"{shlex.quote(directory)}/supervisor.manifest.json {shlex.quote(directory)}/io.prysm.capture.embedded.native.json "
                f"{shlex.quote(directory)}/boot-hook {shlex.quote(directory)}/capture.role.json "
                f"{shlex.quote(directory)}/receiver {shlex.quote(directory)}/receiver.log "
                f"{shlex.quote(directory)}/receiver.port {shlex.quote(directory)}/receiver.complete; "

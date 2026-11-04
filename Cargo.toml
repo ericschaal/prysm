@@ -4,7 +4,9 @@ default-members = ["apps/prysm"]
 members = [
     "xtask",
     "apps/prysm",
+    "apps/prysm/runtime",
     "apps/prysm-webos-capture",
+    "apps/prysm-webos-capture/local",
     "apps/prysm-webos-service",
     "crates/web/prysm-web",
     "crates/capture/prysm-capture",
@@ -73,6 +75,7 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 openh264 = "0.9.9"
 prometheus-client = "0.25"
+rayon = "1.11"
 reqwest = { version = "0.13", default-features = false }
 rust-embed = "8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }

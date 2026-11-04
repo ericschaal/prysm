@@ -1288,6 +1288,10 @@
               "$ref": "#/components/schemas/RequiredSetting"
             }
           },
+          "nativeWebos": {
+            "type": "boolean",
+            "description": "This portal owns the native webOS input and accepts no other input type."
+          },
           "revision": {
             "$ref": "#/components/schemas/ConfigRevision"
           },

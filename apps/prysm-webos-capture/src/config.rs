@@ -18,6 +18,7 @@ pub struct CaptureOptions {
 }
 
 impl Config {
+    #[must_use]
     pub fn new(instance_url: InstanceUrl) -> Self {
         Self {
             instance_url,

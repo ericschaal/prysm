@@ -39,6 +39,7 @@ mod tests {
                 receiver_connected: false,
                 receiver_busy: false,
                 capturing: false,
+                portal_url: None,
                 sender_running: false,
                 stopping: false,
                 power: None,
@@ -46,6 +47,7 @@ mod tests {
                 last_log: None,
                 capabilities: Capabilities {
                     hardware_h264: false,
+                    embedded_portal: false,
                 },
             },
         };

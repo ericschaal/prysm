@@ -339,6 +339,30 @@ const frame = {
   await check(
     off,
     async (p) => {
+      p.settings.nativeWebos = true;
+      await p.refresh();
+      assert.equal(p.element('#input-type'), null);
+      assert.match(
+        p.document.body.textContent,
+        /Video comes directly from this TV/,
+      );
+      assert.equal(p.element('#input-width').value, '1280');
+      button(p, 'Next').click();
+      await until(() => p.element('#output-url'));
+    },
+    {
+      ...config(),
+      input: {
+        type: 'webos',
+        refresh_rate_hz: 30,
+        capture_resolution: [1280, 720],
+      },
+      output: null,
+    },
+  );
+  await check(
+    off,
+    async (p) => {
       assert.equal(
         p.document.querySelector('.main-nav'),
         null,

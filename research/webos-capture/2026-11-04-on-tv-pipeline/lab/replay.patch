@@ -1,0 +1,62 @@
+--- a/apps/prysm-webos-capture/src/local.rs
++++ b/apps/prysm-webos-capture/src/local.rs
+@@ -67,6 +67,9 @@
+     };
+     let settings: Settings = serde_json::from_reader(File::open(path).context("open settings")?)?;
+     settings.validate()?;
++    if let Some(dir) = std::env::var_os("PRYSM_REPLAY_DIR") {
++        return replay(&settings, Path::new(&dir));
++    }
+     let Some(Input::Webos {
+         refresh_rate_hz,
+         capture_resolution,
+@@ -153,3 +156,49 @@
+         assert!(rgb(&mut pool, header, &[16; 5]).is_err());
+     }
+ }
++
++fn replay(settings: &Settings, dir: &std::path::Path) -> Result<()> {
++    use std::io::Write;
++    let mut rgb_file = File::create(dir.join("rgb"))?;
++    let mut ddp_file = File::create(dir.join("ddp"))?;
++    let receiver = std::net::UdpSocket::bind("127.0.0.1:0")?;
++    receiver.set_read_timeout(Some(Duration::from_secs(2)))?;
++    let mut wled = WledRenderer::new(receiver.local_addr()?)?;
++    let mut config = settings.processing.to_core();
++    config.correction = settings.calibration.correction().to_core();
++    let mut processor = PrysmProcessor::new(&config);
++    let mut pool = FramePool::default();
++    let start = Instant::now();
++    let mut random = 0x1234abcd_u32;
++    for i in 0..18u64 {
++        let (width,height) = if i < 12 {(1280,720)} else {(322,182)};
++        let header = pixels::header(width,height,prysm_webos_protocol::PixelFormat::Nv12)?;
++        let mut raw=vec![0;header.raw_len()?];
++        for byte in &mut raw {
++            random = random.wrapping_mul(1664525).wrapping_add(1013904223);
++            *byte=(random >> 24) as u8;
++        }
++        let (y,uv)=raw.split_at_mut((width*height) as usize);
++        match i%6 {
++            0 => {y.fill(16);uv.fill(128);}
++            1 => {y.fill(235);uv.fill(128);}
++            2 | 3 => {
++                let n=width as usize*16;
++                y[..n].fill(16);
++                let end=y.len()-n;
++                y[end..].fill(16);
++            }
++            4 => {for (j,byte) in y.iter_mut().enumerate() {*byte=(j/width as usize) as u8;}}
++            _=>{}
++        }
++        let frame=rgb(&mut pool,header,&raw)?;
++        rgb_file.write_all(frame.as_slice())?;
++        let edges=processor.process_frame_at(frame,start+Duration::from_millis(i*80));
++        let Some(Output::Wled{leds,..})=&settings.output else { anyhow::bail!("missing fixture output") };
++        wled.render_edges(&edges,leds.counts())?;
++        let mut packet=[0;2048];
++        let n=receiver.recv(&mut packet)?;
++        ddp_file.write_all(&packet[..n])?;
++    }
++    Ok(())
++}

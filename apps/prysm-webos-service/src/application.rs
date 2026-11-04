@@ -1,8 +1,8 @@
 //! Service operations, filesystem transactions, and process execution.
 use crate::{
-    config::Config,
+    config::{Config, ProcessingLocation},
     files::Files,
-    supervisor::{Action, Supervisor},
+    supervisor::{Action, Event, Selection, Supervisor},
     worker::Worker,
 };
 use anyhow::{Result, ensure};
@@ -21,14 +21,34 @@ pub(crate) mod tests;
 pub enum AppRequest {
     Start,
     Stop,
-    SetConfig(Config),
+    SetConfig(Box<Config>),
     Cleanup,
 }
 
+/// The pending operation owns its subprocess until completion or cancellation.
 enum Pending {
-    Verify { config: Config, resume: bool },
-    Start,
+    Pause {
+        progress: PauseProgress,
+        deadline: Instant,
+    },
     Stop,
+    Cleanup,
+    Helper {
+        operation: Operation,
+        process: Helper,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PauseProgress {
+    Send,
+    AwaitRelease,
+    Released,
+}
+
+enum Operation {
+    Verify(Box<Selection>),
+    SelectEmbedded(Box<Selection>),
+    Start,
     Cleanup,
 }
 struct Helper {
@@ -47,13 +67,12 @@ pub struct App {
     worker: Option<Worker>,
     video: VideoUpdate,
     pending: Option<Pending>,
-    scan: Option<Helper>,
     shutting_down: bool,
 }
 impl App {
     pub fn new(files: Files) -> Result<Self> {
         let mut state = Supervisor::new(files.load()?);
-        if let Err(error) = files.autostart(state.config.autostart) {
+        if let Err(error) = files.autostart(state.config.needs_boot_hook()) {
             state.error = Some(format!("Restoring boot hook: {error:#}"));
         }
         Ok(Self {
@@ -65,7 +84,6 @@ impl App {
                 reset: false,
             },
             pending: None,
-            scan: None,
             shutting_down: false,
         })
     }
@@ -83,7 +101,7 @@ impl App {
         );
         let result = self.request_inner(request, now);
         if result.is_err() {
-            self.abandon_pending(now);
+            self.pending = None;
         }
         result
     }
@@ -91,38 +109,61 @@ impl App {
         match request {
             AppRequest::Start => {
                 self.files.manifest(true)?;
-                self.begin_scan(now)?;
-                self.pending = Some(Pending::Start);
+                self.begin_scan(Operation::Start, now)?;
             }
             AppRequest::Stop => {
-                self.state.enabled = false;
-                self.state.stop(now, true);
-                self.pending = Some(Pending::Stop);
+                self.state.pause_capture(now);
+                self.pending = Some(if self.state.hosts_portal() {
+                    Pending::Pause {
+                        progress: PauseProgress::Send,
+                        deadline: now + Duration::from_secs(5),
+                    }
+                } else {
+                    Pending::Stop
+                });
             }
             AppRequest::SetConfig(config) => {
-                config.validate()?;
-                if config.instance_url == self.state.config.instance_url {
-                    self.save(config, now)?;
-                } else {
-                    self.pending = Some(Pending::Verify {
-                        config,
-                        resume: self.state.enabled,
+                let selected = Selection::try_from(*config)?;
+                if let Some(url) = selected.receiver_to_verify(&self.state.config) {
+                    // Verification opens a receiver connection; it never owns the capture tap.
+                    let child = Command::new(&self.files.worker)
+                        .arg("--verify-instance")
+                        .arg(url.to_string())
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .spawn()?;
+                    self.pending = Some(Pending::Helper {
+                        operation: Operation::Verify(Box::new(selected)),
+                        process: Helper {
+                            child,
+                            deadline: now + Duration::from_secs(12),
+                        },
                     });
-                    self.state.enabled = false;
-                    self.state.stop(now, true);
+                } else if selected.preferences().location == ProcessingLocation::Embedded
+                    && !self.state.hosts_portal()
+                {
+                    self.files.manifest(true)?;
+                    self.begin_scan(Operation::SelectEmbedded(Box::new(selected)), now)?;
+                } else {
+                    self.save(selected, now)?;
                 }
             }
             AppRequest::Cleanup => {
                 let mut config = self.state.config.clone();
                 config.autostart = false;
-                if config.instance_url.is_some() {
+                let removing_portal = config.location == ProcessingLocation::Embedded;
+                config.location = ProcessingLocation::Remote;
+                if removing_portal
+                    || config.instance_url.is_some()
+                    || self.files.has_versioned_config()?
+                {
                     self.files.persist(&config)?;
                 } else {
                     self.files.autostart(false)?;
                 }
-                self.state.enabled = false;
                 self.state.config = config;
-                self.state.stop(now, true);
+                self.state.deactivate(now);
                 self.pending = Some(Pending::Cleanup);
             }
         }
@@ -133,29 +174,25 @@ impl App {
             self.finish(now)
         }
     }
-    fn save(&mut self, config: Config, now: Instant) -> Result<()> {
-        self.files.persist(&config)?;
-        self.state.configure(config, now);
+    fn save(&mut self, selected: Selection, now: Instant) -> Result<()> {
+        self.files.persist(selected.preferences())?;
+        self.state.configure(selected, now);
         Ok(())
     }
 
-    fn abandon_pending(&mut self, now: Instant) {
-        if let Some(Pending::Verify { resume, .. }) = self.pending.take() {
-            self.state.enabled = resume && !self.shutting_down;
-            self.state.reconcile(now);
-        }
-        self.scan = None;
-    }
-    fn begin_scan(&mut self, now: Instant) -> Result<()> {
+    fn begin_scan(&mut self, operation: Operation, now: Instant) -> Result<()> {
         let child = Command::new(&self.files.scanner)
             .arg("scan-services")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        self.scan = Some(Helper {
-            child,
-            deadline: now + Duration::from_secs(10),
+        self.pending = Some(Pending::Helper {
+            operation,
+            process: Helper {
+                child,
+                deadline: now + Duration::from_secs(10),
+            },
         });
         Ok(())
     }
@@ -174,7 +211,11 @@ impl App {
     fn execute(&mut self, now: Instant) -> Result<()> {
         for action in self.state.actions() {
             match action {
-                Action::Spawn => match Worker::spawn(&self.files.worker, &self.state.config) {
+                Action::Spawn(target) => match Worker::spawn(
+                    &self.files.worker,
+                    &target,
+                    &self.files.portal_settings_path(),
+                ) {
                     Ok(worker) => self.worker = Some(worker),
                     Err(error) => {
                         self.state.error = Some(format!("{error:#}"));
@@ -196,12 +237,21 @@ impl App {
         Ok(())
     }
     pub fn tick(&mut self, now: Instant) -> Option<Value> {
+        let pending = self.pending.is_some();
+        let verifying = matches!(
+            self.pending,
+            Some(Pending::Helper {
+                operation: Operation::Verify(_) | Operation::SelectEmbedded(_),
+                ..
+            })
+        );
         match self.advance(now) {
             Ok(value) => value,
             Err(error) => {
-                self.state.error = Some(format!("{error:#}"));
-                let pending = self.pending.is_some();
-                self.abandon_pending(now);
+                if !verifying {
+                    self.state.error = Some(format!("{error:#}"));
+                }
+                self.pending = None;
                 pending.then(|| {
                     serde_json::to_value(prysm_webos_service::contract::ErrorReply::new(format!(
                         "{error:#}"
@@ -214,7 +264,25 @@ impl App {
     fn advance(&mut self, now: Instant) -> Result<Option<Value>> {
         if let Some(worker) = &mut self.worker {
             if !self.state.stopping {
-                match worker.update_video(self.video) {
+                let video = if self.state.capture_allowed() {
+                    self.video
+                } else {
+                    VideoUpdate {
+                        availability: VideoAvailability::Unavailable,
+                        reset: false,
+                    }
+                };
+                let delivery = match &mut self.pending {
+                    Some(Pending::Pause { progress, .. }) if *progress == PauseProgress::Send => {
+                        worker.request_pause().inspect(|sent| {
+                            if *sent {
+                                *progress = PauseProgress::AwaitRelease;
+                            }
+                        })
+                    }
+                    _ => worker.update_video(video),
+                };
+                match delivery {
                     Ok(true) => self.video.reset = false,
                     Ok(false) => (),
                     Err(error) => self.state.failed(format!("worker control: {error:#}"), now),
@@ -225,7 +293,17 @@ impl App {
                 Ok(update) => {
                     for event in update.events {
                         match event {
-                            Ok(event) => self.state.event(event, now),
+                            Ok(event) => {
+                                if event == Event::CapturePaused
+                                    && let Some(Pending::Pause {
+                                        progress: progress @ PauseProgress::AwaitRelease,
+                                        ..
+                                    }) = &mut self.pending
+                                {
+                                    *progress = PauseProgress::Released;
+                                }
+                                self.state.event(event, now);
+                            }
                             Err(error) if !self.state.stopping => self.state.failed(error, now),
                             Err(_) => (),
                         }
@@ -234,6 +312,9 @@ impl App {
                         self.state.log(log);
                     }
                     if let Some(exit) = update.exit {
+                        if let Some(Pending::Pause { progress, .. }) = &mut self.pending {
+                            *progress = PauseProgress::Released;
+                        }
                         self.worker = None;
                         self.state.closed(exit.success(), &exit.to_string(), now);
                     }
@@ -245,94 +326,99 @@ impl App {
         self.finish(now)
     }
     fn finish(&mut self, now: Instant) -> Result<Option<Value>> {
-        if let Some(scan) = &mut self.scan {
-            if now >= scan.deadline {
-                scan.child.kill()?;
-            }
-            let Some(exit) = scan.child.try_wait()? else {
-                return Ok(None);
-            };
-            let timed_out = now >= scan.deadline;
-            if let Some(Pending::Verify { config, resume }) = &self.pending {
-                ensure!(!self.shutting_down, "Service is shutting down");
-                if timed_out || !exit.success() {
-                    let mut detail = String::new();
-                    if let Some(mut err) = scan.child.stderr.take() {
-                        err.read_to_string(&mut detail)?;
-                    }
-                    let message = if timed_out {
-                        "Prysm connection timed out".to_owned()
-                    } else {
-                        format!(
-                            "Could not verify Prysm: {}",
-                            detail.trim().trim_start_matches("Error: ")
-                        )
-                    };
-                    let reply = prysm_webos_service::contract::ErrorReply::new(message);
-                    self.abandon_pending(now);
-                    self.execute(now)?;
-                    return Ok(Some(serde_json::to_value(reply)?));
+        let Some(pending) = self.pending.take() else {
+            return Ok(None);
+        };
+        match pending {
+            Pending::Pause { progress, deadline }
+                if self.worker.is_some() && progress != PauseProgress::Released =>
+            {
+                if now >= deadline {
+                    self.state
+                        .failed("Timed out pausing native capture".into(), now);
+                    anyhow::bail!("Timed out pausing native capture");
                 }
-                self.state.enabled = *resume;
-                self.save(config.clone(), now)?;
-                self.pending = None;
-                self.scan = None;
-                self.execute(now)?;
-                return Ok(Some(self.state.snapshot()));
+                self.pending = Some(Pending::Pause { progress, deadline });
+                return Ok(None);
             }
-            self.scan = None;
-            ensure!(!timed_out, "Luna service rescan timed out");
-            ensure!(exit.success(), "Luna service rescan failed: {exit}");
-            if matches!(self.pending, Some(Pending::Start)) {
-                ensure!(!self.shutting_down, "Service is shutting down");
-                self.state.start(now)?;
+            Pending::Stop | Pending::Cleanup if self.state.running => {
+                self.pending = Some(pending);
+                return Ok(None);
+            }
+            Pending::Stop | Pending::Pause { .. } => (),
+            Pending::Cleanup => {
+                self.files.manifest(false)?;
+                self.begin_scan(Operation::Cleanup, now)?;
+                return Ok(None);
+            }
+            Pending::Helper {
+                operation,
+                process: mut helper,
+            } => {
+                let timed_out = now >= helper.deadline;
+                if timed_out {
+                    helper.child.kill()?;
+                }
+                let Some(exit) = helper.child.try_wait()? else {
+                    self.pending = Some(Pending::Helper {
+                        operation,
+                        process: helper,
+                    });
+                    return Ok(None);
+                };
+                if !matches!(operation, Operation::Verify(_)) {
+                    ensure!(!timed_out, "Luna service rescan timed out");
+                    ensure!(exit.success(), "Luna service rescan failed: {exit}");
+                }
+                match operation {
+                    Operation::Verify(selected) => {
+                        ensure!(!self.shutting_down, "Service is shutting down");
+                        if timed_out || !exit.success() {
+                            let mut detail = String::new();
+                            if let Some(mut err) = helper.child.stderr.take() {
+                                err.read_to_string(&mut detail)?;
+                            }
+                            let message = if timed_out {
+                                "Prysm connection timed out".to_owned()
+                            } else {
+                                format!(
+                                    "Could not verify Prysm: {}",
+                                    detail.trim().trim_start_matches("Error: ")
+                                )
+                            };
+                            let reply = prysm_webos_service::contract::ErrorReply::new(message);
+                            return Ok(Some(serde_json::to_value(reply)?));
+                        }
+                        self.save(*selected, now)?;
+                    }
+                    Operation::SelectEmbedded(selected) => {
+                        ensure!(!self.shutting_down, "Service is shutting down");
+                        self.save(*selected, now)?;
+                    }
+                    Operation::Start => {
+                        ensure!(!self.shutting_down, "Service is shutting down");
+                        self.state.start(now)?;
+                    }
+                    Operation::Cleanup => (),
+                }
                 self.execute(now)?;
             }
-            self.pending = None;
-            return Ok(Some(self.state.snapshot()));
         }
-        if self.state.running {
-            return Ok(None);
-        }
-        if let Some(Pending::Verify { config, .. }) = &self.pending {
-            ensure!(!self.shutting_down, "Service is shutting down");
-            let child = Command::new(&self.files.worker)
-                .arg("--verify-instance")
-                .arg(
-                    config
-                        .instance_url
-                        .as_ref()
-                        .expect("validated origin")
-                        .to_string(),
-                )
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()?;
-            self.scan = Some(Helper {
-                child,
-                deadline: now + Duration::from_secs(12),
-            });
-            return Ok(None);
-        }
-        if matches!(self.pending, Some(Pending::Cleanup)) {
-            self.files.manifest(false)?;
-            self.begin_scan(now)?;
-            return Ok(None);
-        }
-        Ok(self.pending.take().map(|_| self.state.snapshot()))
+        Ok(Some(self.state.snapshot()))
     }
     pub fn shutdown(&mut self, now: Instant) {
         self.shutting_down = true;
-        if !matches!(self.pending, Some(Pending::Cleanup))
-            && let Some(scan) = &mut self.scan
+        if let Some(Pending::Helper {
+            operation,
+            process: helper,
+        }) = &mut self.pending
+            && !matches!(operation, Operation::Cleanup)
         {
-            let _ = scan.child.kill();
+            let _ = helper.child.kill();
         }
-        self.state.enabled = false;
-        self.state.stop(now, true);
+        self.state.deactivate(now);
     }
     pub fn stopped(&self) -> bool {
-        !self.state.running && self.scan.is_none()
+        !self.state.running && self.pending.is_none()
     }
 }

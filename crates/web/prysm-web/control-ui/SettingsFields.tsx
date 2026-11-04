@@ -109,19 +109,23 @@ export function InputFields({ value, onChange, ...state }: Group<'input'>) {
   return (
     <section aria-labelledby="input-heading">
       <h3 id="input-heading">Capture settings</h3>
-      <Field
-        {...state}
-        field="input.type"
-        label="Capture from"
-        value={value.type}
-        choices={Object.entries(inputLabels)}
-        onChange={(type) => {
-          if (type === 'device' || type === 'file' || type === 'webos')
-            onChange(
-              changeInputType(value, type, state.settings.settings.input),
-            );
-        }}
-      />
+      {state.settings.nativeWebos ? (
+        <p className="field-note">Video comes directly from this TV.</p>
+      ) : (
+        <Field
+          {...state}
+          field="input.type"
+          label="Capture from"
+          value={value.type}
+          choices={Object.entries(inputLabels)}
+          onChange={(type) => {
+            if (type === 'device' || type === 'file' || type === 'webos')
+              onChange(
+                changeInputType(value, type, state.settings.settings.input),
+              );
+          }}
+        />
+      )}
       {value.type === 'device' && (
         <Field
           {...state}

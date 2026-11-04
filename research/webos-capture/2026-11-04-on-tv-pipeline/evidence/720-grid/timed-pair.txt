@@ -1,0 +1,11 @@
+timed-pair.log n= 812
+acquire          mean   0.69 med   0.68 p95   0.80 max   1.55
+convert          mean   2.94 med   2.86 p95   3.92 max  15.68
+processor        mean  20.81 med  20.03 p95  25.08 max  43.15
+DDP              mean   0.14 med   0.13 p95   0.18 max   1.30
+grid             mean   3.34 med   2.96 p95   5.17 max  18.57
+projection       mean  16.06 med  15.77 p95  19.87 max  33.58
+other_processor  mean   1.41 med   1.42 p95   2.61 max   3.82
+work             mean  24.59 med  23.68 p95  29.07 max  53.25
+interval         mean  33.38 med  33.36 p95  37.95 max  63.49
+late intervals >50ms: 2

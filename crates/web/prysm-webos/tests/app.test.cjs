@@ -25,12 +25,15 @@ const service = ts.transpileModule(
     },
   },
 ).outputText;
-const html = fs.readFileSync(
-  path.join(__dirname, '../dist/index.html'),
-  'utf8',
+const embeddedBuild = process.env.VITE_EMBEDDED_PRYSM === '1';
+const dist = path.resolve(
+  __dirname,
+  '..',
+  process.env.PRYSM_WEBOS_TEST_DIST || 'dist',
 );
+const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
 const script = fs.readFileSync(
-  path.join(__dirname, '../dist/' + html.match(/<script[^>]+src="([^"]+)"/)[1]),
+  path.join(dist, html.match(/<script[^>]+src="([^"]+)"/)[1]),
   'utf8',
 );
 
@@ -94,13 +97,17 @@ async function fixture(t, options = {}) {
     stopping: false,
     error: null,
     lastLog: null,
-    capabilities: { hardwareH264: options.hardwareH264 === true },
+    capabilities: {
+      hardwareH264: options.hardwareH264 === true,
+      ...options.capabilities,
+    },
     config: {
       instanceUrl: options.instanceUrl ?? 'http://192.168.18.18:8787',
       source: 'both',
       compression: 'lz4',
       autostart: false,
       metrics: false,
+      ...options.config,
     },
   };
   w.PalmServiceBridge = function () {
@@ -535,6 +542,11 @@ test('subscriptions and actions reject replies that violate the service contract
     invalid,
     { ...f.value, capabilities: {} },
     { ...f.value, capabilities: { hardwareH264: 'true' } },
+    {
+      ...f.value,
+      capabilities: { hardwareH264: false, embeddedPortal: 'true' },
+    },
+    { ...f.value, portalUrl: 8787 },
     { ...f.value, receiverBusy: 'false' },
     { ...f.value, subscribers: 2 ** 32 },
     { ...f.value, revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -643,11 +655,10 @@ test('TV output uses relative classic scripts and excludes the local service sim
     /Local development: simulated TV service|Simulated TV|import\.meta/,
   );
   for (const name of ['app.css', 'appinfo.json', 'icon.png']) {
-    assert.ok(fs.existsSync(path.join(__dirname, '../dist', name)));
+    assert.ok(fs.existsSync(path.join(dist, name)));
   }
   assert.equal(
-    JSON.parse(fs.readFileSync(path.join(__dirname, '../dist/appinfo.json')))
-      .main,
+    JSON.parse(fs.readFileSync(path.join(dist, 'appinfo.json'))).main,
     'index.html',
   );
 });
@@ -1219,3 +1230,183 @@ test('the instance editor displays the resolved LAN address before Save', async 
     assert.equal(f.el('receiver-value').textContent, expected);
   }
 });
+
+const portalUrl = 'http://192.0.2.10:8787/';
+test('processing location requires the portal build and matching service', async (t) => {
+  const f = await fixture(t);
+  assert.equal(f.el('location'), null);
+  f.value.capabilities.embeddedPortal = true;
+  await f.notify();
+  assert.equal(!!f.el('location'), embeddedBuild);
+  assert.equal(script.includes('On this TV (experimental)'), embeddedBuild);
+  assert.equal(script.includes('Use this setup'), false);
+  assert.equal(script.includes('Prysm web portal'), embeddedBuild);
+});
+
+test('a mismatched service with TV-owned lighting settings cannot be edited', async (t) => {
+  const f = await fixture(t, { capabilities: { embeddedPrysm: true } });
+  assert.equal(f.el('location'), null);
+  assert.match(f.el('notice').textContent, /matching Prysm Capture package/);
+  assert.deepEqual(f.mutations(), []);
+});
+
+test(
+  'embedded selection needs no receiver or WLED and the portal remains visible while paused',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      config: { instanceUrl: null },
+      capabilities: { embeddedPortal: true },
+    });
+    await f.key(39);
+    await f.click('location');
+    await f.click('choice-embedded');
+    assert.equal(f.focus(), 'location');
+    for (const id of [
+      'receiver',
+      'compression',
+      'wled',
+      'calibrate',
+      'portal-address',
+    ]) {
+      assert.equal(f.el(id), null);
+    }
+    assert.equal(f.el('primary').textContent, 'Use this TV');
+    await f.click('primary');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig'],
+    );
+    assert.equal(f.value.config.instanceUrl, null);
+    assert.equal(f.value.config.location, 'embedded');
+    assert.equal('embeddedOutput' in f.value.config, false);
+    f.value.enabled = true;
+    f.value.senderRunning = true;
+    f.value.portalUrl = portalUrl;
+    await f.notify();
+    assert.match(f.el('portal-address').textContent, /192\.0\.2\.10:8787/);
+    assert.equal(f.el('status-title').textContent, 'Prysm is ready');
+    await f.click('primary');
+    assert.equal(f.mutations().at(-1).method, 'stop');
+    assert.equal(f.el('status-title').textContent, 'TV capture paused');
+    assert.equal(
+      f.el('portal-address').querySelector('code').textContent,
+      portalUrl,
+    );
+    delete f.value.portalUrl;
+    f.value.error = 'cannot bind portal';
+    await f.notify();
+    assert.equal(f.el('portal-address'), null);
+    assert.equal(f.el('calibrate'), null);
+    assert.equal(f.el('status-title').textContent, 'Capture needs attention');
+  },
+);
+
+test(
+  'allow TV capture saves pending embedded edits before resuming',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      config: { location: 'embedded' },
+      capabilities: { embeddedPortal: true },
+    });
+    await f.click('source');
+    await f.click('choice-video');
+    assert.equal(f.el('primary').textContent, 'Allow TV capture');
+    await f.click('primary');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig', 'start'],
+    );
+    assert.equal(f.value.config.source, 'video');
+  },
+);
+
+test(
+  'the embedded calibration relay uses the actual local portal origin',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      config: { location: 'embedded', instanceUrl: 'https://remote.example' },
+      capabilities: { embeddedPortal: true },
+    });
+    f.value.portalUrl = portalUrl;
+    await f.notify();
+    f.w.setInterval = () => 42;
+    await f.click('calibrate');
+    assert.equal(
+      f.w.document.querySelector('iframe').src,
+      portalUrl + 'calibration-tv.html',
+    );
+  },
+);
+
+test(
+  'mode changes preserve receiver preferences and describe the running mode until saved',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, { capabilities: { embeddedPortal: true } });
+    f.value.enabled = true;
+    f.value.receiverConnected = true;
+    f.value.capturing = true;
+    await f.notify();
+    await f.click('location');
+    await f.click('choice-embedded');
+    assert.match(f.el('status-description').textContent, /sent to Prysm/);
+    await f.click('save');
+    assert.equal(f.value.config.instanceUrl, 'http://192.168.18.18:8787');
+    await f.click('location');
+    await f.click('choice-remote');
+    assert.ok(f.el('compression'));
+    assert.equal(f.el('calibrate'), null);
+    await f.click('save');
+    assert.ok(f.el('calibrate'));
+    assert.equal(f.el('portal-address'), null);
+  },
+);
+
+test(
+  'a standard UI cannot start embedded mode on a mismatched service',
+  { skip: embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      capabilities: { embeddedPortal: true },
+      config: { location: 'embedded' },
+    });
+    assert.equal(f.el('location'), null);
+    await f.click('primary');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig', 'start'],
+    );
+    assert.equal(f.value.config.location, 'remote');
+  },
+);
+
+test(
+  'a newer embedded selection prevents a stale remote Save from enabling another target',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      capabilities: { embeddedPortal: true },
+      deferMethods: ['setConfig'],
+    });
+    await f.click('metrics');
+    await f.click('primary');
+    const oldRemote = f.mutations()[0].payload;
+    assert.equal(oldRemote.location, undefined);
+    const reply = JSON.stringify({ ...f.value, config: oldRemote });
+    f.value.config = { ...oldRemote, location: 'embedded' };
+    f.value.revision++;
+    await f.notify();
+    await f.reply(f.pending[0], reply);
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig'],
+    );
+    assert.equal(
+      f.el('location-value').textContent,
+      'On this TV (experimental)',
+    );
+  },
+);

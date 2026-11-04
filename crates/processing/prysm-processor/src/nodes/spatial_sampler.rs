@@ -1,5 +1,7 @@
 use crate::frames::FrameView;
 use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity};
+#[cfg(feature = "parallel-projection")]
+use rayon::prelude::*;
 
 /// Projects the whole picture onto the perimeter using a smooth distance falloff.
 #[derive(Debug)]
@@ -126,26 +128,42 @@ impl SpatialSampler {
         } else {
             None
         };
-        for (color, &[x0, y0, x1, y1]) in self.cell_colors.iter_mut().zip(&self.cells) {
+        #[cfg(feature = "parallel-projection")]
+        let cells = self.cell_colors.par_iter_mut().zip(&self.cells);
+        #[cfg(not(feature = "parallel-projection"))]
+        let cells = self.cell_colors.iter_mut().zip(&self.cells);
+        cells.for_each(|(color, &[x0, y0, x1, y1])| {
             *color = view.average_linear(x0, y0, x1, y1, rgb);
-        }
+        });
         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
-            ColorStrip::new(
-                weights
-                    .chunks_exact(self.cell_colors.len())
-                    .map(|row| {
-                        let mut sum = [0.0f64; 3];
-                        for (color, &weight) in self.cell_colors.iter().zip(row) {
-                            for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b])
-                            {
-                                *channel += f64::from(value) * f64::from(weight);
-                            }
-                        }
-                        LinearColor::new(sum[0] as f32, sum[1] as f32, sum[2] as f32)
-                    })
-                    .collect(),
-            )
-            .expect("sample count is nonzero")
+            let cell_count = self.cell_colors.len();
+            let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
+            #[cfg(feature = "parallel-projection")]
+            let pairs = samples
+                .par_chunks_mut(2)
+                .zip(weights.par_chunks(2 * cell_count));
+            #[cfg(not(feature = "parallel-projection"))]
+            let pairs = samples.chunks_mut(2).zip(weights.chunks(2 * cell_count));
+            // Two adjacent samples reuse each widened cell color and keep independent sums.
+            pairs.for_each(|(out, rows)| {
+                let (first, second) = rows.split_at(cell_count);
+                let second = if second.is_empty() { first } else { second };
+                let mut first_sum = [0.0; 3];
+                let mut second_sum = [0.0; 3];
+                for ((color, &first_weight), &second_weight) in
+                    self.cell_colors.iter().zip(first).zip(second)
+                {
+                    for (channel, value) in [color.r, color.g, color.b].into_iter().enumerate() {
+                        let value = f64::from(value);
+                        first_sum[channel] += value * f64::from(first_weight);
+                        second_sum[channel] += value * f64::from(second_weight);
+                    }
+                }
+                for (dst, [r, g, b]) in out.iter_mut().zip([first_sum, second_sum]) {
+                    *dst = LinearColor::new(r as f32, g as f32, b as f32);
+                }
+            });
+            ColorStrip::new(samples).expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
     }
@@ -214,6 +232,49 @@ mod tests {
                     assert_eq!(sampler.rgb.as_ptr(), allocation);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn projected_samples_match_serial_sums_in_strip_order() {
+        let mut sampler = SpatialSampler::new(SampleDensity(700), 0.15);
+        let mut view = picture(93, 55, |x, y| {
+            [
+                x.to_le_bytes()[0],
+                y.to_le_bytes()[0],
+                (x ^ y).to_le_bytes()[0],
+            ]
+        });
+        view.viewport = Viewport {
+            x: 3,
+            y: 5,
+            width: 86,
+            height: 46,
+        };
+        let output = sampler.process(&view);
+        let cells: Vec<_> = sampler
+            .cells
+            .iter()
+            .map(|&[x0, y0, x1, y1]| view.average_linear(x0, y0, x1, y1, None))
+            .collect();
+        assert_eq!(sampler.cell_colors, cells);
+        for (strip, weights) in strips(&output).into_iter().zip(&sampler.sample_weights) {
+            let reference: Vec<_> = weights
+                .chunks_exact(cells.len())
+                .map(|row| {
+                    let sum = |channel: fn(&LinearColor) -> f32| {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let value = cells
+                            .iter()
+                            .zip(row)
+                            .map(|(cell, w)| f64::from(channel(cell)) * f64::from(*w))
+                            .sum::<f64>() as f32;
+                        value
+                    };
+                    LinearColor::new(sum(|c| c.r), sum(|c| c.g), sum(|c| c.b))
+                })
+                .collect();
+            assert_eq!(strip.resample(strip.len()), reference);
         }
     }
 

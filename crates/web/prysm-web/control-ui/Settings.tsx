@@ -14,7 +14,7 @@ import { useSettingsForm } from './useSettingsForm';
 
 const steps = ['Video source', 'Your lights', 'Review & finish'];
 const stepDescriptions = [
-  'Choose where your picture comes from. You can fine-tune capture later.',
+  null,
   'Connect your WLED controller and map the LEDs around your screen.',
   'Check your setup. Saving keeps your lights as they are.',
 ];
@@ -164,7 +164,10 @@ export function Settings({
       </div>
       <p className="intro-copy">
         {setup
-          ? stepDescriptions[step]
+          ? (stepDescriptions[step] ??
+            (settings.nativeWebos
+              ? 'Choose the resolution and frame rate for TV capture.'
+              : 'Choose where your picture comes from. You can fine-tune capture later.'))
           : 'Configure capture, lights, processing, and color source. Changes are saved together. Saving does not turn lights on.'}
       </p>
       {!setup || step === 0 ? (

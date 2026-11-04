@@ -5,7 +5,8 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
-    "test": "npm run build && node --test tests/*.test.cjs"
+    "test": "VITE_EMBEDDED_PRYSM=0 npm run build && VITE_EMBEDDED_PRYSM=0 node --test tests/*.test.cjs && npm run test:embedded",
+    "test:embedded": "VITE_EMBEDDED_PRYSM=1 vite build --outDir ../../../target/webos-ui-test-embedded && VITE_EMBEDDED_PRYSM=1 PRYSM_WEBOS_TEST_DIST=../../../target/webos-ui-test-embedded node --test tests/app.test.cjs"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
