@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import {
   createServiceClient,
   parseReply,
@@ -10,36 +10,30 @@ import {
 } from '../service';
 
 const defaults: Config = {
-  instanceUrl: '',
+  instanceUrl: null,
   source: 'both',
   compression: 'lz4',
   autostart: false,
   metrics: false,
 };
-interface SaveRequest {
-  config: Config;
-  enableAfterSave: boolean;
-}
+type Method = 'setConfig' | 'start' | 'stop' | 'cleanup';
 interface State {
   online: boolean | null;
   status: Status | null;
   edits: Partial<Config>;
   changing: boolean;
   notice: string;
-  retry?: SaveRequest;
   error: boolean;
 }
 type Action =
   | {
       type: 'observe';
       status: Status;
-      subscribed?: boolean;
-      method?: 'setConfig' | 'start' | 'stop' | 'cleanup';
-      requestPid?: number;
+      method?: Method;
     }
   | { type: 'offline'; text: string }
   | { type: 'edit'; patch: Partial<Config> }
-  | { type: 'notice'; text: string; error: boolean; retry?: SaveRequest }
+  | { type: 'notice'; text: string; error: boolean }
   | { type: 'changing'; value: boolean };
 
 const initialState: State = {
@@ -62,18 +56,7 @@ function unsaved(edits: Partial<Config>, saved: Config) {
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'observe': {
-      const current = state.status;
-      if (
-        current &&
-        action.requestPid === action.status.pid &&
-        current.pid !== action.status.pid
-      )
-        return state;
-      const status =
-        current?.pid === action.status.pid &&
-        current.revision > action.status.revision
-          ? current
-          : action.status;
+      const { status } = action;
       const edits = unsaved(state.edits, status.config);
       if (action.method === 'cleanup') delete edits.autostart;
       return {
@@ -82,11 +65,10 @@ function reducer(state: State, action: Action): State {
         status,
         edits: action.method === 'setConfig' ? {} : edits,
         notice:
-          action.subscribed && state.online === false
+          !action.method && state.online === false
             ? 'Service connected.'
             : state.notice,
-        error:
-          action.subscribed && state.online === false ? false : state.error,
+        error: !action.method && state.online === false ? false : state.error,
       };
     }
     case 'offline':
@@ -94,7 +76,6 @@ function reducer(state: State, action: Action): State {
     case 'edit':
       return {
         ...state,
-        retry: undefined,
         edits: unsaved(
           { ...state.edits, ...action.patch },
           state.status?.config ?? defaults,
@@ -105,7 +86,6 @@ function reducer(state: State, action: Action): State {
         ...state,
         notice: action.text,
         error: action.error,
-        retry: action.retry,
       };
     case 'changing':
       return { ...state, changing: action.value };
@@ -116,6 +96,25 @@ export function useCaptureService(openReceiver: () => void) {
   const [client] = useState(createServiceClient);
   const call = client.call;
   const [state, dispatch] = useReducer(reducer, initialState);
+  const latest = useRef<Status | null>(null);
+  const observe = useCallback((reply: Status, method?: Method) => {
+    const current = latest.current;
+    if (method && current && current.pid !== reply.pid) return false;
+    const status =
+      current?.pid === reply.pid && current.revision > reply.revision
+        ? current
+        : reply;
+    if (
+      method &&
+      status !== reply &&
+      Object.keys(unsaved(reply.config, status.config)).length
+    ) {
+      return false;
+    }
+    latest.current = status;
+    dispatch({ type: 'observe', status, method });
+    return true;
+  }, []);
   const busy = useRef(false);
   const reconnect = useRef(() => {});
   const { online, status, edits } = state;
@@ -187,11 +186,7 @@ export function useCaptureService(openReceiver: () => void) {
           return;
         }
         clearTimeout(timer);
-        dispatch({
-          type: 'observe',
-          status: value,
-          subscribed: true,
-        });
+        observe(value);
       };
       try {
         bridge.call(
@@ -220,80 +215,45 @@ export function useCaptureService(openReceiver: () => void) {
       client.cancelAll();
       busy.current = false;
     };
-  }, [client]);
+  }, [client, observe]);
 
-  function request(change: SaveRequest | 'start' | 'stop' | 'cleanup') {
+  function request(method: Method, enableAfterSave = false) {
     if (busy.current) return;
     busy.current = true;
     dispatch({ type: 'changing', value: true });
-    const saving = typeof change === 'object';
-    const method = saving ? 'setConfig' : change;
-    const payload = saving ? change.config : {};
     call(
       'luna://io.prysm.capture.service/' + method,
-      payload,
+      method === 'setConfig' ? draft : {},
       parseReply,
       (value) => {
         busy.current = false;
         dispatch({ type: 'changing', value: false });
         if (!value.returnValue) {
-          // An explicit :80 is also a port choice, even though URL normalizes it away.
-          const host =
-            saving &&
-            value.retryDefaultPort &&
-            /^http:\/\/(\[[^\]]+\]|[^/:?#@]+)\/?$/i.exec(
-              change.config.instanceUrl.trim(),
-            );
-          if (host) {
-            dispatch({
-              type: 'notice',
-              text: value.errorText || 'Could not reach Prysm.',
-              error: true,
-              retry: {
-                ...change,
-                config: {
-                  ...change.config,
-                  instanceUrl: `http://${host[1]}:8787`,
-                },
-              },
-            });
-            return;
-          }
           notice(
             value.errorText || 'The service could not complete this action.',
             true,
           );
           return;
         }
-        dispatch({
-          type: 'observe',
-          status: value,
-          method,
-          requestPid: status?.pid,
-        });
-        if (saving) {
+        if (!observe(value, method)) return;
+        if (method === 'setConfig') {
           notice('Settings saved.');
-          if (change.enableAfterSave) request('start');
-        } else if (change === 'stop') {
+          if (enableAfterSave) request('start');
+        } else if (method === 'stop') {
           notice('');
-        } else if (change === 'cleanup') {
+        } else if (method === 'cleanup') {
           notice('Service setup removed. Receiver settings kept.');
         }
       },
     );
   }
   function saveSettings() {
-    if (state.retry) {
-      edit('instanceUrl', state.retry.config.instanceUrl);
-      request(state.retry);
-      return;
-    }
     if (!draft.instanceUrl) {
       notice('Add the Prysm instance URL first.', true);
       openReceiver();
       return;
     }
-    request({ config: draft, enableAfterSave: false });
+    request('setConfig');
   }
   function setup() {
     if (busy.current) return;
@@ -333,7 +293,7 @@ export function useCaptureService(openReceiver: () => void) {
       openReceiver();
       return;
     }
-    if (dirty) request({ config: draft, enableAfterSave: true });
+    if (dirty) request('setConfig', true);
     else request('start');
   }
 

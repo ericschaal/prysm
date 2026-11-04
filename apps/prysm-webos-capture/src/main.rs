@@ -23,18 +23,7 @@ fn main() -> Result<()> {
         && flag == "--verify-instance"
     {
         let instance = value.to_str().context("invalid instance URL")?.parse()?;
-        if let Err(error) = transport::Sender::connect(&instance) {
-            if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
-                matches!(
-                    e.kind(),
-                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
-                )
-            }) {
-                eprintln!("{error:#}");
-                std::process::exit(2);
-            }
-            return Err(error);
-        }
+        transport::Sender::connect(&instance)?;
         return Ok(());
     }
     ensure!(

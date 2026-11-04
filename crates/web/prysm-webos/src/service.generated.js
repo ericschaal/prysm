@@ -6,7 +6,7 @@ const schema33 = {"allOf":[{"$ref":"#/components/schemas/Observation"},{"$ref":"
 const schema34 = {"type":"object","required":["returnValue","subscribed","videoAvailable","revision","subscribers","pid"],"properties":{"pid":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"returnValue":{"type":"boolean"},"revision":{"type":"integer","format":"uint64","minimum":0,"maximum":9007199254740991},"subscribed":{"type":"boolean"},"subscribers":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"videoAvailable":{"type":["boolean","null"]}}};
 const schema35 = {"type":"object","required":["config","enabled","receiverConnected","receiverBusy","capturing","senderRunning","stopping","power","error","lastLog","capabilities"],"properties":{"capabilities":{"$ref":"#/components/schemas/Capabilities"},"capturing":{"type":"boolean"},"config":{"$ref":"#/components/schemas/Config"},"enabled":{"type":"boolean"},"error":{"type":["string","null"]},"lastLog":{"type":["string","null"]},"power":{"type":["string","null"]},"receiverBusy":{"type":"boolean"},"receiverConnected":{"type":"boolean"},"senderRunning":{"type":"boolean"},"stopping":{"type":"boolean"}}};
 const schema36 = {"type":"object","required":["hardwareH264"],"properties":{"hardwareH264":{"type":"boolean"}}};
-const schema37 = {"type":"object","required":["instanceUrl","source","compression","autostart","metrics"],"properties":{"autostart":{"type":"boolean"},"compression":{"$ref":"#/components/schemas/Compression"},"instanceUrl":{"type":"string"},"metrics":{"type":"boolean"},"source":{"$ref":"#/components/schemas/Source"}},"additionalProperties":false};
+const schema37 = {"type":"object","required":["instanceUrl","source","compression","autostart","metrics"],"properties":{"autostart":{"type":"boolean"},"compression":{"$ref":"#/components/schemas/Compression"},"instanceUrl":{"type":["string","null"]},"metrics":{"type":"boolean"},"source":{"$ref":"#/components/schemas/Source"}},"additionalProperties":false};
 const schema38 = {"type":"string","enum":["none","lz4","h264-software","h264-hardware"]};
 const schema39 = {"type":"string","enum":["video","both"]};
 
@@ -67,9 +67,10 @@ var valid0 = true;
 }
 if(valid0){
 if(data.instanceUrl !== undefined){
+let data2 = data.instanceUrl;
 const _errs7 = errors;
-if(typeof data.instanceUrl !== "string"){
-validate24.errors = [{instancePath:instancePath+"/instanceUrl",schemaPath:"#/properties/instanceUrl/type",keyword:"type",params:{type: "string"}}];
+if((typeof data2 !== "string") && (data2 !== null)){
+validate24.errors = [{instancePath:instancePath+"/instanceUrl",schemaPath:"#/properties/instanceUrl/type",keyword:"type",params:{type: schema37.properties.instanceUrl.type}}];
 return false;
 }
 var valid0 = _errs7 === errors;
@@ -535,7 +536,7 @@ validate21.evaluated = {"props":{"returnValue":true,"capabilities":true,"capturi
 
 export const isErrorReply = validate28;
 const schema40 = {"allOf":[{"$ref":"#/components/schemas/ErrorReply"},{"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean","const":false}}}]};
-const schema41 = {"type":"object","required":["returnValue","errorText"],"properties":{"errorText":{"type":"string"},"retryDefaultPort":{"type":"boolean"},"returnValue":{"type":"boolean"}}};
+const schema41 = {"type":"object","required":["returnValue","errorText"],"properties":{"errorText":{"type":"string"},"returnValue":{"type":"boolean"}}};
 
 function validate28(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -569,29 +570,16 @@ else {
 var valid2 = true;
 }
 if(valid2){
-if(data.retryDefaultPort !== undefined){
+if(data.returnValue !== undefined){
 const _errs5 = errors;
-if(typeof data.retryDefaultPort !== "boolean"){
-validate28.errors = [{instancePath:instancePath+"/retryDefaultPort",schemaPath:"#/components/schemas/ErrorReply/properties/retryDefaultPort/type",keyword:"type",params:{type: "boolean"}}];
+if(typeof data.returnValue !== "boolean"){
+validate28.errors = [{instancePath:instancePath+"/returnValue",schemaPath:"#/components/schemas/ErrorReply/properties/returnValue/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
 var valid2 = _errs5 === errors;
 }
 else {
 var valid2 = true;
-}
-if(valid2){
-if(data.returnValue !== undefined){
-const _errs7 = errors;
-if(typeof data.returnValue !== "boolean"){
-validate28.errors = [{instancePath:instancePath+"/returnValue",schemaPath:"#/components/schemas/ErrorReply/properties/returnValue/type",keyword:"type",params:{type: "boolean"}}];
-return false;
-}
-var valid2 = _errs7 === errors;
-}
-else {
-var valid2 = true;
-}
 }
 }
 }
@@ -603,8 +591,8 @@ return false;
 }
 var valid0 = _errs0 === errors;
 if(valid0){
-const _errs9 = errors;
-if(errors === _errs9){
+const _errs7 = errors;
+if(errors === _errs7){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing1;
 if((data.returnValue === undefined) && (missing1 = "returnValue")){
@@ -613,12 +601,12 @@ return false;
 }
 else {
 if(data.returnValue !== undefined){
-let data3 = data.returnValue;
-if(typeof data3 !== "boolean"){
+let data2 = data.returnValue;
+if(typeof data2 !== "boolean"){
 validate28.errors = [{instancePath:instancePath+"/returnValue",schemaPath:"#/allOf/1/properties/returnValue/type",keyword:"type",params:{type: "boolean"}}];
 return false;
 }
-if(false !== data3){
+if(false !== data2){
 validate28.errors = [{instancePath:instancePath+"/returnValue",schemaPath:"#/allOf/1/properties/returnValue/const",keyword:"const",params:{allowedValue: false}}];
 return false;
 }
@@ -630,12 +618,12 @@ validate28.errors = [{instancePath,schemaPath:"#/allOf/1/type",keyword:"type",pa
 return false;
 }
 }
-var valid0 = _errs9 === errors;
+var valid0 = _errs7 === errors;
 }
 validate28.errors = vErrors;
 return errors === 0;
 }
-validate28.evaluated = {"props":{"returnValue":true,"errorText":true,"retryDefaultPort":true},"dynamicProps":false,"dynamicItems":false};
+validate28.evaluated = {"props":{"returnValue":true,"errorText":true},"dynamicProps":false,"dynamicItems":false};
 
 export const isExecReply = validate29;
 const schema42 = {"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean"},"errorText":{"type":"string"},"stderrString":{"type":"string"}}};

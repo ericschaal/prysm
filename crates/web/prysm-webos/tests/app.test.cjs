@@ -1142,42 +1142,57 @@ test('a terminal playback error stays visible past the reconnect deadline', asyn
   assert.equal(f.w.document.querySelector('video'), null);
 });
 
-for (const [button, shouldEnable] of [
-  ['save', false],
-  ['primary', true],
-]) {
-  test(`port retry after ${shouldEnable ? 'Save and enable' : 'Save'} preserves the requested action`, async (t) => {
+for (const restarted of [true, false]) {
+  test(`Save and enable ignores a reply superseded by a ${restarted ? 'restarted service' : 'newer configuration'}`, async (t) => {
     const f = await fixture(t, { deferMethods: ['setConfig'] });
-    await f.click('receiver');
-    await f.input('receiver-input', 'http://192.168.1.10');
-    await f.click('receiver-apply');
-    await f.click(button);
-    await f.reply(
-      f.pending.at(-1),
-      JSON.stringify({
-        returnValue: false,
-        errorText: 'Connection refused',
-        retryDefaultPort: true,
-      }),
-    );
-    assert.equal(f.el('save').textContent, 'Try port 8787');
-    await f.click('save');
-    const retry = f.mutations().at(-1);
-    assert.equal(retry.payload.instanceUrl, 'http://192.168.1.10:8787');
-    assert.equal(f.value.enabled, false);
-    await f.reply(
-      f.pending.at(-1),
-      JSON.stringify({ ...f.value, config: retry.payload }),
-    );
+    await f.click('metrics');
+    await f.click('primary');
+    const reply = { ...f.value, config: f.mutations()[0].payload };
+    if (restarted) f.value.pid++;
+    f.value.revision++;
+    f.value.config = {
+      ...f.value.config,
+      instanceUrl: 'https://other.example',
+    };
+    await f.notify();
+    await f.reply(f.pending[0], JSON.stringify(reply));
     assert.deepEqual(
       f.mutations().map(({ method }) => method),
-      shouldEnable
-        ? ['setConfig', 'setConfig', 'start']
-        : ['setConfig', 'setConfig'],
+      ['setConfig'],
     );
-    assert.equal(f.value.enabled, shouldEnable);
+    assert.notEqual(f.el('notice').textContent, 'Settings saved.');
+    assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
   });
 }
+
+test('a failed save leaves the entered URL and uses current settings on the next save', async (t) => {
+  const f = await fixture(t, { deferMethods: ['setConfig'] });
+  await f.click('receiver');
+  await f.input('receiver-input', 'http://prysm.test');
+  await f.click('receiver-apply');
+  await f.click('primary');
+  await f.reply(
+    f.pending[0],
+    JSON.stringify({
+      returnValue: false,
+      errorText: 'Connection refused',
+    }),
+  );
+  assert.equal(f.el('notice').textContent, 'Connection refused');
+  assert.equal(f.el('save').textContent, 'Save changes');
+  f.value.config.metrics = true;
+  f.value.revision++;
+  await f.notify();
+  await f.click('save');
+  assert.deepEqual(
+    f.mutations().map(({ method }) => method),
+    ['setConfig', 'setConfig'],
+  );
+  assert.deepEqual(f.mutations()[1].payload, {
+    ...f.value.config,
+    instanceUrl: 'http://prysm.test',
+  });
+});
 
 test('the calibration relay uses the saved HTTPS origin', async (t) => {
   const f = await fixture(t, { instanceUrl: 'https://prysm.example' });

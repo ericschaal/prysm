@@ -54,7 +54,7 @@ mod tests {
             value,
             json!({
                 "returnValue":true, "subscribed":true, "videoAvailable":null, "revision":3, "subscribers":1, "pid":42,
-                "config":{"instanceUrl":"", "source":"both", "compression":"lz4", "autostart":false, "metrics":false},
+                "config":{"instanceUrl":null, "source":"both", "compression":"lz4", "autostart":false, "metrics":false},
                 "enabled":false, "receiverConnected":false, "receiverBusy":false, "capturing":false, "senderRunning":false,
                 "stopping":false, "power":null, "error":null, "lastLog":null, "capabilities":{"hardwareH264":false}
             })
@@ -62,13 +62,13 @@ mod tests {
         serde_json::from_value::<ServiceStatus>(value).unwrap();
         let schema = serde_json::to_value(Schema::openapi()).unwrap();
         let config = &schema["components"]["schemas"]["Config"];
-        assert_eq!(config["properties"]["instanceUrl"]["type"], "string");
-        assert!(
-            config["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("metrics"))
+        assert_eq!(
+            config["properties"]["instanceUrl"]["type"],
+            json!(["string", "null"])
         );
+        let required = config["required"].as_array().unwrap();
+        assert!(required.contains(&json!("instanceUrl")));
+        assert!(required.contains(&json!("metrics")));
         assert_eq!(
             serde_json::to_value(ErrorReply::new("failed".into())).unwrap(),
             json!({"returnValue":false, "errorText":"failed"})

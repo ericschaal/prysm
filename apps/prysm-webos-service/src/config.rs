@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Config {
-    #[serde(with = "instance_url", rename = "instanceUrl")]
-    #[cfg_attr(feature = "schema", schema(value_type = String, required = true))]
+    #[serde(rename = "instanceUrl")]
+    #[cfg_attr(feature = "schema", schema(value_type = Option<String>, required = true))]
     pub instance_url: Option<InstanceUrl>,
     pub source: Source,
     pub compression: Compression,
@@ -48,34 +48,6 @@ impl Config {
             compression: self.compression,
             metrics: self.metrics,
         })
-    }
-}
-
-// The TV represents an unconfigured instance with an empty string.
-mod instance_url {
-    use super::InstanceUrl;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    #[allow(clippy::ref_option, reason = "Serde passes a reference to the field")]
-    pub fn serialize<S: Serializer>(
-        address: &Option<InstanceUrl>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        match address {
-            Some(address) => serializer.collect_str(address),
-            None => serializer.serialize_str(""),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<InstanceUrl>, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value.is_empty() {
-            Ok(None)
-        } else {
-            value.parse().map(Some).map_err(serde::de::Error::custom)
-        }
     }
 }
 
@@ -154,7 +126,7 @@ mod tests {
     #[test]
     fn typed_config_preserves_json_and_worker_settings() {
         let empty = Config::default();
-        let json = serde_json::json!({"instanceUrl":"","source":"both","compression":"lz4","autostart":false,"metrics":false});
+        let json = serde_json::json!({"instanceUrl":null,"source":"both","compression":"lz4","autostart":false,"metrics":false});
         assert_eq!(serde_json::to_value(&empty).unwrap(), json);
         assert_eq!(serde_json::from_value::<Config>(json).unwrap(), empty);
         assert!(empty.worker_config().is_err());

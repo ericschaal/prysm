@@ -268,8 +268,7 @@ impl App {
                             detail.trim().trim_start_matches("Error: ")
                         )
                     };
-                    let mut reply = prysm_webos_service::contract::ErrorReply::new(message);
-                    reply.retry_default_port = timed_out || exit.code() == Some(2);
+                    let reply = prysm_webos_service::contract::ErrorReply::new(message);
                     self.abandon_pending(now);
                     self.execute(now)?;
                     return Ok(Some(serde_json::to_value(reply)?));

@@ -229,7 +229,7 @@ fn changing_instance_verifies_before_save_and_restores_the_previous_sender_on_fa
         r#"
 if [ "$1" = --verify-instance ]; then
     if [ "$2" = https://prysm.example ]; then exit 0; fi
-    echo 'Connection refused' >&2; exit 2
+    echo 'Connection refused' >&2; exit 1
 fi
 trap 'exit 0' TERM
 while :; do sleep 0.01; done
@@ -240,8 +240,10 @@ while :; do sleep 0.01; done
     let mut next = old.clone();
     next.instance_url = Some("http://unavailable".parse().unwrap());
     let refused = operate(&mut app, AppRequest::SetConfig(next.clone()), now).unwrap();
-    assert_eq!(refused["returnValue"], false);
-    assert_eq!(refused["retryDefaultPort"], true);
+    assert_eq!(
+        refused,
+        serde_json::json!({"returnValue": false, "errorText": "Could not verify Prysm: Connection refused"})
+    );
     assert_eq!(app.files.load().unwrap(), old);
     assert!(app.state.enabled && app.state.running);
     next.instance_url = Some("https://prysm.example".parse().unwrap());

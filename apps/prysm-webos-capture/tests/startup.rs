@@ -56,6 +56,7 @@ fn verify_instance_accepts_a_trusted_tls12_websocket() {
         pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     };
     use std::{net::TcpListener, thread, time::Duration};
+    use tokio_tungstenite::tungstenite;
 
     let dir = tempfile::tempdir().unwrap();
     let cert = dir.path().join("cert.pem");

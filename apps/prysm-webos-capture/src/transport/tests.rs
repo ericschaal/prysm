@@ -6,7 +6,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     thread,
 };
-use tungstenite::WebSocket;
+use tokio_tungstenite::tungstenite::{self, WebSocket};
 
 pub(crate) fn hello(listener: &TcpListener) -> WebSocket<TcpStream> {
     let (tcp, _) = listener.accept().unwrap();
@@ -256,7 +256,13 @@ fn failed_connection_cannot_create_a_sender_or_queue_frames() {
 }
 
 #[test]
-fn refuses_invalid_handshake() {
+fn failed_and_stalled_handshakes_report_distinct_connection_outcomes() {
+    use std::io::{Read, Write};
+    let exporter = prysm_metrics::start(
+        "127.0.0.1:0".parse().unwrap(),
+        prysm_metrics::Role::Capturer,
+    )
+    .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = format!("http://{}", listener.local_addr().unwrap())
         .parse()
@@ -265,6 +271,20 @@ fn refuses_invalid_handshake() {
         thread::spawn(move || hello(&listener).send(Message::binary("not Prysm")).unwrap());
     assert!(Sender::connect(&addr).is_err());
     receiver.join().unwrap();
+    partial_reply_times_out(false);
+
+    let mut client = TcpStream::connect(exporter.address()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    client.write_all(b"GET /metrics HTTP/1.0\r\n\r\n").unwrap();
+    let mut metrics = String::new();
+    client.read_to_string(&mut metrics).unwrap();
+    for outcome in ["Failed", "TimedOut"] {
+        assert!(metrics.contains(&format!(
+            r#"component="FrameSender",operation="Connect",outcome="{outcome}""#
+        )));
+    }
 }
 
 #[test]
@@ -352,11 +372,6 @@ fn idle_renewals_keep_a_healthy_tv_waiting_until_capture_starts() {
     let (_, settings) = connect(address);
     assert_eq!(settings.fps, 15);
     peer.join().unwrap();
-}
-
-#[test]
-fn trickling_handshake_cannot_renew_the_deadline() {
-    partial_reply_times_out(false);
 }
 
 #[test]

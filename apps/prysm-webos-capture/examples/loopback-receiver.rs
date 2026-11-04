@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use prysm_webos_protocol::{Codec, ControlMessage, HEADER_LEN, HELLO, Header};
 use std::{fs, net::TcpListener, time::Duration};
-use tungstenite::Message;
+use tokio_tungstenite::tungstenite::{self, Message};
 
 fn main() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;

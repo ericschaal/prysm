@@ -57,7 +57,6 @@ export default function App() {
                   ? setCalibrating(true)
                   : navigation.openDialog('receiver')
               }
-              retryDefaultPort={!!capture.retry}
               saveSettings={capture.saveSettings}
               openDialog={navigation.openDialog}
             />

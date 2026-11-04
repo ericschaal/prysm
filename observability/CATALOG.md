@@ -63,7 +63,7 @@ WLED rate-limited and empty calls do not count as transmitted frames.
 
 | Component | Operation | Outcomes and boundary |
 |---|---|---|
-| FrameSender | Connect | Attempted for each actual TCP connection attempt; Succeeded for first successful connection, Reconnected for later success; Failed or TimedOut at connect failure |
+| FrameSender | Connect | Attempted once per connection; Succeeded after the Prysm handshake; Failed or TimedOut for DNS, TCP, TLS, WebSocket or Prysm handshake errors |
 | FrameSender | ConfigureSocket | Failed if TCP_NODELAY/nonblocking setup fails after connecting |
 | FrameSender | WriteFrame | Failed or TimedOut from the actual frame write; closes partial stream and enters normal retry backoff |
 | FrameSender | SendFrame | SkippedBackoff when send is called during reconnect delay |

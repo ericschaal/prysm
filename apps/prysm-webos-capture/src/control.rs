@@ -90,7 +90,7 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let mut socket = crate::transport::tests::hello(&listener);
             socket
-                .send(tungstenite::Message::binary(
+                .send(tokio_tungstenite::tungstenite::Message::binary(
                     ControlMessage::Idle.encode().unwrap(),
                 ))
                 .unwrap();

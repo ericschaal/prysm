@@ -21,7 +21,8 @@ interface Props {
 // Keep an explicit URL (including :80) exactly as entered until native verification.
 function instanceAddress(input: string) {
   const value = input.trim();
-  if (!value || value.includes('://')) return value;
+  if (!value) return null;
+  if (value.includes('://')) return value;
   const host = value.replace(/\/$/, '');
   const hasPort = host.includes(':') && !host.endsWith(']');
   return `http://${host}${hasPort ? '' : ':8787'}`;
@@ -44,7 +45,7 @@ export default function CaptureDialog({
   setup,
   cleanup,
 }: Props) {
-  const [receiver, setReceiver] = useState(draft.instanceUrl);
+  const [receiver, setReceiver] = useState(draft.instanceUrl ?? '');
   let dialogTitle = '';
   let dialogDescription = '';
   let content: ReactNode = null;

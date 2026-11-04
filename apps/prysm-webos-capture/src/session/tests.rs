@@ -217,7 +217,7 @@ fn idle_connection_opens_no_native_resources_and_remains_interruptible() {
     let receiver = std::thread::spawn(move || {
         let mut socket = crate::transport::tests::hello(&listener);
         socket
-            .send(tungstenite::Message::binary(
+            .send(tokio_tungstenite::tungstenite::Message::binary(
                 ControlMessage::Idle.encode().unwrap(),
             ))
             .unwrap();

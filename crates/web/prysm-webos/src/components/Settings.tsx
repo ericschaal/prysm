@@ -18,7 +18,6 @@ interface Props {
   changing: boolean;
   openDialog: (dialog: Dialog) => void;
   edit: <K extends keyof Config>(key: K, value: Config[K]) => void;
-  retryDefaultPort: boolean;
   saveSettings: () => void;
   calibrate: () => void;
 }
@@ -31,7 +30,6 @@ export default function Settings({
   changing,
   openDialog,
   edit,
-  retryDefaultPort,
   saveSettings,
   calibrate,
 }: Props) {
@@ -63,7 +61,7 @@ export default function Settings({
           data-left="primary"
           onClick={saveSettings}
         >
-          {retryDefaultPort ? 'Try port 8787' : 'Save changes'}
+          Save changes
         </button>
       </div>
       <div className="setting-list">

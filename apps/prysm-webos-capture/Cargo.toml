@@ -36,7 +36,6 @@ gstreamer-allocators = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-tungstenite = "0.29"
 yuv.workspace = true
 nix = { workspace = true, features = ["socket", "pthread"] }
 

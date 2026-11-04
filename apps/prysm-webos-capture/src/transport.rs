@@ -40,6 +40,7 @@ impl Sender {
             .worker_threads(1)
             .enable_all()
             .build()?;
+        prysm_metrics::event(FrameSenderEvent::ConnectAttempt);
         let result = runtime.block_on(async {
             let deadline = Instant::now() + CONTROL_TIMEOUT;
             let url = instance.capture_url();
@@ -47,18 +48,10 @@ impl Sender {
                 .port_or_known_default()
                 .context("missing capture port")?;
             let authority = format!("{}:{port}", url.host_str().context("missing capture host")?);
-            prysm_metrics::event(FrameSenderEvent::ConnectAttempt);
             let tcp = timeout_at(deadline, connect_tcp(authority, deadline))
                 .await
                 .map_err(io::Error::from)
                 .flatten()
-                .inspect_err(|e| {
-                    prysm_metrics::event(if e.kind() == io::ErrorKind::TimedOut {
-                        FrameSenderEvent::ConnectTimedOut
-                    } else {
-                        FrameSenderEvent::ConnectFailed
-                    });
-                })
                 .context("could not connect to Prysm")?;
             tcp.set_nodelay(true)?;
             let _ = rustls::crypto::ring::default_provider().install_default();
@@ -87,6 +80,14 @@ impl Sender {
                 Ok((Self { socket, runtime }, reply))
             }
             Err(error) => {
+                let timed_out = error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::TimedOut);
+                prysm_metrics::event(if timed_out {
+                    FrameSenderEvent::ConnectTimedOut
+                } else {
+                    FrameSenderEvent::ConnectFailed
+                });
                 // A timed-out OS hostname lookup can still be running on Tokio's blocking pool.
                 runtime.shutdown_background();
                 Err(error)

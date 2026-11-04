@@ -11,13 +11,12 @@ export interface components {
         Config: {
             autostart: boolean;
             compression: components["schemas"]["Compression"];
-            instanceUrl: string;
+            instanceUrl: string | null;
             metrics: boolean;
             source: components["schemas"]["Source"];
         };
         ErrorReply: {
             errorText: string;
-            retryDefaultPort?: boolean;
             returnValue: boolean;
         };
         Observation: {
