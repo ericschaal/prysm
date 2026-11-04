@@ -197,7 +197,13 @@ test('remote arrows move through setting rows without changing any setting', asy
   assert.equal(f.focus(), 'primary');
   await f.key(39);
   assert.equal(f.focus(), 'receiver');
-  for (const row of ['source', 'compression', 'autostart', 'metrics']) {
+  for (const row of [
+    'source',
+    'compression',
+    'autostart',
+    'calibrate',
+    'metrics',
+  ]) {
     await f.key(40);
     assert.equal(f.focus(), row);
   }
@@ -806,7 +812,7 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
   for (const [shade, color] of [
     'red',
     'green',
-    'blue',
+    'blue-pair',
     'cyan',
     'magenta',
     'yellow',
@@ -833,7 +839,7 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
     'calibration/colors.mp4',
   );
   for (const [step, clips] of [
-    ['intensity', ['clay', 'leaf', 'denim']],
+    ['intensity', ['blue-pair', 'red-pair', 'green-pair']],
     ['mixed', ['coast', 'garden', 'dusk']],
   ]) {
     for (const [shade, clip] of clips.entries()) {

@@ -5,6 +5,7 @@ import type {
   StateResponse,
   Target,
 } from './api';
+import { ProfilePicker } from './ProfilePicker';
 import { SetupCard } from './SetupCard';
 
 export function Overview({
@@ -181,34 +182,20 @@ export function Overview({
                   >
                     {option.value === 'prysm' ? (
                       <>
-                        <rect
-                          className="source-aura"
-                          x="8"
-                          y="6"
-                          width="48"
-                          height="31"
-                          rx="6"
-                        />
-                        <defs>
-                          <linearGradient id="source-picture" x2="1" y2="1">
-                            <stop stopColor="#dba6d9" />
-                            <stop offset=".5" stopColor="#b5a1ef" />
-                            <stop offset="1" stopColor="#8bd4e3" />
-                          </linearGradient>
-                        </defs>
-                        <rect
-                          x="13"
-                          y="11"
-                          width="38"
-                          height="23"
-                          rx="3"
-                          fill="url(#source-picture)"
-                          fillOpacity=".24"
-                        />
-                        <path d="M26 41h12m-6-7v7" />
                         <path
-                          className="source-accent"
-                          d="M18 7h28M9 16v12m46-12v12"
+                          stroke="#edac77"
+                          d="M32 10H16a3 3 0 0 0-3 3v17a3 3 0 0 0 3 3h16"
+                        />
+                        <path
+                          stroke="#76bfd2"
+                          d="M32 10h16a3 3 0 0 1 3 3v17a3 3 0 0 1-3 3H32"
+                        />
+                        <path d="M26 40h12m-6-7v7" />
+                        <path stroke="#edac77" strokeWidth="2.5" d="M7 15v12" />
+                        <path
+                          stroke="#76bfd2"
+                          strokeWidth="2.5"
+                          d="M57 15v12"
                         />
                       </>
                     ) : (
@@ -230,19 +217,56 @@ export function Overview({
               ))}
             </div>
           </fieldset>
-          <div className="source-link">
-            {values?.output?.type === 'wled' && source === 'wled' ? (
-              <a
-                id="wled"
-                className="wled-link"
-                href={values.output.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open WLED ↗
-              </a>
-            ) : null}
-          </div>
+          {settings && source === 'prysm' && (
+            <div className="sync-profile">
+              <ProfilePicker
+                calibration={settings.settings.calibration}
+                disabled={
+                  disabled || savingProfile || !!data?.calibration_active
+                }
+                onSelect={(active) => {
+                  setSavingProfile(true);
+                  setProfileError('');
+                  void saveSettings(settings.revision, {
+                    ...settings.settings,
+                    calibration: {
+                      ...settings.settings.calibration,
+                      active,
+                    },
+                  })
+                    .catch((error: unknown) =>
+                      setProfileError(
+                        error instanceof Error
+                          ? error.message
+                          : 'Could not select profile.',
+                      ),
+                    )
+                    .finally(() => setSavingProfile(false));
+                }}
+              />
+              {data?.calibration_active && (
+                <p role="status">
+                  Finish calibration on your TV to switch profiles.
+                </p>
+              )}
+              {profileError && <p role="alert">{profileError}</p>}
+            </div>
+          )}
+          {source === 'wled' && (
+            <div className="source-link">
+              {values?.output?.type === 'wled' ? (
+                <a
+                  id="wled"
+                  className="wled-link"
+                  href={values.output.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open WLED ↗
+                </a>
+              ) : null}
+            </div>
+          )}
         </div>
         {connectionError ? (
           <p className="notice error" role="alert">
@@ -316,51 +340,6 @@ export function Overview({
           </dl>
         </details>
       </section>
-      {settings ? (
-        <section className="card">
-          <label>
-            Color profile
-            <select
-              value={settings.settings.calibration.active ?? ''}
-              disabled={disabled || savingProfile || data?.calibration_active}
-              onChange={(event) => {
-                const active = event.target.value || null;
-                setSavingProfile(true);
-                setProfileError('');
-                void saveSettings(settings.revision, {
-                  ...settings.settings,
-                  calibration: {
-                    ...settings.settings.calibration,
-                    active,
-                  },
-                })
-                  .catch((error: unknown) =>
-                    setProfileError(
-                      error instanceof Error
-                        ? error.message
-                        : 'Could not select profile.',
-                    ),
-                  )
-                  .finally(() => setSavingProfile(false));
-              }}
-            >
-              <option value="">No correction</option>
-              {settings.settings.calibration.profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {data?.calibration_active ? (
-            <p role="status">
-              Calibration in progress—finish or exit on the TV to change
-              settings.
-            </p>
-          ) : null}
-          {profileError ? <p role="alert">{profileError}</p> : null}
-        </section>
-      ) : null}
       {values?.input && values.output ? (
         <SetupCard input={values.input} output={values.output} />
       ) : null}

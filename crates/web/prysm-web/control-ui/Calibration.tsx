@@ -10,14 +10,18 @@ import { useControl } from './useControl';
 import patterns from '../../calibration-patterns.json';
 import type { components } from './api.generated';
 
-const { colors, grays, muted } = patterns;
-const pairs = patterns.pairs.map((pair) => ({
-  ...pair,
-  swatch: `linear-gradient(90deg,${pair.leftColor} 50%,${pair.rightColor} 50%)`,
-}));
+const { colors } = patterns;
+function splitSwatches(patches: typeof patterns.pairs) {
+  return patches.map((pair) => ({
+    ...pair,
+    swatch: `linear-gradient(90deg,${pair.leftColor} 50%,${pair.rightColor} 50%)`,
+  }));
+}
+const intensity = splitSwatches(patterns.intensity);
+const pairs = splitSwatches(patterns.pairs);
 type View = components['schemas']['CalibrationView'];
 type Step = View['step'];
-const steps: { id: Exclude<Step, 'grays'>; label: string; title: string }[] = [
+const steps: { id: Step; label: string; title: string }[] = [
   { id: 'choose', label: 'Profile', title: 'Choose a profile' },
   { id: 'response', label: 'Response', title: 'Check the response' },
   {
@@ -52,6 +56,7 @@ export function Calibration({ pairing }: { pairing: string }) {
     save,
     cancel,
   } = useCalibrationSession(pairing);
+  const [editingHues, setEditingHues] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [editedName, setEditedName] = useState<string | null>(null);
   const view = settings ? session : null;
@@ -88,11 +93,13 @@ export function Calibration({ pairing }: { pairing: string }) {
     selectProfile(profile);
   }
   function move(step: Step) {
+    if (step === 'colors') setEditingHues(false);
     comparison(false);
     update({
       step,
       paused: step === 'colors',
-      shade: step === 'grays' ? 3 : 0,
+      shade:
+        step === 'colors' ? colors.findIndex(({ clip }) => clip === 'blue') : 0,
     });
   }
   const correction = view?.draft.correction ?? neutral;
@@ -100,25 +107,29 @@ export function Calibration({ pairing }: { pairing: string }) {
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, [view?.step, session?.ended, rejected]);
-  const hueIndex = wheel.indexOf(colors[view?.shade ?? 0]?.label ?? 'Red');
+  const tvColor = colors[view?.shade ?? 0];
+  const hueIndex = wheel.indexOf(tvColor?.label ?? 'Red');
   const hue = correction.hue ?? [0, 0, 0, 0, 0, 0];
   function changeCorrection(patch: Partial<View['draft']['correction']>) {
     update({ correction: { ...correction, ...patch } });
   }
   function changeHue(value: number) {
+    setEditingHues(true);
     changeCorrection({ hue: hue.map((v, i) => (i === hueIndex ? value : v)) });
   }
   const whiteBalance = (
     <WhiteBalanceControls value={correction} onChange={changeCorrection} />
   );
-  const darkTones = view?.step === 'grays';
-  const step = darkTones ? 'colors' : (view?.step ?? 'choose');
-  const stepIndex = steps.findIndex(({ id }) => id === step);
-  const previous = darkTones ? 'colors' : steps[stepIndex - 1]?.id;
-  const next = darkTones ? 'colors' : steps[stepIndex + 1]?.id;
-  let title = 'Connecting to your TV…';
-  if (darkTones) title = 'Fine-tune dark tones';
-  else if (view && steps[stepIndex]) title = steps[stepIndex].title;
+  const stepIndex = steps.findIndex(
+    ({ id }) => id === (view?.step ?? 'choose'),
+  );
+  const previous = steps[stepIndex - 1]?.id;
+  const next = steps[stepIndex + 1]?.id;
+  const title = view ? steps[stepIndex]?.title : 'Connecting to your TV…';
+  const pair = (view?.step === 'intensity' ? intensity : pairs)[
+    view?.shade ?? 0
+  ];
+
   if (session?.ended || rejected)
     return (
       <section className="calibration-wizard calibration-complete">
@@ -135,9 +146,7 @@ export function Calibration({ pairing }: { pairing: string }) {
           {rejected ? error : session?.ended}
         </p>
         {rejected && (
-          <p>
-            Start Match your lights in the Prysm TV app to get a fresh link.
-          </p>
+          <p>Start Calibrate Colors in the Prysm TV app to get a fresh link.</p>
         )}
         {session?.saved ? (
           <>
@@ -152,9 +161,9 @@ export function Calibration({ pairing }: { pairing: string }) {
       </section>
     );
   return (
-    <section className="calibration-wizard" aria-label="Match your lights">
+    <section className="calibration-wizard" aria-label="Calibrate Colors">
       <div className="calibration-topline">
-        <p className="eyebrow">MATCH YOUR LIGHTS</p>
+        <p className="eyebrow">CALIBRATE COLORS</p>
         <span>
           {view ? `${stepIndex + 1} / ${steps.length}` : 'CONNECTING'}
         </span>
@@ -274,6 +283,14 @@ export function Calibration({ pairing }: { pairing: string }) {
                   screen.
                 </p>
                 <div className="calibration-adjustments">{whiteBalance}</div>
+                {correction.midtones !== 0 && (
+                  <button
+                    className="calibration-text-button"
+                    onClick={() => changeCorrection({ midtones: 0 })}
+                  >
+                    Reset saved dark-tone adjustment ({correction.midtones})
+                  </button>
+                )}
                 <details className="calibration-details">
                   <summary>What should I look for?</summary>
                   <p>
@@ -285,69 +302,44 @@ export function Calibration({ pairing }: { pairing: string }) {
                 </details>
               </>
             ) : null}
-            {view.step === 'grays' ? (
-              <>
-                <p className="calibration-lead">
-                  Optional: change how strongly darker scenes light the wall.
-                </p>
-                <p className="calibration-tip">
-                  This is a preference, not a brightness match. Leave it at zero
-                  if neither direction looks clearly better.
-                </p>
-                <SwatchPicker
-                  label="TV shade"
-                  options={grays}
-                  selected={view.shade}
-                  onSelect={(shade) => update({ shade })}
-                />
-                <CalibrationSlider
-                  field="midtones"
-                  label="Dark-tone response"
-                  low="Darker"
-                  high="Lighter"
-                  value={correction.midtones}
-                  onChange={(midtones) => changeCorrection({ midtones })}
-                  resetLabel="Reset dark tones"
-                />
-                <p className="calibration-hint">
-                  This affects brightness across all colors. It cannot fix a
-                  tint that changes with brightness.
-                </p>
-              </>
-            ) : null}
             {view.step === 'intensity' || view.step === 'mixed' ? (
               <>
                 <p className="calibration-lead">
                   {view.step === 'intensity'
-                    ? 'Try all three patches. If the wall looks washed out, increase color intensity. If it looks too vivid, lower it.'
+                    ? 'Compare each side of the TV with the wall behind it. If the wall looks washed out, raise intensity. If it looks too vivid, lower it. Keep the blues distinct, then check red and green.'
                     : 'Compare the left and right sides of the wall with the same sides of the TV. Look for the two colors to stay distinct with your everyday settings.'}
                 </p>
                 <SwatchPicker
                   label="TV pattern"
-                  options={view.step === 'intensity' ? muted : pairs}
+                  options={view.step === 'intensity' ? intensity : pairs}
                   selected={view.shade}
                   onSelect={(shade) => update({ shade })}
                 />
+                <p className="calibration-pattern" role="status">
+                  {pair?.left} on the left · {pair?.right} on the right
+                </p>
                 {view.step === 'intensity' ? (
-                  <CalibrationSlider
-                    field="intensity"
-                    label="Color intensity"
-                    low="More muted"
-                    high="More vivid"
-                    value={correction.intensity ?? 0}
-                    onChange={(intensity) => changeCorrection({ intensity })}
-                    resetLabel="Reset intensity"
-                  />
+                  <>
+                    <CalibrationSlider
+                      field="intensity"
+                      label="Color intensity"
+                      low="More muted"
+                      high="More vivid"
+                      value={correction.intensity ?? 0}
+                      onChange={(intensity) => changeCorrection({ intensity })}
+                      resetLabel="Reset intensity"
+                    />
+                    <p className="calibration-tip">
+                      If neither setting looks closer on both sides, leave
+                      intensity as it was.
+                    </p>
+                  </>
                 ) : (
                   <>
-                    <p className="calibration-pattern" role="status">
-                      {pairs[view.shade]?.left} on the left ·{' '}
-                      {pairs[view.shade]?.right} on the right
-                    </p>
                     <p className="calibration-tip">
                       Hold for uncorrected to compare. If one color looks off,
-                      go back to Hues. If all colors feel too strong or weak,
-                      revisit intensity.
+                      use Back to revisit its hue. If all colors feel too strong
+                      or weak, revisit intensity.
                     </p>
                     <button
                       className="calibration-text-button"
@@ -362,20 +354,25 @@ export function Calibration({ pairing }: { pairing: string }) {
             {view.step === 'colors' ? (
               <>
                 <p className="calibration-lead">
-                  Choose a color that looks off on the wall. Adjust its hue
-                  toward the named neighbor until it looks closer to the TV.
-                  Leave the others as they are.
+                  Choose a color only if it leans toward the wrong neighbor. If
+                  the difference is brightness alone, leave its hue unchanged.
                 </p>
                 <SwatchPicker
                   label="TV color"
                   options={colors}
                   selected={view.paused ? view.shade : null}
-                  onSelect={(shade) => update({ shade, paused: true })}
+                  onSelect={(shade) => {
+                    setEditingHues(true);
+                    update({ shade, paused: true });
+                  }}
                 />
                 <p className="calibration-pattern" role="status">
                   {view.paused
-                    ? `${colors[view.shade]?.label} on your TV · stays until you change it`
+                    ? tvColor?.label + ' on your TV'
                     : 'Cycling through all six colors'}
+                  {view.paused &&
+                    tvColor?.clip === 'blue' &&
+                    ' · Moderate blue on the left · Vivid blue on the right. Does the wall blue lean too purple or too teal?'}
                 </p>
                 <button
                   className="calibration-text-button"
@@ -396,11 +393,7 @@ export function Calibration({ pairing }: { pairing: string }) {
                       resetLabel={`Reset ${wheel[hueIndex]?.toLowerCase()} hue`}
                     />
                   </div>
-                ) : (
-                  <p className="calibration-hint">
-                    Choose a static color to adjust its hue.
-                  </p>
-                )}
+                ) : null}
                 <details className="calibration-details">
                   <summary>Refine the overall color balance</summary>
                   <p>
@@ -409,16 +402,6 @@ export function Calibration({ pairing }: { pairing: string }) {
                     and cannot be removed by white balance.
                   </p>
                   {whiteBalance}
-                </details>
-                <details className="calibration-details">
-                  <summary>Dark scenes feel too strong or too faint?</summary>
-                  <p>
-                    Usually, leave dark tones unchanged. Adjust only if you see
-                    a consistent problem.
-                  </p>
-                  <button onClick={() => move('grays')}>
-                    Adjust dark tones
-                  </button>
                 </details>
               </>
             ) : null}
@@ -500,7 +483,9 @@ export function Calibration({ pairing }: { pairing: string }) {
                 disabled={busy || (view.step === 'response' && !confirmed)}
                 onClick={() => move(next)}
               >
-                {darkTones ? 'Done' : 'Next'}
+                {view.step === 'colors' && !editingHues
+                  ? 'Skip hue adjustment'
+                  : 'Next'}
               </button>
             )}
           </div>

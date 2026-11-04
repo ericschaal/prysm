@@ -17,8 +17,9 @@ def rgb(hex_color):
 
 
 COLORS = {p['clip']: rgb(p.get('reference', p['swatch']))
-          for group in ('grays', 'colors', 'muted') for p in PATTERNS[group]}
-SPLIT = {p['clip']: (rgb(p['leftColor']), rgb(p['rightColor'])) for p in PATTERNS['pairs']}
+          for group in ('grays', 'colors') for p in PATTERNS[group]}
+SPLIT = {p['clip']: (rgb(p['leftColor']), rgb(p['rightColor']))
+         for group in ('intensity', 'pairs') for p in PATTERNS[group]}
 # Static frames list the four quadrants in reading order.
 FRAMES = {name: (color,) * 4 for name, color in COLORS.items()}
 FRAMES.update({name: (left, right, left, right) for name, (left, right) in SPLIT.items()})

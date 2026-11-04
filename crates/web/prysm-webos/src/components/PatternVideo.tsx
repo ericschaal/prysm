@@ -87,7 +87,7 @@ export default function PatternVideo({
       {pattern !== shown && (
         <div key={pattern} className="pattern-pending" role="status">
           <span aria-hidden="true" />
-          Changing color…
+          Changing color...
         </div>
       )}
     </>

@@ -7,6 +7,7 @@ import {
   ProcessingFields,
   SourceField,
 } from './SettingsFields';
+import { ProfileSettings } from './ProfileSettings';
 import { LedLayout } from './LedLayout';
 import { inputLabels } from './settings-draft';
 import { useSettingsForm } from './useSettingsForm';
@@ -33,7 +34,7 @@ export function Settings({
 }) {
   const navigate = useNavigate();
   const form = useSettingsForm(settings, save, onDirty);
-  const [calibrationHelp, setCalibrationHelp] = useState(false);
+  const [discardCount, setDiscardCount] = useState(0);
   const [attempted, setAttempted] = useState(false);
   const [step, setStep] = useState(0);
   const formElementRef = useRef<HTMLFormElement>(null);
@@ -55,6 +56,7 @@ export function Settings({
   }
   function discard() {
     form.discard();
+    setDiscardCount((count) => count + 1);
     setAttempted(false);
   }
   function focusError(prefix = '') {
@@ -101,7 +103,6 @@ export function Settings({
     attempted,
     disabled: form.saving || disabled || data?.calibration_active === true,
   };
-  const profiles = draft.calibration;
   function settingsStatus() {
     if (setup) return 'Nothing is saved until you finish.';
     if (form.saving) return 'Saving…';
@@ -239,65 +240,22 @@ export function Settings({
             value={draft.source}
             onChange={(value) => form.change('source', value)}
           />
-          <section className="card">
-            <h2>Color profiles</h2>
-            <p>
-              To calibrate, open Prysm on your TV and choose Match your lights.
-            </p>
-            <button
-              type="button"
-              onClick={() => setCalibrationHelp(!calibrationHelp)}
-            >
-              Calibrate
-            </button>
-            {calibrationHelp ? (
-              <p role="status">
-                Open Prysm on your TV and choose Match your lights, then scan
-                the QR code with your phone.
-              </p>
-            ) : null}
-            {profiles.profiles.map((profile) => (
-              <div key={profile.id}>
-                <label>
-                  Profile name
-                  <input
-                    value={profile.name}
-                    maxLength={64}
-                    disabled={fields.disabled}
-                    onChange={(event) =>
-                      form.change('calibration', {
-                        ...profiles,
-                        profiles: profiles.profiles.map((p) =>
-                          p.id === profile.id
-                            ? { ...p, name: event.target.value }
-                            : p,
-                        ),
-                      })
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={fields.disabled}
-                  onClick={() =>
-                    form.change('calibration', {
-                      active:
-                        profiles.active === profile.id ? null : profiles.active,
-                      profiles: profiles.profiles.filter(
-                        (p) => p.id !== profile.id,
-                      ),
-                    })
-                  }
-                >
-                  Delete {profile.name}
-                </button>
-              </div>
-            ))}
-            <p>
-              Save settings to apply name changes or deletion. Deleting the
-              active profile selects No correction.
-            </p>
-          </section>
+          <ProfileSettings
+            key={form.base.revision + '/' + discardCount}
+            calibration={draft.calibration}
+            deleted={draft.deletedProfiles}
+            errors={form.errors}
+            disabled={fields.disabled}
+            rename={(id, name) =>
+              form.change('calibration', {
+                ...draft.calibration,
+                profiles: draft.calibration.profiles.map((p) =>
+                  p.id === id ? { ...p, name } : p,
+                ),
+              })
+            }
+            markDeleted={(ids) => form.change('deletedProfiles', ids)}
+          />
           {setup ? (
             <details className="setup-advanced">
               <summary>

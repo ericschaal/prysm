@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { calibrationFixture } from './fixture.mjs';
 
-test('phone flow: no dashboard flash, static colors, optional tones, failed save, reload and success', async ({
+test('phone flow: no dashboard flash, paired intensity, optional hues, failed save, reload and success', async ({
   page,
 }, testInfo) => {
   const fixture = calibrationFixture();
@@ -53,39 +53,52 @@ test('phone flow: no dashboard flash, static colors, optional tones, failed save
   await page.keyboard.up('Space');
   await expect.poll(() => fixture.view.compare).toBe(false);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.getByRole('button', { name: 'Leaf', exact: true }).click();
+  await expect(
+    page.getByText('Moderate blue on the left · Vivid blue on the right', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Green', exact: true }).click();
   await page.getByRole('slider', { name: 'Color intensity' }).fill('-24');
   await expect.poll(() => fixture.view.draft.correction.intensity).toBe(-24);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(
     page.getByRole('heading', { name: 'Fine-tune individual hues' }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Cyan', exact: true }).click();
+  ).toBeFocused();
+  await expect(page.getByRole('slider', { name: 'Blue hue' })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip hue adjustment' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Check colors together' }),
+  ).toBeFocused();
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  const picker = page.getByRole('group', { name: 'TV color' });
+  await expect(picker.getByRole('button')).toHaveCount(6);
+  await expect(
+    picker.getByRole('button', { name: 'Blue', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Cycle colors' }).click();
+  await expect.poll(() => fixture.view.paused).toBe(false);
+  await expect(page.getByRole('slider', { name: 'Blue hue' })).toHaveCount(0);
+  await picker.getByRole('button', { name: 'Cyan', exact: true }).click();
   await expect.poll(() => fixture.view.shade).toBe(3);
   expect(fixture.view.paused).toBe(true);
   await page.getByRole('slider', { name: 'Cyan hue' }).fill('32');
   await expect
     .poll(() => fixture.view.draft.correction.hue)
     .toEqual([0, 0, 0, 32, 0, 0]);
-  await page.getByRole('button', { name: 'Red', exact: true }).click();
+  await picker.getByRole('button', { name: 'Red', exact: true }).click();
   await expect(page.getByRole('slider', { name: 'Red hue' })).toHaveValue('0');
-  await page.getByRole('button', { name: 'Cyan', exact: true }).click();
+  await picker.getByRole('button', { name: 'Cyan', exact: true }).click();
   await expect(page.getByRole('slider', { name: 'Cyan hue' })).toHaveValue(
     '32',
   );
   await expect(
-    page.getByRole('button', { name: 'Cyan', exact: true }),
+    picker.getByRole('button', { name: 'Cyan', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({
     path: testInfo.outputPath('colors.png'),
     fullPage: true,
   });
-  await page.getByText('Dark scenes feel too strong or too faint?').click();
-  await page.getByRole('button', { name: 'Adjust dark tones' }).click();
-  await page.getByRole('button', { name: 'Dark', exact: true }).click();
-  await expect.poll(() => fixture.view.shade).toBe(2);
-  await page.getByRole('button', { name: 'Done', exact: true }).click();
-  expect(fixture.view.draft.correction.midtones).toBe(0);
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Dusk', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Amber on the left');

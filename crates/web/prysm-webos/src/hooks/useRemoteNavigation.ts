@@ -120,7 +120,11 @@ export function useRemoteNavigation(suspended = false) {
         direction === 'right' &&
         (active.id === 'primary' || active.id === 'service-options')
       )
-        target = lastSetting.current;
+        target = document
+          .getElementById(lastSetting.current)
+          ?.matches(':enabled')
+          ? lastSetting.current
+          : 'calibrate';
       const control = target ? document.getElementById(target) : null;
       if (control instanceof HTMLButtonElement && !control.disabled)
         control.focus();

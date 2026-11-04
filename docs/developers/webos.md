@@ -141,5 +141,6 @@ Save applies edits explicitly. Back cancels an editor, leaves service subviews, 
 asks before closing. Text fields retain cursor movement. Keep visible focus, large
 targets and pointer support; avoid native dropdowns that change during navigation.
 Status subscriptions must preserve unsaved edits and focus across reconnects.
-Setup repair and diagnostics live under Service options. Removing setup requires
+Settings starts with Prysm receiver. Calibrate Colors sits immediately above
+Prometheus metrics. Back from calibration returns focus to the row. Setup repair and diagnostics live under Service options. Removing setup requires
 confirmation and defaults to retaining it. Closing the app does not disable the sender.

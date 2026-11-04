@@ -5,7 +5,7 @@ for (const [width, height] of [
   [1920, 1080],
   [1280, 720],
 ]) {
-  test(`TV footer fits inside the safe area at ${width}×${height}`, async ({
+  test(`TV footer stays at the bottom safe margin at ${width}×${height}`, async ({
     page,
   }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'TV viewport check');
@@ -64,21 +64,41 @@ for (const [width, height] of [
       page.getByRole('heading', { name: 'Waiting for video' }),
     ).toBeVisible();
     await expect(
-      page.getByRole('button', { name: 'Match your lights' }),
+      page.getByRole('button', { name: 'Calibrate Colors' }),
     ).toBeVisible();
     const bounds = await page.locator('.key-help').boundingBox();
-    expect(bounds.y + bounds.height).toBeLessThanOrEqual(height * 0.95);
+    expect(Math.abs(bounds.y + bounds.height - height * 0.95)).toBeLessThan(1);
     expect(
       await page.evaluate(
         () => globalThis.document.documentElement.scrollHeight,
       ),
     ).toBeLessThanOrEqual(height);
     await page.screenshot({ path: testInfo.outputPath('tv-layout.png') });
-    const start = page.getByRole('button', { name: 'Match your lights' });
+    const start = page.getByRole('button', { name: 'Calibrate Colors' });
     const next = page.getByRole('button', { name: 'Show QR code' });
     const address = page.getByRole('textbox', { name: 'Prysm web address' });
     const back = page.getByRole('button', { name: 'Back', exact: true });
-    await start.click();
+    await expect(
+      page
+        .getByRole('region', { name: 'Settings' })
+        .getByRole('button', { name: 'Calibrate Colors' }),
+    ).toBeVisible();
+    await page.locator('#primary').focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#receiver')).toBeFocused();
+    for (const id of [
+      'source',
+      'compression',
+      'autostart',
+      'calibrate',
+      'metrics',
+    ]) {
+      await page.keyboard.press('ArrowDown');
+      await expect(page.locator('#' + id)).toBeFocused();
+    }
+    await page.keyboard.press('ArrowUp');
+    await expect(start).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(next).toBeFocused();
     await expect(address).toHaveValue('http://192.168.18.38:8787');
     await page.keyboard.press('ArrowUp');
@@ -170,7 +190,7 @@ for (const [width, height] of [
     await select(0);
     const video = page.locator('video');
     await expect(video).toHaveAttribute('src', /^blob:/);
-    await expect(page.getByText('Changing color…')).toHaveCount(0);
+    await expect(page.getByText('Changing color...')).toHaveCount(0);
     const frames = await video.evaluateHandle((player) => {
       const ctx = globalThis.document.createElement('canvas').getContext('2d');
       const samples = [];
@@ -186,11 +206,11 @@ for (const [width, height] of [
       .poll(() => frames.evaluate((s) => s.some(([r, g]) => r > 180 && g < 40)))
       .toBe(true);
     await select(1);
-    await expect(page.getByText('Changing color…')).toBeAttached();
+    await expect(page.getByText('Changing color...')).toBeAttached();
     await expect
       .poll(() => frames.evaluate((s) => s.some(([r, g]) => g > 180 && r < 40)))
       .toBe(true);
-    await expect(page.getByText('Changing color…')).toHaveCount(0);
+    await expect(page.getByText('Changing color...')).toHaveCount(0);
     expect(
       await frames.evaluate((s) => s.every((rgb) => Math.max(...rgb) > 150)),
     ).toBe(true);
@@ -198,7 +218,7 @@ for (const [width, height] of [
     await page.route('**/calibration/green.mp4', fallbackRequest.resolve);
     await video.dispatchEvent('error');
     const fallback = await fallbackRequest.promise;
-    const pending = page.getByText('Changing color…');
+    const pending = page.getByText('Changing color...');
     await expect(pending).toBeVisible();
     await fallback.fulfill({
       body: await readFile(
@@ -228,6 +248,14 @@ for (const [width, height] of [
     await expect(next).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(start).toBeFocused();
+    const metrics = page.getByRole('checkbox', { name: 'Prometheus metrics' });
+    await metrics.click();
+    await expect(
+      page.getByRole('button', { name: 'Save changes' }),
+    ).toBeVisible();
+    const dirtyBounds = await page.locator('.key-help').boundingBox();
+    expect(dirtyBounds.y).toBe(bounds.y);
+    await metrics.click();
   });
 
   test(`TV calibration fills ${width}×${height} without inset support`, async ({

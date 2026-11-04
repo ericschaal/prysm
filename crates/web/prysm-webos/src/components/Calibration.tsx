@@ -4,7 +4,7 @@ import PatternVideo, { type PatternPlayback } from './PatternVideo';
 import PairingScreen from './PairingScreen';
 import type { components } from '../../../prysm-web/control-ui/api.generated';
 type View = components['schemas']['CalibrationView'];
-const { colors, grays, muted, pairs } = patterns;
+const { colors, intensity, pairs } = patterns;
 
 function patternFor(view: View | null) {
   switch (view?.step) {
@@ -12,14 +12,15 @@ function patternFor(view: View | null) {
       return view.startup_pending ? 'response' : null;
     case 'white_balance':
       return 'gray-192';
-    case 'grays':
-      return grays[view.shade]?.clip;
     case 'intensity':
-      return muted[view.shade]?.clip;
+      return intensity[view.shade]?.clip;
     case 'mixed':
       return pairs[view.shade]?.clip;
     case 'colors':
-      return view.paused ? colors[view.shade]?.clip : 'colors';
+      if (!view.paused) return 'colors';
+      return colors[view.shade]?.clip === 'blue'
+        ? 'blue-pair'
+        : colors[view.shade]?.clip;
     case 'review':
       return 'review-grid';
     case 'response':
@@ -103,7 +104,7 @@ export default function Calibration({
           typeof next.connected !== 'boolean' ||
           !Number.isInteger(next.shade) ||
           next.shade < 0 ||
-          next.shade >= grays.length ||
+          next.shade >= colors.length ||
           (next.step !== 'choose' && !patternFor(next))
         )
           return;

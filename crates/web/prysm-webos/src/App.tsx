@@ -36,34 +36,36 @@ export default function App() {
     >
       <main id="app" aria-hidden={navigation.dialog ? true : undefined}>
         <Header />
-        <div className="layout">
-          <CaptureOverview
-            {...presentation}
-            online={capture.online}
-            changing={capture.changing}
-            primary={capture.primary}
-            calibrate={() => setCalibrating(true)}
-            openService={() => navigation.openDialog('service')}
-          />
-          <Settings
-            online={capture.online}
-            saved={capture.saved}
-            draft={capture.draft}
-            dirty={capture.dirty}
-            changing={capture.changing}
-            edit={capture.edit}
-            saveSettings={capture.saveSettings}
-            openDialog={navigation.openDialog}
-          />
+        <div className="home-content">
+          <div className="layout">
+            <CaptureOverview
+              {...presentation}
+              online={capture.online}
+              changing={capture.changing}
+              primary={capture.primary}
+              openService={() => navigation.openDialog('service')}
+            />
+            <Settings
+              online={capture.online}
+              saved={capture.saved}
+              draft={capture.draft}
+              dirty={capture.dirty}
+              changing={capture.changing}
+              edit={capture.edit}
+              calibrate={() => setCalibrating(true)}
+              saveSettings={capture.saveSettings}
+              openDialog={navigation.openDialog}
+            />
+          </div>
+          <p
+            id="notice"
+            className={'notice' + (capture.error ? ' error' : '')}
+            role={capture.error ? 'alert' : 'status'}
+            aria-live="polite"
+          >
+            {capture.notice}
+          </p>
         </div>
-        <p
-          id="notice"
-          className={'notice' + (capture.error ? ' error' : '')}
-          role={capture.error ? 'alert' : 'status'}
-          aria-live="polite"
-        >
-          {capture.notice}
-        </p>
         <footer className="key-help">
           <span>
             <b>↑ ↓ ← →</b> Move

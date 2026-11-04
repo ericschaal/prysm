@@ -19,6 +19,7 @@ interface Props {
   openDialog: (dialog: Dialog) => void;
   edit: <K extends keyof Config>(key: K, value: Config[K]) => void;
   saveSettings: () => void;
+  calibrate: () => void;
 }
 
 export default function Settings({
@@ -30,6 +31,7 @@ export default function Settings({
   openDialog,
   edit,
   saveSettings,
+  calibrate,
 }: Props) {
   let savedLabel = 'On this TV';
   if (saved) savedLabel = dirty ? 'Unsaved changes' : 'Saved';
@@ -50,6 +52,17 @@ export default function Settings({
         >
           {savedLabel}
         </span>
+        <button
+          id="save"
+          className="secondary"
+          hidden={!dirty}
+          disabled={!online || !dirty || changing}
+          data-down="receiver"
+          data-left="primary"
+          onClick={saveSettings}
+        >
+          Save changes
+        </button>
       </div>
       <div className="setting-list">
         {rows.map(([key, title, value], index) => (
@@ -58,8 +71,8 @@ export default function Settings({
             id={key}
             className="setting"
             aria-haspopup="dialog"
-            data-up={rows[index - 1]?.[0] ?? 'receiver'}
-            data-down={rows[index + 1]?.[0] ?? 'metrics'}
+            data-up={rows[index - 1]?.[0] ?? 'save'}
+            data-down={rows[index + 1]?.[0] ?? 'calibrate'}
             data-left="primary"
             disabled={!online || changing}
             onClick={() => openDialog(key)}
@@ -81,12 +94,27 @@ export default function Settings({
           </button>
         ))}
         <button
+          id="calibrate"
+          className="setting"
+          data-up="autostart"
+          data-down="metrics"
+          data-left={
+            online === null || changing ? 'service-options' : 'primary'
+          }
+          onClick={calibrate}
+        >
+          <span className="setting-label">Calibrate Colors</span>
+          <span className="chevron" aria-hidden="true">
+            ›
+          </span>
+        </button>
+        <button
           id="metrics"
           className="setting"
           role="checkbox"
           aria-checked={draft.metrics}
           aria-describedby="metrics-description"
-          data-up="autostart"
+          data-up="calibrate"
           data-down="save"
           data-left="primary"
           disabled={!online || changing}
@@ -99,18 +127,6 @@ export default function Settings({
             </span>
           </span>
           <span className="tickbox" aria-hidden="true" />
-        </button>
-      </div>
-      <div className="settings-footer">
-        <button
-          id="save"
-          className="secondary"
-          data-up="metrics"
-          data-left="service-options"
-          disabled={!online || !dirty || changing}
-          onClick={saveSettings}
-        >
-          Save changes
         </button>
       </div>
     </section>

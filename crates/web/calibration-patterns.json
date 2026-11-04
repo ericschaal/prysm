@@ -8,17 +8,13 @@
     {"clip": "yellow", "label": "Yellow", "swatch": "#edcb64", "reference": "#ffff00"}
   ],
   "grays": [
-    {"clip": "black", "label": "Black", "swatch": "#000000"},
-    {"clip": "gray-32", "label": "Very dark", "swatch": "#202020"},
-    {"clip": "gray-64", "label": "Dark", "swatch": "#404040"},
-    {"clip": "gray-128", "label": "Mid gray", "swatch": "#808080"},
-    {"clip": "gray-192", "label": "Light gray", "swatch": "#c0c0c0"},
-    {"clip": "white", "label": "White", "swatch": "#ffffff"}
+    {"clip": "gray-64", "swatch": "#404040"},
+    {"clip": "gray-192", "swatch": "#c0c0c0"}
   ],
-  "muted": [
-    {"clip": "clay", "label": "Clay", "swatch": "#c4765f"},
-    {"clip": "leaf", "label": "Leaf", "swatch": "#78a666"},
-    {"clip": "denim", "label": "Denim", "swatch": "#6d90bd"}
+  "intensity": [
+    {"clip": "blue-pair", "label": "Blue", "left": "Moderate blue", "right": "Vivid blue", "leftColor": "#3535c1", "rightColor": "#0000ff"},
+    {"clip": "red-pair", "label": "Red", "left": "Moderate red", "right": "Vivid red", "leftColor": "#cc5c5c", "rightColor": "#ff0000"},
+    {"clip": "green-pair", "label": "Green", "left": "Moderate green", "right": "Vivid green", "leftColor": "#a1eea1", "rightColor": "#00ff00"}
   ],
   "pairs": [
     {"clip": "coast", "label": "Coast", "left": "Peach", "right": "Teal", "leftColor": "#e7ad8a", "rightColor": "#419ea5"},

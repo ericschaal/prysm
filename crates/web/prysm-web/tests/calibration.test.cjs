@@ -163,7 +163,7 @@ test('leaving calibration cancels a scheduled initial connection retry', async (
   assert.equal(f.calls.length, 1);
   assert.equal(f.w.sessionStorage.length, 0);
 });
-test('wizard requires physical confirmation, manually advances shades, bypasses all correction, and retains a failed save', async (t) => {
+test('wizard requires physical confirmation, optionally adjusts hues, bypasses all correction, and retains a failed save', async (t) => {
   const f = await fixture(t);
   await f.click('New profile');
   assert.equal(f.button('Next').disabled, true);
@@ -187,16 +187,15 @@ test('wizard requires physical confirmation, manually advances shades, bypasses 
   assert.equal(f.view().draft.correction.warmth, 40);
   await f.click('Next');
   assert.equal(f.view().step, 'intensity');
+  assert.match(
+    f.w.document.querySelector('.calibration-pattern').textContent,
+    /Moderate blue on the left · Vivid blue on the right/,
+  );
   await f.click('Next');
   assert.equal(f.view().step, 'colors');
   await f.click('Cyan');
   assert.equal(f.view().shade, 3);
   assert.equal(f.view().paused, true);
-  await f.click('Adjust dark tones');
-  assert.equal(f.view().step, 'grays');
-  await f.click('Dark');
-  assert.equal(f.view().shade, 2);
-  await f.click('Done');
   await f.click('Next');
   assert.equal(f.view().step, 'mixed');
   await f.click('Next');
@@ -217,6 +216,38 @@ test('wizard requires physical confirmation, manually advances shades, bypasses 
   f.w.document.querySelector('a').click();
   await until(() => f.w.document.querySelector('.app-shell'));
 });
+for (const reset of [false, true]) {
+  test(`an existing dark-tone adjustment is ${reset ? 'reset explicitly' : 'preserved'} when skipping hues`, async (t) => {
+    const correction = {
+      warmth: 7,
+      tint: -5,
+      midtones: 27,
+      hue: [0, 0, 0, 0, -15, 0],
+    };
+    const f = await fixture(t, undefined, {
+      profiles: [{ id: 'old', name: 'Existing', correction }],
+    });
+    const select = f.w.document.querySelector('select');
+    select.value = 'old';
+    select.dispatchEvent(new f.w.Event('change', { bubbles: true }));
+    await until(() => f.view().step === 'response');
+    f.w.document.querySelector('input[type=checkbox]').click();
+    await f.click('Next');
+    if (reset) await f.click('Reset saved dark-tone adjustment (27)');
+    await f.click('Next');
+    await f.click('Next');
+    assert.equal(f.view().step, 'colors');
+    await f.click('Skip hue adjustment');
+    assert.equal(f.view().step, 'mixed');
+    await f.click('Next');
+    await f.click('Save and use');
+    assert.deepEqual(f.view().draft.correction, {
+      ...correction,
+      midtones: reset ? 0 : 27,
+    });
+    assert.ok(f.view().saved);
+  });
+}
 test('Stop in the profile chooser preserves the selected WLED source', async (t) => {
   const f = await fixture(t, undefined, { source: 'wled' });
   await f.click('Stop lighting');
@@ -337,7 +368,8 @@ for (const cancel of [false, true]) {
       const f = await fixture(t);
       await f.click('New profile');
       f.w.document.querySelector('input[type=checkbox]').click();
-      for (let i = 0; i < 4; i++) await f.click('Next');
+      for (let i = 0; i < 3; i++) await f.click('Next');
+      await f.click('Skip hue adjustment');
       assert.equal(f.view().step, 'mixed');
       const fetch = f.w.fetch;
       const release = Promise.withResolvers();

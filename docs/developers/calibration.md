@@ -129,13 +129,18 @@ still required across TV models and PS5/Freebox picture modes.
 
 ## Phone flow and local testing
 
-The main path is Profile → Response → White balance → Intensity → Hues → Mixed colors → Save. Dark-tone
-response remains available behind an optional disclosure in Colors. Existing
-profile values are preserved, including a nonzero midtone correction. Neutral
-matching targets tint, not equal luminance across a TV and reflected wall.
-Intensity uses three muted single-color patches. Hues uses the six individual
-clips and a cycle. Mixed colors uses three split-field clips to exercise both
-wall edges with colors outside the adjustment set. Save holds a single grid:
+The main path is Profile → Response → White balance → Intensity → Hues → Mixed colors → Save.
+White balance uses one light-grey reference. Existing profiles retain nonzero midtones
+unless the user explicitly resets that value during white balance.
+Intensity opens on a split field with moderate blue on the left and vivid blue
+on the right. Red and green offer the same comparison. The moderate references
+mix each linear RGB primary equally with grey at that primary’s BT.709 luminance,
+rounded to 8-bit sRGB codes. These are digital targets.
+The Hues stage opens with six labeled swatches, Blue selected, and a skip
+action. Selecting another swatch switches the TV pattern and hue slider. Skipping advances to Mixed colors with the draft intact. Static
+blue uses the same split field. The other five static hues and the six-color
+cycle use full-field references. Mixed colors uses three split-field clips
+outside the adjustment set. Save holds a single grid:
 peach and teal on top, violet and amber below.
 
 React Router owns navigation with a HashRouter, keeping the pairing capability
@@ -154,13 +159,13 @@ From `crates/web/prysm-web/control-ui`:
 - `npm run test:browser` builds both frontends and runs the wizard in desktop Chromium, mobile Chromium,
   a 320px viewport, and mobile WebKit. Tests cover delayed loading, explicit
   physical-response confirmation, live updates, hold/release, static color
-  selection, optional tones, reload/rejoin, failed save, successful save,
+  selection, optional hues, reload/rejoin, failed save, successful save,
   profile preservation, routing history, and Stop. Screenshots and failure
   traces go to ignored `test-results/`. TV layout checks also ensure the remote
   footer stays within the safe area at 1080p and 720p.
 - `npm test` runs the DOM/controller UI checks and the development proxy test.
 
-The simulation proves UI behavior, not optical accuracy or TV decoding. The revised static-color flow passed the LG hardware smoke test: all six
+The simulation proves UI behavior, not optical accuracy or TV decoding. The earlier full-field static-color flow passed the LG hardware smoke test: all six
 colors maintained capture, decoded correctly, and drove the expected LED
 output. The user confirmed the physical lights followed. See the capture
-evidence linked above. Optical accuracy across picture modes is still unmeasured.
+evidence linked above. On the project LG, the blue comparison produced distinct left and right receiver samples during intensity and hue adjustments. The receiver samples do not measure the brightness of the reflected light.

@@ -152,7 +152,6 @@ pub enum CalibrationStep {
     Choose,
     Response,
     WhiteBalance,
-    Grays,
     Intensity,
     Colors,
     Mixed,

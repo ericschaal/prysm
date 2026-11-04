@@ -21,6 +21,7 @@ export type InputDraft = {
 );
 export type SettingsDraft = {
   calibration: SettingsValues['calibration'];
+  deletedProfiles: string[];
   source: SettingsValues['source'];
   input: InputDraft;
   output: { url: string; leds: { [K in Edge]: string } };
@@ -30,6 +31,7 @@ export type SettingsDraft = {
 };
 export type SettingsField =
   | 'source'
+  | `calibration.${string}.name`
   | 'input.type'
   | 'input.device'
   | 'input.path'
@@ -147,6 +149,7 @@ export function draftFrom(settings: SettingsValues): SettingsDraft {
   const { processing, output } = settings;
   return {
     calibration: settings.calibration,
+    deletedProfiles: [],
     source: settings.source,
     input: inputDraft(settings.input),
     output: {
@@ -243,6 +246,17 @@ export function validate(draft: SettingsDraft): DraftErrors {
       field.max,
       field.step !== 'any',
     );
+  for (const { id, name } of draft.calibration.profiles) {
+    if (draft.deletedProfiles.includes(id)) continue;
+    if (
+      !name.trim() ||
+      name !== name.trim() ||
+      [...name].length > 64 ||
+      /\p{Cc}/u.test(name)
+    )
+      errors[`calibration.${id}.name`] =
+        'Use 1–64 characters without surrounding spaces or control characters.';
+  }
   return errors;
 }
 
@@ -265,7 +279,14 @@ export function settingsFrom(draft: SettingsDraft): SettingsValues {
   const { leds, url } = draft.output;
   const p = draft.processing;
   return {
-    calibration: draft.calibration,
+    calibration: {
+      active: draft.deletedProfiles.includes(draft.calibration.active ?? '')
+        ? null
+        : draft.calibration.active,
+      profiles: draft.calibration.profiles.filter(
+        (p) => !draft.deletedProfiles.includes(p.id),
+      ),
+    },
     source: draft.source,
     input: inputValue(draft.input),
     output: {

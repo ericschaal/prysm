@@ -247,7 +247,7 @@ p {
 .source-aura { opacity:.3; }
 .source-accent { color:#bca4db; }
 .source[aria-pressed=true] { color:#f1e9ff; }
-.source[aria-pressed=true] .source-icon { filter:drop-shadow(0 0 7px #c6a0ff55); }
+.source[data-source=wled][aria-pressed=true] .source-icon { filter:drop-shadow(0 0 7px #c6a0ff55); }
 .source[aria-pressed=true] .source-aura { color:#b5a1ef; opacity:.8; }
 .source[aria-pressed=true] .source-accent { color:#a8dce9; }
 .source:hover:enabled { background:#ffffff04; color:#fff; border-color:transparent; }
@@ -898,3 +898,47 @@ h1,h2  {
   .calibration-slider input { appearance:auto; }
   .calibration-progress li[aria-current=step],.calibration-swatches button[aria-pressed=true] { outline:2px solid Highlight; }
 }
+
+/* The profile belongs to Screen Sync, beneath the source choice. */
+.sync-profile { margin-top:8px; }
+.profile-trigger { display:flex; width:100%; align-items:center; gap:12px; min-height:44px; padding:6px 10px; text-align:left; font-weight:400; font-size:13px; color:#d8d3e2; background:transparent; border:1px solid transparent; box-shadow:none; }
+.profile-trigger strong { margin-left:auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; color:#fff; }
+.profile-trigger>span:first-child { flex:none; }
+.profile-trigger:hover:enabled,.profile-trigger[aria-expanded=true] { background:#ffffff08; border-color:#ffffff1a; }
+.profile-trigger:disabled { cursor:default; }
+.picker-chevron { flex:none; width:7px; height:7px; border:solid #c5bfd1; border-width:0 1.5px 1.5px 0; transform:rotate(45deg); margin:-3px 2px 0 0; }
+.profile-trigger[aria-expanded=true] .picker-chevron { transform:rotate(225deg); margin-top:3px; }
+.profile-trigger:disabled .picker-chevron { visibility:hidden; }
+.profile-options { max-height:240px; overflow:auto; margin:4px 0 0; padding:4px; border:1px solid #ffffff24; border-radius:12px; background:#262739; }
+.profile-options button { display:flex; justify-content:space-between; align-items:center; gap:12px; width:100%; min-height:44px; padding:9px 12px; border:0; border-radius:8px; background:transparent; box-shadow:none; font-size:13px; font-weight:400; color:#e1deea; text-align:left; overflow-wrap:anywhere; }
+.profile-options button[aria-selected=true] { background:#ffffff0d; font-weight:600; color:#fff; }
+.profile-options button:hover:enabled,.profile-options button:focus-visible { background:#ffffff17; }
+.profile-options button:focus-visible { outline:2px solid #c5abe9; outline-offset:-2px; }
+.profile-options button:last-child:not(:first-child) { border-top:1px solid #ffffff1a; }
+.profile-check { color:#d9c9ef; }
+.sync-profile p { font-size:12px; color:#e2dbea; margin:4px 0 0; }
+.profile-settings { margin:24px 0; }
+.profile-settings h3 { margin-bottom:4px; }
+.profile-caption,.profile-footnote,.profile-empty p,.profile-identity small { color:#696577; font-size:13px; }
+.profile-caption { margin:0 0 12px; }
+.profile-footnote { margin:10px 0 0; font-size:12px; }
+.profile-list { list-style:none; margin:0; padding:0; border-block:1px solid #e3dfeb; }
+.profile-row { display:flex; align-items:center; gap:10px; min-height:54px; padding:5px 2px; }
+.profile-row + .profile-row { border-top:1px solid #e9e6ee; }
+.profile-identity { flex:1; min-width:0; font-size:14px; font-weight:500; overflow-wrap:anywhere; }
+.profile-identity small { display:block; font-weight:400; }
+.profile-identity s { color:#797381; }
+.profile-active { font-size:11px; font-weight:600; color:#614a7d; background:#eee8f4; padding:3px 8px; border-radius:20px; }
+.profile-actions { position:relative; }
+.profile-more,.profile-text-action { min-width:44px; min-height:44px; box-shadow:none; border:0; background:transparent; color:#665672; padding:6px 10px; }
+.profile-more { letter-spacing:1px; }
+.profile-text-action { font-size:13px; }
+.profile-action-list { position:absolute; z-index:2; top:100%; right:0; min-width:132px; padding:4px; background:#fff; border:1px solid #e1dce8; border-radius:12px; box-shadow:0 5px 20px #2d203820; }
+.profile-action-list button { display:block; text-align:left; width:100%; border:0; box-shadow:none; background:transparent; font-size:13px; }
+.profile-action-list .profile-delete { color:#a43d52; }
+.profile-row .profile-editor { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:10px; flex:1; min-width:0; margin:0; padding:4px 0; border:0; }
+.profile-editor label,.profile-editor small { grid-column:1 / -1; }
+.profile-editor label { font-size:12px; }
+.profile-empty { padding:14px 0; border-block:1px solid #e3dfeb; }
+.profile-empty strong { font-size:14px; }
+.profile-empty p { margin:4px 0 0; }

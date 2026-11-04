@@ -107,7 +107,7 @@ export interface components {
             token: components["schemas"]["OperationId"];
         };
         /** @enum {string} */
-        CalibrationStep: "choose" | "response" | "white_balance" | "grays" | "intensity" | "colors" | "mixed" | "review";
+        CalibrationStep: "choose" | "response" | "white_balance" | "intensity" | "colors" | "mixed" | "review";
         CalibrationView: {
             compare: boolean;
             connected: boolean;
