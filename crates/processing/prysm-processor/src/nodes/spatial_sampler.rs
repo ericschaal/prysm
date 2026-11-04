@@ -1,5 +1,7 @@
 use crate::frames::FrameView;
 use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity};
+#[cfg(feature = "parallel-projection")]
+use rayon::prelude::*;
 
 /// Projects the whole picture onto the perimeter using a smooth distance falloff.
 #[derive(Debug)]
@@ -130,20 +132,21 @@ impl SpatialSampler {
             *color = view.average_linear(x0, y0, x1, y1, rgb);
         }
         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
+            #[cfg(feature = "parallel-projection")]
+            let rows = weights.par_chunks_exact(self.cell_colors.len());
+            #[cfg(not(feature = "parallel-projection"))]
+            let rows = weights.chunks_exact(self.cell_colors.len());
             ColorStrip::new(
-                weights
-                    .chunks_exact(self.cell_colors.len())
-                    .map(|row| {
-                        let mut sum = [0.0f64; 3];
-                        for (color, &weight) in self.cell_colors.iter().zip(row) {
-                            for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b])
-                            {
-                                *channel += f64::from(value) * f64::from(weight);
-                            }
+                rows.map(|row| {
+                    let mut sum = [0.0f64; 3];
+                    for (color, &weight) in self.cell_colors.iter().zip(row) {
+                        for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b]) {
+                            *channel += f64::from(value) * f64::from(weight);
                         }
-                        LinearColor::new(sum[0] as f32, sum[1] as f32, sum[2] as f32)
-                    })
-                    .collect(),
+                    }
+                    LinearColor::new(sum[0] as f32, sum[1] as f32, sum[2] as f32)
+                })
+                .collect(),
             )
             .expect("sample count is nonzero")
         });
@@ -214,6 +217,37 @@ mod tests {
                     assert_eq!(sampler.rgb.as_ptr(), allocation);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn projected_samples_match_serial_sums_in_strip_order() {
+        let mut sampler = SpatialSampler::new(SampleDensity(700), 0.15);
+        let output = sampler.process(&picture(93, 55, |x, y| {
+            [
+                x.to_le_bytes()[0],
+                y.to_le_bytes()[0],
+                (x ^ y).to_le_bytes()[0],
+            ]
+        }));
+        for (strip, weights) in strips(&output).into_iter().zip(&sampler.sample_weights) {
+            let cells = &sampler.cell_colors;
+            let reference: Vec<_> = weights
+                .chunks_exact(cells.len())
+                .map(|row| {
+                    let sum = |channel: fn(&LinearColor) -> f32| {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let value = cells
+                            .iter()
+                            .zip(row)
+                            .map(|(cell, w)| f64::from(channel(cell)) * f64::from(*w))
+                            .sum::<f64>() as f32;
+                        value
+                    };
+                    LinearColor::new(sum(|c| c.r), sum(|c| c.g), sum(|c| c.b))
+                })
+                .collect();
+            assert_eq!(strip.resample(strip.len()), reference);
         }
     }
 

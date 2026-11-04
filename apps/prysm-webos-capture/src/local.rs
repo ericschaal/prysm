@@ -89,8 +89,8 @@ fn main() -> Result<()> {
     let mut frames = 0u64;
     let start = Instant::now();
     let mut report = start;
+    let mut next_capture = start;
     while !stop.load(Ordering::Relaxed) {
-        let tick = Instant::now();
         if let Some(frame) = capture.capture(
             &mut |opts| native::Video::open(opts, config::Source::Both),
             &mut events,
@@ -108,7 +108,10 @@ fn main() -> Result<()> {
             );
             report = Instant::now();
         }
-        std::thread::sleep(period.saturating_sub(tick.elapsed()));
+        // Keep the requested cadence across late wakeups; never replay missed ticks.
+        let now = Instant::now();
+        next_capture = (next_capture + period).max(now);
+        std::thread::sleep(next_capture - now);
     }
     tracing::info!(
         frames,
