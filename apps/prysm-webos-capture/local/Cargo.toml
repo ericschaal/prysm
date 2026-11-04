@@ -1,0 +1,39 @@
+[package]
+name = "prysm-webos-local"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Experimental on-TV capture, processing and WLED output"
+
+[[bin]]
+name = "prysm-webos-local"
+path = "../src/local.rs"
+
+[dependencies]
+anyhow.workspace = true
+libc.workspace = true
+libloading.workspace = true
+nix = { workspace = true, features = ["fs", "signal", "user"] }
+prysm-contract = { path = "../../../crates/common/prysm-contract" }
+prysm-core = { path = "../../../crates/common/prysm-core" }
+prysm-metrics = { path = "../../../crates/common/prysm-metrics" }
+prysm-processor = { path = "../../../crates/processing/prysm-processor" }
+prysm-renderer-wled = { path = "../../../crates/rendering/prysm-renderer-wled" }
+prysm-webos-protocol = { path = "../../../crates/capture/prysm-webos-protocol" }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+yuv.workspace = true
+
+[dev-dependencies]
+nix = { workspace = true, features = ["pthread"] }
+
+[build-dependencies]
+cc.workspace = true
+
+[lints]
+workspace = true

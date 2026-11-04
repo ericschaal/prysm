@@ -5,6 +5,7 @@ members = [
     "xtask",
     "apps/prysm",
     "apps/prysm-webos-capture",
+    "apps/prysm-webos-capture/local",
     "apps/prysm-webos-service",
     "crates/web/prysm-web",
     "crates/capture/prysm-capture",

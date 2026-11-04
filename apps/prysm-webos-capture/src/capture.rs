@@ -42,11 +42,17 @@ pub struct Capture<V: FrameCapture> {
 }
 
 impl<V: FrameCapture> Capture<V> {
+    #[must_use]
     pub fn new(config: &Config) -> Self {
+        Self::with_options(config.capture, config.source)
+    }
+
+    #[must_use]
+    pub fn with_options(options: CaptureOptions, source: Source) -> Self {
         prysm_metrics::backend_info(prysm_metrics::Backend::Disabled);
         Self {
-            options: config.capture,
-            source: config.source,
+            options,
+            source,
             video: None,
             video_available: true,
             video_retry: Instant::now(),

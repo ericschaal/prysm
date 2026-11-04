@@ -2111,6 +2111,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "prysm-webos-local"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "libc",
+ "libloading 0.9.0",
+ "nix",
+ "prysm-contract",
+ "prysm-core",
+ "prysm-metrics",
+ "prysm-processor",
+ "prysm-renderer-wled",
+ "prysm-webos-protocol",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "yuv",
+]
+
+[[package]]
 name = "prysm-webos-protocol"
 version = "0.1.0"
 dependencies = [
