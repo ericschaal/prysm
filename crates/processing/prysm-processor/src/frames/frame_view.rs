@@ -64,64 +64,60 @@ impl FrameView {
         y_end: u32,
         rgb: Option<&[u8]>,
     ) -> LinearColor {
-        let mut sum = [0.0f64; 3];
-        let mut count = 0u64;
-
-        for y in y_start..y_end {
-            let abs_y = self.viewport.y + y;
-            if abs_y >= self.frame.height() {
-                break;
-            }
-            for x in x_start..x_end {
-                let abs_x = self.viewport.x + x;
-                if abs_x >= self.frame.width() {
-                    break;
-                }
-                if let Some(color) = self.pixel_srgb(abs_x, abs_y, rgb) {
-                    let color = LinearColor::from_srgb(color);
-                    for (channel, value) in sum.iter_mut().zip([color.r, color.g, color.b]) {
-                        *channel += f64::from(value);
-                    }
-                    count += 1;
-                }
-            }
+        let width = self.frame.width();
+        let height = self.frame.height();
+        let x0 = self.viewport.x.saturating_add(x_start).min(width);
+        let x1 = self.viewport.x.saturating_add(x_end).min(width);
+        let y0 = self.viewport.y.saturating_add(y_start).min(height);
+        let y1 = self.viewport.y.saturating_add(y_end).min(height);
+        if x0 >= x1 || y0 >= y1 {
+            return LinearColor::black();
         }
 
+        let (data, format) = rgb.map_or((self.frame.as_slice(), self.frame.format()), |rgb| {
+            (rgb, PixelFormat::RGB24)
+        });
+        let mut sum = [0.0f64; 3];
+        let mut count = 0u64;
+        let mut add = |color| {
+            let linear = LinearColor::from_srgb(color);
+            sum[0] += f64::from(linear.r);
+            sum[1] += f64::from(linear.g);
+            sum[2] += f64::from(linear.b);
+            count += 1;
+        };
+        match format {
+            PixelFormat::RGB24 | PixelFormat::BGR24 => {
+                let pixels = data.as_chunks::<3>().0;
+                for y in y0..y1 {
+                    let row = y as usize * width as usize;
+                    let end = (row + x1 as usize).min(pixels.len());
+                    if let Some(span) = pixels.get(row + x0 as usize..end) {
+                        for &[r, g, b] in span {
+                            add(Color::new(r, g, b));
+                        }
+                    }
+                }
+                if format == PixelFormat::BGR24 {
+                    sum.swap(0, 2);
+                }
+            }
+            PixelFormat::YUYV { range, matrix } => {
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let (r, g, b) =
+                            prysm_core::yuyv::yuyv_pixel_to_rgb(data, x, y, width, range, matrix);
+                        add(Color::new(r, g, b));
+                    }
+                }
+            }
+            PixelFormat::MJPEG => return LinearColor::black(),
+        }
         if count == 0 {
             return LinearColor::black();
         }
         let [r, g, b] = sum.map(|channel| (channel / count as f64) as f32);
         LinearColor::new(r, g, b)
-    }
-
-    /// Decode a single pixel (absolute coordinates) to sRGB.
-    fn pixel_srgb(&self, x: u32, y: u32, rgb: Option<&[u8]>) -> Option<Color> {
-        let (data, format) = rgb.map_or((self.frame.as_slice(), self.frame.format()), |rgb| {
-            (rgb, PixelFormat::RGB24)
-        });
-        match format {
-            PixelFormat::YUYV { range, matrix } => {
-                let (red, green, blue) = prysm_core::yuyv::yuyv_pixel_to_rgb(
-                    self.frame.as_slice(),
-                    x,
-                    y,
-                    self.frame.width(),
-                    range,
-                    matrix,
-                );
-                Some(Color::new(red, green, blue))
-            }
-            PixelFormat::RGB24 | PixelFormat::BGR24 => {
-                let idx = ((y * self.frame.width() + x) * 3) as usize;
-                let px = data.get(idx..idx + 3)?;
-                Some(if format == PixelFormat::BGR24 {
-                    Color::new(px[2], px[1], px[0])
-                } else {
-                    Color::new(px[0], px[1], px[2])
-                })
-            }
-            PixelFormat::MJPEG => None,
-        }
     }
 }
 
@@ -161,6 +157,29 @@ pub mod tests {
         // Out of bounds reads as black
         assert_eq!(luma_at(&frame, 4, 0), 0);
         assert_eq!(luma_at(&frame, 0, 2), 0);
+    }
+
+    #[test]
+    fn packed_row_spans_preserve_channel_order_and_clip_to_frame() {
+        let rgb = [[2, 30, 60], [255, 0, 0], [21, 39, 53], [0, 0, 0]];
+        for format in [PixelFormat::RGB24, PixelFormat::BGR24] {
+            let data = rgb
+                .iter()
+                .flat_map(|&[r, g, b]| {
+                    if format == PixelFormat::RGB24 {
+                        [r, g, b]
+                    } else {
+                        [b, g, r]
+                    }
+                })
+                .collect();
+            let mut view = FrameView::new(Frame::new(data, 2, 2, format).unwrap());
+            view.viewport.x = 1;
+            assert_eq!(
+                view.average_linear(0, 0, 3, 2, None),
+                LinearColor::new(0.5, 0.0, 0.0)
+            );
+        }
     }
 
     #[test]

@@ -13,6 +13,9 @@ description = "Experimental on-TV capture, processing and WLED output"
 name = "prysm-webos-local"
 path = "../src/local.rs"
 
+[features]
+webos-neon = ["dep:rayon"]
+
 [dependencies]
 anyhow.workspace = true
 libc.workspace = true
@@ -27,7 +30,10 @@ prysm-webos-protocol = { path = "../../../crates/capture/prysm-webos-protocol" }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-yuv.workspace = true
+yuv = { workspace = true, features = ["rayon"] }
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 nix = { workspace = true, features = ["pthread"] }

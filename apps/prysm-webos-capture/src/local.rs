@@ -7,6 +7,9 @@ pub mod events;
 mod lock;
 #[allow(unsafe_code)]
 pub mod native;
+#[cfg(all(target_arch = "arm", feature = "webos-neon"))]
+#[allow(unsafe_code)]
+mod nv12;
 mod pixels;
 mod shutdown;
 
@@ -29,6 +32,16 @@ fn rgb(pool: &mut FramePool, header: prysm_webos_protocol::Header, raw: &[u8]) -
     );
     let (y_plane, uv_plane) = raw.split_at(header.width as usize * header.height as usize);
     let mut frame = pool.acquire(header.width, header.height, PixelFormat::RGB24)?;
+    #[cfg(all(target_arch = "arm", feature = "webos-neon"))]
+    if header.width.is_multiple_of(8) {
+        nv12::convert(
+            y_plane,
+            uv_plane,
+            frame.as_mut_slice(),
+            header.width as usize,
+        );
+        return Ok(frame.finish());
+    }
     yuv::yuv_nv12_to_rgb(
         &yuv::YuvBiPlanarImage {
             y_plane,
@@ -110,8 +123,11 @@ fn main() -> Result<()> {
         }
         // Keep the requested cadence across late wakeups; never replay missed ticks.
         let now = Instant::now();
-        next_capture = (next_capture + period).max(now);
-        std::thread::sleep(next_capture - now);
+        next_capture += period;
+        if now.saturating_duration_since(next_capture) >= period {
+            next_capture = now;
+        }
+        std::thread::sleep(next_capture.saturating_duration_since(now));
     }
     tracing::info!(
         frames,

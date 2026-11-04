@@ -54,6 +54,26 @@ A separate 45-second run with temporary monotonic timers sustained 16.74 FPS. Th
 
 At the configured density and full viewport, 720p has four times the input pixels of 640×360 and 1,022 edge samples instead of 510. Both project from 9,216 grid cells. Grid averaging still runs serially, while edge projection uses the worker pool. Together these two stages consumed 45.12 ms per frame. Even the fastest measured frame took 52.38 ms against the 33.33 ms budget for 30 FPS. The settings, installed service and original Home foreground were verified after both runs.
 
+## Parallel grid and ARM conversion at 1280×720
+
+On the original brightness clip, the on-TV pipeline reached **29.97 FPS** over 35.170 steady-state seconds, up from 16.95 FPS on the previous 720p trial. The settings snapshot, 162 LEDs, native tap, and video clip were the same. Enabling parallel grid averaging and the YUV library’s parallel row conversion first reached 26.45 FPS. The webOS build now uses an ARMv7 NEON kernel for eight-pixel blocks with the same limited-range BT.709 Q13 coefficients and rounding. Other widths use the portable converter. Each grid cell traverses contiguous RGB rows in its original summation order. Two projected edge samples share each cell load and accumulate separately. The capture clock keeps its phase across short overruns.
+
+The stage profiles below omit the first five seconds. The earlier profile included 675 frames and the final one included 812. Times are milliseconds per successful frame.
+
+| Stage | Previous mean | Final mean | Final p95 |
+| --- | ---: | ---: | ---: |
+| Native acquisition and copy | 0.71 | 0.69 | 0.80 |
+| NV12 to RGB | 11.10 | 2.94 | 3.92 |
+| Grid averaging | 23.15 | 3.34 | 5.17 |
+| Edge projection | 21.97 | 16.06 | 19.87 |
+| Other processing | 2.38 | 1.41 | 2.61 |
+| DDP send | 0.14 | 0.14 | 0.18 |
+| **Total work** | **59.45** | **24.59** | **29.07** |
+
+The TV’s ARM test compares the vector kernel with the portable converter for every 8-bit Y, U and V combination. A separate replay ran both the original and optimized pipelines on 18 deterministic NV12 frames at fixed processing timestamps and with the active calibration. It included black, white, random chroma, dark borders and two frame sizes (1280×720 and 322×182). All 34,232,472 RGB bytes and all 8,928 bytes of WLED DDP packets matched using a bytewise comparison.
+
+The final executable sustained **29.86 FPS** between the first and last five-second reports of a 90-second moving multicolor clip. It sent 2,671 frames including startup and averaged 2.02 CPU cores. WLED identified the TV as its DDP source. A separate 15-second packet capture saw 443 packets at 29.45 FPS, with a change in LED values across all 442 consecutive pairs. Packet gaps reached 43.69 ms at p95 and 56.63 ms at maximum. The original foreground app, receiver settings and installed service were restored. The moving-clip executable’s SHA-256 is `c9ea0446c6514174d02d0c5959d1844cb2f6b06aa8dbd8347530ca2ea81af3c3`.
+
 ## Build and run
 
 From the worktree root with the Rust ARMv7 target installed and `WEBOS_SDK` pointing to the relocated buildroot-nc4 SDK, run:
