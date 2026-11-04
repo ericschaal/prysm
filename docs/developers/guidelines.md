@@ -2,63 +2,34 @@
 
 ## Code
 
-Keep applications under `apps/` and reusable libraries under
-`crates/{capture,processing,rendering,common,web}/`. Use the existing boundaries
-and types; see the [workspace map](architecture.md#workspace-map).
-`prysm-core` must not depend on application, serialization or runtime code.
-Avoid new dependencies for small helpers.
-
-Capture adapters implement `PrysmCapturer` and preserve terminal errors separately
-from replaceable frames. Do not block the HTTP/control runtime with capture or
-native I/O. Keep best-effort frame traffic separate from ordered lifecycle commands.
-Preserve validation, cleanup, timeouts, and [error sources](error-handling.md).
-
-`prysm-contract` owns validated disk/HTTP models. After changing routes or DTOs,
-[regenerate and test the frontend client](frontend.md#api-generation).
-Browser settings are one complete typed JSON document. CLI/environment configure
-only the process on every startup; neither group overrides the other. Keep
-network bindings and allowed hosts outside application settings. Do not add a
-database, generic settings resolver or separate setup-completion marker.
-
-Update affected callers, fixtures, examples and documentation together. Test
-behavior at the changed boundary. Preserve WLED stop/drain/join ordering and
-failure compensation; see the [control API](control-api.md#lighting-transitions).
+- Reuse existing boundaries and types; keep application/runtime/serialization
+  dependencies out of `prysm-core`.
+- Preserve typed validation and [error sources](error-handling.md).
+- Keep capture/native I/O off the control runtime. Frames may be replaced;
+  lifecycle commands must remain ordered.
+- Preserve [stop/drain/join ordering](architecture.md#shutdown-ordering), WLED
+  compensation and native watchdogs.
+- Keep browser JSON settings separate from CLI/environment process options.
+- Change callers, fixtures and docs together. Test the changed behavior.
+- After DTO/route changes, [regenerate contracts](frontend.md#api-generation).
 
 ## Documentation
 
-Each topic has one authoritative home:
+[Users](../users/README.md): steps to working lights.
+[Developers](README.md): current architecture, commands and contracts.
+[Research](../../research/README.md): experiments and measurements.
 
-- **[Users](../users/README.md):** installation, running capturers, configuration,
-  and common fixes. Lead with prerequisites, numbered steps, and a success check.
-  Use portable examples, show the explicit start action, and link out for details.
-- **[Developers](README.md):** current contracts, architecture, technical decisions,
-  debugging and contribution rules. Explain ownership, failure behavior and validation.
-  Component READMEs hold narrow implementation contracts and link here for shared setup.
-- **[Research](../../research/README.md):** experiments, alternatives and measurements.
-  Label date, status, tested platform,
-  findings and limits. Link to maintained guides for current behavior.
+Write short, action-first pages: prerequisites, exact commands/clicks, expected result.
+Cut promotion, vague steps, implementation narration in user guides, and repetition.
 
-The root README introduces Prysm and points into these paths. Agent guidance links
-here instead of repeating the architecture.
-Keep public links working when relocating a guide.
-The Debian package README is a self-contained installation handout; preserve its
-runtime instructions when changing packaging.
-
-Keep research evidence beside its scripts. Do not link to ignored `work/`, build
-outputs, machine-specific absolute paths, or temporary files as public evidence.
-Link to committed evidence that is available in a fresh checkout. Keep maintained
-guides focused on the current code; omit migration and compatibility notes for
-unreleased versions.
-
-When moving a page, update incoming links and its relative paths. Check local
-paths, images and heading anchors with:
+Give each topic one home; link instead of repeating it. Keep public paths/anchors
+working. Maintained guides describe current code, without unreleased-version
+migration notes. Link only committed evidence, never ignored build/work/temp files.
+Keep the Debian package handout self-contained.
 
 ```sh
 python3 -m unittest discover -s scripts/tests
 python3 scripts/check-doc-links.py
 ```
 
-The [documentation workflow](../../.github/workflows/documentation.yml) checks
-repository links and public URLs on documentation changes and can also run manually.
-Runtime localhost/LAN endpoints are examples,
-not public sites. Investigate failures rather than broadly excluding domains.
+[CI](../../.github/workflows/documentation.yml) also checks public URLs.
