@@ -21,6 +21,8 @@ pub struct Supervisor {
     pub stopping: bool,
     pub error: Option<String>,
     connected: bool,
+    busy: bool,
+    retry_delay: u64,
     capturing: bool,
     log: Option<String>,
     retry: Option<Instant>,
@@ -34,13 +36,15 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(config: Config) -> Self {
         Self {
-            enabled: config.autostart,
+            enabled: config.autostart && config.instance_url.is_some(),
             config,
             power: None,
             running: false,
             stopping: false,
             error: None,
             connected: false,
+            busy: false,
+            retry_delay: 1,
             capturing: false,
             log: None,
             retry: None,
@@ -53,7 +57,9 @@ impl Supervisor {
         }
     }
     fn wanted(&self) -> bool {
-        self.enabled && self.power.as_deref() == Some("Active") && self.config.receiver.is_some()
+        self.enabled
+            && self.power.as_deref() == Some("Active")
+            && self.config.instance_url.is_some()
     }
     pub fn contract(&self) -> SupervisorStatus {
         SupervisorStatus {
@@ -61,6 +67,7 @@ impl Supervisor {
             power: self.power.clone(),
             sender_running: self.running,
             receiver_connected: self.connected,
+            receiver_busy: self.busy,
             capturing: self.capturing,
             stopping: self.stopping,
             error: self.error.clone(),
@@ -106,6 +113,8 @@ impl Supervisor {
     }
     pub fn configure(&mut self, config: Config, now: Instant) {
         self.config = config;
+        self.busy = false;
+        self.retry_delay = 1;
         self.stop(now, true);
         self.reconcile(now);
     }
@@ -148,8 +157,11 @@ impl Supervisor {
             if !success && !self.expected_exit && self.error.is_none() {
                 self.error = Some(format!("Capturer exited: {description}"));
             }
-            self.retry =
-                Some(now + Duration::from_secs(if success || self.expected_exit { 1 } else { 5 }));
+            if !success && !self.expected_exit {
+                self.retry_delay = self.retry_delay.max(5);
+            }
+            self.retry = Some(now + Duration::from_secs(self.retry_delay));
+            self.retry_delay = (self.retry_delay * 2).min(15);
         }
         self.immediate = false;
         self.reconcile(now);
@@ -164,9 +176,19 @@ impl Supervisor {
             Event::EncoderIdle => self.encoder_at = None,
             Event::VideoResetting => self.video_reset_at = Some(now + Duration::from_secs(5)),
             Event::VideoReset => self.video_reset_at = None,
-            Event::Connected => self.connected = true,
+            Event::Connected => {
+                self.connected = true;
+                self.busy = false;
+                self.retry_delay = 1;
+            }
+            Event::ReceiverBusy => {
+                self.busy = true;
+                self.connected = false;
+                self.expected_exit = true;
+            }
             Event::Capturing => self.capturing = true,
             Event::Disconnected => {
+                self.busy = false;
                 self.expected_exit = true;
                 self.connected = false;
                 self.capturing = false;
@@ -194,7 +216,7 @@ mod tests {
     use super::*;
     fn configured() -> Supervisor {
         Supervisor::new(Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             autostart: true,
             ..Config::default()
         })
@@ -236,13 +258,16 @@ mod tests {
         state.set_power(Some("Active".into()), now);
         state.actions();
         let mut config = state.config.clone();
-        config.receiver = Some("[::1]:19400".parse().unwrap());
+        config.instance_url = Some("http://[::1]:8787".parse().unwrap());
         config.autostart = false;
         state.configure(config, now);
         assert_eq!(state.actions(), [Action::Terminate]);
         state.closed(true, "0", now);
         assert_eq!(state.actions(), [Action::Spawn]);
-        assert_eq!(state.config.receiver, Some("[::1]:19400".parse().unwrap()));
+        assert_eq!(
+            state.config.instance_url,
+            Some("http://[::1]:8787".parse().unwrap())
+        );
         assert!(state.enabled);
         state.enabled = false;
         state.stop(now, true);
@@ -306,7 +331,7 @@ mod video_reset_tests {
     fn completed_reset_keeps_worker_but_stalled_native_release_triggers_recovery() {
         let now = Instant::now();
         let mut state = Supervisor::new(Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             autostart: true,
             ..Config::default()
         });
@@ -331,7 +356,7 @@ mod encoder_tests {
     fn hardware_start_encode_and_drop_are_watchdog_bounded() {
         let now = Instant::now();
         let mut state = Supervisor::new(Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             autostart: true,
             ..Config::default()
         });

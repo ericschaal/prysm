@@ -91,7 +91,7 @@ async function fixture(t, options = {}) {
     lastLog: null,
     capabilities: { hardwareH264: options.hardwareH264 === true },
     config: {
-      receiver: '192.168.18.18:19400',
+      instanceUrl: options.instanceUrl ?? 'http://192.168.18.18:8787',
       source: 'both',
       compression: 'lz4',
       autostart: false,
@@ -249,11 +249,11 @@ test('receiver editing is explicit and cancels without overwriting the address',
   f.el('receiver').focus();
   await f.click('receiver');
   assert.equal(f.focus(), 'receiver-input');
-  await f.input('receiver-input', '192.168.1.50:19400');
+  await f.input('receiver-input', 'https://prysm.test');
   await f.key(461);
-  assert.equal(f.el('receiver-value').textContent, '192.168.18.18:19400');
+  assert.equal(f.el('receiver-value').textContent, 'http://192.168.18.18:8787');
   await f.click('receiver');
-  await f.input('receiver-input', '192.168.1.50:19400');
+  await f.input('receiver-input', 'https://prysm.test');
   await f.key(39);
   assert.equal(
     f.focus(),
@@ -263,7 +263,7 @@ test('receiver editing is explicit and cancels without overwriting the address',
   await f.key(40);
   assert.equal(f.focus(), 'receiver-apply');
   await f.click('receiver-apply');
-  assert.equal(f.el('receiver-value').textContent, '192.168.1.50:19400');
+  assert.equal(f.el('receiver-value').textContent, 'https://prysm.test');
   assert.deepEqual(f.mutations(), []);
 });
 
@@ -279,10 +279,10 @@ test('save-and-enable applies the draft before enabling, with no optimistic stre
   );
   assert.equal(f.value.config.compression, 'h264-software');
   assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
-  assert.equal(f.el('primary').textContent, 'Disable sender');
+  assert.equal(f.el('primary').textContent, 'Disable');
   await f.click('primary');
   assert.equal(f.value.enabled, false);
-  assert.equal(f.el('status-title').textContent, 'Sender disabled');
+  assert.equal(f.el('status-title').textContent, 'Disabled');
   assert.equal(f.el('notice').textContent, '');
 });
 
@@ -342,14 +342,17 @@ test('unavailable service offers setup and keeps the error visible', async (t) =
 
 test('a waiting sender is described as enabled, rather than actively capturing or paused', async (t) => {
   const f = await fixture(t);
-  assert.equal(f.el('primary').textContent, 'Enable sender');
+  assert.equal(f.el('primary').textContent, 'Enable');
   await f.click('primary');
   f.value.lastLog = 'capture handshake failed: Connection refused';
   await f.notify();
-  assert.equal(f.el('primary').textContent, 'Disable sender');
+  assert.equal(f.el('primary').textContent, 'Disable');
   assert.equal(f.el('connection').textContent, 'Waiting for Prysm');
   assert.equal(f.el('status-title').textContent, 'Waiting for Prysm');
-  assert.match(f.el('status-description').textContent, /enable webOS input/);
+  assert.match(
+    f.el('status-description').textContent,
+    /reconnect to your saved instance/,
+  );
   assert.equal(
     f.value.enabled,
     true,
@@ -401,7 +404,7 @@ test('a silent activation times out; hiding the page cancels retries and synchro
   assert.equal(f.calls.length, calls);
   f.options.silentStatus = false;
   await f.event('pageshow');
-  assert.equal(f.el('connection').textContent, 'Sender disabled');
+  assert.equal(f.el('connection').textContent, 'Disabled');
 });
 
 test('switching apps pauses sender updates until Prysm is visible again', async (t) => {
@@ -423,7 +426,7 @@ test('switching apps pauses sender updates until Prysm is visible again', async 
   assert.equal(f.calls.length, 1);
   await setHidden(false);
   assert.notEqual(f.subscription(), previous);
-  assert.equal(f.el('connection').textContent, 'Sender disabled');
+  assert.equal(f.el('connection').textContent, 'Disabled');
 });
 
 test('malformed or unsubscribed status replies are cancelled and retried', async (t) => {
@@ -437,7 +440,7 @@ test('malformed or unsubscribed status replies are cancelled and retried', async
   );
   assert.equal(f.el('connection').textContent, 'TV service unavailable');
   await f.advance(3000);
-  assert.equal(f.el('connection').textContent, 'Sender disabled');
+  assert.equal(f.el('connection').textContent, 'Disabled');
 });
 
 test('metrics checkbox defaults off and only persists on Save', async (t) => {
@@ -528,14 +531,14 @@ test('TV output uses relative classic scripts and excludes the local service sim
 
 test('local development service supports settings, subscriptions, start, stop and cleanup', async (t) => {
   const f = await fixture(t, { devService: true });
-  assert.equal(f.el('status-title').textContent, 'Sender disabled');
+  assert.equal(f.el('status-title').textContent, 'Disabled');
   await f.click('autostart');
   await f.click('choice-true');
   await f.click('primary');
   assert.equal(f.el('saved-state').textContent, 'Saved');
   assert.equal(f.el('status-title').textContent, 'Capturing');
   await f.click('primary');
-  assert.equal(f.el('status-title').textContent, 'Sender disabled');
+  assert.equal(f.el('status-title').textContent, 'Disabled');
   await f.click('service-options');
   await f.click('diagnostics');
   assert.match(
@@ -548,23 +551,23 @@ test('local development service supports settings, subscriptions, start, stop an
   assert.equal(f.el('autostart-value').textContent, 'Off');
   await f.event('pagehide');
   await f.event('pageshow');
-  assert.equal(f.el('status-title').textContent, 'Sender disabled');
+  assert.equal(f.el('status-title').textContent, 'Disabled');
 });
 
 test('receiver input survives status updates, trims on apply, and resets after cancelling', async (t) => {
   const f = await fixture(t);
   await f.click('receiver');
-  await f.input('receiver-input', '  192.168.1.50:19400  ');
+  await f.input('receiver-input', '  https://prysm.test  ');
   await f.notify();
-  assert.equal(f.el('receiver-input').value, '  192.168.1.50:19400  ');
+  assert.equal(f.el('receiver-input').value, '  https://prysm.test  ');
   assert.equal(f.focus(), 'receiver-input');
   await f.click('receiver-apply');
-  assert.equal(f.el('receiver-value').textContent, '192.168.1.50:19400');
+  assert.equal(f.el('receiver-value').textContent, 'https://prysm.test');
   await f.click('receiver');
   await f.input('receiver-input', 'discard me');
   await f.key(461);
   await f.click('receiver');
-  assert.equal(f.el('receiver-input').value, '192.168.1.50:19400');
+  assert.equal(f.el('receiver-input').value, 'https://prysm.test');
   assert.deepEqual(f.mutations(), []);
 });
 
@@ -595,10 +598,10 @@ test('request timeout ignores cancel reentry and late replies, then permits retr
   assert.match(f.el('notice').textContent, /did not respond/);
   assert.equal(f.el('primary').disabled, false);
   await f.reply(f.pending[0], JSON.stringify({ ...f.value, enabled: true }));
-  assert.equal(f.el('primary').textContent, 'Enable sender');
+  assert.equal(f.el('primary').textContent, 'Enable');
   f.options.deferMethods = [];
   await f.click('primary');
-  assert.equal(f.el('primary').textContent, 'Disable sender');
+  assert.equal(f.el('primary').textContent, 'Disable');
 });
 
 test('synchronous bridge errors and invalid action replies release the busy state', async (t) => {
@@ -616,7 +619,7 @@ test('synchronous bridge errors and invalid action replies release the busy stat
   }
   f.options.deferMethods = [];
   await f.click('primary');
-  assert.equal(f.el('primary').textContent, 'Disable sender');
+  assert.equal(f.el('primary').textContent, 'Disable');
 });
 
 test('service clients own cancellation independently and can be reused after effect cleanup', async (t) => {
@@ -669,7 +672,7 @@ test('status has one live location and setting explanations remain secondary tex
   assert.equal(f.el('status-title').textContent, 'Stopping capture…');
   f.value.error = 'capture failed';
   await f.notify();
-  assert.equal(f.el('status-title').textContent, 'Sender needs attention');
+  assert.equal(f.el('status-title').textContent, 'Capture needs attention');
   assert.ok(f.el('status-title').closest('.attention'));
   assert.match(f.el('status-description').textContent, /diagnostics or repair/);
 });
@@ -686,12 +689,16 @@ test('no video keeps an enabled sender in a stable waiting state across receiver
     f.el('status-description').textContent,
     /HDMI input or play a video/,
   );
-  assert.equal(f.el('primary').textContent, 'Disable sender');
+  assert.equal(f.el('primary').textContent, 'Disable');
   assert.equal(f.w.document.querySelector('.ready'), null);
   f.value.receiverConnected = false;
   f.value.capturing = false;
   await f.notify();
   assert.equal(f.el('status-title').textContent, 'Waiting for video');
+  f.value.stopping = true;
+  await f.notify();
+  assert.equal(f.el('status-title').textContent, 'Waiting for video');
+  f.value.stopping = false;
   assert.equal(f.value.enabled, true);
   f.value.videoAvailable = true;
   await f.notify();
@@ -717,7 +724,6 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
   f.w.HTMLMediaElement.prototype.pause = () => {};
   f.w.HTMLMediaElement.prototype.load = () => {};
   await f.click('calibrate');
-  await f.click('calibration-connect');
   const relay = f.w.document.querySelector('iframe');
   const messages = [];
   relay.contentWindow.postMessage = (message, origin) =>
@@ -867,7 +873,6 @@ for (const saved of [true, false]) {
     f.w.HTMLMediaElement.prototype.pause = () => {};
     f.w.HTMLMediaElement.prototype.load = () => {};
     await f.click('calibrate');
-    await f.click('calibration-connect');
     const relay = f.w.document.querySelector('iframe').contentWindow;
     relay.postMessage = () => {};
     const review = { token: 'tv', connected: true, step: 'review', shade: 0 };
@@ -924,7 +929,6 @@ for (const event of ['pagehide', 'visibilitychange']) {
       loads++;
     };
     await f.click('calibrate');
-    await f.click('calibration-connect');
     const relay = f.w.document.querySelector('iframe').contentWindow;
     const messages = [];
     relay.postMessage = (message) => messages.push(message);
@@ -963,7 +967,6 @@ test('the initial connection timeout preserves the reason pairing failed', async
   const f = await fixture(t);
   f.w.setInterval = () => 42;
   await f.click('calibrate');
-  await f.click('calibration-connect');
   const message =
     'Calibration in progress—finish or exit on the TV to change settings.';
   await f.settle(() =>
@@ -986,7 +989,6 @@ test('a terminal playback error stays visible past the reconnect deadline', asyn
   f.w.HTMLMediaElement.prototype.pause = () => {};
   f.w.HTMLMediaElement.prototype.load = () => {};
   await f.click('calibrate');
-  await f.click('calibration-connect');
   const relay = f.w.document.querySelector('iframe').contentWindow;
   await f.settle(() =>
     f.w.dispatchEvent(
@@ -1005,4 +1007,52 @@ test('a terminal playback error stays visible past the reconnect deadline', asyn
   await f.advance(31000);
   assert.equal(alert(), 'Video failed. Exit and try again.');
   assert.equal(f.w.document.querySelector('video'), null);
+});
+
+test('explicit HTTP without a port offers an opt-in retry after connect failure', async (t) => {
+  const f = await fixture(t, { deferMethods: ['setConfig'] });
+  await f.click('receiver');
+  await f.input('receiver-input', 'http://192.168.1.10');
+  await f.click('receiver-apply');
+  await f.click('save');
+  await f.reply(
+    f.pending.at(-1),
+    JSON.stringify({
+      returnValue: false,
+      errorText: 'Connection refused',
+      retryDefaultPort: true,
+    }),
+  );
+  assert.equal(f.el('save').textContent, 'Try port 8787');
+  await f.click('save');
+  assert.equal(
+    f.mutations().at(-1).payload.instanceUrl,
+    'http://192.168.1.10:8787',
+  );
+});
+
+test('the calibration relay uses the saved HTTPS origin', async (t) => {
+  const f = await fixture(t, { instanceUrl: 'https://prysm.example' });
+  f.w.setInterval = () => 42;
+  await f.click('calibrate');
+  assert.equal(
+    f.w.document.querySelector('iframe').src,
+    'https://prysm.example/calibration-tv.html',
+  );
+  assert.equal(f.el('calibration-address'), null);
+});
+
+test('the instance editor displays the resolved LAN address before Save', async (t) => {
+  const f = await fixture(t);
+  for (const [input, expected] of [
+    ['192.168.1.10', 'http://192.168.1.10:8787'],
+    ['[::1]', 'http://[::1]:8787'],
+    ['prysm.local:80', 'http://prysm.local:80'],
+    ['https://prysm.example', 'https://prysm.example'],
+  ]) {
+    await f.click('receiver');
+    await f.input('receiver-input', input);
+    await f.click('receiver-apply');
+    assert.equal(f.el('receiver-value').textContent, expected);
+  }
 });

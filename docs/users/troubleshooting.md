@@ -19,9 +19,8 @@ and turn the lights on, or click **Start capture** in the preview window.
 
 ## TV sender
 
-- **Waiting for Prysm:** check the host LAN IP and TCP port 19400, firewall,
-  webOS input settings, and that the host is running. Do not enter `localhost`
-  or `0.0.0.0` as the TV's receiver address.
+- **Waiting for Prysm:** open the saved panel URL from the TV network. Check the host allowlist, proxy WebSocket support and certificate trust for HTTPS. The TV retries automatically.
+- **Receiver in use:** another TV is capturing. The sender retries when the session ends.
 - **Connected · Capture off:** connection is ready. Start screen sync on the host.
 - **Capturing but no picture:** show active video on the awake TV; both capture
   modes can wait on Home. Check Prysm for actual advancing frames.

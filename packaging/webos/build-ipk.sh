@@ -32,6 +32,9 @@ export PKG_CONFIG_PATH_armv7_unknown_linux_gnueabi=
 cd "$root"
 cargo build --locked "${features[@]}" -p prysm-webos-capture -p prysm-webos-service \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$root/target"
+# Build the isolated smoke fixture beside the worker; only the worker ships in the IPK.
+cargo build --locked -p prysm-webos-capture --example loopback-receiver \
+  --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$root/target"
 npm run build --prefix "$root/crates/web/prysm-webos"
 output="$root/target/webos-ipk"
 mkdir -p "$output"

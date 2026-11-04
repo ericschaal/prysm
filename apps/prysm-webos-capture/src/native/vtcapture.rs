@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn persistent_not_ready_reports_failure_before_native_teardown() {
         let mut events = Events::disabled();
-        let config = crate::config::Config::new("127.0.0.1:19400".parse().unwrap());
+        let config = crate::config::Config::new("http://127.0.0.1:8787".parse().unwrap());
         let mut driver = Driver {
             code: 1,
             initialized: true,
@@ -525,7 +525,7 @@ mod tests {
         reader.set_nonblocking(true).unwrap();
         let writer: OwnedFd = writer.into();
         let mut events = Events::from_file(writer.into());
-        let config = crate::config::Config::new("127.0.0.1:19400".parse().unwrap());
+        let config = crate::config::Config::new("http://127.0.0.1:8787".parse().unwrap());
         let mut capture = crate::capture::Capture::new(&config);
         let mut video = Some(video);
         assert!(

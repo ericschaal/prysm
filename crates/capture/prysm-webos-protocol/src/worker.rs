@@ -10,6 +10,7 @@ pub enum WorkerEvent {
     VideoResetting,
     VideoReset,
     Connected,
+    ReceiverBusy,
     Capturing,
     Disconnected,
     Failed { message: String },

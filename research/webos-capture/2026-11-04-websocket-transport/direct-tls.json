@@ -1,0 +1,82 @@
+{
+  "cadence": [
+    {
+      "run": "oneB",
+      "tv_mean_cpu_cores": 0.135,
+      "seconds": 90.087,
+      "decoded": 2705,
+      "decoded_fps": 30.026,
+      "processed_fps": 29.971,
+      "ddp_fps": 30.026,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.101,
+      "hardware_samples": 2706
+    },
+    {
+      "run": "oneD",
+      "tv_mean_cpu_cores": 0.139,
+      "seconds": 90.084,
+      "decoded": 2705,
+      "decoded_fps": 30.028,
+      "processed_fps": 29.972,
+      "ddp_fps": 30.028,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.151,
+      "hardware_samples": 2706
+    }
+  ],
+  "latency": {
+    "clock": {
+      "p95_clock_half_interval_ms": 0.195,
+      "max_clock_half_interval_ms": 0.197,
+      "wled_report_interval_median_ms": 41.873,
+      "wled_report_interval_p95_ms": 52.757
+    },
+    "runs": {
+      "oneB": {
+        "capture_to_ddp": {
+          "total": 64,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 21.71,
+          "p95_ms": 23.096,
+          "rising_p95_ms": 23.096,
+          "falling_p95_ms": 53.985
+        },
+        "capture_to_wled_report": {
+          "total": 64,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 49.706,
+          "p95_ms": 86.452,
+          "rising_p95_ms": 75.771,
+          "falling_p95_ms": 89.53
+        }
+      },
+      "oneD": {
+        "capture_to_ddp": {
+          "total": 64,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 21.965,
+          "p95_ms": 22.945,
+          "rising_p95_ms": 23.085,
+          "falling_p95_ms": 22.818
+        },
+        "capture_to_wled_report": {
+          "total": 64,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 53.669,
+          "p95_ms": 69.507,
+          "rising_p95_ms": 67.331,
+          "falling_p95_ms": 82.715
+        }
+      }
+    }
+  }
+}

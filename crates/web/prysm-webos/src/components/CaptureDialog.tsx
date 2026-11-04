@@ -18,6 +18,15 @@ interface Props {
   cleanup: () => void;
 }
 
+// Keep an explicit URL (including :80) exactly as entered until native verification.
+function instanceAddress(input: string) {
+  const value = input.trim();
+  if (!value || value.includes('://')) return value;
+  const host = value.replace(/\/$/, '');
+  const hasPort = host.includes(':') && !host.endsWith(']');
+  return `http://${host}${hasPort ? '' : ':8787'}`;
+}
+
 function videoAvailability(available: Status['videoAvailable']) {
   if (available == null) return 'unknown';
   return available ? 'available' : 'unavailable';
@@ -35,7 +44,7 @@ export default function CaptureDialog({
   setup,
   cleanup,
 }: Props) {
-  const [receiver, setReceiver] = useState(draft.receiver);
+  const [receiver, setReceiver] = useState(draft.instanceUrl);
   let dialogTitle = '';
   let dialogDescription = '';
   let content: ReactNode = null;
@@ -56,18 +65,18 @@ export default function CaptureDialog({
   }
   switch (dialog) {
     case 'receiver':
-      dialogTitle = 'Prysm receiver';
+      dialogTitle = 'Prysm instance URL';
       dialogDescription =
-        'Enter the address of the computer running Prysm, including the port.';
+        'A LAN hostname or IP uses HTTP on port 8787. You can also enter the full URL you use to open Prysm.';
       content = (
         <>
-          <label htmlFor="receiver-input">IP address and port</label>
+          <label htmlFor="receiver-input">Prysm address</label>
           <input
             id="receiver-input"
             type="text"
             value={receiver}
             onChange={(event) => setReceiver(event.target.value)}
-            placeholder="192.168.1.10:19400"
+            placeholder="192.168.1.10 or https://prysm.home"
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="off"
@@ -76,7 +85,7 @@ export default function CaptureDialog({
             id="receiver-apply"
             title="Use this address"
             action={() => {
-              edit('receiver', receiver.trim());
+              edit('instanceUrl', instanceAddress(receiver));
               closeDialog();
             }}
           />
@@ -118,16 +127,15 @@ export default function CaptureDialog({
     }
     case 'autostart':
       dialogTitle = 'Enable with TV';
-      dialogDescription =
-        'Start the sender automatically when the TV turns on.';
+      dialogDescription = 'Enable capture automatically when the TV turns on.';
       content = choices('autostart', [
-        [false, 'Off', 'Enable the sender manually from this app.'],
-        [true, 'On', 'Enable the sender when the TV boots.'],
+        [false, 'Off', 'Enable capture manually.'],
+        [true, 'On', 'Enable capture when the TV turns on.'],
       ]);
       break;
     case 'service':
       dialogTitle = 'Service options';
-      dialogDescription = 'Manage the background sender on this TV.';
+      dialogDescription = 'Manage capture on this TV.';
       content = (
         <>
           <ChoiceButton
@@ -156,15 +164,15 @@ export default function CaptureDialog({
       break;
     case 'diagnostics':
       dialogTitle = 'Diagnostics';
-      dialogDescription = 'Connection details and the latest sender message.';
+      dialogDescription = 'Connection details and the latest status message.';
       content = (
         <pre className="diagnostics">
           {status
             ? `TV power: ${status.power || 'unknown'}
 Video source: ${videoAvailability(status.videoAvailable)}
 Prysm receiver connected: ${!!status.receiverConnected}
-Sender enabled: ${status.enabled}
-Sender process running: ${status.senderRunning}
+Capture enabled: ${status.enabled}
+Background process running: ${status.senderRunning}
 
 ${status.error || status.lastLog || 'No errors reported.'}`
             : 'Service unavailable.'}
@@ -174,7 +182,7 @@ ${status.error || status.lastLog || 'No errors reported.'}`
     case 'cleanup':
       dialogTitle = 'Remove service setup?';
       dialogDescription =
-        'The sender will stop. Autostart and capture permissions will be removed. Your receiver settings are kept.';
+        'Capture will stop. This removes autostart and capture permissions. Your settings are kept.';
       content = (
         <>
           <ChoiceButton
@@ -196,8 +204,7 @@ ${status.error || status.lastLog || 'No errors reported.'}`
       break;
     case 'exit':
       dialogTitle = 'Close Prysm Capture?';
-      dialogDescription =
-        'The sender keeps its current state when you close this app.';
+      dialogDescription = 'Closing the app keeps your current capture setting.';
       content = (
         <>
           <ChoiceButton id="stay" title="Stay here" action={closeDialog} />

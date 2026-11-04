@@ -73,10 +73,10 @@ See [frontend development](../../docs/developers/frontend.md#webos-tv-app).
 ## Process adapter
 
 The service configuration and worker startup contract share `Source`, `Compression`, and a
-validated `ReceiverAddress` from `prysm-webos-protocol`. An unconfigured receiver
+validated `InstanceUrl` from `prysm-webos-protocol`. An unconfigured receiver
 is `None` internally and remains `""` in the app's saved JSON. Invalid addresses
 and enum values are rejected while parsing; existing saved JSON is preserved.
-The worker accepts no CLI arguments: the supervisor supplies a bounded
+For a changed URL the supervisor runs a bounded `--verify-instance` probe before saving. For capture it supplies a bounded
 `PRYSM_WORKER_CONFIG` environment value and requires event/stdin control pipes.
 Both binaries must be updated together when this private startup contract changes.
 

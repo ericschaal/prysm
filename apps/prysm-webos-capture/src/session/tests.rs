@@ -1,7 +1,7 @@
 use super::*;
 use crate::{native::Video, pixels};
 use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat};
-use std::{io::Read, net::TcpListener};
+use std::net::TcpListener;
 
 #[test]
 fn receiver_stop_without_frames_ends_session_and_drops_capture() {
@@ -17,12 +17,16 @@ fn receiver_stop_without_frames_ends_session_and_drops_capture() {
         }
     }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let config = Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
+    let config = Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
     let (opened, ready) = std::sync::mpsc::channel();
     let receiver = std::thread::spawn(move || {
         let socket = crate::transport::tests::accept(&listener, 30);
         ready.recv_timeout(Duration::from_secs(2)).unwrap();
-        socket.shutdown(std::net::Shutdown::Both).unwrap();
+        socket.get_ref().shutdown(std::net::Shutdown::Both).unwrap();
     });
     let stop = AtomicBool::new(false);
     let dropped = std::sync::Arc::new(AtomicBool::new(false));
@@ -42,7 +46,11 @@ fn native_nv12_reaches_socket_with_raw_or_lz4_payload() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let config = Config {
             compression,
-            ..Config::new(listener.local_addr().unwrap().to_string().parse().unwrap())
+            ..Config::new(
+                format!("http://{}", listener.local_addr().unwrap())
+                    .parse()
+                    .unwrap(),
+            )
         };
         let receiver = std::thread::spawn(move || {
             crate::transport::tests::accept_resolution(&listener, 15, [16, 8])
@@ -67,19 +75,19 @@ fn native_nv12_reaches_socket_with_raw_or_lz4_payload() {
         .unwrap();
         let mut socket = receiver.join().unwrap();
         socket
+            .get_ref()
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
-        let mut bytes = [0; HEADER_LEN];
-        socket.read_exact(&mut bytes).unwrap();
-        let header = Header::decode(&bytes).unwrap();
+        let bytes = socket.read().unwrap().into_data();
+        let header = Header::decode(bytes[..HEADER_LEN].try_into().unwrap()).unwrap();
         assert_eq!(header.format, PixelFormat::Nv12);
         assert_eq!(header.raw_len().unwrap(), 16 * 8 * 3 / 2);
         assert_eq!(
             header.codec == prysm_webos_protocol::Codec::Lz4,
             compression == Compression::Lz4
         );
-        let mut payload = vec![0; header.payload_len];
-        socket.read_exact(&mut payload).unwrap();
+        let payload = bytes[HEADER_LEN..].to_vec();
+        assert_eq!(payload.len(), header.payload_len);
         let raw = if header.codec == prysm_webos_protocol::Codec::Lz4 {
             let mut decoded = vec![0; header.raw_len().unwrap()];
             prysm_webos_protocol::decompress(&payload, &mut decoded).unwrap();
@@ -95,7 +103,11 @@ fn native_nv12_reaches_socket_with_raw_or_lz4_payload() {
 #[test]
 fn startup_retries_without_emitting_stale_frames() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let config = Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
+    let config = Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
     let receiver = std::thread::spawn(move || crate::transport::tests::accept(&listener, 15));
     let stop = AtomicBool::new(false);
     let mut attempts = 0;
@@ -113,25 +125,29 @@ fn startup_retries_without_emitting_stale_frames() {
     assert!(start.elapsed() >= Duration::from_secs(1));
     let mut socket = receiver.join().unwrap();
     socket
+        .get_ref()
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
-    assert_eq!(socket.read(&mut [0]).unwrap(), 0);
+    assert!(socket.read().is_err());
 }
 
 #[test]
 fn reconnect_applies_new_rate_and_resolution_before_capture() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let config = Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
+    let config = Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
     let receiver = std::thread::spawn(move || {
         for (rate, resolution) in [(15, [2, 2]), (20, [4, 2])] {
             let mut socket =
                 crate::transport::tests::accept_resolution(&listener, rate, resolution);
-            let mut header = [0; HEADER_LEN];
-            socket.read_exact(&mut header).unwrap();
-            let header = Header::decode(&header).unwrap();
+            let bytes = socket.read().unwrap().into_data();
+            let header = Header::decode(bytes[..HEADER_LEN].try_into().unwrap()).unwrap();
             assert_eq!([header.width, header.height], resolution);
-            socket.read_exact(&mut vec![0; header.payload_len]).unwrap();
-            socket.shutdown(std::net::Shutdown::Both).unwrap();
+            assert_eq!(bytes.len(), HEADER_LEN + header.payload_len);
+            socket.get_ref().shutdown(std::net::Shutdown::Both).unwrap();
         }
     });
     let stop = AtomicBool::new(false);
@@ -175,7 +191,11 @@ fn reconnect_applies_new_rate_and_resolution_before_capture() {
 #[test]
 fn failed_connection_opens_no_capture_resources() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let config = Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
+    let config = Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
     drop(listener);
     assert!(
         capture_loop(&config, &AtomicBool::new(false), |_| -> Result<Video> {
@@ -187,19 +207,19 @@ fn failed_connection_opens_no_capture_resources() {
 
 #[test]
 fn idle_connection_opens_no_native_resources_and_remains_interruptible() {
-    use std::io::Write;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let config = Config::new(listener.local_addr().unwrap().to_string().parse().unwrap());
+    let config = Config::new(
+        format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap(),
+    );
     let (release, hold) = std::sync::mpsc::channel();
     let receiver = std::thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
-        let mut prefix = [0; 4];
-        socket.read_exact(&mut prefix).unwrap();
-        let mut bytes =
-            vec![0; prysm_webos_protocol::ControlMessage::decode_length(prefix).unwrap()];
-        socket.read_exact(&mut bytes).unwrap();
+        let mut socket = crate::transport::tests::hello(&listener);
         socket
-            .write_all(&prysm_webos_protocol::ControlMessage::Idle.encode().unwrap())
+            .send(tungstenite::Message::binary(
+                ControlMessage::Idle.encode().unwrap(),
+            ))
             .unwrap();
         hold.recv_timeout(Duration::from_secs(2)).unwrap();
     });

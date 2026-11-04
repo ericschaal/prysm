@@ -1,11 +1,11 @@
-//! Bounded, length-prefixed connection control messages.
+//! Bounded, binary WebSocket control messages.
 use crate::VERSION;
 use anyhow::{Result, ensure};
 
 pub const MAX_CONTROL_LEN: usize = 128;
 pub const HELLO: ControlMessage = ControlMessage::Hello { version: VERSION };
 
-/// Connection control uses bounded, length-prefixed JSON; frame payloads stay binary.
+/// Connection control uses bounded JSON; frame payloads stay binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMessage {
@@ -13,6 +13,7 @@ pub enum ControlMessage {
         version: u32,
     },
     Idle,
+    Busy,
     CaptureSettings {
         refresh_rate_hz: u32,
         capture_resolution: [u32; 2],
@@ -22,7 +23,7 @@ pub enum ControlMessage {
 impl ControlMessage {
     pub fn validate(self) -> Result<Self> {
         match self {
-            Self::Idle => {}
+            Self::Idle | Self::Busy => {}
             Self::Hello { version } => {
                 ensure!(version == VERSION, "unsupported webOS handshake version");
             }
@@ -47,23 +48,9 @@ impl ControlMessage {
     }
 
     pub fn encode(self) -> Result<Vec<u8>> {
-        let payload = serde_json::to_vec(&self.validate()?)?;
-        let mut bytes = u32::try_from(payload.len())?.to_be_bytes().to_vec();
-        bytes.extend_from_slice(&payload);
-        Ok(bytes)
+        Ok(serde_json::to_vec(&self.validate()?)?)
     }
 
-    /// Validate the prefix before allocating a control payload.
-    pub fn decode_length(prefix: [u8; 4]) -> Result<usize> {
-        let length = u32::from_be_bytes(prefix) as usize;
-        ensure!(
-            (1..=MAX_CONTROL_LEN).contains(&length),
-            "invalid webOS control message length"
-        );
-        Ok(length)
-    }
-
-    /// Decode the JSON payload, after removing its four-byte length prefix.
     pub fn decode(payload: &[u8]) -> Result<Self> {
         ensure!(
             (1..=MAX_CONTROL_LEN).contains(&payload.len()),
@@ -92,11 +79,7 @@ mod tests {
             },
         ] {
             let bytes = message.encode().unwrap();
-            assert_eq!(
-                ControlMessage::decode_length(bytes[..4].try_into().unwrap()).unwrap(),
-                bytes.len() - 4
-            );
-            assert_eq!(ControlMessage::decode(&bytes[4..]).unwrap(), message);
+            assert_eq!(ControlMessage::decode(&bytes).unwrap(), message);
         }
         for json in [
             r#"{"type":"capture_settings","refresh_rate_hz":0}"#,
@@ -114,9 +97,6 @@ mod tests {
             serde_json::json!({"type":"hello", "version":VERSION, "extra":true}),
         ] {
             assert!(ControlMessage::decode(&serde_json::to_vec(&value).unwrap()).is_err());
-        }
-        for length in [0u32, 129, u32::MAX] {
-            assert!(ControlMessage::decode_length(length.to_be_bytes()).is_err());
         }
         assert!(ControlMessage::decode(&[b' '; MAX_CONTROL_LEN + 1]).is_err());
     }

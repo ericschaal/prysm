@@ -31,13 +31,12 @@ function patternFor(view: View | null) {
 }
 
 export default function Calibration({
-  receiver,
+  origin,
   close,
 }: {
-  receiver: string;
+  origin: string;
   close: () => void;
 }) {
-  const [origin, setOrigin] = useState('');
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState('');
   const relayRef = useRef<HTMLIFrameElement>(null);
@@ -60,7 +59,6 @@ export default function Calibration({
   );
 
   useEffect(() => {
-    if (!origin) return;
     endedRef.current = false;
     let deadline = window.setTimeout(
       () =>
@@ -149,15 +147,7 @@ export default function Calibration({
       document.removeEventListener('visibilitychange', visibility);
     };
   }, [origin]);
-  const back = useCallback(() => {
-    if (origin && !connected && !view?.ended) {
-      setOrigin('');
-      setView(null);
-      setError('');
-    } else {
-      close();
-    }
-  }, [origin, connected, view?.ended, close]);
+  const back = close;
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.keyCode === 461 || event.keyCode === 27) {
@@ -170,14 +160,12 @@ export default function Calibration({
   }, [back]);
   return (
     <div className="calibration-screen">
-      {origin ? (
-        <iframe
-          ref={relayRef}
-          src={`${origin}/calibration-tv.html`}
-          title="Prysm calibration connection"
-          hidden
-        />
-      ) : null}
+      <iframe
+        ref={relayRef}
+        src={`${origin}/calibration-tv.html`}
+        title="Prysm calibration connection"
+        hidden
+      />
       {connected && pattern ? (
         <PatternVideo
           pattern={pattern}
@@ -186,14 +174,11 @@ export default function Calibration({
         />
       ) : (
         <PairingScreen
-          receiver={receiver}
-          origin={origin}
           url={url}
           choosing={connected && view?.step === 'choose'}
           ended={view?.ended}
           saved={view?.saved === true}
           error={error}
-          connect={setOrigin}
           back={back}
         />
       )}

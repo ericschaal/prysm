@@ -91,8 +91,17 @@ impl Files {
         match fs::read(self.root.join("config.json")) {
             Ok(data) => {
                 ensure!(data.len() <= 65536, "Oversized capture configuration");
-                let value: Config = serde_json::from_slice(&data)?;
-                value.validate()?;
+                let mut saved: serde_json::Value = serde_json::from_slice(&data)?;
+                if let Some(fields) = saved.as_object_mut()
+                    && !fields.contains_key("instanceUrl")
+                    && fields.remove("receiver").is_some()
+                {
+                    fields.insert("instanceUrl".into(), "".into());
+                }
+                let value: Config = serde_json::from_value(saved)?;
+                if value.instance_url.is_some() {
+                    value.validate()?;
+                }
                 Ok(value)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
@@ -200,7 +209,7 @@ mod tests {
         let files = Files::sandbox(directory.path()).unwrap();
         assert_eq!(files.load().unwrap(), Config::default());
         let value = Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             metrics: true,
             ..Config::default()
         };

@@ -11,12 +11,13 @@ export interface components {
         Config: {
             autostart: boolean;
             compression: components["schemas"]["Compression"];
+            instanceUrl: string;
             metrics: boolean;
-            receiver: string;
             source: components["schemas"]["Source"];
         };
         ErrorReply: {
             errorText: string;
+            retryDefaultPort?: boolean;
             returnValue: boolean;
         };
         Observation: {
@@ -41,6 +42,7 @@ export interface components {
             error: string | null;
             lastLog: string | null;
             power: string | null;
+            receiverBusy: boolean;
             receiverConnected: boolean;
             senderRunning: boolean;
             stopping: boolean;

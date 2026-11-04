@@ -9,6 +9,7 @@ use anyhow::{Result, ensure};
 use prysm_webos_protocol::worker::{VideoAvailability, VideoUpdate};
 use serde_json::Value;
 use std::{
+    io::Read as _,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -25,15 +26,16 @@ pub enum AppRequest {
 }
 
 enum Pending {
+    Verify { config: Config, resume: bool },
     Start,
     Stop,
     Cleanup,
 }
-struct Scan {
+struct Helper {
     child: Child,
     deadline: Instant,
 }
-impl Drop for Scan {
+impl Drop for Helper {
     fn drop(&mut self) {
         let _ = self.child.kill();
         crate::worker::reap(&mut self.child);
@@ -45,7 +47,7 @@ pub struct App {
     worker: Option<Worker>,
     video: VideoUpdate,
     pending: Option<Pending>,
-    scan: Option<Scan>,
+    scan: Option<Helper>,
     shutting_down: bool,
 }
 impl App {
@@ -77,8 +79,7 @@ impl App {
         );
         let result = self.request_inner(request, now);
         if result.is_err() {
-            self.pending = None;
-            self.scan = None;
+            self.abandon_pending(now);
         }
         result
     }
@@ -96,23 +97,23 @@ impl App {
             }
             AppRequest::SetConfig(config) => {
                 config.validate()?;
-                self.files.persist(&config)?;
-                if let Err(error) = self.files.autostart(config.autostart) {
-                    if self.state.config.receiver.is_none() {
-                        Files::remove(&self.files.root.join("config.json"))?;
-                    } else {
-                        self.files.persist(&self.state.config)?;
-                    }
-                    return Err(error);
+                if config.instance_url == self.state.config.instance_url {
+                    self.save(config, now)?;
+                } else {
+                    self.pending = Some(Pending::Verify {
+                        config,
+                        resume: self.state.enabled,
+                    });
+                    self.state.enabled = false;
+                    self.state.stop(now, true);
                 }
-                self.state.configure(config, now);
             }
             AppRequest::Cleanup => {
                 self.state.enabled = false;
                 let mut config = self.state.config.clone();
                 config.autostart = false;
                 self.files.autostart(false)?;
-                if config.receiver.is_some() {
+                if config.instance_url.is_some() {
                     self.files.persist(&config)?;
                 }
                 self.state.config = config;
@@ -127,6 +128,28 @@ impl App {
             self.finish(now)
         }
     }
+    fn save(&mut self, config: Config, now: Instant) -> Result<()> {
+        let had_saved_config = self.files.root.join("config.json").try_exists()?;
+        self.files.persist(&config)?;
+        if let Err(error) = self.files.autostart(config.autostart) {
+            if had_saved_config {
+                self.files.persist(&self.state.config)?;
+            } else {
+                Files::remove(&self.files.root.join("config.json"))?;
+            }
+            return Err(error);
+        }
+        self.state.configure(config, now);
+        Ok(())
+    }
+
+    fn abandon_pending(&mut self, now: Instant) {
+        if let Some(Pending::Verify { resume, .. }) = self.pending.take() {
+            self.state.enabled = resume && !self.shutting_down;
+            self.state.reconcile(now);
+        }
+        self.scan = None;
+    }
     fn begin_scan(&mut self, now: Instant) -> Result<()> {
         let child = Command::new(&self.files.scanner)
             .arg("scan-services")
@@ -134,7 +157,7 @@ impl App {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        self.scan = Some(Scan {
+        self.scan = Some(Helper {
             child,
             deadline: now + Duration::from_secs(10),
         });
@@ -181,8 +204,9 @@ impl App {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = Some(format!("{error:#}"));
-                self.scan = None;
-                self.pending.take().map(|_| {
+                let pending = self.pending.is_some();
+                self.abandon_pending(now);
+                pending.then(|| {
                     serde_json::to_value(prysm_webos_service::contract::ErrorReply::new(format!(
                         "{error:#}"
                     )))
@@ -233,6 +257,34 @@ impl App {
                 return Ok(None);
             };
             let timed_out = now >= scan.deadline;
+            if let Some(Pending::Verify { config, resume }) = &self.pending {
+                ensure!(!self.shutting_down, "Service is shutting down");
+                if timed_out || !exit.success() {
+                    let mut detail = String::new();
+                    if let Some(mut err) = scan.child.stderr.take() {
+                        err.read_to_string(&mut detail)?;
+                    }
+                    let message = if timed_out {
+                        "Prysm connection timed out".to_owned()
+                    } else {
+                        format!(
+                            "Could not verify Prysm: {}",
+                            detail.trim().trim_start_matches("Error: ")
+                        )
+                    };
+                    let mut reply = prysm_webos_service::contract::ErrorReply::new(message);
+                    reply.retry_default_port = timed_out || exit.code() == Some(2);
+                    self.abandon_pending(now);
+                    self.execute(now)?;
+                    return Ok(Some(serde_json::to_value(reply)?));
+                }
+                self.state.enabled = *resume;
+                self.save(config.clone(), now)?;
+                self.pending = None;
+                self.scan = None;
+                self.execute(now)?;
+                return Ok(Some(self.state.snapshot()));
+            }
             self.scan = None;
             ensure!(!timed_out, "Luna service rescan timed out");
             ensure!(exit.success(), "Luna service rescan failed: {exit}");
@@ -247,6 +299,26 @@ impl App {
         if self.state.running {
             return Ok(None);
         }
+        if let Some(Pending::Verify { config, .. }) = &self.pending {
+            let child = Command::new(&self.files.worker)
+                .arg("--verify-instance")
+                .arg(
+                    config
+                        .instance_url
+                        .as_ref()
+                        .expect("validated origin")
+                        .to_string(),
+                )
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            self.scan = Some(Helper {
+                child,
+                deadline: now + Duration::from_secs(12),
+            });
+            return Ok(None);
+        }
         if matches!(self.pending, Some(Pending::Cleanup)) {
             self.files.manifest(false)?;
             self.begin_scan(now)?;
@@ -256,9 +328,7 @@ impl App {
     }
     pub fn shutdown(&mut self, now: Instant) {
         self.shutting_down = true;
-        if matches!(self.pending, Some(Pending::Start))
-            && let Some(scan) = &mut self.scan
-        {
+        if let Some(scan) = &mut self.scan {
             let _ = scan.child.kill();
         }
         self.state.enabled = false;

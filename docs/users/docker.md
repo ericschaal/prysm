@@ -46,7 +46,6 @@ address. For example:
 ```yaml
 ports:
   - "192.168.1.20:8787:8787"
-  - "192.168.1.20:19400:19400"
 environment:
   PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787,prysm.example.lan:8787"
 ```
@@ -64,7 +63,6 @@ edits only application settings in the mounted JSON file.
 | `PRYSM_CONFIG` / `--config` | Settings file location; image default `/config/settings.json` |
 | `PRYSM_LISTEN` / `--listen` | HTTP socket; default `0.0.0.0:8787` |
 | `PRYSM_ALLOWED_HOSTS` / `--allowed-host` | Exact browser authorities; default loopback hosts on port 8787 |
-| `PRYSM_RECEIVER_LISTEN` / `--receiver-listen` | TV receiver socket; default `0.0.0.0:19400` |
 | `PRYSM_METRICS_LISTEN` / `--metrics-listen` | Optional metrics socket; disabled by default |
 | `RUST_LOG` | Log filter; default `info` |
 
@@ -95,8 +93,7 @@ whole directory before updates. Use one Prysm instance per settings directory.
 
 ## TV and USB capture
 
-For TV capture, choose webOS in Settings and listen on `0.0.0.0:19400`.
-Point the [TV sender](webos.md) at the Docker host's LAN IP and port 19400.
+For TV capture, choose webOS in Settings and enter the panel's LAN or HTTPS address in the TV app. [TV setup](webos.md)
 
 For Linux USB capture, choose Device in Settings with `/dev/video0` as the
 container path. Add these keys under `services.prysm`:

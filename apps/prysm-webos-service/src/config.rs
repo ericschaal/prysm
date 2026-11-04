@@ -1,15 +1,15 @@
 //! Saved service configuration and conversion to the worker startup contract.
 use anyhow::{Context, Result};
-use prysm_webos_protocol::{Compression, ReceiverAddress, Source, WorkerConfig};
+use prysm_webos_protocol::{Compression, InstanceUrl, Source, WorkerConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Config {
-    #[serde(with = "receiver")]
+    #[serde(with = "receiver", rename = "instanceUrl")]
     #[cfg_attr(feature = "schema", schema(value_type = String, required = true))]
-    pub receiver: Option<ReceiverAddress>,
+    pub instance_url: Option<InstanceUrl>,
     pub source: Source,
     pub compression: Compression,
     pub autostart: bool,
@@ -21,7 +21,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            receiver: None,
+            instance_url: None,
             source: Source::Both,
             compression: Compression::Lz4,
             autostart: false,
@@ -31,7 +31,9 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        self.receiver.context("Receiver must be configured")?;
+        self.instance_url
+            .as_ref()
+            .context("Receiver must be configured")?;
         anyhow::ensure!(
             self.compression != Compression::H264Hardware || cfg!(feature = "hardware-h264"),
             "Hardware H.264 is not included in this build"
@@ -40,7 +42,10 @@ impl Config {
     }
     pub fn worker_config(&self) -> Result<WorkerConfig> {
         Ok(WorkerConfig {
-            receiver: self.receiver.context("Receiver must be configured")?,
+            instance_url: self
+                .instance_url
+                .clone()
+                .context("Prysm instance URL must be configured")?,
             source: self.source,
             compression: self.compression,
             metrics: self.metrics,
@@ -50,12 +55,12 @@ impl Config {
 
 // Preserve the app's empty-string representation of an unconfigured receiver.
 mod receiver {
-    use super::ReceiverAddress;
+    use super::InstanceUrl;
     use serde::{Deserialize, Deserializer, Serializer};
 
     #[allow(clippy::ref_option, reason = "Serde passes a reference to the field")]
     pub fn serialize<S: Serializer>(
-        address: &Option<ReceiverAddress>,
+        address: &Option<InstanceUrl>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         match address {
@@ -66,7 +71,7 @@ mod receiver {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Option<ReceiverAddress>, D::Error> {
+    ) -> Result<Option<InstanceUrl>, D::Error> {
         let value = String::deserialize(deserializer)?;
         if value.is_empty() {
             Ok(None)
@@ -81,7 +86,7 @@ mod tests {
     use super::*;
     fn valid() -> Config {
         Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             ..Config::default()
         }
     }
@@ -99,18 +104,18 @@ mod tests {
         let value = valid();
         value.validate().unwrap();
         let mut ipv6 = value.clone();
-        ipv6.receiver = Some("[::1]:19400".parse().unwrap());
+        ipv6.instance_url = Some("http://[::1]:8787".parse().unwrap());
         ipv6.validate().unwrap();
         for address in [
             "",
-            "example.com:19400",
+            "ftp://example.com",
             "1.2.3.4:0",
             "1.2.3.4:65536",
             "::1:19400",
             "1.2.3.4:1;reboot",
         ] {
             let mut json = serde_json::to_value(&value).unwrap();
-            json["receiver"] = address.into();
+            json["instanceUrl"] = address.into();
             assert!(match serde_json::from_value::<Config>(json) {
                 Ok(config) => config.validate().is_err(),
                 Err(_) => true,
@@ -151,7 +156,7 @@ mod tests {
     #[test]
     fn typed_config_preserves_json_and_worker_settings() {
         let empty = Config::default();
-        let json = serde_json::json!({"receiver":"","source":"both","compression":"lz4","autostart":false,"metrics":false});
+        let json = serde_json::json!({"instanceUrl":"","source":"both","compression":"lz4","autostart":false,"metrics":false});
         assert_eq!(serde_json::to_value(&empty).unwrap(), json);
         assert_eq!(serde_json::from_value::<Config>(json).unwrap(), empty);
         assert!(empty.worker_config().is_err());
@@ -174,7 +179,7 @@ mod tests {
                 assert_eq!(
                     config.worker_config().unwrap(),
                     WorkerConfig {
-                        receiver: "127.0.0.1:19400".parse().unwrap(),
+                        instance_url: "http://127.0.0.1:8787".parse().unwrap(),
                         source,
                         compression,
                         metrics: false,

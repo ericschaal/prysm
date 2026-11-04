@@ -21,7 +21,7 @@ for operating the panel.
 The backend owns one UI-saved JSON file selected by `--config` or `PRYSM_CONFIG`.
 The directory must be writable for atomic replacement and directory syncing.
 Missing files use application defaults with no input or output selected. Process
-options (HTTP/receiver/metrics bindings, allowed hosts, logging and storage path)
+options (HTTP/metrics bindings, allowed hosts, logging and storage path)
 come only from CLI/environment on every startup, never from the saved JSON.
 A malformed or unreadable existing file is reported rather than reset.
 

@@ -19,7 +19,7 @@ for (const [width, height] of [
               subscribed: true,
               revision: 1,
               config: {
-                receiver: '192.168.18.38:19400',
+                instanceUrl: 'https://prysm.test',
                 source: 'both',
                 compression: 'h264-hardware',
                 autostart: true,
@@ -75,8 +75,6 @@ for (const [width, height] of [
     ).toBeLessThanOrEqual(height);
     await page.screenshot({ path: testInfo.outputPath('tv-layout.png') });
     const start = page.getByRole('button', { name: 'Calibrate Colors' });
-    const next = page.getByRole('button', { name: 'Show QR code' });
-    const address = page.getByRole('textbox', { name: 'Prysm web address' });
     const back = page.getByRole('button', { name: 'Back', exact: true });
     await expect(
       page
@@ -98,19 +96,13 @@ for (const [width, height] of [
     }
     await page.keyboard.press('ArrowUp');
     await expect(start).toBeFocused();
+    await page.route('**/calibration-tv.html', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: '<script>parent.postMessage({type:"calibration",view:{token:"mock",connected:false,step:"choose",shade:0,pairing:"local-preview"}}, "*")</script>',
+      }),
+    );
     await page.keyboard.press('Enter');
-    await expect(next).toBeFocused();
-    await expect(address).toHaveValue('http://192.168.18.38:8787');
-    await page.keyboard.press('ArrowUp');
-    await expect(address).toBeFocused();
-    const field = await address.boundingBox();
-    expect(field.y + field.height).toBeLessThan((height * 2) / 3);
-    await page.keyboard.press('ArrowDown');
-    await expect(next).toBeFocused();
-    await page.keyboard.press('ArrowLeft');
-    await expect(back).toBeFocused();
-    await page.keyboard.press('ArrowRight');
-    await expect(next).toBeFocused();
     async function safeControls() {
       for (const control of await page
         .locator('.pairing-shell input,.pairing-shell button')
@@ -126,14 +118,6 @@ for (const [width, height] of [
       }
     }
     await safeControls();
-    await page.screenshot({ path: testInfo.outputPath('tv-address.png') });
-    await page.route('**/calibration-tv.html', (route) =>
-      route.fulfill({
-        contentType: 'text/html',
-        body: '<script>parent.postMessage({type:"calibration",view:{token:"mock",connected:false,step:"choose",shade:0,pairing:"local-preview"}}, "*")</script>',
-      }),
-    );
-    await page.keyboard.press('Enter');
     await expect(
       page.getByRole('img', { name: 'Scan to open the calibration wizard' }),
     ).toBeVisible();
@@ -141,9 +125,8 @@ for (const [width, height] of [
     await safeControls();
     await page.screenshot({ path: testInfo.outputPath('tv-qr.png') });
     await page.keyboard.press('Escape');
-    await expect(next).toBeFocused();
-    await expect(address).toHaveValue('http://192.168.18.38:8787');
-    await page.keyboard.press('Enter');
+    await expect(start).toBeVisible();
+    await start.click();
     await expect(
       page.getByRole('img', { name: 'Scan to open the calibration wizard' }),
     ).toBeVisible();
@@ -244,8 +227,6 @@ for (const [width, height] of [
       'Calibration has ended; start again on the TV.',
     );
     await expect(video).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(next).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(start).toBeFocused();
     const metrics = page.getByRole('checkbox', { name: 'Prometheus metrics' });

@@ -1,0 +1,305 @@
+{
+  "cadence": [
+    {
+      "run": "smokeA",
+      "tv_mean_cpu_cores": null,
+      "seconds": 60.03,
+      "decoded": 1802,
+      "decoded_fps": 30.018,
+      "processed_fps": 29.985,
+      "ddp_fps": 30.018,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.098,
+      "hardware_samples": 1802
+    },
+    {
+      "run": "smokeB",
+      "tv_mean_cpu_cores": null,
+      "seconds": 60.026,
+      "decoded": 1802,
+      "decoded_fps": 30.02,
+      "processed_fps": 29.987,
+      "ddp_fps": 30.037,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.098,
+      "hardware_samples": 1803
+    },
+    {
+      "run": "smokeC",
+      "tv_mean_cpu_cores": null,
+      "seconds": 60.035,
+      "decoded": 1803,
+      "decoded_fps": 30.032,
+      "processed_fps": 29.982,
+      "ddp_fps": 30.032,
+      "gaps_above_50_ms": 5,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.143,
+      "hardware_samples": 1803
+    },
+    {
+      "run": "firstA",
+      "tv_mean_cpu_cores": 0.159,
+      "seconds": 300.106,
+      "decoded": 9007,
+      "decoded_fps": 30.013,
+      "processed_fps": 29.989,
+      "ddp_fps": 30.013,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.093,
+      "hardware_samples": 9006
+    },
+    {
+      "run": "firstB",
+      "tv_mean_cpu_cores": 0.138,
+      "seconds": 300.062,
+      "decoded": 9003,
+      "decoded_fps": 30.004,
+      "processed_fps": 30.094,
+      "ddp_fps": 30.007,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.096,
+      "hardware_samples": 9005
+    },
+    {
+      "run": "firstC",
+      "tv_mean_cpu_cores": 0.137,
+      "seconds": 300.081,
+      "decoded": 9005,
+      "decoded_fps": 30.009,
+      "processed_fps": 29.992,
+      "ddp_fps": 30.009,
+      "gaps_above_50_ms": 73,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.144,
+      "hardware_samples": 9006
+    },
+    {
+      "run": "secondA",
+      "tv_mean_cpu_cores": 0.137,
+      "seconds": 300.062,
+      "decoded": 9004,
+      "decoded_fps": 30.007,
+      "processed_fps": 29.99,
+      "ddp_fps": 30.004,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.092,
+      "hardware_samples": 9004
+    },
+    {
+      "run": "secondB",
+      "tv_mean_cpu_cores": 0.133,
+      "seconds": 300.044,
+      "decoded": 9004,
+      "decoded_fps": 30.009,
+      "processed_fps": 29.996,
+      "ddp_fps": 30.012,
+      "gaps_above_50_ms": 0,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.096,
+      "hardware_samples": 9005
+    },
+    {
+      "run": "secondC",
+      "tv_mean_cpu_cores": 0.138,
+      "seconds": 300.047,
+      "decoded": 9004,
+      "decoded_fps": 30.009,
+      "processed_fps": 29.992,
+      "ddp_fps": 30.009,
+      "gaps_above_50_ms": 60,
+      "gaps_above_100_ms": 0,
+      "gaps_above_250_ms": 0,
+      "mean_sender_write_ms": 0.145,
+      "hardware_samples": 9003
+    }
+  ],
+  "latency": {
+    "clock": {
+      "p95_clock_half_interval_ms": 0.195,
+      "max_clock_half_interval_ms": 0.208,
+      "wled_report_interval_median_ms": 41.718,
+      "wled_report_interval_p95_ms": 48.91
+    },
+    "runs": {
+      "secondA": {
+        "capture_to_ddp": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 21.673,
+          "p95_ms": 23.082,
+          "rising_p95_ms": 23.041,
+          "falling_p95_ms": 24.138
+        },
+        "capture_to_wled_report": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 53.409,
+          "p95_ms": 68.601,
+          "rising_p95_ms": 68.601,
+          "falling_p95_ms": 70.183
+        }
+      },
+      "secondB": {
+        "capture_to_ddp": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 21.684,
+          "p95_ms": 22.982,
+          "rising_p95_ms": 23.078,
+          "falling_p95_ms": 22.768
+        },
+        "capture_to_wled_report": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 48.136,
+          "p95_ms": 69.539,
+          "rising_p95_ms": 69.576,
+          "falling_p95_ms": 67.337
+        }
+      },
+      "secondC": {
+        "capture_to_ddp": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 25.306,
+          "p95_ms": 57.943,
+          "rising_p95_ms": 33.774,
+          "falling_p95_ms": 59.697
+        },
+        "capture_to_wled_report": {
+          "total": 227,
+          "missing": 7,
+          "negative": 0,
+          "median_ms": 53.833,
+          "p95_ms": 79.16,
+          "rising_p95_ms": 75.981,
+          "falling_p95_ms": 100.186
+        }
+      },
+      "firstC": {
+        "capture_to_ddp": {
+          "total": 227,
+          "missing": 0,
+          "negative": 0,
+          "median_ms": 27.015,
+          "p95_ms": 59.375,
+          "rising_p95_ms": 38.326,
+          "falling_p95_ms": 61.557
+        },
+        "capture_to_wled_report": {
+          "total": 227,
+          "missing": 96,
+          "negative": 0,
+          "median_ms": 62.136,
+          "p95_ms": 119.988,
+          "rising_p95_ms": 118.238,
+          "falling_p95_ms": 149.837
+        }
+      }
+    }
+  },
+  "p95_difference": {
+    "secondB": {
+      "diff_ms": -0.1,
+      "within_run_bootstrap_95_ms": [
+        -1.002,
+        0.19
+      ]
+    },
+    "secondC": {
+      "diff_ms": 34.86,
+      "within_run_bootstrap_95_ms": [
+        33.463,
+        36.123
+      ]
+    },
+    "firstC": {
+      "diff_ms": 36.293,
+      "within_run_bootstrap_95_ms": [
+        34.914,
+        37.923
+      ]
+    }
+  },
+  "response_thresholds": {
+    "secondA": {
+      "first_12_level_response_p95_ms": 23.038,
+      "crossing_p95_ms": {
+        "110": 56.05,
+        "115": 55.741,
+        "120": 23.082,
+        "125": 23.038,
+        "130": 23.038
+      }
+    },
+    "secondB": {
+      "first_12_level_response_p95_ms": 22.973,
+      "crossing_p95_ms": {
+        "110": 56.043,
+        "115": 55.037,
+        "120": 22.982,
+        "125": 22.973,
+        "130": 22.973
+      }
+    },
+    "secondC": {
+      "first_12_level_response_p95_ms": 31.784,
+      "crossing_p95_ms": {
+        "110": 62.772,
+        "115": 59.697,
+        "120": 57.943,
+        "125": 36.818,
+        "130": 34.496
+      }
+    },
+    "firstC": {
+      "first_12_level_response_p95_ms": 38.342,
+      "crossing_p95_ms": {
+        "110": 64.582,
+        "115": 62.157,
+        "120": 59.375,
+        "125": 57.999,
+        "130": 46.05
+      }
+    }
+  },
+  "camera_tcp_sample": [
+    {
+      "edge": 581,
+      "screen": 581.3452662721893,
+      "wall": 595.9575330829778,
+      "delay_at_240_ms": 60.88444504495195
+    },
+    {
+      "edge": 853,
+      "screen": 853.7975365968833,
+      "wall": 868.8498444589155,
+      "delay_at_240_ms": 62.717949425134144
+    },
+    {
+      "edge": 1108,
+      "screen": 1109.1907192575406,
+      "wall": 1123.552935327795,
+      "delay_at_240_ms": 59.842566959393174
+    }
+  ]
+}

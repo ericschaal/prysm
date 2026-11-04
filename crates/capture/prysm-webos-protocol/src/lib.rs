@@ -9,7 +9,9 @@ pub mod worker;
 
 pub use control::{ControlMessage, HELLO, MAX_CONTROL_LEN};
 pub use frame::{Codec, HEADER_LEN, Header, MAGIC, PixelFormat, compress, decompress};
-pub use settings::{Compression, ReceiverAddress, Source, WORKER_CONFIG_ENV, WorkerConfig};
+pub use settings::{Compression, InstanceUrl, Source, WORKER_CONFIG_ENV, WorkerConfig};
+
+pub const CAPTURE_PATH: &str = "/api/capture";
 
 /// One ASCII digit also forms the last byte of the four-byte frame magic.
 pub const VERSION: u32 = {

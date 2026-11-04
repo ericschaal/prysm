@@ -71,8 +71,7 @@ services cancellation/configuration/availability, and yields even for continuous
 ready input. Native completion monitors keep running while device resources are
 being released. V4L blocking capture, AVFoundation callback queues, webOS receiver/
 decode and FFmpeg remain backend-specific work. File cleanup explicitly terminates
-and reaps FFmpeg. The webOS listener belongs to the configured input, survives run
-stop, and is shut down and joined on reconfiguration or application exit.
+and reaps FFmpeg. The application owns the capture WebSocket and joins its receiver on exit. Changing inputs or stopping the pipeline releases the session.
 
 WLED implements the single tagged production Output variant. Its DDP adapter stays
 in `prysm-renderer-wled`; WLED HTTP power/effect capabilities stay in the application

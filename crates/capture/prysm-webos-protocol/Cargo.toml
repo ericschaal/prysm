@@ -14,6 +14,7 @@ schema = ["dep:utoipa"]
 h264 = ["dep:openh264", "dep:yuv", "dep:h264-reader"]
 
 [dependencies]
+url.workspace = true
 utoipa = { workspace = true, optional = true }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }

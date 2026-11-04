@@ -1,0 +1,574 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index bc4e206..454e090 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2051,6 +2051,7 @@ version = "0.1.0"
+ dependencies = [
+  "anyhow",
+  "av-foundation",
++ "axum",
+  "core-foundation",
+  "core-media",
+  "core-video",
+@@ -2061,6 +2062,7 @@ dependencies = [
+  "prysm-core",
+  "prysm-metrics",
+  "prysm-webos-protocol",
++ "serde_json",
+  "thiserror 2.0.21",
+  "tokio",
+  "tokio-util",
+@@ -2151,9 +2153,12 @@ dependencies = [
+  "nix",
+  "prysm-metrics",
+  "prysm-webos-protocol",
++ "rustls",
+  "serde_json",
+  "tracing",
+  "tracing-subscriber",
++ "tungstenite",
++ "url",
+  "yuv",
+ ]
+ 
+@@ -2518,6 +2523,7 @@ checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
+ dependencies = [
+  "aws-lc-rs",
+  "once_cell",
++ "ring",
+  "rustls-pki-types",
+  "rustls-webpki",
+  "subtle",
+@@ -3268,6 +3274,7 @@ dependencies = [
+  "log",
+  "rand 0.9.5",
+  "rustls",
++ "rustls-native-certs",
+  "rustls-pki-types",
+  "sha1",
+  "thiserror 2.0.21",
+diff --git a/apps/prysm-webos-capture/Cargo.toml b/apps/prysm-webos-capture/Cargo.toml
+index 31528fa..1de15c1 100644
+--- a/apps/prysm-webos-capture/Cargo.toml
++++ b/apps/prysm-webos-capture/Cargo.toml
+@@ -10,9 +10,13 @@ categories.workspace = true
+ description = "Native webOS video capture sender for Prysm"
+ 
+ [features]
++bench-ws = ["dep:tungstenite", "dep:rustls", "dep:url"]
+ hardware-h264 = ["dep:memmap2", "dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
+ 
+ [dependencies]
++tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"], optional = true }
++rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
++url = { workspace = true, optional = true }
+ prysm-metrics = { path = "../../crates/common/prysm-metrics" }
+ anyhow.workspace = true
+ tracing.workspace = true
+diff --git a/apps/prysm-webos-capture/src/main.rs b/apps/prysm-webos-capture/src/main.rs
+index b439b16..89edbc2 100644
+--- a/apps/prysm-webos-capture/src/main.rs
++++ b/apps/prysm-webos-capture/src/main.rs
+@@ -11,6 +11,7 @@ mod native;
+ mod pixels;
+ mod session;
+ mod shutdown;
++#[cfg_attr(feature = "bench-ws", path = "ws_sender.rs")]
+ mod transport;
+ 
+ use anyhow::{Context, Result, ensure};
+diff --git a/apps/prysm-webos-capture/src/ws_sender.rs b/apps/prysm-webos-capture/src/ws_sender.rs
+new file mode 100644
+index 0000000..2c03cfa
+--- /dev/null
++++ b/apps/prysm-webos-capture/src/ws_sender.rs
+@@ -0,0 +1,98 @@
++//! Direct WebSocket transport for the staged on-TV A/B/C experiment.
++use crate::{config::CaptureOptions, encoder::EncodedFrame};
++use anyhow::{Context, Result, bail, ensure};
++use prysm_metrics::{Codec, Content, Stage, WireBoundary};
++use prysm_webos_protocol::{ControlMessage, HELLO};
++use std::{
++    net::{SocketAddr, TcpStream, ToSocketAddrs},
++    sync::atomic::{AtomicBool, Ordering},
++    time::Duration,
++};
++use tungstenite::{Message, WebSocket, stream::MaybeTlsStream};
++
++pub struct Sender {
++    socket: WebSocket<MaybeTlsStream<TcpStream>>,
++    tcp: TcpStream,
++}
++
++impl Sender {
++    pub fn connect(_: SocketAddr) -> Result<(Self, ControlMessage)> {
++        let url = url::Url::parse(&std::env::var("PRYSM_BENCH_WS")?)?;
++        let host = url.host_str().context("missing host")?;
++        let port = url.port_or_known_default().context("missing port")?;
++        let address = (host, port)
++            .to_socket_addrs()?
++            .next()
++            .context("unresolved host")?;
++        let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(3))?;
++        tcp.set_nodelay(true)?;
++        tcp.set_read_timeout(Some(Duration::from_secs(5)))?;
++        tcp.set_write_timeout(Some(Duration::from_millis(100)))?;
++        let _ = rustls::crypto::ring::default_provider().install_default();
++        let (socket, _) = tungstenite::client_tls(url.as_str(), tcp.try_clone()?)?;
++        let mut sender = Self { socket, tcp };
++        sender
++            .socket
++            .send(Message::binary(serde_json::to_vec(&HELLO)?))?;
++        let control = sender.control()?;
++        Ok((sender, control))
++    }
++
++    fn control(&mut self) -> Result<ControlMessage> {
++        let Message::Binary(bytes) = self.socket.read()? else {
++            bail!("expected binary Prysm control")
++        };
++        ControlMessage::decode(&bytes)
++    }
++
++    pub fn wait_for_capture(
++        &mut self,
++        mut message: ControlMessage,
++        stop: &AtomicBool,
++    ) -> Result<Option<CaptureOptions>> {
++        while !stop.load(Ordering::Relaxed) {
++            match message {
++                ControlMessage::CaptureSettings {
++                    refresh_rate_hz,
++                    capture_resolution: [width, height],
++                } => {
++                    return Ok(Some(CaptureOptions {
++                        fps: refresh_rate_hz.try_into()?,
++                        width,
++                        height,
++                    }));
++                }
++                ControlMessage::Idle => message = self.control()?,
++                ControlMessage::Hello { .. } => bail!("expected capture settings"),
++            }
++        }
++        Ok(None)
++    }
++
++    pub fn check_connection(&self) -> Result<()> {
++        ensure!(self.socket.can_write(), "receiver disconnected");
++        Ok(())
++    }
++
++    pub fn send(&mut self, frame: EncodedFrame<'_>, content: Content) -> Result<()> {
++        let header = frame.header;
++        let _write = prysm_metrics::timer(Stage::FrameWrite);
++        let mut bytes = Vec::with_capacity(prysm_webos_protocol::HEADER_LEN + frame.pixels.len());
++        bytes.extend_from_slice(&header.encode()?);
++        bytes.extend_from_slice(frame.pixels);
++        self.socket.send(Message::binary(bytes))?;
++        prysm_metrics::wire_frame(
++            WireBoundary::SocketAccepted,
++            header.format.into(),
++            Codec::from(&header),
++            content,
++            header.width,
++            header.height,
++        );
++        Ok(())
++    }
++
++    pub fn disconnect(&self) {
++        let _ = self.tcp.shutdown(std::net::Shutdown::Both);
++    }
++}
+diff --git a/crates/capture/prysm-capture/Cargo.toml b/crates/capture/prysm-capture/Cargo.toml
+index a98e6ba..31f4778 100644
+--- a/crates/capture/prysm-capture/Cargo.toml
++++ b/crates/capture/prysm-capture/Cargo.toml
+@@ -25,7 +25,9 @@ tracing.workspace = true
+ anyhow.workspace = true
+ thiserror.workspace = true
+ tokio = { workspace = true, features = ["sync", "rt", "macros", "net", "io-util", "time"] }
+-tokio-util.workspace = true
++tokio-util = { workspace = true, features = ["io"] }
++axum = { workspace = true, features = ["ws"] }
++serde_json.workspace = true
+ prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
+ 
+ [dev-dependencies]
+diff --git a/crates/capture/prysm-capture/src/receiver.rs b/crates/capture/prysm-capture/src/receiver.rs
+index 3ff4798..b161c4a 100644
+--- a/crates/capture/prysm-capture/src/receiver.rs
++++ b/crates/capture/prysm-capture/src/receiver.rs
+@@ -1,4 +1,5 @@
+ //! Application-owned webOS listener; capture requests do not own the listening socket.
++mod websocket;
+ use crate::{Frame, Result, capture_channel};
+ use anyhow::{Context, ensure};
+ use futures::Stream;
+@@ -16,6 +17,7 @@ use tokio::{
+     sync::{mpsc, oneshot, watch},
+ };
+ use tokio_util::sync::{CancellationToken, DropGuard};
++use websocket::Incoming;
+ 
+ /// A worker owns LAN reception and decoding, independently of capture and API runtimes.
+ /// The last handle closing stops the worker; the wire protocol is unauthenticated.
+@@ -23,6 +25,7 @@ use tokio_util::sync::{CancellationToken, DropGuard};
+ pub struct WebosReceiver {
+     address: SocketAddr,
+     requests: mpsc::Sender<Request>,
++    sockets: mpsc::Sender<Incoming>,
+     worker: Arc<Worker>,
+ }
+ struct Worker {
+@@ -77,6 +80,7 @@ impl WebosReceiver {
+             .build()
+             .context("cannot create webOS receiver runtime")?;
+         let (requests, incoming) = mpsc::channel(1);
++        let (sockets, websocket_rx) = mpsc::channel(1);
+         let shutdown = CancellationToken::new();
+         let completed = CancellationToken::new();
+         let worker_shutdown = shutdown.clone();
+@@ -90,7 +94,7 @@ impl WebosReceiver {
+                         TcpListener::from_std(listener).context("cannot attach webOS listener")?;
+                     tokio::select! {
+                         () = worker_shutdown.cancelled() => Ok(()),
+-                        result = serve(listener, incoming) => result,
++                        result = serve(listener, incoming, websocket_rx) => result,
+                     }
+                 });
+                 if let Err(error) = result {
+@@ -101,6 +105,7 @@ impl WebosReceiver {
+         Ok(Self {
+             address,
+             requests,
++            sockets,
+             worker: Arc::new(Worker {
+                 shutdown,
+                 completed,
+@@ -188,7 +193,11 @@ fn finish(active: &mut Option<Request>) {
+     }
+ }
+ 
+-async fn serve(listener: TcpListener, mut requests: mpsc::Receiver<Request>) -> anyhow::Result<()> {
++async fn serve(
++    listener: TcpListener,
++    mut requests: mpsc::Receiver<Request>,
++    mut sockets: mpsc::Receiver<Incoming>,
++) -> anyhow::Result<()> {
+     let mut active = None;
+     loop {
+         tokio::select! {
+@@ -198,6 +207,12 @@ async fn serve(listener: TcpListener, mut requests: mpsc::Receiver<Request>) ->
+                 Some(request) => { ensure!(active.is_none(), "overlapping webOS captures"); active = Some(request.activate()); },
+                 None => return Ok(()),
+             },
++            Some(incoming) = sockets.recv() => {
++                if let Err(error) = websocket::receive(incoming, &mut active, &mut requests).await {
++                    tracing::debug!(error = %format!("{error:#}"), "webOS WebSocket ended");
++                }
++                if let Some(request) = &active { request.receiving.send_replace(false); }
++            }
+             accepted = accept(&listener) => {
+                 let (socket, peer) = accepted?;
+                 if let Err(error) = connection(socket, peer, &listener, &mut active, &mut requests).await {
+diff --git a/crates/capture/prysm-capture/src/receiver/websocket.rs b/crates/capture/prysm-capture/src/receiver/websocket.rs
+new file mode 100644
+index 0000000..7188884
+--- /dev/null
++++ b/crates/capture/prysm-capture/src/receiver/websocket.rs
+@@ -0,0 +1,120 @@
++//! Staged direct receiver. Only one test sender connects at a time.
++use super::{Request, WebosReceiver, finish, stop_requested};
++use anyhow::{Context, Result, ensure};
++use axum::{
++    Router,
++    extract::{
++        ConnectInfo,
++        ws::{Message, WebSocket, WebSocketUpgrade},
++    },
++    routing::get,
++};
++use futures::{StreamExt, TryStreamExt};
++use prysm_webos_protocol::{ControlMessage, HEADER_LEN, HELLO, Header};
++use std::{net::SocketAddr, time::Duration};
++use tokio::sync::mpsc;
++use tokio_util::io::StreamReader;
++
++pub(super) struct Incoming {
++    socket: WebSocket,
++    peer: SocketAddr,
++}
++
++impl WebosReceiver {
++    pub fn router(&self) -> Router {
++        let sockets = self.sockets.clone();
++        Router::new().route(
++            "/api/capture",
++            get(
++                move |ConnectInfo(peer): ConnectInfo<SocketAddr>, ws: WebSocketUpgrade| async move {
++                    ws.max_message_size(8_388_608 + HEADER_LEN)
++                        .max_frame_size(8_388_608 + HEADER_LEN)
++                        .on_upgrade(move |socket| async move {
++                            let _ = sockets.try_send(Incoming { socket, peer });
++                        })
++                },
++            ),
++        )
++    }
++}
++
++fn frame(message: Message) -> Result<axum::body::Bytes> {
++    let Message::Binary(bytes) = message else {
++        anyhow::bail!("expected binary capture frame")
++    };
++    let header = bytes.get(..HEADER_LEN).context("truncated frame header")?;
++    ensure!(
++        Header::decode(header.try_into()?)?.payload_len == bytes.len() - HEADER_LEN,
++        "incorrect frame length"
++    );
++    Ok(bytes)
++}
++
++pub(super) async fn receive(
++    incoming: Incoming,
++    active: &mut Option<Request>,
++    requests: &mut mpsc::Receiver<Request>,
++) -> Result<()> {
++    let Incoming { mut socket, peer } = incoming;
++    let Some(Ok(Message::Binary(bytes))) =
++        tokio::time::timeout(Duration::from_secs(2), socket.recv()).await?
++    else {
++        anyhow::bail!("expected Prysm handshake")
++    };
++    ensure!(
++        ControlMessage::decode(&bytes)? == HELLO,
++        "invalid Prysm handshake"
++    );
++    if active.is_none() {
++        socket
++            .send(Message::Binary(
++                serde_json::to_vec(&ControlMessage::Idle)?.into(),
++            ))
++            .await?;
++        tokio::select! {
++            request = requests.recv() => *active = request.map(Request::activate),
++            _ = socket.recv() => return Ok(()),
++        }
++    }
++    let Some(request) = active.as_ref() else {
++        return Ok(());
++    };
++    socket
++        .send(Message::Binary(
++            serde_json::to_vec(&request.settings)?.into(),
++        ))
++        .await?;
++    let messages = socket.map(|message| {
++        let message = message.map_err(std::io::Error::other)?;
++        frame(message).map_err(std::io::Error::other)
++    });
++    let mut last = None;
++    let mut reader = StreamReader::new(messages.into_stream());
++    tokio::select! {
++        () = stop_requested(Some(request)) => finish(active),
++        () = crate::webos::receive_frames(&mut reader, &request.frames, &request.receiving, peer, &mut last) => {}
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use prysm_webos_protocol::{Codec, PixelFormat};
++    #[test]
++    fn binary_message_contains_exactly_one_complete_frame() {
++        let header = Header {
++            width: 2,
++            height: 2,
++            codec: Codec::Raw,
++            format: PixelFormat::Rgb,
++            payload_len: 12,
++        };
++        let mut bytes = header.encode().unwrap().to_vec();
++        assert!(frame(Message::Binary(bytes.clone().into())).is_err());
++        bytes.extend_from_slice(&[0; 12]);
++        assert!(frame(Message::Binary(bytes.clone().into())).is_ok());
++        bytes.push(0);
++        assert!(frame(Message::Binary(bytes.into())).is_err());
++    }
++}
+diff --git a/crates/capture/prysm-capture/src/webos.rs b/crates/capture/prysm-capture/src/webos.rs
+index ed8082f..34320d6 100644
+--- a/crates/capture/prysm-capture/src/webos.rs
++++ b/crates/capture/prysm-capture/src/webos.rs
+@@ -12,7 +12,7 @@ use std::{
+ use tokio::{io::AsyncReadExt, sync::watch};
+ 
+ pub(super) async fn receive_frames(
+-    socket: &mut tokio::net::TcpStream,
++    socket: &mut (impl tokio::io::AsyncRead + Unpin),
+     sender: &watch::Sender<Option<Frame>>,
+     receiving: &watch::Sender<bool>,
+     peer: SocketAddr,
+diff --git a/apps/prysm/src/input.rs b/apps/prysm/src/input.rs
+index b0dd663..120395e 100644
+--- a/apps/prysm/src/input.rs
++++ b/apps/prysm/src/input.rs
+@@ -20,7 +20,7 @@ pub(crate) struct InputStream {
+ pub(crate) struct InputSource {
+     config: Input,
+     receiver_listen: std::net::SocketAddr,
+-    receiver: Option<WebosReceiver>,
++    pub(crate) receiver: Option<WebosReceiver>,
+ }
+ 
+ impl InputSource {
+diff --git a/apps/prysm/src/pipeline/runtime.rs b/apps/prysm/src/pipeline/runtime.rs
+index aa000f2..150b140 100644
+--- a/apps/prysm/src/pipeline/runtime.rs
++++ b/apps/prysm/src/pipeline/runtime.rs
+@@ -19,6 +19,7 @@ enum Command {
+ }
+ #[derive(Clone)]
+ pub struct Pipeline {
++    pub(crate) capture_router: axum::Router,
+     commands: mpsc::Sender<Command>,
+     owner: Arc<Mutex<Option<JoinHandle<()>>>>,
+ }
+@@ -93,6 +94,10 @@ impl Pipeline {
+                 None
+             }
+         };
++        let capture_router = input
++            .as_ref()
++            .and_then(|input| input.receiver.as_ref())
++            .map_or_else(axum::Router::new, prysm_capture::WebosReceiver::router);
+         let (commands, incoming) = mpsc::channel(32);
+         let task = tokio::spawn(own(
+             config,
+@@ -105,6 +110,7 @@ impl Pipeline {
+         (
+             Self {
+                 commands,
++                capture_router,
+                 owner: Arc::new(Mutex::new(Some(task))),
+             },
+             receiver,
+diff --git a/apps/prysm/src/control/ready.rs b/apps/prysm/src/control/ready.rs
+index 675eb1a..a4a9fad 100644
+--- a/apps/prysm/src/control/ready.rs
++++ b/apps/prysm/src/control/ready.rs
+@@ -85,6 +85,10 @@ impl Ready {
+         })
+     }
+ 
++    pub fn capture_router(&self) -> axum::Router {
++        self.service.pipeline.capture_router.clone()
++    }
++
+     pub fn state(&self, operation: OperationStatus) -> StateResponse {
+         let pipeline = self.service.status.borrow().clone();
+         let mut observed = self.observed.clone();
+diff --git a/apps/prysm/src/control/controller.rs b/apps/prysm/src/control/controller.rs
+index 75b5cae..fadde3e 100644
+--- a/apps/prysm/src/control/controller.rs
++++ b/apps/prysm/src/control/controller.rs
+@@ -97,6 +97,7 @@ pub(crate) struct Controller {
+ }
+ 
+ pub(crate) struct ControllerHandle {
++    pub(crate) capture_router: axum::Router,
+     shutdown: CancellationToken,
+     task: JoinHandle<Result<()>>,
+ }
+@@ -122,6 +123,10 @@ impl Controller {
+         let mode = settings.config().map_or(Mode::Setup, |config| {
+             Mode::configured(&config, preview.clone(), receiver_listen)
+         });
++        let capture_router = match &mode {
++            Mode::Ready(ready) => ready.capture_router(),
++            _ => axum::Router::new(),
++        };
+         let (settings_tx, settings_rx) = watch::channel(view.clone());
+         let (state_tx, state_rx) = watch::channel(mode.state(OperationStatus::Idle));
+         let (commands, receiver) = mpsc::channel(32);
+@@ -139,7 +144,11 @@ impl Controller {
+         };
+         let task = tokio::spawn(controller.run(receiver, shutdown.clone()));
+         (
+-            ControllerHandle { shutdown, task },
++            ControllerHandle {
++                shutdown,
++                task,
++                capture_router,
++            },
+             App::new(commands, settings_rx, state_rx),
+         )
+     }
+diff --git a/apps/prysm/src/application.rs b/apps/prysm/src/application.rs
+index 842c94e..1d59a20 100644
+--- a/apps/prysm/src/application.rs
++++ b/apps/prysm/src/application.rs
+@@ -36,7 +36,11 @@ impl Application {
+             .context("cannot bind the web listener")?;
+         let preview = Preview::new();
+         let (controller, app) = Controller::start(settings, preview.publisher(), receiver_listen);
+-        let router = crate::control::http::router(app, web, preview.router());
++        let router = crate::control::http::router(
++            app,
++            web,
++            preview.router().merge(controller.capture_router.clone()),
++        );
+         tracing::info!(address=%listener.local_addr()?, "Prysm listening");
+         Ok(Self {
+             listener,
+@@ -55,9 +59,12 @@ impl Application {
+             preview,
+             shutdown,
+         } = self;
+-        let server = axum::serve(listener, router)
+-            .with_graceful_shutdown(shutdown.clone().cancelled_owned())
+-            .into_future();
++        let server = axum::serve(
++            listener,
++            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
++        )
++        .with_graceful_shutdown(shutdown.clone().cancelled_owned())
++        .into_future();
+         tokio::pin!(server);
+         let stopped = tokio::select! {
+             result = &mut server => Stopped::Http(result),
+diff --git a/apps/prysm-webos-capture/src/session.rs b/apps/prysm-webos-capture/src/session.rs
+index 68c9015..485bdf8 100644
+--- a/apps/prysm-webos-capture/src/session.rs
++++ b/apps/prysm-webos-capture/src/session.rs
+@@ -77,6 +77,7 @@ impl<V: FrameCapture> Session<V> {
+         let mut encoder = Encoder::new(self.compression, settings.fps, H264_BITRATE)?;
+         let result = (|| {
+             let mut next = Instant::now();
++            let mut last_bright = None;
+             while !stop.load(Ordering::Relaxed) {
+                 if let Err(error) = self.sender.check_connection() {
+                     tracing::info!(error = %format!("{error:#}"), "receiver disconnected");
+@@ -90,6 +91,19 @@ impl<V: FrameCapture> Session<V> {
+                     .set_video_available(update.availability.allows_capture());
+                 let work = prysm_metrics::timer(Stage::CaptureIteration);
+                 if let Some(frame) = self.capture.capture(open_video, events)? {
++                    // Benchmark marker at the native frame boundary, before encoding.
++                    let center = (frame.header.width as usize * frame.header.height as usize / 2)
++                        + frame.header.width as usize / 2;
++                    let offset = if frame.header.format == prysm_webos_protocol::PixelFormat::Rgb {
++                        center * 3 + 1
++                    } else { center };
++                    let level = frame.pixels[offset];
++                    let bright = level > 120;
++                    if last_bright != Some(bright) {
++                        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
++                        eprintln!("BENCH_EDGE {} {} {}", stamp.as_nanos(), u8::from(bright), level);
++                        last_bright = Some(bright);
++                    }
+                     let hardware = encoder.hardware_active();
+                     if hardware {
+                         events.send(&crate::events::Event::EncoderBusy)?;

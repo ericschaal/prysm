@@ -29,7 +29,7 @@ fn app(dir: &tempfile::TempDir) -> App {
     let files = Files::sandbox(dir.path()).unwrap();
     files
         .persist(&Config {
-            receiver: Some("127.0.0.1:19400".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
             ..Config::default()
         })
         .unwrap();
@@ -98,8 +98,8 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     );
     assert!(!dir.path().join("capture.manifest.json").exists());
     assert_eq!(
-        app.files.load().unwrap().receiver,
-        Some("127.0.0.1:19400".parse().unwrap())
+        app.files.load().unwrap().instance_url,
+        Some("http://127.0.0.1:8787".parse().unwrap())
     );
 }
 #[test]
@@ -109,7 +109,6 @@ fn hook_failure_rolls_back_config() {
     let original = app.state.config.clone();
     fs::write(dir.path().join("boot-hook"), "unrelated").unwrap();
     let mut changed = original.clone();
-    changed.receiver = Some("[::1]:42".parse().unwrap());
     changed.autostart = true;
     assert!(
         app.request(AppRequest::SetConfig(changed), Instant::now())
@@ -192,4 +191,48 @@ fn readiness_loss_is_latched_across_rapid_input_transitions() {
     app.video.reset = false;
     app.video_available(VideoAvailability::Unknown);
     assert!(!app.video.reset);
+}
+
+#[test]
+fn changing_instance_verifies_before_save_and_restores_the_previous_sender_on_failure() {
+    let dir = sandbox();
+    let mut app = app(&dir);
+    let now = Instant::now();
+    let old = app.state.config.clone();
+    script(
+        &app.files.worker,
+        r#"
+if [ "$1" = --verify-instance ]; then
+    if [ "$2" = https://prysm.example ]; then exit 0; fi
+    echo 'Connection refused' >&2; exit 2
+fi
+trap 'exit 0' TERM
+while :; do sleep 0.01; done
+"#,
+    );
+    app.power(Some("Active".into()), None, now);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    let mut next = old.clone();
+    next.instance_url = Some("http://unavailable".parse().unwrap());
+    let refused = operate(&mut app, AppRequest::SetConfig(next.clone()), now).unwrap();
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(refused["retryDefaultPort"], true);
+    assert_eq!(app.files.load().unwrap(), old);
+    assert!(app.state.enabled && app.state.running);
+    next.instance_url = Some("https://prysm.example".parse().unwrap());
+    let saved = operate(&mut app, AppRequest::SetConfig(next.clone()), now).unwrap();
+    assert_eq!(saved["config"]["instanceUrl"], "https://prysm.example");
+    assert_eq!(app.files.load().unwrap(), next);
+    assert!(app.state.running);
+    operate(&mut app, AppRequest::Stop, now).unwrap();
+}
+
+#[test]
+fn old_receiver_config_prompts_for_an_instance_and_preserves_capture_preferences() {
+    let dir = sandbox();
+    fs::write(dir.path().join("config.json"),r#"{"receiver":"192.168.1.10:19400","autostart":true,"source":"video","compression":"none","metrics":true}"#).unwrap();
+    let app = App::new(Files::sandbox(dir.path()).unwrap()).unwrap();
+    assert!(app.state.config.instance_url.is_none());
+    assert!(app.state.config.autostart && app.state.config.metrics);
+    assert!(!app.state.enabled);
 }

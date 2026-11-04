@@ -546,8 +546,19 @@ fn mutation_authorizes_before_deserializing_configuration() {
             .contains("missing field")
     );
     assert!(!dir.path().join("config.json").exists());
-    raw.0 = Some(CString::new(r#"{"receiver":"127.0.0.1:19400","source":"video","compression":"none","autostart":false}"#).unwrap());
+    crate::application::tests::script(
+        &dir.path().join("worker"),
+        "test \"$1\" = --verify-instance",
+    );
+    raw.0 = Some(CString::new(r#"{"instanceUrl":"http://127.0.0.1:8787","source":"video","compression":"none","autostart":false}"#).unwrap());
     service.callbacks.status(&message).unwrap();
+    for _ in 0..200 {
+        service.callbacks.tick(Instant::now()).unwrap();
+        if dir.path().join("config.json").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let saved = MOCK.with_borrow(|mock| mock.reply.clone()).unwrap();
     assert_eq!(saved["returnValue"], true);
     let persisted: Value =
@@ -634,7 +645,7 @@ fn deferred_reply_survives_publish_failure_and_releases_reference_on_reply_failu
         if configured {
             files
                 .persist(&crate::config::Config {
-                    receiver: Some("127.0.0.1:42".parse().unwrap()),
+                    instance_url: Some("http://127.0.0.1:42".parse().unwrap()),
                     ..crate::config::Config::default()
                 })
                 .unwrap();
@@ -853,7 +864,7 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
     .unwrap();
     let files = Files::sandbox(dir.path()).unwrap();
     files.persist(&serde_json::from_value(json!({
-        "receiver":"127.0.0.1:19400", "source":"video", "compression":"none", "autostart":false
+        "instanceUrl":"http://127.0.0.1:8787", "source":"video", "compression":"none", "autostart":false
     })).unwrap()).unwrap();
     crate::application::tests::script(&files.worker, r#"exec cat > "$0.control""#);
     *service.callbacks.app.borrow_mut() = Some(App::new(files).unwrap());

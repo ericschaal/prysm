@@ -5,8 +5,7 @@ Start with the TV and WLED powered, the webOS sender connected, and Prysm
 configured with the webOS input. Keep the phone on the receiver's local network.
 
 1. Open Prysm on the TV and choose **Calibrate Colors** under **Settings**.
-2. Check the Prysm web address, choose **Show QR code**, and scan the QR code.
-   Before pairing, **Back** returns to the address field.
+2. Scan the QR code with your phone. It opens calibration on the instance saved in TV settings.
 3. The TV waits while you choose **New profile** or select a saved profile on
    your phone. On the response check, the TV starts cycling through gray, red,
    green, and blue. Confirm that the wall lights follow the sequence.

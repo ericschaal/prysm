@@ -1,0 +1,102 @@
+--- a/apps/prysm/Cargo.toml
++++ b/apps/prysm/Cargo.toml
+@@ -34,6 +34,9 @@
+ workspace = true
+ 
+ [dependencies]
++tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
++hyper = { version = "1", features = ["server", "http1"] }
++hyper-util = { version = "0.1", features = ["tokio", "service"] }
+ prysm-metrics = { path = "../../crates/common/prysm-metrics" }
+ clap = { workspace = true, features = ["derive", "env"] }
+ serde = { workspace = true, features = ["derive"] }
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2008,6 +2008,8 @@
+  "base64 0.22.1",
+  "clap",
+  "futures",
++ "hyper",
++ "hyper-util",
+  "image",
+  "prysm-api",
+  "prysm-capture",
+@@ -2024,6 +2026,7 @@
+  "tempfile",
+  "thiserror 2.0.21",
+  "tokio",
++ "tokio-rustls",
+  "tokio-tungstenite",
+  "tokio-util",
+  "tower",
+--- a/apps/prysm/src/application.rs
++++ b/apps/prysm/src/application.rs
+@@ -59,6 +59,8 @@
+             preview,
+             shutdown,
+         } = self;
++        let tls_listener = TcpListener::bind("192.168.18.38:8443").await?;
++        let tls = tokio::spawn(serve_tls(tls_listener, router.clone(), shutdown.clone()));
+         let server = axum::serve(
+             listener,
+             router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+@@ -95,11 +97,59 @@
+                 }
+             }
+         };
++        tls.await??;
+         controller_result?;
+         preview_result?;
+         http_result?;
+         tracing::info!("capture, lighting and preview stopped");
+         Ok(())
++    }
++}
++
++/// Benchmark-only TLS termination in the RP5 receiver process.
++async fn serve_tls(
++    listener: TcpListener,
++    router: Router,
++    shutdown: CancellationToken,
++) -> Result<()> {
++    use tokio_rustls::{
++        TlsAcceptor,
++        rustls::{
++            ServerConfig,
++            crypto::ring,
++            pki_types::{CertificateDer, PrivatePkcs8KeyDer},
++        },
++    };
++    let config = ServerConfig::builder_with_provider(ring::default_provider().into())
++        .with_safe_default_protocol_versions()?
++        .with_no_client_auth()
++        .with_single_cert(
++            vec![CertificateDer::from(std::fs::read("leaf.der")?)],
++            PrivatePkcs8KeyDer::from(std::fs::read("leaf-key.der")?).into(),
++        )?;
++    let acceptor = TlsAcceptor::from(std::sync::Arc::new(config));
++    loop {
++        let (socket, peer) = tokio::select! {
++            () = shutdown.cancelled() => return Ok(()),
++            connection = listener.accept() => connection?,
++        };
++        let router = router
++            .clone()
++            .layer(axum::Extension(axum::extract::ConnectInfo(peer)));
++        let acceptor = acceptor.clone();
++        tokio::spawn(async move {
++            let result: Result<()> = async {
++                let tls = tokio::time::timeout(Duration::from_secs(5), acceptor.accept(socket)).await??;
++                tracing::info!(%peer, tls_version = ?tls.get_ref().1.protocol_version(), "benchmark direct TLS accepted");
++                hyper::server::conn::http1::Builder::new()
++                    .serve_connection(hyper_util::rt::TokioIo::new(tls), hyper_util::service::TowerToHyperService::new(router))
++                    .with_upgrades().await?;
++                Ok(())
++            }.await;
++            if let Err(error) = result {
++                tracing::debug!(%peer, %error, "TLS connection ended");
++            }
++        });
+     }
+ }
+ 

@@ -41,7 +41,6 @@ settings have no override relationship with process options.
 | `--config PATH` | `PRYSM_CONFIG` | `settings.json`; application settings location |
 | `--listen IP:PORT` | `PRYSM_LISTEN` | `0.0.0.0:8787`; HTTP listener |
 | `--allowed-host HOST:PORT,...` | `PRYSM_ALLOWED_HOSTS` | `localhost:8787,127.0.0.1:8787`; exact browser authorities |
-| `--receiver-listen IP:PORT` | `PRYSM_RECEIVER_LISTEN` | `0.0.0.0:19400`; webOS receiver |
 | `--metrics-listen IP:PORT` | `PRYSM_METRICS_LISTEN` | Disabled; optional metrics endpoint |
 | — | `RUST_LOG` | `info`; logging filter |
 

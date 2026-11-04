@@ -16,19 +16,27 @@ export function capturePresentation(
     description = 'Set up the background service to connect this TV to Prysm.';
     label = 'Set up service';
   } else if (online && status) {
-    if (status.stopping) {
+    if (
+      enabled &&
+      status.power === 'Active' &&
+      status.videoAvailable === false
+    ) {
+      title = 'Waiting for video';
+      description = 'Select an HDMI input or play a video on the TV.';
+    } else if (status.stopping) {
       title = 'Stopping capture…';
-      description = 'Waiting for the sender to stop safely.';
+      description = 'Finishing the current capture session.';
     } else if (enabled && status.power !== 'Active') {
       title = 'Waiting for TV';
-      description = 'The sender will reconnect when the TV is active.';
-    } else if (enabled && status.videoAvailable === false) {
-      title = 'Waiting for video';
+      description = 'Prysm will reconnect when the TV wakes up.';
+    } else if (enabled && status.receiverBusy) {
+      title = 'Receiver in use';
       description =
-        'The sender is enabled. Select an HDMI input or play a video on the TV.';
+        'Another TV is capturing. This TV will retry automatically.';
     } else if (enabled && !connected) {
       title = 'Waiting for Prysm';
-      description = 'Open Prysm on your computer and enable webOS input.';
+      description =
+        'This TV will reconnect to your saved instance automatically.';
     } else if (enabled && status.capturing) {
       title = 'Capturing';
       description = 'Your TV picture is being sent to Prysm.';
@@ -36,17 +44,17 @@ export function capturePresentation(
       title = 'Ready to capture';
       description = 'Start capture in Prysm on your computer.';
     } else {
-      title = 'Sender disabled';
-      description = 'Enable the sender to connect to Prysm.';
+      title = 'Disabled';
+      description = 'Enable capture to connect this TV to Prysm.';
     }
     if (status.error) {
-      title = 'Sender needs attention';
+      title = 'Capture needs attention';
       description = 'Open Service options for diagnostics or repair.';
     }
-    if (enabled) label = 'Disable sender';
-    else if (!draft.receiver) label = 'Set receiver address';
+    if (enabled) label = 'Disable';
+    else if (!draft.instanceUrl) label = 'Set receiver address';
     else if (dirty) label = 'Save and enable';
-    else label = 'Enable sender';
+    else label = 'Enable';
   }
 
   return {

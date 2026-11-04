@@ -185,7 +185,6 @@ fn check(suite: Option<Suite>) -> Result<()> {
         npm(".", &["run", "format:check"])?;
         npm(HOST, &["test"])?;
         npm(WEBOS, &["test"])?;
-        run(Command::new("node").args(["--test", "packaging/webos/tests/protocol.test.js"]))?;
         run(Command::new("python3")
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .args(["-m", "unittest", "discover", "-s", "packaging/webos/tests"]))?;

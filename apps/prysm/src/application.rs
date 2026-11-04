@@ -11,6 +11,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 struct Application {
+    receiver: prysm_capture::WebosReceiver,
     listener: TcpListener,
     router: Router,
     controller: ControllerHandle,
@@ -25,20 +26,19 @@ enum Stopped {
 }
 
 impl Application {
-    async fn bind(
-        settings: SettingsStore,
-        web: crate::config::WebConfig,
-        receiver_listen: std::net::SocketAddr,
-    ) -> Result<Self> {
+    async fn bind(settings: SettingsStore, web: crate::config::WebConfig) -> Result<Self> {
         web.validate()?;
         let listener = TcpListener::bind(web.listen)
             .await
             .context("cannot bind the web listener")?;
         let preview = Preview::new();
-        let (controller, app) = Controller::start(settings, preview.publisher(), receiver_listen);
-        let router = crate::control::http::router(app, web, preview.router());
+        let receiver = prysm_capture::WebosReceiver::new()?;
+        let (controller, app) = Controller::start(settings, preview.publisher(), receiver.clone());
+        let router =
+            crate::control::http::router(app, web, preview.router().merge(receiver.router()));
         tracing::info!(address=%listener.local_addr()?, "Prysm listening");
         Ok(Self {
+            receiver,
             listener,
             router,
             controller,
@@ -49,6 +49,7 @@ impl Application {
 
     async fn run(self) -> Result<()> {
         let Self {
+            receiver,
             listener,
             router,
             mut controller,
@@ -75,6 +76,7 @@ impl Application {
             Stopped::Http(result) => (controller.shutdown().await, Some(result)),
             Stopped::Requested => (controller.shutdown().await, None),
         };
+        let receiver_result = receiver.shutdown().await;
         let preview_result = preview.shutdown().await;
         let http_result = match finished_http {
             Some(result) => result.context("HTTP server failed"),
@@ -89,6 +91,7 @@ impl Application {
             }
         };
         controller_result?;
+        receiver_result?;
         preview_result?;
         http_result?;
         tracing::info!("capture, lighting and preview stopped");
@@ -96,20 +99,11 @@ impl Application {
     }
 }
 
-pub fn run(
-    settings: SettingsStore,
-    web: crate::config::WebConfig,
-    receiver_listen: std::net::SocketAddr,
-) -> Result<()> {
+pub fn run(settings: SettingsStore, web: crate::config::WebConfig) -> Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(async {
-            Application::bind(settings, web, receiver_listen)
-                .await?
-                .run()
-                .await
-        })
+        .block_on(async { Application::bind(settings, web).await?.run().await })
 }
 
 async fn shutdown_signal() {
@@ -139,9 +133,7 @@ mod tests {
             listen: "127.0.0.1:0".parse().unwrap(),
             allowed_hosts: vec!["localhost:8787".into()],
         };
-        let application = Application::bind(store, web, "127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap();
+        let application = Application::bind(store, web).await.unwrap();
         let address = application.listener.local_addr().unwrap();
         let shutdown = application.shutdown.clone();
         let server = tokio::spawn(application.run());

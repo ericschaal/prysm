@@ -1,5 +1,5 @@
 //! Exercise exported health metrics through a real receiver connection and capture lifecycle.
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use prysm_capture::WebosReceiver;
 use prysm_webos_protocol::{Codec, ControlMessage, HELLO, Header, PixelFormat};
 use std::{
@@ -10,6 +10,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 async fn metric(address: SocketAddr, name: &str) -> f64 {
@@ -39,6 +40,25 @@ async fn requested(address: SocketAddr, fps: f64) {
     .unwrap();
 }
 
+async fn endpoint(receiver: &WebosReceiver) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/api/capture", listener.local_addr().unwrap());
+    let router = receiver.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    url
+}
+type Tv = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
+async fn connect(url: &str) -> Tv {
+    let (mut tv, _) = connect_async(url).await.unwrap();
+    tv.send(Message::binary(HELLO.encode().unwrap()))
+        .await
+        .unwrap();
+    tv
+}
+async fn reply(tv: &mut Tv) -> ControlMessage {
+    ControlMessage::decode(&tv.next().await.unwrap().unwrap().into_data()).unwrap()
+}
+
 #[tokio::test]
 async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() {
     tokio::time::timeout(Duration::from_secs(8), async {
@@ -47,7 +67,7 @@ async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() 
                 .unwrap();
         let address = exporter.address();
         let last = "prysm_receiver_last_decoded_frame_timestamp_seconds";
-        let receiver = WebosReceiver::new("127.0.0.1:0".parse().unwrap()).unwrap();
+        let receiver = WebosReceiver::new().unwrap();
         assert_eq!(metric(address, last).await, 0.0);
         requested(address, 0.0).await;
         let shutdown = CancellationToken::new();
@@ -57,12 +77,11 @@ async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() 
         let mut frames = Box::pin(frames);
         requested(address, 30.0).await;
         assert_eq!(metric(address, last).await, 0.0);
-        let mut tv = TcpStream::connect(receiver.address()).await.unwrap();
-        tv.write_all(&HELLO.encode().unwrap()).await.unwrap();
-        let mut prefix = [0; 4];
-        tv.read_exact(&mut prefix).await.unwrap();
-        let mut settings = vec![0; ControlMessage::decode_length(prefix).unwrap()];
-        tv.read_exact(&mut settings).await.unwrap();
+        let mut tv = connect(&endpoint(&receiver).await).await;
+        assert!(matches!(
+            reply(&mut tv).await,
+            ControlMessage::CaptureSettings { .. }
+        ));
         let before = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -76,11 +95,8 @@ async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() 
         }
         .encode()
         .unwrap();
-        tv.write_all(&header).await.unwrap();
-        // An incomplete frame must not make the stream look fresh.
-        tv.write_all(&[42; 12]).await.unwrap();
-        assert_eq!(metric(address, last).await, 0.0);
-        tv.write_all(&[42; 12]).await.unwrap();
+        let packet = [header.as_slice(), &[42; 24]].concat();
+        tv.send(Message::binary(packet)).await.unwrap();
         assert_eq!(frames.next().await.unwrap().unwrap().as_slice(), &[42; 24]);
         let timestamp = metric(address, last).await;
         assert!(timestamp >= before);
@@ -108,10 +124,49 @@ async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() 
             .capture(4, 2, 60.try_into().unwrap(), CancellationToken::new())
             .unwrap();
         requested(address, 60.0).await;
-        drop(receiver);
+        receiver.shutdown().await.unwrap();
         completed.cancelled().await;
         requested(address, 0.0).await;
         drop(frames);
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn ready_tvs_are_ordered_and_an_active_session_survives_a_busy_handshake() {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        let receiver = WebosReceiver::new().unwrap();
+        let url = endpoint(&receiver).await;
+        let mut first = connect(&url).await;
+        assert_eq!(reply(&mut first).await, ControlMessage::Idle);
+        let mut second = connect(&url).await;
+        assert_eq!(reply(&mut second).await, ControlMessage::Idle);
+        let stop = CancellationToken::new();
+        let (_frames, completed, _) = receiver
+            .capture(4, 2, 30.try_into().unwrap(), stop.clone())
+            .unwrap();
+        assert!(matches!(
+            reply(&mut first).await,
+            ControlMessage::CaptureSettings { .. }
+        ));
+        assert_eq!(reply(&mut second).await, ControlMessage::Busy);
+        assert_eq!(reply(&mut connect(&url).await).await, ControlMessage::Busy);
+        first.send(Message::binary(vec![1, 2, 3])).await.unwrap();
+        assert!(
+            first
+                .next()
+                .await
+                .is_none_or(|m| m.is_err() || m.unwrap().is_close())
+        );
+        let mut replacement = connect(&url).await;
+        assert!(matches!(
+            reply(&mut replacement).await,
+            ControlMessage::CaptureSettings { .. }
+        ));
+        stop.cancel();
+        completed.cancelled().await;
+        assert_eq!(reply(&mut connect(&url).await).await, ControlMessage::Idle);
+        receiver.shutdown().await.unwrap();
     })
     .await
     .unwrap();

@@ -56,12 +56,12 @@ impl Ready {
     pub fn new(
         config: &Config,
         preview: Publisher,
-        receiver_listen: std::net::SocketAddr,
+        webos: prysm_capture::WebosReceiver,
     ) -> Result<Self> {
         let client = LightingService::client()?;
         let (config_tx, config_rx) = watch::channel(config.clone());
         let (pipeline, status) =
-            Pipeline::with_preview(PipelineConfig::from(config), receiver_listen, preview);
+            Pipeline::with_preview(PipelineConfig::from(config), webos, preview);
         let service = Arc::new(LightingService::new(client, config_rx, pipeline, status));
         let shutdown = CancellationToken::new();
         let stopped = shutdown.clone();
@@ -297,7 +297,7 @@ mod tests {
         let mut ready = Ready::new(
             &config,
             Preview::new().publisher(),
-            "127.0.0.1:0".parse().unwrap(),
+            prysm_capture::WebosReceiver::new().unwrap(),
         )
         .unwrap();
         ready.service.pipeline.start().await.unwrap();
@@ -353,7 +353,7 @@ mod tests {
         let mut ready = Ready::new(
             &config,
             Preview::new().publisher(),
-            "127.0.0.1:0".parse().unwrap(),
+            prysm_capture::WebosReceiver::new().unwrap(),
         )
         .unwrap();
         // A running receiver needs no physical TV to exercise settings reconciliation.
@@ -380,7 +380,7 @@ mod tests {
         let mut ready = Ready::new(
             &config,
             Preview::new().publisher(),
-            "127.0.0.1:0".parse().unwrap(),
+            prysm_capture::WebosReceiver::new().unwrap(),
         )
         .unwrap();
         let (updates, receiver) = watch::channel(None);

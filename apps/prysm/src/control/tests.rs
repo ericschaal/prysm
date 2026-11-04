@@ -26,7 +26,7 @@ async fn disconnected_settings_caller_still_saves_and_rejects_stale_revision() {
     let (controller, app) = Controller::start(
         store,
         Preview::new().publisher(),
-        "127.0.0.1:0".parse().unwrap(),
+        prysm_capture::WebosReceiver::new().unwrap(),
     );
     let initial = app.settings();
     let mut changed = initial.settings.clone();
@@ -76,11 +76,11 @@ async fn pending_wled_operation_conflicts_and_shutdown_waits_for_accepted_work()
 }
 
 #[tokio::test]
-async fn source_saved_before_apply_failure_keeps_authoritative_revision() {
+async fn failed_switch_keeps_the_previous_persisted_source() {
     target_transaction(true).await;
 }
 
-async fn target_transaction(unavailable_input: bool) {
+async fn target_transaction(reject_switch: bool) {
     use axum::{
         Json, Router,
         routing::{get, post},
@@ -99,7 +99,7 @@ async fn target_transaction(unavailable_input: bool) {
         let (entered, release, changed) = (command_entered.clone(),command_release.clone(),changed.clone());
         async move {
             if value["on"] == true {entered.notify_one(); release.notified().await; changed.store(true,std::sync::atomic::Ordering::Relaxed);}
-            Json(serde_json::json!({"success":true}))
+            (if reject_switch && value["on"] == true { axum::http::StatusCode::BAD_GATEWAY } else { axum::http::StatusCode::OK },Json(serde_json::json!({"success":!reject_switch})))
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -117,18 +117,12 @@ async fn target_transaction(unavailable_input: bool) {
     config.source = Source::Prysm;
     let prysm_contract::Output::Wled { url, .. } = &mut config.output;
     *url = format!("http://{address}/").parse().unwrap();
-    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    if unavailable_input {
-        config.input = prysm_contract::Input::Webos {
-            capture_resolution: [4, 2].try_into().unwrap(),
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
-    }
+
     let store = test_support::store(&directory, &config);
     let (controller, app) = Controller::start(
         store,
         Preview::new().publisher(),
-        occupied.local_addr().unwrap(),
+        prysm_capture::WebosReceiver::new().unwrap(),
     );
     let accepted = app
         .set_target(Target {
@@ -160,13 +154,20 @@ async fn target_transaction(unavailable_input: bool) {
         .unwrap()
         .unwrap();
     let state = app.state().unwrap();
-    if unavailable_input {
+    if reject_switch {
         assert!(matches!(state.operation, OperationStatus::Failed { .. }));
     } else {
         assert!(matches!(state.operation, OperationStatus::Succeeded { .. }));
     }
     let loaded = SettingsStore::load(directory.path().join("settings.json")).unwrap();
-    assert_eq!(loaded.view().settings.source, Source::Wled);
+    assert_eq!(
+        loaded.view().settings.source,
+        if reject_switch {
+            Source::Prysm
+        } else {
+            Source::Wled
+        }
+    );
     assert_eq!(app.settings().settings, loaded.view().settings);
     assert_eq!(state.config_revision, app.settings().revision);
     assert!(on.load(std::sync::atomic::Ordering::Relaxed));
@@ -183,7 +184,7 @@ async fn persistence_failure_preserves_settings_and_revision() {
     let (controller, app) = Controller::start(
         store,
         Preview::new().publisher(),
-        "127.0.0.1:0".parse().unwrap(),
+        prysm_capture::WebosReceiver::new().unwrap(),
     );
     let initial = app.settings();
     std::fs::remove_file(&path).unwrap();

@@ -9,7 +9,7 @@ fn worker_rejects_cli_and_missing_supervisor_contract_before_native_startup() {
         (None, None, "requires supervisor configuration"),
         (
             None,
-            Some(r#"{"receiver":"127.0.0.1:19400","source":"both","compression":"lz4"}"#),
+            Some(r#"{"instance_url":"http://127.0.0.1:8787","source":"both","compression":"lz4"}"#),
             "requires a supervisor event pipe",
         ),
     ] {

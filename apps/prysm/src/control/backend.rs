@@ -196,10 +196,8 @@ mod tests {
 
     #[tokio::test]
     async fn webos_disconnect_reports_waiting_and_reconnect_restores_running() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = available.local_addr().unwrap();
-        drop(available);
+        use futures::{SinkExt, StreamExt};
+        let webos = prysm_capture::WebosReceiver::new().unwrap();
         let mut config: Config = crate::test_support::config();
         let prysm_contract::Output::Wled { url, .. } = &mut config.output;
         *url = "http://127.0.0.1/".parse().unwrap();
@@ -209,7 +207,7 @@ mod tests {
         };
         let (pipeline, mut status) = Pipeline::with_preview(
             PipelineConfig::from(&config),
-            address,
+            webos.clone(),
             crate::preview::Preview::new().publisher(),
         );
         let (_, receiver) = watch::channel(config);
@@ -221,14 +219,14 @@ mod tests {
         );
         lighting.capture(CaptureAction::Start).await.unwrap();
         for count in 1..=2 {
-            let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-            tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
-                .await
-                .unwrap();
-            let mut prefix = [0; 4];
-            tv.read_exact(&mut prefix).await.unwrap();
-            let mut settings = vec![0; u32::from_be_bytes(prefix) as usize];
-            tv.read_exact(&mut settings).await.unwrap();
+            let mut tv = crate::test_support::tv_socket(&webos).await;
+            assert!(matches!(
+                prysm_webos_protocol::ControlMessage::decode(
+                    &tv.next().await.unwrap().unwrap().into_data()
+                )
+                .unwrap(),
+                prysm_webos_protocol::ControlMessage::CaptureSettings { .. }
+            ));
             let mut frame = prysm_webos_protocol::Header {
                 width: 4,
                 height: 2,
@@ -240,7 +238,9 @@ mod tests {
             .unwrap()
             .to_vec();
             frame.extend([255; 24]);
-            tv.write_all(&frame).await.unwrap();
+            tv.send(tokio_tungstenite::tungstenite::Message::binary(frame))
+                .await
+                .unwrap();
             tokio::time::timeout(Duration::from_secs(2), async {
                 while status.borrow().frames_processed < count
                     || status.borrow().phase != PipelinePhase::Running

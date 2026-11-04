@@ -12,7 +12,6 @@ services:
       PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787,truenas.local:8787"
     ports:
       - "192.168.1.20:8787:8787"
-      - "192.168.1.20:19400:19400"
     volumes:
       - type: bind
         source: /mnt/tank/apps/prysm

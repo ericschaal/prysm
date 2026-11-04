@@ -18,6 +18,7 @@ interface Props {
   changing: boolean;
   openDialog: (dialog: Dialog) => void;
   edit: <K extends keyof Config>(key: K, value: Config[K]) => void;
+  retryDefaultPort: boolean;
   saveSettings: () => void;
   calibrate: () => void;
 }
@@ -30,13 +31,14 @@ export default function Settings({
   changing,
   openDialog,
   edit,
+  retryDefaultPort,
   saveSettings,
   calibrate,
 }: Props) {
   let savedLabel = 'On this TV';
   if (saved) savedLabel = dirty ? 'Unsaved changes' : 'Saved';
   const rows = [
-    ['receiver', 'Prysm receiver', draft.receiver || 'Add address'],
+    ['receiver', 'Prysm instance URL', draft.instanceUrl || 'Add address'],
     ['source', 'Capture', names.source[draft.source]],
     ['compression', 'Compression', names.compression[draft.compression]],
     ['autostart', 'Enable with TV', draft.autostart ? 'On' : 'Off'],
@@ -61,7 +63,7 @@ export default function Settings({
           data-left="primary"
           onClick={saveSettings}
         >
-          Save changes
+          {retryDefaultPort ? 'Try port 8787' : 'Save changes'}
         </button>
       </div>
       <div className="setting-list">
@@ -123,7 +125,7 @@ export default function Settings({
           <span>
             <span className="setting-label">Prometheus metrics</span>
             <span id="metrics-description" className="setting-detail">
-              Port 9101 · while the sender is enabled.
+              Port 9101
             </span>
           </span>
           <span className="tickbox" aria-hidden="true" />

@@ -13,8 +13,7 @@ The supervisor starts one Rust sender only while enabled and TV power is
 valid power observation rather than assuming an awake TV. Failed subscriptions
 retry after five seconds and keep the sender stopped.
 
-Prysm owns the TCP listener while the application is running with webOS input,
-including when the pipeline is off. An idle TV connects without opening capture
+Prysm accepts a binary WebSocket at `/api/capture` on its HTTP listener, including during setup. When capture starts the first ready TV gets the session; other TVs receive a busy response and retry. A TV with video available connects to idle Prysm without opening capture
 devices or encoding/sending frames. Screen sync sends capture settings to that
 connection; Off or Effects closes the capture session. Resolution and FPS remain
 owned by Prysm. After a capture session ends, the worker exits and the supervisor
@@ -28,9 +27,7 @@ disconnects. The supervisor owns retries.
 
 The TV UI distinguishes **Waiting for Prysm**, **Ready to capture**,
 **Waiting for video**, and **Capturing**. The service publishes `videoAvailable`
-as true, false, or null for unknown readiness. Known video absence takes priority
-over capture-request and receiver-connectivity flags, so reconnects cannot make
-the UI claim capture is active without a video source. **Capturing** means capture
+as true, false, or null for unknown readiness. When webOS reports no video, the UI shows **Waiting for video** across connection changes. **Capturing** means capture
 is requested with no known video absence; it does not guarantee fresh frames. Driver errors remain
 available in diagnostics. The app subscribes to native status changes. A failed subscription is cancelled
 and retried after three seconds; returning to the app refreshes it. Unsaved
@@ -50,9 +47,7 @@ Native video open, preparation, and release have a five-second watchdog, includi
 release after acquisition errors. A hung reset, failed constructor,
 or preparation that stays unready for ten seconds still triggers process recovery
 with the existing bounded teardown and failure backoff. Ordinary video absence
-reported by Luna does not trigger the native watchdog. If capture is requested
-without video, the receiver's five-second frame deadline can recycle the empty
-connection. The sender remains enabled, and the TV UI stays **Waiting for video**. Failed/malformed subscriptions
+reported by Luna does not trigger the native watchdog. The worker waits for video readiness before opening a capture connection. If video stops during capture, the receiver releases the session after five seconds without frames. The next connection waits for video to return. Failed/malformed subscriptions
 fall back to bounded capture retries and resubscribe after five seconds. The worker retains bounded native retry for unknown readiness. Valid black
 frames never expire.
 
@@ -63,8 +58,7 @@ supervisor launches the worker without arguments and supplies typed receiver,
 source, compression, and metrics settings in `PRYSM_WORKER_CONFIG`; commands never enter
 the receiver protocol. The supervisor clears connectivity on disconnect
 before native teardown, and kills a worker after five seconds if cleanup blocks.
-Upgrade native executable and supervisor together using the IPK. The always-on
-idle connection also requires rebuilding/restarting the host Prysm application.
+Upgrade native executable and supervisor together using the IPK. The WebSocket endpoint requires the matching host Prysm build.
 
 On standby the supervisor sends SIGTERM and waits for native cleanup. It sends
 SIGKILL after five seconds if the driver blocks. Wake starts a fresh sender if
@@ -141,6 +135,6 @@ Save applies edits explicitly. Back cancels an editor, leaves service subviews, 
 asks before closing. Text fields retain cursor movement. Keep visible focus, large
 targets and pointer support; avoid native dropdowns that change during navigation.
 Status subscriptions must preserve unsaved edits and focus across reconnects.
-Settings starts with Prysm receiver. Calibrate Colors sits immediately above
+Settings starts with the Prysm instance URL. Calibrate Colors sits immediately above
 Prometheus metrics. Back from calibration returns focus to the row. Setup repair and diagnostics live under Service options. Removing setup requires
 confirmation and defaults to retaining it. Closing the app does not disable the sender.

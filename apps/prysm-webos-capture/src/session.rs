@@ -30,13 +30,17 @@ enum State {
 impl<V: FrameCapture> Session<V> {
     /// Connect before acquiring native capture resources.
     pub fn connect(config: &Config) -> Result<Self> {
-        let (sender, message) = Sender::connect(config.receiver.socket_addr())?;
+        let (sender, message) = Sender::connect(&config.instance_url)?;
         Ok(Self {
             capture: Capture::new(config),
             sender,
             state: State::Waiting(message),
             compression: config.compression,
         })
+    }
+
+    pub fn busy(&self) -> bool {
+        matches!(self.state, State::Waiting(ControlMessage::Busy))
     }
 
     pub fn wait_for_capture(&mut self, config: &Config, stop: &AtomicBool) -> Result<bool> {

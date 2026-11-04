@@ -4,11 +4,7 @@ use prysm_contract::{RequiredSetting, SettingsView, StateResponse};
 use serde_json::{Value, json};
 use std::{path::Path, process::Stdio, time::Duration};
 
-fn start(
-    path: &Path,
-    address: std::net::SocketAddr,
-    receiver: std::net::SocketAddr,
-) -> tokio::process::Child {
+fn start(path: &Path, address: std::net::SocketAddr) -> tokio::process::Child {
     tokio::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
         .arg("--config")
         .arg(path)
@@ -16,7 +12,6 @@ fn start(
         .arg(address.to_string())
         .arg("--allowed-host")
         .arg(address.to_string())
-        .args(["--receiver-listen", &receiver.to_string()])
         .env("PRYSM_LISTEN", "invalid-env-shadowed-by-cli")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -109,18 +104,16 @@ async fn ready(client: &reqwest::Client, base: &str, child: &mut tokio::process:
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
-    reason = "follow one installation through setup, failed receiver, repair, reset and restart"
+    reason = "follow one installation through setup, live edits, reset and restart"
 )]
-async fn first_run_stays_available_through_setup_receiver_failure_and_reset() {
+async fn first_run_keeps_capture_endpoint_available_through_setup_and_reset() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
     let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = available.local_addr().unwrap();
     drop(available);
     let base = format!("http://{address}");
-    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let receiver = occupied.local_addr().unwrap();
-    let mut child = start(&path, address, receiver);
+    let mut child = start(&path, address);
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(4))
@@ -181,16 +174,8 @@ async fn first_run_stays_available_through_setup_receiver_failure_and_reset() {
         .await
         .unwrap();
     assert_eq!(state.config_revision, configured.revision);
-    assert_eq!(state.pipeline.phase, prysm_contract::PipelinePhase::Failed);
+    assert_eq!(state.pipeline.phase, prysm_contract::PipelinePhase::Idle);
     assert_eq!(state.pipeline.frames_processed, 0);
-    assert!(
-        state
-            .pipeline
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("cannot listen")
-    );
     let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(
         saved.get("web").is_none(),
@@ -210,7 +195,6 @@ async fn first_run_stays_available_through_setup_receiver_failure_and_reset() {
         reqwest::StatusCode::CONFLICT
     );
 
-    drop(occupied);
     let repaired = save_settings(
         &client,
         &base,
@@ -239,12 +223,17 @@ async fn first_run_stays_available_through_setup_receiver_failure_and_reset() {
     })
     .await
     .unwrap();
-    assert!(tokio::net::TcpStream::connect(receiver).await.is_ok());
+    assert!(
+        tokio_tungstenite::connect_async(format!("ws://{address}/api/capture"))
+            .await
+            .is_ok()
+    );
     let incomplete = save_settings(&client, &base, &repaired, json!({"input":null})).await;
     assert_eq!(incomplete.missing_required, [RequiredSetting::Input]);
     assert!(
-        std::net::TcpListener::bind(receiver).is_ok(),
-        "reset must release the receiver before replying"
+        tokio_tungstenite::connect_async(format!("ws://{address}/api/capture"))
+            .await
+            .is_ok()
     );
     stop(&mut child).await;
 
@@ -252,7 +241,7 @@ async fn first_run_stays_available_through_setup_receiver_failure_and_reset() {
     let address = available.local_addr().unwrap();
     drop(available);
     let base = format!("http://{address}");
-    let mut child = start(&path, address, receiver);
+    let mut child = start(&path, address);
     ready(&client, &base, &mut child).await;
     let restored = settings(&client, &base).await;
     assert_eq!(restored.missing_required, [RequiredSetting::Input]);

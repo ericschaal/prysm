@@ -9,7 +9,7 @@ import {
 } from '../service';
 
 const defaults: Config = {
-  receiver: '',
+  instanceUrl: '',
   source: 'both',
   compression: 'lz4',
   autostart: false,
@@ -22,11 +22,12 @@ interface State {
   draft: Config;
   changing: boolean;
   notice: string;
+  retryUrl?: string;
   error: boolean;
 }
 function normalizeConfig(value: Config): Config {
   return {
-    receiver: value.receiver,
+    instanceUrl: value.instanceUrl,
     source: value.source,
     compression: value.compression,
     autostart: value.autostart,
@@ -38,7 +39,7 @@ type Action =
   | { type: 'observe'; status: Status; subscribed?: boolean }
   | { type: 'offline'; text: string }
   | { type: 'edit'; patch: Partial<Config> }
-  | { type: 'notice'; text: string; error: boolean }
+  | { type: 'notice'; text: string; error: boolean; retryUrl?: string }
   | { type: 'changing'; value: boolean }
   | { type: 'saved'; config: Config; cleanup: boolean };
 
@@ -73,9 +74,18 @@ function reducer(state: State, action: Action): State {
     case 'offline':
       return { ...state, online: false, error: true, notice: action.text };
     case 'edit':
-      return { ...state, draft: { ...state.draft, ...action.patch } };
+      return {
+        ...state,
+        retryUrl: undefined,
+        draft: { ...state.draft, ...action.patch },
+      };
     case 'notice':
-      return { ...state, notice: action.text, error: action.error };
+      return {
+        ...state,
+        notice: action.text,
+        error: action.error,
+        retryUrl: action.retryUrl,
+      };
     case 'changing':
       return { ...state, changing: action.value };
     case 'saved':
@@ -84,7 +94,7 @@ function reducer(state: State, action: Action): State {
         saved: normalizeConfig(action.config),
         draft: action.cleanup
           ? { ...state.draft, autostart: false }
-          : state.draft,
+          : normalizeConfig(action.config),
       };
   }
 }
@@ -214,6 +224,22 @@ export function useCaptureService(openReceiver: () => void) {
       busy.current = false;
       dispatch({ type: 'changing', value: false });
       if (value.returnValue !== true || !value.config) {
+        // An explicit :80 is also a port choice, even though URL normalizes it away.
+        const host =
+          method === 'setConfig' &&
+          value.retryDefaultPort &&
+          /^http:\/\/(\[[^\]]+\]|[^/:?#@]+)\/?$/i.exec(
+            draft.instanceUrl.trim(),
+          );
+        if (host) {
+          dispatch({
+            type: 'notice',
+            text: value.errorText || 'Could not reach Prysm.',
+            error: true,
+            retryUrl: `http://${host[1]}:8787`,
+          });
+          return;
+        }
         notice(
           value.errorText || 'The service could not complete this action.',
           true,
@@ -232,8 +258,8 @@ export function useCaptureService(openReceiver: () => void) {
     });
   }
   function saveSettings(success?: () => void) {
-    if (!draft.receiver) {
-      notice('Add the Prysm receiver address first.', true);
+    if (!draft.instanceUrl) {
+      notice('Add the Prysm instance URL first.', true);
       openReceiver();
       return;
     }
@@ -281,7 +307,7 @@ export function useCaptureService(openReceiver: () => void) {
       request('stop', {}, () => notice(''));
       return;
     }
-    if (!draft.receiver) {
+    if (!draft.instanceUrl) {
       openReceiver();
       return;
     }
@@ -294,6 +320,15 @@ export function useCaptureService(openReceiver: () => void) {
     dirty,
     edit,
     saveSettings,
+    retryDefaultPort: () => {
+      if (!state.retryUrl) return;
+      edit('instanceUrl', state.retryUrl);
+      request(
+        'setConfig',
+        { ...normalizeConfig(draft), instanceUrl: state.retryUrl },
+        () => notice('Settings saved.'),
+      );
+    },
     primary,
     setup,
     cleanup: () =>

@@ -30,6 +30,7 @@ pub struct SupervisorStatus {
     pub config: Config,
     pub enabled: bool,
     pub receiver_connected: bool,
+    pub receiver_busy: bool,
     pub capturing: bool,
     pub sender_running: bool,
     pub stopping: bool,
@@ -65,6 +66,8 @@ pub struct ProbeStatus {
 pub struct ErrorReply {
     pub return_value: bool,
     pub error_text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retry_default_port: bool,
 }
 
 impl ErrorReply {
@@ -73,6 +76,7 @@ impl ErrorReply {
         Self {
             return_value: false,
             error_text,
+            retry_default_port: false,
         }
     }
 }

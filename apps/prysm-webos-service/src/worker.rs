@@ -222,7 +222,7 @@ mod process_tests {
     use std::time::{Duration, Instant};
     fn config() -> Config {
         Config {
-            receiver: Some("127.0.0.1:42".parse().unwrap()),
+            instance_url: Some("http://127.0.0.1:42".parse().unwrap()),
             metrics: true,
             ..Config::default()
         }

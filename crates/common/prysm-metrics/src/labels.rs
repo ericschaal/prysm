@@ -53,7 +53,7 @@ pub enum Operation {
     WriteFrame,
     WaitWritable,
     SendFrame,
-    ReadHeader,
+    ReadMessage,
     ValidateHeader,
     ReadPayload,
     ReadFrame,
@@ -115,11 +115,10 @@ pub enum EncoderEvent {
 #[derive(Clone, Copy, Debug)]
 pub enum FrameReceiverEvent {
     ConnectionAccepted,
-    HeaderClosed,
-    HeaderReadFailed,
+    MessageClosed,
+    MessageReadFailed,
     HeaderRejected,
     PayloadTruncated,
-    PayloadReadFailed,
     FrameTimedOut,
 }
 #[derive(Clone, Copy, Debug)]
@@ -209,11 +208,10 @@ impl From<FrameReceiverEvent> for Event {
     fn from(event: FrameReceiverEvent) -> Self {
         let (operation, outcome) = match event {
             FrameReceiverEvent::ConnectionAccepted => (Operation::Connect, Outcome::Succeeded),
-            FrameReceiverEvent::HeaderClosed => (Operation::ReadHeader, Outcome::PeerClosed),
-            FrameReceiverEvent::HeaderReadFailed => (Operation::ReadHeader, Outcome::Failed),
+            FrameReceiverEvent::MessageClosed => (Operation::ReadMessage, Outcome::PeerClosed),
+            FrameReceiverEvent::MessageReadFailed => (Operation::ReadMessage, Outcome::Failed),
             FrameReceiverEvent::HeaderRejected => (Operation::ValidateHeader, Outcome::Rejected),
             FrameReceiverEvent::PayloadTruncated => (Operation::ReadPayload, Outcome::Truncated),
-            FrameReceiverEvent::PayloadReadFailed => (Operation::ReadPayload, Outcome::Failed),
             FrameReceiverEvent::FrameTimedOut => (Operation::ReadFrame, Outcome::TimedOut),
         };
         Self {
@@ -317,8 +315,7 @@ pub enum Stage {
     FrameWriteWait,
     FrameConnect,
     CaptureIteration,
-    FrameReadPayload,
-    FrameReadHeader,
+    FrameReadMessage,
     FrameDecompress,
     FrameDecodeH264,
     FrameConvert,
@@ -404,15 +401,10 @@ impl From<Stage> for StageLabels {
                 Component::CaptureLoop,
                 Operation::Iterate,
             ),
-            Stage::FrameReadPayload => (
+            Stage::FrameReadMessage => (
                 Flow::CaptureFrames,
                 Component::FrameReceiver,
-                Operation::ReadPayload,
-            ),
-            Stage::FrameReadHeader => (
-                Flow::CaptureFrames,
-                Component::FrameReceiver,
-                Operation::ReadHeader,
+                Operation::ReadMessage,
             ),
             Stage::FrameDecodeH264 => (
                 Flow::CaptureFrames,

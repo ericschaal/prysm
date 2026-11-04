@@ -31,14 +31,6 @@ struct Args {
         default_value = "localhost:8787,127.0.0.1:8787"
     )]
     allowed_hosts: Vec<String>,
-    /// webOS receiver binding, read on every startup.
-    #[arg(
-        long,
-        global = true,
-        env = "PRYSM_RECEIVER_LISTEN",
-        default_value = "0.0.0.0:19400"
-    )]
-    receiver_listen: std::net::SocketAddr,
     /// Opt-in Prometheus endpoint, separate from the REST API
     #[arg(
         long,
@@ -94,7 +86,7 @@ fn main() -> Result<()> {
                     }
                 }
             });
-            prysm::run(settings, web, args.receiver_listen)
+            prysm::run(settings, web)
         }
     }
 }

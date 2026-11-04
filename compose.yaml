@@ -8,7 +8,6 @@ services:
     stop_grace_period: 90s
     ports:
       - "127.0.0.1:8787:8787"
-      - "19400:19400"
     volumes:
       - prysm-config:/config
 

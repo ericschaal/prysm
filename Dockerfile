@@ -42,5 +42,5 @@ LABEL org.opencontainers.image.title="Prysm" \
 USER 10001:10001
 WORKDIR /config
 ENV PRYSM_CONFIG=/config/settings.json
-EXPOSE 8787/tcp 19400/tcp
+EXPOSE 8787/tcp
 ENTRYPOINT ["/usr/local/bin/prysm"]

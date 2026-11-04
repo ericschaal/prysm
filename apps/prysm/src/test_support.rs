@@ -28,3 +28,21 @@ pub(crate) fn update(app: &prysm_api::App, config: &Config) -> UpdateSettings {
         settings,
     }
 }
+
+pub(crate) type Tv =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+pub(crate) async fn tv_socket(receiver: &prysm_capture::WebosReceiver) -> Tv {
+    use futures::SinkExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/api/capture", listener.local_addr().unwrap());
+    let router = receiver.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::binary(
+            prysm_webos_protocol::HELLO.encode().unwrap(),
+        ))
+        .await
+        .unwrap();
+    socket
+}

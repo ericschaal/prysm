@@ -35,8 +35,7 @@ input, WLED HTTP address, LED counts, and capture mode. Saving creates
 on. An unavailable WLED controller does not prevent saving valid settings;
 connection errors remain visible in the panel.
 
-For webOS, use the default receiver binding `0.0.0.0:19400` (or set `PRYSM_RECEIVER_LISTEN`) and point
-the TV sender at the NAS's LAN IP. For USB, add the device and supplementary
+For webOS, enter the NAS panel URL in the TV app. For USB, add the device and supplementary
 group mapping described in the [Docker guide](docker.md#tv-and-usb-capture).
 
 ## Manage settings and updates

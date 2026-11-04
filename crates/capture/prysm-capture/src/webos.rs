@@ -1,219 +1,143 @@
 //! Receive raw/LZ4 pixels or connection-scoped H.264 from the Rust webOS sender.
+use crate::receiver::Capture;
 use crate::{Frame, FramePool, PixelFormat};
 use anyhow::Context;
-use prysm_metrics::{
-    BytesKind, Codec, DecoderEvent, FrameReceiverEvent, FrameStage, Stage, WireBoundary,
-};
+use prysm_metrics::{BytesKind, Codec, DecoderEvent, FrameReceiverEvent, Stage, WireBoundary};
 use prysm_webos_protocol::{HEADER_LEN, Header, PixelFormat as WireFormat};
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
-use tokio::{io::AsyncReadExt, sync::watch};
+use std::time::Duration;
 
-pub(super) async fn receive_frames(
-    socket: &mut tokio::net::TcpStream,
-    sender: &watch::Sender<Option<Frame>>,
-    receiving: &watch::Sender<bool>,
-    peer: SocketAddr,
-    last_decoded: &mut Option<Instant>,
-) {
-    let mut scratch = [Vec::new(), Vec::new()];
-    let mut decoder = None;
-    let mut pool = FramePool::default();
+pub(super) async fn receive_frames(socket: &mut axum::extract::ws::WebSocket, capture: &Capture) {
+    let mut decoder = Decoder::default();
     let mut stats = prysm_metrics::TraceStats::new("webos_receive");
-    tracing::info!(%peer, "webOS receiving frames");
+    tracing::info!("webOS receiving frames");
     loop {
         let started = stats.start();
         // A stalled or partial frame must not hold the only TV connection forever.
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            read_frame_into(socket, &mut scratch, &mut decoder, &mut pool),
-        )
+        match tokio::time::timeout(Duration::from_secs(5), async {
+            let wait = prysm_metrics::timer(Stage::FrameReadMessage);
+            let bytes = crate::receiver::binary(socket).await?;
+            drop(wait);
+            decoder.decode(&bytes)
+        })
         .await
         {
             Ok(Ok(frame)) => {
-                stats.record(started, frame.len(), Some(pool.stats()));
-                if prysm_metrics::enabled() {
-                    let now = Instant::now();
-                    if let Some(last) = last_decoded.replace(now) {
-                        prysm_metrics::observe(Stage::ReceiverFrameGap, now.duration_since(last));
-                    }
-                }
-                prysm_metrics::frame(FrameStage::Decoded, frame.format().into());
-                if sender.send(Some(frame)).is_err() {
+                stats.record(started, frame.len(), Some(decoder.pool.stats()));
+                if !capture.publish(frame) {
                     return;
                 }
-                receiving.send_if_modified(|available| {
-                    let changed = !*available;
-                    *available = true;
-                    changed
-                });
             }
             Ok(Err(error)) => {
                 stats.failure();
-                tracing::info!(%peer, error = %format!("{error:#}"), "webOS connection ended");
+                tracing::info!( error = %format!("{error:#}"), "webOS connection ended");
                 break;
             }
             Err(_) => {
                 stats.failure();
                 prysm_metrics::event(FrameReceiverEvent::FrameTimedOut);
-                tracing::warn!(%peer, "webOS frame timed out");
+                tracing::warn!("webOS frame timed out");
                 break;
             }
         }
     }
 }
 
-#[cfg(test)]
-async fn read_frame(reader: &mut (impl tokio::io::AsyncRead + Unpin)) -> anyhow::Result<Frame> {
-    read_frame_into(
-        reader,
-        &mut [Vec::new(), Vec::new()],
-        &mut None,
-        &mut FramePool::default(),
-    )
-    .await
+#[derive(Default)]
+struct Decoder {
+    h264: Option<prysm_webos_protocol::h264::Decoder>,
+    pool: FramePool,
+    decompressed: Vec<u8>,
 }
 
-async fn read_frame_into(
-    reader: &mut (impl tokio::io::AsyncRead + Unpin),
-    scratch: &mut [Vec<u8>; 2],
-    decoder: &mut Option<prysm_webos_protocol::h264::Decoder>,
-    pool: &mut FramePool,
-) -> anyhow::Result<Frame> {
-    let mut header = [0; HEADER_LEN];
-    {
-        let _time = prysm_metrics::timer(Stage::FrameReadHeader);
-        reader
-            .read_exact(&mut header)
-            .await
-            .inspect_err(|error| {
-                prysm_metrics::event(if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                    FrameReceiverEvent::HeaderClosed
-                } else {
-                    FrameReceiverEvent::HeaderReadFailed
-                });
-            })
-            .context("reading webOS frame header")?;
-    }
-    let header = Header::decode(&header)
-        .inspect_err(|_| prysm_metrics::event(FrameReceiverEvent::HeaderRejected))?;
-    if header.codec == prysm_webos_protocol::Codec::H264 {
-        scratch[0].resize(header.payload_len, 0);
-        read_payload(reader, &mut scratch[0], header).await?;
-        let _time = prysm_metrics::timer(Stage::FrameDecodeH264);
-        if decoder.is_none() {
-            *decoder = Some(
-                prysm_webos_protocol::h264::Decoder::new()
-                    .inspect_err(|_| prysm_metrics::event(DecoderEvent::InitializationFailed))?,
-            );
-        }
-        let mut frame = pool.acquire(header.width, header.height, PixelFormat::RGB24)?;
-        decoder
-            .as_mut()
-            .expect("initialized decoder")
-            .decode_into(header, &scratch[0], frame.as_mut_slice())
-            .inspect_err(|_| prysm_metrics::event(DecoderEvent::H264DecodeFailed))?;
-        return Ok(frame.finish());
-    }
-    read_pixels(reader, header, scratch, pool).await
-}
-
-async fn read_payload(
-    reader: &mut (impl tokio::io::AsyncRead + Unpin),
-    payload: &mut [u8],
-    header: Header,
-) -> anyhow::Result<()> {
-    let _time = prysm_metrics::timer(Stage::FrameReadPayload);
-    reader
-        .read_exact(payload)
-        .await
-        .inspect_err(|error| {
-            prysm_metrics::event(if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                FrameReceiverEvent::PayloadTruncated
-            } else {
-                FrameReceiverEvent::PayloadReadFailed
-            });
-        })
-        .context("reading webOS frame payload")?;
-    prysm_metrics::wire_frame(
-        WireBoundary::PayloadReceived,
-        header.format.into(),
-        Codec::from(&header),
-        prysm_metrics::Content::Unspecified,
-        header.width,
-        header.height,
-    );
-    prysm_metrics::bytes(BytesKind::ReceiverPayload, payload.len());
-    Ok(())
-}
-
-async fn read_pixels(
-    reader: &mut (impl tokio::io::AsyncRead + Unpin),
-    header: Header,
-    scratch: &mut [Vec<u8>; 2],
-    pool: &mut FramePool,
-) -> anyhow::Result<Frame> {
-    let mut frame = pool.acquire(header.width, header.height, PixelFormat::RGB24)?;
-    if header.format == WireFormat::Rgb {
-        let data = frame.as_mut_slice();
-        if header.codec == prysm_webos_protocol::Codec::Lz4 {
-            scratch[0].resize(header.payload_len, 0);
-            read_payload(reader, &mut scratch[0], header).await?;
-            let _time = prysm_metrics::timer(Stage::FrameDecompress);
-            prysm_webos_protocol::decompress(&scratch[0], data)
-                .inspect_err(|_| prysm_metrics::event(DecoderEvent::DecompressionFailed))?;
-        } else {
-            read_payload(reader, data, header).await?;
-        }
-        return Ok(frame.finish());
-    }
-    let [payload, decoded] = scratch;
-    payload.resize(header.payload_len, 0);
-    read_payload(reader, payload, header).await?;
-    let raw = if header.codec == prysm_webos_protocol::Codec::Lz4 {
-        decoded.resize(header.raw_len()?, 0);
-        let _time = prysm_metrics::timer(Stage::FrameDecompress);
-        prysm_webos_protocol::decompress(payload, decoded)
-            .inspect_err(|_| prysm_metrics::event(DecoderEvent::DecompressionFailed))?;
-        decoded.as_slice()
-    } else {
-        payload.as_slice()
-    };
-    {
-        let _time = prysm_metrics::timer(Stage::FrameConvert);
-        let (y, uv) = raw.split_at(header.width as usize * header.height as usize);
-        let image = yuv::YuvBiPlanarImage {
-            y_plane: y,
-            y_stride: header.width,
-            uv_plane: uv,
-            uv_stride: header.width,
-            width: header.width,
-            height: header.height,
-        };
-        let convert = match header.format {
-            WireFormat::Nv12 => yuv::yuv_nv12_to_rgb,
-            WireFormat::Nv16 => yuv::yuv_nv16_to_rgb,
-            WireFormat::Rgb => unreachable!(),
-        };
-        convert(
-            &image,
-            frame.as_mut_slice(),
-            header.width * 3,
-            yuv::YuvRange::Limited,
-            yuv::YuvStandardMatrix::Bt709,
-            yuv::YuvConversionMode::Balanced,
+impl Decoder {
+    fn decode(&mut self, bytes: &[u8]) -> anyhow::Result<Frame> {
+        let header = Header::decode(
+            bytes
+                .get(..HEADER_LEN)
+                .context("truncated capture header")?
+                .try_into()?,
         )
-        .inspect_err(|_| prysm_metrics::event(DecoderEvent::ConversionFailed))?;
+        .inspect_err(|_| prysm_metrics::event(FrameReceiverEvent::HeaderRejected))?;
+        let payload = &bytes[HEADER_LEN..];
+        if payload.len() != header.payload_len {
+            prysm_metrics::event(FrameReceiverEvent::PayloadTruncated);
+            anyhow::bail!("capture payload length differs from header");
+        }
+        prysm_metrics::wire_frame(
+            WireBoundary::PayloadReceived,
+            header.format.into(),
+            Codec::from(&header),
+            prysm_metrics::Content::Unspecified,
+            header.width,
+            header.height,
+        );
+        prysm_metrics::bytes(BytesKind::ReceiverPayload, payload.len());
+        let mut frame = self
+            .pool
+            .acquire(header.width, header.height, PixelFormat::RGB24)?;
+        if header.codec == prysm_webos_protocol::Codec::H264 {
+            let _time = prysm_metrics::timer(Stage::FrameDecodeH264);
+            if self.h264.is_none() {
+                self.h264 = Some(prysm_webos_protocol::h264::Decoder::new().inspect_err(|_| {
+                    prysm_metrics::event(DecoderEvent::InitializationFailed);
+                })?);
+            }
+            self.h264
+                .as_mut()
+                .expect("initialized decoder")
+                .decode_into(header, payload, frame.as_mut_slice())
+                .inspect_err(|_| prysm_metrics::event(DecoderEvent::H264DecodeFailed))?;
+            return Ok(frame.finish());
+        }
+        let raw = if header.codec == prysm_webos_protocol::Codec::Lz4 {
+            let _time = prysm_metrics::timer(Stage::FrameDecompress);
+            self.decompressed.resize(header.raw_len()?, 0);
+            prysm_webos_protocol::decompress(payload, &mut self.decompressed)
+                .inspect_err(|_| prysm_metrics::event(DecoderEvent::DecompressionFailed))?;
+            self.decompressed.as_slice()
+        } else {
+            payload
+        };
+        if header.format == WireFormat::Rgb {
+            frame.as_mut_slice().copy_from_slice(raw);
+            return Ok(frame.finish());
+        }
+        {
+            let _time = prysm_metrics::timer(Stage::FrameConvert);
+            let (y, uv) = raw.split_at(header.width as usize * header.height as usize);
+            let image = yuv::YuvBiPlanarImage {
+                y_plane: y,
+                y_stride: header.width,
+                uv_plane: uv,
+                uv_stride: header.width,
+                width: header.width,
+                height: header.height,
+            };
+            let convert = match header.format {
+                WireFormat::Nv12 => yuv::yuv_nv12_to_rgb,
+                WireFormat::Nv16 => yuv::yuv_nv16_to_rgb,
+                WireFormat::Rgb => unreachable!(),
+            };
+            convert(
+                &image,
+                frame.as_mut_slice(),
+                header.width * 3,
+                yuv::YuvRange::Limited,
+                yuv::YuvStandardMatrix::Bt709,
+                yuv::YuvConversionMode::Balanced,
+            )
+            .inspect_err(|_| prysm_metrics::event(DecoderEvent::ConversionFailed))?;
+        }
+        Ok(frame.finish())
     }
-    Ok(frame.finish())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
+    fn read_frame(bytes: &[u8]) -> anyhow::Result<Frame> {
+        Decoder::default().decode(bytes)
+    }
 
     fn raw_rgb_packet(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         let mut packet = prysm_webos_protocol::MAGIC.to_vec();
@@ -264,12 +188,12 @@ mod tests {
                 .unwrap();
         let mut malformed = fixture_packet(WireFormat::Rgb, true);
         malformed[HEADER_LEN] = 0xff;
-        assert!(read_frame(&mut malformed.as_slice()).await.is_err());
+        assert!(read_frame(&malformed).is_err());
         let mut rejected = fixture_packet(WireFormat::Rgb, false);
         rejected[0] = 0;
-        assert!(read_frame(&mut rejected.as_slice()).await.is_err());
+        assert!(read_frame(&rejected).is_err());
         let truncated = &fixture_packet(WireFormat::Rgb, false)[..=HEADER_LEN];
-        assert!(read_frame(&mut &truncated[..]).await.is_err());
+        assert!(read_frame(truncated).is_err());
         let address = exporter.address();
         let text = tokio::task::spawn_blocking(move || {
             use std::io::{Read, Write};
@@ -296,47 +220,16 @@ mod tests {
 
     #[tokio::test]
     async fn raw_lz4_rgb_and_chroma_keep_boundaries() {
-        let (mut writer, mut reader) = tokio::io::duplex(7);
-        let send = tokio::spawn(async move {
-            for format in [WireFormat::Rgb, WireFormat::Nv12, WireFormat::Nv16] {
-                // Tiny chroma frames may expand under LZ4, so raw is sufficient
-                // here; compressed NV12/NV16 are covered below at a larger size.
-                let variants: &[bool] = if format == WireFormat::Rgb {
-                    &[false, true]
-                } else {
-                    &[false]
-                };
-                for &compressed in variants {
-                    for fragment in fixture_packet(format, compressed).chunks(3) {
-                        writer.write_all(fragment).await.unwrap();
-                    }
-                }
-            }
-            writer
-                .write_all(&raw_rgb_packet(1, 1, &[1, 2, 3]))
-                .await
-                .unwrap();
-        });
-        let mut scratch = [Vec::new(), Vec::new()];
-        let mut pool = FramePool::default();
-        let mut pixels = None;
-        for expected in [
-            vec![42; 24],
-            vec![42; 24],
-            vec![0; 24],
-            vec![0; 24],
-            vec![1, 2, 3],
+        let mut decoder = Decoder::default();
+        for (format, compressed, value) in [
+            (WireFormat::Rgb, false, 42),
+            (WireFormat::Rgb, true, 42),
+            (WireFormat::Nv12, false, 0),
+            (WireFormat::Nv16, false, 0),
         ] {
-            let frame = read_frame_into(&mut reader, &mut scratch, &mut None, &mut pool)
-                .await
-                .unwrap();
-            assert_eq!(frame.as_slice(), expected);
-            assert_eq!(
-                *pixels.get_or_insert(frame.as_slice().as_ptr()),
-                frame.as_slice().as_ptr()
-            );
+            let frame = decoder.decode(&fixture_packet(format, compressed)).unwrap();
+            assert_eq!(frame.as_slice(), [value; 24]);
         }
-        send.await.unwrap();
     }
 
     #[tokio::test]
@@ -385,7 +278,7 @@ mod tests {
                     header.payload_len = payload.len();
                     let mut packet = header.encode().unwrap().to_vec();
                     packet.extend_from_slice(&payload);
-                    let frame = read_frame(&mut packet.as_slice()).await.unwrap();
+                    let frame = read_frame(&packet).unwrap();
                     assert!(
                         frame.as_slice().as_chunks::<3>().0.iter().all(|pixel| {
                             pixel
@@ -420,47 +313,23 @@ mod tests {
             let mut packet = header.encode().unwrap().to_vec();
             packet.extend_from_slice(&scratch[..length]);
             assert!(
-                read_frame(&mut packet.as_slice())
-                    .await
+                read_frame(&packet)
                     .unwrap()
                     .as_slice()
                     .iter()
                     .all(|v| *v <= 1)
             );
             packet[HEADER_LEN] = 0xff;
-            assert!(read_frame(&mut packet.as_slice()).await.is_err());
+            assert!(read_frame(&packet).is_err());
         }
         let mut packet = fixture_packet(WireFormat::Rgb, false);
         for (offset, value) in [(4, u32::MAX), (12, 99), (16, 99), (20, u32::MAX)] {
             let mut bad = packet.clone();
             bad[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
-            assert!(read_frame(&mut bad.as_slice()).await.is_err());
+            assert!(read_frame(&bad).is_err());
         }
         packet.pop();
-        assert!(read_frame(&mut packet.as_slice()).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn fragmented_and_consecutive_rgb_frames_keep_their_boundaries() {
-        let (mut writer, mut reader) = tokio::io::duplex(8);
-        let send = tokio::spawn(async move {
-            for bytes in [
-                raw_rgb_packet(1, 1, &[255, 0, 12]),
-                raw_rgb_packet(3, 1, &[42; 9]),
-            ] {
-                for fragment in bytes.chunks(3) {
-                    writer.write_all(fragment).await.unwrap();
-                }
-            }
-        });
-        let first = read_frame(&mut reader).await.unwrap();
-        assert_eq!(
-            (first.width(), first.height(), first.format()),
-            (1, 1, PixelFormat::RGB24)
-        );
-        assert_eq!(first.as_slice(), &[255, 0, 12]);
-        assert_eq!(read_frame(&mut reader).await.unwrap().as_slice(), &[42; 9]);
-        send.await.unwrap();
+        assert!(read_frame(&packet).is_err());
     }
 
     #[tokio::test]
@@ -476,16 +345,14 @@ mod tests {
             raw_rgb_packet(2, 2, &[0; 3]),
             raw_rgb_packet(1, 1, &[0; 3])[..HEADER_LEN + 2].to_vec(),
         ] {
-            assert!(read_frame(&mut bytes.as_slice()).await.is_err());
+            assert!(read_frame(&bytes).is_err());
         }
     }
 
     #[tokio::test]
     async fn h264_packets_decode_in_order_with_reused_connection_state() {
         let mut encoder = prysm_webos_protocol::h264::Encoder::new(2_000_000, 30).unwrap();
-        let mut decoder = None;
-        let mut scratch = [Vec::new(), Vec::new()];
-        let mut pool = FramePool::default();
+        let mut decoder = Decoder::default();
         let mut pixels = None;
         let header = Header {
             width: 64,
@@ -505,17 +372,10 @@ mod tests {
                 ..header
             };
             let packet = [wire.encode().unwrap().as_slice(), &payload].concat();
-            let frame = read_frame_into(
-                &mut packet.as_slice(),
-                &mut scratch,
-                &mut decoder,
-                &mut pool,
-            )
-            .await
-            .unwrap();
+            let frame = decoder.decode(&packet).unwrap();
             assert_eq!(frame.width(), 64);
             assert_eq!(frame.height(), 32);
-            assert!(decoder.is_some());
+            assert!(decoder.h264.is_some());
             assert_eq!(
                 *pixels.get_or_insert(frame.as_slice().as_ptr()),
                 frame.as_slice().as_ptr()

@@ -170,7 +170,7 @@ impl Control {
         let (controller, app) = Controller::start(
             store,
             Preview::new().publisher(),
-            "127.0.0.1:0".parse().unwrap(),
+            prysm_capture::WebosReceiver::new().unwrap(),
         );
         let control = Self {
             app,

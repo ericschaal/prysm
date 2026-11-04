@@ -1,6 +1,6 @@
 //! Adapt configured device, file, and webOS inputs to the same fallible frame stream.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::{StreamExt, stream::BoxStream};
 use prysm_capture::{Capturer, Frame, PrysmCapturer, WebosReceiver};
 use tokio_util::sync::CancellationToken;
@@ -19,45 +19,12 @@ pub(crate) struct InputStream {
 #[derive(Clone)]
 pub(crate) struct InputSource {
     config: Input,
-    receiver_listen: std::net::SocketAddr,
-    receiver: Option<WebosReceiver>,
+    receiver: WebosReceiver,
 }
 
 impl InputSource {
-    pub fn new(config: Input, receiver_listen: std::net::SocketAddr) -> Result<Self> {
-        let receiver = match &config {
-            Input::Webos { .. } => Some(WebosReceiver::new(receiver_listen)?),
-            _ => None,
-        };
-        Ok(Self {
-            config,
-            receiver_listen,
-            receiver,
-        })
-    }
-
-    pub async fn reconfigure(&self, config: Input) -> Result<Self> {
-        if matches!(
-            (&self.config, &config),
-            (Input::Webos { .. }, Input::Webos { .. })
-        ) {
-            Ok(Self {
-                config,
-                receiver: self.receiver.clone(),
-                receiver_listen: self.receiver_listen,
-            })
-        } else {
-            let next = Self::new(config, self.receiver_listen)?;
-            self.shutdown().await?;
-            Ok(next)
-        }
-    }
-
-    pub async fn shutdown(&self) -> Result<()> {
-        if let Some(receiver) = &self.receiver {
-            receiver.shutdown().await?;
-        }
-        Ok(())
+    pub fn new(config: Input, receiver: WebosReceiver) -> Self {
+        Self { config, receiver }
     }
 
     pub fn into_stream(self, shutdown: CancellationToken) -> Result<InputStream> {
@@ -100,7 +67,7 @@ impl InputSource {
             Input::Webos {
                 refresh_rate_hz, ..
             } => {
-                let receiver = self.receiver.context("webOS input has no receiver")?;
+                let receiver = self.receiver;
                 let (frames, completed, availability) =
                     receiver.capture(width, height, refresh_rate_hz, shutdown)?;
                 InputStream {
@@ -128,7 +95,7 @@ mod tests {
             refresh_rate_hz: 30.try_into().unwrap(),
             path: String::from("/missing/prysm-input.mp4").try_into().unwrap(),
         };
-        let source = InputSource::new(input, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let source = InputSource::new(input, WebosReceiver::new().unwrap());
         let error = source.into_stream(CancellationToken::new()).err().unwrap();
         assert_eq!(
             error.to_string(),

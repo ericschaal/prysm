@@ -18,14 +18,38 @@ use config::Config;
 use prysm_webos_protocol::{WORKER_CONFIG_ENV, WorkerConfig};
 
 fn main() -> Result<()> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let [flag, value] = args.as_slice()
+        && flag == "--verify-instance"
+    {
+        let instance = value.to_str().context("invalid instance URL")?.parse()?;
+        if let Err(error) = transport::Sender::connect(&instance) {
+            if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                )
+            }) {
+                eprintln!("{error:#}");
+                std::process::exit(2);
+            }
+            return Err(error);
+        }
+        return Ok(());
+    }
     ensure!(
-        std::env::args_os().len() == 1,
+        args.is_empty(),
         "capture worker accepts no command-line arguments"
     );
+    run_worker()
+}
+
+fn run_worker() -> Result<()> {
     let startup = WorkerConfig::decode(
         &std::env::var(WORKER_CONFIG_ENV)
             .context("capture worker requires supervisor configuration")?,
     )?;
+    let metrics = startup.metrics;
     let mut config = Config::from(startup);
     let mut events = events::Events::from_environment()?;
     let mut control = control::Control::from_stdin()?;
@@ -40,7 +64,7 @@ fn main() -> Result<()> {
     );
     let _lock = capture_lock(std::path::Path::new("/tmp/prysm-capture.lock"))?;
     let (stop, _signal_waiter) = shutdown::listen()?;
-    let _metrics = if startup.metrics {
+    let _metrics = if metrics {
         match prysm_metrics::start(([0, 0, 0, 0], 9101).into(), prysm_metrics::Role::Capturer) {
             Ok(exporter) => {
                 tracing::info!(address = %exporter.address(), "metrics listening");
@@ -55,24 +79,34 @@ fn main() -> Result<()> {
         None
     };
     loop {
-        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+        if !control.wait_for_video(&stop)? {
             events.send(&events::Event::Disconnected)?;
             return Ok(());
         }
         let mut session = match session::Session::connect(&config) {
             Ok(session) => session,
             Err(error) => {
+                tracing::info!(error = %format!("{error:#}"), "waiting for Prysm");
                 events.send(&events::Event::Disconnected)?;
-                return Err(error);
+                return Ok(());
             }
         };
+        if session.busy() {
+            events.send(&events::Event::ReceiverBusy)?;
+            return Ok(());
+        }
         events.send(&events::Event::Connected)?;
-        let capturing = session
-            .wait_for_capture(&config, &stop)
-            .unwrap_or_else(|error| {
+        let capturing = match session.wait_for_capture(&config, &stop) {
+            Ok(capturing) => capturing,
+            Err(error) if error.is::<transport::ReceiverBusy>() => {
+                events.send(&events::Event::ReceiverBusy)?;
+                return Ok(());
+            }
+            Err(error) => {
                 tracing::info!(error = %format!("{error:#}"), "idle receiver disconnected");
                 false
-            });
+            }
+        };
         if !capturing || stop.load(std::sync::atomic::Ordering::Relaxed) {
             events.send(&events::Event::Disconnected)?;
             return Ok(());

@@ -20,10 +20,10 @@ export default function App() {
     capture.dirty,
   );
 
-  if (calibrating)
+  if (calibrating && capture.saved?.instanceUrl)
     return (
       <Calibration
-        receiver={capture.saved?.receiver ?? ''}
+        origin={capture.saved.instanceUrl}
         close={closeCalibration}
       />
     );
@@ -52,8 +52,17 @@ export default function App() {
               dirty={capture.dirty}
               changing={capture.changing}
               edit={capture.edit}
-              calibrate={() => setCalibrating(true)}
-              saveSettings={capture.saveSettings}
+              calibrate={() =>
+                capture.saved?.instanceUrl
+                  ? setCalibrating(true)
+                  : navigation.openDialog('receiver')
+              }
+              retryDefaultPort={!!capture.retryUrl}
+              saveSettings={
+                capture.retryUrl
+                  ? capture.retryDefaultPort
+                  : capture.saveSettings
+              }
               openDialog={navigation.openDialog}
             />
           </div>

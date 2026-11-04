@@ -1,10 +1,10 @@
 //! Internal capture defaults; only startup choices cross the supervisor boundary.
-use prysm_webos_protocol::ReceiverAddress;
+use prysm_webos_protocol::InstanceUrl;
 pub use prysm_webos_protocol::{Compression, Source};
 
 #[derive(Debug)]
 pub struct Config {
-    pub receiver: ReceiverAddress,
+    pub instance_url: InstanceUrl,
     pub source: Source,
     pub compression: Compression,
     pub capture: CaptureOptions,
@@ -18,9 +18,9 @@ pub struct CaptureOptions {
 }
 
 impl Config {
-    pub fn new(receiver: ReceiverAddress) -> Self {
+    pub fn new(instance_url: InstanceUrl) -> Self {
         Self {
-            receiver,
+            instance_url,
             source: Source::Both,
             compression: Compression::None,
             capture: CaptureOptions::default(),
@@ -33,7 +33,7 @@ impl From<prysm_webos_protocol::WorkerConfig> for Config {
         Self {
             source: settings.source,
             compression: settings.compression,
-            ..Self::new(settings.receiver)
+            ..Self::new(settings.instance_url)
         }
     }
 }

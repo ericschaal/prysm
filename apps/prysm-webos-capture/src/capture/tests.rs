@@ -7,7 +7,7 @@ fn frame(output: &mut Vec<u8>) -> Result<Option<Header>> {
     Ok(Some(crate::pixels::header(2, 2, PixelFormat::Nv12)?))
 }
 fn config(source: Source) -> Config {
-    let mut config = Config::new("127.0.0.1:19400".parse().unwrap());
+    let mut config = Config::new("http://127.0.0.1:8787".parse().unwrap());
     config.source = source;
     config.capture.width = 2;
     config.capture.height = 2;

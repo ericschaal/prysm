@@ -59,7 +59,7 @@ LG's capture libraries, `libstdc++.so.6`, and `libgcc_s.so.1` come from the TV.
 
 The service starts the worker without arguments and supplies:
 
-- `PRYSM_WORKER_CONFIG`: bounded JSON containing a validated receiver address,
+- `PRYSM_WORKER_CONFIG`: bounded JSON containing a validated HTTP(S) instance origin,
   `source` (`video`, `both`), `compression` (`none`, `lz4`, `h264-software`, `h264-hardware`), and
   `metrics` (boolean, defaults off).
 - `PRYSM_EVENTS_FD`: an owned inherited pipe for typed lifecycle events.
@@ -82,7 +82,7 @@ Internal modules have separate jobs:
 - `control` and `events`: private supervisor IPC.
 - `capture`, `native`, and `pixels`: acquire, release, and pack LG frames.
 - `encoder`: raw/LZ4/H.264 encoding and reusable codec buffers.
-- `transport`: bounded TCP negotiation and writes, with one owned socket.
+- `transport`: bounded WebSocket negotiation and writes, with one owned socket.
 - `session`: negotiation state, frame scheduling, and coordination.
 
 Combined capture uses VTCapture's blended tap (mode 3), supplying video and
@@ -134,8 +134,7 @@ result. Each new session owns fresh codec state and begins with decoder
 configuration and an IDR frame. Periodic IDRs are disabled for reliable TCP;
 scene-change detection remains enabled.
 
-There is no application frame queue. TCP connect and complete-frame writes have
-100 ms deadlines; initial and partial control messages have a one-second bound.
+There is no application frame queue. TCP connect and initial handshake I/O have four-second timeouts. Complete frame writes have a 100 ms deadline.
 The idle wait is interruptible. A partial/failed write disconnects immediately,
 before potentially blocking native teardown. Kernel TCP buffering and
 retransmissions can still increase latency.
@@ -143,7 +142,7 @@ retransmissions can still increase latency.
 The sole active version source is
 [`wire-version.txt`](../../crates/capture/prysm-webos-protocol/wire-version.txt). It drives the JSON
 hello version, four-byte frame magic, Rust fixtures, and TV smoke receiver. This
-refactor does not change the receiver protocol. Frames retain the 24-byte header:
+version requires both ends to use the WebSocket transport. Each binary message holds one JSON control or one frame with its 24-byte header:
 
 | Offset | Bytes | Field |
 | --- | --- | --- |
@@ -159,15 +158,13 @@ The receiver validates dimensions, lengths, codec data, and embedded H.264 SPS
 before allocation/decoding. Limits remain 1920×1080, even capture dimensions,
 1–60 FPS, and 8 MiB H.264 payloads. Mixed protocol versions are rejected.
 
-The LAN protocol is unauthenticated and unencrypted. Restrict the listening
-interface and port to the TV's trusted LAN. Packet/frame instrumentation remains
+Use WS on a trusted LAN or WSS through a trusted HTTPS endpoint. The receiver is unauthenticated. Packet/frame instrumentation remains
 in the pipeline; the worker no longer exposes a standalone Prometheus CLI option.
 
 ## Verification
 
 ```sh
 cargo test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-capture -p prysm-webos-service
-node --test packaging/webos/tests/*.test.js
 python3 -m unittest discover -s packaging/webos/tests
 ```
 

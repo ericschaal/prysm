@@ -30,9 +30,9 @@ impl Mode {
     fn configured(
         config: &Config,
         preview: Publisher,
-        receiver_listen: std::net::SocketAddr,
+        webos: prysm_capture::WebosReceiver,
     ) -> Self {
-        match Ready::new(config, preview, receiver_listen) {
+        match Ready::new(config, preview, webos) {
             Ok(ready) => Self::Ready(Box::new(ready)),
             Err(error) => Self::Failed(Box::new(failed_state(config, &error))),
         }
@@ -89,7 +89,7 @@ pub(crate) struct Controller {
     settings: SettingsStore,
     mode: Mode,
     preview: Publisher,
-    receiver_listen: std::net::SocketAddr,
+    webos: prysm_capture::WebosReceiver,
     operation: OperationStatus,
     job: Option<JoinHandle<Finished>>,
     settings_tx: watch::Sender<SettingsView>,
@@ -116,11 +116,11 @@ impl Controller {
     pub fn start(
         settings: SettingsStore,
         preview: Publisher,
-        receiver_listen: std::net::SocketAddr,
+        webos: prysm_capture::WebosReceiver,
     ) -> (ControllerHandle, App) {
         let view = settings.view();
         let mode = settings.config().map_or(Mode::Setup, |config| {
-            Mode::configured(&config, preview.clone(), receiver_listen)
+            Mode::configured(&config, preview.clone(), webos.clone())
         });
         let (settings_tx, settings_rx) = watch::channel(view.clone());
         let (state_tx, state_rx) = watch::channel(mode.state(OperationStatus::Idle));
@@ -131,7 +131,7 @@ impl Controller {
             settings,
             mode,
             preview,
-            receiver_listen,
+            webos,
             operation: OperationStatus::Idle,
             job: None,
             settings_tx,
@@ -442,7 +442,7 @@ impl Controller {
                 self.publish();
             }
             (_, Some(config)) => {
-                self.mode = Mode::configured(&config, self.preview.clone(), self.receiver_listen);
+                self.mode = Mode::configured(&config, self.preview.clone(), self.webos.clone());
                 let result = match &self.mode {
                     Mode::Failed(state) => Err(CommandError::Backend(anyhow::anyhow!(
                         state.pipeline.error.clone().unwrap_or_default()
@@ -645,12 +645,12 @@ mod tests {
 
     fn owner(
         settings: SettingsStore,
-        receiver_listen: std::net::SocketAddr,
+        webos: prysm_capture::WebosReceiver,
     ) -> (Controller, App, mpsc::Receiver<Command>) {
         let preview = Preview::new().publisher();
         let view = settings.view();
         let mode = settings.config().map_or(Mode::Setup, |config| {
-            Mode::configured(&config, preview.clone(), receiver_listen)
+            Mode::configured(&config, preview.clone(), webos.clone())
         });
         let (settings_tx, settings_rx) = watch::channel(view.clone());
         let (state_tx, state_rx) = watch::channel(mode.state(OperationStatus::Idle));
@@ -661,7 +661,7 @@ mod tests {
                 settings,
                 mode,
                 preview,
-                receiver_listen,
+                webos,
                 operation: OperationStatus::Idle,
                 job: None,
                 settings_tx,
@@ -673,31 +673,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepted_task_panic_still_joins_owned_receiver() {
+    async fn accepted_task_panic_still_reports_failure_after_cleanup() {
         let directory = tempfile::tempdir().unwrap();
-        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = available.local_addr().unwrap();
-        drop(available);
+        let webos = prysm_capture::WebosReceiver::new().unwrap();
         let mut config = test_support::config();
         config.input = prysm_contract::Input::Webos {
             capture_resolution: [4, 2].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
         };
         let (mut controller, _app, receiver) =
-            owner(test_support::store(&directory, &config), address);
+            owner(test_support::store(&directory, &config), webos);
         controller.job = Some(tokio::spawn(async {
             panic!("accepted operation failed unexpectedly")
         }));
-        assert!(std::net::TcpListener::bind(address).is_err());
         let error = controller
             .run(receiver, CancellationToken::new())
             .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("accepted operation task panicked"));
-        assert!(
-            std::net::TcpListener::bind(address).is_ok(),
-            "error cleanup must join the receiver before returning"
-        );
     }
 
     #[tokio::test]
@@ -716,7 +709,8 @@ mod tests {
             )
             .await
             .unwrap();
-        let (mut controller, app, _receiver) = owner(settings, "127.0.0.1:0".parse().unwrap());
+        let (mut controller, app, _receiver) =
+            owner(settings, prysm_capture::WebosReceiver::new().unwrap());
         let (reply, response) = oneshot::channel();
         let id = controller.begin();
         controller
@@ -777,10 +771,8 @@ mod tests {
             axum::serve(listener, router).await.unwrap();
         });
         let directory = tempfile::tempdir().unwrap();
-        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = available.local_addr().unwrap();
-        drop(available);
-        let (controller, app, receiver) = owner(test_support::store(&directory, &config), address);
+        let webos = prysm_capture::WebosReceiver::new().unwrap();
+        let (controller, app, receiver) = owner(test_support::store(&directory, &config), webos);
         (directory, controller, app, receiver, server)
     }
 
@@ -874,24 +866,16 @@ mod tests {
         (tv, phone)
     }
 
-    async fn tv_frame(address: std::net::SocketAddr) -> tokio::net::TcpStream {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    async fn tv_frame(receiver: &prysm_capture::WebosReceiver) -> crate::test_support::Tv {
+        use futures::{SinkExt, StreamExt};
         tokio::time::timeout(Duration::from_secs(2), async {
-            let mut sender = tokio::net::TcpStream::connect(address).await.unwrap();
-            sender
-                .write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
-                .await
-                .unwrap();
-            loop {
-                let size = sender.read_u32().await.unwrap();
-                let mut message = vec![0; size as usize];
-                sender.read_exact(&mut message).await.unwrap();
-                if serde_json::from_slice::<serde_json::Value>(&message).unwrap()["type"]
-                    == "capture_settings"
-                {
-                    break;
-                }
-            }
+            let mut sender = crate::test_support::tv_socket(receiver).await;
+            while prysm_webos_protocol::ControlMessage::decode(
+                &sender.next().await.unwrap().unwrap().into_data(),
+            )
+            .unwrap()
+                == prysm_webos_protocol::ControlMessage::Idle
+            {}
             let mut frame = prysm_webos_protocol::Header {
                 width: 4,
                 height: 2,
@@ -903,7 +887,10 @@ mod tests {
             .unwrap()
             .to_vec();
             frame.extend([128; 24]);
-            sender.write_all(&frame).await.unwrap();
+            sender
+                .send(tokio_tungstenite::tungstenite::Message::binary(frame))
+                .await
+                .unwrap();
             sender
         })
         .await
@@ -918,7 +905,7 @@ mod tests {
     async fn calibration_startup_applies_queued_draft_before_save() {
         let (_directory, mut controller, app, receiver, server) = calibration_owner(true).await;
         let normal = app.settings().settings;
-        let address = controller.receiver_listen;
+        let tv_receiver = controller.webos.clone();
         let (tv, phone) = paired(&mut controller).await;
         assert!(!tv.startup_pending);
         let shutdown = CancellationToken::new();
@@ -955,7 +942,7 @@ mod tests {
             .await,
             Err(CommandError::Conflict(_))
         ));
-        let sender = tv_frame(address).await;
+        let sender = tv_frame(&tv_receiver).await;
         tokio::time::timeout(Duration::from_secs(2), async {
             while app.settings().settings.source != Source::Prysm {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -989,7 +976,7 @@ mod tests {
             Err(CommandError::Conflict(_))
         ));
         assert_eq!(app.settings().settings.calibration, normal.calibration);
-        let _sender = tv_frame(address).await;
+        let _sender = tv_frame(&tv_receiver).await;
         tokio::time::timeout(Duration::from_secs(2), async {
             while app.state().unwrap().pipeline.phase != prysm_contract::PipelinePhase::Running {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1191,7 +1178,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let _sender = tv_frame(controller.receiver_listen).await;
+        let _sender = tv_frame(&controller.webos).await;
         let started = controller.job.take().unwrap().await.unwrap();
         controller.finished(started).await;
         let normal = controller.settings.view();

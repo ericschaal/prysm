@@ -612,8 +612,6 @@ async fn save_config(
     reason = "keep each end-to-end controller scenario and its assertions together"
 )]
 async fn start_retries_saved_configuration_before_opening_the_input() {
-    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let desired = occupied.local_addr().unwrap();
     let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = available.local_addr().unwrap();
     drop(available);
@@ -652,14 +650,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_prysm"))
         .arg("--config")
         .arg(&path)
-        .args([
-            "--listen",
-            &address.to_string(),
-            "--allowed-host",
-            "*",
-            "--receiver-listen",
-            &desired.to_string(),
-        ])
+        .args(["--listen", &address.to_string(), "--allowed-host", "*"])
         .kill_on_drop(true)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -705,7 +696,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         loop {
             let state = wait(&client, &endpoint).await;
             if state.config_revision == saved.revision
-                && matches!(state.operation, OperationStatus::Failed { .. })
+                && matches!(state.operation, OperationStatus::Succeeded { .. })
             {
                 break;
             }
@@ -714,58 +705,25 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
     })
     .await
     .unwrap();
-    // Retrying while the desired input is unavailable must never start the old input.
-    let accepted = client
-        .put(&endpoint)
-        .json(&Target {
-            power: true,
-            source: Source::Prysm,
-        })
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let failed = wait_operation(&client, &endpoint, accepted).await;
-    let OperationStatus::Failed { error, .. } = failed.operation else {
-        panic!("expected bind failure")
-    };
-    assert!(
-        error.message.contains("cannot listen for webOS"),
-        "{}",
-        error.message
-    );
-    assert_eq!(failed.pipeline.phase, prysm_contract::PipelinePhase::Idle);
-    drop(occupied);
     let tv = tokio::spawn(async move {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let mut socket = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let Ok(socket) = tokio::net::TcpStream::connect(desired).await {
-                    break socket;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}/api/capture"))
+                .await
+                .unwrap();
         socket
-            .write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
+            .send(Message::binary(
+                prysm_webos_protocol::HELLO.encode().unwrap(),
+            ))
             .await
             .unwrap();
-        loop {
-            let mut prefix = [0; 4];
-            socket.read_exact(&mut prefix).await.unwrap();
-            let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
-            socket.read_exact(&mut bytes).await.unwrap();
-            if matches!(
-                prysm_webos_protocol::ControlMessage::decode(&bytes).unwrap(),
-                prysm_webos_protocol::ControlMessage::CaptureSettings { .. }
-            ) {
-                break;
-            }
-        }
+        while prysm_webos_protocol::ControlMessage::decode(
+            &socket.next().await.unwrap().unwrap().into_data(),
+        )
+        .unwrap()
+            == prysm_webos_protocol::ControlMessage::Idle
+        {}
         let mut frame = prysm_webos_protocol::Header {
             width: 4,
             height: 2,
@@ -777,7 +735,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         .unwrap()
         .to_vec();
         frame.extend([255; 24]);
-        socket.write_all(&frame).await.unwrap();
+        socket.send(Message::binary(frame)).await.unwrap();
         futures::future::pending::<()>().await;
     });
     let accepted = client
@@ -798,7 +756,6 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         "{started:?}"
     );
     assert_eq!(started.applied_revision, Some(saved.revision));
-    assert!(tokio::net::TcpStream::connect(desired).await.is_ok());
     child.kill().await.unwrap();
     fixture.abort();
     tv.abort();

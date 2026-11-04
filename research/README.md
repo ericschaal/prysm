@@ -28,6 +28,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 
 | Investigation | Finding / status |
 | --- | --- |
+| [Direct WebSocket capture](webos-capture/2026-11-04-websocket-transport/README.md) | On-TV TCP, LAN WebSocket and Caddy WSS benchmark with RP5 packet and WLED pixel observations |
 | [Initial hardware encoding](webos-capture/2026-11-01-hardware-encoding/README.md) | Feasibility probes and vendor encoder investigation |
 | [Encoder latency](webos-capture/2026-11-02-encoder-latency/README.md) | Static hypotheses followed by live tests and integration; read follow-ups in order |
 | [Hardware qualification](webos-capture/hardware-h264-qualification.md) | Measurements from multiple historical implementations, with workload limits |

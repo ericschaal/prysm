@@ -24,7 +24,7 @@ export default function CaptureOverview({
       className={'overview' + (attention ? ' attention' : '')}
       aria-labelledby="status-title"
     >
-      <p className="section-label">Sender status</p>
+      <p className="section-label">Capture status</p>
       <div id="connection" role="status" aria-live="polite">
         <h2 id="status-title">{title}</h2>
       </div>
@@ -52,7 +52,7 @@ export default function CaptureOverview({
           Service options
         </button>
       </div>
-      <p className="capture-hint">The sender runs in the background.</p>
+      <p className="capture-hint">Capture stays enabled when you close the app.</p>
     </section>
   );
 }

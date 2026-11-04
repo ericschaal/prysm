@@ -96,7 +96,7 @@ def main():
         if args.capture:
             write(directory + "/worker", (ROOT / "target/armv7-unknown-linux-gnueabi/webos/prysm-webos-capture").read_bytes(), "700")
         elif args.supervisor:
-            write(directory + "/worker", b"#!/bin/sh\ntrap '' TERM\nprintf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"\nwhile :; do sleep 1; done\n", "700")
+            write(directory + "/worker", b"#!/bin/sh\n[ \"$1\" = --verify-instance ] && exit 0\ntrap '' TERM\nprintf '%s\\n' '{\"type\":\"connected\"}' >&\"$PRYSM_EVENTS_FD\"\nwhile :; do sleep 1; done\n", "700")
         if args.supervisor:
             write(directory + "/scan-services", b"#!/bin/sh\nexit 0\n", "700")
         write(directory + "/service.service",
@@ -137,15 +137,14 @@ def main():
         if args.supervisor:
             identity = "io.prysm.capture.probe.app"
             assert request({}, method="start")["returnValue"] is False
-            config = {"receiver": "127.0.0.1:19400", "source": "both", "compression": "lz4", "autostart": False}
+            config = {"instanceUrl": "http://127.0.0.1:8787","metrics": False, "source": "both", "compression": "lz4", "autostart": False}
             if args.capture:
-                receiver_source = (ROOT / "packaging/webos/tests/loopback-receiver.js").read_bytes()
-                write(directory + "/receiver.js", receiver_source)
-                write(directory + "/wire-version.txt", (ROOT / "crates/capture/prysm-webos-protocol/wire-version.txt").read_bytes())
-                receiver_pid = int(remote(f"timeout 18 node {directory}/receiver.js </dev/null >{directory}/receiver.log 2>&1 & echo $!").stdout)
+                probe = ROOT / "target/armv7-unknown-linux-gnueabi/webos/examples/loopback-receiver"
+                write(directory + "/receiver", probe.read_bytes(), "700")
+                receiver_pid = int(remote(f"cd {directory}; timeout 18 ./receiver </dev/null >receiver.log 2>&1 & echo $!").stdout)
                 remote(f"timeout 4 sh -c 'while [ ! -f {directory}/receiver.port ]; do sleep 0.1; done'")
                 port = int(remote(f"cat {directory}/receiver.port").stdout)
-                config.update(receiver=f"127.0.0.1:{port}", compression="none")
+                config.update(instanceUrl=f"http://127.0.0.1:{port}", compression="none")
             assert request(config, method="setConfig", app=identity)["returnValue"] is True
             assert request({}, method="start", app=identity)["returnValue"] is True
             eventually(lambda v: v["receiverConnected"], "worker handshake")
@@ -196,8 +195,7 @@ def main():
                f"{shlex.quote(directory)}/config.json {shlex.quote(directory)}/capture.manifest.json "
                f"{shlex.quote(directory)}/supervisor.manifest.json "
                f"{shlex.quote(directory)}/boot-hook {shlex.quote(directory)}/capture.role.json "
-               f"{shlex.quote(directory)}/receiver.js {shlex.quote(directory)}/receiver.log "
-               f"{shlex.quote(directory)}/wire-version.txt "
+               f"{shlex.quote(directory)}/receiver {shlex.quote(directory)}/receiver.log "
                f"{shlex.quote(directory)}/receiver.port {shlex.quote(directory)}/receiver.complete; "
                f"rmdir {shlex.quote(directory)}")
         print("Removed temporary probe registration and files.", flush=True)

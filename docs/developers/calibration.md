@@ -118,8 +118,7 @@ as well as opaque local-file origins. Other web pages cannot frame it, and
 unrelated windows cannot send commands through it. The API retains the normal
 Host, Origin, Fetch Metadata and body-size protections; no CORS exception is
 added. The phone's QR URL uses a fragment so the pairing capability is not sent
-in ordinary URL requests or referrers. The TV suggests port 8787 and lets users
-enter a different allowed web address before pairing.
+in ordinary URL requests or referrers. The TV uses its verified instance origin for both the relay and the phone QR code.
 
 Build host and TV frontends together when changing the generated calibration
 contract. Unit and DOM tests cover correction ramps, identity, locks, pairing

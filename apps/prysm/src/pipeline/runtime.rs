@@ -82,32 +82,18 @@ pub(super) fn idle() -> PipelineStatus {
 impl Pipeline {
     pub(crate) fn with_preview(
         config: PipelineConfig,
-        receiver_listen: std::net::SocketAddr,
+        receiver: prysm_capture::WebosReceiver,
         preview: crate::preview::Publisher,
     ) -> (Self, watch::Receiver<PipelineStatus>) {
-        let (status, receiver) = watch::channel(idle());
-        let input = match InputSource::new(config.input.clone(), receiver_listen) {
-            Ok(input) => Some(input),
-            Err(error) => {
-                fail(&status, &error);
-                None
-            }
-        };
+        let (status, updates) = watch::channel(idle());
         let (commands, incoming) = mpsc::channel(32);
-        let task = tokio::spawn(own(
-            config,
-            receiver_listen,
-            input,
-            Some(preview),
-            status,
-            incoming,
-        ));
+        let task = tokio::spawn(own(config, receiver, Some(preview), status, incoming));
         (
             Self {
                 commands,
                 owner: Arc::new(Mutex::new(Some(task))),
             },
-            receiver,
+            updates,
         )
     }
     pub async fn start(&self) -> Result<()> {
@@ -197,17 +183,12 @@ async fn configure_run(
 )]
 async fn own(
     mut config: PipelineConfig,
-    receiver_listen: std::net::SocketAddr,
-    mut input: Option<InputSource>,
+    receiver: prysm_capture::WebosReceiver,
     preview: Option<crate::preview::Publisher>,
     status: watch::Sender<PipelineStatus>,
     mut commands: mpsc::Receiver<Command>,
 ) {
-    let mut state = if input.is_some() {
-        State::Idle
-    } else {
-        State::Failed
-    };
+    let mut state = State::Idle;
     let mut accepting_commands = true;
     loop {
         tokio::select! {
@@ -220,14 +201,8 @@ async fn own(
                             State::Starting { .. } | State::Stopping { .. } => { let _ = reply.send(Err(anyhow!("pipeline lifecycle change already running"))); },
                             _ => {
                                 status.send_replace(PipelineStatus { phase:PipelinePhase::Starting,..idle() });
-                                let source = match &input {
-                                    Some(input) => Ok(input.clone()),
-                                    None => InputSource::new(config.input.clone(), receiver_listen),
-                                };
-                                let launched = source.and_then(|source| {
-                                    input = Some(source.clone());
-                                    worker::launch(config.clone(), status.clone(), preview.clone(), source)
-                                });
+                                let input = InputSource::new(config.input.clone(),receiver.clone());
+                                let launched = worker::launch(config.clone(), status.clone(), preview.clone(), input);
                                 match launched {
                                     Ok((session,ready)) => {
                                         let run = Run {shutdown:session.shutdown.clone(),configure:session.configure.clone(),task:tokio::spawn(session.wait())};
@@ -240,25 +215,12 @@ async fn own(
                     },
                     Some(Command::Configure(next, reply)) => {
                         let next=*next;
-                        let recovering = input.is_none();
                         let run = match &state { State::Running(run) => Some(run), State::Starting { .. } | State::Stopping { .. } => {
                             let _ = reply.send(Err(anyhow!("pipeline lifecycle change already running")));
                             continue;
                         }, _=>None };
-                        let result = async {
-                            configure_run(run,&config,&next).await?;
-                            let next_input = match &input {
-                                Some(input) => input.reconfigure(next.input.clone()).await?,
-                                None => InputSource::new(next.input.clone(), receiver_listen)?,
-                            };
-                            input = Some(next_input);
-                            config = next;
-                            Ok(())
-                        }.await;
-                        if recovering && result.is_ok() {
-                            state = State::Idle;
-                            status.send_replace(idle());
-                        }
+                        let result = configure_run(run,&config,&next).await;
+                        if result.is_ok() { config = next; }
                         let _ = reply.send(result);
                     },
                     command => {
@@ -292,8 +254,7 @@ async fn own(
                             },
                             _ => {
                                 if shutting_down {
-                                    let result=match &input { Some(input)=>input.shutdown().await, None=>Ok(()) };
-                                    if let Some(reply)=reply { let _=reply.send(result); }
+                                    if let Some(reply)=reply { let _=reply.send(Ok(())); }
                                     return;
                                 }
                                 status.send_replace(idle());
@@ -339,8 +300,7 @@ async fn own(
                             Err(error)=>fail(&status,error),
                         }
                         state=if result.is_err() {State::Failed} else if matches!(result,Ok(PipelineExit::Completed)) {State::Completed} else {State::Idle};
-                        let cleanup=if shutting_down {match &input {Some(input)=>input.shutdown().await,None=>Ok(())}} else {Ok(())};
-                        let error=result.err().or_else(||cleanup.err());
+                        let error=result.err();
                         for reply in replies {
                             let _=reply.send(match &error {Some(error)=>Err(anyhow!("{error:#}")),None=>Ok(())});
                         }
@@ -356,56 +316,17 @@ async fn own(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::{SinkExt, StreamExt};
     use prysm_contract::{ConfigRevision, Output};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    async fn message(tv: &mut tokio::net::TcpStream) -> serde_json::Value {
-        let mut prefix = [0; 4];
-        tv.read_exact(&mut prefix).await.unwrap();
-        let mut bytes = vec![0; u32::from_be_bytes(prefix) as usize];
-        tv.read_exact(&mut bytes).await.unwrap();
-        serde_json::from_slice(&bytes).unwrap()
+    async fn message(tv: &mut crate::test_support::Tv) -> serde_json::Value {
+        use futures::StreamExt;
+        serde_json::from_slice(&tv.next().await.unwrap().unwrap().into_data()).unwrap()
     }
     fn config() -> PipelineConfig {
         let mut config: prysm_contract::Config = crate::test_support::config();
         let Output::Wled { url, .. } = &mut config.output;
         *url = "http://127.0.0.1/".parse().unwrap();
         PipelineConfig::from(&config)
-    }
-
-    #[tokio::test]
-    async fn occupied_receiver_port_is_recoverable_without_replacing_the_owner() {
-        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = occupied.local_addr().unwrap();
-        let mut config = config();
-        config.input = prysm_contract::Input::Webos {
-            capture_resolution: [4, 2].try_into().unwrap(),
-            refresh_rate_hz: 30.try_into().unwrap(),
-        };
-        let (pipeline, status) = Pipeline::with_preview(
-            config.clone(),
-            address,
-            crate::preview::Preview::new().publisher(),
-        );
-        assert_eq!(status.borrow().phase, PipelinePhase::Failed);
-        assert!(
-            status
-                .borrow()
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("cannot listen")
-        );
-        assert!(pipeline.configure(config.clone()).await.is_err());
-        drop(occupied);
-        pipeline.configure(config).await.unwrap();
-        assert_eq!(status.borrow().phase, PipelinePhase::Idle);
-        let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-        tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
-            .await
-            .unwrap();
-        assert_eq!(message(&mut tv).await["type"], "idle");
-        pipeline.shutdown().await.unwrap();
-        assert!(std::net::TcpListener::bind(address).is_ok());
     }
 
     #[tokio::test]
@@ -419,20 +340,14 @@ mod tests {
             capture_resolution: [4, 2].try_into().unwrap(),
             refresh_rate_hz: 30.try_into().unwrap(),
         };
-        // Reserve a concrete fixture address for the application-scoped listener.
-        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = available.local_addr().unwrap();
-        drop(available);
+        let receiver = prysm_capture::WebosReceiver::new().unwrap();
         let (pipeline, mut status) = Pipeline::with_preview(
             config.clone(),
-            address,
+            receiver.clone(),
             crate::preview::Preview::new().publisher(),
         );
         for index in 0..2 {
-            let mut tv = tokio::net::TcpStream::connect(address).await.unwrap();
-            tv.write_all(&prysm_webos_protocol::HELLO.encode().unwrap())
-                .await
-                .unwrap();
+            let mut tv = crate::test_support::tv_socket(&receiver).await;
             assert_eq!(message(&mut tv).await["type"], "idle");
             pipeline.start().await.unwrap();
             assert_eq!(message(&mut tv).await["type"], "capture_settings");
@@ -447,7 +362,11 @@ mod tests {
             .unwrap()
             .to_vec();
             frame.extend([255; 24]);
-            tv.write_all(&frame).await.unwrap();
+            tv.send(tokio_tungstenite::tungstenite::Message::binary(
+                frame.clone(),
+            ))
+            .await
+            .unwrap();
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
                 while status.borrow().frames_processed < 1 {
                     status.changed().await.unwrap();
@@ -489,7 +408,11 @@ mod tests {
                     before,
                     "live setting {setting} must not reset processing history/session"
                 );
-                tv.write_all(&frame).await.unwrap();
+                tv.send(tokio_tungstenite::tungstenite::Message::binary(
+                    frame.clone(),
+                ))
+                .await
+                .unwrap();
                 tokio::time::timeout(std::time::Duration::from_secs(2), async {
                     while status.borrow().frames_processed == before {
                         status.changed().await.unwrap();
@@ -499,12 +422,14 @@ mod tests {
                 .unwrap();
             }
             pipeline.stop().await.unwrap();
-            assert_eq!(tv.read(&mut [0]).await.unwrap(), 0);
+            assert!(
+                tv.next()
+                    .await
+                    .is_none_or(|m| m.is_err() || m.unwrap().is_close())
+            );
         }
         pipeline.shutdown().await.unwrap();
-        let listener = std::net::TcpListener::bind(address)
-            .expect("shutdown must release listener before acknowledgment");
-        drop(listener);
+        receiver.shutdown().await.unwrap();
     }
     #[tokio::test]
     async fn startup_failure_is_joined_and_http_owner_can_accept_next_command() {
@@ -516,7 +441,7 @@ mod tests {
         };
         let (pipeline, status) = Pipeline::with_preview(
             config.clone(),
-            "127.0.0.1:0".parse().unwrap(),
+            prysm_capture::WebosReceiver::new().unwrap(),
             crate::preview::Preview::new().publisher(),
         );
         let error = pipeline.start().await.unwrap_err();
