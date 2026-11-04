@@ -52,8 +52,12 @@ pub struct App {
 }
 impl App {
     pub fn new(files: Files) -> Result<Self> {
+        let mut state = Supervisor::new(files.load()?);
+        if let Err(error) = files.autostart(state.config.autostart) {
+            state.error = Some(format!("Restoring boot hook: {error:#}"));
+        }
         Ok(Self {
-            state: Supervisor::new(files.load()?),
+            state,
             files,
             worker: None,
             video: VideoUpdate {

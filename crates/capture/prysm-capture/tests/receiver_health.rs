@@ -13,6 +13,9 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
+// Each receiver writes the same process-wide capture gauges.
+static RECEIVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn metric(address: SocketAddr, name: &str) -> f64 {
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
@@ -61,6 +64,7 @@ async fn reply(tv: &mut Tv) -> ControlMessage {
 
 #[tokio::test]
 async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() {
+    let _guard = RECEIVER.lock().await;
     tokio::time::timeout(Duration::from_secs(8), async {
         let exporter =
             prysm_metrics::start("127.0.0.1:0".parse().unwrap(), prysm_metrics::Role::Prysm)
@@ -134,6 +138,7 @@ async fn health_distinguishes_idle_waiting_receiving_reconnecting_and_stopped() 
 }
 #[tokio::test]
 async fn ready_tvs_are_ordered_and_an_active_session_survives_a_busy_handshake() {
+    let _guard = RECEIVER.lock().await;
     tokio::time::timeout(Duration::from_secs(4), async {
         let receiver = WebosReceiver::new().unwrap();
         let url = endpoint(&receiver).await;
@@ -174,6 +179,7 @@ async fn ready_tvs_are_ordered_and_an_active_session_survives_a_busy_handshake()
 
 #[tokio::test]
 async fn idle_waiters_keep_their_place_across_renewals_and_video_loss() {
+    let _guard = RECEIVER.lock().await;
     tokio::time::timeout(Duration::from_secs(4), async {
         let receiver = WebosReceiver::new().unwrap();
         let url = endpoint(&receiver).await;

@@ -62,9 +62,6 @@ async function fixture(t, options = {}) {
     return id;
   };
   w.clearTimeout = (id) => timers.delete(id);
-  w.setInterval = () => {
-    throw new Error('status must use a subscription');
-  };
   function advance(milliseconds) {
     const end = now + milliseconds;
     while (true) {
@@ -122,6 +119,7 @@ async function fixture(t, options = {}) {
         return;
       }
       if (method === 'status') {
+        assert.equal(payload.subscribe, true, 'status must use a subscription');
         subscription = this;
         if (options.silentStatus) return;
       }
@@ -344,6 +342,49 @@ test('status subscription preserves an unsaved choice and its focus', async (t) 
   assert.equal(f.el('autostart-value').textContent, 'On');
   assert.equal(f.value.config.autostart, false);
   assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
+});
+
+test('a subscription alone updates the calibration origin and preserves unrelated edits', async (t) => {
+  const f = await fixture(t, { deferMethods: ['setConfig'] });
+  await f.click('receiver');
+  await f.input('receiver-input', 'https://updated.example');
+  await f.click('receiver-apply');
+  await f.click('save');
+  const [save] = f.mutations();
+  await f.advance(30000); // The service saved the config, but its direct reply was lost.
+  await f.click('metrics');
+  f.value.config = save.payload;
+  await f.notify();
+  assert.equal(f.el('metrics').getAttribute('aria-checked'), 'true');
+  assert.equal(f.el('saved-state').textContent, 'Unsaved changes');
+  await f.click('calibrate');
+  assert.equal(
+    f.w.document.querySelector('iframe').src,
+    'https://updated.example/calibration-tv.html',
+  );
+});
+
+test('a late action reply cannot revert a newer subscription, and a restarted service can reset its revision', async (t) => {
+  const f = await fixture(t, { deferMethods: ['start'] });
+  await f.click('primary');
+  const reply = JSON.stringify(f.value);
+  f.value.revision++;
+  f.value.config = { ...f.value.config, instanceUrl: 'https://second.example' };
+  await f.notify();
+  await f.reply(f.pending[0], reply);
+  assert.equal(f.el('receiver-value').textContent, 'https://second.example');
+
+  await f.click('primary');
+  const previousProcessReply = JSON.stringify(f.value);
+  f.value.pid++;
+  f.value.revision = 0;
+  f.value.config = {
+    ...f.value.config,
+    instanceUrl: 'https://restarted.example',
+  };
+  await f.notify();
+  await f.reply(f.pending[1], previousProcessReply);
+  assert.equal(f.el('receiver-value').textContent, 'https://restarted.example');
 });
 
 test('Back on the main screen asks before closing; modal Tab stays inside', async (t) => {

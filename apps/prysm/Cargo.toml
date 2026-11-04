@@ -55,7 +55,8 @@ prysm-contract = { path = "../../crates/common/prysm-contract" }
 axum = { workspace = true, features = ["ws"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 base64 = "0.22"
-reqwest = { workspace = true, features = ["json", "rustls"] }
+rustls.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-no-provider"] }
 serde_json.workspace = true
 prysm-api = { path = "../../crates/common/prysm-api" }
 prysm-web = { path = "../../crates/web/prysm-web" }

@@ -5,6 +5,9 @@ use prysm_webos_service::contract::{Capabilities, SupervisorStatus};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
+// Leave room for the handshake and first frame inside the host's 12-second startup window.
+const MAX_RETRY_SECONDS: u64 = 5;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
     Spawn,
@@ -154,14 +157,13 @@ impl Supervisor {
         self.video_reset_at = None;
         self.encoder_at = None;
         if self.wanted() && !self.immediate {
-            if !success && !self.expected_exit && self.error.is_none() {
-                self.error = Some(format!("Capturer exited: {description}"));
-            }
             if !success && !self.expected_exit {
-                self.retry_delay = self.retry_delay.max(5);
+                self.error
+                    .get_or_insert_with(|| format!("Capturer exited: {description}"));
+                self.retry_delay = MAX_RETRY_SECONDS;
             }
             self.retry = Some(now + Duration::from_secs(self.retry_delay));
-            self.retry_delay = (self.retry_delay * 2).min(15);
+            self.retry_delay = (self.retry_delay * 2).min(MAX_RETRY_SECONDS);
         }
         self.immediate = false;
         self.reconcile(now);
@@ -297,6 +299,26 @@ mod tests {
             state.tick(now + Duration::from_secs(100));
             assert_eq!(state.actions(), []);
         }
+    }
+    #[test]
+    fn busy_tv_retries_at_maximum_backoff_in_time_to_start_capture() {
+        let mut now = Instant::now();
+        let mut state = configured();
+        state.set_power(Some("Active".into()), now);
+        for seconds in [1, 2, 4, 5, 5] {
+            assert_eq!(state.actions(), [Action::Spawn]);
+            state.event(Event::ReceiverBusy, now);
+            state.closed(true, "busy", now);
+            state.tick(now + Duration::from_millis(seconds * 1000 - 1));
+            assert_eq!(state.actions(), []);
+            now += Duration::from_secs(seconds);
+            state.tick(now);
+        }
+        assert_eq!(state.actions(), [Action::Spawn]);
+        state.event(Event::Connected, now);
+        state.event(Event::Capturing, now);
+        assert!(state.contract().capturing);
+        assert!(!state.contract().receiver_busy);
     }
     #[test]
     fn handshake_events_define_connectivity_and_disconnect_is_not_a_crash() {

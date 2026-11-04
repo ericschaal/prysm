@@ -1,5 +1,6 @@
 //! Exercise first-run configuration through the same binary used by containers.
 #![cfg(unix)]
+mod common;
 use prysm_contract::{RequiredSetting, SettingsView, StateResponse};
 use serde_json::{Value, json};
 use std::{path::Path, process::Stdio, time::Duration};
@@ -114,11 +115,7 @@ async fn first_run_keeps_capture_endpoint_available_through_setup_and_reset() {
     drop(available);
     let base = format!("http://{address}");
     let mut child = start(&path, address);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(4))
-        .build()
-        .unwrap();
+    let client = common::http_client(Duration::from_secs(4));
     ready(&client, &base, &mut child).await;
     let initial = settings(&client, &base).await;
     assert_eq!(
@@ -247,6 +244,31 @@ async fn first_run_keeps_capture_endpoint_available_through_setup_and_reset() {
     assert_eq!(restored.missing_required, [RequiredSetting::Input]);
     assert_eq!(restored.settings.processing.brightness_percent.get(), 42);
     assert_ne!(restored.revision, incomplete.revision);
+    stop(&mut child).await;
+}
+
+#[tokio::test]
+async fn https_wled_observer_survives_a_failed_tls_handshake() {
+    use tokio::io::AsyncReadExt as _;
+    let wled = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config: Value = serde_json::from_str(include_str!("fixtures/config.json")).unwrap();
+    config.as_object_mut().unwrap().remove("revision");
+    config["calibration"] = json!({"profiles": [], "active": null});
+    config["output"]["url"] = format!("https://{}/", wled.local_addr().unwrap()).into();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let mut child = start(&path, "127.0.0.1:0".parse().unwrap());
+
+    // Both the HTTP poll and the WebSocket observer must start TLS, even if the peer then closes.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        for _ in 0..2 {
+            let (mut stream, _) = wled.accept().await.unwrap();
+            assert_eq!(stream.read_u8().await.unwrap(), 0x16);
+        }
+    })
+    .await
+    .unwrap();
     stop(&mut child).await;
 }
 

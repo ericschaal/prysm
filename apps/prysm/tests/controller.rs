@@ -1,5 +1,6 @@
 //! The same controller runs on macOS/Linux; only WLED is an HTTP fixture.
 #![cfg(unix)]
+mod common;
 use axum::{
     Json, Router,
     routing::{get, post},
@@ -151,11 +152,7 @@ async fn exercise_controller(video: Option<PathBuf>) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap();
+    let client = common::http_client(Duration::from_secs(2));
     let endpoint = format!("http://{address}/api/state");
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -656,11 +653,7 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap();
+    let client = common::http_client(Duration::from_secs(2));
     let endpoint = format!("http://{address}/api/state");
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {

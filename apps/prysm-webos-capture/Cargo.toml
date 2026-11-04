@@ -16,7 +16,7 @@ hardware-h264 = ["dep:memmap2", "dep:gstreamer", "dep:gstreamer-app", "dep:gstre
 futures.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"] }
 tokio-tungstenite.workspace = true
-rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
+rustls.workspace = true
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
 anyhow.workspace = true
 tracing.workspace = true

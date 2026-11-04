@@ -23,40 +23,64 @@ interface SaveRequest {
 interface State {
   online: boolean | null;
   status: Status | null;
-  saved: Config | null;
-  draft: Config;
+  edits: Partial<Config>;
   changing: boolean;
   notice: string;
   retry?: SaveRequest;
   error: boolean;
 }
 type Action =
-  | { type: 'observe'; status: Status; subscribed?: boolean }
+  | {
+      type: 'observe';
+      status: Status;
+      subscribed?: boolean;
+      method?: 'setConfig' | 'start' | 'stop' | 'cleanup';
+      requestPid?: number;
+    }
   | { type: 'offline'; text: string }
   | { type: 'edit'; patch: Partial<Config> }
   | { type: 'notice'; text: string; error: boolean; retry?: SaveRequest }
-  | { type: 'changing'; value: boolean }
-  | { type: 'saved'; config: Config; cleanup: boolean };
+  | { type: 'changing'; value: boolean };
 
 const initialState: State = {
   online: null,
   status: null,
-  saved: null,
-  draft: defaults,
+  edits: {},
   changing: false,
   notice: '',
   error: false,
 };
 
+function unsaved(edits: Partial<Config>, saved: Config) {
+  const remaining = { ...edits };
+  for (const key of Object.keys(remaining) as (keyof Config)[]) {
+    if (remaining[key] === saved[key]) delete remaining[key];
+  }
+  return remaining;
+}
+
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'observe':
+    case 'observe': {
+      const current = state.status;
+      if (
+        current &&
+        action.requestPid === action.status.pid &&
+        current.pid !== action.status.pid
+      )
+        return state;
+      const status =
+        current?.pid === action.status.pid &&
+        current.revision > action.status.revision
+          ? current
+          : action.status;
+      const edits = unsaved(state.edits, status.config);
+      if (action.method === 'cleanup') delete edits.autostart;
       return {
         ...state,
         online: true,
-        status: action.status,
-        saved: state.saved ?? action.status.config,
-        draft: state.saved ? state.draft : action.status.config,
+        status,
+        edits: action.method === 'setConfig' ? {} : edits,
         notice:
           action.subscribed && state.online === false
             ? 'Service connected.'
@@ -64,13 +88,17 @@ function reducer(state: State, action: Action): State {
         error:
           action.subscribed && state.online === false ? false : state.error,
       };
+    }
     case 'offline':
       return { ...state, online: false, error: true, notice: action.text };
     case 'edit':
       return {
         ...state,
         retry: undefined,
-        draft: { ...state.draft, ...action.patch },
+        edits: unsaved(
+          { ...state.edits, ...action.patch },
+          state.status?.config ?? defaults,
+        ),
       };
     case 'notice':
       return {
@@ -81,14 +109,6 @@ function reducer(state: State, action: Action): State {
       };
     case 'changing':
       return { ...state, changing: action.value };
-    case 'saved':
-      return {
-        ...state,
-        saved: action.config,
-        draft: action.cleanup
-          ? { ...state.draft, autostart: false }
-          : action.config,
-      };
   }
 }
 
@@ -98,12 +118,10 @@ export function useCaptureService(openReceiver: () => void) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const busy = useRef(false);
   const reconnect = useRef(() => {});
-  const { online, status, saved, draft } = state;
-  const dirty =
-    !saved ||
-    (Object.keys(draft) as (keyof Config)[]).some(
-      (key) => draft[key] !== saved[key],
-    );
+  const { online, status, edits } = state;
+  const saved = status?.config ?? null;
+  const draft = { ...(saved ?? defaults), ...edits };
+  const dirty = !saved || Object.keys(edits).length > 0;
   const enabled = status?.enabled;
   const notice = (text: string, error = false) =>
     dispatch({ type: 'notice', text, error });
@@ -247,14 +265,12 @@ export function useCaptureService(openReceiver: () => void) {
           );
           return;
         }
-        dispatch({ type: 'observe', status: value });
-        if (saving || change === 'cleanup') {
-          dispatch({
-            type: 'saved',
-            config: value.config,
-            cleanup: change === 'cleanup',
-          });
-        }
+        dispatch({
+          type: 'observe',
+          status: value,
+          method,
+          requestPid: status?.pid,
+        });
         if (saving) {
           notice('Settings saved.');
           if (change.enableAfterSave) request('start');
@@ -323,6 +339,8 @@ export function useCaptureService(openReceiver: () => void) {
 
   return {
     ...state,
+    saved,
+    draft,
     dirty,
     edit,
     saveSettings,

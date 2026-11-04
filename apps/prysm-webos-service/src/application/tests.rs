@@ -253,6 +253,29 @@ while :; do sleep 0.01; done
 }
 
 #[test]
+fn reopening_repairs_an_interrupted_autostart_change() {
+    let dir = sandbox();
+    let files = Files::sandbox(dir.path()).unwrap();
+    let mut config = Config {
+        instance_url: Some("https://prysm.example".parse().unwrap()),
+        ..Config::default()
+    };
+    let hook = dir.path().join("boot-hook");
+    for enabled in [false, true] {
+        config.autostart = enabled;
+        files.persist(&config).unwrap();
+        files.autostart(!enabled).unwrap();
+        let app = App::new(Files::sandbox(dir.path()).unwrap()).unwrap();
+        assert_eq!(app.state.enabled, enabled);
+        assert_eq!(hook.exists(), enabled);
+    }
+    fs::write(&hook, "unrelated").unwrap();
+    let app = App::new(files).unwrap();
+    assert!(app.state.error.is_some());
+    assert_eq!(fs::read_to_string(hook).unwrap(), "unrelated");
+}
+
+#[test]
 fn incompatible_config_is_rejected_without_rewriting_it() {
     let dir = sandbox();
     let path = dir.path().join("config.json");

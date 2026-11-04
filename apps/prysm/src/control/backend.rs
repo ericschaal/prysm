@@ -87,6 +87,7 @@ pub(crate) struct LightingService {
 }
 impl LightingService {
     pub(super) fn client() -> Result<reqwest::Client> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         reqwest::Client::builder()
             .timeout(Duration::from_secs(3))
             .redirect(reqwest::redirect::Policy::none())
