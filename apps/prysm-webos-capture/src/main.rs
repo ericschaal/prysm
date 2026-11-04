@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 mod capture;
 mod lock;
+mod metrics;
 use lock::capture_lock;
 mod config;
 mod control;
@@ -55,20 +56,7 @@ fn run_worker() -> Result<()> {
     );
     let _lock = capture_lock(std::path::Path::new("/tmp/prysm-capture.lock"))?;
     let (stop, _signal_waiter) = shutdown::listen()?;
-    let _metrics = if metrics {
-        match prysm_metrics::start(([0, 0, 0, 0], 9101).into(), prysm_metrics::Role::Capturer) {
-            Ok(exporter) => {
-                tracing::info!(address = %exporter.address(), "metrics listening");
-                Some(exporter)
-            }
-            Err(error) => {
-                tracing::warn!(error = %format!("{error:#}"), "metrics disabled");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let _metrics = metrics::exporter(metrics);
     loop {
         if !control.wait_for_video(&stop)? {
             events.send(&events::Event::Disconnected)?;

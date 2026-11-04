@@ -46,6 +46,7 @@ mod tests {
                 last_log: None,
                 capabilities: Capabilities {
                     hardware_h264: false,
+                    embedded_prysm: false,
                 },
             },
         };

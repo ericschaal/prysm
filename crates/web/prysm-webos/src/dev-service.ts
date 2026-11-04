@@ -1,7 +1,7 @@
 import type { Config, Status, ServiceBridge } from './service';
 
 // In-memory Luna simulation for the Vite dev server; removed from TV builds.
-export function installDevService() {
+export function installDevService(embeddedPrysm = false) {
   if (typeof PalmServiceBridge !== 'undefined') return;
   document.title = 'Prysm Capture · Simulated TV';
   const subscriptions = new Set<DevBridge>();
@@ -28,7 +28,10 @@ export function installDevService() {
     power: 'Active',
     error: null,
     lastLog: 'Local development: simulated TV service.',
-    capabilities: { hardwareH264: true },
+    capabilities: {
+      hardwareH264: true,
+      ...(embeddedPrysm ? { embeddedPrysm: true } : {}),
+    },
   };
   class DevBridge implements ServiceBridge {
     onservicecallback: (text: string) => void = () => {};
@@ -50,9 +53,10 @@ export function installDevService() {
         case 'cleanup':
           status.enabled =
             status.senderRunning =
-            status.receiverConnected =
             status.capturing =
               method === 'start';
+          status.receiverConnected =
+            status.enabled && status.config.location !== 'embedded';
           if (method === 'cleanup') status.config.autostart = false;
           break;
         case 'exec':

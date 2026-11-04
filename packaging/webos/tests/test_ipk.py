@@ -36,12 +36,13 @@ class PackageTests(unittest.TestCase):
             directory = Path(directory)
             package = directory / 'test.ipk'
             (directory / 'debian-binary').write_text('2.0\n')
-            def archive(name, filename):
+            def archive(name, *filenames):
                 with tarfile.open(directory / name, 'w:gz') as tar:
-                    member = tarfile.TarInfo(filename)
-                    member.size = 1
-                    member.mode = 0o777
-                    tar.addfile(member, io.BytesIO(b'x'))
+                    for filename in filenames:
+                        member = tarfile.TarInfo(filename)
+                        member.size = 1
+                        member.mode = 0o777
+                        tar.addfile(member, io.BytesIO(b'x'))
             def build():
                 module.write_ar(package, {name: (directory / name).read_bytes() for name in ['debian-binary', 'control.tar.gz', 'data.tar.gz']})
             archive('control.tar.gz', 'control')
@@ -56,6 +57,22 @@ class PackageTests(unittest.TestCase):
             module.secure(package)
             with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(['ar', '-p', str(package), 'data.tar.gz'])), mode='r:gz') as tar:
                 self.assertEqual(tar.getmembers()[0].mode, 0o755)
+            archive('data.tar.gz', module.LOCAL_WORKER)
+            build()
+            with self.assertRaisesRegex(ValueError, 'unexpected embedded payload'):
+                module.secure(package)
+            with self.assertRaisesRegex(ValueError, 'incomplete embedded payload'):
+                module.secure(package, embedded=True)
+            archive('data.tar.gz', module.LOCAL_WORKER, module.LOCAL_ROLE)
+            build()
+            module.secure(package, embedded=True)
+            with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(['ar', '-p', str(package), 'data.tar.gz'])), mode='r:gz') as tar:
+                self.assertEqual(tar.getmember(module.LOCAL_WORKER).mode, 0o755)
+                self.assertEqual(tar.getmember(module.LOCAL_ROLE).mode, 0o644)
+            archive('data.tar.gz', module.SERVICE + 'nested/../prysm-webos-local')
+            build()
+            with self.assertRaisesRegex(ValueError, 'unexpected package path'):
+                module.secure(package)
             archive('control.tar.gz', 'postinst')
             build()
             with self.assertRaisesRegex(ValueError, 'installation scripts'):

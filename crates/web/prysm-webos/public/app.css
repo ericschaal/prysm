@@ -138,3 +138,6 @@ button:disabled { cursor: default; color: #737687; }
 @keyframes turn-pending { to { transform: rotate(360deg); } }
 @keyframes show-pending { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pattern-pending span { animation: none; } }
+
+.led-edges { display: flex; flex-wrap: wrap; }
+.led-edges label { width: 25%; padding-right: .5rem; }

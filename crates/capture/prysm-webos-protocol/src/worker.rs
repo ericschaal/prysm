@@ -2,6 +2,16 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+/// Private startup DTO for the on-TV engine. Video stays in this process.
+#[cfg(feature = "embedded-prysm")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddedWorkerConfig {
+    pub output: prysm_contract::Output,
+    pub source: crate::Source,
+    pub metrics: bool,
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerEvent {
@@ -12,6 +22,7 @@ pub enum WorkerEvent {
     Connected,
     ReceiverBusy,
     Capturing,
+    CaptureIdle,
     Disconnected,
     Failed { message: String },
 }

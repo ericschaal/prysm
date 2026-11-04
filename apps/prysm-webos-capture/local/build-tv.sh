@@ -11,4 +11,10 @@ export CXXFLAGS_armv7_unknown_linux_gnueabi="--sysroot=\"$sdk/arm-webos-linux-gn
 export CFLAGS_armv7_unknown_linux_gnueabi="$CXXFLAGS_armv7_unknown_linux_gnueabi"
 # Keep the TV's soft calling convention while doing pixel math in hardware.
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_RUSTFLAGS="-C target-cpu=cortex-a9 -C target-feature=-soft-float,+neon"
-cargo build --locked -p prysm-webos-local --features webos-neon --target armv7-unknown-linux-gnueabi --profile webos
+features=webos-neon
+case "$#:${1-}" in
+  0:) ;;
+  1:--embedded-prysm) features+=,embedded-prysm ;;
+  *) echo 'Usage: build-tv.sh [--embedded-prysm]' >&2; exit 1 ;;
+esac
+cargo build --locked -p prysm-webos-local --features "$features" --target armv7-unknown-linux-gnueabi --profile webos

@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { installDevService } from './dev-service';
 
-if (import.meta.env.DEV) installDevService();
+if (import.meta.env.DEV)
+  installDevService(import.meta.env.VITE_EMBEDDED_PRYSM === '1');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

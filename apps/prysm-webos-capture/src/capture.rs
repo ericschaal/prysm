@@ -80,6 +80,11 @@ impl<V: FrameCapture> Capture<V> {
         self.video_available = available;
     }
 
+    #[must_use]
+    pub fn has_video(&self) -> bool {
+        self.video.is_some()
+    }
+
     pub fn release_video(&mut self, events: &mut Events) -> Result<()> {
         if self.video.is_some() {
             events.send(&Event::VideoResetting)?;
@@ -114,7 +119,7 @@ impl<V: FrameCapture> Capture<V> {
         open_video: &mut impl FnMut(&CaptureOptions) -> Result<V>,
         events: &mut Events,
     ) -> Result<Option<Header>> {
-        if self.video.is_none() && Instant::now() >= self.video_retry {
+        if !self.has_video() && Instant::now() >= self.video_retry {
             prysm_metrics::event(VideoCaptureEvent::InitAttempt);
             events.send(&Event::VideoResetting)?;
             let result = open_video(&self.options);

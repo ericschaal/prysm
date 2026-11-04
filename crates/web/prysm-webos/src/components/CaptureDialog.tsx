@@ -2,6 +2,8 @@ import { useState, type ReactNode, type Ref } from 'react';
 import type { Config, Status } from '../service';
 import type { Dialog } from '../hooks/useRemoteNavigation';
 import ChoiceButton from './ChoiceButton';
+import WledSettings from './WledSettings';
+import { embeddedBuild, supportsEmbedded } from '../processingLocation';
 
 type ChoiceKey = 'source' | 'compression' | 'autostart';
 type Choice<K extends ChoiceKey> = [Config[K], string, string];
@@ -65,6 +67,50 @@ export default function CaptureDialog({
     ));
   }
   switch (dialog) {
+    case 'location':
+      if (embeddedBuild && supportsEmbedded(status)) {
+        dialogTitle = 'Processing location';
+        dialogDescription = 'Choose where Prysm processes the TV picture.';
+        content = (
+          <>
+            <ChoiceButton
+              id="choice-remote"
+              title="Remote instance"
+              selected={draft.location !== 'embedded'}
+              action={() => {
+                edit('location', 'remote');
+                closeDialog();
+              }}
+            />
+            <ChoiceButton
+              id="choice-embedded"
+              title="On this TV (experimental)"
+              selected={draft.location === 'embedded'}
+              action={() => {
+                edit('location', 'embedded');
+                closeDialog();
+              }}
+            />
+          </>
+        );
+      } else dialogTitle = 'Setting unavailable';
+      break;
+    case 'wled':
+      if (embeddedBuild && supportsEmbedded(status)) {
+        dialogTitle = 'WLED setup';
+        dialogDescription =
+          'Enter your controller and count LEDs along each edge. Use 0 for edges without LEDs.';
+        content = (
+          <WledSettings
+            saved={draft.embeddedOutput}
+            apply={(output) => {
+              edit('embeddedOutput', output);
+              closeDialog();
+            }}
+          />
+        );
+      } else dialogTitle = 'Setting unavailable';
+      break;
     case 'receiver':
       dialogTitle = 'Prysm instance URL';
       dialogDescription =
@@ -171,7 +217,7 @@ export default function CaptureDialog({
           {status
             ? `TV power: ${status.power || 'unknown'}
 Video source: ${videoAvailability(status.videoAvailable)}
-Prysm receiver connected: ${!!status.receiverConnected}
+${embeddedBuild && supportsEmbedded(status) && status.config.location === 'embedded' ? 'Processing on this TV' : 'Prysm receiver connected: ' + !!status.receiverConnected}
 Capture enabled: ${status.enabled}
 Background process running: ${status.senderRunning}
 

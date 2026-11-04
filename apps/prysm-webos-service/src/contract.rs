@@ -23,6 +23,8 @@ pub struct Observation {
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Capabilities {
     pub hardware_h264: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub embedded_prysm: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]

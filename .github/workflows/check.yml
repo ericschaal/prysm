@@ -308,6 +308,10 @@ jobs:
         run: cargo xtask setup host
       - name: Verify Rust on arm64
         run: cargo test --locked --workspace --no-default-features
+      - name: Test experimental embedded processing and mode switching
+        run: >-
+          cargo test --locked -p prysm-webos-service -p prysm-webos-local
+          --features prysm-webos-service/embedded-prysm,prysm-webos-local/embedded-prysm
       - name: Verify contracts and build package
         run: cargo xtask package deb
       - name: Inspect package and verify configuration lifecycle

@@ -2141,6 +2141,7 @@ dependencies = [
  "h264-reader",
  "lz4_flex",
  "openh264",
+ "prysm-contract",
  "serde",
  "serde_json",
  "url",
@@ -2159,11 +2160,13 @@ dependencies = [
  "libc",
  "libloading 0.9.0",
  "nix",
+ "prysm-contract",
  "prysm-webos-protocol",
  "serde",
  "serde_json",
  "signal-hook",
  "tempfile",
+ "thiserror 2.0.21",
  "utoipa",
 ]
 

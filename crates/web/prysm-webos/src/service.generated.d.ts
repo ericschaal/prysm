@@ -4,20 +4,34 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Capabilities: {
+            embeddedPrysm?: boolean;
             hardwareH264: boolean;
         };
         /** @enum {string} */
         Compression: "none" | "lz4" | "h264-software" | "h264-hardware";
+        /** @description The stored form includes the inactive mode's preferences and may be incomplete. */
         Config: {
             autostart: boolean;
             compression: components["schemas"]["Compression"];
+            embeddedOutput?: components["schemas"]["Output"] | null;
             instanceUrl: string | null;
+            location?: components["schemas"]["ProcessingLocation"];
             metrics: boolean;
             source: components["schemas"]["Source"];
         };
         ErrorReply: {
             errorText: string;
             returnValue: boolean;
+        };
+        LedCounts: {
+            /** Format: int32 */
+            bottom: number;
+            /** Format: int32 */
+            left: number;
+            /** Format: int32 */
+            right: number;
+            /** Format: int32 */
+            top: number;
         };
         Observation: {
             /** Format: uint32 */
@@ -30,6 +44,14 @@ export interface components {
             subscribers: number;
             videoAvailable: boolean | null;
         };
+        Output: {
+            leds: components["schemas"]["LedCounts"];
+            /** @enum {string} */
+            type: "wled";
+            url: string;
+        };
+        /** @enum {string} */
+        ProcessingLocation: "remote" | "embedded";
         ServiceStatus: components["schemas"]["Observation"] & components["schemas"]["SupervisorStatus"];
         /** @enum {string} */
         Source: "video" | "both";

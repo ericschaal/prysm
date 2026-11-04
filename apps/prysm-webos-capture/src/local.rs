@@ -1,10 +1,12 @@
-//! Standalone experiment: LG capture → Prysm processing → WLED DDP.
+//! On-TV worker: LG capture → Prysm processing → WLED DDP.
 #![deny(unsafe_code)]
 pub mod capture;
 pub mod config;
+pub mod control;
 #[allow(unsafe_code)]
 pub mod events;
 mod lock;
+mod metrics;
 #[allow(unsafe_code)]
 pub mod native;
 #[cfg(all(target_arch = "arm", feature = "webos-neon"))]
@@ -60,82 +62,210 @@ fn rgb(pool: &mut FramePool, header: prysm_webos_protocol::Header, raw: &[u8]) -
     Ok(frame.finish())
 }
 
+/// Capture and lighting settings after crossing either startup boundary.
+struct Job {
+    capture: config::CaptureOptions,
+    source: config::Source,
+    processing: prysm_core::Config,
+    output: Output,
+    metrics: bool,
+}
+
+impl Job {
+    fn from_file(path: &Path) -> Result<Self> {
+        let settings: Settings =
+            serde_json::from_reader(File::open(path).context("open settings")?)?;
+        settings.validate()?;
+        let Some(Input::Webos {
+            refresh_rate_hz,
+            capture_resolution,
+        }) = settings.input
+        else {
+            anyhow::bail!("settings require a webOS input");
+        };
+        let [width, height] = capture_resolution.dimensions();
+        let mut processing = settings.processing.to_core();
+        processing.correction = settings.calibration.correction().to_core();
+        Ok(Self {
+            capture: config::CaptureOptions {
+                width,
+                height,
+                fps: u8::try_from(refresh_rate_hz.get())?,
+            },
+            source: config::Source::Both,
+            processing,
+            output: settings.output.context("missing WLED output")?,
+            metrics: false,
+        })
+    }
+
+    #[cfg(feature = "embedded-prysm")]
+    fn from_supervisor() -> Result<Self> {
+        let config: prysm_webos_protocol::worker::EmbeddedWorkerConfig = serde_json::from_str(
+            &std::env::var(prysm_webos_protocol::WORKER_CONFIG_ENV)
+                .context("missing embedded worker configuration")?,
+        )?;
+        config.output.validate()?;
+        Ok(Self {
+            capture: config::CaptureOptions {
+                width: 1280,
+                height: 720,
+                fps: 30,
+            },
+            source: config.source,
+            processing: prysm_contract::ProcessingSettings::default().to_core(),
+            output: config.output,
+            metrics: config.metrics,
+        })
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let [path] = args.as_slice() else {
+    let [arg] = args.as_slice() else {
         anyhow::bail!("usage: prysm-webos-local SETTINGS.json")
     };
-    let settings: Settings = serde_json::from_reader(File::open(path).context("open settings")?)?;
-    settings.validate()?;
-    let Some(Input::Webos {
-        refresh_rate_hz,
-        capture_resolution,
-    }) = settings.input
-    else {
-        anyhow::bail!("settings require a webOS input");
-    };
-    let output = settings.output.context("missing WLED output")?;
-    let Output::Wled { leds, .. } = &output;
-    let [width, height] = capture_resolution.dimensions();
-    let fps = u8::try_from(refresh_rate_hz.get())?;
-    let period = Duration::from_secs(1) / u32::from(fps);
-    ensure!(
-        cfg!(target_os = "linux") && nix::unistd::Uid::effective().is_root(),
-        "TV capture requires webOS root"
-    );
-    let _lock = lock::capture_lock(Path::new("/tmp/prysm-capture.lock"))?;
-    let (stop, _waiter) = shutdown::listen()?;
+    #[cfg(feature = "embedded-prysm")]
+    if arg == "--supervised" {
+        let mut events = events::Events::from_environment()?;
+        let job = report(Job::from_supervisor(), &mut events)?;
+        let control = report(control::Control::from_stdin(), &mut events)?;
+        return run(&job, Some(control), &mut events);
+    }
+    let mut events = events::Events::from_file(File::options().write(true).open("/dev/null")?);
+    run(&Job::from_file(Path::new(arg))?, None, &mut events)
+}
+
+fn report<T>(result: Result<T>, events: &mut events::Events) -> Result<T> {
+    if let Err(error) = &result {
+        events.send(&events::Event::Failed {
+            message: format!("{error:#}"),
+        })?;
+    }
+    result
+}
+
+fn run(job: &Job, control: Option<control::Control>, events: &mut events::Events) -> Result<()> {
+    if !cfg!(target_os = "linux") || !nix::unistd::Uid::effective().is_root() {
+        return report(
+            Err(anyhow::anyhow!("TV capture requires webOS root")),
+            events,
+        );
+    }
+    let _lock = report(
+        lock::capture_lock(Path::new("/tmp/prysm-capture.lock")),
+        events,
+    )?;
+    let (stop, _waiter) = report(shutdown::listen(), events)?;
     tracing_subscriber::fmt()
         .with_ansi(false)
         .with_writer(std::io::stderr)
         .init();
-    let mut core = settings.processing.to_core();
-    core.correction = settings.calibration.correction().to_core();
-    let mut processor = PrysmProcessor::new(&core);
-    let mut renderer = WledRenderer::new(output.ddp_address()?)?;
-    let mut pool = FramePool::default();
-    let mut capture = capture::Capture::with_options(
-        config::CaptureOptions { width, height, fps },
-        config::Source::Both,
-    );
-    let mut events = events::Events::from_file(File::options().write(true).open("/dev/null")?);
-    let mut frames = 0u64;
-    let start = Instant::now();
-    let mut report = start;
-    let mut next_capture = start;
-    while !stop.load(Ordering::Relaxed) {
-        if let Some(frame) = capture.capture(
-            &mut |opts| native::Video::open(opts, config::Source::Both),
-            &mut events,
-        )? {
-            let rgb = rgb(&mut pool, frame.header, frame.pixels)?;
-            let edges = processor.process_frame(rgb);
-            renderer.render_edges(&edges, leds.counts())?;
-            frames += 1;
-        }
-        if report.elapsed() >= Duration::from_secs(5) {
-            tracing::info!(
-                frames,
-                elapsed_ms = start.elapsed().as_millis(),
-                "local DDP output"
-            );
-            report = Instant::now();
-        }
-        // Keep the requested cadence across late wakeups; never replay missed ticks.
-        let now = Instant::now();
-        next_capture += period;
-        if now.saturating_duration_since(next_capture) >= period {
-            next_capture = now;
-        }
-        std::thread::sleep(next_capture.saturating_duration_since(now));
+    let _metrics = metrics::exporter(job.metrics);
+    let mut pipeline = report(Pipeline::new(job), events)?;
+    // Publish the original failure before any potentially blocking vendor teardown.
+    let result = report(pipeline.run(job, control, events, &stop), events);
+    let release = pipeline.capture.release_video(events);
+    result.and_then(|()| report(release, events))
+}
+
+struct Pipeline {
+    capture: capture::Capture<native::Video>,
+    processor: PrysmProcessor,
+    renderer: WledRenderer,
+    leds: [usize; 4],
+    pool: FramePool,
+}
+
+impl Pipeline {
+    fn new(job: &Job) -> Result<Self> {
+        let Output::Wled { leds, .. } = &job.output;
+        Ok(Self {
+            capture: capture::Capture::with_options(job.capture, job.source),
+            processor: PrysmProcessor::new(&job.processing),
+            renderer: WledRenderer::new(job.output.ddp_address()?)?,
+            leds: leds.counts(),
+            pool: FramePool::default(),
+        })
     }
-    tracing::info!(
-        frames,
-        elapsed_ms = start.elapsed().as_millis(),
-        "local capture stopped"
-    );
-    ensure!(frames > 0, "no frames rendered");
-    Ok(())
+
+    fn render(&mut self, source: config::Source, events: &mut events::Events) -> Result<bool> {
+        let Some(frame) = self
+            .capture
+            .capture(&mut |opts| native::Video::open(opts, source), events)?
+        else {
+            return Ok(false);
+        };
+        let rgb = rgb(&mut self.pool, frame.header, frame.pixels)?;
+        let edges = self.processor.process_frame(rgb);
+        self.renderer.render_edges(&edges, self.leds)?;
+        Ok(true)
+    }
+
+    fn run(
+        &mut self,
+        job: &Job,
+        mut control: Option<control::Control>,
+        events: &mut events::Events,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        let mut frames = 0u64;
+        let mut published = false;
+        let start = Instant::now();
+        let mut report = start;
+        let mut next_capture = start;
+        let period = Duration::from_secs(1) / u32::from(job.capture.fps);
+        while !stop.load(Ordering::Relaxed) {
+            if let Some(control) = &mut control {
+                let update = control.poll()?;
+                if update.reset || !update.availability.allows_capture() {
+                    if published {
+                        events.send(&events::Event::CaptureIdle)?;
+                        published = false;
+                    }
+                    self.capture.release_video(events)?;
+                    self.processor = PrysmProcessor::new(&job.processing);
+                    self.capture.set_video_available(false);
+                    if !update.availability.allows_capture() && !control.wait_for_video(stop)? {
+                        break;
+                    }
+                    self.capture.set_video_available(true);
+                    next_capture = Instant::now();
+                }
+            }
+            if self.render(job.source, events)? {
+                frames += 1;
+                if !published {
+                    events.send(&events::Event::Capturing)?;
+                    published = true;
+                }
+            } else if published && !self.capture.has_video() {
+                events.send(&events::Event::CaptureIdle)?;
+                published = false;
+            }
+            if report.elapsed() >= Duration::from_secs(5) {
+                tracing::info!(
+                    frames,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "local DDP output"
+                );
+                report = Instant::now();
+            }
+            let now = Instant::now();
+            next_capture += period;
+            if now.saturating_duration_since(next_capture) >= period {
+                next_capture = now;
+            }
+            std::thread::sleep(next_capture.saturating_duration_since(now));
+        }
+        tracing::info!(
+            frames,
+            elapsed_ms = start.elapsed().as_millis(),
+            "local capture stopped"
+        );
+        ensure!(control.is_some() || frames > 0, "no frames rendered");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

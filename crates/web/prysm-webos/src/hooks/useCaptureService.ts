@@ -9,6 +9,12 @@ import {
   type ServiceBridge,
 } from '../service';
 
+import {
+  embeddedBuild,
+  sameOutput,
+  supportsEmbedded,
+} from '../processingLocation';
+
 const defaults: Config = {
   instanceUrl: null,
   source: 'both',
@@ -48,7 +54,12 @@ const initialState: State = {
 function unsaved(edits: Partial<Config>, saved: Config) {
   const remaining = { ...edits };
   for (const key of Object.keys(remaining) as (keyof Config)[]) {
-    if (remaining[key] === saved[key]) delete remaining[key];
+    let equal = remaining[key] === saved[key];
+    if (key === 'embeddedOutput')
+      equal = sameOutput(remaining.embeddedOutput, saved.embeddedOutput);
+    if (key === 'location')
+      equal = (remaining.location ?? 'remote') === (saved.location ?? 'remote');
+    if (equal) delete remaining[key];
   }
   return remaining;
 }
@@ -58,6 +69,10 @@ function reducer(state: State, action: Action): State {
     case 'observe': {
       const { status } = action;
       const edits = unsaved(state.edits, status.config);
+      if (!supportsEmbedded(status)) {
+        delete edits.location;
+        delete edits.embeddedOutput;
+      }
       if (action.method === 'cleanup') delete edits.autostart;
       return {
         ...state,
@@ -92,7 +107,9 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-export function useCaptureService(openReceiver: () => void) {
+type OpenSetup = (dialog: 'receiver' | 'wled') => void;
+
+export function useCaptureService() {
   const [client] = useState(createServiceClient);
   const call = client.call;
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -107,7 +124,8 @@ export function useCaptureService(openReceiver: () => void) {
     if (
       method &&
       status !== reply &&
-      Object.keys(unsaved(reply.config, status.config)).length
+      (Object.keys(unsaved(reply.config, status.config)).length ||
+        Object.keys(unsaved(status.config, reply.config)).length)
     ) {
       return false;
     }
@@ -120,7 +138,11 @@ export function useCaptureService(openReceiver: () => void) {
   const { online, status, edits } = state;
   const saved = status?.config ?? null;
   const draft = { ...(saved ?? defaults), ...edits };
-  const dirty = !saved || Object.keys(edits).length > 0;
+  const embeddedAvailable = supportsEmbedded(status);
+  // If a standard UI attaches to an embedded service, save remote mode before starting.
+  if (!embeddedAvailable && draft.location === 'embedded')
+    draft.location = 'remote';
+  const dirty = !saved || Object.keys(unsaved(draft, saved)).length > 0;
   const enabled = status?.enabled;
   const notice = (text: string, error = false) =>
     dispatch({ type: 'notice', text, error });
@@ -247,10 +269,22 @@ export function useCaptureService(openReceiver: () => void) {
       },
     );
   }
-  function saveSettings() {
-    if (!draft.instanceUrl) {
-      notice('Add the Prysm instance URL first.', true);
-      openReceiver();
+  function missingSetup(): 'receiver' | 'wled' | null {
+    if (embeddedBuild && embeddedAvailable && draft.location === 'embedded') {
+      return draft.embeddedOutput ? null : 'wled';
+    }
+    return draft.instanceUrl ? null : 'receiver';
+  }
+  function saveSettings(openSetup: OpenSetup) {
+    const missing = missingSetup();
+    if (missing) {
+      notice(
+        missing === 'receiver'
+          ? 'Add the Prysm instance URL first.'
+          : 'Set the WLED address and LED counts first.',
+        true,
+      );
+      openSetup(missing);
       return;
     }
     request('setConfig');
@@ -279,7 +313,7 @@ export function useCaptureService(openReceiver: () => void) {
       },
     );
   }
-  function primary() {
+  function primary(openSetup: OpenSetup) {
     if (busy.current) return;
     if (!online) {
       setup();
@@ -289,8 +323,9 @@ export function useCaptureService(openReceiver: () => void) {
       request('stop');
       return;
     }
-    if (!draft.instanceUrl) {
-      openReceiver();
+    const missing = missingSetup();
+    if (missing) {
+      openSetup(missing);
       return;
     }
     if (dirty) request('setConfig', true);
@@ -300,6 +335,7 @@ export function useCaptureService(openReceiver: () => void) {
   return {
     ...state,
     saved,
+    embeddedAvailable,
     draft,
     dirty,
     edit,

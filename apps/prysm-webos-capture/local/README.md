@@ -4,6 +4,8 @@ This experimental executable opens LG’s blended capture tap, converts its limi
 
 [Research checkpoint, tested binary and replay fixtures](../../../research/webos-capture/2026-11-04-on-tv-pipeline/README.md)
 
+The installable, feature-gated TV app can now launch this worker under its supervisor. [Embedded setup](../../../docs/users/webos.md#processing-on-this-tv-experimental)
+
 ## Initial TV trial
 
 A looping bright/dim video ran on the TV on November 4, 2026. Each capture size ran for about 25 seconds at a requested 30 FPS using the same color profile, processing settings and 162-LED layout. The FPS column uses the change in successful DDP frame sends between the first and last five-second progress reports. The controller column is the observed range of the first LED’s green channel from WLED’s independent live preview.

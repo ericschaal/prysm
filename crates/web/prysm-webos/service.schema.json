@@ -18,6 +18,9 @@
           "hardwareH264"
         ],
         "properties": {
+          "embeddedPrysm": {
+            "type": "boolean"
+          },
           "hardwareH264": {
             "type": "boolean"
           }
@@ -34,6 +37,7 @@
       },
       "Config": {
         "type": "object",
+        "description": "The stored form includes the inactive mode's preferences and may be incomplete.",
         "required": [
           "instanceUrl",
           "source",
@@ -48,11 +52,24 @@
           "compression": {
             "$ref": "#/components/schemas/Compression"
           },
+          "embeddedOutput": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "instanceUrl": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "location": {
+            "$ref": "#/components/schemas/ProcessingLocation"
           },
           "metrics": {
             "type": "boolean"
@@ -77,6 +94,38 @@
             "type": "boolean"
           }
         }
+      },
+      "LedCounts": {
+        "type": "object",
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "properties": {
+          "bottom": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "left": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "right": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "top": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "Observation": {
         "type": "object",
@@ -117,6 +166,39 @@
             ]
           }
         }
+      },
+      "Output": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "leds",
+              "type"
+            ],
+            "properties": {
+              "leds": {
+                "$ref": "#/components/schemas/LedCounts"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "wled"
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ProcessingLocation": {
+        "type": "string",
+        "enum": [
+          "remote",
+          "embedded"
+        ]
       },
       "ServiceStatus": {
         "allOf": [

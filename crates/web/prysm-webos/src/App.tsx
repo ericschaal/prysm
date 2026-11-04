@@ -9,10 +9,27 @@ import { useCaptureService } from './hooks/useCaptureService';
 import { useRemoteNavigation } from './hooks/useRemoteNavigation';
 
 export default function App() {
+  const capture = useCaptureService();
+  // Mode and capability changes invalidate any open mode-specific dialog or calibration session.
+  const screenKey = [
+    capture.embeddedAvailable,
+    capture.saved?.location ?? 'remote',
+  ].join('-');
+  return <CaptureScreen key={screenKey} capture={capture} />;
+}
+
+function CaptureScreen({
+  capture,
+}: {
+  capture: ReturnType<typeof useCaptureService>;
+}) {
   const [calibrating, setCalibrating] = useState(false);
   const closeCalibration = useCallback(() => setCalibrating(false), []);
-  const navigation = useRemoteNavigation(calibrating);
-  const capture = useCaptureService(() => navigation.openDialog('receiver'));
+  const calibrationOrigin =
+    calibrating &&
+    capture.saved?.location !== 'embedded' &&
+    capture.saved?.instanceUrl;
+  const navigation = useRemoteNavigation(!!calibrationOrigin);
   const presentation = capturePresentation(
     capture.online,
     capture.status,
@@ -20,13 +37,8 @@ export default function App() {
     capture.dirty,
   );
 
-  if (calibrating && capture.saved?.instanceUrl)
-    return (
-      <Calibration
-        origin={capture.saved.instanceUrl}
-        close={closeCalibration}
-      />
-    );
+  if (calibrationOrigin)
+    return <Calibration origin={calibrationOrigin} close={closeCalibration} />;
 
   return (
     <div
@@ -42,12 +54,13 @@ export default function App() {
               {...presentation}
               online={capture.online}
               changing={capture.changing}
-              primary={capture.primary}
+              primary={() => capture.primary(navigation.openDialog)}
               openService={() => navigation.openDialog('service')}
             />
             <Settings
               online={capture.online}
               saved={capture.saved}
+              embeddedAvailable={capture.embeddedAvailable}
               draft={capture.draft}
               dirty={capture.dirty}
               changing={capture.changing}
@@ -57,7 +70,7 @@ export default function App() {
                   ? setCalibrating(true)
                   : navigation.openDialog('receiver')
               }
-              saveSettings={capture.saveSettings}
+              saveSettings={() => capture.saveSettings(navigation.openDialog)}
               openDialog={navigation.openDialog}
             />
           </div>

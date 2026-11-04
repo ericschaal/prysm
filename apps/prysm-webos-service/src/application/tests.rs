@@ -70,8 +70,11 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     );
     assert!(app.request(AppRequest::Start, now).unwrap().is_none());
     assert!(
-        app.request(AppRequest::SetConfig(app.state.config.clone()), now)
-            .is_err()
+        app.request(
+            AppRequest::SetConfig(Box::new(app.state.config.clone())),
+            now
+        )
+        .is_err()
     );
     fs::write(dir.path().join("scan-services.ready"), "").unwrap();
     assert_eq!(completion(&mut app, now)["senderRunning"], true);
@@ -114,7 +117,7 @@ fn hook_failure_preserves_the_saved_file() {
     let mut changed = original.clone();
     changed.autostart = true;
     assert!(
-        app.request(AppRequest::SetConfig(changed), Instant::now())
+        app.request(AppRequest::SetConfig(Box::new(changed)), Instant::now())
             .is_err()
     );
     assert_eq!(app.state.config, original);
@@ -141,7 +144,7 @@ fn invalid_config_path_leaves_the_boot_hook_untouched() {
     let mut changed = app.state.config.clone();
     changed.autostart = true;
     assert!(
-        app.request(AppRequest::SetConfig(changed), Instant::now())
+        app.request(AppRequest::SetConfig(Box::new(changed)), Instant::now())
             .is_err()
     );
     assert!(!app.state.config.autostart);
@@ -184,7 +187,8 @@ fn config_restart_waits_for_kill_and_reap() {
     let pid = app.worker.as_ref().unwrap().child_id();
     let mut changed = app.state.config.clone();
     changed.metrics = true;
-    app.request(AppRequest::SetConfig(changed), now).unwrap();
+    app.request(AppRequest::SetConfig(Box::new(changed)), now)
+        .unwrap();
     app.tick(now + Duration::from_millis(4999));
     assert_eq!(app.worker.as_ref().unwrap().child_id(), pid);
     while app.worker.as_ref().is_some_and(|w| w.child_id() == pid) {
@@ -239,7 +243,7 @@ while :; do sleep 0.01; done
     operate(&mut app, AppRequest::Start, now).unwrap();
     let mut next = old.clone();
     next.instance_url = Some("http://unavailable".parse().unwrap());
-    let refused = operate(&mut app, AppRequest::SetConfig(next.clone()), now).unwrap();
+    let refused = operate(&mut app, AppRequest::SetConfig(Box::new(next.clone())), now).unwrap();
     assert_eq!(
         refused,
         serde_json::json!({"returnValue": false, "errorText": "Could not verify Prysm: Connection refused"})
@@ -247,7 +251,7 @@ while :; do sleep 0.01; done
     assert_eq!(app.files.load().unwrap(), old);
     assert!(app.state.enabled && app.state.running);
     next.instance_url = Some("https://prysm.example".parse().unwrap());
-    let saved = operate(&mut app, AppRequest::SetConfig(next.clone()), now).unwrap();
+    let saved = operate(&mut app, AppRequest::SetConfig(Box::new(next.clone())), now).unwrap();
     assert_eq!(saved["config"]["instanceUrl"], "https://prysm.example");
     assert_eq!(app.files.load().unwrap(), next);
     assert!(app.state.running);
@@ -305,4 +309,136 @@ fn shutdown_waits_for_the_cleanup_rescan() {
     assert_eq!(completion(&mut app, now)["enabled"], false);
     assert!(dir.path().join("scan-services.done").exists());
     assert!(app.stopped());
+}
+
+#[test]
+fn verified_receiver_save_failure_replies_without_disrupting_the_incumbent() {
+    let dir = sandbox();
+    let mut app = app(&dir);
+    script(
+        &app.files.worker,
+        r#"
+if [ "$1" = --verify-instance ]; then
+    while [ ! -f "$0.verified" ]; do sleep 0.01; done
+    exit 0
+fi
+trap 'exit 0' TERM
+while :; do sleep 0.01; done
+"#,
+    );
+    let now = Instant::now();
+    app.power(Some("Active".into()), None, now);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    let original = app.state.config.clone();
+    let pid = app.worker.as_ref().unwrap().child_id();
+    let next = Config {
+        instance_url: Some("https://new.example".parse().unwrap()),
+        ..original.clone()
+    };
+    assert!(
+        app.request(AppRequest::SetConfig(Box::new(next)), now)
+            .unwrap()
+            .is_none()
+    );
+    fs::write(dir.path().join("boot-hook"), "another owner's hook").unwrap();
+    fs::write(dir.path().join("worker.verified"), "").unwrap();
+    let reply = completion(&mut app, now);
+    assert_eq!(reply["returnValue"], false);
+    assert!(reply["errorText"].as_str().unwrap().contains("boot hook"));
+    assert!(app.pending.is_none());
+    assert_eq!(app.files.load().unwrap(), original);
+    assert_eq!(app.worker.as_ref().unwrap().child_id(), pid);
+    assert!(app.state.enabled && !app.state.stopping);
+    operate(&mut app, AppRequest::Stop, now).unwrap();
+}
+
+#[test]
+#[cfg(feature = "embedded-prysm")]
+fn switching_waits_for_reap_and_the_embedded_worker_uses_only_local_startup() {
+    use crate::config::ProcessingLocation;
+    let dir = sandbox();
+    let mut app = app(&dir);
+    let now = Instant::now();
+    script(
+        &app.files.worker,
+        r#"
+if [ "$1" = --verify-instance ]; then echo "receiver offline" >&2; exit 1; fi
+trap '' TERM
+printf '%s\n' '{"type":"connected"}' >&"$PRYSM_EVENTS_FD"
+while :; do sleep 0.01; done
+"#,
+    );
+    script(
+        &dir.path().join("prysm-webos-local"),
+        r#"
+test "$1" = "--supervised" || exit 2
+echo "$PRYSM_WORKER_CONFIG" > "$0.startup"
+while IFS= read -r -n 1 command; do
+  if [ "$command" = 0 ]; then printf '%s\n' '{"type":"capture_idle"}'; else printf '%s\n' '{"type":"capturing"}'; fi >&"$PRYSM_EVENTS_FD"
+done
+"#,
+    );
+    app.power(Some("Active".into()), None, now);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    let wait = |app: &mut App, now, done: fn(&App) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !done(app) {
+            app.tick(now);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    wait(&mut app, now, |a| a.state.contract().receiver_connected);
+    let remote_pid = app.worker.as_ref().unwrap().child_id();
+    let remote = app.state.config.clone();
+    let embedded = Config {
+        location: ProcessingLocation::Embedded,
+        embedded_output: Some(serde_json::from_value(serde_json::json!({
+            "type":"wled","url":"http://lights.example","leds":{"top":4,"right":2,"bottom":3,"left":2}
+        })).unwrap()),
+        ..remote.clone()
+    };
+    let switched = operate(
+        &mut app,
+        AppRequest::SetConfig(Box::new(embedded.clone())),
+        now,
+    )
+    .unwrap();
+    assert_eq!(switched["config"]["location"], "embedded");
+    assert_eq!(switched["stopping"], true);
+    assert_eq!(switched["receiverConnected"], false);
+    app.video_available(VideoAvailability::Available);
+    app.tick(now + Duration::from_millis(4999));
+    assert_eq!(app.worker.as_ref().unwrap().child_id(), remote_pid);
+    assert!(!dir.path().join("prysm-webos-local.startup").exists());
+    wait(&mut app, now + Duration::from_secs(5), |a| {
+        a.state.contract().capturing
+    });
+    let local_pid = app.worker.as_ref().unwrap().child_id();
+    assert_ne!(remote_pid, local_pid);
+    let startup: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("prysm-webos-local.startup")).unwrap())
+            .unwrap();
+    assert_eq!(
+        startup["output"],
+        serde_json::to_value(&embedded.embedded_output).unwrap()
+    );
+    assert!(startup.get("compression").is_none() && startup.get("instanceUrl").is_none());
+    assert!(!app.state.contract().receiver_connected);
+    // The remote URL is unchanged but inactive. Require a successful probe before switching back.
+    let refused = operate(
+        &mut app,
+        AppRequest::SetConfig(Box::new(remote)),
+        now + Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!(refused["returnValue"], false);
+    assert_eq!(app.worker.as_ref().unwrap().child_id(), local_pid);
+    assert_eq!(app.files.load().unwrap(), embedded);
+    assert!(app.state.contract().capturing && !app.state.stopping);
+    app.video_available(VideoAvailability::Unavailable);
+    wait(&mut app, now + Duration::from_secs(5), |a| {
+        !a.state.contract().capturing
+    });
+    operate(&mut app, AppRequest::Stop, now + Duration::from_secs(5)).unwrap();
 }

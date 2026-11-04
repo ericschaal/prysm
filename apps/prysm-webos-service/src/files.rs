@@ -1,5 +1,5 @@
 //! Private state persistence, Luna registration, and boot-hook ownership.
-use crate::config::Config;
+use crate::config::{Config, ProcessingLocation};
 use anyhow::{Context, Result, ensure};
 use std::{
     fs,
@@ -111,25 +111,38 @@ impl Files {
         })
     }
     pub fn load(&self) -> Result<Config> {
-        let Some(data) = self.config_bytes()? else {
-            return Ok(Config::default());
-        };
-        let value: Config = serde_json::from_slice(&data)?;
-        value.validate()?;
-        Ok(value)
-    }
-    fn config_bytes(&self) -> Result<Option<Vec<u8>>> {
-        read_file(&self.root.join("config.json"), MAX_CONFIG_BYTES)
+        for name in ["config-v2.json", "config.json"] {
+            if let Some(data) = read_file(&self.root.join(name), MAX_CONFIG_BYTES)? {
+                return serde_json::from_slice::<Config>(&data)?.restore();
+            }
+        }
+        Ok(Config::default())
     }
     pub fn persist(&self, value: &Config) -> Result<()> {
-        let previous = self.config_bytes()?;
+        // A pre-feature service strictly decodes config.json. Leave that snapshot
+        // intact once an extended preference first requires the versioned file.
+        let versioned = self.root.join("config-v2.json");
+        let extended = read_file(&versioned, MAX_CONFIG_BYTES)?;
+        let (path, previous) = if extended.is_some()
+            || value.location == ProcessingLocation::Embedded
+            || value.embedded_output.is_some()
+        {
+            (versioned, extended)
+        } else {
+            let path = self.root.join("config.json");
+            let previous = read_file(&path, MAX_CONFIG_BYTES)?;
+            (path, previous)
+        };
         let mut data = serde_json::to_vec(value)?;
         data.push(b'\n');
-        let file = self.stage_config(&data)?;
+        ensure!(data.len() <= MAX_CONFIG_BYTES, "Oversized configuration");
+        let file = Self::stage_config(&path, &data)?;
         let had_hook = self.has_boot_hook()?;
         if let Err(error) = self.commit_with_autostart(value.autostart, || Ok(file.commit()?)) {
-            self.commit_with_autostart(had_hook, || self.restore_config(previous.as_deref()))
-                .with_context(|| format!("Rollback after settings save failed: {error}"))?;
+            self.commit_with_autostart(had_hook, || {
+                self.restore_config(&path, previous.as_deref())
+            })
+            .with_context(|| format!("Rollback after settings save failed: {error}"))?;
             return Err(error);
         }
         Ok(())
@@ -149,19 +162,19 @@ impl Files {
         }
         Ok(())
     }
-    fn stage_config(&self, data: &[u8]) -> Result<atomic_write_file::AtomicWriteFile> {
-        let mut file = atomic_write_file::AtomicWriteFile::open(self.root.join("config.json"))?;
+    fn stage_config(path: &Path, data: &[u8]) -> Result<atomic_write_file::AtomicWriteFile> {
+        let mut file = atomic_write_file::AtomicWriteFile::open(path)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(data)?;
         Ok(file)
     }
-    fn restore_config(&self, previous: Option<&[u8]>) -> Result<()> {
+    fn restore_config(&self, path: &Path, previous: Option<&[u8]>) -> Result<()> {
         // commit can report a directory sync error after the rename has already succeeded.
-        if self.config_bytes()?.as_deref() != previous {
+        if read_file(path, MAX_CONFIG_BYTES)?.as_deref() != previous {
             if let Some(data) = previous {
-                self.stage_config(data)?.commit()?;
+                Self::stage_config(path, data)?.commit()?;
             } else {
-                Self::remove(&self.root.join("config.json"))?;
+                Self::remove(path)?;
                 fs::File::open(&self.root)?.sync_all()?;
             }
         }
@@ -169,7 +182,16 @@ impl Files {
     }
     pub fn manifest(&self, install: bool) -> Result<()> {
         let value = serde_json::json!({"id":"io.prysm.capture.native", "version":"1.0.0", "roleFiles":[self.capture_role]});
-        registration(&self.manifest_path, &value, install)
+        registration(&self.manifest_path, &value, install)?;
+        // Its own identity lets a standard build remove the role on downgrade.
+        registration(
+            &self
+                .manifest_path
+                .with_file_name("io.prysm.capture.embedded.native.json"),
+            &serde_json::json!({"id":"io.prysm.capture.embedded.native","version":"1.0.0",
+                "roleFiles":[self.capture_role.with_file_name("embedded.role.json")]}),
+            install && cfg!(feature = "embedded-prysm"),
+        )
     }
     pub fn register_supervisor(&self) -> Result<()> {
         let service = self.capture_role.parent().context("service directory")?;
@@ -258,6 +280,57 @@ mod tests {
 
     #[test]
     #[cfg(not(miri))]
+    fn extended_preferences_never_overwrite_the_pre_feature_snapshot() {
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        let legacy = Config {
+            instance_url: Some("https://old.example".parse().unwrap()),
+            ..Config::default()
+        };
+        let mut extended = Config {
+            location: ProcessingLocation::Embedded,
+            embedded_output: Some(
+                serde_json::from_value(serde_json::json!({
+                    "type":"wled","url":"http://lights.example",
+                    "leds":{"top":1,"right":2,"bottom":3,"left":4}
+                }))
+                .unwrap(),
+            ),
+            ..Config::default()
+        };
+        files.persist(&extended).unwrap();
+        let path = dir.path().join("config.json");
+        assert!(
+            !path.exists(),
+            "pre-feature installation boots with its default settings"
+        );
+        let saved = files.load().unwrap();
+        assert_eq!(saved.embedded_output, extended.embedded_output);
+        assert_eq!(
+            saved.location,
+            if cfg!(feature = "embedded-prysm") {
+                ProcessingLocation::Embedded
+            } else {
+                ProcessingLocation::Remote
+            }
+        );
+        assert!(saved.instance_url.is_none());
+
+        let snapshot = serde_json::to_vec_pretty(&legacy).unwrap();
+        fs::write(&path, &snapshot).unwrap(); // Simulate editing the remote URL during rollback.
+        extended.instance_url = Some("https://new.example".parse().unwrap());
+        files.persist(&extended).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), snapshot);
+        assert_eq!(files.load().unwrap().instance_url, extended.instance_url);
+        files.persist(&files.load().unwrap()).unwrap();
+        assert_eq!(
+            files.load().unwrap().embedded_output,
+            extended.embedded_output
+        );
+        assert_eq!(fs::read(path).unwrap(), snapshot);
+    }
+    #[test]
+    #[cfg(not(miri))]
     fn cleanup_rejects_a_boot_hook_pipe_without_waiting_for_a_writer() {
         use nix::{sys::stat::Mode, unistd::mkfifo};
         let dir = crate::application::tests::sandbox();
@@ -280,9 +353,11 @@ mod tests {
         files.persist(&config).unwrap();
         for enable in [true, false] {
             config.autostart = enable;
-            let staged = files
-                .stage_config(&serde_json::to_vec(&config).unwrap())
-                .unwrap();
+            let staged = Files::stage_config(
+                &dir.path().join("config.json"),
+                &serde_json::to_vec(&config).unwrap(),
+            )
+            .unwrap();
             files
                 .commit_with_autostart(enable, || {
                     // Inspect both sides of the rename before any further hook operation.
@@ -306,9 +381,9 @@ mod tests {
         let path = dir.path().join("config.json");
         let previous = br#"{ "metrics": false }"#;
         fs::write(&path, b"replacement").unwrap();
-        files.restore_config(Some(previous)).unwrap();
+        files.restore_config(&path, Some(previous)).unwrap();
         assert_eq!(fs::read(&path).unwrap(), previous);
-        files.restore_config(None).unwrap();
+        files.restore_config(&path, None).unwrap();
         assert!(!path.exists());
     }
 

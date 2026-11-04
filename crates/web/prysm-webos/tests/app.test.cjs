@@ -25,12 +25,15 @@ const service = ts.transpileModule(
     },
   },
 ).outputText;
-const html = fs.readFileSync(
-  path.join(__dirname, '../dist/index.html'),
-  'utf8',
+const embeddedBuild = process.env.VITE_EMBEDDED_PRYSM === '1';
+const dist = path.resolve(
+  __dirname,
+  '..',
+  process.env.PRYSM_WEBOS_TEST_DIST || 'dist',
 );
+const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
 const script = fs.readFileSync(
-  path.join(__dirname, '../dist/' + html.match(/<script[^>]+src="([^"]+)"/)[1]),
+  path.join(dist, html.match(/<script[^>]+src="([^"]+)"/)[1]),
   'utf8',
 );
 
@@ -94,13 +97,17 @@ async function fixture(t, options = {}) {
     stopping: false,
     error: null,
     lastLog: null,
-    capabilities: { hardwareH264: options.hardwareH264 === true },
+    capabilities: {
+      hardwareH264: options.hardwareH264 === true,
+      ...options.capabilities,
+    },
     config: {
       instanceUrl: options.instanceUrl ?? 'http://192.168.18.18:8787',
       source: 'both',
       compression: 'lz4',
       autostart: false,
       metrics: false,
+      ...options.config,
     },
   };
   w.PalmServiceBridge = function () {
@@ -535,6 +542,20 @@ test('subscriptions and actions reject replies that violate the service contract
     invalid,
     { ...f.value, capabilities: {} },
     { ...f.value, capabilities: { hardwareH264: 'true' } },
+    {
+      ...f.value,
+      capabilities: { hardwareH264: false, embeddedPrysm: 'true' },
+    },
+    ...[-1, 0.5, 65536].map((top) => ({
+      ...f.value,
+      config: {
+        ...f.value.config,
+        embeddedOutput: {
+          ...embeddedOutput,
+          leds: { ...embeddedOutput.leds, top },
+        },
+      },
+    })),
     { ...f.value, receiverBusy: 'false' },
     { ...f.value, subscribers: 2 ** 32 },
     { ...f.value, revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -643,11 +664,10 @@ test('TV output uses relative classic scripts and excludes the local service sim
     /Local development: simulated TV service|Simulated TV|import\.meta/,
   );
   for (const name of ['app.css', 'appinfo.json', 'icon.png']) {
-    assert.ok(fs.existsSync(path.join(__dirname, '../dist', name)));
+    assert.ok(fs.existsSync(path.join(dist, name)));
   }
   assert.equal(
-    JSON.parse(fs.readFileSync(path.join(__dirname, '../dist/appinfo.json')))
-      .main,
+    JSON.parse(fs.readFileSync(path.join(dist, 'appinfo.json'))).main,
     'index.html',
   );
 });
@@ -1219,3 +1239,171 @@ test('the instance editor displays the resolved LAN address before Save', async 
     assert.equal(f.el('receiver-value').textContent, expected);
   }
 });
+
+const embeddedOutput = {
+  type: 'wled',
+  url: 'http://fixture-wled.local/',
+  leds: { top: 51, right: 31, bottom: 49, left: 31 },
+};
+
+test('processing location requires both build support and the installed service capability', async (t) => {
+  const f = await fixture(t);
+  assert.equal(f.el('location'), null);
+  f.value.capabilities.embeddedPrysm = true;
+  await f.notify();
+  assert.equal(!!f.el('location'), embeddedBuild);
+  assert.equal(script.includes('On this TV (experimental)'), embeddedBuild);
+  assert.equal(script.includes('Use this setup'), embeddedBuild);
+});
+
+test(
+  'local setup needs WLED and valid LED counts, then starts without a receiver',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      config: { instanceUrl: null },
+      capabilities: { embeddedPrysm: true },
+    });
+    await f.key(39);
+    assert.equal(f.focus(), 'location');
+    await f.click('location');
+    assert.equal(f.focus(), 'choice-remote');
+    await f.click('choice-embedded');
+    assert.equal(f.focus(), 'location');
+    assert.equal(f.el('receiver'), null);
+    assert.equal(f.el('compression'), null);
+    assert.equal(f.el('calibrate'), null);
+    assert.equal(f.el('primary').textContent, 'Set WLED output');
+    await f.click('primary');
+    assert.equal(f.focus(), 'wled-url');
+    await f.input('wled-url', 'http://host/invalid');
+    await f.click('wled-apply');
+    assert.match(f.el('dialog-body').textContent, /base URL/);
+    await f.input('wled-url', 'fixture-wled.local');
+    await f.click('wled-apply');
+    assert.match(f.el('dialog-body').textContent, /65535/);
+    await f.input('led-top', '65535');
+    await f.input('led-left', '1');
+    await f.click('wled-apply');
+    assert.match(f.el('dialog-body').textContent, /65535/);
+    await f.input('led-top', '2.5');
+    await f.click('wled-apply');
+    assert.match(f.el('dialog-body').textContent, /whole number/);
+    for (const [edge, count] of Object.entries(embeddedOutput.leds))
+      await f.input('led-' + edge, String(count));
+    await f.click('wled-apply');
+    assert.equal(f.el('modal'), null);
+    assert.equal(f.el('primary').textContent, 'Save and enable');
+    await f.click('primary');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig', 'start'],
+    );
+    assert.equal(f.value.config.instanceUrl, null);
+    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
+    assert.equal(f.value.config.location, 'embedded');
+    assert.equal(f.el('status-title').textContent, 'Starting local capture');
+    f.value.capturing = true;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Capturing');
+    assert.equal(f.w.document.querySelector('.ready') !== null, true);
+    assert.match(f.el('status-description').textContent, /WLED/);
+    f.value.videoAvailable = false;
+    await f.notify();
+    assert.equal(f.el('status-title').textContent, 'Waiting for video');
+  },
+);
+
+test(
+  'switching modes preserves inactive settings and reports the saved runtime until Save',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      capabilities: { embeddedPrysm: true },
+      config: { embeddedOutput },
+    });
+    f.value.enabled = true;
+    f.value.receiverConnected = true;
+    f.value.capturing = true;
+    await f.notify();
+    await f.click('location');
+    await f.click('choice-embedded');
+    assert.match(f.el('status-description').textContent, /sent to Prysm/);
+    await f.click('wled');
+    await f.click('wled-apply');
+    await f.notify();
+    await f.click('save');
+    assert.equal(f.value.config.instanceUrl, 'http://192.168.18.18:8787');
+    await f.click('location');
+    await f.click('choice-remote');
+    assert.ok(f.el('compression'));
+    assert.equal(
+      f.el('calibrate'),
+      null,
+      'calibration needs a saved remote selection',
+    );
+    f.el('autostart').focus();
+    await f.key(40);
+    assert.equal(f.focus(), 'metrics');
+    await f.click('save');
+    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
+    assert.equal(f.el('calibrate').disabled, false);
+    await f.click('location');
+    await f.click('choice-embedded');
+    await f.click('wled');
+    delete f.value.capabilities.embeddedPrysm;
+    await f.notify();
+    assert.equal(f.el('modal'), null);
+    assert.equal(f.el('location'), null);
+    assert.equal(f.el('save').disabled, true);
+  },
+);
+
+test(
+  'a standard UI never enables embedded processing on a mismatched service',
+  { skip: embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      capabilities: { embeddedPrysm: true },
+      config: { location: 'embedded', embeddedOutput },
+    });
+    assert.equal(f.el('location'), null);
+    assert.equal(f.el('primary').textContent, 'Save and enable');
+    await f.click('primary');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig', 'start'],
+    );
+    assert.equal(f.value.config.location, 'remote');
+    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
+  },
+);
+
+test(
+  'a newer embedded selection prevents a stale remote Save from enabling another target',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      capabilities: { embeddedPrysm: true },
+      config: { embeddedOutput },
+      deferMethods: ['setConfig'],
+    });
+    await f.click('metrics');
+    await f.click('primary');
+    const oldRemote = f.mutations()[0].payload;
+    assert.equal(oldRemote.location, undefined);
+    const reply = JSON.stringify({ ...f.value, config: oldRemote });
+    f.value.config = { ...oldRemote, location: 'embedded' };
+    f.value.revision++;
+    await f.notify();
+    await f.reply(f.pending[0], reply);
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig'],
+    );
+    assert.equal(
+      f.el('location-value').textContent,
+      'On this TV (experimental)',
+    );
+  },
+);

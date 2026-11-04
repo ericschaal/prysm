@@ -1,4 +1,5 @@
 import type { Config, Status } from './service';
+import { embeddedBuild, supportsEmbedded } from './processingLocation';
 
 export function capturePresentation(
   online: boolean | null,
@@ -7,6 +8,10 @@ export function capturePresentation(
   dirty: boolean,
 ) {
   const enabled = status?.enabled;
+  const embedded =
+    embeddedBuild &&
+    supportsEmbedded(status) &&
+    status?.config.location === 'embedded';
   const connected = online && enabled && status?.receiverConnected;
   let title = 'Connecting…';
   let description = 'Checking the capture service on this TV.';
@@ -28,7 +33,22 @@ export function capturePresentation(
       description = 'Finishing the current capture session.';
     } else if (enabled && status.power !== 'Active') {
       title = 'Waiting for TV';
-      description = 'Prysm will reconnect when the TV wakes up.';
+      description =
+        embeddedBuild && embedded
+          ? 'Local capture will resume when the TV wakes up.'
+          : 'Prysm will reconnect when the TV wakes up.';
+    } else if (embeddedBuild && embedded) {
+      if (!enabled) {
+        title = 'Disabled';
+        description = 'Enable capture to run Prysm on this TV.';
+      } else if (status.capturing) {
+        title = 'Capturing';
+        description =
+          'This TV is processing the picture and sending colors to WLED.';
+      } else {
+        title = 'Starting local capture';
+        description = 'Prysm is waiting for its first lighting frame.';
+      }
     } else if (enabled && status.receiverBusy) {
       title = 'Receiver in use';
       description =
@@ -52,7 +72,15 @@ export function capturePresentation(
       description = 'Open Service options for diagnostics or repair.';
     }
     if (enabled) label = 'Disable';
-    else if (!draft.instanceUrl) label = 'Set receiver address';
+    else if (
+      embeddedBuild &&
+      supportsEmbedded(status) &&
+      draft.location === 'embedded' &&
+      !draft.embeddedOutput
+    )
+      label = 'Set WLED output';
+    else if (draft.location !== 'embedded' && !draft.instanceUrl)
+      label = 'Set receiver address';
     else if (dirty) label = 'Save and enable';
     else label = 'Enable';
   }
@@ -62,7 +90,7 @@ export function capturePresentation(
     description,
     label,
     ready: !!(
-      connected &&
+      (embedded ? status?.capturing : connected) &&
       status?.power === 'Active' &&
       status.videoAvailable !== false
     ),
