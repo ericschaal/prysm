@@ -1,6 +1,6 @@
 # webOS capturer
 
-Requires a rooted LG TV with Homebrew Channel root execution, a
+Requires a [rooted LG TV](https://www.webosbrew.org/rooting/) with Homebrew Channel root execution, a
 [Prysm host](README.md#1-install-the-prysm-application), and WLED.
 Experimental; tested on LG 43QNED87A6D.BEUFLJP, webOS 25 (10.3.2-34).
 Other models and firmware are unqualified.
