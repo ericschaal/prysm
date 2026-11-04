@@ -10,20 +10,11 @@ pub struct Observation {
     pub subscribed: bool,
     #[cfg_attr(feature = "schema", schema(required = true))]
     pub video_available: Option<bool>,
-    #[cfg_attr(
-        feature = "schema",
-        schema(format = "uint64", maximum = 18_446_744_073_709_551_615_u64)
-    )]
+    #[cfg_attr(feature = "schema", schema(format = "uint64"))]
     pub revision: u64,
-    #[cfg_attr(
-        feature = "schema",
-        schema(format = "uint32", maximum = 4_294_967_295_u32)
-    )]
+    #[cfg_attr(feature = "schema", schema(format = "uint32"))]
     pub subscribers: u32,
-    #[cfg_attr(
-        feature = "schema",
-        schema(format = "uint32", maximum = 4_294_967_295_u32)
-    )]
+    #[cfg_attr(feature = "schema", schema(format = "uint32"))]
     pub pid: u32,
 }
 

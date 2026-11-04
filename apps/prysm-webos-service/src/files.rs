@@ -126,13 +126,26 @@ impl Files {
         let mut data = serde_json::to_vec(value)?;
         data.push(b'\n');
         let file = self.stage_config(&data)?;
-        let had_hook = self.autostart(value.autostart)?;
-        if let Err(error) = file.commit() {
-            let hook = self.autostart(had_hook);
-            let config = self.restore_config(previous.as_deref());
-            hook.and(config)
-                .with_context(|| format!("Rollback after config commit failed: {error}"))?;
-            return Err(error.into());
+        let had_hook = self.has_boot_hook()?;
+        if let Err(error) = self.commit_with_autostart(value.autostart, || Ok(file.commit()?)) {
+            self.commit_with_autostart(had_hook, || self.restore_config(previous.as_deref()))
+                .with_context(|| format!("Rollback after settings save failed: {error}"))?;
+            return Err(error);
+        }
+        Ok(())
+    }
+    fn commit_with_autostart(
+        &self,
+        enabled: bool,
+        commit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        // A committed autostart=true must always have a complete boot hook, even after power loss.
+        if enabled {
+            self.autostart(true)?;
+        }
+        commit()?;
+        if !enabled {
+            self.autostart(false)?;
         }
         Ok(())
     }
@@ -169,37 +182,39 @@ impl Files {
         });
         registration(&self.supervisor_manifest_path, &value, true)
     }
-    /// Set the owned boot hook and return its previous state for rollback.
-    pub fn autostart(&self, enabled: bool) -> Result<bool> {
-        let script = &self.boot_script;
-        let path = &self.hook_path;
-        let existing = read_file(path, script.len())?;
-        let previous = existing.is_some();
+    fn has_boot_hook(&self) -> Result<bool> {
+        let existing = read_file(&self.hook_path, self.boot_script.len())?;
         ensure!(
             existing
                 .as_deref()
-                .is_none_or(|bytes| bytes == script.as_bytes()),
+                .is_none_or(|bytes| bytes == self.boot_script.as_bytes()),
             "Refusing to change an unrelated boot hook"
         );
-        if previous == enabled {
-            return Ok(previous);
+        Ok(existing.is_some())
+    }
+    pub fn autostart(&self, enabled: bool) -> Result<()> {
+        let exists = self.has_boot_hook()?;
+        if !enabled && !exists {
+            return Ok(());
         }
-        if enabled {
-            fs::create_dir_all(path.parent().context("boot hook parent")?)?;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o755)
-                .custom_flags(libc::O_NOFOLLOW)
-                .open(path)?;
-            if let Err(error) = file.write_all(script.as_bytes()) {
-                Self::remove(path)?;
-                return Err(error.into());
-            }
-        } else {
+        let path = &self.hook_path;
+        let parent = path.parent().context("boot hook parent")?;
+        if enabled && !exists {
+            fs::create_dir_all(parent)?;
+            let mut file = tempfile::NamedTempFile::new_in(parent)?;
+            file.write_all(self.boot_script.as_bytes())?;
+            file.as_file()
+                .set_permissions(fs::Permissions::from_mode(0o755))?;
+            file.as_file().sync_all()?;
+            file.persist_noclobber(path).map_err(|error| error.error)?;
+        } else if !enabled {
             Self::remove(path)?;
         }
-        Ok(previous)
+        if enabled {
+            // A prior save may have been interrupted after creating init.d or publishing the hook.
+            fs::File::open(parent.parent().context("boot hook directory parent")?)?.sync_all()?;
+        }
+        Ok(fs::File::open(parent)?.sync_all()?)
     }
     fn remove(path: &Path) -> Result<()> {
         match fs::remove_file(path) {
@@ -250,6 +265,37 @@ mod tests {
         mkfifo(&files.hook_path, Mode::S_IRUSR).unwrap();
         assert!(files.autostart(false).is_err());
         assert!(files.hook_path.exists());
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn an_interruption_at_config_commit_keeps_autostart_bootable() {
+        let dir = crate::application::tests::sandbox();
+        let mut files = Files::sandbox(dir.path()).unwrap();
+        files.hook_path = dir.path().join("init.d/prysm-capture");
+        let mut config = Config {
+            instance_url: Some("http://127.0.0.1:8787".parse().unwrap()),
+            ..Config::default()
+        };
+        files.persist(&config).unwrap();
+        for enable in [true, false] {
+            config.autostart = enable;
+            let staged = files
+                .stage_config(&serde_json::to_vec(&config).unwrap())
+                .unwrap();
+            files
+                .commit_with_autostart(enable, || {
+                    // Inspect both sides of the rename before any further hook operation.
+                    assert_eq!(fs::read(&files.hook_path)?, files.boot_script.as_bytes());
+                    assert_eq!(files.load()?.autostart, !enable);
+                    staged.commit()?;
+                    assert_eq!(files.load()?.autostart, enable);
+                    assert!(files.has_boot_hook()?);
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(files.has_boot_hook().unwrap(), enable);
+        }
     }
 
     #[test]

@@ -46,9 +46,13 @@ if (process.argv[2] === 'types') {
     );
   }
 } else {
+  // JSON.parse can only preserve consecutive integer values through MAX_SAFE_INTEGER.
+  for (const field of Object.values(schemas.Observation.properties)) {
+    if (field.format === 'uint32') field.maximum = 2 ** 32 - 1;
+    if (field.format === 'uint64') field.maximum = Number.MAX_SAFE_INTEGER;
+  }
   const ajv = new Ajv2020({
     code: { source: true, esm: true, lines: true },
-    // The exported minimum and maximum enforce the unsigned integer ranges.
     formats: { uint32: true, uint64: true },
     messages: false,
   });

@@ -3,7 +3,7 @@
 export const isStatus = validate21;
 const schema32 = {"allOf":[{"$ref":"#/components/schemas/ServiceStatus"},{"type":"object","required":["returnValue"],"properties":{"returnValue":{"type":"boolean","const":true}}}]};
 const schema33 = {"allOf":[{"$ref":"#/components/schemas/Observation"},{"$ref":"#/components/schemas/SupervisorStatus"}]};
-const schema34 = {"type":"object","required":["returnValue","subscribed","videoAvailable","revision","subscribers","pid"],"properties":{"pid":{"type":"integer","format":"uint32","maximum":4294967295,"minimum":0},"returnValue":{"type":"boolean"},"revision":{"type":"integer","format":"uint64","maximum":18446744073709552000,"minimum":0},"subscribed":{"type":"boolean"},"subscribers":{"type":"integer","format":"uint32","maximum":4294967295,"minimum":0},"videoAvailable":{"type":["boolean","null"]}}};
+const schema34 = {"type":"object","required":["returnValue","subscribed","videoAvailable","revision","subscribers","pid"],"properties":{"pid":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"returnValue":{"type":"boolean"},"revision":{"type":"integer","format":"uint64","minimum":0,"maximum":9007199254740991},"subscribed":{"type":"boolean"},"subscribers":{"type":"integer","format":"uint32","minimum":0,"maximum":4294967295},"videoAvailable":{"type":["boolean","null"]}}};
 const schema35 = {"type":"object","required":["config","enabled","receiverConnected","receiverBusy","capturing","senderRunning","stopping","power","error","lastLog","capabilities"],"properties":{"capabilities":{"$ref":"#/components/schemas/Capabilities"},"capturing":{"type":"boolean"},"config":{"$ref":"#/components/schemas/Config"},"enabled":{"type":"boolean"},"error":{"type":["string","null"]},"lastLog":{"type":["string","null"]},"power":{"type":["string","null"]},"receiverBusy":{"type":"boolean"},"receiverConnected":{"type":"boolean"},"senderRunning":{"type":"boolean"},"stopping":{"type":"boolean"}}};
 const schema36 = {"type":"object","required":["hardwareH264"],"properties":{"hardwareH264":{"type":"boolean"}}};
 const schema37 = {"type":"object","required":["instanceUrl","source","compression","autostart","metrics"],"properties":{"autostart":{"type":"boolean"},"compression":{"$ref":"#/components/schemas/Compression"},"instanceUrl":{"type":"string"},"metrics":{"type":"boolean"},"source":{"$ref":"#/components/schemas/Source"}},"additionalProperties":false};
@@ -386,8 +386,8 @@ return false;
 }
 if(errors === _errs7){
 if((typeof data2 == "number") && (isFinite(data2))){
-if(data2 > 18446744073709552000 || isNaN(data2)){
-validate22.errors = [{instancePath:instancePath+"/revision",schemaPath:"#/components/schemas/Observation/properties/revision/maximum",keyword:"maximum",params:{comparison: "<=", limit: 18446744073709552000}}];
+if(data2 > 9007199254740991 || isNaN(data2)){
+validate22.errors = [{instancePath:instancePath+"/revision",schemaPath:"#/components/schemas/Observation/properties/revision/maximum",keyword:"maximum",params:{comparison: "<=", limit: 9007199254740991}}];
 return false;
 }
 else {

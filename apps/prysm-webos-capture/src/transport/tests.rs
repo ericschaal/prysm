@@ -297,11 +297,19 @@ fn stalled_receiver_cannot_extend_the_frame_deadline() {
 
 #[test]
 fn https_ipv6_literal_reaches_the_tls_peer() {
+    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+    use std::os::fd::AsFd;
+
     let listener = TcpListener::bind("[::1]:0").unwrap();
     let instance = format!("https://{}", listener.local_addr().unwrap())
         .parse()
         .unwrap();
     let peer = thread::spawn(move || {
+        let mut waiting = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
+        let timeout = PollTimeout::try_from(CONTROL_TIMEOUT).unwrap();
+        if poll(&mut waiting, timeout).unwrap() == 0 {
+            return false;
+        }
         let (mut tcp, _) = listener.accept().unwrap();
         tcp.set_read_timeout(Some(CONTROL_TIMEOUT)).unwrap();
         let mut acceptor = rustls::server::Acceptor::default();

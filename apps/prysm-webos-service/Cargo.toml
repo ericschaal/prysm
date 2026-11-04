@@ -27,8 +27,6 @@ serde_json.workspace = true
 signal-hook.workspace = true
 bindgen = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
-
-[dev-dependencies]
 tempfile.workspace = true
 
 [[bin]]

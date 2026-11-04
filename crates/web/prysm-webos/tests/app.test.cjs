@@ -481,12 +481,22 @@ test('subscriptions and actions reject replies that violate the service contract
   );
   assert.equal(f.el('connection').textContent, 'TV service unavailable');
   await f.advance(3000);
+  await f.reply(
+    f.subscription(),
+    JSON.stringify({
+      ...f.value,
+      subscribed: true,
+      revision: Number.MAX_SAFE_INTEGER,
+    }),
+  );
+  assert.equal(f.el('connection').textContent, 'Disabled');
   for (const reply of [
     invalid,
     { ...f.value, capabilities: {} },
     { ...f.value, capabilities: { hardwareH264: 'true' } },
     { ...f.value, receiverBusy: 'false' },
     { ...f.value, subscribers: 2 ** 32 },
+    { ...f.value, revision: Number.MAX_SAFE_INTEGER + 1 },
     { ...f.value, config: { ...f.value.config, unknown: true } },
     { returnValue: false, errorText: 42 },
   ]) {
