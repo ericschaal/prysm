@@ -67,6 +67,7 @@ impl Observation {
 pub enum ErrorCode {
     InvalidRequest,
     Conflict,
+    CapturePending,
     Persistence,
     Backend,
     Unavailable,

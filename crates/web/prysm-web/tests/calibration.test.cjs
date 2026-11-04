@@ -23,6 +23,7 @@ async function fixture(
   {
     storedToken,
     joinErrors = [],
+    pendingSaves = 0,
     waitForJoin = true,
     profiles = [],
     source = 'prysm',
@@ -68,6 +69,16 @@ async function fixture(
               : 'Receiver unavailable',
         },
         { status: failure },
+      );
+    }
+    if (body.action === 'save' && pendingSaves > 0) {
+      pendingSaves--;
+      return Response.json(
+        {
+          code: 'capture_pending',
+          message: 'Waiting for TV capture to resume.',
+        },
+        { status: 409 },
       );
     }
     if (body.action === 'update' && failUpdate) {
@@ -163,6 +174,22 @@ test('leaving calibration cancels a scheduled initial connection retry', async (
   assert.equal(f.calls.length, 1);
   assert.equal(f.w.sessionStorage.length, 0);
 });
+test('one Save click persists the reviewed profile after TV capture resumes', async (t) => {
+  const f = await fixture(t, undefined, { pendingSaves: 1 });
+  await f.click('New profile');
+  f.w.document.querySelector('input[type=checkbox]').click();
+  for (let i = 0; i < 3; i++) await f.click('Next');
+  await f.click('Skip hue adjustment');
+  await f.click('Next');
+  await f.click('Save and use');
+  assert.ok(f.button('Saving…')?.disabled);
+  assert.equal(f.button('Cancel').disabled, false);
+  await until(() => f.view().saved, 2500);
+  const saves = f.calls.filter((call) => call.action === 'save');
+  assert.equal(saves.length, 2);
+  assert.deepEqual(saves[1], saves[0]);
+});
+
 test('wizard requires physical confirmation, optionally adjusts hues, bypasses all correction, and retains a failed save', async (t) => {
   const f = await fixture(t);
   await f.click('New profile');

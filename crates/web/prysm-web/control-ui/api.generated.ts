@@ -140,7 +140,7 @@ export interface components {
         ConfigRevision: string;
         DeviceId: string;
         /** @enum {string} */
-        ErrorCode: "invalid_request" | "conflict" | "persistence" | "backend" | "unavailable";
+        ErrorCode: "invalid_request" | "conflict" | "capture_pending" | "persistence" | "backend" | "unavailable";
         Input: {
             capture_resolution: components["schemas"]["CaptureResolution"];
             device: components["schemas"]["DeviceId"];

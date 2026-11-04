@@ -292,9 +292,7 @@ impl Controller {
                         .state(self.operation.clone())
                         .is_some_and(|s| s.pipeline.phase == prysm_contract::PipelinePhase::Running)
                 {
-                    return Err(CommandError::Conflict(
-                        "wait for TV capture to resume before saving",
-                    ));
+                    return Err(CommandError::CapturePending);
                 }
                 self.settings.save_profile(&profile).await?;
                 self.calibration.as_mut().unwrap().saved(profile);
@@ -940,7 +938,7 @@ mod tests {
                 name: "Too early".into()
             })
             .await,
-            Err(CommandError::Conflict(_))
+            Err(CommandError::CapturePending)
         ));
         let sender = tv_frame(&tv_receiver).await;
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -973,7 +971,7 @@ mod tests {
                 name: "Disconnected".into(),
             })
             .await,
-            Err(CommandError::Conflict(_))
+            Err(CommandError::CapturePending)
         ));
         assert_eq!(app.settings().settings.calibration, normal.calibration);
         let _sender = tv_frame(&tv_receiver).await;

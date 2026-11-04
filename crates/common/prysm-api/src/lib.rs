@@ -100,6 +100,8 @@ pub enum Command {
 pub enum CommandError {
     #[error("{0}")]
     Conflict(&'static str),
+    #[error("Waiting for TV capture to resume before saving.")]
+    CapturePending,
     #[error("invalid settings: {0:#}")]
     Invalid(#[source] anyhow::Error),
     #[error("could not save settings: {0:#}")]
@@ -115,6 +117,7 @@ impl CommandError {
     pub fn report(&self) -> ApiError {
         let code = match self {
             Self::Conflict(_) => ErrorCode::Conflict,
+            Self::CapturePending => ErrorCode::CapturePending,
             Self::Invalid(_) => ErrorCode::InvalidRequest,
             Self::Persistence(_) => ErrorCode::Persistence,
             Self::Backend(_) => ErrorCode::Backend,
@@ -146,7 +149,7 @@ impl ApiFailure {
 impl From<CommandError> for ApiFailure {
     fn from(error: CommandError) -> Self {
         let status = match error {
-            CommandError::Conflict(_) => StatusCode::CONFLICT,
+            CommandError::Conflict(_) | CommandError::CapturePending => StatusCode::CONFLICT,
             CommandError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
             CommandError::Persistence(_) => StatusCode::INTERNAL_SERVER_ERROR,
             CommandError::Backend(_) => StatusCode::BAD_GATEWAY,

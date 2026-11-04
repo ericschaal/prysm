@@ -65,8 +65,12 @@ function createPhoneSession(
     sending = body;
     if (body === action) publish();
     let continueSending = true;
+    let waitingForCapture = false;
     try {
-      const next = unwrap(await client.POST('/api/calibration', { body }));
+      const reply = await client.POST('/api/calibration', { body });
+      waitingForCapture =
+        body.action === 'save' && reply.error?.code === 'capture_pending';
+      const next = unwrap(reply);
       if (!mounted) return;
       if (!view && !next.ended) sessionStorage.setItem(key, next.token);
       if (next.ended || !view || next.sequence >= view.sequence) view = next;
@@ -97,7 +101,7 @@ function createPhoneSession(
       }
     } finally {
       sending = null;
-      if (body === action) action = null;
+      if (body === action && !waitingForCapture) action = null;
     }
     if (view?.ended || rejected) {
       sessionStorage.removeItem(key);

@@ -655,6 +655,7 @@
         "enum": [
           "invalid_request",
           "conflict",
+          "capture_pending",
           "persistence",
           "backend",
           "unavailable"
