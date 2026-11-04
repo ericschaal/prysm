@@ -36,6 +36,24 @@ The final binary ran a 90-second moving multicolor pattern with the same calibra
 
 The final one-minute repeat of the original bright/dim clip measured 29.997 FPS over 50.172 steady-state seconds, up from 25.34 FPS on the same clip. WLED again identified the TV as its DDP source. The installed service, configuration and foreground app were restored after testing. The SHA-256 of the final tested binary is `7d39aaa263376b5791acc40602b0b2b3a1166c6421a3dfcc14fd175ff19dd908`.
 
+## 1280×720 profile
+
+The same optimized binary (commit `23dac94`) sustained **16.95 FPS** at 1280×720, compared with 10.65 FPS in the initial serial trial. The native driver confirmed the capture dimensions. The test used the same 640×360 bright/dim video, calibration, density and 162-LED layout as the 640×360 trial. The uninstrumented binary sent 1,009 frames in 60.15 seconds including startup. Between the first and last progress reports it sent 854 frames in 50.392 seconds, using an average of 1.72 CPU cores over the CPU sampling interval. WLED identified the TV as its DDP source. A ten-second packet observation measured 16.89 FPS independently.
+
+A separate 45-second run with temporary monotonic timers sustained 16.74 FPS. The following times cover 675 successful frames after the first five seconds.
+
+| Stage | Mean ms | p95 ms |
+| --- | ---: | ---: |
+| Native acquisition and copy | 0.71 | 0.81 |
+| NV12 to RGB | 11.10 | 13.67 |
+| Grid averaging | 23.15 | 26.35 |
+| Projecting grid colors onto the edges | 21.97 | 30.29 |
+| Remaining processing | 2.38 | 2.92 |
+| WLED DDP send | 0.14 | 0.18 |
+| **Total work** | **59.45** | **70.49** |
+
+At the configured density and full viewport, 720p has four times the input pixels of 640×360 and 1,022 edge samples instead of 510. Both project from 9,216 grid cells. Grid averaging still runs serially, while edge projection uses the worker pool. Together these two stages consumed 45.12 ms per frame. Even the fastest measured frame took 52.38 ms against the 33.33 ms budget for 30 FPS. The settings, installed service and original Home foreground were verified after both runs.
+
 ## Build and run
 
 From the worktree root with the Rust ARMv7 target installed and `WEBOS_SDK` pointing to the relocated buildroot-nc4 SDK, run:
