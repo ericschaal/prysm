@@ -2,6 +2,8 @@
 
 This experimental executable opens LG’s blended capture tap, converts its limited-range BT.709 NV12 pixels to RGB, runs the Prysm processor with a local settings file, and sends DDP directly to WLED. It shares the installed worker’s exclusive capture lock. The normal dependency tree contains no OpenH264, GStreamer or WebSocket implementation.
 
+[Research checkpoint, tested binary and replay fixtures](../../../research/webos-capture/2026-11-04-on-tv-pipeline/README.md)
+
 ## Initial TV trial
 
 A looping bright/dim video ran on the TV on November 4, 2026. Each capture size ran for about 25 seconds at a requested 30 FPS using the same color profile, processing settings and 162-LED layout. The FPS column uses the change in successful DDP frame sends between the first and last five-second progress reports. The controller column is the observed range of the first LED’s green channel from WLED’s independent live preview.
