@@ -1,11 +1,55 @@
 # TV deployment history
 
-**Status:** historical deployment notes, 2026-11-01–02. Claims and settings below
+**Status:** historical deployment notes, 2026-11-01–04. Claims and settings below
 refer to the version described; they do not describe the current release as a whole.
 **Platform:** project LG webOS 25 TV. Short checks do not qualify sustained performance
 or other models/firmware. Some original local evidence was not committed.
 **Current instructions:** [TV setup](../../docs/users/webos.md) and
 [developer lifecycle](../../docs/developers/webos.md).
+
+Version 0.1.28 redesigns the receiver-address and QR screens. Both layouts passed
+local checks at 720p and 1080p for focus, target size, overscan margins and
+space for the system keyboard. On the LG, the receiver address filled in from
+the sender, Back returned to address entry, and a freshly rendered QR decoded
+from the TV screenshot and paired with the receiver. Exiting restored focus
+to Match your lights. Receiver settings and profiles matched the pretest
+snapshot; the lights stayed off.
+
+Version 0.1.27 adds color intensity, six selective hue controls, and a mixed-color
+check. The local workspace and browser checks passed before the receiver, web UI,
+and TV package were updated on 2026-11-04. The LG played the three muted patches
+and all three split-field clips at 1280×720 capture. On clay, reducing intensity
+moved mean top-edge output from RGB (186, 90, 67) to (123, 115, 103). On red,
+shifting Red hue toward Yellow moved it from (214, 1, 0) to (144, 90, 0) while
+the decoded TV patch held red. All three split fields produced distinct left
+and right LED output. These are receiver samples, not optical measurements.
+
+The phone rejoined after reload and cancelled the draft. Both saved profiles,
+the active selection and all other receiver settings matched the pretest file
+byte-for-byte. The TV sender remained connected and WLED was off. The receiver
+rollback is in `/var/backups/prysm/color-steps-20261104` and local evidence is
+in `work/color-steps/`.
+
+Version 0.1.26 adds TV/phone calibration pairing, looping static-color patterns,
+and the footer spacing fix. Deployed on 2026-11-03 together with the ARM64 receiver
+and embedded web UI. The receiver's existing TOML settings were migrated to JSON,
+preserving 1280×720 at 30 fps, processing values and LED layout; the user's saved
+`Calibration 1` profile was retained and activated unchanged. TV native executable
+hashes matched the build, and sender settings, enabled state and boot hook were
+preserved. No TV system partition was written.
+
+Local checks, browser tests and Docker smoke tests passed before deployment.
+The deployed stack passed phone pairing, saved-profile selection, reload/rejoin,
+static cyan playback/capture, cancellation and Stop. Five decoded preview frames
+confirmed 1280×720 capture; corrected mean LED RGB was 0, 198, 181. After cancelling
+the draft, settings matched the deployment input exactly, WLED was off, the
+receiver was idle, and the TV sender remained connected without an error.
+Receiver rollback files are in `/var/backups/prysm/calibration-20261103`; local
+logs, the prior TV package and app backup are in `work/full-stack-deploy/`.
+Temporary uploads and the debugger tunnel were removed. This was a bounded
+functional test; standby, reboot, sustained performance and optical accuracy
+were not requalified. Color intensity, selective hue correction and mixed-color
+checks remain future work in `TODO.md`.
 
 Version 0.1.25 refactors the TV React app into components and hooks, simplifies
 its TV layout, and removes the redundant disable confirmation. The service now

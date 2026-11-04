@@ -148,6 +148,7 @@ async function fixture(t, options = {}) {
   w.eval(script);
   await settle();
   return {
+    settle,
     w,
     calls,
     options,
@@ -674,4 +675,116 @@ test('no video keeps an enabled sender in a stable waiting state across receiver
     f.mutations().map((call) => call.method),
     ['start'],
   );
+});
+
+test('TV calibration pairs through the same-origin relay, hides QR during video and releases playback on Back', async (t) => {
+  const f = await fixture(t);
+  f.w.setInterval = () => 42;
+  f.w.clearInterval = () => {};
+  f.w.HTMLMediaElement.prototype.play = () => Promise.resolve();
+  f.w.HTMLMediaElement.prototype.pause = () => {};
+  f.w.HTMLMediaElement.prototype.load = () => {};
+  await f.click('calibrate');
+  await f.click('calibration-connect');
+  const relay = f.w.document.querySelector('iframe');
+  const messages = [];
+  relay.contentWindow.postMessage = (message, origin) =>
+    messages.push({ message, origin });
+  const send = (data, origin = 'http://192.168.18.18:8787') =>
+    f.settle(() =>
+      f.w.dispatchEvent(
+        new f.w.MessageEvent('message', {
+          source: relay.contentWindow,
+          origin,
+          data,
+        }),
+      ),
+    );
+  await send({ type: 'calibration-ready' }, 'http://attacker.invalid');
+  assert.equal(messages.length, 0);
+  await send({ type: 'calibration-ready' });
+  assert.equal(messages[0].message.action, 'begin');
+  let view = {
+    token: 'tv',
+    pairing: 'pair',
+    connected: false,
+    draft: {
+      id: 'profile',
+      name: 'Calibration 1',
+      correction: { warmth: 0, tint: 0, midtones: 0 },
+    },
+    step: 'choose',
+    shade: 0,
+    paused: false,
+    compare: false,
+    sequence: 0,
+    ended: null,
+  };
+  await send({ type: 'calibration', view });
+  assert.ok(
+    f.w.document.querySelector(
+      'img[alt="Scan to open the calibration wizard"]',
+    ),
+  );
+  view = { ...view, connected: true, pairing: null };
+  await send({ type: 'calibration', view });
+  assert.equal(f.w.document.querySelector('img'), null);
+  assert.equal(
+    f.w.document.querySelector('video').getAttribute('src'),
+    'calibration/response.mp4',
+  );
+  view = { ...view, step: 'white_balance' };
+  await send({ type: 'calibration', view });
+  const video = f.w.document.querySelector('video');
+  assert.equal(video.getAttribute('src'), 'calibration/gray-192.mp4');
+  f.w.HTMLMediaElement.prototype.play = () =>
+    Promise.reject(
+      new f.w.DOMException('Playback intentionally paused', 'AbortError'),
+    );
+  view = { ...view, step: 'colors', paused: true };
+  await send({ type: 'calibration', view });
+  assert.ok(
+    f.w.document.querySelector('video'),
+    'an intentional Pause must not exit calibration',
+  );
+  for (const [shade, color] of [
+    'red',
+    'green',
+    'blue',
+    'cyan',
+    'magenta',
+    'yellow',
+  ].entries()) {
+    view = { ...view, shade, paused: true };
+    await send({ type: 'calibration', view });
+    assert.equal(
+      f.w.document.querySelector('video').getAttribute('src'),
+      `calibration/${color}.mp4`,
+    );
+  }
+  view = { ...view, paused: false };
+  await send({ type: 'calibration', view });
+  assert.equal(
+    f.w.document.querySelector('video').getAttribute('src'),
+    'calibration/colors.mp4',
+  );
+  for (const [step, clips] of [
+    ['intensity', ['clay', 'leaf', 'denim']],
+    ['mixed', ['coast', 'garden', 'dusk']],
+  ]) {
+    for (const [shade, clip] of clips.entries()) {
+      view = { ...view, step, shade };
+      await send({ type: 'calibration', view });
+      assert.equal(
+        f.w.document.querySelector('video').getAttribute('src'),
+        'calibration/' + clip + '.mp4',
+      );
+    }
+  }
+  await f.key(461);
+  assert.equal(f.w.document.querySelector('video'), null);
+  assert.equal(video.hasAttribute('src'), false);
+  assert.equal(messages.at(-1).message.action, 'cancel');
+  await send({ type: 'calibration', view });
+  assert.equal(f.w.document.querySelector('video'), null);
 });

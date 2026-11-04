@@ -337,6 +337,49 @@ mod tests {
     use prysm_core::{EdgeColors, Frame, Viewport};
 
     #[tokio::test]
+    async fn calibrated_preview_colors_match_the_ddp_output() {
+        let config = prysm_core::Config {
+            correction: prysm_core::ColorCorrection::new(55, -30, 40).unwrap(),
+            brightness_percent: prysm_core::BrightnessPercent(70),
+            smoothing_seconds: prysm_core::SmoothingSeconds(0.0),
+            remove_black_bars: false,
+            ..prysm_core::Config::default()
+        };
+        let frame = Frame::fill(128, 8, 4, PixelFormat::RGB24).unwrap();
+        let mut processor = prysm_processor::PrysmProcessor::new(&config);
+        let colors = processor.process_frame(frame.clone());
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut renderer =
+            prysm_renderer_wled::WledRenderer::new(socket.local_addr().unwrap()).unwrap();
+        renderer.render_edges(&colors, [1; 4]).unwrap();
+        let mut packet = [0; 1500];
+        let length = socket.recv(&mut packet).await.unwrap();
+        assert_eq!(length, 22);
+        let preview = Preview::new();
+        preview.publisher().publish(
+            ProcessedSnapshot {
+                frame,
+                viewport: processor.viewport(),
+                colors,
+            },
+            ConfigRevision::new(1),
+        );
+        let response = preview.request().unwrap().await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        for (index, edge) in ["top", "right", "bottom", "left"].iter().enumerate() {
+            assert_eq!(
+                value["colors"][edge][0],
+                serde_json::json!(&packet[10 + index * 3..13 + index * 3])
+            );
+        }
+        assert_ne!(
+            packet[10], packet[12],
+            "white balance must affect the shared result"
+        );
+        preview.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn cached_response_does_not_pin_the_previous_raw_frame() {
         let preview = Preview::new();
         let mut pool = prysm_core::FramePool::default();

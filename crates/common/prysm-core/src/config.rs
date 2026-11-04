@@ -21,6 +21,8 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Config {
+    /// Selected profile correction, independent of processing controls.
+    pub correction: crate::ColorCorrection,
     /// Light output: 0 = off, 100 = full brightness. Default: 100.
     /// Values above 100 are treated as 100.
     pub brightness_percent: BrightnessPercent,
@@ -51,6 +53,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            correction: crate::ColorCorrection::default(),
             brightness_percent: BrightnessPercent(100),
             shadow_lift_percent: ShadowLiftPercent(0),
             smoothing_seconds: SmoothingSeconds(0.1),

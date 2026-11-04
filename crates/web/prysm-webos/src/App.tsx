@@ -1,3 +1,5 @@
+import { useCallback, useState } from 'react';
+import Calibration from './components/Calibration';
 import Header from './components/Header';
 import CaptureOverview from './components/CaptureOverview';
 import Settings from './components/Settings';
@@ -7,7 +9,9 @@ import { useCaptureService } from './hooks/useCaptureService';
 import { useRemoteNavigation } from './hooks/useRemoteNavigation';
 
 export default function App() {
-  const navigation = useRemoteNavigation();
+  const [calibrating, setCalibrating] = useState(false);
+  const closeCalibration = useCallback(() => setCalibrating(false), []);
+  const navigation = useRemoteNavigation(calibrating);
   const capture = useCaptureService(() => navigation.openDialog('receiver'));
   const presentation = capturePresentation(
     capture.online,
@@ -15,6 +19,14 @@ export default function App() {
     capture.draft,
     capture.dirty,
   );
+
+  if (calibrating)
+    return (
+      <Calibration
+        receiver={capture.saved?.receiver ?? ''}
+        close={closeCalibration}
+      />
+    );
 
   return (
     <div
@@ -30,6 +42,7 @@ export default function App() {
             online={capture.online}
             changing={capture.changing}
             primary={capture.primary}
+            calibrate={() => setCalibrating(true)}
             openService={() => navigation.openDialog('service')}
           />
           <Settings

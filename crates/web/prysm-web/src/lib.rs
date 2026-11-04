@@ -9,13 +9,23 @@ use tower_http::set_header::SetResponseHeaderLayer;
 
 /// Embedded UI routes, protected by the hosting application's HTTP policy.
 pub fn assets_router() -> Router {
-    Router::new().route("/", axum::routing::get(index)).route(
-        "/assets/{*path}",
-        axum::routing::get(static_asset).layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
-        )),
-    )
+    Router::new()
+        .route("/", axum::routing::get(index))
+        .route(
+            "/calibration-tv.html",
+            axum::routing::get(async || asset("calibration-tv.html")),
+        )
+        .route(
+            "/calibration-tv.js",
+            axum::routing::get(async || asset("calibration-tv.js")),
+        )
+        .route(
+            "/assets/{*path}",
+            axum::routing::get(static_asset).layer(SetResponseHeaderLayer::overriding(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            )),
+        )
 }
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));

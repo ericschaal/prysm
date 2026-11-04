@@ -1,0 +1,11 @@
+{
+  "id": "io.prysm.calibrationprobe",
+  "version": "0.0.1",
+  "vendor": "Prysm",
+  "type": "web",
+  "main": "index.html",
+  "title": "Prysm calibration check",
+  "icon": "icon.png",
+  "disableBackHistoryAPI": true,
+  "requiredACG": ["public"]
+}

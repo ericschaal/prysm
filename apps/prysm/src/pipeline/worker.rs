@@ -5,7 +5,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use futures::StreamExt;
-use prysm_contract::{ConfigRevision, Output, PipelinePhase, PipelineStatus, ProcessingSettings};
+use prysm_contract::{
+    ColorCorrection, ConfigRevision, Output, PipelinePhase, PipelineStatus, ProcessingSettings,
+};
 use prysm_core::{EdgeColors, ProcessedSnapshot};
 use prysm_processor::PrysmProcessor;
 use prysm_renderer_wled::WledRenderer;
@@ -19,6 +21,7 @@ pub enum PipelineExit {
     Stopped,
 }
 pub(crate) struct Configure {
+    pub correction: ColorCorrection,
     pub settings: ProcessingSettings,
     pub revision: ConfigRevision,
     pub reply: oneshot::Sender<Result<()>>,
@@ -212,6 +215,10 @@ fn availability(status: &watch::Sender<PipelineStatus>, available: bool) {
         }
     });
 }
+#[allow(
+    clippy::too_many_lines,
+    reason = "retain the frame loop and ordered configuration handling together"
+)]
 async fn process(
     config: PipelineConfig,
     input: InputStream,
@@ -227,7 +234,9 @@ async fn process(
         cleanup,
         availability: mut available,
     } = input;
-    let mut processor = PrysmProcessor::new(&config.processing.to_core());
+    let mut core = config.processing.to_core();
+    core.correction = config.correction.to_core();
+    let mut processor = PrysmProcessor::new(&core);
     let mut revision = config.revision;
     let mut diagnostics = prysm_metrics::TraceStats::new("processing");
     let mut layout = None;
@@ -247,7 +256,9 @@ async fn process(
                 () = shutdown.cancelled() => break 'frames Ok(PipelineExit::Stopped),
                 command = commands.recv(), if !commands.is_closed() => {
                     if let Some(command) = command {
-                        processor.configure(&command.settings.to_core());
+                        let mut core = command.settings.to_core();
+                        core.correction = command.correction.to_core();
+                        processor.configure(&core);
                         revision = command.revision;
                         tracing::info!(revision = revision.get(), settings = ?command.settings, "processing settings applied");
                         status.send_modify(|status| status.applied_revision = Some(revision));
@@ -440,6 +451,7 @@ mod tests {
         let (reply, applied) = oneshot::channel();
         commands
             .send(Configure {
+                correction: prysm_contract::ColorCorrection::default(),
                 settings,
                 revision: ConfigRevision::new(8),
                 reply,
@@ -503,6 +515,7 @@ mod tests {
         let (reply, applied) = oneshot::channel();
         commands
             .send(Configure {
+                correction: prysm_contract::ColorCorrection::default(),
                 settings: config().processing,
                 revision: ConfigRevision::new(3),
                 reply,

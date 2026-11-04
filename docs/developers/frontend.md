@@ -103,3 +103,6 @@ Generated contracts, build output, dependencies, and the local `work/` research
 tree are excluded. Regenerate contracts with `cargo xtask codegen`; do not format
 them manually. `cargo xtask check frontend` enforces lint and formatting in CI,
 with warnings treated as failures.
+
+For the TV/phone wizard, its same-origin relay and generated contracts, see
+[Visual calibration](calibration.md).

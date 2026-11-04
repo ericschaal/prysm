@@ -9,6 +9,9 @@ pub(crate) fn config() -> Config {
 pub(crate) fn settings_value(config: &Config) -> serde_json::Value {
     let mut value = serde_json::to_value(config).unwrap();
     value.as_object_mut().unwrap().remove("revision");
+    value.as_object_mut().unwrap().remove("correction");
+    value["calibration"] =
+        serde_json::to_value(prysm_contract::CalibrationProfiles::default()).unwrap();
     value
 }
 

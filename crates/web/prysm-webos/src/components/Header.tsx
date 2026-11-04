@@ -1,4 +1,8 @@
-export default function Header() {
+export default function Header({
+  subtitle = 'TV capture',
+}: {
+  subtitle?: string;
+}) {
   return (
     <header className="header">
       <div className="brand">
@@ -18,7 +22,7 @@ export default function Header() {
         <h1>
           prysm<span className="brand-dot">.</span>
         </h1>
-        <p>TV capture</p>
+        <p>{subtitle}</p>
       </div>
     </header>
   );

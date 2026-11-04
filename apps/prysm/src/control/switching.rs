@@ -1,11 +1,16 @@
 use super::backend::{CaptureAction, LightingBackend, WledCommand};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use prysm_contract::{PipelinePhase, Source, Target};
 
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
+use tokio_util::sync::CancellationToken;
 
-async fn apply(backend: &impl LightingBackend, target: Target) -> Result<()> {
+pub(super) async fn apply(
+    backend: &impl LightingBackend,
+    target: Target,
+    cancel: &CancellationToken,
+) -> Result<()> {
     if !target.power {
         // Stop even if WLED is offline; reapply after the last DDP packet so override takes effect.
         let preliminary = backend.wled(WledCommand::SUPPRESS_AND_OFF).await;
@@ -25,15 +30,22 @@ async fn apply(backend: &impl LightingBackend, target: Target) -> Result<()> {
     } else {
         // A previous main-segment realtime session can ignore lor until live has been released.
         backend.wled(WledCommand::RELEASE).await?;
+        // Finish each WLED write before cancellation so a late On cannot undo Stop.
+        ensure!(!cancel.is_cancelled(), "lighting startup cancelled");
         backend.wled(WledCommand::REALTIME).await?;
-        backend
-            .capture(CaptureAction::Start)
-            .await
-            .context("cannot start Prysm")?;
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => bail!("lighting startup cancelled"),
+            result = backend.capture(CaptureAction::Start) => result.context("cannot start Prysm")?,
+        }
     }
     let deadline = Instant::now() + Duration::from_secs(12);
     loop {
-        let observed = backend.observe().await?;
+        let observed = tokio::select! {
+            biased;
+            () = cancel.cancelled() => bail!("lighting startup cancelled"),
+            result = backend.observe() => result?,
+        };
         if observed.matches(target) {
             return Ok(());
         }
@@ -46,17 +58,21 @@ async fn apply(backend: &impl LightingBackend, target: Target) -> Result<()> {
         if Instant::now() >= deadline {
             bail!("requested state was not confirmed; check capture and WLED");
         }
-        sleep(Duration::from_millis(300)).await;
+        tokio::select! {
+            () = cancel.cancelled() => bail!("lighting startup cancelled"),
+            () = sleep(Duration::from_millis(300)) => {},
+        }
     }
 }
 
 pub(super) async fn switch(backend: &impl LightingBackend, target: Target) -> Result<()> {
+    let cancel = CancellationToken::new();
     let previous = backend.observe().await;
     // A source choice while observed Off only changes what the next On request starts.
     if !target.power && previous.as_ref().is_ok_and(|state| state.matches(target)) {
         return Ok(());
     }
-    if let Err(error) = apply(backend, target).await {
+    if let Err(error) = apply(backend, target, &cancel).await {
         if target.power && target.source == Source::Prysm {
             backend
                 .capture(CaptureAction::Stop)
@@ -79,7 +95,7 @@ pub(super) async fn switch(backend: &impl LightingBackend, target: Target) -> Re
                     },
                 },
             );
-            if let Err(restore_error) = apply(backend, rollback).await {
+            if let Err(restore_error) = apply(backend, rollback, &cancel).await {
                 let stopped = backend.capture(CaptureAction::Stop).await;
                 bail!(
                     "{error:#}; restoring previous state failed: {restore_error:#}; cancel automatic retries: {stopped:?}"
@@ -97,6 +113,81 @@ mod tests {
     use prysm_contract::Observation;
 
     use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn cancelled_startup_finishes_an_in_flight_wled_write_before_stop() {
+        struct DelayedOn {
+            backend: Fake,
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+        impl LightingBackend for DelayedOn {
+            async fn capture(&self, action: CaptureAction) -> Result<()> {
+                self.backend.capture(action).await
+            }
+            async fn wled(&self, value: WledCommand) -> Result<()> {
+                if value.on == Some(true) {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.backend.wled(value).await
+            }
+            async fn observe(&self) -> Result<Observation> {
+                self.backend.observe().await
+            }
+        }
+        let backend = std::sync::Arc::new(DelayedOn {
+            backend: Fake::new(false),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let cancel = CancellationToken::new();
+        let pending = {
+            let backend = backend.clone();
+            let cancel = cancel.clone();
+            tokio::spawn(async move {
+                apply(
+                    &*backend,
+                    Target {
+                        power: true,
+                        source: Source::Prysm,
+                    },
+                    &cancel,
+                )
+                .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(1), backend.entered.notified())
+            .await
+            .unwrap();
+        cancel.cancel();
+        tokio::task::yield_now().await;
+        assert!(
+            !pending.is_finished(),
+            "do not cancel an accepted WLED write"
+        );
+        backend.release.notify_one();
+        assert!(pending.await.unwrap().is_err());
+        assert!(
+            !backend
+                .backend
+                .calls
+                .lock()
+                .await
+                .iter()
+                .any(|call| call == "start")
+        );
+        switch(
+            &*backend,
+            Target {
+                power: false,
+                source: Source::Prysm,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!backend.backend.state.lock().await.power);
+    }
     struct Fake {
         state: Mutex<Observation>,
         calls: Mutex<Vec<String>>,

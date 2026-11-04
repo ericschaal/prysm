@@ -92,6 +92,7 @@ impl Ready {
             observed.pipeline_phase = pipeline.phase;
         }
         StateResponse {
+            calibration_active: false,
             source: self.config.source,
             observed,
             observation_error: self.observation_error.clone(),
@@ -115,6 +116,16 @@ impl Ready {
         }
         self.config_tx.send_replace(config.clone());
         self.config = config;
+    }
+
+    pub async fn live(&mut self, config: Config) -> Result<(), CommandError> {
+        self.service
+            .pipeline
+            .configure(PipelineConfig::from(&config))
+            .await
+            .map_err(CommandError::Backend)?;
+        self.record_settings(config);
+        Ok(())
     }
 
     pub fn apply(
@@ -183,6 +194,27 @@ impl Ready {
         }
     }
 
+    pub fn start_calibration(
+        &self,
+        cancel: CancellationToken,
+    ) -> impl Future<Output = OperationResult> + Send + 'static {
+        let service = self.service.clone();
+        let observations = self.updates.clone();
+        async move {
+            let result = super::switching::apply(
+                &*service,
+                Target {
+                    power: true,
+                    source: Source::Prysm,
+                },
+                &cancel,
+            )
+            .await
+            .map_err(CommandError::Backend);
+            OperationResult::capture(&service, result, observations).await
+        }
+    }
+
     pub async fn source_saved(&mut self, config: Config) -> Result<(), CommandError> {
         self.record_settings(config);
         self.service
@@ -228,6 +260,7 @@ impl Ready {
 
 pub(super) fn failed_state(config: &Config, error: &anyhow::Error) -> StateResponse {
     StateResponse {
+        calibration_active: false,
         source: config.source,
         observed: None,
         observation_error: Some(format!("{error:#}")),

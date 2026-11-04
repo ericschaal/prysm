@@ -1,0 +1,156 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+
+for (const [width, height] of [
+  [1920, 1080],
+  [1280, 720],
+]) {
+  test(`TV footer fits inside the safe area at ${width}×${height}`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'TV viewport check');
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(() => {
+      globalThis.PalmServiceBridge = class {
+        call() {
+          this.onservicecallback(
+            JSON.stringify({
+              returnValue: true,
+              subscribed: true,
+              revision: 1,
+              config: {
+                receiver: '192.168.18.38:19400',
+                source: 'both',
+                compression: 'h264-hardware',
+                autostart: true,
+                metrics: true,
+              },
+              enabled: true,
+              receiverConnected: true,
+              capturing: false,
+              senderRunning: true,
+              stopping: false,
+              videoAvailable: false,
+              power: 'Active',
+              error: null,
+              capabilities: { hardwareH264: true },
+            }),
+          );
+        }
+        cancel() {
+          return undefined;
+        }
+      };
+    });
+    await page.route('**/tv-layout/**', async (route) => {
+      const path =
+        new URL(route.request().url()).pathname.slice('/tv-layout/'.length) ||
+        'index.html';
+      const file = new URL(
+        `../../../prysm-webos/dist/${path}`,
+        import.meta.url,
+      );
+      await route.fulfill({
+        body: await readFile(file),
+        contentType: path.endsWith('.html')
+          ? 'text/html'
+          : path.endsWith('.css')
+            ? 'text/css'
+            : 'text/javascript',
+      });
+    });
+    await page.goto('/tv-layout/');
+    await expect(
+      page.getByRole('heading', { name: 'Waiting for video' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Match your lights' }),
+    ).toBeVisible();
+    const bounds = await page.locator('.key-help').boundingBox();
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(height * 0.95);
+    expect(
+      await page.evaluate(
+        () => globalThis.document.documentElement.scrollHeight,
+      ),
+    ).toBeLessThanOrEqual(height);
+    await page.screenshot({ path: testInfo.outputPath('tv-layout.png') });
+    const start = page.getByRole('button', { name: 'Match your lights' });
+    const next = page.getByRole('button', { name: 'Show QR code' });
+    const address = page.getByRole('textbox', { name: 'Prysm web address' });
+    const back = page.getByRole('button', { name: 'Back', exact: true });
+    await start.click();
+    await expect(next).toBeFocused();
+    await expect(address).toHaveValue('http://192.168.18.38:8787');
+    await page.keyboard.press('ArrowUp');
+    await expect(address).toBeFocused();
+    const field = await address.boundingBox();
+    expect(field.y + field.height).toBeLessThan((height * 2) / 3);
+    await page.keyboard.press('ArrowDown');
+    await expect(next).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(back).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(next).toBeFocused();
+    async function safeControls() {
+      for (const control of await page
+        .locator('.pairing-shell input,.pairing-shell button')
+        .all()) {
+        const box = await control.boundingBox();
+        expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(
+          width === 1920 ? 75 : 50,
+        );
+        expect(box.x).toBeGreaterThanOrEqual(20);
+        expect(box.y).toBeGreaterThanOrEqual(20);
+        expect(box.x + box.width).toBeLessThanOrEqual(width - 20);
+        expect(box.y + box.height).toBeLessThanOrEqual(height - 20);
+      }
+    }
+    await safeControls();
+    await page.screenshot({ path: testInfo.outputPath('tv-address.png') });
+    await page.route('**/calibration-tv.html', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: '<script>parent.postMessage({type:"calibration",view:{token:"mock",connected:false,step:"choose",shade:0,pairing:"local-preview"}}, "*")</script>',
+      }),
+    );
+    await page.keyboard.press('Enter');
+    await expect(
+      page.getByRole('img', { name: 'Scan to open the calibration wizard' }),
+    ).toBeVisible();
+    await expect(back).toBeFocused();
+    await safeControls();
+    await page.screenshot({ path: testInfo.outputPath('tv-qr.png') });
+    await page.keyboard.press('Escape');
+    await expect(next).toBeFocused();
+    await expect(address).toHaveValue('http://192.168.18.38:8787');
+    await back.click();
+    await expect(start).toBeFocused();
+  });
+
+  test(`TV calibration fills ${width}×${height} without inset support`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'TV viewport check');
+    await page.setViewportSize({ width, height });
+    const css = await readFile(
+      new URL('../../../prysm-webos/dist/app.css', import.meta.url),
+      'utf8',
+    );
+    // Older TV engines ignore inset; exercise the shipped stylesheet without it.
+    await page.setContent(
+      `<style>${css.replace(/\binset\s*:[^;}]+;?/g, '')}</style><div id="app"><div class="calibration-screen"><video></video></div></div>`,
+    );
+    expect(await page.locator('.calibration-screen').boundingBox()).toEqual({
+      x: 0,
+      y: 0,
+      width,
+      height,
+    });
+    expect(await page.locator('video').boundingBox()).toEqual({
+      x: 0,
+      y: 0,
+      width,
+      height,
+    });
+  });
+}

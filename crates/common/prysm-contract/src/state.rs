@@ -98,6 +98,7 @@ pub struct OperationResponse {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StateResponse {
+    pub calibration_active: bool,
     pub source: Source,
     pub observed: Option<Observation>,
     pub observation_error: Option<String>,

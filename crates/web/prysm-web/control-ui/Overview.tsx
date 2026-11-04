@@ -1,5 +1,10 @@
-import { useEffect, useRef } from 'react';
-import type { SettingsView, StateResponse, Target } from './api';
+import { useEffect, useRef, useState } from 'react';
+import type {
+  SettingsValues,
+  SettingsView,
+  StateResponse,
+  Target,
+} from './api';
 import { SetupCard } from './SetupCard';
 
 export function Overview({
@@ -10,7 +15,12 @@ export function Overview({
   connectionError,
   requestError,
   setState,
+  saveSettings,
 }: {
+  saveSettings: (
+    revision: string,
+    settings: SettingsValues,
+  ) => Promise<SettingsView>;
   settings: SettingsView | null;
   data: StateResponse | null;
   busy: boolean;
@@ -19,6 +29,8 @@ export function Overview({
   requestError: string;
   setState: (target: Target, control: 'power' | 'source') => Promise<void>;
 }) {
+  const [profileError, setProfileError] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
   const values = settings?.settings;
   const available = !!data && !connectionError;
   const observed = available ? data.observed : null;
@@ -62,7 +74,11 @@ export function Overview({
         observed.pipeline_phase === 'running');
   const mismatch = !!observed && !confirmed;
   const power = observed ? (observed.power ? 'On' : 'Off') : 'Unknown';
-  const turnOn = observed ? !observed.power : false;
+  const turnOn = data?.calibration_active
+    ? false
+    : observed
+      ? !observed.power
+      : false;
   const disabled = !available || busy;
   const notice = connectionError
     ? 'Connection lost. Reconnecting automatically…'
@@ -119,7 +135,10 @@ export function Overview({
           ) : null}
         </div>
         <div className="power-controls">
-          <fieldset className="sources" disabled={disabled || !observed}>
+          <fieldset
+            className="sources"
+            disabled={disabled || !observed || data?.calibration_active}
+          >
             <legend>Color source</legend>
             <div className="source-options" data-selected={source}>
               {(
@@ -293,6 +312,51 @@ export function Overview({
           </dl>
         </details>
       </section>
+      {settings ? (
+        <section className="card">
+          <label>
+            Color profile
+            <select
+              value={values?.calibration?.active ?? ''}
+              disabled={disabled || savingProfile || data?.calibration_active}
+              onChange={(event) => {
+                const active = event.target.value || null;
+                setSavingProfile(true);
+                setProfileError('');
+                void saveSettings(settings.revision, {
+                  ...settings.settings,
+                  calibration: {
+                    profiles: settings.settings.calibration?.profiles ?? [],
+                    active,
+                  },
+                })
+                  .catch((error: unknown) =>
+                    setProfileError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Could not select profile.',
+                    ),
+                  )
+                  .finally(() => setSavingProfile(false));
+              }}
+            >
+              <option value="">No correction</option>
+              {values?.calibration?.profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {data?.calibration_active ? (
+            <p role="status">
+              Calibration in progress—finish or exit on the TV to change
+              settings.
+            </p>
+          ) : null}
+          {profileError ? <p role="alert">{profileError}</p> : null}
+        </section>
+      ) : null}
       {values?.input && values.output ? (
         <SetupCard input={values.input} output={values.output} />
       ) : null}

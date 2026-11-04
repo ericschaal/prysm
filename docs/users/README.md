@@ -18,3 +18,5 @@ After setup: [settings and daily use](configuration.md) · [troubleshooting](tro
 Building an executable yourself? Use [developer setup](../developers/README.md#build),
 then return to the guide for your hardware. The web panel is included in Prysm;
 you do not need to run a separate frontend server.
+
+[Match your lights](calibration.md) explains visual color profiles and the TV/phone wizard.

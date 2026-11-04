@@ -6,6 +6,8 @@ use utoipa::ToSchema;
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    #[serde(default)]
+    pub calibration: crate::CalibrationProfiles,
     pub source: Source,
     pub input: Option<Input>,
     pub output: Option<Output>,
@@ -14,6 +16,7 @@ pub struct Settings {
 
 impl Settings {
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.calibration.validate()?;
         if let Some(input) = &self.input {
             input.validate()?;
         }
@@ -26,6 +29,7 @@ impl Settings {
     #[must_use]
     pub fn config(&self, revision: ConfigRevision) -> Option<Config> {
         Some(Config {
+            correction: self.calibration.correction(),
             revision,
             source: self.source,
             input: self.input.clone()?,

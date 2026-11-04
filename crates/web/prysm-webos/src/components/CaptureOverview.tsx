@@ -6,6 +6,7 @@ interface Props {
   attention: boolean;
   changing: boolean;
   primary: () => void;
+  calibrate: () => void;
   openService: () => void;
 }
 
@@ -17,6 +18,7 @@ export default function CaptureOverview({
   attention,
   changing,
   primary,
+  calibrate,
   openService,
 }: Props) {
   return (
@@ -46,10 +48,20 @@ export default function CaptureOverview({
           id="service-options"
           className="quiet"
           data-up="primary"
+          data-down="calibrate"
           data-right="receiver"
           onClick={openService}
         >
           Service options
+        </button>
+        <button
+          id="calibrate"
+          className="quiet"
+          data-up="service-options"
+          data-right="receiver"
+          onClick={calibrate}
+        >
+          Match your lights
         </button>
       </div>
       <p className="capture-hint">The sender runs in the background.</p>

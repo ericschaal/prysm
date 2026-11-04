@@ -26,6 +26,7 @@ impl WebConfig {
 /// The configuration needed to create one pipeline session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineConfig {
+    pub correction: prysm_contract::ColorCorrection,
     pub revision: ConfigRevision,
     pub input: Input,
     pub output: Output,
@@ -41,6 +42,7 @@ impl PipelineConfig {
 impl From<&Config> for PipelineConfig {
     fn from(config: &Config) -> Self {
         Self {
+            correction: config.correction,
             revision: config.revision,
             input: config.input.clone(),
             output: config.output.clone(),

@@ -123,7 +123,10 @@ impl PrysmProcessor {
             edge_colors = smoother.process(edge_colors, now);
         }
 
-        if self.config.shadow_lift_percent.0 != 0 || self.config.brightness_percent.0 < 100 {
+        if self.config.correction != prysm_core::ColorCorrection::default()
+            || self.config.shadow_lift_percent.0 != 0
+            || self.config.brightness_percent.0 < 100
+        {
             for strip in [
                 &mut edge_colors.top,
                 &mut edge_colors.right,
@@ -131,7 +134,9 @@ impl PrysmProcessor {
                 &mut edge_colors.left,
             ] {
                 strip.map_colors(|color| {
-                    color.lift_shadows(self.config.shadow_lift_percent)
+                    self.config
+                        .correction
+                        .apply(color.lift_shadows(self.config.shadow_lift_percent))
                         * self.config.brightness_percent.as_ratio()
                 });
             }
@@ -159,5 +164,32 @@ impl PrysmProcessor {
 impl Default for PrysmProcessor {
     fn default() -> Self {
         Self::new(&Config::default())
+    }
+}
+
+#[cfg(test)]
+mod correction_tests {
+    use super::*;
+    #[test]
+    fn live_profile_changes_precede_brightness_and_do_not_retain_previous_correction() {
+        let mut config = Config {
+            remove_black_bars: false,
+            smoothing_seconds: prysm_core::SmoothingSeconds(0.0),
+            brightness_percent: prysm_core::BrightnessPercent(70),
+            ..Config::default()
+        };
+        let frame = Frame::fill(128, 4, 2, PixelFormat::RGB24).unwrap();
+        let mut processor = PrysmProcessor::new(&config);
+        let original = processor.process_frame(frame.clone()).top.sample_at(0.5);
+        config.correction = prysm_core::ColorCorrection::new(60, -30, 40).unwrap();
+        processor.configure(&config);
+        let corrected = processor.process_frame(frame.clone()).top.sample_at(0.5);
+        let expected = config.correction.apply(original / 0.7) * 0.7;
+        assert!((corrected.r - expected.r).abs() < 1e-6);
+        assert!((corrected.g - expected.g).abs() < 1e-6);
+        assert!((corrected.b - expected.b).abs() < 1e-6);
+        config.correction = prysm_core::ColorCorrection::default();
+        processor.configure(&config);
+        assert_eq!(processor.process_frame(frame).top.sample_at(0.5), original);
     }
 }

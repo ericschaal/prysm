@@ -7,6 +7,8 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub correction: crate::ColorCorrection,
     pub revision: ConfigRevision,
     pub source: Source,
     pub input: Input,

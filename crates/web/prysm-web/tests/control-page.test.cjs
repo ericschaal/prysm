@@ -1226,7 +1226,7 @@ const frame = {
     p.document.dispatchEvent(new p.dom.window.Event('visibilitychange'));
     await until(() => p.sockets.length === 3);
     button(p, 'Overview').click();
-    await delay();
+    await until(() => p.sockets[2].closed);
     assert.equal(
       p.sockets[2].closed,
       true,

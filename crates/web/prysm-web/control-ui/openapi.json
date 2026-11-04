@@ -6,6 +6,77 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/calibration": {
+      "post": {
+        "operationId": "calibrate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalibrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationView"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings": {
       "get": {
         "operationId": "getSettings",
@@ -217,6 +288,303 @@
         "maximum": 100,
         "minimum": 0
       },
+      "CalibrationProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "correction"
+        ],
+        "properties": {
+          "correction": {
+            "$ref": "#/components/schemas/ColorCorrection"
+          },
+          "id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalibrationProfiles": {
+        "type": "object",
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "active": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OperationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalibrationProfile"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CalibrationRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "begin"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pairing",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "pair"
+                ]
+              },
+              "pairing": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "compare",
+              "playing",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "poll"
+                ]
+              },
+              "compare": {
+                "type": "boolean"
+              },
+              "playing": {
+                "type": "boolean"
+              },
+              "token": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "select"
+                ]
+              },
+              "profile": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OperationId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "token": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "sequence",
+              "correction",
+              "step",
+              "shade",
+              "paused",
+              "compare",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "update"
+                ]
+              },
+              "compare": {
+                "type": "boolean"
+              },
+              "correction": {
+                "$ref": "#/components/schemas/ColorCorrection"
+              },
+              "paused": {
+                "type": "boolean"
+              },
+              "sequence": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "shade": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "step": {
+                "$ref": "#/components/schemas/CalibrationStep"
+              },
+              "token": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "name",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "save"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "token": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "cancel"
+                ]
+              },
+              "token": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            }
+          }
+        ]
+      },
+      "CalibrationStep": {
+        "type": "string",
+        "enum": [
+          "choose",
+          "response",
+          "white_balance",
+          "grays",
+          "intensity",
+          "colors",
+          "mixed",
+          "review"
+        ]
+      },
+      "CalibrationView": {
+        "type": "object",
+        "required": [
+          "saved",
+          "token",
+          "connected",
+          "draft",
+          "step",
+          "shade",
+          "paused",
+          "compare",
+          "sequence"
+        ],
+        "properties": {
+          "compare": {
+            "type": "boolean"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/CalibrationProfile"
+          },
+          "ended": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pairing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OperationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "saved": {
+            "type": "boolean"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "shade": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "step": {
+            "$ref": "#/components/schemas/CalibrationStep"
+          },
+          "token": {
+            "$ref": "#/components/schemas/OperationId"
+          }
+        }
+      },
       "CaptureResolution": {
         "type": "array",
         "items": {},
@@ -234,6 +602,43 @@
         ],
         "maxItems": 2,
         "minItems": 2
+      },
+      "ColorAdjustment": {
+        "type": "integer",
+        "maximum": 100,
+        "minimum": -100
+      },
+      "ColorCorrection": {
+        "type": "object",
+        "required": [
+          "warmth",
+          "tint",
+          "midtones"
+        ],
+        "properties": {
+          "hue": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColorAdjustment"
+            },
+            "description": "Red, yellow, green, cyan, blue, magenta in wheel order.",
+            "maxItems": 6,
+            "minItems": 6
+          },
+          "intensity": {
+            "$ref": "#/components/schemas/ColorAdjustment"
+          },
+          "midtones": {
+            "$ref": "#/components/schemas/ColorAdjustment"
+          },
+          "tint": {
+            "$ref": "#/components/schemas/ColorAdjustment"
+          },
+          "warmth": {
+            "$ref": "#/components/schemas/ColorAdjustment"
+          }
+        },
+        "additionalProperties": false
       },
       "ConfigRevision": {
         "type": "string",
@@ -832,6 +1237,9 @@
           "processing"
         ],
         "properties": {
+          "calibration": {
+            "$ref": "#/components/schemas/CalibrationProfiles"
+          },
           "input": {
             "oneOf": [
               {
@@ -908,6 +1316,7 @@
       "StateResponse": {
         "type": "object",
         "required": [
+          "calibration_active",
           "source",
           "operation",
           "wled_url",
@@ -924,6 +1333,9 @@
                 "type": "null"
               }
             ]
+          },
+          "calibration_active": {
+            "type": "boolean"
           },
           "config_revision": {
             "$ref": "#/components/schemas/ConfigRevision"

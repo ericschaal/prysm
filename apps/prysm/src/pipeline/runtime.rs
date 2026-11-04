@@ -178,6 +178,7 @@ async fn configure_run(
         let (reply, result) = oneshot::channel();
         run.configure
             .send(Configure {
+                correction: config.correction,
                 settings: config.processing,
                 revision: config.revision,
                 reply,

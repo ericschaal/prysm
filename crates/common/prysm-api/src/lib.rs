@@ -6,7 +6,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use prysm_contract::{
-    ApiError, ErrorCode, OperationResponse, SettingsView, StateResponse, Target, UpdateSettings,
+    ApiError, CalibrationRequest, CalibrationView, ErrorCode, OperationResponse, SettingsView,
+    StateResponse, Target, UpdateSettings,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -44,6 +45,18 @@ impl App {
         ))
     }
 
+    pub async fn calibrate(
+        &self,
+        request: CalibrationRequest,
+    ) -> Result<CalibrationView, CommandError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::Calibrate(request, reply))
+            .await
+            .map_err(|_| CommandError::Unavailable)?;
+        response.await.map_err(|_| CommandError::Unavailable)?
+    }
+
     pub async fn update_settings(
         &self,
         update: UpdateSettings,
@@ -69,6 +82,10 @@ impl App {
 /// Accepted commands continue even when their reply receiver is dropped.
 #[derive(Debug)]
 pub enum Command {
+    Calibrate(
+        CalibrationRequest,
+        oneshot::Sender<Result<CalibrationView, CommandError>>,
+    ),
     UpdateSettings(
         Box<UpdateSettings>,
         oneshot::Sender<Result<SettingsView, CommandError>>,
@@ -180,12 +197,21 @@ async fn set_state(
     ))
 }
 
+#[utoipa::path(post,path="/api/calibration",operation_id="calibrate",request_body=CalibrationRequest,responses((status=200,body=CalibrationView),(status=409,body=ApiError),(status=422,body=ApiError),(status=500,body=ApiError),(status=502,body=ApiError),(status=503,body=ApiError)))]
+async fn calibrate(
+    State(app): State<App>,
+    body: Result<Json<CalibrationRequest>, JsonRejection>,
+) -> Result<Json<CalibrationView>, ApiFailure> {
+    Ok(Json(app.calibrate(payload(body)?).await?))
+}
+
 #[derive(utoipa::OpenApi)]
 #[openapi(components(schemas(prysm_contract::PreviewMessage)))]
 struct PreviewSchema;
 
 pub fn router() -> OpenApiRouter<App> {
     let mut api = OpenApiRouter::new()
+        .routes(routes!(calibrate))
         .routes(routes!(get_settings, update_settings))
         .routes(routes!(get_state, set_state));
     api.get_openapi_mut()

@@ -814,3 +814,88 @@ h1,h2  {
   .setup-advanced summary span { display:block; margin:5px 0 0; }
   .setup-preferences { padding:14px; }
 }
+
+/* Phone calibration keeps attention on the TV, with quiet surfaces and large controls. */
+.calibration-page { width:min(100% - 40px,560px); margin:auto; padding:0 0 max(20px,env(safe-area-inset-bottom)); }
+.calibration-brand { display:flex; align-items:center; justify-content:space-between; padding:28px 4px; }
+.calibration-brand>span:first-child { font-size:27px; font-weight:750; letter-spacing:-1.4px; }
+.calibration-brand>span:last-child { font-size:10px; letter-spacing:2px; color:#706b7b; }
+.calibration-wizard { background:#fcfcfe; border:1px solid #e1dfe8; border-radius:24px; padding:32px; box-shadow:0 12px 36px #25283806; }
+.calibration-wizard h1 { font-size:32px; letter-spacing:-1.15px; line-height:1.15; margin:28px 0 14px; }
+.calibration-wizard h1:focus { outline:none; }
+.calibration-topline { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.calibration-topline .eyebrow { margin:0; font-size:10px; }
+.calibration-topline>span { font-size:11px; color:#706b7b; font-variant-numeric:tabular-nums; }
+.calibration-progress { list-style:none; display:flex; gap:6px; padding:0; margin:16px 0 0; }
+.calibration-progress li { flex:1; height:4px; border-radius:4px; background:#e7e4ed; }
+.calibration-progress li[aria-current=step] { background:#765a9c; }
+.calibration-progress li[data-complete=true] { background:#b9a8cf; }
+.calibration-progress span { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden; }
+.calibration-lead { font-size:15px; color:#605b6d; line-height:1.65; margin-bottom:24px; }
+.calibration-wizard button { min-height:44px; }
+.calibration-wizard .primary { box-shadow:0 3px 8px #60428612; }
+.calibration-body { min-height:240px; }
+.calibration-note { padding:18px; background:#f1eff5; border:1px solid #e8e4ee; border-radius:14px; margin:20px 0; font-size:13px; color:#62596f; }
+.calibration-note strong { display:block; color:#42394f; margin-bottom:5px; font-weight:600; }
+.calibration-note p { margin:0; }
+.calibration-tip { padding-left:13px; border-left:2px solid #bda9d4; font-size:13px; color:#655574; margin:0 0 24px; }
+.calibration-hint { color:#777080; font-size:12px; margin:16px 0; }
+.calibration-new { width:100%; margin-top:8px; }
+.calibration-field { display:grid; gap:10px; font-size:13px; font-weight:600; margin:24px 0 0; }
+.calibration-field input,.calibration-field select { width:100%; min-width:0; border:1px solid #d6d0df; padding:13px 12px; border-radius:10px; background:#fff; color:#36303f; font-size:16px; font-weight:400; }
+.calibration-slider { display:block; margin:24px 0 18px; }
+.slider-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:14px; font-weight:600; }
+.slider-heading output { min-width:44px; border-radius:6px; background:#efecf4; padding:4px 8px; font-size:12px; text-align:center; font-variant-numeric:tabular-nums; color:#655078; }
+.calibration-slider input { appearance:none; display:block; width:100%; height:44px; margin:5px 0 0; background:transparent; cursor:pointer; }
+.calibration-slider input::-webkit-slider-runnable-track { height:6px; border-radius:9px; background:#ded8e8; }
+.calibration-slider input::-moz-range-track { height:6px; border-radius:9px; background:#ded8e8; }
+.slider-warmth input::-webkit-slider-runnable-track { background:linear-gradient(90deg,#aac1de,#e8e3e8,#dbc29c); }
+.slider-tint input::-webkit-slider-runnable-track { background:linear-gradient(90deg,#accbb6,#e8e3e8,#cdaac5); }
+.slider-warmth input::-moz-range-track { background:linear-gradient(90deg,#aac1de,#e8e3e8,#dbc29c); }
+.slider-tint input::-moz-range-track { background:linear-gradient(90deg,#accbb6,#e8e3e8,#cdaac5); }
+.calibration-slider input::-webkit-slider-thumb { appearance:none; width:26px; height:26px; border-radius:50%; border:2px solid #806699; background:#fcfcfe; box-shadow:0 2px 6px #44344f25; margin-top:-10px; }
+.calibration-slider input::-moz-range-thumb { width:22px; height:22px; border-radius:50%; border:2px solid #806699; background:#fcfcfe; box-shadow:0 2px 6px #44344f25; }
+.slider-endpoints { display:flex; justify-content:space-between; font-size:12px; color:#706678; }
+.calibration-text-button { border:0; background:transparent; padding:10px 0; font-size:12px; color:#69527f; box-shadow:none; }
+.calibration-text-button:hover:enabled { background:transparent; color:#43265d; text-decoration:underline; }
+.calibration-details { border-top:1px solid #e9e5ee; font-size:13px; color:#6d6377; }
+.calibration-details summary { padding:15px 0; cursor:pointer; min-height:48px; font-weight:500; color:#51435e; }
+.calibration-details p { margin:0 0 14px; }
+.calibration-details .calibration-slider { margin-top:16px; }
+.response-swatches { display:flex; gap:10px; margin:28px 0; }
+.response-swatches i { height:44px; flex:1; border-radius:10px; background:#b8b8bb; }
+.response-swatches i:nth-child(2) { background:#d69092; }.response-swatches i:nth-child(3) { background:#94ba9c; }.response-swatches i:nth-child(4) { background:#8ca3cd; }
+.calibration-confirm { display:flex; align-items:center; gap:12px; padding:18px; margin-bottom:8px; border:1px solid #d9d0e4; border-radius:14px; background:#f7f4fb; font-size:14px; line-height:1.5; cursor:pointer; }
+.calibration-confirm input { width:22px; height:22px; flex:none; margin:0; accent-color:#765a9c; }
+.calibration-swatches { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:24px 0 16px; }
+.calibration-swatches button { display:flex; flex-direction:column; align-items:center; gap:9px; font-size:12px; font-weight:500; padding:14px 8px; border:1px solid #e0dbe7; background:#fff; }
+.calibration-swatches button i { display:block; width:30px; height:30px; border-radius:50%; box-shadow:inset 0 0 0 1px #0000000d; }
+.calibration-swatches button[aria-pressed=true] { border-color:#806699; background:#f2edf8; box-shadow:0 0 0 1px #806699; color:#503565; }
+.calibration-pattern { font-size:12px; color:#6d6377; margin:0; min-height:38px; }
+.compare-button { width:100%; margin:24px 0 0; background:#f4f1f7; border:1px solid #ddd5e5; font-size:13px; color:#645171; touch-action:none; user-select:none; -webkit-user-select:none; }
+.compare-button[aria-pressed=true] { background:#e6dcec; color:#442753; border-color:#8a6ba3; }
+.calibration-actions { display:flex; gap:12px; background:#fcfcfe; padding:20px 0 12px; margin-top:8px; }
+.calibration-actions:empty { display:none; }
+.calibration-actions>button { flex:1; }
+.calibration-actions>.primary { flex:2; }
+.calibration-footer { display:flex; justify-content:space-between; border-top:1px solid #e9e5ee; margin-top:12px; padding-top:8px; gap:16px; }
+.calibration-footer .danger { margin-left:auto; color:#8b5765; }
+.calibration-loading { min-height:460px; }
+.calibration-complete { text-align:center; padding-top:44px; }
+.calibration-complete .eyebrow { font-size:9px; margin-top:28px; }
+.completion-mark { display:grid; place-items:center; width:64px; height:64px; border-radius:50%; background:#e9eee9; color:#5b7963; font-size:30px; margin:auto; }
+.calibration-complete p { color:#6b6176; font-size:14px; }
+.calibration-complete .saved-profile { font-weight:600; color:#4f3b64; background:#f0ebf5; border-radius:12px; padding:14px; overflow-wrap:anywhere; }
+.calibration-return { display:block; border:1px solid #d6ccdf; border-radius:12px; padding:14px; margin-top:28px; font-size:14px; font-weight:600; text-decoration:none; }
+.calibration-complete>.danger { margin-top:12px; }
+@media(max-width:480px) {
+  .calibration-page { width:calc(100% - 24px); }
+  .calibration-brand { padding:20px 10px; }
+  .calibration-wizard { padding:24px 20px 14px; border-radius:20px; }
+  .calibration-wizard h1 { font-size:29px; }
+  .calibration-lead { font-size:14px; }
+}
+@media(forced-colors:active) {
+  .calibration-slider input { appearance:auto; }
+  .calibration-progress li[aria-current=step],.calibration-swatches button[aria-pressed=true] { outline:2px solid Highlight; }
+}

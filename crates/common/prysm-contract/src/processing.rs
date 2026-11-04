@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 macro_rules! bounded {
-    ($name:ident, $primitive:ty, $wire:literal, $min:expr, $max:expr) => {
+    ($(#[$attr:meta])* $name:ident, $primitive:ty, $wire:literal, $min:expr, $max:expr) => {
+        $(#[$attr])*
         #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
         #[serde(try_from = $wire, into = $wire)]
         pub struct $name($primitive);
@@ -48,6 +49,14 @@ macro_rules! bounded {
         }
     };
 }
+bounded!(
+    #[derive(Default)]
+    ColorAdjustment,
+    i16,
+    "i16",
+    -100,
+    100
+);
 bounded!(BrightnessPercent, u8, "u8", 0, 100);
 bounded!(ShadowLiftPercent, u8, "u8", 0, 100);
 bounded!(SpatialReachPercent, u8, "u8", 1, 100);
@@ -84,6 +93,7 @@ impl ProcessingSettings {
     #[must_use]
     pub fn to_core(self) -> prysm_core::Config {
         prysm_core::Config {
+            correction: prysm_core::ColorCorrection::default(),
             brightness_percent: prysm_core::BrightnessPercent(self.brightness_percent.get()),
             shadow_lift_percent: prysm_core::ShadowLiftPercent(self.shadow_lift_percent.get()),
             smoothing_seconds: prysm_core::SmoothingSeconds(self.smoothing_seconds.get()),

@@ -2,6 +2,8 @@ mod capture_resolution;
 mod color;
 mod color_strip;
 mod config;
+mod correction;
+pub use correction::ColorCorrection;
 mod frame;
 mod linear;
 pub mod yuyv;

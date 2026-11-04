@@ -807,6 +807,9 @@ async fn start_retries_saved_configuration_before_opening_the_input() {
 fn settings_value(config: &Config) -> serde_json::Value {
     let mut value = serde_json::to_value(config).unwrap();
     value.as_object_mut().unwrap().remove("revision");
+    value.as_object_mut().unwrap().remove("correction");
+    value["calibration"] =
+        serde_json::to_value(prysm_contract::CalibrationProfiles::default()).unwrap();
     value
 }
 

@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsValues, SettingsView, StateResponse } from './api';
 import {
@@ -29,7 +30,9 @@ export function Settings({
   save: (revision: string, changes: SettingsValues) => Promise<SettingsView>;
   onDirty: (dirty: boolean) => void;
 }) {
+  const navigate = useNavigate();
   const form = useSettingsForm(settings, save, onDirty);
+  const [calibrationHelp, setCalibrationHelp] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [step, setStep] = useState(0);
   const formElementRef = useRef<HTMLFormElement>(null);
@@ -83,21 +86,21 @@ export function Settings({
       return;
     }
     setAttempted(true);
-    if (disabled) return;
+    if (disabled || data?.calibration_active) return;
     if (focusError()) return;
     const saved = await form.submit();
     if (saved) {
       setAttempted(false);
-      if (setup && !saved.missing_required.length)
-        window.location.hash = '#overview';
+      if (setup && !saved.missing_required.length) void navigate('/overview');
     }
   }
   const fields = {
     settings,
     errors: form.errors,
     attempted,
-    disabled: form.saving,
+    disabled: form.saving || disabled || data?.calibration_active === true,
   };
+  const profiles = draft.calibration ?? { profiles: [], active: null };
   const applied = data?.applied_revision === settings.revision;
   const status = form.saving
     ? 'Saving…'
@@ -119,6 +122,11 @@ export function Settings({
       aria-busy={form.saving}
       noValidate
     >
+      {data?.calibration_active ? (
+        <p role="status">
+          Calibration in progress—finish or exit on the TV to change settings.
+        </p>
+      ) : null}
       {setup ? (
         <ol className="setup-steps" aria-label="Setup progress">
           {steps.map((label, index) => (
@@ -236,6 +244,65 @@ export function Settings({
             value={draft.source}
             onChange={(value) => form.change('source', value)}
           />
+          <section className="card">
+            <h2>Color profiles</h2>
+            <p>
+              To calibrate, open Prysm on your TV and choose Match your lights.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCalibrationHelp(!calibrationHelp)}
+            >
+              Calibrate
+            </button>
+            {calibrationHelp ? (
+              <p role="status">
+                Open Prysm on your TV and choose Match your lights, then scan
+                the QR code with your phone.
+              </p>
+            ) : null}
+            {profiles.profiles.map((profile) => (
+              <div key={profile.id}>
+                <label>
+                  Profile name
+                  <input
+                    value={profile.name}
+                    maxLength={64}
+                    disabled={fields.disabled}
+                    onChange={(event) =>
+                      form.change('calibration', {
+                        ...profiles,
+                        profiles: profiles.profiles.map((p) =>
+                          p.id === profile.id
+                            ? { ...p, name: event.target.value }
+                            : p,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={fields.disabled}
+                  onClick={() =>
+                    form.change('calibration', {
+                      active:
+                        profiles.active === profile.id ? null : profiles.active,
+                      profiles: profiles.profiles.filter(
+                        (p) => p.id !== profile.id,
+                      ),
+                    })
+                  }
+                >
+                  Delete {profile.name}
+                </button>
+              </div>
+            ))}
+            <p>
+              Save settings to apply name changes or deletion. Deleting the
+              active profile selects No correction.
+            </p>
+          </section>
           {setup ? (
             <details className="setup-advanced">
               <summary>

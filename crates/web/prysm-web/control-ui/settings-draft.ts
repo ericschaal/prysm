@@ -15,6 +15,7 @@ export type InputDraft = {
   | { type: 'webos' }
 );
 export type SettingsDraft = {
+  calibration: SettingsValues['calibration'];
   source: SettingsValues['source'];
   input: InputDraft;
   output: { url: string; leds: { [K in Edge]: string } };
@@ -140,6 +141,7 @@ export function changeInputType(
 export function draftFrom(settings: SettingsValues): SettingsDraft {
   const { processing, output } = settings;
   return {
+    calibration: settings.calibration,
     source: settings.source,
     input: inputDraft(settings.input),
     output: {
@@ -258,6 +260,7 @@ export function settingsFrom(draft: SettingsDraft): SettingsValues {
   const { leds, url } = draft.output;
   const p = draft.processing;
   return {
+    calibration: draft.calibration,
     source: draft.source,
     input: inputValue(draft.input),
     output: {

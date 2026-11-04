@@ -1,27 +1,60 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import {
+  HashRouter,
+  Link,
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from 'react-router';
 import { createRoot } from 'react-dom/client';
 import { useControl } from './useControl';
 import { Overview } from './Overview';
 import { Settings } from './Settings';
 import { Preview } from './Preview';
 import './style.css';
+import { Calibration } from './Calibration';
 
-const currentPage = () =>
-  window.location.hash === '#settings'
-    ? 'settings'
-    : window.location.hash === '#preview'
-      ? 'preview'
-      : 'overview';
-
-export function App() {
+function CalibrationPage() {
+  const { pairing = '' } = useParams();
   const control = useControl();
-  const [page, setPage] = useState(currentPage);
+  return (
+    <main id="content" className="calibration-page">
+      <header className="calibration-brand">
+        <span>
+          prysm<span className="brand-dot">.</span>
+        </span>
+        <span>LIGHT & COLOR</span>
+      </header>
+      {control.settings ? (
+        <Calibration
+          key={pairing}
+          pairing={pairing}
+          settings={control.settings}
+        />
+      ) : (
+        <section
+          className="calibration-wizard calibration-loading"
+          aria-busy={!control.connectionError}
+        >
+          <p className="eyebrow">MATCH YOUR LIGHTS</p>
+          <h1>Connecting to your TV…</h1>
+          <p role="status">
+            {control.connectionError || 'Getting your profiles ready.'}
+          </p>
+          {control.connectionError ? (
+            <button onClick={() => void control.poll()}>Try again</button>
+          ) : null}
+        </section>
+      )}
+    </main>
+  );
+}
+
+function Dashboard({ page }: { page: 'overview' | 'preview' | 'settings' }) {
+  const control = useControl();
   const [dirty, setDirty] = useState(false);
-  useEffect(() => {
-    const navigate = () => setPage(currentPage());
-    window.addEventListener('hashchange', navigate);
-    return () => window.removeEventListener('hashchange', navigate);
-  }, []);
   const online = !!control.settings && !control.connectionError;
   const setup = !!control.settings?.missing_required.length;
   const title = setup
@@ -33,11 +66,18 @@ export function App() {
         : 'Make Prysm yours.';
   return (
     <div className={`app-shell${setup ? ' is-setup' : ''}`}>
-      <a className="skip-link" href="#content">
+      <a
+        className="skip-link"
+        href="#content"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById('content')?.focus();
+        }}
+      >
         Skip to content
       </a>
       <header className="app-header">
-        <a className="brand" href="#overview" aria-label="Prysm home">
+        <Link className="brand" to="/overview" aria-label="Prysm home">
           <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <path
               d="m16 3 13 24H3L16 3Z"
@@ -53,7 +93,7 @@ export function App() {
           <span>
             prysm<span className="brand-dot">.</span>
           </span>
-        </a>
+        </Link>
         <span
           className={`connection ${online ? 'ready' : 'attention'}`}
           role="status"
@@ -66,53 +106,42 @@ export function App() {
               : 'Connecting'}
         </span>
       </header>
-      {!setup ? (
+      {control.settings && !setup ? (
         <nav className="main-nav" aria-label="Main navigation">
-          <a
-            href="#overview"
-            aria-current={page === 'overview' ? 'page' : undefined}
-          >
-            Overview
-          </a>
-          <a
-            href="#preview"
-            aria-current={page === 'preview' ? 'page' : undefined}
-          >
-            Preview
-          </a>
-          <a
-            href="#settings"
-            aria-current={page === 'settings' ? 'page' : undefined}
-          >
+          <NavLink to="/overview">Overview</NavLink>
+          <NavLink to="/preview">Preview</NavLink>
+          <NavLink to="/settings">
             Settings{' '}
             {dirty ? (
               <span className="draft-dot" aria-label="unsaved changes" />
             ) : null}
-          </a>
+          </NavLink>
         </nav>
       ) : null}
-      <main id="content">
-        <div className="page-intro">
-          <p className="eyebrow">
-            {setup
-              ? 'YOUR FIRST SCREEN SYNC'
-              : page === 'overview'
-                ? 'ROOM CONTROL'
-                : page === 'preview'
-                  ? 'PICTURE & COLOR'
-                  : 'SCREEN, LIGHTS & CONNECTIONS'}
-          </p>
-          <h1>{title}</h1>
-          <p>
-            {setup
-              ? 'Choose your video source and tell Prysm about your lights.'
-              : page === 'overview'
-                ? 'Control your lights and see what Prysm is doing.'
-                : page === 'preview'
-                  ? 'Inspect the picture, detected crop, and colors sent to each edge.'
-                  : 'Configure everything in one place, then save to apply your changes.'}
-          </p>
-        </div>
+      <main id="content" tabIndex={-1}>
+        {control.settings ? (
+          <div className="page-intro">
+            <p className="eyebrow">
+              {setup
+                ? 'YOUR FIRST SCREEN SYNC'
+                : page === 'overview'
+                  ? 'ROOM CONTROL'
+                  : page === 'preview'
+                    ? 'PICTURE & COLOR'
+                    : 'SCREEN, LIGHTS & CONNECTIONS'}
+            </p>
+            <h1>{title}</h1>
+            <p>
+              {setup
+                ? 'Choose your video source and tell Prysm about your lights.'
+                : page === 'overview'
+                  ? 'Control your lights and see what Prysm is doing.'
+                  : page === 'preview'
+                    ? 'Inspect the picture, detected crop, and colors sent to each edge.'
+                    : 'Configure everything in one place, then save to apply your changes.'}
+            </p>
+          </div>
+        ) : null}
         {control.settings ? (
           <>
             {!setup ? (
@@ -130,7 +159,7 @@ export function App() {
                   ) : null}
                   <p>
                     Change capture, LED layout, and picture processing in{' '}
-                    <a href="#settings">Settings</a>.
+                    <Link to="/settings">Settings</Link>.
                   </p>
                 </div>
               </>
@@ -139,7 +168,11 @@ export function App() {
               <Settings
                 settings={control.settings}
                 data={control.data}
-                disabled={!online || control.busy}
+                disabled={
+                  !online ||
+                  control.busy ||
+                  control.data?.calibration_active === true
+                }
                 save={control.saveSettings}
                 onDirty={setDirty}
               />
@@ -164,4 +197,27 @@ export function App() {
     </div>
   );
 }
-createRoot(document.getElementById('root')!).render(<App />);
+export function App() {
+  return (
+    <Routes>
+      <Route path="/calibrate/:pairing" element={<CalibrationPage />} />
+      <Route path="/overview" element={<Dashboard page="overview" />} />
+      <Route path="/preview" element={<Dashboard page="preview" />} />
+      <Route path="/settings" element={<Dashboard page="settings" />} />
+      <Route path="*" element={<Navigate to="/overview" replace />} />
+    </Routes>
+  );
+}
+// Preserve QR links from TVs running the previous app version.
+if (window.location.hash.startsWith('#calibrate=')) {
+  window.history.replaceState(
+    null,
+    '',
+    `#/calibrate/${encodeURIComponent(window.location.hash.slice(11))}`,
+  );
+}
+createRoot(document.getElementById('root')!).render(
+  <HashRouter>
+    <App />
+  </HashRouter>,
+);

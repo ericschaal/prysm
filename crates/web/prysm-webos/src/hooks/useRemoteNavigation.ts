@@ -18,8 +18,9 @@ export type Dialog =
   | 'cleanup'
   | 'exit';
 
-export function useRemoteNavigation() {
+export function useRemoteNavigation(suspended = false) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const wasSuspended = useRef(false);
   const lastSetting = useRef('receiver');
   const returnFocus = useRef<HTMLElement | null>(null);
   const modal = useRef<HTMLDivElement>(null);
@@ -52,11 +53,15 @@ export function useRemoteNavigation() {
     }
   }, [dialog]);
   useLayoutEffect(() => {
+    if (wasSuspended.current && !suspended)
+      document.getElementById('calibrate')?.focus();
+    wasSuspended.current = suspended;
     if (!dialog && document.activeElement === document.body)
       document.getElementById('primary')?.focus();
   });
 
   const keydown = useEffectEvent((event: KeyboardEvent) => {
+    if (suspended) return;
     const active =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
