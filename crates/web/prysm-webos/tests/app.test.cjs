@@ -831,6 +831,57 @@ test('TV calibration pairs through the same-origin relay, hides QR during video 
   assert.equal(f.w.document.querySelector('video'), null);
 });
 
+for (const saved of [true, false]) {
+  test(`ending review shows the ${saved ? 'saved' : 'discarded'} outcome and Return exits calibration`, async (t) => {
+    const f = await fixture(t);
+    f.w.setInterval = () => 42;
+    f.w.HTMLMediaElement.prototype.play = () => Promise.resolve();
+    f.w.HTMLMediaElement.prototype.pause = () => {};
+    f.w.HTMLMediaElement.prototype.load = () => {};
+    await f.click('calibrate');
+    await f.click('calibration-connect');
+    const relay = f.w.document.querySelector('iframe').contentWindow;
+    relay.postMessage = () => {};
+    const review = { token: 'tv', connected: true, step: 'review', shade: 0 };
+    const show = (view) =>
+      f.settle(() =>
+        f.w.dispatchEvent(
+          new f.w.MessageEvent('message', {
+            source: relay,
+            origin: 'http://192.168.18.18:8787',
+            data: { type: 'calibration', view },
+          }),
+        ),
+      );
+    await show(review);
+    const video = f.w.document.querySelector('video');
+    assert.equal(video.getAttribute('src'), 'calibration/review-grid.mp4');
+    const ended = saved
+      ? 'Calibration saved and active.'
+      : 'Calibration cancelled.';
+    await show({ ...review, saved, ended });
+    await f.event('pagehide');
+    assert.equal(f.w.document.querySelector('video'), null);
+    assert.equal(video.hasAttribute('src'), false);
+    assert.equal(
+      f.w.document.querySelector('.pairing-copy h2').textContent,
+      saved ? 'Calibration finished' : 'Calibration ended',
+    );
+    assert.equal(
+      f.w.document.querySelector('.pairing-lead').textContent,
+      ended,
+    );
+    assert.match(
+      f.w.document.querySelector('.pairing-status').textContent,
+      /Press Return/,
+    );
+    assert.equal(f.focus(), 'calibration-exit');
+    await f.key(461);
+    assert.equal(f.w.document.querySelector('.calibration-screen'), null);
+    assert.equal(f.focus(), 'calibrate');
+  });
+}
+
 for (const event of ['pagehide', 'visibilitychange']) {
   test(`TV playback releases the decoder immediately and only once on ${event}`, async (t) => {
     const f = await fixture(t);

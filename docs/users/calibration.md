@@ -24,8 +24,10 @@ configured with the webOS input. Keep the phone on the receiver's local network.
    half of the TV with the corresponding wall edge using your everyday
    processing settings. Revisit hue or intensity if a change helps one
    patch but makes another look worse.
-8. Review with your usual processing settings, name the profile, and choose
-   **Save and use**. Press Back on the TV when finished.
+8. Compare each corner of the four-color grid with the glow behind it.
+   Name the profile and choose
+   **Save and use**. When the TV shows **Calibration finished**, press Return
+   on the remote to exit.
 
 Hold **Hold for uncorrected** to compare with all profile correction bypassed.
 Release it to return to the draft. Brightness, smoothing, shadow lift and

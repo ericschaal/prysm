@@ -62,8 +62,8 @@ processing configuration, and preserves the currently selected lighting source.
 Exit, disconnect timeout, and capture failure discard the unsaved correction and stop lighting. These paths
 never switch TV inputs. A successful Save and use goes through the existing
 revision-checked atomic settings store and activates the profile; persistence
-failure keeps the draft editable. The saved review video remains until TV Exit
-so saving itself does not replace the approved picture.
+failure keeps the draft editable. When the receiver confirms the save, the TV
+releases the review video and shows **Calibration finished** until the user exits.
 
 Startup runs as a controller job so heartbeats and Stop remain available while
 WLED readiness is pending. Cancellation finishes any accepted WLED write, then
@@ -135,7 +135,8 @@ profile values are preserved, including a nonzero midtone correction. Neutral
 matching targets tint, not equal luminance across a TV and reflected wall.
 Intensity uses three muted single-color patches. Hues uses the six individual
 clips and a cycle. Mixed colors uses three split-field clips to exercise both
-wall edges with colors outside the adjustment set.
+wall edges with colors outside the adjustment set. Save holds a single grid:
+peach and teal on top, violet and amber below.
 
 React Router owns navigation with a HashRouter, keeping the pairing capability
 in the fragment (`/#/calibrate/:pairing`). The calibration route joins the session

@@ -21,7 +21,7 @@ function patternFor(view: View | null) {
     case 'colors':
       return view.paused ? colors[view.shade]?.clip : 'colors';
     case 'review':
-      return 'colors';
+      return 'review-grid';
     case 'response':
       return 'response';
     default:
@@ -42,7 +42,7 @@ export default function Calibration({
   const relayRef = useRef<HTMLIFrameElement>(null);
   const playbackRef = useRef<PatternPlayback>(null);
   const endedRef = useRef(false);
-  const connected = !!view?.connected && (!view.ended || view.saved);
+  const connected = !!view?.connected && !view.ended;
   const pattern = patternFor(view);
   const url = view?.pairing ? `${origin}/#/calibrate/${view.pairing}` : '';
   const playbackFailed = useCallback(
@@ -128,6 +128,7 @@ export default function Calibration({
       send('cancel');
     };
     const hide = () => {
+      if (endedRef.current) return;
       leave();
       playbackRef.current?.release();
       setView(null);
@@ -189,6 +190,7 @@ export default function Calibration({
           url={url}
           choosing={connected && view?.step === 'choose'}
           ended={view?.ended}
+          saved={view?.saved === true}
           error={error}
           connect={setOrigin}
           back={back}

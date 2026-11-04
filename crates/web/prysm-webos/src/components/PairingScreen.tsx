@@ -23,12 +23,21 @@ type PairingProps = {
   url: string;
   choosing: boolean;
   ended?: string | null;
+  saved: boolean;
   error: string;
   connect: (origin: string) => void;
   back: () => void;
 };
 
-function pairingPhase({ choosing, ended, origin, url, error }: PairingProps) {
+function pairingPhase({
+  choosing,
+  ended,
+  saved,
+  origin,
+  url,
+  error,
+}: PairingProps) {
+  if (saved) return 'saved';
   if (choosing) return 'standby';
   if (ended) return 'ended';
   if (!origin) return 'entry';
@@ -64,6 +73,7 @@ const instructions = {
     lead: 'Choose a profile on your phone. The first colors will appear here when you reach the response check.',
   },
   ended: { kicker: 'Session complete', title: 'Calibration ended', lead: '' },
+  saved: { kicker: 'Profile saved', title: 'Calibration finished', lead: '' },
 };
 
 export default function PairingScreen(props: PairingProps) {
@@ -193,7 +203,9 @@ export default function PairingScreen(props: PairingProps) {
             {!entry && phase !== 'scan' && (
               <p className="pairing-status" role={error ? 'alert' : 'status'}>
                 {error ||
-                  (ended ? 'Session closed' : 'Connecting to receiver…')}
+                  (ended
+                    ? 'Press Return on your remote to exit.'
+                    : 'Connecting to receiver…')}
               </p>
             )}
             {phase === 'scan' && error && <p role="alert">{error}</p>}
@@ -209,7 +221,7 @@ export default function PairingScreen(props: PairingProps) {
           onClick={back}
         >
           <span aria-hidden="true">←</span>{' '}
-          {choosing ? 'Exit calibration' : 'Back'}
+          {choosing || phase === 'saved' ? 'Exit calibration' : 'Back'}
         </button>
         {!ended && !choosing && (
           <p>

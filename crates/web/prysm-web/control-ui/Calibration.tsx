@@ -142,9 +142,7 @@ export function Calibration({ pairing }: { pairing: string }) {
         {session?.saved ? (
           <>
             <p className="saved-profile">{session.draft.name}</p>
-            <p>
-              Press Back on the TV when you’re finished checking your lights.
-            </p>
+            <p>Press Return on your TV remote to exit calibration.</p>
           </>
         ) : null}
         <Link className="calibration-return" to="/overview">
@@ -427,8 +425,8 @@ export function Calibration({ pairing }: { pairing: string }) {
             {view.step === 'review' ? (
               <>
                 <p className="calibration-lead">
-                  One last look with your usual lighting settings. Save when the
-                  wall glow feels right.
+                  Check the glow at each corner. When it looks right, name and
+                  save your profile.
                 </p>
                 <div className="calibration-note">
                   <strong>Your everyday settings are back</strong>
