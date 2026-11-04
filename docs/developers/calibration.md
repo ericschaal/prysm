@@ -1,170 +1,102 @@
 # Visual calibration
 
-Calibration matches the color character of LED wall light to the TV by eye. It
-does not measure panel emission, wall reflectance, or a source HDR transfer
-function. Capture remains limited-range BT.709; do not add HDMI-metadata-based
-tone mapping. See the [capture evidence](../../research/webos-capture/2026-11-03-calibration-playback/README.md).
+Calibration matches LED wall light to the TV by eye. It does not measure panel
+emission, wall reflectance or HDR transfer. TV capture remains limited-range
+BT.709; do not infer tone mapping from HDMI metadata.
 
 ## Ownership and persistence
 
-The existing controller owns one temporary session and all settings mutations.
-`Session` keeps its fields private and owns authorization, pairing expiry, draft
-ordering, comparison leases, profile selection, and save eligibility. Its
-transitions return the runtime or persistence work for the controller to perform.
-Saved and discarded outcomes are distinct; a runtime cleanup error cannot make a
-persisted profile appear unsaved.
-`Settings.calibration` contains the saved profiles and active selection.
-New installations start with an empty list. Each profile stores an id, name, and bounded integer controls
-(-100…100) for warmth, tint, midtones, intensity, and six hue anchors. Older
-profiles default the new controls to zero and serialize as before. It contains no brightness,
-smoothing, shadow lift, spatial reach, capture, or source associations. Up to
-32 profiles and 64 characters per name are allowed. Settings writes replace the
-complete revision-checked document. Omitting calibration fails validation.
-An empty profile list with no active profile clears the selection and profiles. The Overview selector
-activates a profile, or the permanent No correction option. Settings stages
-rename/deletion through its existing complete-document save; deleting the
-active profile selects No correction.
+The controller owns one temporary session. `Session` owns authorization, expiry,
+draft ordering, comparison leases and save eligibility; its transitions return
+runtime/persistence work to the controller. Settings stores up to 32 profiles,
+with 64-character names and integer controls from -100 to 100: warmth, tint,
+midtones, intensity and six hue anchors. Capture, brightness, smoothing and
+source are separate settings. No correction is always available.
 
-A session starts on the TV. Pairing lasts at most two minutes and is single-use.
-TV and phone receive separate random UUID capabilities; the phone may edit,
-while either owner may cancel. Heartbeats allow 30 seconds for reconnection.
-The phone keeps only its capability in session storage, not a recoverable draft.
-A restart loses the session and capabilities. Controller state exposes only a
-lock flag to other clients, not pairing or owner tokens.
+The TV starts a session with single-use pairing valid for two minutes. TV and
+phone receive separate random capabilities; the phone edits, either owner cancels.
+Thirty-second heartbeat leases allow reconnect. The phone keeps its capability in
+session storage, not a recoverable draft. Restart loses the session. Other clients
+see only a lock flag. If a pairing reply is lost, start a fresh link rather than
+reusing the consumed capability.
 
-The phone's `useCalibrationSession` hook owns requests, capability storage,
-polling, ordered updates, and comparison release. The wizard owns presentation
-and form fields. Initial pairing and stored-token rejoin retry temporary network
-and server failures at the normal one-second interval. Rejected or expired
-capabilities stop retries, clear storage, and require a fresh TV link. Pairing
-remains single-use: if the server accepted pairing but its response was lost,
-the next attempt is rejected and a fresh link is needed.
+`useCalibrationSession` owns requests, token storage, one-second polling, ordered
+updates and comparison release. Temporary network errors retry; rejected/expired
+tokens stop retries and clear storage. Slider updates carry a monotonic sequence;
+the latest unacknowledged update is retried. Save waits for acknowledgment.
+Hold for uncorrected bypasses the profile using a two-second renewable lease,
+so a lost release cannot leave correction bypassed.
 
-Polling is intentional for one TV and one phone during a short calibration.
-Adjustments send immediately; TV step changes have roughly one-second latency.
-WebSockets would be warranted if faster TV synchronization becomes a requirement.
+Reference steps temporarily use 70% brightness, no smoothing and no shadow lift.
+Spatial settings remain unchanged. Mixed colors/Review restore normal processing
+with the draft. Slider changes never persist settings.
 
-Reference steps temporarily use **70% brightness**, zero smoothing and zero
-shadow lift. Spatial settings stay as configured. Mixed and Review restore normal
-processing with the draft correction. Returning to a reference step restores its processing.
-Slider updates never persist settings. A monotonic update sequence rejects old
-slider responses. The phone retains the latest unacknowledged update and retries
-it after polling. Save waits for that acknowledgment. Cancel can replace a queued
-Save until the phone sends the Save request. If the receiver rejects the session,
-the phone clears its draft and directs the user to the TV for a fresh link.
-Hold for uncorrected bypasses the complete profile with a two-second renewable
-lease so a lost release cannot leave correction bypassed.
+Full-settings writes and powered source changes are blocked during calibration.
+Stop cancels the session, joins capture and restores saved processing. Exit,
+disconnect expiry and capture failure discard the draft and stop lighting.
+These paths do not switch TV inputs. Save uses the revision-checked atomic settings
+store and activates the profile. A failed save leaves the draft editable; cleanup
+failure after persistence must not report the profile as unsaved.
 
-Every full-settings write and powered source change is rejected while the
-session is active, with `Calibration in progress—finish or exit on the TV to
-change settings.` Stop cancels the session, drains capture, restores the saved
-processing configuration, and preserves the currently selected lighting source.
-Exit, disconnect timeout, and capture failure discard the unsaved correction and stop lighting. These paths
-never switch TV inputs. A successful Save and use goes through the existing
-revision-checked atomic settings store and activates the profile; persistence
-failure keeps the draft editable. When the receiver confirms the save, the TV
-releases the review video and shows **Calibration finished** until the user exits.
-
-Startup runs as a controller job so heartbeats and Stop remain available while
-WLED readiness is pending. Cancellation finishes any accepted WLED write, then
-joins startup before stopping output, preventing a late On from undoing Stop.
-Draft updates received during startup apply when it completes; Save is rejected
-until startup finishes and capture is running. If frames stop, Save keeps the
-draft editable until capture resumes.
+Startup is a controller job so heartbeats and Stop remain responsive. Cancellation
+finishes accepted WLED writes, then joins startup before stopping output, preventing
+a late On. Draft updates apply when startup completes; Save requires running capture
+and stays unavailable during frame loss.
 
 ## Correction math and placement
 
-The processor applies correction to the sampled/smoothed linear edge colors,
-after the independent shadow lift and before independent brightness scaling.
-Preview and output consume the same corrected edge colors. WLED gamma and
-configuration are untouched.
+Correction acts on sampled/smoothed linear colors after shadow lift, before
+brightness. Preview and WLED consume the same result; WLED gamma is unchanged.
 
-For warmth `w` and tint `t`, the preliminary RGB gains are
-`[2^(w/200), 2^(-t/200), 2^(-w/200)]`, divided by their maximum (at least one).
-This changes tint by attenuation without clipping highlights. For shared
-midtones `m`, the peak channel `p` maps to
-`p / (p + (1-p) * 2^(-m/100))`; all channels scale together before the white
-balance gains. Black and peak white are fixed by the tone curve, which is
-monotonic and preserves channel ratios. Identity returns unchanged colors.
-Between the tone curve and white balance, intensity scales chroma around
-linear BT.709 luminance. Hue controls shift the six RGB wheel anchors toward
-their immediate neighbors by up to half the distance. A color between two
-anchors blends their adjustments. A shared chroma limit keeps channels in
-gamut at the original luminance. Neutral inputs bypass both controls.
+| Control | Operation |
+| --- | --- |
+| Midtones `m` | Map peak `p` to `p / (p + (1-p) * 2^(-m/100))`, scaling channels together. Black/white stay fixed and channel ratios are preserved. |
+| Intensity | Scale chroma around linear BT.709 luminance. |
+| Hues | Shift six RGB wheel anchors toward neighbors by up to half the distance; interpolate between anchors. |
+| Warmth `w`, tint `t` | Apply `[2^(w/200), 2^(-t/200), 2^(-w/200)]`, normalized by its maximum (at least one), to attenuate without clipping highlights. |
+
+Intensity/hues sit between the tone curve and white balance. A common chroma limit
+keeps values in gamut at the original luminance; neutrals bypass chroma changes.
+Identity correction returns unchanged colors.
 
 ## TV transport and patterns
 
-The phone, TV and video generator share the ordered swatches, clip names and
-cycle definitions in [the pattern catalog](../../crates/web/calibration-patterns.json).
-The shade index therefore selects the same patch in both players. A separate
-reference color in the catalog gives the video generator the exact RGB value
-when the phone uses a more legible swatch.
+The phone, TV and generator share [calibration-patterns.json](../../crates/web/calibration-patterns.json).
+Keep swatches, clip names and cycle order there. The TV uses half-second H.264
+fragments in one Media Source Extensions player, falling back to bundled MP4s.
+Static patterns loop; cycle patches last two seconds. A queued-pattern indicator
+clears when playback reaches the requested patch. Both paths keep video active
+for capture. Profile selection leaves decoding idle until startup needs a pattern.
 
-The TV leaves the decoder idle during initial profile selection. Returning to profile
-selection during capture startup keeps the response pattern playing until startup finishes.
-From Response onward,
-the TV app feeds half-second H.264 fragments to one Media Source Extensions
-player. Static patterns repeat in place. Cycles hold each patch for two seconds.
-When a manual change is queued, a small centered indicator clears as playback
-reaches the new patch. If the stream is unavailable on a TV, the wizard uses the
-individual bundled MP4s. Both paths keep video playing for capture. Asset generation and verification are documented with the
-[capture experiment](../../research/webos-capture/2026-11-03-calibration-playback/README.md).
+`/calibration-tv.html` relays Poll/Cancel from its direct file-origin TV parent.
+Only this page permits `frame-ancestors file:`; verify the parent window and
+webOS file origin. The same-origin API retains normal Host, Origin, Fetch Metadata
+and size checks. Pairing uses a QR URL fragment, keeping capabilities out of
+ordinary requests/referrers. Use the verified instance origin for the relay and QR.
 
-A tiny classic-script page at `/calibration-tv.html` accepts Poll and Cancel
-from its direct file-origin parent. The first poll begins the session. Later
-polls use the TV token returned by the same-origin API. That page
-alone allows `frame-ancestors file:`. It recognizes webOS's named file origins
-as well as opaque local-file origins. Other web pages cannot frame it, and
-unrelated windows cannot send commands through it. The API retains the normal
-Host, Origin, Fetch Metadata and body-size protections; no CORS exception is
-added. The phone's QR URL uses a fragment so the pairing capability is not sent
-in ordinary URL requests or referrers. The TV uses its verified instance origin for both the relay and the phone QR code.
+The phone uses HashRouter at `/#/calibrate/:pairing`. Joining and loading settings
+must both finish before showing the wizard. Main navigation retains the Settings
+draft; preview follows the active route. The flow is Profile → Response → White
+balance → Intensity → Hues → Mixed colors → Save. Hues can be skipped without
+losing the draft. Keep reference colors digital targets, separate from optical
+claims about the wall.
 
-Build host and TV frontends together when changing the generated calibration
-contract. Unit and DOM tests cover correction ramps, identity, locks, pairing
-reuse, stale updates, save failure, profile replacement/deletion, comparison
-release, playback cleanup and timeout/Stop behavior. Physical validation is
-still required across TV models and PS5/Freebox picture modes.
-
-## Phone flow and local testing
-
-The main path is Profile → Response → White balance → Intensity → Hues → Mixed colors → Save.
-White balance uses one light-grey reference. Existing profiles retain nonzero midtones
-unless the user explicitly resets that value during white balance.
-Intensity opens on a split field with moderate blue on the left and vivid blue
-on the right. Red and green offer the same comparison. The moderate references
-mix each linear RGB primary equally with grey at that primary’s BT.709 luminance,
-rounded to 8-bit sRGB codes. These are digital targets.
-The Hues stage opens with six labeled swatches, Blue selected, and a skip
-action. Selecting another swatch switches the TV pattern and hue slider. Skipping advances to Mixed colors with the draft intact. Static
-blue uses the same split field. The other five static hues and the six-color
-cycle use full-field references. Mixed colors uses three split-field clips
-outside the adjustment set. Save holds a single grid:
-peach and teal on top, violet and amber below.
-
-React Router owns navigation with a HashRouter, keeping the pairing capability
-in the fragment (`/#/calibrate/:pairing`). The calibration route joins the session
-while it loads settings and shows the wizard once both are ready. Main routes retain
-the Settings component and its unsaved draft; preview streaming follows the
-active route.
+## Local checks
 
 From `crates/web/prysm-web/control-ui`:
 
-- `npm run dev:calibration` builds and serves the actual UI at
-  <http://127.0.0.1:5180/#/calibrate/local-demo>. Its in-memory API simulation
-  has no TV, WLED, outbound requests, or persistent settings. The banner's
-  **Restart demo** starts a new session. This is a single local demo session.
-- `npx playwright install chromium webkit` installs browser test runtimes.
-- `npm run test:browser` builds both frontends and runs the wizard in desktop Chromium, mobile Chromium,
-  a 320px viewport, and mobile WebKit. Tests cover delayed loading, explicit
-  physical-response confirmation, live updates, hold/release, static color
-  selection, optional hues, reload/rejoin, failed save, successful save,
-  profile preservation, routing history, and Stop. Screenshots and failure
-  traces go to ignored `test-results/`. TV layout checks also ensure the remote
-  footer stays within the safe area at 1080p and 720p.
-- `npm test` runs the DOM/controller UI checks and the development proxy test.
+```sh
+npm run dev:calibration
+npx playwright install chromium webkit
+npm run test:browser
+npm test
+```
 
-The simulation proves UI behavior, not optical accuracy or TV decoding. The earlier full-field static-color flow passed the LG hardware smoke test: all six
-colors maintained capture, decoded correctly, and drove the expected LED
-output. The user confirmed the physical lights followed. See the capture
-evidence linked above. On the project LG, the blue comparison produced distinct left and right receiver samples during intensity and hue adjustments. The receiver samples do not measure the brightness of the reflected light.
+The demo opens at `http://127.0.0.1:5180/#/calibrate/local-demo` with an in-memory
+API: no TV, WLED or persistent settings. Browser tests build both UIs and cover
+mobile/narrow layouts, updates, rejoin, leases, save failures and Stop. Screenshots
+and traces go to ignored `test-results/`.
+
+When changing contracts, regenerate and test both UIs. Rust/DOM checks also cover
+identity/ramps, pairing reuse, stale updates, locks and profile changes. Simulation
+does not establish optical accuracy or TV decoding; validate on target hardware.

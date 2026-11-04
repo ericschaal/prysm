@@ -1,67 +1,68 @@
 # Install on Raspberry Pi / Debian arm64
 
-Use 64-bit Raspberry Pi OS or Debian arm64, a video source, and a WLED controller
-with DDP enabled. For TV capture, install the host package first, then follow the
-[webOS guide](webos.md).
+Use a Raspberry Pi with 64-bit Raspberry Pi OS, or another Debian arm64 host.
+This installs the Prysm application and its browser panel as a service. Your
+[capture device and WLED controller](README.md) are configured afterward.
 
-## Get the package
+## 1. Get and install the package
 
-Open [Check and package](https://github.com/ericschaal/prysm/actions/workflows/check.yml),
+There is no official release yet. Open [Check and package](https://github.com/ericschaal/prysm/actions/workflows/check.yml),
 choose a successful push or manual run, and download **prysm-debian-arm64** from
-**Artifacts** (GitHub sign-in required). Unzip it into an otherwise empty folder.
-Artifacts expire after three days. If unavailable, [build the package](../developers/packaging.md#debian-arm64).
+**Artifacts**. GitHub sign-in is required; artifacts expire after three days.
+If none is available, [build the package](../developers/packaging.md#debian-arm64).
 
-## Install and configure
-
-Run from the download folder containing only the package you intend to install:
+Unzip the artifact into an empty folder. From that folder, run:
 
 ```sh
 sudo apt install ./prysm-led_*_arm64.deb
 sudo systemctl enable --now prysm
 ```
 
-The service starts with an empty configuration. Open `http://localhost:8787` on
-the host and complete Settings: choose a video source, WLED HTTP base URL, and
-LED counts. Save, select **Screen sync**, and turn the lights on. A first
-successful save creates `/etc/prysm/settings.json`; no template copy is needed.
-For capture modes and wiring, see the [quickstart](quickstart.md).
+The service runs as user `prysm`, with access to the `video` group.
 
-For a headless Pi, make the panel reachable before opening setup. Run
-`sudo systemctl edit prysm` and add your actual LAN address:
+## 2. Open the control panel
+
+On the Prysm host, open `http://localhost:8787`.
+
+For a headless Pi or access from your phone, run `sudo systemctl edit prysm`
+and add this, replacing `192.168.1.20` with the Pi's LAN address:
 
 ```ini
 [Service]
-Environment="PRYSM_LISTEN=0.0.0.0:8787"
-Environment="PRYSM_ALLOWED_HOSTS=192.168.1.20:8787,prysm.example.lan:8787"
+Environment="PRYSM_ALLOWED_HOSTS=localhost:8787,127.0.0.1:8787,192.168.1.20:8787"
 ```
 
-Restart with `sudo systemctl restart prysm` and open `http://192.168.1.20:8787`.
-These process options apply every startup and are never browser settings. Use a trusted LAN or private VPN: the panel has no login.
-
-## Storage and service lifecycle
-
-The package creates `/etc/prysm` owned by `prysm` with mode `0700`. Prysm needs
-write access to this directory because saves atomically replace `settings.json`.
-Only browser-saved settings live there; environment/CLI options stay outside
-the file. JSON is the configuration format; TOML files are not loaded or migrated.
-
-The single service runs as `prysm` with video-group access. Capture starts idle
-after every restart. Normal capture failures leave the panel running; systemd
-restarts a crashed application. SIGINT/TERM stops and joins capture before exit.
-File input requires FFmpeg 9+ on PATH.
-
-The service is initially disabled and stopped at installation. Upgrades restart
-running services, preserve enablement and local systemd overrides, and preserve
-saved settings. Back up `/etc/prysm` before updating. Removal preserves settings;
-purging deletes `settings.json` and removes the directory if empty.
+Then run:
 
 ```sh
-sudo systemctl stop prysm
-sudo apt remove prysm-led
-# To delete the package's saved settings as well:
-sudo apt purge prysm-led
+sudo systemctl restart prysm
 ```
 
-Stopping capture releases WLED realtime control so its own effect resumes after
-the realtime timeout; it does not send a lighting Off command. Use
-`journalctl -u prysm -f` for errors.
+Open `http://192.168.1.20:8787` from a device on the same trusted LAN. The panel
+has no login.
+
+## 3. Connect video and lights
+
+Follow [capture card setup](quickstart.md) or [webOS capturer setup](webos.md),
+then [complete the browser wizard](configuration.md). Success means the LEDs
+follow the picture when **Screen sync** is on.
+
+Settings are saved in `/etc/prysm/settings.json`. The service must be able to
+write the whole `/etc/prysm` directory. Back it up before changing the installation.
+Prysm starts idle after every restart.
+
+## Service commands
+
+```sh
+sudo systemctl status prysm
+sudo journalctl -u prysm -f
+sudo systemctl stop prysm
+sudo systemctl restart prysm
+```
+
+Stopping the service releases live color control; WLED can resume its own effect
+after its realtime timeout. To turn the lights off, use Prysm's power control
+before stopping the service.
+
+`sudo apt remove prysm-led` preserves settings. `sudo apt purge prysm-led`
+deletes the saved settings.

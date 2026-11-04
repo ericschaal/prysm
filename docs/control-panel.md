@@ -1,3 +1,3 @@
 # Web UI
 
-This guide has moved to [Web UI](developers/control-api.md).
+See the [Control API and lifecycle](developers/control-api.md).

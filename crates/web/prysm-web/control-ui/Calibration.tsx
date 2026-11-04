@@ -266,8 +266,8 @@ export function Calibration({ pairing }: { pairing: string }) {
                   <summary>The lights are not responding</summary>
                   <p>
                     Check that WLED is powered and connected, Prysm uses the
-                    webOS input, and the TV sender says Capturing. If the video
-                    is missing, exit on the TV and try again.
+                    webOS input, and the webOS capturer says Capturing. If the
+                    video is missing, exit on the TV and try again.
                   </p>
                 </details>
               </>

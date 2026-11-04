@@ -1,3 +1,3 @@
 # Error handling
 
-This guide has moved to [Error handling](developers/error-handling.md).
+See the [error-handling guide](developers/error-handling.md).

@@ -1,40 +1,36 @@
 # Develop Prysm
 
-Run commands from the repository root unless a guide says otherwise.
-For installation and everyday use, see [Run Prysm](../users/README.md).
+Start with the [architecture](architecture.md) to see what runs where, or
+[debugging](debugging.md) to investigate a problem. For installation and everyday
+use, follow the [user guide](../users/README.md).
 
 ## Build
 
-Install a current stable Rust toolchain supporting edition 2024, Node.js 24 or newer, and npm.
-Node builds the embedded web panel; it is not needed to run the built executable.
-On Linux, install native capture/build dependencies:
+Run commands from the repository root. Install stable Rust with edition 2024
+support and Node.js 24+/npm. Node builds the embedded panel; the finished Prysm
+executable does not need it.
+
+On Linux:
 
 ```sh
 sudo apt install build-essential pkg-config clang libclang-dev libudev-dev
 ```
 
-On macOS, install Xcode Command Line Tools. FFmpeg 9+ is needed at runtime only
-for file input. Hardware H.264 for webOS has [separate SDK requirements](packaging.md#webos).
+On macOS, install Xcode Command Line Tools. Then:
 
 ```sh
 cargo xtask setup host
 cargo build --locked --release
-```
-
-The executable is `target/release/prysm`. To use user-guide commands verbatim in
-this shell, run `export PATH="$PWD/target/release:$PATH"` from the repository root.
-Start with an empty writable settings location, then configure the application
-in the browser:
-
-```sh
 ./target/release/prysm --config settings.json
 ```
 
-For development, use `cargo run -p prysm -- --config settings.json`. Open
-`http://localhost:8787` and complete Settings. Use `prysm --config settings.json
-check` to validate saved effective settings without starting anything. Missing
-required values fail `check` but open setup during ordinary startup. Startup is
-idle for every output; settings are JSON and old TOML files are not loaded.
+Open `http://localhost:8787` and complete setup. Prysm starts idle; select
+**Screen sync** and turn the lights on to capture. For a development build, use
+`cargo run -p prysm -- --config settings.json`.
+
+A normal build targets the host application and embeds its panel. File input
+needs FFmpeg 9+ at runtime. TV binaries need a separate
+[webOS cross-build](packaging.md#webos).
 
 ## Test
 
@@ -43,29 +39,27 @@ cargo xtask setup
 cargo xtask check
 ```
 
-Use `cargo xtask check rust` or `cargo xtask check frontend` for one group.
-The root [task guide](../../xtask/README.md) lists setup, generation and packaging commands.
-Bare `cargo build` targets the host app; `--workspace` explicitly includes TV apps and tooling.
-Run checks for the crate you changed first. Full Linux workspace builds with all
-features also need GStreamer development libraries, as configured in
-[CI](../../.github/workflows/check.yml). See [frontend tests](frontend.md) for UI/API changes.
+For a smaller check, use `cargo test --locked -p CRATE`,
+`cargo xtask check rust`, or `cargo xtask check frontend`.
+The [task reference](../../xtask/README.md) lists generation and package commands.
+CI also checks Linux/macOS, all features, ARM, Miri and packages. All-feature
+Linux builds need GStreamer development libraries; see
+[CI dependencies](../../.github/workflows/check.yml).
+Hardware behavior needs [separate checks](debugging.md#hardware-checks).
 
-CI covers Linux/macOS, default/all-features, generated API freshness, ARM webOS tests,
-Miri, and Debian/IPK packaging. Physical capture devices and TV firmware behavior need [manual checks](debugging.md#hardware-checks).
+## Focused guides
 
-## Find the right guide
-
-| Task | Documentation |
+| Working on | Read |
 | --- | --- |
-| Understand threads, ownership, and frame delivery | [Architecture](architecture.md) |
-| Understand why the system is structured this way | [Technical decisions](decisions/README.md) |
-| Change code or documentation | [Guidelines](guidelines.md), [error handling](error-handling.md) |
-| Change HTTP/configuration behavior | [Control API](control-api.md) |
-| Work on React or generated clients | [Frontend](frontend.md) |
-| Diagnose failures or performance | [Debugging](debugging.md), [monitoring](monitoring.md), [metric catalog](../../observability/CATALOG.md) |
-| Build Debian or TV packages | [Packaging](packaging.md) |
-| Work on the TV worker/service | [webOS lifecycle and permissions](webos.md), [worker](../../apps/prysm-webos-capture/README.md), [supervisor](../../apps/prysm-webos-service/README.md) |
-| Work on hardware H.264 | [Encoder contract](hardware-h264.md) |
-| Work on WLED transport | [Renderer contract](../../crates/rendering/prysm-renderer-wled/README.md) |
+| Settings, HTTP or lighting transitions | [Control API](control-api.md) |
+| Browser panel or TV UI | [Frontend](frontend.md) |
+| Color profiles and the TV/phone wizard | [Calibration](calibration.md) |
+| TV capture, power or permissions | [webOS](webos.md) |
+| Experimental TV hardware encoding | [Hardware H.264](hardware-h264.md) |
+| WLED packets and LED order | [Renderer](../../crates/rendering/prysm-renderer-wled/README.md) |
+| Metrics and performance | [Monitoring](monitoring.md) |
+| Docker, Debian or IPK builds | [Packaging](packaging.md) |
 
-[Research](../../research/README.md) retains experiments and historical results.
+Before contributing, read the [guidelines](guidelines.md) and
+[error-handling rules](error-handling.md). [Decisions](decisions/README.md)
+explain the main tradeoffs.

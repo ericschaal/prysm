@@ -1,221 +1,115 @@
 # Architecture
 
-`application` is the composition root. Startup stays idle. The main OS thread runs
-one Tokio current-thread runtime for HTTP, the settings owner, application
-controller, pipeline lifecycle, asynchronous WLED HTTP, and the tracked WLED DDP
-consumer. With required settings missing, HTTP serves Settings before lighting
-and capture resources are constructed. HTTP remains
-available after EOF or capture/output failure. No multithread Tokio runtime is used.
+Prysm runs on a Linux or macOS host. It captures or receives video, computes
+colors along the picture edges, and sends those colors to WLED. The browser
+panel is part of the same application.
+
+```text
+HDMI capture card → V4L2 / AVFoundation capturer       ─┐
+Rooted LG TV → webOS capturer → WebSocket ───────────────┼→ processor → WLED → LEDs
+Video file → FFmpeg ────────────────────────────────────┘      ↕
+                                                     browser panel
+```
+
+A **capture device** supplies the video: an HDMI capture card, or the webOS capturer
+running on a rooted LG TV. A file is also supported for testing. The **Prysm
+application** owns host capture/receiving, processing and controls. The **WLED
+renderer** sends colors to the lights; it is the only supported LED renderer.
+The webOS capturer still needs a separate Prysm host.
 
 ## Ownership and boundaries
 
-The settings owner owns one browser-saved JSON layer and resolves defaults, saved
-settings, environment and CLI in increasing priority. The controller owns requested
-source, operation IDs and applied revision state. Process options are read from CLI/environment and never enter saved settings. Bounded reliable commands with oneshot replies connect the HTTP
-adapter in `prysm-api` to it. Accepted mutations continue
-when their callers disconnect. The controller retains startup/application,
-persistence and WLED work while it observes status and handles shutdown. Competing
-mutations conflict. Atomic file writes finish before saved configuration is published;
-saved and processor-applied revisions remain distinct. WLED switching preserves
-its compensation/rollback and observation checks.
+[`application.rs`](../../apps/prysm/src/application.rs) composes HTTP, the
+controller, preview and the webOS receiver. Startup stays idle, including after
+setup. HTTP remains available after EOF or capture/output failure.
 
-WLED observations use one `/ws` connection for pushed state/info snapshots, with
-an immediate HTTP `/json/si` read and a 30-second HTTP resynchronization interval.
-The socket sends WLED's `p`/`pong` heartbeat every 15 seconds and reconnects after
-30 seconds without a reply. Failed connections retry with exponential delays from
-one to 30 seconds; a valid snapshot resets the delay. HTTP observation continues
-while WebSocket is unavailable. Delayed HTTP responses cannot replace a newer
-pushed snapshot. Configuration changes retire the previous observation session;
-revision checks reject retired updates. The controller owns and cancels the
-observer future on shutdown, while draining accepted operations as before. Local
-pipeline status refreshes every second without a WLED request. Switching still
-uses direct HTTP observations to confirm commands and preserve rollback behavior.
-
-A pipeline lifecycle owner holds the configured input and explicit Idle, Starting,
-Running, Stopping, Completed and Failed states. Active resources are attached to
-states until their terminal result and joins are observed. Every run has a fresh
-latest-result watch channel, so a restarted output cannot transmit a retired frame.
-Configuration is applied between frames on the processing owner; input/output
-changes recreate a run. Web listen/access-policy changes require application restart.
-
-Each active run owns a dedicated OS thread with a Tokio current-thread runtime.
-It polls the selected fallible input stream, runs one sequential `PrysmProcessor`,
-and publishes only `EdgeColors` to lighting. Preview receives a `ProcessedSnapshot`
-containing source Frame, optional source-pixel Viewport, and EdgeColors from the
-same pass. Cloning these values shares their immutable pixel/color buffers without
-allocating wrappers. Core data and processing do not know about HTTP,
-preview wire formats, runtime workers or application commands. There is one
-capturer, one processor and one configured lighting output; no processing graph.
-
-Each native capture session, webOS connection and file reader owns a `FramePool`
-with at most four retained pixel buffers. It acquires a fixed-length writable
-buffer, fills it directly, then publishes an immutable Frame. `Arc::get_mut`
-allows reuse only after every consumer has released that buffer. There are no
-return queues or custom destructors. If all four buffers are held, capture replaces
-one pool reference with a fresh allocation; existing readers retain their old
-pixels and capture never waits for them. The cap bounds retained pool entries,
-not buffers still owned by consumers. Four 1080p RGB buffers occupy about 25 MB;
-capacities grow as needed. Ending the producer releases its pool references;
-observers may still retain the final frame.
-
-Steady-state reuse avoids pixel allocation and clearing, not the copy from native
-capture storage or required color conversion. `FrameWriter` keeps validated
-geometry separate from fixed-length mutable pixels; reads/conversions must finish
-successfully before publication. Cancelling a partial read publishes nothing.
-Lighting never retains source pixels. Preview retains its latest snapshot and any
-currently encoding snapshot, but its encoded-response cache stores only the
-publication ID and encoded response.
-
-The processing loop retains its in-flight stream read across configuration events,
-services cancellation/configuration/availability, and yields even for continuously
-ready input. Native completion monitors keep running while device resources are
-being released. V4L blocking capture, AVFoundation callback queues, webOS receiver/
-decode and FFmpeg remain backend-specific work. File cleanup explicitly terminates
-and reaps FFmpeg. The application owns the capture WebSocket and joins its receiver on exit. Changing inputs or stopping the pipeline releases the session.
-
-WLED implements the single tagged production Output variant. Its DDP adapter stays
-in `prysm-renderer-wled`; WLED HTTP power/effect capabilities stay in the application
-backend rather than a universal renderer interface. Hostname resolution occurs on
-the processing/setup worker before the renderer moves into the application task.
-The consumer clones the latest edge colors, releases watch borrows, resamples/packs
-and sends nonblocking UDP. `WouldBlock` remains a rendering error. This task shares
-scheduling with HTTP; it does not provide strict HTTP isolation.
-
-## Type ownership
-
-Shared image and processing concepts belong in `prysm-core`: frames and pixel
-metadata, capture resolution, viewport/edges, color strips, processing settings,
-and paired processing snapshots. Core has an existing `yuv` dependency for color
-conversion; it does not depend on serialization, HTTP, the runtime, or webOS.
-Move a type here when its meaning and invariants are shared, not just its name or
-field layout.
-
-The November 2026 type audit covered the maintained applications and capture,
-processing, rendering, contract/API, metrics, and frontend code. These boundaries
-deliberately retain distinct types:
-
-| Similar types | Why they remain separate |
+| Owner | Job |
 | --- | --- |
-| Core `Config`/setting scalars and contract `ProcessingSettings`/scalars | Core clamps percentages and disables invalid smoothing; disk/HTTP settings reject invalid input. Sample density uses `usize` in core and `u32` on the wire. Contract defaults already come from core. |
-| Core and contract `CaptureResolution` | The contract wrapper delegates validation/defaults to core and adds serialization/schema ownership. webOS additionally restricts dimensions to even values up to 1080p. |
-| Core, webOS, and metrics pixel formats | Core describes processing storage and YUYV color metadata; the wire has fixed RGB/NV12/NV16 IDs; metrics combine formats into labels. A merged enum would admit unsupported states. |
-| webOS `Compression` and `Codec` | Compression selects a configured encoder backend; codec identifies the actual payload. Metrics codec labels also include an unspecified value. |
-| Application and webOS `Source` | Prysm/WLED lighting selection and video/blended capture selection are different decisions. |
-| `Settings`, `Config`, `PipelineConfig`, and runtime state | Application settings (nullable input/output during setup), complete validated configuration, a pipeline subset, and owned running resources have different roles. `PipelinePhase` observes runtime state. |
-| Contract `LedCounts` and renderer counts | Configuration requires a positive total; the renderer permits empty output and enforces the WLED limit at its boundary. |
-| `Frame`, `FrameView`, `ProcessedSnapshot`, and private `FrameLayout` | Immutable pixels, processor sampling/cropping access, a published result, and a layout-change cache key serve different purposes. |
-| `CapturedFrame` and `EncodedFrame` | Borrowed raw capture pixels and encoded transport bytes mark distinct pipeline stages despite matching fields. |
-| `Color`, `LinearColor`, and renderer `Rgb8Payload` | sRGB values, linear-light arithmetic, and packed DDP bytes must retain their color/encoding semantics. |
-| `ApiError` and `ApiFailure` | Serialized error data belongs to the contract; HTTP status and response behavior belong to the API adapter. |
+| Settings store | Validate one browser-saved JSON document, check revisions and write atomically. Publish new settings only after persistence succeeds. |
+| Controller | Serialize accepted settings and power/source operations, observe WLED, retain operation results and own calibration sessions. Accepted work survives a disconnected caller. |
+| Pipeline | Own one input, one processor and one WLED output through Idle, Starting, Running, Stopping, Completed and Failed states. |
+| Processing worker | Poll input and process frames sequentially on a dedicated OS thread with a current-thread Tokio runtime. Apply processing changes between frames. |
+| WLED task | Consume the latest edge colors and send nonblocking DDP packets. It runs on the application's current-thread Tokio runtime alongside HTTP. |
 
-Keep platform handles, worker commands, WLED response projections, and metrics
-labels with their adapters. REST frontend models derive from OpenAPI; the webOS
-frontend describes the separate Luna interface.
+Process options such as bindings, allowed hosts and the storage path come from
+CLI/environment. They are separate from browser settings; they do not override
+fields in the JSON document. Input/output edits recreate a running pipeline;
+processing edits apply live. See [settings ownership](decisions/2026-11-03-settings-ownership.md)
+and [HTTP contracts](control-api.md).
 
-Within core, `frame/mod.rs` owns immutable frames and format/geometry validation;
-`frame/pool.rs` owns reusable producer storage and its exclusive writer. Keeping
-the writer with the pool preserves private frame construction without exposing an
-unchecked constructor. Capture resolution has its own module, while processing
-settings live together in `config.rs`. The webOS protocol separates bounded JSON
-control messages in `control.rs` from binary headers and payload compression in
-`frame.rs`. Crate-root exports keep callers independent of these file boundaries.
+WLED state comes from its WebSocket with HTTP resynchronization. Switching uses
+direct HTTP observations to confirm the result. Observations from a retired
+configuration cannot replace current state. The renderer only sends colors;
+WLED power/effects control belongs to the application.
+
+## Processing and color
+
+Capture publishes immutable `Frame` values. Each producer has a `FramePool` with
+up to four retained buffers; readers share pixels. A buffer is reused only when
+all readers release it. If every slot is held, the producer replaces a pool
+reference rather than waiting. The pool limit does not include displaced buffers
+still held by readers.
+
+`PrysmProcessor` runs black-bar detection, spatial sampling and temporal smoothing,
+then shadow lift, calibration correction and brightness. A `ProcessedSnapshot`
+pairs source pixels, source-pixel crop and edge colors from the same pass.
+Lighting receives only `EdgeColors`; it never retains source pixels.
+
+Frame delivery favors the latest result instead of accumulating a backlog.
+Lifecycle commands remain ordered and reliable. Each run gets a fresh output
+channel so a restart cannot send an old run's colors.
+
+Core holds shared image/color concepts and their invariants. It has a `yuv`
+conversion dependency, but no serialization, HTTP or runtime dependencies.
+`prysm-contract` adds disk/HTTP validation and schema ownership. Similar types at
+these boundaries can have different rules: core clamps some controls, while
+contract values reject invalid user input. Keep platform handles and wire-format
+choices with their adapters.
+
+YUYV frames carry range/matrix metadata and use a reusable RGB conversion buffer
+for sampling. Processing assumes sRGB transfer: a BT.2020 matrix does not decode
+PQ/HLG. File input tone-maps first. Use `process_frame_at` with consistent source
+timestamps for deterministic replay. For the black-bar algorithm and evidence,
+see the [detector investigation](../../research/black-bar-detection-2026-11-02/README.md).
 
 ## Preview observation
 
-The application owns a small latest-snapshot bridge that retains the final image
-across stop/EOF and reconnects to publications from a new run. It is separate from
-the per-run output channel. Opening preview never starts capture.
+Preview observes the pipeline; opening it never starts capture. It retains the
+last paired snapshot across stop/EOF and reconnects when a new run starts.
+A lazy JPEG worker allows one active and one queued request. It encodes the
+freshest snapshot, fits it within 480×480 and caches by publication ID.
 
-The encoder is one synchronous OS worker, started on first demand, with a bounded
-channel allowing one active and one queued request. It reads the freshest paired
-snapshot when work starts, downscales to at most 480px on either axis, encodes JPEG,
-and reuses an encoded response for the same publication ID. No encoder runs without
-demand. At most four WebSocket viewers may connect; each requests the next response
-after decode/display, with at most 8 fps. Hidden/closed views stop requesting. Slow,
-disconnected and malformed clients affect only preview. Image/crop/edge drawing
-stays outside React state. Crop coordinates always refer to source pixels; color
-arrays use screen coordinates (horizontal left-to-right, vertical top-to-bottom).
-
-`/api/preview` is inside the same host/origin/security policy as REST. It accepts
-only `next`, caps inbound messages and connections, and bounds send duration. JSON
-responses pair a frame identifier and applied revision with JPEG/base64, source and
-preview dimensions, crop and sRGB edge strips. Idle/busy/error replies are local to
-preview. CSP permits only same-origin resources and data images for JPEG decoding.
+The same-origin `/api/preview` WebSocket allows four viewers. Each requests
+`next` after display, at up to 8 fps. Hidden views stop requesting. Slow or broken
+viewers affect preview only. Crop coordinates refer to source pixels; horizontal
+edge arrays run left-to-right and vertical arrays top-to-bottom. See the
+[preview protocol](control-api.md#browser-preview-and-live-settings).
 
 ## Shutdown ordering
 
-Stop cancels capture, finishes accepted synchronous processing, ceases publication,
-closes the per-run result sender, and lets WLED consume its final unseen result.
-The session observes output completion, native release/FFmpeg cleanup, and processing
-OS-thread join before acknowledging stop. Only then may switching send final WLED
-Off/effects commands. Output failure cancels capture and retains its error; a failed
-output need not send again. Preview clients/encoding are outside the lighting stop
-barrier and are cancelled/joined separately at application shutdown.
+Stop cancels capture, finishes accepted processing, closes publication and lets
+the output consume its final unseen result. It then observes native/FFmpeg cleanup
+and joins the processing worker. Only after that may Off/effects commands change
+WLED state; a late DDP packet must never undo them.
 
-A five-second cleanup deadline reports failure; it does not prove work stopped.
-Timed-out runs retain their handles and remain unavailable for restart until actual
-cleanup completes. No successful stop or final WLED command is permitted while
-output could still send. Application shutdown drains accepted control work, shuts
-down/join the pipeline and webOS listener, then shuts down preview and HTTP.
-
-## Measurements and platforms
-
-On the development Mac, 100 full WLED resample/pack/loopback UDP calls measured:
-300 LEDs p50 10.9µs, p99 66.5µs, max 94.5µs; maximum 65535 LEDs p50 1.75ms,
-p99 1.92ms, max 1.95ms. This fits the chosen 5ms local handler budget; repeat with
-`cargo test -p prysm --lib measure_synchronous_wled_handler -- --ignored --nocapture`.
-Re-evaluate on deployment hardware before assuming the same control budget; move
-the whole consumer to one owned worker if measurements exceed it. These timings
-include synchronous packing/socket acceptance, not physical screen-to-light latency.
-Backend/native libraries may create auxiliary threads; this documents owned contexts,
-not an exact process thread count. Linux and physical device behavior require target
-CI/hardware checks; macOS results do not establish those properties.
-
-`cargo run --release -p prysm-processor --example frame_recycling` compares fresh
-and pooled input buffers while retaining the previous frame, then repeats with
-processing enabled. It asserts zero steady-state capture allocations and matching
-output checksums. On the development Mac, three runs at 1080p RGB/density 128
-reduced copy-plus-processing allocations from 18 to 16 per frame and allocated
-bytes from 6,239,544 to 18,704. Median time was 6.006ms versus 5.986ms: no convincing
-CPU gain. This is an allocation-volume improvement; pixel copying, processing
-allocations and decoder-internal allocations remain. The benchmark excludes device
-I/O, preview encoding and publication wrappers (which no longer allocate).
+A five-second cleanup deadline reports failure, not successful cancellation.
+Timed-out runs retain their handles and cannot restart until cleanup really
+finishes. Output failures cancel capture and retain the cause. Application exit
+drains accepted control work, joins the pipeline and receiver, then shuts down
+preview and HTTP. Preview is outside the lighting stop barrier.
 
 ## Workspace map
 
 | Location | Responsibility |
 | --- | --- |
-| `apps/prysm` | Composition, control/persistence, pipeline workers, preview and HTTP policy |
-| `apps/prysm-webos-capture` | TV capture/encode/transport worker |
-| `apps/prysm-webos-service` | Native Luna supervisor, setup and worker lifecycle |
-| `crates/capture` | Native capture, receiver and webOS protocol |
-| `crates/processing` | Black-bar detection, spatial sampling, temporal smoothing |
-| `crates/rendering` | Framework-independent WLED DDP adapter |
-| `crates/common` | Core immutable data, validated contract, typed HTTP adapter and metrics |
-| `crates/web` | Embedded React UI/assets and separate webOS frontend |
+| `apps/prysm` | Application composition, settings, controller, pipeline, preview and HTTP policy |
+| `apps/prysm-webos-capture` | webOS capturer: video capture, encoding and transport |
+| `apps/prysm-webos-service` | TV Luna supervisor, permission setup and worker lifecycle |
+| `crates/capture` | V4L2 capturer (Linux), AVFoundation capturer (macOS), webOS receiver and protocol |
+| `crates/processing` | Black-bar detection, sampling and smoothing |
+| `crates/rendering` | WLED DDP renderer |
+| `crates/common` | Core data, validated contracts, HTTP adapter and metrics |
+| `crates/web` | Embedded host panel, TV frontend and calibration patterns |
 
-## Processing and color
-
-`PrysmProcessor` chains BlackBarDetector → SpatialSampler → TemporalSmoother.
-Sampling averages picture areas and projects colors onto the perimeter. Shadow lift
-follows smoothing; brightness scales final colors. Density controls sampling independently
-of LED count. Black-bar detection tracks the four picture boundaries independently,
-combining distributed observations of a dark exterior and sustained picture interior.
-It rejects small overlays and retains confirmed coordinates through dark or ambiguous
-scenes. Fresh consistent observations confirm deeper cropping in about 1.5 seconds
-and restore visible picture in about 0.4 seconds; capture gaps do not count as evidence.
-Live configure preserves temporal history except history specifically invalidated by
-the changed setting. See the [detector investigation](../../research/black-bar-detection-2026-11-02/README.md)
-for the motivating failures, design and validation limits.
-
-Black-bar detection reads the original frame. For sampling, YUYV is converted
-with the existing SIMD converter into one reusable RGB buffer, using its range
-and matrix metadata; RGB/BGR inputs need no conversion buffer. Shadow lift and
-brightness share one sample pass after smoothing, with copy-on-write preserving
-the unadjusted history and published snapshots. Identity adjustments share colors.
-
-Frames carry YUYV range/matrix metadata. Processing assumes sRGB transfer; BT.2020
-matrix support does not decode PQ/HLG. File input tone-maps first. Use `process_frame_at`
-with shared clock origin/source timestamps for deterministic replay; `process_frame`
-uses monotonic processing time. See [color measurements](../../research/webos-capture/2026-11-01-hdr-brightness/README.md)
-and [webOS ownership](webos.md) for backend-specific constraints.
+Backend libraries may create additional threads. This describes ownership, not an
+exact thread count. For performance checks and measurement limits, see [debugging](debugging.md).

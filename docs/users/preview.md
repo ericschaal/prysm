@@ -1,30 +1,36 @@
 # Preview and tune the picture
 
-Prysm's browser panel shows the source image, detected black-bar crop and matching
-perimeter colors. Keep your existing WLED output configured; preview is an optional
-observer of the same processing pass that supplies the lights.
+Preview shows what the Prysm application receives from your capture device,
+the detected picture boundaries, and the colors calculated for each LED edge.
+Start with [Screen sync working](configuration.md); WLED is required even when
+you are inspecting the preview.
 
-![Browser preview and all six live settings, verified using synthetic video and a local WLED fixture](../images/preview-tuning.jpg)
+![Prysm browser preview and picture settings](../images/preview-tuning.jpg)
 
-1. Start Prysm and configure the source and WLED in Settings. For file input,
-   install FFmpeg 9+ and enter the absolute video path.
-2. Open `http://localhost:8787`, select **Screen sync**, and turn the lights on.
-3. Select **Preview**, then **Open preview**.
-4. Open **Settings**, adjust picture controls and choose **Save & apply**, or **Discard** to return
-   to saved values. Brightness, shadow lift, smoothing, sample density, spatial reach
-   and black-bar removal apply live without restarting capture/output.
+## Open the preview
 
-Preview remains closed until requested. Pause/close it to stop image requests;
-hidden tabs also pause requests. The diagnostic image is scaled to at most 480px
-and updates at up to 8 fps. Stopped/completed capture retains a clearly labeled last
-image. Reopen/restart capture to inspect new frames. Preview never starts capture
-or changes the configured lighting output.
+1. In **Overview**, choose **Screen sync** and turn the lights on.
+2. Choose **Preview**, then **Open preview**.
+3. Check that the image matches your video and changes as it plays.
 
-Saved and processor-applied revisions are shown separately. If someone else edits
-settings, review/reload the newer revision before saving; errors retain your draft.
-Use Settings to edit input, output, source and processing. Configure network
-bindings through CLI/environment when starting the process.
+The dashed outline shows the picture area used after black-bar removal. Edge
+colors show what Prysm calculates for the lights. If the picture is correct but
+the LEDs are wrong, check WLED, the LED counts, and the wiring direction.
 
-Configure WLED output with its HTTP URL and LED counts. There is no native
-preview window or preview-only output. Closing the browser leaves Prysm running. File HDR is tone-mapped
-to sRGB before processing; preview does not calibrate physical LEDs or the wall.
+The preview is a small, slower view of capture: at most 480 pixels across and
+8 updates per second. Use the physical lights to judge smoothness. If capture
+stops or a file finishes, the last image stays visible with a label.
+
+## Tune the lights
+
+Open **Settings**, change one [picture setting](configuration.md#processing),
+and choose **Save & apply**. Watch the preview and wall light while comparing.
+Use **Discard** to return to saved values before saving.
+
+Start with brightness and smoothing. Adjust shadow lift if dark scenes need
+more light. Leave sample density at 128 unless increasing it visibly improves
+the result. For an LG TV, [color calibration](calibration.md) can help match tint.
+
+**Pause** or **Close** stops preview requests; hidden browser tabs pause them too.
+Opening or closing Preview does not start or stop Screen sync. Closing the
+browser leaves Prysm running.

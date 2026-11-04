@@ -1,7 +1,7 @@
-# Replace the image version, LAN address, and dataset path for your installation.
+# Build prysm:local on the NAS, then replace the LAN address and dataset path.
 services:
   prysm:
-    image: ghcr.io/ericschaal/prysm:0.1.0
+    image: prysm:local
     user: "568:568"
     restart: unless-stopped
     read_only: true

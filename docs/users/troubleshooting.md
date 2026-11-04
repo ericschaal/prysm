@@ -1,37 +1,58 @@
 # Troubleshooting
 
-Start with the error shown in the panel. Prysm starts idle: select **Screen sync**
-and turn the lights on, or click **Start capture** in the preview window.
+Read the error in Prysm's browser panel first. After starting or restarting
+Prysm, choose **Screen sync** in **Overview** and turn the lights on.
 
-| Symptom | Check / fix |
+## Panel and settings
+
+| Problem | What to check |
 | --- | --- |
-| Panel will not open | On the host try `http://localhost:8787`. On Debian run `systemctl status prysm` and `journalctl -u prysm -n 100`. For a phone, configure [LAN access](configuration.md#access-from-your-phone). |
-| Request rejected / invalid Host | Add the exact browser hostname or IP with port to `[web].allowed_hosts`, then restart Prysm. |
-| Capture device unavailable | Check its configured path/UID and that no other program owns it. Linux service user needs video access; macOS needs camera permission. |
-| Unsupported format or rate | Choose a resolution and frame rate supported by the device; Prysm does not silently accept a different mode. |
-| No LEDs, but capture runs | Check WLED's HTTP URL, DDP input, LED counts and wiring. Allow UDP 4048 from Prysm to WLED. |
-| Wrong edge or direction | Counts are viewed from the front. Wiring starts bottom-left → up left → across top → down right → along bottom. |
-| Dark or washed-out colors | Check [gamma and calibration](configuration.md#color-calibration), brightness, and WLED power limits. |
-| File does not play | FFmpeg 9+ must be on PATH for the process running Prysm; check the absolute file path and read permissions. |
-| File finished | EOF is normal. The panel stays available; start capture again to replay. |
-| Settings will not save | Prysm must be able to replace settings.json and write its parent directory. Reload the panel if another client changed the revision. |
-| Restart required | Restart the Prysm process/service; saved output-kind or web-policy changes cannot apply live. |
+| Panel will not open | On the Prysm host, try `http://localhost:8787`. For a phone, use the host's LAN address and [allow LAN access](configuration.md#access-from-your-phone). Check the service or container logs. |
+| Request rejected / invalid Host | Add the exact browser hostname or IP, including port, to `PRYSM_ALLOWED_HOSTS` in the service/container environment. Restart or recreate Prysm. |
+| Settings will not save | Prysm needs write access to the settings directory, not just the file. In containers, mount the whole directory. If another browser saved changes, reload saved settings before editing again. |
+| Settings saved, but not applied | Read the application error in the panel. Check the capture device and WLED connection, then retry Screen sync. |
 
-## TV sender
+For Debian service logs:
 
-- **Waiting for Prysm:** open the saved panel URL from the TV network. Check the host allowlist, proxy WebSocket support and certificate trust for HTTPS. The TV retries automatically.
-- **Receiver in use:** another TV is capturing. The sender retries when the session ends.
-- **Connected · Capture off:** connection is ready. Start screen sync on the host.
-- **Capturing but no picture:** show active video on the awake TV; both capture
-  modes can wait on Home. Check Prysm for actual advancing frames.
-- **Service unavailable / permission denied:** use **Service options → Set up or
-  repair service** and inspect diagnostics. Stop competing capturers.
-- **Start fails after about 12 seconds:** the host rolls back an unconfirmed start.
-  Wake the TV, show video, resolve the reported error, and retry.
-- **Invalid configuration after upgrade:** UI-only capture is removed. Follow
-  the [saved-configuration reset instructions](webos.md#change-settings-or-remove).
+```sh
+sudo systemctl status prysm
+sudo journalctl -u prysm -n 100
+```
 
-For deeper diagnosis, use the [developer debugging guide](../developers/debugging.md)
-and [monitoring setup](../developers/monitoring.md). Include the error, Prysm revision,
-OS/TV firmware, input/output type, resolution and frame rate when reporting a problem.
-Redact local addresses or paths if you do not want them published.
+For Docker logs, run `docker compose logs --tail 100 prysm` from the Compose directory.
+
+## Picture and lights
+
+Open [Preview](preview.md). If its picture is missing or frozen, check capture.
+If it advances correctly, check WLED and the LED layout.
+
+| Problem | What to check |
+| --- | --- |
+| Capture card unavailable | Confirm the path/ID and that another program is not using it. Linux needs video-device permissions; macOS needs camera permission. Docker needs the device and group mappings. |
+| Unsupported capture mode | Choose a resolution, frame rate, and format the card supports. Linux accepts YUYV, RGB3, or BGR3, not MJPEG-only modes. |
+| Preview works, LEDs do not | Check the WLED address, DDP input, LED counts, and wiring. Allow HTTP/WebSocket and UDP 4048 from the Prysm host or container to WLED. |
+| Colors follow the wrong edge | Viewed from the front, wiring starts bottom-left → up left → across top → down right → along bottom. Check each edge's count. |
+| Dark or washed-out colors | Check [WLED gamma](configuration.md#color-calibration), brightness, and WLED power limits. |
+| Black bars are still sampled | Allow about 1.5 seconds for detection. Black-bar removal needs at least 5 incoming fps. |
+| Video file will not play | FFmpeg 9+ must be on the running process's PATH. Check the file path and read access; in a container, mount the file. The standard image does not include FFmpeg. |
+| File finished / last image remains | Playback runs once. Restart Screen sync to replay. |
+
+## webOS capturer
+
+| TV message or problem | What to do |
+| --- | --- |
+| Waiting for Prysm | Verify the saved host panel address is reachable from the TV's network. Check `PRYSM_ALLOWED_HOSTS`. For HTTPS, check certificate trust and proxy WebSocket support. |
+| Receiver in use | Another TV has the capture session. The webOS capturer retries when it is free. |
+| Connected · Capture off / Ready to capture | Choose Screen sync and turn the lights on in the host panel. |
+| Waiting for video / Capturing but no picture | Wake the TV and play video or select an active HDMI input. Check that Preview actually advances; the TV Home screen may provide no frames. |
+| Service unavailable / permission denied | Use **Service options → Set up or repair service**. Stop PicCap or other capturers. |
+| Start fails after about 12 seconds | Wake the TV, show active video, fix the reported error, and retry. Prysm cancels a start that never confirms. |
+
+## Report a problem
+
+Include the error, code revision, host OS, capture device, WLED address type
+(IP or hostname), resolution, and frame rate. For LG capture, include the TV
+model and firmware. Redact private addresses and paths before posting logs.
+
+For more detail, see [developer debugging](../developers/debugging.md) and
+[monitoring](../developers/monitoring.md).

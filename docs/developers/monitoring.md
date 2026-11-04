@@ -1,120 +1,73 @@
-# Centralized Prysm monitoring
+# Monitoring
 
-Prometheus and Grafana run on your computer. Prysm exposes an opt-in metrics
-endpoint with its process and machine statistics. The supervised TV worker exposes
-its encoder, capture, process and machine metrics on port 9101 while running,
-when **Prometheus metrics** is checked and saved in the TV app (defaults off).
-Prometheus pulls both endpoints every five seconds; browser preview is independent of collection.
+Prysm exposes optional Prometheus metrics. The included Docker Compose stack runs
+Prometheus and Grafana on your computer; browser preview is independent.
 
-## Start the nodes
+## Enable exporters
 
-On your computer, run your normal Prysm configuration with a metrics listener:
+Start the host with its normal settings and a metrics binding:
 
 ```sh
-cargo run --release -p prysm -- \
-  --config settings.json --metrics-listen 0.0.0.0:9102
+cargo run --release -p prysm -- --config settings.json --metrics-listen 0.0.0.0:9102
 ```
 
-The metrics
-listener is separate from the REST API and does not change your saved JSON settings.
-Enable Screen sync as usual to open the video receiver.
-Use your working configuration path; [TV setup](../users/webos.md) describes browser configuration.
+For the TV, save **Prometheus metrics** in the TV app. Its worker serves port 9101
+while running. Both exporters default off. Omitting the host option disables its
+instrumentation and exporter thread. Exporter failures are logged without stopping
+capture or lighting.
 
-Omit `--metrics-listen` to disable all instrumentation and the exporter thread.
-Both nodes require opting in. A metrics bind or exporter failure is reported without
-interrupting capture or lighting. Metrics are not written to a local log file.
+Metrics have no authentication. Restrict ports 9101/9102 to your trusted monitoring
+network. They are separate from the panel's listener and access policy.
 
-The endpoint has no authentication. Bind to an appropriate trusted interface
-and restrict ports 9101 (TV) and 9102 (host) to your monitoring computer. Do not expose it to
-the internet. The Compose web ports below bind only to your computer's loopback.
+## Start Prometheus and Grafana
 
-## Start the central stack
-
-Install Docker with its Compose plugin (Docker Desktop includes it).
-[prometheus/targets.json](../../observability/prometheus/targets.json) contains the live host and TV exporters.
-`host.docker.internal:9102` points at Prysm on your computer; the Compose
-host-gateway alias also supports Linux hosts. Set `192.168.18.10:9101` to your TV address.
-The TV endpoint is available only while the supervised capture worker is running.
-
-From the repository root:
+Set host/TV addresses in
+[`targets.json`](../../observability/prometheus/targets.json).
+`host.docker.internal:9102` reaches Prysm on the Docker host, including Linux via
+the Compose host-gateway alias. Replace the example TV address with yours.
 
 ```sh
 docker compose -f observability/compose.yaml up -d
 ```
 
-Open [Grafana](http://localhost:3000/d/prysm-overview). Initial login is
-`admin` / `admin`; Grafana prompts for a new password. To set the initial password
-explicitly, set `GRAFANA_ADMIN_PASSWORD` before the first `up`. This only initializes
-a new Grafana data volume; it does not reset an existing account.
+Open [Grafana](http://localhost:3000/d/prysm-overview). The initial login is
+`admin` / `admin`; change it when prompted. `GRAFANA_ADMIN_PASSWORD` sets the
+initial password for a new volume, not an existing account. Compose web ports bind
+to loopback. The datasource and Prysm dashboard are provisioned automatically.
 
-The datasource and **Prysm — systems and stream** dashboard are provisioned from
-this directory. Select nodes at the top. Capture configuration and codec-specific
-panels retain requested codec, capture mode, width and height filters for
-live and historical TV series. The overview gives the health instruments two roomy
-rows: stream status, cadence and capture budget above frame regularity and faults.
-The expanded **Hardware H.264** section separates mean preparation/collection
-costs from output wait. It shows no samples while the worker is off or hardware
-encoding is inactive. Expand **Machine resources**, **Throughput & encoding**, or
-**Timing & reliability** for the remaining detailed charts. Idle capture is displayed separately from stalled capture.
-
-[Prometheus targets](http://localhost:9090/targets) shows scrape errors. Check the
-endpoint directly if Prysm is DOWN:
+Use [Prometheus targets](http://localhost:9090/targets) for scrape errors, or check:
 
 ```sh
 curl http://localhost:9102/metrics
-curl http://192.168.18.10:9101/metrics
+curl http://TV_IP:9101/metrics
 ```
 
-Changing `targets.json` is picked up automatically (within five seconds). Add
-more target entries with distinct `node` labels to monitor additional machines.
-If Prysm runs on another machine, replace the computer target with that IP.
-Prometheus configuration changes require restarting its container:
+Target changes load within five seconds. Prometheus configuration changes need
+`docker compose -f observability/compose.yaml restart prometheus`.
+Named volumes retain 15 days of metrics and Grafana state; `down -v` deletes them.
+Edit the provisioned dashboard JSON to keep dashboard changes in source control.
 
-```sh
-docker compose -f observability/compose.yaml restart prometheus
-```
+## Read the measurements
 
-Prometheus keeps 15 days of data. Named volumes retain metrics and Grafana state
-across container replacement and `docker compose down`. `down -v` deletes those
-volumes and their history. Source-controlled dashboard edits are authoritative;
-Grafana UI changes do not overwrite the provisioned JSON file.
+Use the [metric catalog](../../observability/CATALOG.md) for emitter, unit, labels
+and exact measurement boundaries. The dashboard separates idle from stalled
+capture, and requested settings from actual codec/format. Hardware H.264 panels
+have no samples while hardware encoding is inactive.
 
-The [instrumentation catalog](../../observability/CATALOG.md) defines every emitter, operation, outcome,
-measurement boundary, unit and label. Dashboard legends identify the node and
-owning component; actual wire codec/content are separate from requested settings.
+Compare identical release builds, dimensions, FPS, source, codec and playback.
+Let rates warm up and include static, moving and dark scenes. Compare output FPS
+and failures alongside bytes/frame; dropped frames are not compression gains.
 
-## Compare runs
+Process CPU uses cores (1.0 = one busy core); machine CPU is normalized across
+cores. Interface counters may overlap on bridges/VPNs. Availability gauges mark
+unsupported statistics. Histogram percentiles are bucket estimates; do not average
+p95/p99 across nodes. Socket acceptance and receiver gaps do not measure delivery
+or physical screen-to-light latency.
 
-Use the same release build, capture dimensions, FPS, source, backend and playback
-sequence. Let CPU sampling and rate calculations warm up, then compare at least
-one minute of static menus, motion, grain, dark scenes and scene changes. Compare
-encoding bytes/frame alongside actual frame rates and failure counts: dropping
-frames is not a compression gain. Compare the selected native tap and actual encoded format;
-inspect the format and backend panels before comparing runs.
-
-The system collector uses `sysinfo`, refreshed once a second on the exporter
-thread. Process CPU includes every thread of the exporting Prysm process and uses
-cores (1.0 means one fully used core). Machine CPU is normalized across all cores. Interfaces are
-reported separately; bridged/VPN traffic can appear on multiple interfaces and
-must not be summed blindly. Missing/unsupported machine statistics are indicated
-by the collector-availability gauge. Hardware statistics depend on the host platform.
-
-Prometheus histograms estimate percentiles from buckets; never average p95/p99
-values between nodes or intervals. Socket acceptance is not remote delivery.
-Receiver frame gaps show output continuity, not capture-to-host or screen-to-light
-latency. No clock synchronization, frame acknowledgements, video quality scoring,
-or replay recorder is introduced by this monitoring setup.
-
-The exporter uses maintained `prometheus-client`, `tiny_http`, and `sysinfo`
-crates. It contains no unsafe Rust. Bounded label families and histograms (which use brief library locks)
-are updated in process; sampling, encoding exposition, and HTTP I/O run on a
-separate thread. Prometheus/Grafana outages therefore do not block capture.
-
-Validate the overview expressions and layout with Docker available:
+Sampling and HTTP exposition run on a separate exporter thread. Collection uses
+bounded labels and brief library locks, so a Prometheus/Grafana outage does not
+block capture. Validate the dashboard with Docker and synthetic series:
 
 ```sh
 python3 observability/tests/check-health.py
 ```
-
-The check uses the configured Prometheus image and synthetic healthy, idle,
-delayed, stalled, missing-telemetry and offline series; it does not need live capture.

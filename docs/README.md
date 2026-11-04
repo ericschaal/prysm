@@ -1,12 +1,11 @@
 # Documentation
 
-| Your goal | Start here | What you will find |
-| --- | --- | --- |
-| Get the lights working | [Run Prysm](users/README.md) | Installation, capture setup, settings, and common fixes |
-| Change or debug the software | [Develop Prysm](developers/README.md) | Build/test commands, architecture, decisions, and diagnostics |
-| Understand the investigations | [Dive deeper](../research/README.md) | Experiments, measurements, alternatives, and historical evidence |
+- **[Set up Prysm](users/README.md):** understand the capture device, Prysm host,
+  and WLED, then install and connect them.
+- **[Develop Prysm](developers/README.md):** architecture, compiling, debugging,
+  and the key components.
+- **[Research](../research/README.md):** experiments and hardware measurements.
 
-Start with the guide for your goal. Research reports describe the code and hardware
-at the time of the experiment; use the user and developer guides for current behavior.
-
-Documentation changes follow the [writing and link rules](developers/guidelines.md#documentation).
+The user and developer guides describe the current code. Prysm has no official
+release yet. See the [writing and link rules](developers/guidelines.md#documentation)
+when changing documentation.

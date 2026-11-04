@@ -61,7 +61,7 @@ Prysm captures your live video feed, reads the colors along each edge, and sends
 
 Overview controls power and color source. Settings configures the full installation
 in the browser, including video input, WLED, LEDs, processing and color source.
-Network bindings and allowed hosts are configured through CLI/environment.
+Allow phone access when starting the service or container.
 Preview shows the source image, detected crop and colors sent to each edge.
 
 - **Screen sync** lets Prysm supply live colors from your video.
@@ -75,32 +75,37 @@ capture, colors, and control. See [settings and daily use](docs/users/configurat
 
 ## How it connects
 
+Prysm has three parts:
+
+- **Capture device:** an HDMI capture card, or the Prysm webOS capturer on a
+  rooted LG TV running the **webOS capturer**.
+- **Prysm application:** runs on a Linux or macOS computer, the **Prysm host**.
+  It captures through V4L2 on Linux or AVFoundation on macOS, or receives video
+  from the webOS capturer, then calculates the LED colors. Its browser panel controls
+  the setup from your computer or phone.
+- **LED renderer:** WLED receives the colors and drives the strips. It is the
+  only supported renderer.
+
 ```text
-USB capture device / video file / rooted LG TV → Prysm → WLED → LED strips
-                                                  ↑
-                                            Phone control panel
+HDMI video → capture card → Prysm host → WLED → LED strips
+Rooted LG TV → webOS capturer → Prysm host → WLED → LED strips
 ```
 
-Bring a Linux or macOS host, a video source, and a WLED controller with LED strips.
-A Raspberry Pi with 64-bit Raspberry Pi OS works for the packaged setup. On a
-compatible rooted LG TV, the experimental TV sender replaces the capture card.
-Inspect the source image, crop and edge colors in the browser while tuning live processing settings.
+A Raspberry Pi can be the Prysm host. The webOS capturer replaces the capture card;
+you still need the Prysm host and WLED.
 
 ## Get started
 
+1. **[Install Prysm on your host](docs/users/README.md#1-install-the-prysm-application)**
+   using the Debian package, Docker, TrueNAS, or a local build.
+2. **Connect your capture device:** [HDMI capture card](docs/users/quickstart.md)
+   or [rooted LG TV](docs/users/webos.md).
+3. **[Set up WLED and start Screen sync](docs/users/configuration.md)** in the
+   browser wizard. No configuration file needs to be written by hand.
 
-Choose one setup guide:
-
-- **[Raspberry Pi / Debian arm64](docs/users/debian.md)** — install the package and run it as a service.
-- **[Docker](docs/users/docker.md)** — run the TV receiver or Linux USB capture in a container.
-- **[TrueNAS](docs/users/truenas.md)** — deploy the same image with a persistent config dataset.
-- **[Linux or macOS with a capture device](docs/users/quickstart.md)** — configure capture and WLED, then start Prysm.
-- **[Rooted LG TV](docs/users/webos.md)** — install the TV sender and connect it to Prysm.
-- **[Preview and tune](docs/users/preview.md)** — inspect the picture and adjust live processing in the browser.
-
-Prysm starts idle. On first use, complete Settings in the browser; no configuration
-file is needed. Then select **Screen sync** and turn the lights on.
-See [settings and daily use](docs/users/configuration.md) or [troubleshooting](docs/users/troubleshooting.md).
+There is no official release yet; the installation guides use current CI
+artifacts or local builds. After setup, [preview and tune](docs/users/preview.md)
+the picture or use [troubleshooting](docs/users/troubleshooting.md).
 
 ## Develop Prysm
 
@@ -111,9 +116,8 @@ See [settings and daily use](docs/users/configuration.md) or [troubleshooting](d
 
 ## Dive deeper
 
-[Research and experiments](research/README.md) explain what was investigated,
-what was measured, and which approaches were superseded. For all three audiences,
-start at the [documentation index](docs/README.md).
+[Research and experiments](research/README.md) cover capture behavior, performance,
+and color measurements. Find all guides in the [documentation index](docs/README.md).
 
 ## License
 

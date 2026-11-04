@@ -1,82 +1,91 @@
 # Run Prysm with Docker
 
-The image includes Prysm, its web panel, the webOS receiver, and Linux V4L2
-capture. Deploy on a 64-bit Linux host (amd64 or arm64). Docker Desktop can run
-the TV receiver; USB capture needs the device inside the Docker host's Linux
-kernel. Video-file playback needs FFmpeg 9+, which this image does not include.
+The image runs the Prysm application with its browser panel, LG TV receiver,
+and Linux V4L2 capture. Use a 64-bit host (amd64 or arm64). Docker Desktop works
+with the webOS capturer; USB capture requires access to a Linux host's video device.
+For TrueNAS, use the [TrueNAS guide](truenas.md).
 
-For a TrueNAS Apps deployment, use the [TrueNAS guide](truenas.md).
+## 1. Build the image
 
-The Compose examples use a published version tag. Until that release is available
-from GHCR, [build the image locally](#update-build-and-verify), change `image` to
-`prysm:local`, and omit `docker compose pull`.
-
-## Start and configure
-
-Save the repository's [Compose file](../../compose.yaml) in an empty directory,
-then run:
+There is no official release yet. From a checkout of this repository, build:
 
 ```sh
-docker compose pull
+git clone https://github.com/ericschaal/prysm.git
+cd prysm
+docker build -t prysm:local .
+```
+
+Docker builds Prysm and the browser panel; you do not need Rust or Node.js on
+the host. The image does not include FFmpeg, so video-file input needs a custom image.
+
+## 2. Start Prysm
+
+From the repository directory, use the included [Compose file](../../compose.yaml):
+
+```sh
 docker compose up -d
 docker compose logs -f prysm
 ```
 
-Open `http://localhost:8787`. The panel opens Settings when input or output is
-missing. Choose your video source, enter the WLED HTTP address and LED counts,
-and save. You can configure every application setting in the browser. Prysm
-starts idle; select **Screen sync** and turn the lights on when ready.
+Open `http://localhost:8787`. The named volume keeps settings at
+`/config/settings.json`. No initial settings file is needed. The container runs
+as `10001:10001` with a read-only root filesystem and a writable config volume.
 
-The default named volume stores `/config/settings.json`. No host configuration
-file or UID/GID shell exports are needed. The container runs as `10001:10001`
-with a read-only root filesystem and a writable config volume. Do not use
-`docker compose down -v` unless you intend to delete your settings.
-
-WLED traffic leaves the container over HTTP/WebSocket and UDP 4048. No inbound
-UDP mapping is needed. Use an IP address or ordinary DNS name for WLED;
-`.local` multicast DNS usually does not resolve on Docker's bridge network.
+For access from a phone or the webOS capturer, configure the LAN address below
+before continuing.
 
 ## Network and deployment options
 
-The image defaults to listening on `0.0.0.0:8787` inside the container. Compose
-publishes the panel on the host's loopback address. To access it from another
-computer or phone, publish the host's trusted LAN address and allow that exact
-address. For example:
+Under `services.prysm` in Compose, replace the loopback port mapping and add
+an allowed address. Use your Docker host's LAN IP instead of `192.168.1.20`:
 
 ```yaml
 ports:
   - "192.168.1.20:8787:8787"
 environment:
-  PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787,prysm.example.lan:8787"
+  PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787"
 ```
 
-Recreate the container after changing its deployment settings, then open the
-allowed LAN address. Both the panel and TV receiver have no login; publish them
-only on a trusted LAN or private VPN.
+Apply the change with `docker compose up -d`, then open
+`http://192.168.1.20:8787`. Add any other browser hostname with its port to
+`PRYSM_ALLOWED_HOSTS`, separated by commas. The panel and TV connection have no
+login; publish them only on a trusted LAN or private VPN.
 
-Process configuration is read on every startup: **CLI arguments → environment →
-explicit defaults**. It is never persisted or edited in the browser. The browser
-edits only application settings in the mounted JSON file.
+WLED must be reachable from the container over HTTP/WebSocket and UDP 4048.
+No inbound UDP mapping is needed. Use WLED's IP address or ordinary DNS name;
+`.local` names usually do not resolve on Docker's bridge network.
 
-| Deployment setting | Purpose |
-| --- | --- |
-| `PRYSM_CONFIG` / `--config` | Settings file location; image default `/config/settings.json` |
-| `PRYSM_LISTEN` / `--listen` | HTTP socket; default `0.0.0.0:8787` |
-| `PRYSM_ALLOWED_HOSTS` / `--allowed-host` | Exact browser authorities; default loopback hosts on port 8787 |
-| `PRYSM_METRICS_LISTEN` / `--metrics-listen` | Optional metrics socket; disabled by default |
-| `RUST_LOG` | Log filter; default `info` |
+## TV and USB capture
 
-A published host port and the container's listen port must match your port
-mapping. Changing Settings cannot create Docker port mappings or grant devices.
+For an LG TV, follow [webOS capturer setup](webos.md) and use the panel's LAN address
+in the TV app. No extra capture port is needed.
+
+For a USB capture card on Linux, add these under `services.prysm`:
+
+```yaml
+devices:
+  - /dev/video0:/dev/video0
+group_add:
+  - "44" # Replace with the output of: stat -c '%g' /dev/video0
+```
+
+A stable `/dev/v4l/by-id/...` path can replace the left side of the device mapping.
+Run `docker compose up -d` after editing. In Prysm, select **USB capture device**
+and use `/dev/video0`, the path inside the container.
+See [capture card setup](quickstart.md) for capture modes.
+
+For either capture device, [complete browser setup](configuration.md) to connect
+WLED and start Screen sync. Success means the LEDs follow the picture.
 
 ## Persistent host storage
 
-To use a bind-mounted directory instead of the named volume, create a dedicated
-config directory on the Docker host and give the container's numeric user read,
-write and directory traversal permission. Mount the whole directory at `/config`:
+The default named volume is sufficient for most installations. To store settings
+in a host directory, create a dedicated directory such as `/srv/prysm` and give
+the container user read, write, and directory traversal access. Replace the
+service's volume mapping with:
 
 ```yaml
-user: "1000:1000" # Use the numeric identity that has access to your directory.
+user: "1000:1000" # Use the numeric user/group with access to the directory.
 volumes:
   - type: bind
     source: /srv/prysm
@@ -85,55 +94,22 @@ volumes:
       create_host_path: false
 ```
 
-The directory may start empty. The first successful browser save creates the
-JSON file as the selected user. Prysm replaces that file atomically, so mounting
-only `settings.json` does not work. An existing malformed or unreadable settings
-file is reported as an error and is never reset automatically. Back up the
-whole directory before updates. Use one Prysm instance per settings directory.
+Mount the whole directory, not just `settings.json`: saving replaces the file.
+The directory can start empty. Use one Prysm instance per settings directory.
 
-## TV and USB capture
+## Stop or rebuild
 
-For TV capture, choose webOS in Settings and enter the panel's LAN or HTTPS address in the TV app. [TV setup](webos.md)
+`docker compose down` stops Prysm and preserves settings. Adding `-v` deletes
+the named volume and its settings. Stopping Prysm releases live color control;
+use the panel's power control first if you want the lights off.
 
-For Linux USB capture, choose Device in Settings with `/dev/video0` as the
-container path. Add these keys under `services.prysm`:
-
-```yaml
-devices:
-  - /dev/video0:/dev/video0
-group_add:
-  - "44" # Replace with: stat -c '%g' /dev/video0
-```
-
-The numeric group must match the host device's group. A stable
-`/dev/v4l/by-id/...` path can be used on the left side of the device mapping.
-Keep the HTTP port mapping so the panel remains reachable. See [device setup](quickstart.md) for supported modes and LED wiring.
-
-## Update, build, and verify
-
-Use an explicit image version in Compose. To update, back up the settings volume,
-change the version, then run:
+To run a different checkout, back up the settings volume, rebuild the image,
+and recreate the container:
 
 ```sh
-docker compose pull
-docker compose up -d
+docker build -t prysm:local .
+docker compose up -d --force-recreate
 ```
 
-`docker compose down` stops the service and preserves settings. Prysm starts idle
-after recreation. The settings format is JSON; old TOML configurations are not
-loaded or migrated.
-
-For a local development image, clone the repository and run
-`cargo xtask package docker` or `docker build -t prysm:local .`. To use it with
-Compose, set its `image` to `prysm:local` and omit the pull step. A first build
-compiles Rust dependencies; subsequent builds reuse Docker caches. Host Rust and
-Node.js are unnecessary for a direct Docker build.
-
-```sh
-python3 packaging/docker/smoke.py prysm:local
-```
-
-The smoke test creates and cleans temporary containers, a named volume and a
-bind directory. It checks first-run browser setup, embedded assets, environment
-and CLI precedence, non-root saves, failed writes, persistence and shutdown.
-CI runs it on native amd64 and arm64. See [image maintenance](../developers/packaging.md#docker).
+Prysm starts idle after recreation. For image checks and build details, see
+[developer packaging](../developers/packaging.md#docker).

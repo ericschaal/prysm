@@ -6,7 +6,7 @@ type NumericProcessing = Exclude<keyof Processing, 'remove_black_bars'>;
 export type Edge = keyof NonNullable<SettingsValues['output']>['leds'];
 export type InputType = Input['type'];
 export const inputLabels = {
-  webos: 'LG webOS sender',
+  webos: 'webOS capturer',
   device: 'USB capture device',
   file: 'Video file',
 } satisfies Record<InputType, string>;

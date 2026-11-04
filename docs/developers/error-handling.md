@@ -15,7 +15,7 @@ contract. Do not introduce a workspace-wide error enum.
 - Renderers retain dependency errors (`DDPError`).
 - Binaries and application orchestration use `anyhow`, adding context about the
   operation, device, file or destination. Convert typed errors here, not in
-  processing adapters. `prysm-core` stays dependency-free.
+  processing adapters. Keep application error dependencies out of `prysm-core`.
 
 Preserve sources with `#[source]`, `#[from]` and `anyhow::Context`; avoid converting
 errors into strings. macOS device input and runtime notification failures retain

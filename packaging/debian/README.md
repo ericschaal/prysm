@@ -10,9 +10,10 @@ sudo apt install ./prysm-led_*_arm64.deb
 sudo systemctl enable --now prysm
 ```
 
-Open `http://localhost:8787` on the host. Complete Settings with the video source,
-WLED HTTP URL and LED counts, save, select **Screen sync**, and turn the lights
-on. WLED needs DDP enabled; packets go to the URL's host on UDP 4048. Capture
+Open `http://localhost:8787` on the host. Setup walks through **Video source**,
+**Your lights**, and **Review & finish**. Enter the capture device, WLED HTTP URL
+and LED counts, then choose **Finish setup**. Select **Screen sync** and turn the
+lights on. WLED needs DDP enabled; packets go to the URL's host on UDP 4048. Capture
 starts idle on every restart. Use `journalctl -u prysm -f` for errors.
 
 For a headless host, run `sudo systemctl edit prysm` and add:
@@ -29,8 +30,8 @@ private VPN. CLI/environment configure the process on every startup and are neve
 
 The first successful browser save creates `/etc/prysm/settings.json`. The
 parent directory is owned by `prysm` with mode `0700` and must remain writable
-for atomic saves. No initial file is installed. Upgrades and removal preserve
-settings; purge deletes them. One process owns each settings directory.
+for atomic saves. No initial file is installed. Removing the package preserves settings; purging
+deletes them. One process owns each settings directory.
 
 For the full installation and package-build guides, see the
 [Prysm repository](https://github.com/ericschaal/prysm).
