@@ -1,11 +1,15 @@
 //! Shared settings fixtures for application unit tests.
+#[cfg(feature = "host-input")]
 use crate::settings::SettingsStore;
-use prysm_contract::{Config, Settings, UpdateSettings};
+use prysm_contract::Config;
+#[cfg(feature = "host-input")]
+use prysm_contract::{Settings, UpdateSettings};
 
 pub(crate) fn config() -> Config {
-    serde_json::from_str(include_str!("../tests/fixtures/config.json")).unwrap()
+    serde_json::from_str(include_str!("../../tests/fixtures/config.json")).unwrap()
 }
 
+#[cfg(feature = "host-input")]
 pub(crate) fn settings_value(config: &Config) -> serde_json::Value {
     let mut value = serde_json::to_value(config).unwrap();
     value.as_object_mut().unwrap().remove("revision");
@@ -15,12 +19,14 @@ pub(crate) fn settings_value(config: &Config) -> serde_json::Value {
     value
 }
 
+#[cfg(feature = "host-input")]
 pub(crate) fn store(directory: &tempfile::TempDir, config: &Config) -> SettingsStore {
     let path = directory.path().join("settings.json");
     std::fs::write(&path, serde_json::to_vec(&settings_value(config)).unwrap()).unwrap();
     SettingsStore::load(path).unwrap()
 }
 
+#[cfg(feature = "host-input")]
 pub(crate) fn update(app: &prysm_api::App, config: &Config) -> UpdateSettings {
     let settings: Settings = serde_json::from_value(settings_value(config)).unwrap();
     UpdateSettings {
@@ -29,8 +35,10 @@ pub(crate) fn update(app: &prysm_api::App, config: &Config) -> UpdateSettings {
     }
 }
 
+#[cfg(feature = "host-input")]
 pub(crate) type Tv =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+#[cfg(feature = "host-input")]
 pub(crate) async fn tv_socket(receiver: &prysm_capture::WebosReceiver) -> Tv {
     use futures::SinkExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

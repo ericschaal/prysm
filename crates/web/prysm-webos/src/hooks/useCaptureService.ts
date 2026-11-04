@@ -9,11 +9,7 @@ import {
   type ServiceBridge,
 } from '../service';
 
-import {
-  embeddedBuild,
-  sameOutput,
-  supportsEmbedded,
-} from '../processingLocation';
+import { supportsEmbedded } from '../processingLocation';
 
 const defaults: Config = {
   instanceUrl: null,
@@ -55,8 +51,6 @@ function unsaved(edits: Partial<Config>, saved: Config) {
   const remaining = { ...edits };
   for (const key of Object.keys(remaining) as (keyof Config)[]) {
     let equal = remaining[key] === saved[key];
-    if (key === 'embeddedOutput')
-      equal = sameOutput(remaining.embeddedOutput, saved.embeddedOutput);
     if (key === 'location')
       equal = (remaining.location ?? 'remote') === (saved.location ?? 'remote');
     if (equal) delete remaining[key];
@@ -71,7 +65,6 @@ function reducer(state: State, action: Action): State {
       const edits = unsaved(state.edits, status.config);
       if (!supportsEmbedded(status)) {
         delete edits.location;
-        delete edits.embeddedOutput;
       }
       if (action.method === 'cleanup') delete edits.autostart;
       return {
@@ -107,7 +100,7 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-type OpenSetup = (dialog: 'receiver' | 'wled') => void;
+type OpenSetup = (dialog: 'receiver') => void;
 
 export function useCaptureService() {
   const [client] = useState(createServiceClient);
@@ -269,22 +262,16 @@ export function useCaptureService() {
       },
     );
   }
-  function missingSetup(): 'receiver' | 'wled' | null {
-    if (embeddedBuild && embeddedAvailable && draft.location === 'embedded') {
-      return draft.embeddedOutput ? null : 'wled';
-    }
-    return draft.instanceUrl ? null : 'receiver';
+  function needsReceiver() {
+    return (
+      !(embeddedAvailable && draft.location === 'embedded') &&
+      !draft.instanceUrl
+    );
   }
   function saveSettings(openSetup: OpenSetup) {
-    const missing = missingSetup();
-    if (missing) {
-      notice(
-        missing === 'receiver'
-          ? 'Add the Prysm instance URL first.'
-          : 'Set the WLED address and LED counts first.',
-        true,
-      );
-      openSetup(missing);
+    if (needsReceiver()) {
+      notice('Add the Prysm instance URL first.', true);
+      openSetup('receiver');
       return;
     }
     request('setConfig');
@@ -323,12 +310,15 @@ export function useCaptureService() {
       request('stop');
       return;
     }
-    const missing = missingSetup();
-    if (missing) {
-      openSetup(missing);
+    if (needsReceiver()) {
+      openSetup('receiver');
       return;
     }
-    if (dirty) request('setConfig', true);
+    if (dirty)
+      request(
+        'setConfig',
+        draft.location !== 'embedded' || saved?.location === 'embedded',
+      );
     else request('start');
   }
 

@@ -4,6 +4,7 @@ default-members = ["apps/prysm"]
 members = [
     "xtask",
     "apps/prysm",
+    "apps/prysm/runtime",
     "apps/prysm-webos-capture",
     "apps/prysm-webos-capture/local",
     "apps/prysm-webos-service",

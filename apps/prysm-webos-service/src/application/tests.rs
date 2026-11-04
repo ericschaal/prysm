@@ -372,9 +372,12 @@ while :; do sleep 0.01; done
         &dir.path().join("prysm-webos-local"),
         r#"
 test "$1" = "--supervised" || exit 2
+test "$2" = "$(dirname "$0")/portal-settings.json" || exit 2
 echo "$PRYSM_WORKER_CONFIG" > "$0.startup"
+printf '%s\n' '{"type":"portal_ready","address":"192.0.2.1:8787"}' >&"$PRYSM_EVENTS_FD"
 while IFS= read -r -n 1 command; do
-  if [ "$command" = 0 ]; then printf '%s\n' '{"type":"capture_idle"}'; else printf '%s\n' '{"type":"capturing"}'; fi >&"$PRYSM_EVENTS_FD"
+  case "$command" in 0) event=capture_idle ;; p) event=capture_paused ;; *) event=capturing ;; esac
+  printf '{"type":"%s"}\n' "$event" >&"$PRYSM_EVENTS_FD"
 done
 "#,
     );
@@ -393,9 +396,6 @@ done
     let remote = app.state.config.clone();
     let embedded = Config {
         location: ProcessingLocation::Embedded,
-        embedded_output: Some(serde_json::from_value(serde_json::json!({
-            "type":"wled","url":"http://lights.example","leds":{"top":4,"right":2,"bottom":3,"left":2}
-        })).unwrap()),
         ..remote.clone()
     };
     let switched = operate(
@@ -419,10 +419,7 @@ done
     let startup: Value =
         serde_json::from_slice(&fs::read(dir.path().join("prysm-webos-local.startup")).unwrap())
             .unwrap();
-    assert_eq!(
-        startup["output"],
-        serde_json::to_value(&embedded.embedded_output).unwrap()
-    );
+    assert!(startup.get("output").is_none());
     assert!(startup.get("compression").is_none() && startup.get("instanceUrl").is_none());
     assert!(!app.state.contract().receiver_connected);
     // The remote URL is unchanged but inactive. Require a successful probe before switching back.
@@ -441,4 +438,94 @@ done
         !a.state.contract().capturing
     });
     operate(&mut app, AppRequest::Stop, now + Duration::from_secs(5)).unwrap();
+}
+
+#[test]
+#[cfg(feature = "embedded-prysm")]
+fn choosing_embedded_starts_an_idle_portal_and_cleanup_cannot_relaunch_it() {
+    use crate::config::ProcessingLocation;
+    fn until(app: &mut App, now: Instant, ready: impl Fn(&Supervisor) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !ready(&app.state) {
+            app.tick(now);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    let dir = sandbox();
+    let files = Files::sandbox(dir.path()).unwrap();
+    script(&files.scanner, "exit 0");
+    script(
+        &dir.path().join("prysm-webos-local"),
+        r#"
+printf '%s\n' '{"type":"portal_ready","address":"192.0.2.5:8787"}' >&"$PRYSM_EVENTS_FD"
+while IFS= read -r -n 1 command; do
+  case "$command" in 0) event=capture_idle ;; p) event=capture_paused ;; *) event=capturing ;; esac
+  printf '{"type":"%s"}\n' "$event" >&"$PRYSM_EVENTS_FD"
+done
+"#,
+    );
+    let mut app = App::new(files).unwrap();
+    let now = Instant::now();
+    app.power(Some("Active".into()), None, now);
+    let config = Config {
+        location: ProcessingLocation::Embedded,
+        ..Config::default()
+    };
+    operate(&mut app, AppRequest::SetConfig(Box::new(config)), now).unwrap();
+    until(&mut app, now, |s| s.contract().portal_url.is_some());
+    let pid = app.worker.as_ref().unwrap().child_id();
+    assert!(app.state.enabled && !app.state.contract().capturing);
+    assert!(dir.path().join("boot-hook").exists());
+    // Stop also needs an acknowledgement before the very first captured frame.
+    assert!(app.request(AppRequest::Stop, now).unwrap().is_none());
+    completion(&mut app, now);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    app.video_available(VideoAvailability::Available);
+    until(&mut app, now, |s| s.contract().capturing);
+    let paused = operate(&mut app, AppRequest::Stop, now).unwrap();
+    assert_eq!(paused["portalUrl"], "http://192.0.2.5:8787/");
+    assert_eq!(paused["capturing"], false);
+    assert_eq!(paused["enabled"], false);
+    assert_eq!(app.worker.as_ref().unwrap().child_id(), pid);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    until(&mut app, now, |s| s.contract().capturing);
+    app.power(Some("Screen Saver".into()), None, now);
+    until(&mut app, now, |s| !s.contract().capturing);
+    assert_eq!(app.worker.as_ref().unwrap().child_id(), pid);
+    assert!(app.state.contract().portal_url.is_some());
+    let cleaned = operate(&mut app, AppRequest::Cleanup, now).unwrap();
+    assert_eq!(cleaned["senderRunning"], false);
+    assert!(cleaned.get("portalUrl").is_none());
+    assert!(!dir.path().join("boot-hook").exists());
+    let mut reopened = App::new(Files::sandbox(dir.path()).unwrap()).unwrap();
+    reopened.power(Some("Active".into()), None, now);
+    reopened.tick(now);
+    assert!(reopened.worker.is_none());
+    assert_eq!(reopened.state.config.location, ProcessingLocation::Remote);
+    assert!(reopened.state.config.instance_url.is_none());
+}
+
+#[test]
+#[cfg(feature = "embedded-prysm")]
+fn leaving_embedded_restores_the_disabled_remote_selection() {
+    let now = Instant::now();
+    let remote = Config {
+        instance_url: Some("http://remote.test".parse().unwrap()),
+        ..Config::default()
+    };
+    let mut state = Supervisor::new(remote.clone());
+    assert!(!state.enabled);
+    state.configure(
+        Config {
+            location: crate::config::ProcessingLocation::Embedded,
+            ..remote.clone()
+        }
+        .try_into()
+        .unwrap(),
+        now,
+    );
+    assert!(state.enabled);
+    state.configure(remote.try_into().unwrap(), now);
+    assert!(!state.enabled);
 }

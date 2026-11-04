@@ -55,7 +55,7 @@ Add `--hardware-h264` for the experimental encoder. This requires SDK developmen
 files and TV runtime libraries for GStreamer/GLib, even when software encoding is
 selected. [Encoder details](hardware-h264.md).
 
-Add `--embedded-prysm` to include the experimental local processor and its
+Install the portal frontend dependencies with `cargo xtask setup host` before building the embedded variant. Add `--embedded-prysm` to include the shared web portal, experimental local processor and its
 executable-specific Luna role. The embedded package is written under
 `target/webos-ipk/embedded/` and has the same app ID as the standard package.
 The two flags can be combined. Hardware H.264 applies only to remote capture.
@@ -69,7 +69,6 @@ Push/manual CI artifacts last three days; PR builds do not upload. Install using
 
 ```sh
 npm test --prefix crates/web/prysm-webos
-node --test packaging/webos/tests/*.test.js
 python3 -m unittest discover -s packaging/webos/tests
 cargo test --locked -p prysm-webos-service --all-features
 cargo test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-capture

@@ -5,7 +5,7 @@ use crate::{config::CaptureTarget, supervisor::Event};
 use anyhow::Result;
 use prysm_webos_protocol::{
     WORKER_CONFIG_ENV,
-    worker::{VideoAvailability, VideoUpdate},
+    worker::{VideoAvailability, VideoCommand, VideoUpdate},
 };
 use std::{
     fs::File,
@@ -33,7 +33,12 @@ impl Worker {
     pub(crate) fn child_id(&self) -> u32 {
         self.child.id()
     }
-    pub fn spawn(binary: &Path, target: &CaptureTarget) -> Result<Self> {
+    pub fn spawn(
+        binary: &Path,
+        target: &CaptureTarget,
+        #[cfg_attr(not(feature = "embedded-prysm"), allow(unused_variables))]
+        portal_settings: &Path,
+    ) -> Result<Self> {
         let mut command = match target {
             CaptureTarget::Remote(config) => {
                 let mut command = Command::new(binary);
@@ -45,6 +50,7 @@ impl Worker {
                 let mut command = Command::new(binary.with_file_name("prysm-webos-local"));
                 command
                     .arg("--supervised")
+                    .arg(portal_settings)
                     .env(WORKER_CONFIG_ENV, serde_json::to_string(config)?);
                 command
             }
@@ -77,8 +83,18 @@ impl Worker {
         if self.video_sent == Some(update.availability) && !update.reset {
             return Ok(true);
         }
-        match self.control.write(&[update.command().into()]) {
-            Ok(1) => self.video_sent = Some(update.availability),
+        self.write_control(update.command(), update.availability)
+    }
+    pub fn request_pause(&mut self) -> Result<bool> {
+        self.write_control(VideoCommand::Pause, VideoAvailability::Unavailable)
+    }
+    fn write_control(
+        &mut self,
+        command: VideoCommand,
+        availability: VideoAvailability,
+    ) -> Result<bool> {
+        match self.control.write(&[command.into()]) {
+            Ok(1) => self.video_sent = Some(availability),
             Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(false),
             Err(error) => return Err(error.into()),
             Ok(_) => anyhow::bail!("worker control pipe closed"),
@@ -250,7 +266,8 @@ mod process_tests {
             &path,
             "printf '%s\\n' \"$#\" \"$PRYSM_WORKER_CONFIG\" > \"$0.startup\"; dd bs=1 count=6 >&2 2>/dev/null",
         );
-        let mut worker = Worker::spawn(&path, &target()).unwrap();
+        let mut worker =
+            Worker::spawn(&path, &target(), &dir.path().join("portal-settings.json")).unwrap();
         for (availability, reset) in [
             (VideoAvailability::Unavailable, false),
             (VideoAvailability::Unavailable, false),
@@ -306,7 +323,8 @@ mod process_tests {
             &path,
             "printf '{\"type\":\"con' >&\"$PRYSM_EVENTS_FD\"; sleep 0.02; printf 'nected\"}\\n' >&\"$PRYSM_EVENTS_FD\"; dd if=/dev/zero bs=8192 count=32 >&2 2>/dev/null; printf '%s\\n' '{\"type\":\"disconnected\"}' >&\"$PRYSM_EVENTS_FD\"",
         );
-        let mut worker = Worker::spawn(&path, &target()).unwrap();
+        let mut worker =
+            Worker::spawn(&path, &target(), &dir.path().join("portal-settings.json")).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut connected = false;
         let mut disconnected = false;
@@ -328,7 +346,14 @@ mod process_tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(connected && disconnected && logged);
-        assert!(Worker::spawn(&dir.path().join("missing"), &target()).is_err());
+        assert!(
+            Worker::spawn(
+                &dir.path().join("missing"),
+                &target(),
+                &dir.path().join("portal-settings.json")
+            )
+            .is_err()
+        );
     }
     #[test]
     fn event_eof_with_live_child_and_incomplete_last_line_fail_closed() {
@@ -339,7 +364,8 @@ mod process_tests {
             let dir = sandbox();
             let path = dir.path().join("worker");
             script(&path, body);
-            let mut worker = Worker::spawn(&path, &target()).unwrap();
+            let mut worker =
+                Worker::spawn(&path, &target(), &dir.path().join("portal-settings.json")).unwrap();
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
                 let update = worker.poll().unwrap();

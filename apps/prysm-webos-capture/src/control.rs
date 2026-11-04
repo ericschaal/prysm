@@ -43,6 +43,10 @@ impl Control {
         Ok(false)
     }
     pub fn poll(&mut self) -> Result<VideoUpdate> {
+        Ok(self.poll_with_pause()?.0)
+    }
+    pub(crate) fn poll_with_pause(&mut self) -> Result<(VideoUpdate, bool)> {
+        let mut pause = false;
         let mut update = VideoUpdate {
             availability: self.availability,
             reset: false,
@@ -52,7 +56,9 @@ impl Control {
             Ok(0) => bail!("supervisor control pipe closed"),
             Ok(n) => {
                 for byte in &bytes[..n] {
-                    update.apply(VideoCommand::try_from(*byte)?);
+                    let command = VideoCommand::try_from(*byte)?;
+                    pause |= command == VideoCommand::Pause;
+                    update.apply(command);
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => (),
@@ -60,7 +66,7 @@ impl Control {
             Err(error) => return Err(error.into()),
         }
         self.availability = update.availability;
-        Ok(update)
+        Ok((update, pause))
     }
 }
 

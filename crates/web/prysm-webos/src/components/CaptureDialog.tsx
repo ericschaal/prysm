@@ -2,7 +2,6 @@ import { useState, type ReactNode, type Ref } from 'react';
 import type { Config, Status } from '../service';
 import type { Dialog } from '../hooks/useRemoteNavigation';
 import ChoiceButton from './ChoiceButton';
-import WledSettings from './WledSettings';
 import { embeddedBuild, supportsEmbedded } from '../processingLocation';
 
 type ChoiceKey = 'source' | 'compression' | 'autostart';
@@ -92,22 +91,6 @@ export default function CaptureDialog({
               }}
             />
           </>
-        );
-      } else dialogTitle = 'Setting unavailable';
-      break;
-    case 'wled':
-      if (embeddedBuild && supportsEmbedded(status)) {
-        dialogTitle = 'WLED setup';
-        dialogDescription =
-          'Enter your controller and count LEDs along each edge. Use 0 for edges without LEDs.';
-        content = (
-          <WledSettings
-            saved={draft.embeddedOutput}
-            apply={(output) => {
-              edit('embeddedOutput', output);
-              closeDialog();
-            }}
-          />
         );
       } else dialogTitle = 'Setting unavailable';
       break;

@@ -113,7 +113,7 @@ export default function Calibration({
         if (!next.ended)
           deadline = window.setTimeout(() => {
             if (endedRef.current) return;
-            setError('Receiver connection lost. Reconnecting…');
+            setError('Connection to Prysm lost. Reconnecting…');
             setView(null);
           }, 30000);
       }

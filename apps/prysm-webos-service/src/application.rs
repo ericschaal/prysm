@@ -1,8 +1,8 @@
 //! Service operations, filesystem transactions, and process execution.
 use crate::{
-    config::Config,
+    config::{Config, ProcessingLocation},
     files::Files,
-    supervisor::{Action, Selection, Supervisor},
+    supervisor::{Action, Event, Selection, Supervisor},
     worker::Worker,
 };
 use anyhow::{Result, ensure};
@@ -27,6 +27,10 @@ pub enum AppRequest {
 
 /// The pending operation owns its subprocess until completion or cancellation.
 enum Pending {
+    Pause {
+        progress: PauseProgress,
+        deadline: Instant,
+    },
     Stop,
     Cleanup,
     Helper {
@@ -34,8 +38,16 @@ enum Pending {
         process: Helper,
     },
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PauseProgress {
+    Send,
+    AwaitRelease,
+    Released,
+}
+
 enum Operation {
     Verify(Box<Selection>),
+    SelectEmbedded(Box<Selection>),
     Start,
     Cleanup,
 }
@@ -60,7 +72,7 @@ pub struct App {
 impl App {
     pub fn new(files: Files) -> Result<Self> {
         let mut state = Supervisor::new(files.load()?);
-        if let Err(error) = files.autostart(state.config.autostart) {
+        if let Err(error) = files.autostart(state.config.needs_boot_hook()) {
             state.error = Some(format!("Restoring boot hook: {error:#}"));
         }
         Ok(Self {
@@ -100,9 +112,15 @@ impl App {
                 self.begin_scan(Operation::Start, now)?;
             }
             AppRequest::Stop => {
-                self.state.enabled = false;
-                self.state.stop(now, true);
-                self.pending = Some(Pending::Stop);
+                self.state.pause_capture(now);
+                self.pending = Some(if self.state.hosts_portal() {
+                    Pending::Pause {
+                        progress: PauseProgress::Send,
+                        deadline: now + Duration::from_secs(5),
+                    }
+                } else {
+                    Pending::Stop
+                });
             }
             AppRequest::SetConfig(config) => {
                 let selected = Selection::try_from(*config)?;
@@ -122,6 +140,11 @@ impl App {
                             deadline: now + Duration::from_secs(12),
                         },
                     });
+                } else if selected.preferences().location == ProcessingLocation::Embedded
+                    && !self.state.hosts_portal()
+                {
+                    self.files.manifest(true)?;
+                    self.begin_scan(Operation::SelectEmbedded(Box::new(selected)), now)?;
                 } else {
                     self.save(selected, now)?;
                 }
@@ -129,14 +152,18 @@ impl App {
             AppRequest::Cleanup => {
                 let mut config = self.state.config.clone();
                 config.autostart = false;
-                if config.instance_url.is_some() || config.embedded_output.is_some() {
+                let removing_portal = config.location == ProcessingLocation::Embedded;
+                config.location = ProcessingLocation::Remote;
+                if removing_portal
+                    || config.instance_url.is_some()
+                    || self.files.has_versioned_config()?
+                {
                     self.files.persist(&config)?;
                 } else {
                     self.files.autostart(false)?;
                 }
-                self.state.enabled = false;
                 self.state.config = config;
-                self.state.stop(now, true);
+                self.state.deactivate(now);
                 self.pending = Some(Pending::Cleanup);
             }
         }
@@ -184,7 +211,11 @@ impl App {
     fn execute(&mut self, now: Instant) -> Result<()> {
         for action in self.state.actions() {
             match action {
-                Action::Spawn(target) => match Worker::spawn(&self.files.worker, &target) {
+                Action::Spawn(target) => match Worker::spawn(
+                    &self.files.worker,
+                    &target,
+                    &self.files.portal_settings_path(),
+                ) {
                     Ok(worker) => self.worker = Some(worker),
                     Err(error) => {
                         self.state.error = Some(format!("{error:#}"));
@@ -210,7 +241,7 @@ impl App {
         let verifying = matches!(
             self.pending,
             Some(Pending::Helper {
-                operation: Operation::Verify(_),
+                operation: Operation::Verify(_) | Operation::SelectEmbedded(_),
                 ..
             })
         );
@@ -233,7 +264,25 @@ impl App {
     fn advance(&mut self, now: Instant) -> Result<Option<Value>> {
         if let Some(worker) = &mut self.worker {
             if !self.state.stopping {
-                match worker.update_video(self.video) {
+                let video = if self.state.capture_allowed() {
+                    self.video
+                } else {
+                    VideoUpdate {
+                        availability: VideoAvailability::Unavailable,
+                        reset: false,
+                    }
+                };
+                let delivery = match &mut self.pending {
+                    Some(Pending::Pause { progress, .. }) if *progress == PauseProgress::Send => {
+                        worker.request_pause().inspect(|sent| {
+                            if *sent {
+                                *progress = PauseProgress::AwaitRelease;
+                            }
+                        })
+                    }
+                    _ => worker.update_video(video),
+                };
+                match delivery {
                     Ok(true) => self.video.reset = false,
                     Ok(false) => (),
                     Err(error) => self.state.failed(format!("worker control: {error:#}"), now),
@@ -244,7 +293,17 @@ impl App {
                 Ok(update) => {
                     for event in update.events {
                         match event {
-                            Ok(event) => self.state.event(event, now),
+                            Ok(event) => {
+                                if event == Event::CapturePaused
+                                    && let Some(Pending::Pause {
+                                        progress: progress @ PauseProgress::AwaitRelease,
+                                        ..
+                                    }) = &mut self.pending
+                                {
+                                    *progress = PauseProgress::Released;
+                                }
+                                self.state.event(event, now);
+                            }
                             Err(error) if !self.state.stopping => self.state.failed(error, now),
                             Err(_) => (),
                         }
@@ -253,6 +312,9 @@ impl App {
                         self.state.log(log);
                     }
                     if let Some(exit) = update.exit {
+                        if let Some(Pending::Pause { progress, .. }) = &mut self.pending {
+                            *progress = PauseProgress::Released;
+                        }
                         self.worker = None;
                         self.state.closed(exit.success(), &exit.to_string(), now);
                     }
@@ -268,11 +330,22 @@ impl App {
             return Ok(None);
         };
         match pending {
+            Pending::Pause { progress, deadline }
+                if self.worker.is_some() && progress != PauseProgress::Released =>
+            {
+                if now >= deadline {
+                    self.state
+                        .failed("Timed out pausing native capture".into(), now);
+                    anyhow::bail!("Timed out pausing native capture");
+                }
+                self.pending = Some(Pending::Pause { progress, deadline });
+                return Ok(None);
+            }
             Pending::Stop | Pending::Cleanup if self.state.running => {
                 self.pending = Some(pending);
                 return Ok(None);
             }
-            Pending::Stop => (),
+            Pending::Stop | Pending::Pause { .. } => (),
             Pending::Cleanup => {
                 self.files.manifest(false)?;
                 self.begin_scan(Operation::Cleanup, now)?;
@@ -293,6 +366,10 @@ impl App {
                     });
                     return Ok(None);
                 };
+                if !matches!(operation, Operation::Verify(_)) {
+                    ensure!(!timed_out, "Luna service rescan timed out");
+                    ensure!(exit.success(), "Luna service rescan failed: {exit}");
+                }
                 match operation {
                     Operation::Verify(selected) => {
                         ensure!(!self.shutting_down, "Service is shutting down");
@@ -314,14 +391,15 @@ impl App {
                         }
                         self.save(*selected, now)?;
                     }
-                    Operation::Start | Operation::Cleanup => {
-                        ensure!(!timed_out, "Luna service rescan timed out");
-                        ensure!(exit.success(), "Luna service rescan failed: {exit}");
-                        if matches!(operation, Operation::Start) {
-                            ensure!(!self.shutting_down, "Service is shutting down");
-                            self.state.start(now)?;
-                        }
+                    Operation::SelectEmbedded(selected) => {
+                        ensure!(!self.shutting_down, "Service is shutting down");
+                        self.save(*selected, now)?;
                     }
+                    Operation::Start => {
+                        ensure!(!self.shutting_down, "Service is shutting down");
+                        self.state.start(now)?;
+                    }
+                    Operation::Cleanup => (),
                 }
                 self.execute(now)?;
             }
@@ -338,8 +416,7 @@ impl App {
         {
             let _ = helper.child.kill();
         }
-        self.state.enabled = false;
-        self.state.stop(now, true);
+        self.state.deactivate(now);
     }
     pub fn stopped(&self) -> bool {
         !self.state.running && self.pending.is_none()

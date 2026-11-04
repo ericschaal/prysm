@@ -14,6 +14,7 @@ export default function App() {
   const screenKey = [
     capture.embeddedAvailable,
     capture.saved?.location ?? 'remote',
+    capture.status?.portalUrl ?? '',
   ].join('-');
   return <CaptureScreen key={screenKey} capture={capture} />;
 }
@@ -25,10 +26,12 @@ function CaptureScreen({
 }) {
   const [calibrating, setCalibrating] = useState(false);
   const closeCalibration = useCallback(() => setCalibrating(false), []);
-  const calibrationOrigin =
-    calibrating &&
-    capture.saved?.location !== 'embedded' &&
-    capture.saved?.instanceUrl;
+  const embedded =
+    capture.embeddedAvailable && capture.saved?.location === 'embedded';
+  const origin = embedded
+    ? capture.status?.portalUrl?.replace(/\/$/, '')
+    : capture.saved?.instanceUrl;
+  const calibrationOrigin = calibrating && origin;
   const navigation = useRemoteNavigation(!!calibrationOrigin);
   const presentation = capturePresentation(
     capture.online,
@@ -54,6 +57,9 @@ function CaptureScreen({
               {...presentation}
               online={capture.online}
               changing={capture.changing}
+              portalUrl={
+                embedded ? (capture.status?.portalUrl ?? undefined) : undefined
+              }
               primary={() => capture.primary(navigation.openDialog)}
               openService={() => navigation.openDialog('service')}
             />
@@ -61,12 +67,13 @@ function CaptureScreen({
               online={capture.online}
               saved={capture.saved}
               embeddedAvailable={capture.embeddedAvailable}
+              calibrationAvailable={!embedded || !!origin}
               draft={capture.draft}
               dirty={capture.dirty}
               changing={capture.changing}
               edit={capture.edit}
               calibrate={() =>
-                capture.saved?.instanceUrl
+                origin
                   ? setCalibrating(true)
                   : navigation.openDialog('receiver')
               }

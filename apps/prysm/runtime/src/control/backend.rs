@@ -189,7 +189,7 @@ impl LightingBackend for LightingService {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests {
     use super::*;
     use crate::config::PipelineConfig;

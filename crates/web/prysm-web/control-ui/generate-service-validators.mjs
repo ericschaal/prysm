@@ -51,13 +51,6 @@ if (process.argv[2] === 'types') {
     if (field.format === 'uint32') field.maximum = 2 ** 32 - 1;
     if (field.format === 'uint64') field.maximum = Number.MAX_SAFE_INTEGER;
   }
-  // OpenAPI describes the u16 edge counts as int32. Enforce their actual wire range.
-  for (const field of Object.values(schemas.LedCounts.properties)) {
-    if (field.type === 'integer' && field.format === 'int32') {
-      delete field.format;
-      field.maximum = 65535;
-    }
-  }
   const ajv = new Ajv2020({
     code: { source: true, esm: true, lines: true },
     formats: { uint32: true, uint64: true },

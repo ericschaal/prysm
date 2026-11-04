@@ -6,8 +6,8 @@ use std::{io, num::NonZeroU32};
 
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
-use prysm_capture::{Frame, FramePool, PixelFormat};
 use prysm_core::CaptureResolution;
+use prysm_core::{Frame, FramePool, PixelFormat};
 use std::{
     pin::Pin,
     task::{Context as TaskContext, Poll},

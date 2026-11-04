@@ -22,6 +22,7 @@ export function capturePresentation(
     label = 'Set up service';
   } else if (online && status) {
     if (
+      !embedded &&
       enabled &&
       status.power === 'Active' &&
       status.videoAvailable === false
@@ -39,15 +40,17 @@ export function capturePresentation(
           : 'Prysm will reconnect when the TV wakes up.';
     } else if (embeddedBuild && embedded) {
       if (!enabled) {
-        title = 'Disabled';
-        description = 'Enable capture to run Prysm on this TV.';
+        title = 'TV capture paused';
+        description = 'The portal stays available while capture is paused.';
       } else if (status.capturing) {
         title = 'Capturing';
         description =
           'This TV is processing the picture and sending colors to WLED.';
       } else {
-        title = 'Starting local capture';
-        description = 'Prysm is waiting for its first lighting frame.';
+        title = status.portalUrl ? 'Prysm is ready' : 'Starting Prysm';
+        description = status.portalUrl
+          ? 'Use the web portal to set up your lights or start screen sync.'
+          : 'Waiting for the web portal to open.';
       }
     } else if (enabled && status.receiverBusy) {
       title = 'Receiver in use';
@@ -71,15 +74,14 @@ export function capturePresentation(
       title = 'Capture needs attention';
       description = 'Open Service options for diagnostics or repair.';
     }
-    if (enabled) label = 'Disable';
+    if (enabled) label = embedded ? 'Pause TV capture' : 'Disable';
     else if (
       embeddedBuild &&
       supportsEmbedded(status) &&
-      draft.location === 'embedded' &&
-      !draft.embeddedOutput
-    )
-      label = 'Set WLED output';
-    else if (draft.location !== 'embedded' && !draft.instanceUrl)
+      draft.location === 'embedded'
+    ) {
+      label = dirty && !embedded ? 'Use this TV' : 'Allow TV capture';
+    } else if (draft.location !== 'embedded' && !draft.instanceUrl)
       label = 'Set receiver address';
     else if (dirty) label = 'Save and enable';
     else label = 'Enable';

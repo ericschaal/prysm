@@ -82,12 +82,12 @@ pub(super) fn idle() -> PipelineStatus {
 impl Pipeline {
     pub(crate) fn with_preview(
         config: PipelineConfig,
-        receiver: prysm_capture::WebosReceiver,
+        inputs: impl Into<crate::input::Inputs>,
         preview: crate::preview::Publisher,
     ) -> (Self, watch::Receiver<PipelineStatus>) {
         let (status, updates) = watch::channel(idle());
         let (commands, incoming) = mpsc::channel(32);
-        let task = tokio::spawn(own(config, receiver, Some(preview), status, incoming));
+        let task = tokio::spawn(own(config, inputs.into(), Some(preview), status, incoming));
         (
             Self {
                 commands,
@@ -183,7 +183,7 @@ async fn configure_run(
 )]
 async fn own(
     mut config: PipelineConfig,
-    receiver: prysm_capture::WebosReceiver,
+    inputs: crate::input::Inputs,
     preview: Option<crate::preview::Publisher>,
     status: watch::Sender<PipelineStatus>,
     mut commands: mpsc::Receiver<Command>,
@@ -201,7 +201,7 @@ async fn own(
                             State::Starting { .. } | State::Stopping { .. } => { let _ = reply.send(Err(anyhow!("pipeline lifecycle change already running"))); },
                             _ => {
                                 status.send_replace(PipelineStatus { phase:PipelinePhase::Starting,..idle() });
-                                let input = InputSource::new(config.input.clone(),receiver.clone());
+                                let input = InputSource::new(config.input.clone(),inputs.clone());
                                 let launched = worker::launch(config.clone(), status.clone(), preview.clone(), input);
                                 match launched {
                                     Ok((session,ready)) => {
@@ -313,7 +313,7 @@ async fn own(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests {
     use super::*;
     use futures::{SinkExt, StreamExt};
@@ -475,5 +475,81 @@ mod tests {
         assert!(!run.task.is_finished());
         release.send(()).unwrap();
         assert_eq!(run.task.await.unwrap().unwrap(), PipelineExit::Stopped);
+    }
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+    use crate::{InputStream, NativeCapture, input::Inputs, preview::Preview};
+    use futures::{StreamExt as _, stream};
+    use prysm_contract::{CaptureResolution, Input};
+    use prysm_core::{FramePool, PixelFormat};
+    use std::{num::NonZeroU32, time::Duration};
+
+    struct NativeFrames {
+        released: CancellationToken,
+    }
+    impl NativeCapture for NativeFrames {
+        fn open(
+            &self,
+            resolution: CaptureResolution,
+            rate: NonZeroU32,
+            stop: CancellationToken,
+        ) -> Result<InputStream> {
+            assert_eq!(resolution.dimensions(), [4, 2]);
+            assert_eq!(rate.get(), 30);
+            let (tx, rx) = mpsc::channel(1);
+            let (available, availability) = watch::channel(true);
+            let released = self.released.clone();
+            let cleanup = tokio::task::spawn_blocking(move || {
+                let mut pool = FramePool::default();
+                while !stop.is_cancelled() {
+                    let mut frame = pool.acquire(4, 2, PixelFormat::RGB24)?;
+                    frame.as_mut_slice().fill(255);
+                    if tx.blocking_send(Ok(frame.finish())).is_err() {
+                        break;
+                    }
+                }
+                drop(available);
+                released.cancel();
+                Ok(())
+            });
+            Ok(InputStream::native(
+                stream::unfold(rx, |mut rx| async move { Some((rx.recv().await?, rx)) }).boxed(),
+                cleanup,
+                availability,
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn native_frames_enter_shared_processor_and_stop_joins_the_bounded_producer() {
+        let mut config = PipelineConfig::from(&crate::test_support::config());
+        config.input = Input::Webos {
+            capture_resolution: [4, 2].try_into().unwrap(),
+            refresh_rate_hz: 30.try_into().unwrap(),
+        };
+        let released = CancellationToken::new();
+        let inputs = Inputs::Native(Arc::new(NativeFrames {
+            released: released.clone(),
+        }));
+        let preview = Preview::new();
+        let (pipeline, mut status) = Pipeline::with_preview(config, inputs, preview.publisher());
+        pipeline.start().await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            status.wait_for(|state| state.frames_processed >= 2),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), pipeline.stop())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(released.is_cancelled());
+        pipeline.shutdown().await.unwrap();
+        preview.shutdown().await.unwrap();
     }
 }

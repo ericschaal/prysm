@@ -127,5 +127,5 @@ async fn websocket_session(url: &reqwest::Url, mut publish: impl FnMut(WledStatu
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests;

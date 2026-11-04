@@ -1949,32 +1949,19 @@ name = "prysm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "atomic-write-file",
  "axum",
- "base64 0.22.1",
  "clap",
  "futures",
- "image",
- "prysm-api",
- "prysm-capture",
  "prysm-contract",
- "prysm-core",
  "prysm-metrics",
- "prysm-processor",
- "prysm-renderer-wled",
- "prysm-web",
+ "prysm-runtime",
  "prysm-webos-protocol",
  "reqwest",
  "rustls",
- "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tower",
- "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2073,6 +2060,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "prysm-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atomic-write-file",
+ "axum",
+ "base64 0.22.1",
+ "futures",
+ "image",
+ "prysm-api",
+ "prysm-capture",
+ "prysm-contract",
+ "prysm-core",
+ "prysm-metrics",
+ "prysm-processor",
+ "prysm-renderer-wled",
+ "prysm-web",
+ "prysm-webos-protocol",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "prysm-web"
 version = "0.1.0"
 dependencies = [
@@ -2117,6 +2138,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cc",
+ "futures",
  "libc",
  "libloading 0.9.0",
  "nix",
@@ -2125,9 +2147,12 @@ dependencies = [
  "prysm-metrics",
  "prysm-processor",
  "prysm-renderer-wled",
+ "prysm-runtime",
  "prysm-webos-protocol",
  "rayon",
  "serde_json",
+ "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "yuv",
@@ -2141,7 +2166,6 @@ dependencies = [
  "h264-reader",
  "lz4_flex",
  "openh264",
- "prysm-contract",
  "serde",
  "serde_json",
  "url",

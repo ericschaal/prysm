@@ -544,18 +544,9 @@ test('subscriptions and actions reject replies that violate the service contract
     { ...f.value, capabilities: { hardwareH264: 'true' } },
     {
       ...f.value,
-      capabilities: { hardwareH264: false, embeddedPrysm: 'true' },
+      capabilities: { hardwareH264: false, embeddedPortal: 'true' },
     },
-    ...[-1, 0.5, 65536].map((top) => ({
-      ...f.value,
-      config: {
-        ...f.value.config,
-        embeddedOutput: {
-          ...embeddedOutput,
-          leds: { ...embeddedOutput.leds, top },
-        },
-      },
-    })),
+    { ...f.value, portalUrl: 8787 },
     { ...f.value, receiverBusy: 'false' },
     { ...f.value, subscribers: 2 ** 32 },
     { ...f.value, revision: Number.MAX_SAFE_INTEGER + 1 },
@@ -1240,88 +1231,121 @@ test('the instance editor displays the resolved LAN address before Save', async 
   }
 });
 
-const embeddedOutput = {
-  type: 'wled',
-  url: 'http://fixture-wled.local/',
-  leds: { top: 51, right: 31, bottom: 49, left: 31 },
-};
-
-test('processing location requires both build support and the installed service capability', async (t) => {
+const portalUrl = 'http://192.0.2.10:8787/';
+test('processing location requires the portal build and matching service', async (t) => {
   const f = await fixture(t);
   assert.equal(f.el('location'), null);
-  f.value.capabilities.embeddedPrysm = true;
+  f.value.capabilities.embeddedPortal = true;
   await f.notify();
   assert.equal(!!f.el('location'), embeddedBuild);
   assert.equal(script.includes('On this TV (experimental)'), embeddedBuild);
-  assert.equal(script.includes('Use this setup'), embeddedBuild);
+  assert.equal(script.includes('Use this setup'), false);
+  assert.equal(script.includes('Prysm web portal'), embeddedBuild);
+});
+
+test('a mismatched service with TV-owned lighting settings cannot be edited', async (t) => {
+  const f = await fixture(t, { capabilities: { embeddedPrysm: true } });
+  assert.equal(f.el('location'), null);
+  assert.match(f.el('notice').textContent, /matching Prysm Capture package/);
+  assert.deepEqual(f.mutations(), []);
 });
 
 test(
-  'local setup needs WLED and valid LED counts, then starts without a receiver',
+  'embedded selection needs no receiver or WLED and the portal remains visible while paused',
   { skip: !embeddedBuild },
   async (t) => {
     const f = await fixture(t, {
       config: { instanceUrl: null },
-      capabilities: { embeddedPrysm: true },
+      capabilities: { embeddedPortal: true },
     });
     await f.key(39);
-    assert.equal(f.focus(), 'location');
     await f.click('location');
-    assert.equal(f.focus(), 'choice-remote');
     await f.click('choice-embedded');
     assert.equal(f.focus(), 'location');
-    assert.equal(f.el('receiver'), null);
-    assert.equal(f.el('compression'), null);
-    assert.equal(f.el('calibrate'), null);
-    assert.equal(f.el('primary').textContent, 'Set WLED output');
+    for (const id of [
+      'receiver',
+      'compression',
+      'wled',
+      'calibrate',
+      'portal-address',
+    ]) {
+      assert.equal(f.el(id), null);
+    }
+    assert.equal(f.el('primary').textContent, 'Use this TV');
     await f.click('primary');
-    assert.equal(f.focus(), 'wled-url');
-    await f.input('wled-url', 'http://host/invalid');
-    await f.click('wled-apply');
-    assert.match(f.el('dialog-body').textContent, /base URL/);
-    await f.input('wled-url', 'fixture-wled.local');
-    await f.click('wled-apply');
-    assert.match(f.el('dialog-body').textContent, /65535/);
-    await f.input('led-top', '65535');
-    await f.input('led-left', '1');
-    await f.click('wled-apply');
-    assert.match(f.el('dialog-body').textContent, /65535/);
-    await f.input('led-top', '2.5');
-    await f.click('wled-apply');
-    assert.match(f.el('dialog-body').textContent, /whole number/);
-    for (const [edge, count] of Object.entries(embeddedOutput.leds))
-      await f.input('led-' + edge, String(count));
-    await f.click('wled-apply');
-    assert.equal(f.el('modal'), null);
-    assert.equal(f.el('primary').textContent, 'Save and enable');
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      ['setConfig'],
+    );
+    assert.equal(f.value.config.instanceUrl, null);
+    assert.equal(f.value.config.location, 'embedded');
+    assert.equal('embeddedOutput' in f.value.config, false);
+    f.value.enabled = true;
+    f.value.senderRunning = true;
+    f.value.portalUrl = portalUrl;
+    await f.notify();
+    assert.match(f.el('portal-address').textContent, /192\.0\.2\.10:8787/);
+    assert.equal(f.el('status-title').textContent, 'Prysm is ready');
+    await f.click('primary');
+    assert.equal(f.mutations().at(-1).method, 'stop');
+    assert.equal(f.el('status-title').textContent, 'TV capture paused');
+    assert.equal(
+      f.el('portal-address').querySelector('code').textContent,
+      portalUrl,
+    );
+    delete f.value.portalUrl;
+    f.value.error = 'cannot bind portal';
+    await f.notify();
+    assert.equal(f.el('portal-address'), null);
+    assert.equal(f.el('calibrate'), null);
+    assert.equal(f.el('status-title').textContent, 'Capture needs attention');
+  },
+);
+
+test(
+  'allow TV capture saves pending embedded edits before resuming',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, {
+      config: { location: 'embedded' },
+      capabilities: { embeddedPortal: true },
+    });
+    await f.click('source');
+    await f.click('choice-video');
+    assert.equal(f.el('primary').textContent, 'Allow TV capture');
     await f.click('primary');
     assert.deepEqual(
       f.mutations().map(({ method }) => method),
       ['setConfig', 'start'],
     );
-    assert.equal(f.value.config.instanceUrl, null);
-    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
-    assert.equal(f.value.config.location, 'embedded');
-    assert.equal(f.el('status-title').textContent, 'Starting local capture');
-    f.value.capturing = true;
-    await f.notify();
-    assert.equal(f.el('status-title').textContent, 'Capturing');
-    assert.equal(f.w.document.querySelector('.ready') !== null, true);
-    assert.match(f.el('status-description').textContent, /WLED/);
-    f.value.videoAvailable = false;
-    await f.notify();
-    assert.equal(f.el('status-title').textContent, 'Waiting for video');
+    assert.equal(f.value.config.source, 'video');
   },
 );
 
 test(
-  'switching modes preserves inactive settings and reports the saved runtime until Save',
+  'the embedded calibration relay uses the actual local portal origin',
   { skip: !embeddedBuild },
   async (t) => {
     const f = await fixture(t, {
-      capabilities: { embeddedPrysm: true },
-      config: { embeddedOutput },
+      config: { location: 'embedded', instanceUrl: 'https://remote.example' },
+      capabilities: { embeddedPortal: true },
     });
+    f.value.portalUrl = portalUrl;
+    await f.notify();
+    f.w.setInterval = () => 42;
+    await f.click('calibrate');
+    assert.equal(
+      f.w.document.querySelector('iframe').src,
+      portalUrl + 'calibration-tv.html',
+    );
+  },
+);
+
+test(
+  'mode changes preserve receiver preferences and describe the running mode until saved',
+  { skip: !embeddedBuild },
+  async (t) => {
+    const f = await fixture(t, { capabilities: { embeddedPortal: true } });
     f.value.enabled = true;
     f.value.receiverConnected = true;
     f.value.capturing = true;
@@ -1329,53 +1353,33 @@ test(
     await f.click('location');
     await f.click('choice-embedded');
     assert.match(f.el('status-description').textContent, /sent to Prysm/);
-    await f.click('wled');
-    await f.click('wled-apply');
-    await f.notify();
     await f.click('save');
     assert.equal(f.value.config.instanceUrl, 'http://192.168.18.18:8787');
     await f.click('location');
     await f.click('choice-remote');
     assert.ok(f.el('compression'));
-    assert.equal(
-      f.el('calibrate'),
-      null,
-      'calibration needs a saved remote selection',
-    );
-    f.el('autostart').focus();
-    await f.key(40);
-    assert.equal(f.focus(), 'metrics');
+    assert.equal(f.el('calibrate'), null);
     await f.click('save');
-    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
-    assert.equal(f.el('calibrate').disabled, false);
-    await f.click('location');
-    await f.click('choice-embedded');
-    await f.click('wled');
-    delete f.value.capabilities.embeddedPrysm;
-    await f.notify();
-    assert.equal(f.el('modal'), null);
-    assert.equal(f.el('location'), null);
-    assert.equal(f.el('save').disabled, true);
+    assert.ok(f.el('calibrate'));
+    assert.equal(f.el('portal-address'), null);
   },
 );
 
 test(
-  'a standard UI never enables embedded processing on a mismatched service',
+  'a standard UI cannot start embedded mode on a mismatched service',
   { skip: embeddedBuild },
   async (t) => {
     const f = await fixture(t, {
-      capabilities: { embeddedPrysm: true },
-      config: { location: 'embedded', embeddedOutput },
+      capabilities: { embeddedPortal: true },
+      config: { location: 'embedded' },
     });
     assert.equal(f.el('location'), null);
-    assert.equal(f.el('primary').textContent, 'Save and enable');
     await f.click('primary');
     assert.deepEqual(
       f.mutations().map(({ method }) => method),
       ['setConfig', 'start'],
     );
     assert.equal(f.value.config.location, 'remote');
-    assert.deepEqual(f.value.config.embeddedOutput, embeddedOutput);
   },
 );
 
@@ -1384,8 +1388,7 @@ test(
   { skip: !embeddedBuild },
   async (t) => {
     const f = await fixture(t, {
-      capabilities: { embeddedPrysm: true },
-      config: { embeddedOutput },
+      capabilities: { embeddedPortal: true },
       deferMethods: ['setConfig'],
     });
     await f.click('metrics');

@@ -1,7 +1,7 @@
 import type { Config, Status, ServiceBridge } from './service';
 
 // In-memory Luna simulation for the Vite dev server; removed from TV builds.
-export function installDevService(embeddedPrysm = false) {
+export function installDevService(embeddedPortal = false) {
   if (typeof PalmServiceBridge !== 'undefined') return;
   document.title = 'Prysm Capture · Simulated TV';
   const subscriptions = new Set<DevBridge>();
@@ -30,9 +30,10 @@ export function installDevService(embeddedPrysm = false) {
     lastLog: 'Local development: simulated TV service.',
     capabilities: {
       hardwareH264: true,
-      ...(embeddedPrysm ? { embeddedPrysm: true } : {}),
+      ...(embeddedPortal ? { embeddedPortal: true } : {}),
     },
   };
+  let remoteEnabled = false;
   class DevBridge implements ServiceBridge {
     onservicecallback: (text: string) => void = () => {};
     cancel() {
@@ -45,19 +46,44 @@ export function installDevService(embeddedPrysm = false) {
         case 'status':
           subscriptions.add(this);
           break;
-        case 'setConfig':
+        case 'setConfig': {
+          const wasEmbedded = status.config.location === 'embedded';
           status.config = data as Config;
+          if (status.config.location === 'embedded') {
+            if (!wasEmbedded) {
+              remoteEnabled = status.enabled;
+              status.enabled = true;
+            }
+            status.senderRunning = true;
+            status.receiverConnected = false;
+            status.capturing = false;
+            status.portalUrl = 'http://localhost:8787/';
+          } else if (wasEmbedded) {
+            delete status.portalUrl;
+            status.senderRunning =
+              status.enabled =
+              status.receiverConnected =
+              status.capturing =
+                remoteEnabled;
+          }
           break;
+        }
         case 'start':
         case 'stop':
         case 'cleanup':
-          status.enabled =
-            status.senderRunning =
-            status.capturing =
-              method === 'start';
+          status.enabled = method === 'start';
+          status.senderRunning =
+            status.enabled ||
+            (status.config.location === 'embedded' && method !== 'cleanup');
+          status.capturing =
+            status.enabled && status.config.location !== 'embedded';
           status.receiverConnected =
             status.enabled && status.config.location !== 'embedded';
-          if (method === 'cleanup') status.config.autostart = false;
+          if (method === 'cleanup') {
+            status.config.autostart = false;
+            delete status.config.location;
+            delete status.portalUrl;
+          }
           break;
         case 'exec':
           this.onservicecallback(JSON.stringify({ returnValue: true }));

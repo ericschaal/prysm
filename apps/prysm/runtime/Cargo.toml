@@ -1,0 +1,52 @@
+[package]
+name = "prysm-runtime"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Prysm portal, controller and lighting pipeline"
+
+[features]
+default = ["host-input"]
+host-input = ["dep:prysm-capture"]
+
+[lints]
+workspace = true
+
+[dependencies]
+prysm-metrics = { path = "../../../crates/common/prysm-metrics" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+prysm-capture = { path = "../../../crates/capture/prysm-capture", optional = true }
+prysm-core = { path = "../../../crates/common/prysm-core" }
+prysm-processor = { path = "../../../crates/processing/prysm-processor" }
+prysm-renderer-wled = { path = "../../../crates/rendering/prysm-renderer-wled" }
+tokio-util.workspace = true
+tokio-tungstenite.workspace = true
+
+prysm-contract = { path = "../../../crates/common/prysm-contract" }
+
+axum = { workspace = true, features = ["ws"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+base64 = "0.22"
+rustls.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls-no-provider"] }
+serde_json.workspace = true
+prysm-api = { path = "../../../crates/common/prysm-api" }
+prysm-web = { path = "../../../crates/web/prysm-web" }
+tower-http = { workspace = true, features = ["csrf"] }
+atomic-write-file.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+prysm-webos-protocol = { path = "../../../crates/capture/prysm-webos-protocol" }
+tower = { workspace = true, features = ["util"] }

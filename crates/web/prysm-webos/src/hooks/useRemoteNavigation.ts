@@ -10,7 +10,6 @@ import {
 
 export type Dialog =
   | 'location'
-  | 'wled'
   | 'receiver'
   | 'source'
   | 'compression'

@@ -1,5 +1,4 @@
 //! Saved preferences and their resolution into a runnable capture target.
-use prysm_contract::Output;
 use prysm_webos_protocol::{Compression, InstanceUrl, Source, WorkerConfig};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -29,12 +28,6 @@ impl ProcessingLocation {
 pub struct Config {
     #[serde(default, skip_serializing_if = "ProcessingLocation::is_remote")]
     pub location: ProcessingLocation,
-    #[serde(
-        default,
-        rename = "embeddedOutput",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub embedded_output: Option<Output>,
     #[serde(rename = "instanceUrl")]
     #[cfg_attr(feature = "schema", schema(value_type = Option<String>, required = true))]
     pub instance_url: Option<InstanceUrl>,
@@ -48,7 +41,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             location: ProcessingLocation::Remote,
-            embedded_output: None,
             instance_url: None,
             source: Source::Both,
             compression: Compression::Lz4,
@@ -74,13 +66,15 @@ pub enum SetupError {
     UnsupportedEncoder,
     #[error("Embedded Prysm is not included in this build")]
     UnsupportedEmbedded,
-    #[error("Configure the WLED address and LED layout")]
-    MissingOutput,
-    #[error("Invalid WLED output: {0}")]
-    InvalidOutput(#[source] anyhow::Error),
 }
 
 impl Config {
+    /// The TV boot hook activates the service independently of capture eligibility.
+    #[must_use]
+    pub fn needs_boot_hook(&self) -> bool {
+        self.autostart || self.location == ProcessingLocation::Embedded
+    }
+
     pub fn resolve(&self) -> Result<CaptureTarget, SetupError> {
         match self.location {
             ProcessingLocation::Remote => {
@@ -91,20 +85,12 @@ impl Config {
                 self.remote_worker().map(CaptureTarget::Remote)
             }
             #[cfg(feature = "embedded-prysm")]
-            ProcessingLocation::Embedded => {
-                let output = self
-                    .embedded_output
-                    .as_ref()
-                    .ok_or(SetupError::MissingOutput)?;
-                output.validate().map_err(SetupError::InvalidOutput)?;
-                Ok(CaptureTarget::Embedded(
-                    prysm_webos_protocol::worker::EmbeddedWorkerConfig {
-                        output: output.clone(),
-                        source: self.source,
-                        metrics: self.metrics,
-                    },
-                ))
-            }
+            ProcessingLocation::Embedded => Ok(CaptureTarget::Embedded(
+                prysm_webos_protocol::worker::EmbeddedWorkerConfig {
+                    source: self.source,
+                    metrics: self.metrics,
+                },
+            )),
             #[cfg(not(feature = "embedded-prysm"))]
             ProcessingLocation::Embedded => Err(SetupError::UnsupportedEmbedded),
         }
@@ -130,7 +116,7 @@ impl Config {
             }
         }
         match self.resolve() {
-            Ok(_) | Err(SetupError::MissingReceiver | SetupError::MissingOutput) => Ok(self),
+            Ok(_) | Err(SetupError::MissingReceiver) => Ok(self),
             Err(error) => Err(error.into()),
         }
     }
@@ -147,28 +133,26 @@ mod tests {
     }
 
     fn local() -> Config {
-        serde_json::from_value(serde_json::json!({
-            "location":"embedded", "instanceUrl": null, "source":"video", "compression":"h264-hardware",
-            "autostart":true, "metrics":true,
-            "embeddedOutput":{"type":"wled","url":"http://127.0.0.1/",
-                "leds":{"top":51,"right":31,"bottom":49,"left":31}}
-        })).unwrap()
+        Config {
+            location: ProcessingLocation::Embedded,
+            source: Source::Video,
+            compression: Compression::H264Hardware,
+            metrics: true,
+            ..Config::default()
+        }
     }
     #[test]
-    fn selected_mode_is_the_only_source_of_worker_settings() {
+    fn embedded_selection_needs_neither_a_receiver_nor_portal_settings() {
         let mut prefs = local();
         #[cfg(feature = "embedded-prysm")]
         {
             let CaptureTarget::Embedded(startup) = prefs.resolve().unwrap() else {
                 panic!("wrong target")
             };
-            assert_eq!(startup.output, prefs.embedded_output.clone().unwrap());
-            assert_eq!(startup.source, Source::Video);
-            assert!(startup.metrics);
-            let wire = serde_json::to_value(startup).unwrap();
-            assert!(wire.get("compression").is_none() && wire.get("instanceUrl").is_none());
-            prefs.embedded_output = None;
-            assert!(matches!(prefs.resolve(), Err(SetupError::MissingOutput)));
+            assert_eq!(
+                serde_json::to_value(startup).unwrap(),
+                serde_json::json!({"source":"video","metrics":true})
+            );
         }
         #[cfg(not(feature = "embedded-prysm"))]
         assert!(matches!(
@@ -180,19 +164,10 @@ mod tests {
         assert!(matches!(prefs.resolve(), Err(SetupError::MissingReceiver)));
     }
     #[test]
-    fn embedded_output_validates_url_and_four_edge_counts_at_the_wire_boundary() {
-        for leds in [
-            serde_json::json!({"top":0,"right":0,"bottom":0,"left":0}),
-            serde_json::json!({"top":65535,"right":1,"bottom":0,"left":0}),
-            serde_json::json!({"top":1,"right":-1,"bottom":0,"left":0}),
-        ] {
-            let mut wire = serde_json::to_value(local()).unwrap();
-            wire["embeddedOutput"]["leds"] = leds;
-            assert!(serde_json::from_value::<Config>(wire).is_err());
-        }
-        let mut wire = serde_json::to_value(local()).unwrap();
-        wire["embeddedOutput"]["url"] = serde_json::json!("file:///tmp/target");
-        assert!(serde_json::from_value::<Config>(wire).is_err());
+    fn luna_does_not_accept_portal_settings() {
+        let mut input = serde_json::to_value(local()).unwrap();
+        input["embeddedOutput"] = serde_json::json!({"type":"wled","url":"http://somewhere/","leds":{"top":10,"right":5,"bottom":10,"left":5}});
+        assert!(serde_json::from_value::<Config>(input).is_err());
     }
     #[test]
     fn hardware_compression_requires_the_build_feature() {

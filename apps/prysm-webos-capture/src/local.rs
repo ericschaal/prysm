@@ -6,6 +6,7 @@ pub mod control;
 #[allow(unsafe_code)]
 pub mod events;
 mod lock;
+#[cfg(feature = "embedded-prysm")]
 mod metrics;
 #[allow(unsafe_code)]
 pub mod native;
@@ -13,6 +14,8 @@ pub mod native;
 #[allow(unsafe_code)]
 mod nv12;
 mod pixels;
+#[cfg(feature = "embedded-prysm")]
+mod portal;
 mod shutdown;
 
 use anyhow::{Context, Result, ensure};
@@ -62,13 +65,12 @@ fn rgb(pool: &mut FramePool, header: prysm_webos_protocol::Header, raw: &[u8]) -
     Ok(frame.finish())
 }
 
-/// Capture and lighting settings after crossing either startup boundary.
+/// Settings for the standalone profiling runner.
 struct Job {
     capture: config::CaptureOptions,
     source: config::Source,
     processing: prysm_core::Config,
     output: Output,
-    metrics: bool,
 }
 
 impl Job {
@@ -95,45 +97,23 @@ impl Job {
             source: config::Source::Both,
             processing,
             output: settings.output.context("missing WLED output")?,
-            metrics: false,
-        })
-    }
-
-    #[cfg(feature = "embedded-prysm")]
-    fn from_supervisor() -> Result<Self> {
-        let config: prysm_webos_protocol::worker::EmbeddedWorkerConfig = serde_json::from_str(
-            &std::env::var(prysm_webos_protocol::WORKER_CONFIG_ENV)
-                .context("missing embedded worker configuration")?,
-        )?;
-        config.output.validate()?;
-        Ok(Self {
-            capture: config::CaptureOptions {
-                width: 1280,
-                height: 720,
-                fps: 30,
-            },
-            source: config.source,
-            processing: prysm_contract::ProcessingSettings::default().to_core(),
-            output: config.output,
-            metrics: config.metrics,
         })
     }
 }
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(feature = "embedded-prysm")]
+    if let [mode, path] = args.as_slice()
+        && mode == "--supervised"
+    {
+        return portal::serve(Path::new(path));
+    }
     let [arg] = args.as_slice() else {
         anyhow::bail!("usage: prysm-webos-local SETTINGS.json")
     };
-    #[cfg(feature = "embedded-prysm")]
-    if arg == "--supervised" {
-        let mut events = events::Events::from_environment()?;
-        let job = report(Job::from_supervisor(), &mut events)?;
-        let control = report(control::Control::from_stdin(), &mut events)?;
-        return run(&job, Some(control), &mut events);
-    }
     let mut events = events::Events::from_file(File::options().write(true).open("/dev/null")?);
-    run(&Job::from_file(Path::new(arg))?, None, &mut events)
+    run(&Job::from_file(Path::new(arg))?, &mut events)
 }
 
 fn report<T>(result: Result<T>, events: &mut events::Events) -> Result<T> {
@@ -145,7 +125,7 @@ fn report<T>(result: Result<T>, events: &mut events::Events) -> Result<T> {
     result
 }
 
-fn run(job: &Job, control: Option<control::Control>, events: &mut events::Events) -> Result<()> {
+fn run(job: &Job, events: &mut events::Events) -> Result<()> {
     if !cfg!(target_os = "linux") || !nix::unistd::Uid::effective().is_root() {
         return report(
             Err(anyhow::anyhow!("TV capture requires webOS root")),
@@ -161,10 +141,9 @@ fn run(job: &Job, control: Option<control::Control>, events: &mut events::Events
         .with_ansi(false)
         .with_writer(std::io::stderr)
         .init();
-    let _metrics = metrics::exporter(job.metrics);
     let mut pipeline = report(Pipeline::new(job), events)?;
     // Publish the original failure before any potentially blocking vendor teardown.
-    let result = report(pipeline.run(job, control, events, &stop), events);
+    let result = report(pipeline.run(job, events, &stop), events);
     let release = pipeline.capture.release_video(events);
     result.and_then(|()| report(release, events))
 }
@@ -205,7 +184,6 @@ impl Pipeline {
     fn run(
         &mut self,
         job: &Job,
-        mut control: Option<control::Control>,
         events: &mut events::Events,
         stop: &std::sync::atomic::AtomicBool,
     ) -> Result<()> {
@@ -216,23 +194,6 @@ impl Pipeline {
         let mut next_capture = start;
         let period = Duration::from_secs(1) / u32::from(job.capture.fps);
         while !stop.load(Ordering::Relaxed) {
-            if let Some(control) = &mut control {
-                let update = control.poll()?;
-                if update.reset || !update.availability.allows_capture() {
-                    if published {
-                        events.send(&events::Event::CaptureIdle)?;
-                        published = false;
-                    }
-                    self.capture.release_video(events)?;
-                    self.processor = PrysmProcessor::new(&job.processing);
-                    self.capture.set_video_available(false);
-                    if !update.availability.allows_capture() && !control.wait_for_video(stop)? {
-                        break;
-                    }
-                    self.capture.set_video_available(true);
-                    next_capture = Instant::now();
-                }
-            }
             if self.render(job.source, events)? {
                 frames += 1;
                 if !published {
@@ -263,7 +224,7 @@ impl Pipeline {
             elapsed_ms = start.elapsed().as_millis(),
             "local capture stopped"
         );
-        ensure!(control.is_some() || frames > 0, "no frames rendered");
+        ensure!(frames > 0, "no frames rendered");
         Ok(())
     }
 }

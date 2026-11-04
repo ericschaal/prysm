@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddedWorkerConfig {
-    pub output: prysm_contract::Output,
     pub source: crate::Source,
     pub metrics: bool,
 }
@@ -20,11 +19,18 @@ pub enum WorkerEvent {
     VideoResetting,
     VideoReset,
     Connected,
+    PortalReady {
+        address: std::net::SocketAddr,
+    },
     ReceiverBusy,
     Capturing,
     CaptureIdle,
+    /// All native capture resources have been released after an explicit pause.
+    CapturePaused,
     Disconnected,
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +51,8 @@ impl VideoAvailability {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VideoCommand {
     Availability(VideoAvailability),
+    /// Withdraw native capture permission and request a release acknowledgement.
+    Pause,
     /// Reset the video client and permit capture, including unknown-readiness fallback.
     Reset,
 }
@@ -56,6 +64,7 @@ impl From<VideoCommand> for u8 {
             VideoCommand::Availability(VideoAvailability::Available) => b'1',
             VideoCommand::Availability(VideoAvailability::Unknown) => b'?',
             VideoCommand::Reset => b'r',
+            VideoCommand::Pause => b'p',
         }
     }
 }
@@ -69,6 +78,7 @@ impl TryFrom<u8> for VideoCommand {
             b'1' => Ok(Self::Availability(VideoAvailability::Available)),
             b'?' => Ok(Self::Availability(VideoAvailability::Unknown)),
             b'r' => Ok(Self::Reset),
+            b'p' => Ok(Self::Pause),
             _ => bail!("invalid supervisor command"),
         }
     }
@@ -90,6 +100,7 @@ impl VideoUpdate {
     pub fn apply(&mut self, command: VideoCommand) {
         match command {
             VideoCommand::Availability(availability) => self.observe(availability),
+            VideoCommand::Pause => self.observe(VideoAvailability::Unavailable),
             VideoCommand::Reset => {
                 self.availability = VideoAvailability::Available;
                 self.reset = true;
@@ -124,6 +135,7 @@ mod tests {
             ),
             (b'?', VideoCommand::Availability(VideoAvailability::Unknown)),
             (b'r', VideoCommand::Reset),
+            (b'p', VideoCommand::Pause),
         ] {
             assert_eq!(u8::from(command), byte);
             assert_eq!(VideoCommand::try_from(byte).unwrap(), command);

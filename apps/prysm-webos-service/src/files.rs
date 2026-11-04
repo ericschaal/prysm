@@ -111,34 +111,95 @@ impl Files {
         })
     }
     pub fn load(&self) -> Result<Config> {
-        for name in ["config-v2.json", "config.json"] {
-            if let Some(data) = read_file(&self.root.join(name), MAX_CONFIG_BYTES)? {
-                return serde_json::from_slice::<Config>(&data)?.restore();
-            }
+        let current = self.root.join("config-v3.json");
+        if let Some(data) = read_file(&current, MAX_CONFIG_BYTES)? {
+            return serde_json::from_slice::<Config>(&data)?.restore();
         }
-        Ok(Config::default())
+        if let Some(data) = read_file(&self.root.join("config-v2.json"), MAX_CONFIG_BYTES)? {
+            // The portal owns lighting settings. Only this on-disk migration accepts embeddedOutput.
+            let mut saved: serde_json::Value = serde_json::from_slice(&data)?;
+            let output = saved
+                .as_object_mut()
+                .and_then(|o| o.remove("embeddedOutput"));
+            let config: Config = serde_json::from_value(saved)?;
+            config.clone().restore()?;
+            if let Some(output) = output.filter(|o| !o.is_null()) {
+                self.migrate_output(output)?;
+            }
+            // Publish the migration marker last. A crash before this point can retry
+            // without overwriting the portal store or changing the v2 rollback snapshot.
+            self.create_once(&current, &config)?;
+            let data =
+                read_file(&current, MAX_CONFIG_BYTES)?.context("missing migrated preferences")?;
+            return serde_json::from_slice::<Config>(&data)?.restore();
+        }
+        match read_file(&self.root.join("config.json"), MAX_CONFIG_BYTES)? {
+            Some(data) => serde_json::from_slice::<Config>(&data)?.restore(),
+            None => Ok(Config::default()),
+        }
     }
-    pub fn persist(&self, value: &Config) -> Result<()> {
-        // A pre-feature service strictly decodes config.json. Leave that snapshot
-        // intact once an extended preference first requires the versioned file.
-        let versioned = self.root.join("config-v2.json");
-        let extended = read_file(&versioned, MAX_CONFIG_BYTES)?;
-        let (path, previous) = if extended.is_some()
-            || value.location == ProcessingLocation::Embedded
-            || value.embedded_output.is_some()
-        {
-            (versioned, extended)
-        } else {
-            let path = self.root.join("config.json");
-            let previous = read_file(&path, MAX_CONFIG_BYTES)?;
-            (path, previous)
+
+    pub fn portal_settings_path(&self) -> PathBuf {
+        self.root.join("portal-settings.json")
+    }
+
+    fn migrate_output(&self, legacy: serde_json::Value) -> Result<()> {
+        use prysm_contract::{Input, Settings};
+        let path = self.portal_settings_path();
+        match fs::symlink_metadata(&path) {
+            // An existing store, including a damaged one, belongs to the portal.
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        let settings = Settings {
+            input: Some(Input::Webos {
+                capture_resolution: [1280, 720].try_into().map_err(anyhow::Error::msg)?,
+                refresh_rate_hz: 30.try_into()?,
+            }),
+            output: Some(serde_json::from_value(legacy)?),
+            ..Settings::default()
         };
+        settings.validate()?;
+        self.create_once(&path, &settings)
+    }
+
+    fn create_once(&self, path: &Path, value: &impl serde::Serialize) -> Result<()> {
+        let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        serde_json::to_writer_pretty(&mut file, value)?;
+        file.write_all(b"\n")?;
+        file.as_file().sync_all()?;
+        match file.persist_noclobber(path) {
+            Ok(_) => Ok(fs::File::open(&self.root)?.sync_all()?),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(error.error.into()),
+        }
+    }
+
+    pub fn has_versioned_config(&self) -> Result<bool> {
+        Ok(self.root.join("config-v3.json").try_exists()?)
+    }
+
+    pub fn persist(&self, value: &Config) -> Result<()> {
+        // Older services continue to see their last readable preference snapshot.
+        let versioned = self.root.join("config-v3.json");
+        let extended = read_file(&versioned, MAX_CONFIG_BYTES)?;
+        let (path, previous) =
+            if extended.is_some() || value.location == ProcessingLocation::Embedded {
+                (versioned, extended)
+            } else {
+                let path = self.root.join("config.json");
+                let previous = read_file(&path, MAX_CONFIG_BYTES)?;
+                (path, previous)
+            };
         let mut data = serde_json::to_vec(value)?;
         data.push(b'\n');
         ensure!(data.len() <= MAX_CONFIG_BYTES, "Oversized configuration");
         let file = Self::stage_config(&path, &data)?;
         let had_hook = self.has_boot_hook()?;
-        if let Err(error) = self.commit_with_autostart(value.autostart, || Ok(file.commit()?)) {
+        if let Err(error) =
+            self.commit_with_autostart(value.needs_boot_hook(), || Ok(file.commit()?))
+        {
             self.commit_with_autostart(had_hook, || {
                 self.restore_config(&path, previous.as_deref())
             })
@@ -152,7 +213,7 @@ impl Files {
         enabled: bool,
         commit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        // A committed autostart=true must always have a complete boot hook, even after power loss.
+        // Any saved mode that needs activation must remain bootable after power loss.
         if enabled {
             self.autostart(true)?;
         }
@@ -289,23 +350,12 @@ mod tests {
         };
         let mut extended = Config {
             location: ProcessingLocation::Embedded,
-            embedded_output: Some(
-                serde_json::from_value(serde_json::json!({
-                    "type":"wled","url":"http://lights.example",
-                    "leds":{"top":1,"right":2,"bottom":3,"left":4}
-                }))
-                .unwrap(),
-            ),
             ..Config::default()
         };
         files.persist(&extended).unwrap();
         let path = dir.path().join("config.json");
-        assert!(
-            !path.exists(),
-            "pre-feature installation boots with its default settings"
-        );
+        assert!(!path.exists(), "legacy install boots unconfigured");
         let saved = files.load().unwrap();
-        assert_eq!(saved.embedded_output, extended.embedded_output);
         assert_eq!(
             saved.location,
             if cfg!(feature = "embedded-prysm") {
@@ -314,20 +364,64 @@ mod tests {
                 ProcessingLocation::Remote
             }
         );
-        assert!(saved.instance_url.is_none());
-
         let snapshot = serde_json::to_vec_pretty(&legacy).unwrap();
-        fs::write(&path, &snapshot).unwrap(); // Simulate editing the remote URL during rollback.
+        fs::write(&path, &snapshot).unwrap();
         extended.instance_url = Some("https://new.example".parse().unwrap());
         files.persist(&extended).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), snapshot);
         assert_eq!(files.load().unwrap().instance_url, extended.instance_url);
-        files.persist(&files.load().unwrap()).unwrap();
-        assert_eq!(
-            files.load().unwrap().embedded_output,
-            extended.embedded_output
-        );
         assert_eq!(fs::read(path).unwrap(), snapshot);
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn migrate_legacy_output_once_without_replacing_even_an_invalid_portal_store() {
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        let mut saved = serde_json::to_value(Config {
+            location: ProcessingLocation::Embedded,
+            ..Config::default()
+        })
+        .unwrap();
+        let output = serde_json::json!({
+            "type":"wled","url":"http://lights.example/",
+            "leds":{"top":1,"right":2,"bottom":3,"left":4}
+        });
+        saved["embeddedOutput"] = output.clone();
+        let old_path = dir.path().join("config-v2.json");
+        let old_bytes = serde_json::to_vec(&saved).unwrap();
+        fs::write(&old_path, &old_bytes).unwrap();
+        let prefs = files.load().unwrap();
+        let path = files.portal_settings_path();
+        let settings: prysm_contract::Settings =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        settings.validate().unwrap();
+        assert_eq!(serde_json::to_value(&settings.output).unwrap(), output);
+        assert!(matches!(
+            settings.input,
+            Some(prysm_contract::Input::Webos { .. })
+        ));
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        // Replaying a half-complete migration must not overwrite portal edits.
+        let current = dir.path().join("config-v3.json");
+        fs::remove_file(&current).unwrap();
+        fs::write(&path, b"damaged existing store").unwrap();
+        files.load().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"damaged existing store");
+        // A deliberately removed portal store is not seeded a second time.
+        fs::remove_file(&path).unwrap();
+        files.persist(&prefs).unwrap();
+        files.load().unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read(old_path).unwrap(), old_bytes);
+        assert!(
+            !fs::read_to_string(current)
+                .unwrap()
+                .contains("embeddedOutput")
+        );
     }
     #[test]
     #[cfg(not(miri))]

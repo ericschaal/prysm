@@ -14,10 +14,22 @@ name = "prysm-webos-local"
 path = "../src/local.rs"
 
 [features]
-embedded-prysm = ["prysm-webos-protocol/embedded-prysm"]
+embedded-prysm = [
+    "prysm-webos-protocol/embedded-prysm",
+    "dep:prysm-runtime",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:futures",
+    "nix/net",
+    "nix/socket",
+]
 webos-neon = ["dep:rayon"]
 
 [dependencies]
+prysm-runtime = { path = "../../prysm/runtime", default-features = false, optional = true }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"], optional = true }
+tokio-util = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 anyhow.workspace = true
 libc.workspace = true
 libloading.workspace = true

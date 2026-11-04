@@ -27,12 +27,8 @@ enum Mode {
 }
 
 impl Mode {
-    fn configured(
-        config: &Config,
-        preview: Publisher,
-        webos: prysm_capture::WebosReceiver,
-    ) -> Self {
-        match Ready::new(config, preview, webos) {
+    fn configured(config: &Config, preview: Publisher, inputs: crate::input::Inputs) -> Self {
+        match Ready::new(config, preview, inputs) {
             Ok(ready) => Self::Ready(Box::new(ready)),
             Err(error) => Self::Failed(Box::new(failed_state(config, &error))),
         }
@@ -89,7 +85,7 @@ pub(crate) struct Controller {
     settings: SettingsStore,
     mode: Mode,
     preview: Publisher,
-    webos: prysm_capture::WebosReceiver,
+    inputs: crate::input::Inputs,
     operation: OperationStatus,
     job: Option<JoinHandle<Finished>>,
     settings_tx: watch::Sender<SettingsView>,
@@ -116,11 +112,12 @@ impl Controller {
     pub fn start(
         settings: SettingsStore,
         preview: Publisher,
-        webos: prysm_capture::WebosReceiver,
+        inputs: impl Into<crate::input::Inputs>,
     ) -> (ControllerHandle, App) {
+        let inputs = inputs.into();
         let view = settings.view();
         let mode = settings.config().map_or(Mode::Setup, |config| {
-            Mode::configured(&config, preview.clone(), webos.clone())
+            Mode::configured(&config, preview.clone(), inputs.clone())
         });
         let (settings_tx, settings_rx) = watch::channel(view.clone());
         let (state_tx, state_rx) = watch::channel(mode.state(OperationStatus::Idle));
@@ -131,7 +128,7 @@ impl Controller {
             settings,
             mode,
             preview,
-            webos,
+            inputs,
             operation: OperationStatus::Idle,
             job: None,
             settings_tx,
@@ -440,7 +437,7 @@ impl Controller {
                 self.publish();
             }
             (_, Some(config)) => {
-                self.mode = Mode::configured(&config, self.preview.clone(), self.webos.clone());
+                self.mode = Mode::configured(&config, self.preview.clone(), self.inputs.clone());
                 let result = match &self.mode {
                     Mode::Failed(state) => Err(CommandError::Backend(anyhow::anyhow!(
                         state.pipeline.error.clone().unwrap_or_default()
@@ -635,7 +632,7 @@ impl From<SettingsError> for CommandError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests {
     use super::*;
     use crate::{preview::Preview, test_support};
@@ -648,7 +645,7 @@ mod tests {
         let preview = Preview::new().publisher();
         let view = settings.view();
         let mode = settings.config().map_or(Mode::Setup, |config| {
-            Mode::configured(&config, preview.clone(), webos.clone())
+            Mode::configured(&config, preview.clone(), webos.clone().into())
         });
         let (settings_tx, settings_rx) = watch::channel(view.clone());
         let (state_tx, state_rx) = watch::channel(mode.state(OperationStatus::Idle));
@@ -659,7 +656,7 @@ mod tests {
                 settings,
                 mode,
                 preview,
-                webos,
+                inputs: webos.into(),
                 operation: OperationStatus::Idle,
                 job: None,
                 settings_tx,
@@ -903,7 +900,7 @@ mod tests {
     async fn calibration_startup_applies_queued_draft_before_save() {
         let (_directory, mut controller, app, receiver, server) = calibration_owner(true).await;
         let normal = app.settings().settings;
-        let tv_receiver = controller.webos.clone();
+        let tv_receiver = controller.inputs.host().clone();
         let (tv, phone) = paired(&mut controller).await;
         assert!(!tv.startup_pending);
         let shutdown = CancellationToken::new();
@@ -1176,7 +1173,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let _sender = tv_frame(&controller.webos).await;
+        let _sender = tv_frame(controller.inputs.host()).await;
         let started = controller.job.take().unwrap().await.unwrap();
         controller.finished(started).await;
         let normal = controller.settings.view();

@@ -25,9 +25,26 @@ pub struct SettingsStore {
     view: SettingsView,
 }
 
+fn validate(settings: &Settings, native_webos: bool) -> Result<(), SettingsError> {
+    if native_webos && !matches!(settings.input, Some(prysm_contract::Input::Webos { .. })) {
+        return Err(SettingsError::Invalid(anyhow::anyhow!(
+            "the TV portal requires native webOS capture"
+        )));
+    }
+    settings.validate().map_err(SettingsError::Invalid)
+}
+
 impl SettingsStore {
     pub fn load(path: PathBuf) -> Result<Self, SettingsError> {
-        let (settings, exists): (Settings, _) = match std::fs::read(&path) {
+        Self::open(path, false)
+    }
+
+    pub fn load_native(path: PathBuf) -> Result<Self, SettingsError> {
+        Self::open(path, true)
+    }
+
+    fn open(path: PathBuf, native_webos: bool) -> Result<Self, SettingsError> {
+        let (mut settings, exists): (Settings, _) = match std::fs::read(&path) {
             Ok(bytes) => (
                 serde_json::from_slice(&bytes)
                     .with_context(|| format!("cannot parse settings {}", path.display()))
@@ -44,11 +61,18 @@ impl SettingsStore {
                 ));
             }
         };
-        settings.validate().map_err(SettingsError::Invalid)?;
+        if native_webos && settings.input.is_none() {
+            settings.input = Some(prysm_contract::Input::Webos {
+                refresh_rate_hz: 30.try_into().expect("valid rate"),
+                capture_resolution: [1280, 720].try_into().expect("valid resolution"),
+            });
+        }
+        validate(&settings, native_webos)?;
         Ok(Self {
             path,
             exists,
             view: SettingsView {
+                native_webos,
                 revision: ConfigRevision::new_session(),
                 missing_required: settings.missing_required(),
                 settings,
@@ -117,7 +141,7 @@ impl SettingsStore {
                 "settings changed; reload before saving",
             ));
         }
-        update.settings.validate().map_err(SettingsError::Invalid)?;
+        validate(&update.settings, self.view.native_webos)?;
         let revision = self
             .view
             .revision
@@ -135,6 +159,7 @@ impl SettingsStore {
         .map_err(|error| SettingsError::Persistence(error.into()))??;
         self.exists = true;
         self.view = SettingsView {
+            native_webos: self.view.native_webos,
             revision,
             missing_required: settings.missing_required(),
             settings,
@@ -226,6 +251,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "external file");
         assert!(matches!(
             SettingsStore::load(path),
+            Err(SettingsError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn persisted_host_input_is_rejected_on_native_startup() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let settings = Settings {
+            input: Some(crate::test_support::config().input),
+            ..Settings::default()
+        };
+        std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert!(matches!(
+            SettingsStore::load_native(path),
             Err(SettingsError::Invalid(_))
         ));
     }

@@ -52,6 +52,9 @@ pub struct Supervisor {
     pub config: Config,
     target: Option<CaptureTarget>,
     pub enabled: bool,
+    // Remote enablement survives a round trip through the portal-owned mode.
+    remote_enabled_before_embedded: bool,
+    portal_url: Option<String>,
     pub power: Option<String>,
     pub running: bool,
     pub stopping: bool,
@@ -74,6 +77,8 @@ impl Supervisor {
         let target = config.resolve().ok();
         Self {
             enabled: config.autostart && target.is_some(),
+            remote_enabled_before_embedded: config.autostart && config.instance_url.is_some(),
+            portal_url: None,
             target,
             config,
             power: None,
@@ -95,8 +100,36 @@ impl Supervisor {
         }
     }
     fn wanted(&self) -> bool {
-        self.enabled && self.power.as_deref() == Some("Active") && self.target.is_some()
+        let awake = self.power.as_deref() == Some("Active")
+            || (self.hosts_portal() && self.power.as_deref() == Some("Screen Saver"));
+        awake && self.target.is_some() && (self.enabled || self.hosts_portal())
     }
+
+    pub fn hosts_portal(&self) -> bool {
+        matches!(
+            self.config.location,
+            crate::config::ProcessingLocation::Embedded
+        ) && self.target.is_some()
+    }
+
+    pub fn capture_allowed(&self) -> bool {
+        self.enabled && self.power.as_deref() == Some("Active")
+    }
+
+    pub fn pause_capture(&mut self, now: Instant) {
+        self.enabled = false;
+        if !self.hosts_portal() {
+            self.stop(now, true);
+        }
+    }
+
+    /// Release the selected host as well as capture on service shutdown or cleanup.
+    pub fn deactivate(&mut self, now: Instant) {
+        self.enabled = false;
+        self.target = None;
+        self.stop(now, true);
+    }
+
     pub fn contract(&self) -> SupervisorStatus {
         SupervisorStatus {
             enabled: self.enabled,
@@ -105,13 +138,14 @@ impl Supervisor {
             receiver_connected: self.connected,
             receiver_busy: self.busy,
             capturing: self.capturing,
+            portal_url: self.portal_url.clone(),
             stopping: self.stopping,
             error: self.error.clone(),
             last_log: self.log.clone(),
             config: self.config.clone(),
             capabilities: Capabilities {
                 hardware_h264: cfg!(feature = "hardware-h264"),
-                embedded_prysm: cfg!(feature = "embedded-prysm"),
+                embedded_portal: cfg!(feature = "embedded-prysm"),
             },
         }
     }
@@ -141,18 +175,26 @@ impl Supervisor {
     }
     pub fn set_power(&mut self, power: Option<String>, now: Instant) {
         self.power = power;
-        if self.power.as_deref() != Some("Active") {
+        if !self.wanted() {
             self.stop(now, true);
         }
         self.reconcile(now);
     }
     pub fn start(&mut self, now: Instant) -> anyhow::Result<()> {
-        self.config.resolve()?;
+        self.target = Some(self.config.resolve()?);
         self.enabled = true;
         self.reconcile(now);
         Ok(())
     }
     pub fn configure(&mut self, selected: Selection, now: Instant) {
+        if self.config.location != selected.preferences.location {
+            if selected.preferences.location == crate::config::ProcessingLocation::Embedded {
+                self.remote_enabled_before_embedded = self.enabled;
+                self.enabled = true;
+            } else {
+                self.enabled = self.remote_enabled_before_embedded;
+            }
+        }
         self.config = selected.preferences;
         if self.target.as_ref() == Some(&selected.target) {
             return;
@@ -169,6 +211,7 @@ impl Supervisor {
     }
     pub fn stop(&mut self, now: Instant, immediate: bool) {
         self.retry = None;
+        self.portal_url = None;
         self.immediate |= immediate;
         if self.running && !self.stopping {
             self.stopping = true;
@@ -198,6 +241,7 @@ impl Supervisor {
     }
     pub fn closed(&mut self, success: bool, description: &str, now: Instant) {
         self.running = false;
+        self.portal_url = None;
         self.stopping = false;
         self.connected = false;
         self.capturing = false;
@@ -226,6 +270,17 @@ impl Supervisor {
             Event::EncoderIdle => self.encoder_at = None,
             Event::VideoResetting => self.video_reset_at = Some(now + Duration::from_secs(5)),
             Event::VideoReset => self.video_reset_at = None,
+            Event::PortalReady { address } => {
+                if self.hosts_portal()
+                    && !address.ip().is_unspecified()
+                    && !address.ip().is_loopback()
+                    && !address.ip().is_multicast()
+                    && address.port() != 0
+                {
+                    self.portal_url = Some(format!("http://{address}/"));
+                    self.retry_delay = 1;
+                }
+            }
             Event::Connected => {
                 self.connected = true;
                 self.busy = false;
@@ -240,7 +295,7 @@ impl Supervisor {
                 self.retry_delay = 1;
                 self.capturing = true;
             }
-            Event::CaptureIdle => self.capturing = false,
+            Event::CaptureIdle | Event::CapturePaused => self.capturing = false,
             Event::Disconnected => {
                 self.busy = false;
                 self.expected_exit = true;
@@ -277,6 +332,61 @@ mod tests {
             ..Config::default()
         })
     }
+    #[test]
+    #[cfg(feature = "embedded-prysm")]
+    fn portal_is_reachable_with_capture_idle_paused_or_screen_saving_but_reaped_on_suspend() {
+        let now = Instant::now();
+        let mut state = Supervisor::new(Config {
+            location: crate::config::ProcessingLocation::Embedded,
+            ..Config::default()
+        });
+        assert!(!state.enabled, "cold start honors capture autostart");
+        state.set_power(Some("Screen Saver".into()), now);
+        assert!(matches!(
+            state.actions().as_slice(),
+            [Action::Spawn(CaptureTarget::Embedded(_))]
+        ));
+        assert!(!state.capture_allowed());
+        for invalid in ["127.0.0.1:8787", "0.0.0.0:8787", "192.0.2.12:0"] {
+            state.event(
+                Event::PortalReady {
+                    address: invalid.parse().unwrap(),
+                },
+                now,
+            );
+            assert_eq!(state.contract().portal_url, None);
+        }
+        state.event(
+            Event::PortalReady {
+                address: "192.0.2.12:8787".parse().unwrap(),
+            },
+            now,
+        );
+        assert_eq!(
+            state.contract().portal_url.as_deref(),
+            Some("http://192.0.2.12:8787/")
+        );
+        state.set_power(Some("Active".into()), now);
+        assert!(!state.capture_allowed());
+        state.start(now).unwrap();
+        assert!(state.capture_allowed());
+        state.pause_capture(now);
+        state.tick(now);
+        assert_eq!(state.actions(), []);
+        assert!(state.contract().portal_url.is_some());
+        state.set_power(Some("Suspend".into()), now);
+        assert_eq!(state.actions(), [Action::Terminate]);
+        assert_eq!(state.contract().portal_url, None);
+        state.set_power(Some("Active".into()), now);
+        assert_eq!(state.actions(), []);
+        state.closed(true, "normal", now);
+        assert!(matches!(
+            state.actions().as_slice(),
+            [Action::Spawn(CaptureTarget::Embedded(_))]
+        ));
+        assert!(!state.capture_allowed());
+    }
+
     #[test]
     fn snapshot_reports_hardware_build_support() {
         assert_eq!(

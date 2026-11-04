@@ -6,9 +6,11 @@ Other models and firmware are unqualified.
 
 ## Processing on this TV (experimental)
 
-Install the IPK built with `--embedded-prysm`. Choose **Processing location → On this TV (experimental)**, open **WLED setup**, and enter the controller address and LED counts for the top, right, bottom and left edges. Choose **Save and enable** and play video. The TV captures and processes raw frames locally and sends colors directly to WLED. Closing the app keeps the supervised worker enabled. The first version uses the built-in processing defaults; receiver-based calibration is available in remote mode.
+1. Install the IPK built with `--embedded-prysm`. Open **Prysm Capture**, set up its service if prompted, choose **Processing location → On this TV (experimental)** and save.
+2. On a phone or computer connected to the same LAN, open the **Prysm web portal** address shown on the TV. In [browser setup](configuration.md), set the WLED address and LED layout. You can return to this address to change processing settings, view Preview, or calibrate colors.
+3. Allow TV capture, play video, select **Screen sync** in the portal and turn the lights on. The TV processes raw frames locally and sends the resulting colors to WLED.
 
-Choose **Remote instance** to switch back and enter or reuse the receiver URL. The TV keeps the WLED setup when switching modes. The standard package offers remote capture. [Building the experimental IPK](../developers/packaging.md#webos)
+The portal stays available while the TV is awake, including when capture is paused, video is idle, or the TV app is closed. At startup, **Enable with TV** controls whether capture is allowed. The portal starts whenever embedded mode is selected. Switching to **Remote instance** stops the local portal. Its settings are kept for the next time you select **On this TV**. The standard package offers remote capture. [Building the experimental IPK](../developers/packaging.md#webos)
 
 ## 1. Prepare Prysm for remote capture
 

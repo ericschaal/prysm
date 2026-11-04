@@ -9,5 +9,5 @@ mod switching;
 
 pub(crate) use controller::{Controller, ControllerHandle};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests;

@@ -56,12 +56,12 @@ impl Ready {
     pub fn new(
         config: &Config,
         preview: Publisher,
-        webos: prysm_capture::WebosReceiver,
+        inputs: impl Into<crate::input::Inputs>,
     ) -> Result<Self> {
         let client = LightingService::client()?;
         let (config_tx, config_rx) = watch::channel(config.clone());
         let (pipeline, status) =
-            Pipeline::with_preview(PipelineConfig::from(config), webos, preview);
+            Pipeline::with_preview(PipelineConfig::from(config), inputs, preview);
         let service = Arc::new(LightingService::new(client, config_rx, pipeline, status));
         let shutdown = CancellationToken::new();
         let stopped = shutdown.clone();
@@ -281,7 +281,7 @@ pub(super) fn failed_state(config: &Config, error: &anyhow::Error) -> StateRespo
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests {
     use super::*;
     use crate::{preview::Preview, test_support};

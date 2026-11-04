@@ -7,17 +7,17 @@ Capture device → Prysm application → WLED renderer → LEDs
 ```
 
 An HDMI card uses the **V4L2 capturer** on Linux or **AVFoundation capturer** on
-macOS. A rooted LG TV uses the **webOS capturer**, sending video over WebSocket
-to a separate Prysm host. Video files use FFmpeg.
+macOS. The **webOS capturer** can send video to a separate Prysm host. With experimental embedded processing, the TV runs the same portal and lighting pipeline and supplies raw frames directly. Video files use FFmpeg on host installations.
 
 ## Ownership and boundaries
 
 | Owner | Responsibility |
 | --- | --- |
-| [Application](../../apps/prysm/src/application.rs) | HTTP, controller, preview and receiver lifetime. Starts idle; HTTP survives capture failure. |
-| [Settings store](../../apps/prysm/src/settings.rs) | Validate JSON, check revisions, write atomically before publishing changes. CLI/environment process options remain separate. |
-| [Controller](../../apps/prysm/src/control/controller.rs) | Serialize settings/power/source changes; accepted work survives caller disconnects. |
-| [Pipeline](../../apps/prysm/src/pipeline/) | One input, processor and WLED output. Processing has its own OS thread/current-thread Tokio runtime; WLED runs alongside HTTP. |
+| [Application](../../apps/prysm/runtime/src/application.rs) | HTTP, controller, preview and receiver lifetime. Starts idle; HTTP survives capture failure. |
+| [Settings store](../../apps/prysm/runtime/src/settings.rs) | Validate JSON, check revisions, write atomically before publishing changes. CLI/environment process options remain separate. |
+| [Controller](../../apps/prysm/runtime/src/control/controller.rs) | Serialize settings/power/source changes; accepted work survives caller disconnects. |
+| [Input boundary](../../apps/prysm/runtime/src/input.rs) | The host opens a device, file or remote receiver. The embedded executable supplies a native frame stream, its availability and a handle for waiting on cleanup. |
+| [Pipeline](../../apps/prysm/runtime/src/pipeline/) | One input, processor and WLED output. Processing has its own OS thread/current-thread Tokio runtime; WLED runs alongside HTTP. |
 
 ## Processing and color
 
@@ -50,4 +50,4 @@ capture and retains its cause. Preview shuts down separately.
 `apps/` owns application lifetimes. `crates/capture`, `processing` and `rendering`
 own the video path; `crates/common` owns data/contracts/metrics; `crates/web` owns
 both frontends. TV [worker](../../apps/prysm-webos-capture/README.md) and
-[supervisor](../../apps/prysm-webos-service/README.md) run separately from host Prysm.
+[supervisor](../../apps/prysm-webos-service/README.md) run as separate processes. The supervisor selects the remote capture worker or the embedded executable that owns the portal.

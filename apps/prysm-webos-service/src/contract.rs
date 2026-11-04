@@ -24,7 +24,7 @@ pub struct Observation {
 pub struct Capabilities {
     pub hardware_h264: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub embedded_prysm: bool,
+    pub embedded_portal: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -37,6 +37,8 @@ pub struct SupervisorStatus {
     pub receiver_connected: bool,
     pub receiver_busy: bool,
     pub capturing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portal_url: Option<String>,
     pub sender_running: bool,
     pub stopping: bool,
     #[cfg_attr(feature = "schema", schema(required = true))]

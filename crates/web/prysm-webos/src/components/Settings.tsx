@@ -15,6 +15,7 @@ interface Props {
   online: boolean | null;
   saved: Config | null;
   embeddedAvailable: boolean;
+  calibrationAvailable: boolean;
   draft: Config;
   dirty: boolean;
   changing: boolean;
@@ -28,6 +29,7 @@ export default function Settings({
   online,
   saved,
   embeddedAvailable,
+  calibrationAvailable,
   draft,
   dirty,
   changing,
@@ -40,7 +42,8 @@ export default function Settings({
   if (saved) savedLabel = dirty ? 'Unsaved changes' : 'Saved';
   const embedded =
     embeddedBuild && embeddedAvailable && draft.location === 'embedded';
-  const showCalibration = !embedded && saved?.location !== 'embedded';
+  const showCalibration =
+    (saved?.location === 'embedded') === embedded && calibrationAvailable;
   const rows: [Dialog, string, string][] = [];
   if (embeddedBuild && embeddedAvailable) {
     rows.push([
@@ -49,13 +52,7 @@ export default function Settings({
       embedded ? 'On this TV (experimental)' : 'Remote instance',
     ]);
   }
-  if (embeddedBuild && embedded) {
-    rows.push([
-      'wled',
-      'WLED setup',
-      draft.embeddedOutput?.url || 'Set address and LED counts',
-    ]);
-  } else {
+  if (!embedded) {
     rows.push([
       'receiver',
       'Prysm instance URL',
@@ -114,8 +111,7 @@ export default function Settings({
               <span
                 id={key + '-value'}
                 className={
-                  'setting-value' +
-                  (key === 'receiver' || key === 'wled' ? ' address' : '')
+                  'setting-value' + (key === 'receiver' ? ' address' : '')
                 }
               >
                 {value}

@@ -116,7 +116,7 @@ pub(crate) fn launch(
                         let cleanup = frames.cleanup;
                         drop(frames.frames);
                         if let Some(cleanup) = cleanup {
-                            cleanup.await.context("file cleanup task panicked")??;
+                            cleanup.await.context("capture cleanup task panicked")??;
                         }
                         if let Some(completed) = completed {
                             completed.cancelled().await;
@@ -328,12 +328,12 @@ async fn process(
         completed.cancelled().await;
     }
     if let Some(cleanup) = cleanup {
-        cleanup.await.context("file cleanup task panicked")??;
+        cleanup.await.context("capture cleanup task panicked")??;
     }
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-input"))]
 mod tests {
     use super::*;
     use futures::{stream, stream::BoxStream};

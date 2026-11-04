@@ -1,10 +1,10 @@
 # Prysm on webOS
 
-This experimental executable opens LG’s blended capture tap, converts its limited-range BT.709 NV12 pixels to RGB, runs the Prysm processor with a local settings file, and sends DDP directly to WLED. It shares the installed worker’s exclusive capture lock. The normal dependency tree contains no OpenH264, GStreamer or WebSocket implementation.
+This experimental executable opens LG’s blended capture tap, converts its limited-range BT.709 NV12 pixels to RGB, runs the Prysm processor with a local settings file, and sends DDP directly to WLED. It shares the installed worker’s exclusive capture lock. The standalone research build has no video transport or encoder.
 
 [Research checkpoint, tested binary and replay fixtures](../../../research/webos-capture/2026-11-04-on-tv-pipeline/README.md)
 
-The installable, feature-gated TV app can now launch this worker under its supervisor. [Embedded setup](../../../docs/users/webos.md#processing-on-this-tv-experimental)
+With the `embedded-prysm` feature, the TV supervisor runs the shared Prysm portal in this executable. The portal stays up while capture is paused. Native frames enter the shared pipeline directly. [Embedded setup](../../../docs/users/webos.md#processing-on-this-tv-experimental)
 
 ## Initial TV trial
 

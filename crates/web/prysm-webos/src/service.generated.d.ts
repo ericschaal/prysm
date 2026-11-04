@@ -4,7 +4,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Capabilities: {
-            embeddedPrysm?: boolean;
+            embeddedPortal?: boolean;
             hardwareH264: boolean;
         };
         /** @enum {string} */
@@ -13,7 +13,6 @@ export interface components {
         Config: {
             autostart: boolean;
             compression: components["schemas"]["Compression"];
-            embeddedOutput?: components["schemas"]["Output"] | null;
             instanceUrl: string | null;
             location?: components["schemas"]["ProcessingLocation"];
             metrics: boolean;
@@ -22,16 +21,6 @@ export interface components {
         ErrorReply: {
             errorText: string;
             returnValue: boolean;
-        };
-        LedCounts: {
-            /** Format: int32 */
-            bottom: number;
-            /** Format: int32 */
-            left: number;
-            /** Format: int32 */
-            right: number;
-            /** Format: int32 */
-            top: number;
         };
         Observation: {
             /** Format: uint32 */
@@ -43,12 +32,6 @@ export interface components {
             /** Format: uint32 */
             subscribers: number;
             videoAvailable: boolean | null;
-        };
-        Output: {
-            leds: components["schemas"]["LedCounts"];
-            /** @enum {string} */
-            type: "wled";
-            url: string;
         };
         /** @enum {string} */
         ProcessingLocation: "remote" | "embedded";
@@ -62,6 +45,7 @@ export interface components {
             enabled: boolean;
             error: string | null;
             lastLog: string | null;
+            portalUrl?: string | null;
             power: string | null;
             receiverBusy: boolean;
             receiverConnected: boolean;

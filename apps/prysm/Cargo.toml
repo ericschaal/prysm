@@ -34,37 +34,21 @@ restart-after-upgrade = true
 workspace = true
 
 [dependencies]
+prysm-runtime = { path = "runtime", features = ["host-input"] }
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
 clap = { workspace = true, features = ["derive", "env"] }
-serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
-tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
-futures.workspace = true
-prysm-capture = { path = "../../crates/capture/prysm-capture" }
-prysm-core = { path = "../../crates/common/prysm-core" }
-prysm-processor = { path = "../../crates/processing/prysm-processor" }
-prysm-renderer-wled = { path = "../../crates/rendering/prysm-renderer-wled" }
-tokio-util.workspace = true
-tokio-tungstenite.workspace = true
-
-prysm-contract = { path = "../../crates/common/prysm-contract" }
-
-axum = { workspace = true, features = ["ws"] }
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
-base64 = "0.22"
-rustls.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls-no-provider"] }
-serde_json.workspace = true
-prysm-api = { path = "../../crates/common/prysm-api" }
-prysm-web = { path = "../../crates/web/prysm-web" }
-tower-http = { workspace = true, features = ["csrf"] }
-atomic-write-file.workspace = true
-tempfile.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+prysm-contract = { path = "../../crates/common/prysm-contract" }
 prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol" }
-tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite.workspace = true
+futures.workspace = true
+axum = { workspace = true, features = ["ws"] }
+reqwest = { workspace = true, features = ["json", "rustls-no-provider"] }
+rustls.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

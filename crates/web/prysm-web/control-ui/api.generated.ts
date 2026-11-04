@@ -288,6 +288,8 @@ export interface components {
         };
         SettingsView: {
             missing_required: components["schemas"]["RequiredSetting"][];
+            /** @description This portal owns the native webOS input and accepts no other input type. */
+            nativeWebos?: boolean;
             revision: components["schemas"]["ConfigRevision"];
             settings: components["schemas"]["Settings"];
         };

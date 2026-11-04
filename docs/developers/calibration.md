@@ -2,7 +2,7 @@
 
 The controller owns one TV/phone session and saves profiles through the existing
 revision-checked atomic settings store. Entry points:
-[session/controller](../../apps/prysm/src/control/calibration.rs),
+[session/controller](../../apps/prysm/runtime/src/control/calibration.rs),
 [phone hook](../../crates/web/prysm-web/control-ui/useCalibrationSession.ts).
 
 ## Session rules
