@@ -47,7 +47,9 @@ async fn endpoint(receiver: &WebosReceiver) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/api/capture", listener.local_addr().unwrap());
     let router = receiver.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    tokio::spawn(async move {
+        axum::serve(listener, router).await;
+    });
     url
 }
 type Tv = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;

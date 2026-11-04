@@ -1,7 +1,9 @@
 # Build packages
 
-No official release yet. Build locally or use
-[CI artifacts](../../.github/workflows/check.yml). Builds do not install/deploy.
+[Published releases](https://github.com/ericschaal/prysm/releases) contain Docker
+images, a Debian arm64 package, and the matching webOS IPK. For development, build
+locally or use [CI artifacts](../../.github/workflows/check.yml).
+Local builds do not install/deploy. [Release automation](releasing.md).
 
 ## Docker
 
@@ -51,11 +53,12 @@ ARMv7 soft-float despite `_all`. The task checks contracts, bundles the TV UI an
 packages both binaries/notices. Keep archive path/permission validation enabled.
 [Worker ABI requirements](../../apps/prysm-webos-capture/README.md#build-for-webos).
 
-Add `--hardware-h264` for the experimental encoder. This requires SDK development
-files and TV runtime libraries for GStreamer/GLib, even when software encoding is
-selected. [Encoder details](hardware-h264.md).
+IPK builds include the experimental hardware H.264 encoder in both binaries by
+default. This requires SDK development files and TV runtime libraries for
+GStreamer/GLib, even when software encoding is selected.
+[Encoder details](hardware-h264.md).
 
-Push/manual CI artifacts last three days; PR builds do not upload. Install using
+Push/manual CI artifacts last seven days; PR builds do not upload. Install using
 [TV setup](../users/webos.md).
 
 ## TV package verification

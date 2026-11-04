@@ -766,7 +766,7 @@ mod tests {
             .parse()
             .unwrap();
         let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
+            axum::serve(listener, router).await;
         });
         let directory = tempfile::tempdir().unwrap();
         let webos = prysm_capture::WebosReceiver::new().unwrap();

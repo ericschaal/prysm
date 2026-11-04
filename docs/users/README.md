@@ -15,7 +15,7 @@ Both setups need a Prysm host. Keep all devices on a trusted LAN; Prysm has no l
 
 ## 1. Install the Prysm application
 
-No official release yet. Use a CI build or build locally:
+Use the [latest release](https://github.com/ericschaal/prysm/releases):
 
 | Host | Guide |
 | --- | --- |

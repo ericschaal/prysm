@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 022
-features=(--no-default-features)
-case "$#:${1-}" in
-  0:) ;;
-  1:--hardware-h264)
-    features+=(--features "prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264")
-    ;;
-  *) echo 'Usage: build-ipk.sh [--hardware-h264]' >&2; exit 1 ;;
-esac
+if [ "$#" -ne 0 ]; then
+  echo 'Usage: build-ipk.sh' >&2
+  exit 1
+fi
 if ! command -v ares-package >/dev/null; then
   echo 'Install the webOS CLI (ares-package) before packaging.' >&2
   exit 1
@@ -30,7 +26,9 @@ export PKG_CONFIG_SYSROOT_DIR_armv7_unknown_linux_gnueabi="$WEBOS_SDK/arm-webos-
 export PKG_CONFIG_LIBDIR_armv7_unknown_linux_gnueabi="$WEBOS_SDK/arm-webos-linux-gnueabi/sysroot/usr/lib/pkgconfig:$WEBOS_SDK/arm-webos-linux-gnueabi/sysroot/usr/share/pkgconfig"
 export PKG_CONFIG_PATH_armv7_unknown_linux_gnueabi=
 cd "$root"
-cargo build --locked "${features[@]}" -p prysm-webos-capture -p prysm-webos-service \
+cargo build --locked --no-default-features \
+  --features "prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264" \
+  -p prysm-webos-capture -p prysm-webos-service \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$root/target"
 # Build the isolated smoke fixture beside the worker; only the worker ships in the IPK.
 cargo build --locked -p prysm-webos-capture --example loopback-receiver \

@@ -4,12 +4,11 @@ Requires 64-bit Raspberry Pi OS or Debian arm64.
 
 ## 1. Install
 
-Download **prysm-debian-arm64** from a successful
-[Check and package run](https://github.com/ericschaal/prysm/actions/workflows/check.yml).
-GitHub sign-in is required; artifacts expire after three days.
+Download `prysm-led_*_arm64.deb` from the
+[latest release](https://github.com/ericschaal/prysm/releases).
 Alternatively, [build the package](../developers/packaging.md#debian-arm64).
 
-Unzip into an empty folder, then run there:
+In the download directory, run:
 
 ```sh
 sudo apt install ./prysm-led_*_arm64.deb

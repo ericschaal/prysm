@@ -1,5 +1,16 @@
 # Contribution guidelines
 
+## Commits and pull requests
+
+Use Conventional Commits for commit messages and PR titles:
+`feat:`, `fix:`, `perf:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`,
+`chore:`, `style:`, or `revert:`. Add a scope when useful, such as
+`fix(webos): resume capture after calibration`. Mark breaking changes with `!`.
+Squash-merge PRs using their title as the commit title.
+
+Release Please collects user-facing commits into a release PR; merge it to
+[publish the next version](releasing.md).
+
 ## Code
 
 - Reuse existing boundaries and types; keep application/runtime/serialization
