@@ -96,7 +96,7 @@ fn run_worker() -> Result<()> {
             return Ok(());
         }
         events.send(&events::Event::Connected)?;
-        let capturing = match session.wait_for_capture(&config, &stop) {
+        let capturing = match session.wait_for_capture(&config, || control.video_ready(&stop)) {
             Ok(capturing) => capturing,
             Err(error) if error.is::<transport::ReceiverBusy>() => {
                 events.send(&events::Event::ReceiverBusy)?;

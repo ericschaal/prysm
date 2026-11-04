@@ -147,7 +147,7 @@ seconds land in +Inf. FrameArrival measures decoded continuity, not transport de
 |---|---|
 | FrameEncoder / EncoderInput | Raw bytes of successfully prepared frames (header encoding succeeded); excludes encoder-skipped inputs so compression ratios do not count dropped frames as savings |
 | FrameEncoder / EncoderOutput | Matching encoded payload bytes, including raw fallback; excludes header |
-| FrameSender / SocketAccepted | Every successful local write, including protocol headers and bytes of a frame whose later write fails |
+| FrameSender / SocketAccepted | Capture header and payload bytes for frames whose WebSocket send completes locally. A failed or timed-out send contributes zero bytes. WebSocket framing and TLS overhead are excluded. |
 | FrameReceiver / CompletePayload | Complete validated-header payload bytes, even if subsequent decoding fails; excludes header and incomplete reads |
 | WledSender / DdpPayload | Complete-frame color payload bytes after successful DDP write; excludes DDP headers and partially failed frames |
 

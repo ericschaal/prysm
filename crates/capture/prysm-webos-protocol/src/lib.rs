@@ -13,6 +13,10 @@ pub use settings::{Compression, InstanceUrl, Source, WORKER_CONFIG_ENV, WorkerCo
 
 pub const CAPTURE_PATH: &str = "/api/capture";
 
+/// An idle receiver renews the wait until it can issue capture settings.
+pub const IDLE_RENEWAL: std::time::Duration = std::time::Duration::from_secs(1);
+pub const CONTROL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// One ASCII digit also forms the last byte of the four-byte frame magic.
 pub const VERSION: u32 = {
     let text = include_bytes!("../wire-version.txt");

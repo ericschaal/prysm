@@ -3,10 +3,33 @@ use crate::config::Config;
 use anyhow::{Context, Result, ensure};
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+
+const MAX_CONFIG_BYTES: usize = 65_536;
+
+fn read_file(path: &Path, limit: usize) -> Result<Option<Vec<u8>>> {
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("Open {}", path.display())),
+    };
+    ensure!(
+        file.metadata()?.is_file(),
+        "Expected file: {}",
+        path.display()
+    );
+    let mut data = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut data)?;
+    ensure!(data.len() <= limit, "Oversized file: {}", path.display());
+    Ok(Some(data))
+}
 
 pub struct Files {
     pub root: PathBuf,
@@ -88,33 +111,47 @@ impl Files {
         })
     }
     pub fn load(&self) -> Result<Config> {
-        match fs::read(self.root.join("config.json")) {
-            Ok(data) => {
-                ensure!(data.len() <= 65536, "Oversized capture configuration");
-                let mut saved: serde_json::Value = serde_json::from_slice(&data)?;
-                if let Some(fields) = saved.as_object_mut()
-                    && !fields.contains_key("instanceUrl")
-                    && fields.remove("receiver").is_some()
-                {
-                    fields.insert("instanceUrl".into(), "".into());
-                }
-                let value: Config = serde_json::from_value(saved)?;
-                if value.instance_url.is_some() {
-                    value.validate()?;
-                }
-                Ok(value)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(error) => Err(error.into()),
-        }
+        let Some(data) = self.config_bytes()? else {
+            return Ok(Config::default());
+        };
+        let value: Config = serde_json::from_slice(&data)?;
+        value.validate()?;
+        Ok(value)
+    }
+    fn config_bytes(&self) -> Result<Option<Vec<u8>>> {
+        read_file(&self.root.join("config.json"), MAX_CONFIG_BYTES)
     }
     pub fn persist(&self, value: &Config) -> Result<()> {
+        let previous = self.config_bytes()?;
+        let mut data = serde_json::to_vec(value)?;
+        data.push(b'\n');
+        let file = self.stage_config(&data)?;
+        let had_hook = self.autostart(value.autostart)?;
+        if let Err(error) = file.commit() {
+            let hook = self.autostart(had_hook);
+            let config = self.restore_config(previous.as_deref());
+            hook.and(config)
+                .with_context(|| format!("Rollback after config commit failed: {error}"))?;
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    fn stage_config(&self, data: &[u8]) -> Result<atomic_write_file::AtomicWriteFile> {
         let mut file = atomic_write_file::AtomicWriteFile::open(self.root.join("config.json"))?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        serde_json::to_writer(&mut file, value)?;
-        file.write_all(b"\n")?;
-        file.commit()?;
-        fs::File::open(&self.root)?.sync_all()?;
+        file.write_all(data)?;
+        Ok(file)
+    }
+    fn restore_config(&self, previous: Option<&[u8]>) -> Result<()> {
+        // commit can report a directory sync error after the rename has already succeeded.
+        if self.config_bytes()?.as_deref() != previous {
+            if let Some(data) = previous {
+                self.stage_config(data)?.commit()?;
+            } else {
+                Self::remove(&self.root.join("config.json"))?;
+                fs::File::open(&self.root)?.sync_all()?;
+            }
+        }
         Ok(())
     }
     pub fn manifest(&self, install: bool) -> Result<()> {
@@ -132,33 +169,39 @@ impl Files {
         });
         registration(&self.supervisor_manifest_path, &value, true)
     }
-    pub fn autostart(&self, enabled: bool) -> Result<()> {
+    /// Set the owned boot hook and return its previous state for rollback.
+    pub fn autostart(&self, enabled: bool) -> Result<bool> {
         let script = &self.boot_script;
         let path = &self.hook_path;
-        match fs::read_to_string(path) {
-            Ok(existing) => ensure!(
-                existing == *script,
-                "Refusing to change an unrelated boot hook"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(error.into()),
+        let existing = read_file(path, script.len())?;
+        let previous = existing.is_some();
+        ensure!(
+            existing
+                .as_deref()
+                .is_none_or(|bytes| bytes == script.as_bytes()),
+            "Refusing to change an unrelated boot hook"
+        );
+        if previous == enabled {
+            return Ok(previous);
         }
         if enabled {
             fs::create_dir_all(path.parent().context("boot hook parent")?)?;
             let mut file = fs::OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .mode(0o755)
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(path)?;
-            file.write_all(script.as_bytes())?;
+            if let Err(error) = file.write_all(script.as_bytes()) {
+                Self::remove(path)?;
+                return Err(error.into());
+            }
         } else {
             Self::remove(path)?;
         }
-        Ok(())
+        Ok(previous)
     }
-    pub fn remove(path: &Path) -> Result<()> {
+    fn remove(path: &Path) -> Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -197,6 +240,31 @@ fn registration(path: &Path, value: &serde_json::Value, install: bool) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(miri))]
+    fn cleanup_rejects_a_boot_hook_pipe_without_waiting_for_a_writer() {
+        use nix::{sys::stat::Mode, unistd::mkfifo};
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        mkfifo(&files.hook_path, Mode::S_IRUSR).unwrap();
+        assert!(files.autostart(false).is_err());
+        assert!(files.hook_path.exists());
+    }
+
+    #[test]
+    #[cfg(not(miri))]
+    fn rollback_after_publication_restores_the_original_bytes_or_absence() {
+        let dir = crate::application::tests::sandbox();
+        let files = Files::sandbox(dir.path()).unwrap();
+        let path = dir.path().join("config.json");
+        let previous = br#"{ "metrics": false }"#;
+        fs::write(&path, b"replacement").unwrap();
+        files.restore_config(Some(previous)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        files.restore_config(None).unwrap();
+        assert!(!path.exists());
+    }
 
     #[test]
     #[cfg_attr(miri, ignore = "filesystem integration runs in ordinary tests")]

@@ -53,7 +53,7 @@ Open **Prysm Capture** on the TV:
 3. Leave **Combined** and **LZ4** selected for the first run; choose **Save changes**.
 4. Choose **Enable** (or **Save and enable**).
 
-A bare host uses HTTP on port 8787. A full URL respects its scheme and port, including the standard HTTP and HTTPS defaults. Save verifies the capture handshake and remembers the resulting origin for both capture and the calibration QR code. After upgrading from an IP-and-port receiver setting, enter the instance URL once. **Receiver in use** means another TV has the session. The sender retries automatically.
+A bare host uses HTTP on port 8787. A full URL respects its scheme and port, including the standard HTTP and HTTPS defaults. Save verifies the capture handshake and remembers the resulting origin for both capture and the calibration QR code. **Receiver in use** means another TV has the session. The sender retries automatically.
 
 Arrows move focus; OK opens or selects a setting. Save applies changes. Closing
 the app leaves capture enabled. **Enable with TV** optionally enables boot
@@ -62,7 +62,7 @@ startup; leave it off until you have checked standby/wake and cold boot on your 
 ## 4. Start capture
 
 Wake the TV and show active video. In Prysm's host panel at `http://localhost:8787`,
-select **Screen sync** and turn the lights on .
+select **Screen sync** and turn the lights on.
 **Success:** the TV reports **Capturing** and Prysm displays frames or updates the LEDs.
 
 **Ready to capture** means video is available and Prysm is idle. **Waiting for video**
@@ -73,10 +73,10 @@ does not guarantee fresh video; inspect Prysm's output too.
 
 ## Change settings or remove
 
-**Video only** excludes on-screen menus; **Combined** includes them. UI-only capture
-is no longer supported. If upgrading from a UI-only configuration, disable the
-sender, back up then remove `/var/lib/prysm-capture/config.json` through your root
-TV access, reinstall, and configure again; removing that file resets saved settings.
+**Video only** excludes on-screen menus. **Combined** includes them.
+If a previous package saved an incompatible configuration, move
+`/var/lib/prysm-capture/config.json` to a backup through your root TV access,
+then relaunch the service and configure the sender in the TV app.
 
 **Prometheus metrics** is optional and defaults off; saving it restarts an active
 worker. See [monitoring](../developers/monitoring.md).

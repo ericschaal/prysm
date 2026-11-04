@@ -28,6 +28,10 @@ setup, but does not install them itself. Standalone `npm run build` and UI tests
 use the frontend's own `dist/` directory. Code generation is always explicit;
 packaging checks committed output and never repairs it.
 
+The webOS codegen task also compiles standalone reply validators with Ajv. The TV
+uses them for subscriptions and service actions. Homebrew setup uses its own
+reply schema. The validator compiler runs only during code generation.
+
 Rust owns the actual serialized types. The API exporter includes preview
 WebSocket message schemas. The TV exporter uses the service configuration and
 status types, with its `schema` feature keeping schema tooling out of production

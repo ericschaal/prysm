@@ -7,14 +7,12 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Config {
-    #[serde(with = "receiver", rename = "instanceUrl")]
+    #[serde(with = "instance_url", rename = "instanceUrl")]
     #[cfg_attr(feature = "schema", schema(value_type = String, required = true))]
     pub instance_url: Option<InstanceUrl>,
     pub source: Source,
     pub compression: Compression,
     pub autostart: bool,
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schema(required = true))]
     pub metrics: bool,
 }
 
@@ -33,7 +31,7 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         self.instance_url
             .as_ref()
-            .context("Receiver must be configured")?;
+            .context("Prysm instance URL must be configured")?;
         anyhow::ensure!(
             self.compression != Compression::H264Hardware || cfg!(feature = "hardware-h264"),
             "Hardware H.264 is not included in this build"
@@ -53,8 +51,8 @@ impl Config {
     }
 }
 
-// Preserve the app's empty-string representation of an unconfigured receiver.
-mod receiver {
+// The TV represents an unconfigured instance with an empty string.
+mod instance_url {
     use super::InstanceUrl;
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -139,11 +137,11 @@ mod tests {
         assert!(serde_json::from_value::<Config>(json).is_err());
     }
     #[test]
-    fn metrics_default_off_for_saved_configs_and_reach_the_worker_when_enabled() {
-        let mut json = serde_json::to_value(valid()).unwrap();
-        json.as_object_mut().unwrap().remove("metrics");
-        let mut config: Config = serde_json::from_value(json).unwrap();
-        assert!(!config.metrics);
+    fn metrics_are_required_and_reach_the_worker() {
+        let mut config = valid();
+        let mut incomplete = serde_json::to_value(&config).unwrap();
+        incomplete.as_object_mut().unwrap().remove("metrics");
+        assert!(serde_json::from_value::<Config>(incomplete).is_err());
         assert!(!config.worker_config().unwrap().metrics);
         config.metrics = true;
         assert!(config.worker_config().unwrap().metrics);

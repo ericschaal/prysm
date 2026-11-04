@@ -550,7 +550,7 @@ fn mutation_authorizes_before_deserializing_configuration() {
         &dir.path().join("worker"),
         "test \"$1\" = --verify-instance",
     );
-    raw.0 = Some(CString::new(r#"{"instanceUrl":"http://127.0.0.1:8787","source":"video","compression":"none","autostart":false}"#).unwrap());
+    raw.0 = Some(CString::new(r#"{"instanceUrl":"http://127.0.0.1:8787","source":"video","compression":"none","autostart":false,"metrics":false}"#).unwrap());
     service.callbacks.status(&message).unwrap();
     for _ in 0..200 {
         service.callbacks.tick(Instant::now()).unwrap();
@@ -864,7 +864,7 @@ fn video_callback_updates_context_and_recovers_after_subscription_failure() {
     .unwrap();
     let files = Files::sandbox(dir.path()).unwrap();
     files.persist(&serde_json::from_value(json!({
-        "instanceUrl":"http://127.0.0.1:8787", "source":"video", "compression":"none", "autostart":false
+        "instanceUrl":"http://127.0.0.1:8787", "source":"video", "compression":"none", "autostart":false, "metrics":false
     })).unwrap()).unwrap();
     crate::application::tests::script(&files.worker, r#"exec cat > "$0.control""#);
     *service.callbacks.app.borrow_mut() = Some(App::new(files).unwrap());

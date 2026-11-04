@@ -25,7 +25,7 @@ editor and change:
 - The image version to the release you intend to run.
 - `/mnt/tank/apps/prysm` to your dataset path.
 - `user` to the numeric identity with dataset access.
-- `192.168.1.20` to the NAS's trusted LAN address in both port mappings.
+- `192.168.1.20` to the NAS's trusted LAN address in the HTTP port mapping.
 - `PRYSM_ALLOWED_HOSTS` to the actual IP address or DNS names, including port,
   that browsers will use.
 

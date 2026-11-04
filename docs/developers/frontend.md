@@ -66,7 +66,7 @@ builds target Chromium 53 and emit a classic script for the packaged TV app.
 The [IPK build](packaging.md#webos) stages the generated `dist/` assets.
 
 TV service types are generated from the Rust service's serialized contracts into
-`src/service.generated.ts`, with the schema in `service.schema.json`.
+`src/service.generated.d.ts` and the matching runtime validators in `src/service.generated.js`. Both derive from `service.schema.json`; the UI generator adds the reply shape used by Homebrew setup.
 Use `cargo xtask codegen webos` after changing them, or add `--check` to verify.
 The generator uses the host UI's locked `openapi-typescript` installation; run
 `cargo xtask setup` before generating or checking both frontends.

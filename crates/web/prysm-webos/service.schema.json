@@ -91,7 +91,8 @@
         "properties": {
           "pid": {
             "type": "integer",
-            "format": "int32",
+            "format": "uint32",
+            "maximum": 4294967295,
             "minimum": 0
           },
           "returnValue": {
@@ -99,7 +100,8 @@
           },
           "revision": {
             "type": "integer",
-            "format": "int64",
+            "format": "uint64",
+            "maximum": 18446744073709551615,
             "minimum": 0
           },
           "subscribed": {
@@ -107,7 +109,8 @@
           },
           "subscribers": {
             "type": "integer",
-            "format": "int32",
+            "format": "uint32",
+            "maximum": 4294967295,
             "minimum": 0
           },
           "videoAvailable": {

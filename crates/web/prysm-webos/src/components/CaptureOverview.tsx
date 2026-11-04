@@ -52,7 +52,9 @@ export default function CaptureOverview({
           Service options
         </button>
       </div>
-      <p className="capture-hint">Capture stays enabled when you close the app.</p>
+      <p className="capture-hint">
+        Capture stays enabled when you close the app.
+      </p>
     </section>
   );
 }

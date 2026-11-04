@@ -99,14 +99,15 @@ fn npm(ui: &str, args: &[&str]) -> Result<()> {
     run(Command::new("npm").arg("--prefix").arg(ui).args(args))
 }
 
-fn typescript(schema: &str) -> Result<String> {
+fn generate(generator: &[&str], schema: &str) -> Result<String> {
     let mut child = Command::new("node")
-        .arg(format!("{HOST}/generate-types.mjs"))
+        .current_dir(HOST)
+        .args(generator)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("run TypeScript generator; run cargo xtask setup first")?;
+        .context("run contract generator; run cargo xtask setup first")?;
     let write = child
         .stdin
         .take()
@@ -115,10 +116,10 @@ fn typescript(schema: &str) -> Result<String> {
     let output = child.wait_with_output()?;
     ensure!(
         output.status.success(),
-        "TypeScript generation failed; run cargo xtask setup first"
+        "contract generation failed; run cargo xtask setup first"
     );
     write?;
-    String::from_utf8(output.stdout).context("generated TypeScript is not UTF-8")
+    String::from_utf8(output.stdout).context("generated contract is not UTF-8")
 }
 
 fn emit(outputs: &[(PathBuf, String)], check: bool) -> Result<()> {
@@ -166,12 +167,23 @@ fn codegen(contract: Option<Contract>, check: bool) -> Result<()> {
                 ]);
                 (
                     format!("{WEBOS}/service.schema.json"),
-                    format!("{WEBOS}/src/service.generated.ts"),
+                    format!("{WEBOS}/src/service.generated.d.ts"),
                 )
             }
         };
         let schema = capture(&mut command)?;
-        let types = typescript(&schema)?;
+        let types = match contract {
+            Contract::Api => generate(&["generate-types.mjs"], &schema)?,
+            Contract::Webos => {
+                let script = "generate-service-validators.mjs";
+                let validators = generate(&[script], &schema)?;
+                outputs.push((
+                    format!("{WEBOS}/src/service.generated.js").into(),
+                    validators,
+                ));
+                generate(&[script, "types"], &schema)?
+            }
+        };
         outputs.push((schema_path.into(), schema));
         outputs.push((types_path.into(), types));
     }

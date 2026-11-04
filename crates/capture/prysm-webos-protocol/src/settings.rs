@@ -29,7 +29,6 @@ pub struct WorkerConfig {
     pub instance_url: InstanceUrl,
     pub source: Source,
     pub compression: Compression,
-    #[serde(default)]
     pub metrics: bool,
 }
 
@@ -157,9 +156,9 @@ mod tests {
             WorkerConfig::decode(&config.encode().unwrap()).unwrap(),
             config
         );
-        let mut legacy = serde_json::to_value(config).unwrap();
-        legacy.as_object_mut().unwrap().remove("metrics");
-        assert!(!WorkerConfig::decode(&legacy.to_string()).unwrap().metrics);
+        let mut incomplete = serde_json::to_value(config).unwrap();
+        incomplete.as_object_mut().unwrap().remove("metrics");
+        assert!(WorkerConfig::decode(&incomplete.to_string()).is_err());
         for payload in [
             r#"{"instance_url":"127.0.0.1:0","source":"both","compression":"h264-software"}"#,
             r#"{"instance_url":"http://127.0.0.1:8787","source":"ui","compression":"h264-software"}"#,

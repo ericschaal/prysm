@@ -1,12 +1,14 @@
-import type { components } from './service.generated';
+import {
+  type components,
+  isErrorReply,
+  isExecReply,
+  isStatus,
+} from './service.generated.js';
 
 export type Config = components['schemas']['Config'];
-export type Status = components['schemas']['ServiceStatus'];
-// The bridge also receives partial failures and Homebrew Channel's exec replies.
-export type Reply = Partial<Status> &
-  Partial<components['schemas']['ErrorReply']> & {
-    stderrString?: string;
-  };
+export type Status = components['schemas']['StatusReply'];
+type Failure = components['schemas']['FailureReply'];
+export type Reply = Status | Failure;
 
 export interface ServiceBridge {
   onservicecallback: (text: string) => void;
@@ -25,13 +27,25 @@ const timedOut =
 
 export function parseReply(text: string): Reply {
   const value: unknown = JSON.parse(text);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('The service returned an invalid reply.');
-  }
-  return value;
+  if (isStatus(value) || isErrorReply(value)) return value;
+  throw new Error('The service returned an invalid reply.');
 }
 
-function errorReply(error: unknown): Reply {
+export function parseSetupReply(text: string): { returnValue: true } | Failure {
+  const value: unknown = JSON.parse(text);
+  if (!isExecReply(value))
+    throw new Error('Homebrew Channel returned an invalid reply.');
+  if (!value.returnValue) {
+    return {
+      returnValue: false,
+      errorText:
+        value.errorText || value.stderrString || 'Service setup failed.',
+    };
+  }
+  return { returnValue: true };
+}
+
+function errorReply(error: unknown): Failure {
   return {
     returnValue: false,
     errorText: error instanceof Error ? error.message : String(error),
@@ -41,10 +55,11 @@ function errorReply(error: unknown): Reply {
 // Keep native bridges alive until completion, scoped to the mounted consumer.
 export function createServiceClient() {
   const pending = new Set<() => void>();
-  function call(
+  function call<T>(
     uri: string,
     payload: object,
-    callback: (value: Reply) => void,
+    parse: (text: string) => T,
+    callback: (value: T | Failure) => void,
   ) {
     if (typeof PalmServiceBridge === 'undefined') {
       callback({ returnValue: false, errorText: unavailable });
@@ -72,16 +87,16 @@ export function createServiceClient() {
       release();
       bridge.cancel();
     }
-    function done(value: Reply) {
+    function done(value: T | Failure) {
       if (!active) return;
       release();
       callback(value);
     }
     pending.add(cancel);
     bridge.onservicecallback = (text) => {
-      let value: Reply;
+      let value: T | Failure;
       try {
-        value = parseReply(text);
+        value = parse(text);
       } catch (error) {
         value = errorReply(error);
       }

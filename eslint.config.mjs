@@ -14,7 +14,7 @@ export default defineConfig(
       '**/node_modules/**',
       '**/dist/**',
       '**/target/**',
-      '**/*.generated.ts',
+      '**/*.generated.*',
       'work/**',
       '.webos-sdk/**',
     ],

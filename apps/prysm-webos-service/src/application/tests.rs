@@ -103,10 +103,13 @@ fn start_stop_cleanup_serialize_and_preserve_settings() {
     );
 }
 #[test]
-fn hook_failure_rolls_back_config() {
+fn hook_failure_preserves_the_saved_file() {
     let dir = sandbox();
     let mut app = app(&dir);
     let original = app.state.config.clone();
+    let bytes = serde_json::to_vec_pretty(&original).unwrap();
+    let path = dir.path().join("config.json");
+    fs::write(&path, &bytes).unwrap();
     fs::write(dir.path().join("boot-hook"), "unrelated").unwrap();
     let mut changed = original.clone();
     changed.autostart = true;
@@ -115,12 +118,34 @@ fn hook_failure_rolls_back_config() {
             .is_err()
     );
     assert_eq!(app.state.config, original);
-    assert_eq!(app.files.load().unwrap(), original);
+    assert_eq!(fs::read(path).unwrap(), bytes);
     assert!(app.pending.is_none());
     assert_eq!(
         fs::read_to_string(dir.path().join("boot-hook")).unwrap(),
         "unrelated"
     );
+    let now = Instant::now();
+    app.power(Some("Active".into()), None, now);
+    operate(&mut app, AppRequest::Start, now).unwrap();
+    assert!(app.request(AppRequest::Cleanup, now).is_err());
+    assert!(app.state.enabled && app.state.running && !app.state.stopping);
+    operate(&mut app, AppRequest::Stop, now).unwrap();
+}
+#[test]
+fn invalid_config_path_leaves_the_boot_hook_untouched() {
+    let dir = sandbox();
+    let mut app = app(&dir);
+    let path = dir.path().join("config.json");
+    fs::rename(&path, dir.path().join("saved-config")).unwrap();
+    fs::create_dir(path).unwrap();
+    let mut changed = app.state.config.clone();
+    changed.autostart = true;
+    assert!(
+        app.request(AppRequest::SetConfig(changed), Instant::now())
+            .is_err()
+    );
+    assert!(!app.state.config.autostart);
+    assert!(!dir.path().join("boot-hook").exists());
 }
 #[test]
 fn scanner_timeout_is_reaped_and_shutdown_cancels_pending_start() {
@@ -228,11 +253,31 @@ while :; do sleep 0.01; done
 }
 
 #[test]
-fn old_receiver_config_prompts_for_an_instance_and_preserves_capture_preferences() {
+fn incompatible_config_is_rejected_without_rewriting_it() {
     let dir = sandbox();
-    fs::write(dir.path().join("config.json"),r#"{"receiver":"192.168.1.10:19400","autostart":true,"source":"video","compression":"none","metrics":true}"#).unwrap();
-    let app = App::new(Files::sandbox(dir.path()).unwrap()).unwrap();
-    assert!(app.state.config.instance_url.is_none());
-    assert!(app.state.config.autostart && app.state.config.metrics);
-    assert!(!app.state.enabled);
+    let path = dir.path().join("config.json");
+    let bytes = br#"{"receiver":"192.168.1.10:19400","autostart":true,"source":"video","compression":"none","metrics":true}"#;
+    fs::write(&path, bytes).unwrap();
+    assert!(App::new(Files::sandbox(dir.path()).unwrap()).is_err());
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn shutdown_waits_for_the_cleanup_rescan() {
+    let dir = sandbox();
+    let mut app = app(&dir);
+    app.files.manifest(true).unwrap();
+    script(
+        &app.files.scanner,
+        "while [ ! -f \"$0.ready\" ]; do sleep 0.01; done; touch \"$0.done\"",
+    );
+    let now = Instant::now();
+    assert!(app.request(AppRequest::Cleanup, now).unwrap().is_none());
+    app.shutdown(now);
+    assert!(!app.stopped());
+    assert!(!dir.path().join("capture.manifest.json").exists());
+    fs::write(dir.path().join("scan-services.ready"), "").unwrap();
+    assert_eq!(completion(&mut app, now)["enabled"], false);
+    assert!(dir.path().join("scan-services.done").exists());
+    assert!(app.stopped());
 }

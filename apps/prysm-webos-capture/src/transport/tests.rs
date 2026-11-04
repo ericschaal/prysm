@@ -1,10 +1,12 @@
 use super::*;
 use crate::encoder::{Encoder, H264_BITRATE};
 use prysm_webos_protocol::{Compression, HEADER_LEN, Header, PixelFormat, decompress};
+use std::net::TcpStream;
 use std::{
     net::{SocketAddr, TcpListener},
     thread,
 };
+use tungstenite::WebSocket;
 
 pub(crate) fn hello(listener: &TcpListener) -> WebSocket<TcpStream> {
     let (tcp, _) = listener.accept().unwrap();
@@ -39,10 +41,7 @@ pub(crate) fn accept_resolution(
 }
 fn connect(address: SocketAddr) -> (Sender, CaptureOptions) {
     let (mut sender, msg) = Sender::connect(&format!("http://{address}").parse().unwrap()).unwrap();
-    let settings = sender
-        .wait_for_capture(msg, &AtomicBool::new(false))
-        .unwrap()
-        .unwrap();
+    let settings = sender.wait_for_capture(msg, || Ok(true)).unwrap().unwrap();
     (sender, settings)
 }
 fn send(
@@ -275,7 +274,12 @@ fn stalled_receiver_cannot_extend_the_frame_deadline() {
     let server = thread::spawn(move || accept(&listener, 30));
     let (mut sender, _) = connect(address);
     let peer = server.join().unwrap();
-    nix::sys::socket::setsockopt(&sender.tcp, nix::sys::socket::sockopt::SndBuf, &4096).unwrap();
+    nix::sys::socket::setsockopt(
+        sender.socket.get_ref().get_ref(),
+        nix::sys::socket::sockopt::SndBuf,
+        &4096,
+    )
+    .unwrap();
     nix::sys::socket::setsockopt(peer.get_ref(), nix::sys::socket::sockopt::RcvBuf, &4096).unwrap();
     let header = Header {
         width: 1920,
@@ -289,4 +293,103 @@ fn stalled_receiver_cannot_extend_the_frame_deadline() {
     let start = Instant::now();
     assert!(send(&mut sender, &mut encoder, header, &pixels, Content::Video).is_err());
     assert!(start.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn https_ipv6_literal_reaches_the_tls_peer() {
+    let listener = TcpListener::bind("[::1]:0").unwrap();
+    let instance = format!("https://{}", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let peer = thread::spawn(move || {
+        let (mut tcp, _) = listener.accept().unwrap();
+        tcp.set_read_timeout(Some(CONTROL_TIMEOUT)).unwrap();
+        let mut acceptor = rustls::server::Acceptor::default();
+        while acceptor.read_tls(&mut tcp).unwrap() != 0 {
+            if acceptor.accept().unwrap().is_some() {
+                return true;
+            }
+        }
+        false
+    });
+    // The peer closes after ClientHello without presenting a certificate.
+    assert!(Sender::connect(&instance).is_err());
+    assert!(peer.join().unwrap(), "IPv6 was rejected before TLS");
+}
+
+#[test]
+fn idle_renewals_keep_a_healthy_tv_waiting_until_capture_starts() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = thread::spawn(move || {
+        let mut socket = hello(&listener);
+        let start = Instant::now();
+        while start.elapsed() <= CONTROL_TIMEOUT {
+            socket
+                .send(Message::binary(ControlMessage::Idle.encode().unwrap()))
+                .unwrap();
+            thread::sleep(prysm_webos_protocol::IDLE_RENEWAL);
+        }
+        socket
+            .send(Message::binary(
+                ControlMessage::CaptureSettings {
+                    refresh_rate_hz: 15,
+                    capture_resolution: [2, 2],
+                }
+                .encode()
+                .unwrap(),
+            ))
+            .unwrap();
+    });
+    let (_, settings) = connect(address);
+    assert_eq!(settings.fps, 15);
+    peer.join().unwrap();
+}
+
+#[test]
+fn trickling_handshake_cannot_renew_the_deadline() {
+    partial_reply_times_out(false);
+}
+
+#[test]
+fn trickling_settings_after_idle_cannot_renew_the_deadline() {
+    partial_reply_times_out(true);
+}
+
+fn partial_reply_times_out(after_idle: bool) {
+    use std::io::Write;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let instance = format!("http://{}", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let peer = thread::spawn(move || {
+        let mut socket = hello(&listener);
+        if after_idle {
+            socket
+                .send(Message::binary(ControlMessage::Idle.encode().unwrap()))
+                .unwrap();
+        }
+        let payload = ControlMessage::CaptureSettings {
+            refresh_rate_hz: 30,
+            capture_resolution: [2, 2],
+        }
+        .encode()
+        .unwrap();
+        let tcp = socket.get_mut();
+        tcp.write_all(&[0x82, u8::try_from(payload.len()).unwrap()])
+            .unwrap();
+        thread::sleep(CONTROL_TIMEOUT * 3 / 5);
+        tcp.write_all(&payload[..1]).unwrap();
+        thread::sleep(CONTROL_TIMEOUT * 3 / 5);
+        let _ = tcp.write_all(&payload[1..]);
+    });
+    let result = Sender::connect(&instance)
+        .and_then(|(mut sender, msg)| sender.wait_for_capture(msg, || Ok(true)));
+    let err = result.expect_err("peer extended the deadline by trickling bytes");
+    assert!(
+        err.downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::TimedOut),
+        "{err:#}"
+    );
+    peer.join().unwrap();
 }

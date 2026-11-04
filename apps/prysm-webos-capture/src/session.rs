@@ -43,12 +43,16 @@ impl<V: FrameCapture> Session<V> {
         matches!(self.state, State::Waiting(ControlMessage::Busy))
     }
 
-    pub fn wait_for_capture(&mut self, config: &Config, stop: &AtomicBool) -> Result<bool> {
+    pub fn wait_for_capture(
+        &mut self,
+        config: &Config,
+        ready: impl FnMut() -> Result<bool>,
+    ) -> Result<bool> {
         let message = match &self.state {
             State::Waiting(message) => *message,
             State::Capturing(_) => return Ok(true),
         };
-        let Some(settings) = self.sender.wait_for_capture(message, stop)? else {
+        let Some(settings) = self.sender.wait_for_capture(message, ready)? else {
             return Ok(false);
         };
         record_capture_settings(config, settings.fps, [settings.width, settings.height]);
@@ -143,7 +147,7 @@ pub(crate) fn capture_loop<V: FrameCapture>(
     mut open_video: impl FnMut(&CaptureOptions) -> Result<V>,
 ) -> Result<()> {
     let mut session = Session::connect(config)?;
-    if session.wait_for_capture(config, stop)? {
+    if session.wait_for_capture(config, || Ok(!stop.load(Ordering::Relaxed)))? {
         session.configure(&mut Events::disabled())?;
         session.run(
             stop,

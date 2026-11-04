@@ -21,13 +21,13 @@ export interface components {
             returnValue: boolean;
         };
         Observation: {
-            /** Format: int32 */
+            /** Format: uint32 */
             pid: number;
             returnValue: boolean;
-            /** Format: int64 */
+            /** Format: uint64 */
             revision: number;
             subscribed: boolean;
-            /** Format: int32 */
+            /** Format: uint32 */
             subscribers: number;
             videoAvailable: boolean | null;
         };
@@ -47,6 +47,19 @@ export interface components {
             senderRunning: boolean;
             stopping: boolean;
         };
+        StatusReply: components["schemas"]["ServiceStatus"] & {
+            /** @constant */
+            returnValue: true;
+        };
+        FailureReply: components["schemas"]["ErrorReply"] & {
+            /** @constant */
+            returnValue: false;
+        };
+        HomebrewExecReply: {
+            returnValue: boolean;
+            errorText?: string;
+            stderrString?: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -56,3 +69,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;
+export function isStatus(value: unknown): value is components["schemas"]["StatusReply"];
+export function isErrorReply(value: unknown): value is components["schemas"]["FailureReply"];
+export function isExecReply(value: unknown): value is components["schemas"]["HomebrewExecReply"];

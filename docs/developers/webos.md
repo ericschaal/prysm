@@ -14,7 +14,7 @@ valid power observation rather than assuming an awake TV. Failed subscriptions
 retry after five seconds and keep the sender stopped.
 
 Prysm accepts a binary WebSocket at `/api/capture` on its HTTP listener, including during setup. When capture starts the first ready TV gets the session; other TVs receive a busy response and retry. A TV with video available connects to idle Prysm without opening capture
-devices or encoding/sending frames. Screen sync sends capture settings to that
+devices or encoding/sending frames. Prysm renews the idle reply every second, including for queued TVs. The worker releases its place if video becomes unavailable or a complete reply takes longer than four seconds. Screen sync sends capture settings to that
 connection; Off or Effects closes the capture session. Resolution and FPS remain
 owned by Prysm. After a capture session ends, the worker exits and the supervisor
 starts a fresh worker after one second. On this TV, UI reinitialization in one

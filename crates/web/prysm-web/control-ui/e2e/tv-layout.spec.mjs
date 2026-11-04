@@ -18,6 +18,10 @@ for (const [width, height] of [
               returnValue: true,
               subscribed: true,
               revision: 1,
+              subscribers: 1,
+              pid: 42,
+              receiverBusy: false,
+              lastLog: null,
               config: {
                 instanceUrl: 'https://prysm.test',
                 source: 'both',

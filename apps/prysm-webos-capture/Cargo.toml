@@ -13,8 +13,10 @@ description = "Native webOS video capture sender for Prysm"
 hardware-h264 = ["dep:memmap2", "dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-allocators"]
 
 [dependencies]
-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+futures.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"] }
+tokio-tungstenite.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
 prysm-metrics = { path = "../../crates/common/prysm-metrics" }
 anyhow.workspace = true
 tracing.workspace = true
@@ -22,7 +24,7 @@ tracing-subscriber.workspace = true
 libc.workspace = true
 libloading.workspace = true
 memmap2 = { workspace = true, optional = true }
-nix = { workspace = true, features = ["poll", "user", "fs", "signal"] }
+nix = { workspace = true, features = ["poll", "user", "fs", "signal", "socket"] }
 serde_json.workspace = true
 prysm-webos-protocol = { path = "../../crates/capture/prysm-webos-protocol", features = ["h264"] }
 
@@ -33,6 +35,8 @@ gstreamer-video = { workspace = true, optional = true }
 gstreamer-allocators = { workspace = true, optional = true }
 
 [dev-dependencies]
+tempfile.workspace = true
+tungstenite = "0.29"
 yuv.workspace = true
 nix = { workspace = true, features = ["socket", "pthread"] }
 

@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { createRequire } = require('node:module');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const ts = require('typescript');
@@ -82,6 +83,13 @@ async function fixture(t, options = {}) {
   const pending = [];
   let value = {
     returnValue: true,
+    subscribed: false,
+    subscribers: 0,
+    pid: 42,
+    revision: 1,
+    videoAvailable: null,
+    receiverBusy: false,
+    capturing: false,
     enabled: false,
     power: 'Active',
     senderRunning: false,
@@ -95,6 +103,7 @@ async function fixture(t, options = {}) {
       source: 'both',
       compression: 'lz4',
       autostart: false,
+      metrics: false,
     },
   };
   w.PalmServiceBridge = function () {
@@ -286,6 +295,23 @@ test('save-and-enable applies the draft before enabling, with no optimistic stre
   assert.equal(f.el('notice').textContent, '');
 });
 
+test('Save completes when the service replies after the click', async (t) => {
+  const f = await fixture(t, { deferMethods: ['setConfig'] });
+  await f.click('metrics');
+  await f.click('save');
+  const [save] = f.mutations();
+  await f.reply(
+    f.pending[0],
+    JSON.stringify({ ...f.value, config: save.payload }),
+  );
+  assert.equal(f.el('saved-state').textContent, 'Saved');
+  assert.equal(f.el('notice').textContent, 'Settings saved.');
+  assert.deepEqual(
+    f.mutations().map(({ method }) => method),
+    ['setConfig'],
+  );
+});
+
 test('cleanup is tucked away and requires explicit confirmation; Back returns one level', async (t) => {
   const f = await fixture(t);
   f.el('service-options').focus();
@@ -443,6 +469,60 @@ test('malformed or unsubscribed status replies are cancelled and retried', async
   assert.equal(f.el('connection').textContent, 'Disabled');
 });
 
+test('subscriptions and actions reject replies that violate the service contract', async (t) => {
+  const f = await fixture(t, { deferMethods: ['start'] });
+  const invalid = {
+    ...f.value,
+    config: { ...f.value.config, compression: 'zip' },
+  };
+  await f.reply(
+    f.subscription(),
+    JSON.stringify({ ...invalid, subscribed: true }),
+  );
+  assert.equal(f.el('connection').textContent, 'TV service unavailable');
+  await f.advance(3000);
+  for (const reply of [
+    invalid,
+    { ...f.value, capabilities: {} },
+    { ...f.value, capabilities: { hardwareH264: 'true' } },
+    { ...f.value, receiverBusy: 'false' },
+    { ...f.value, subscribers: 2 ** 32 },
+    { ...f.value, config: { ...f.value.config, unknown: true } },
+    { returnValue: false, errorText: 42 },
+  ]) {
+    await f.click('primary');
+    await f.reply(f.pending.at(-1), JSON.stringify(reply));
+    assert.equal(
+      f.el('notice').textContent,
+      'The service returned an invalid reply.',
+    );
+    assert.equal(f.el('primary').disabled, false);
+  }
+});
+
+test('Homebrew setup accepts exec success and reports stderr without a Prysm status', async (t) => {
+  const f = await fixture(t, { offline: true, deferMethods: ['exec'] });
+  await f.click('primary');
+  await f.reply(f.pending.at(-1), JSON.stringify({ stdoutString: 'done' }));
+  assert.equal(
+    f.el('notice').textContent,
+    'Homebrew Channel returned an invalid reply.',
+  );
+  await f.click('primary');
+  await f.reply(
+    f.pending.at(-1),
+    JSON.stringify({ returnValue: false, stderrString: 'Setup script failed' }),
+  );
+  assert.equal(f.el('notice').textContent, 'Setup script failed');
+  await f.click('primary');
+  f.options.offline = false;
+  await f.reply(
+    f.pending.at(-1),
+    JSON.stringify({ returnValue: true, stderrString: 'Setup warning' }),
+  );
+  assert.equal(f.el('connection').textContent, 'Disabled');
+});
+
 test('metrics checkbox defaults off and only persists on Save', async (t) => {
   const f = await fixture(t);
   const checkbox = f.el('metrics');
@@ -491,18 +571,10 @@ for (const [compression, label] of [
 
 test('hardware compression is offered only when the service advertises support', async (t) => {
   const f = await fixture(t);
-  for (const capabilities of [
-    undefined,
-    { hardwareH264: false },
-    { hardwareH264: 'true' },
-  ]) {
-    f.value.capabilities = capabilities;
-    await f.notify();
-    await f.click('compression');
-    assert.equal(f.el('choice-h264-hardware'), null);
-    assert.ok(f.el('choice-h264-software'));
-    await f.key(461);
-  }
+  await f.click('compression');
+  assert.equal(f.el('choice-h264-hardware'), null);
+  assert.ok(f.el('choice-h264-software'));
+  await f.key(461);
   f.value.capabilities = { hardwareH264: true };
   await f.notify();
   await f.click('compression');
@@ -611,7 +683,12 @@ test('synchronous bridge errors and invalid action replies release the busy stat
   assert.equal(f.el('primary').disabled, false);
   f.options.throwMethod = undefined;
   f.options.deferMethods = ['start'];
-  for (const reply of ['null', '{', '[]']) {
+  for (const reply of [
+    'null',
+    '{',
+    '[]',
+    '{"returnValue":true,"config":{"receiver":"old"}}',
+  ]) {
     await f.click('primary');
     await f.reply(f.pending[f.pending.length - 1], reply);
     assert.equal(f.el('notice').getAttribute('role'), 'alert');
@@ -624,13 +701,18 @@ test('synchronous bridge errors and invalid action replies release the busy stat
 
 test('service clients own cancellation independently and can be reused after effect cleanup', async (t) => {
   const f = await fixture(t, { deferMethods: ['start'], cancelReentry: true });
-  f.w.eval('var exports = {};\n' + service);
-  const first = f.w.exports.createServiceClient();
-  const second = f.w.exports.createServiceClient();
+  const exports = {};
+  f.w.Function(
+    'exports',
+    'require',
+    service,
+  )(exports, createRequire(path.join(__dirname, '../src/service.ts')));
+  const first = exports.createServiceClient();
+  const second = exports.createServiceClient();
   const replies = [];
   const uri = 'luna://io.prysm.capture.service/start';
-  first.call(uri, {}, (value) => replies.push(value));
-  second.call(uri, {}, (value) => replies.push(value));
+  first.call(uri, {}, exports.parseReply, (value) => replies.push(value));
+  second.call(uri, {}, exports.parseReply, (value) => replies.push(value));
   first.cancelAll();
   assert.equal(f.pending[0].cancelled, true);
   assert.equal(f.pending[1].cancelled, undefined);
@@ -641,7 +723,7 @@ test('service clients own cancellation independently and can be reused after eff
   assert.equal(replies.length, 1, 'each request completes only once');
   await f.advance(30000);
   assert.equal(replies.length, 1, 'cleanup removes request timeouts');
-  first.call(uri, {}, (value) => replies.push(value));
+  first.call(uri, {}, exports.parseReply, (value) => replies.push(value));
   await f.reply(f.pending[2], JSON.stringify(f.value));
   assert.equal(replies.length, 2);
 });
@@ -1009,27 +1091,42 @@ test('a terminal playback error stays visible past the reconnect deadline', asyn
   assert.equal(f.w.document.querySelector('video'), null);
 });
 
-test('explicit HTTP without a port offers an opt-in retry after connect failure', async (t) => {
-  const f = await fixture(t, { deferMethods: ['setConfig'] });
-  await f.click('receiver');
-  await f.input('receiver-input', 'http://192.168.1.10');
-  await f.click('receiver-apply');
-  await f.click('save');
-  await f.reply(
-    f.pending.at(-1),
-    JSON.stringify({
-      returnValue: false,
-      errorText: 'Connection refused',
-      retryDefaultPort: true,
-    }),
-  );
-  assert.equal(f.el('save').textContent, 'Try port 8787');
-  await f.click('save');
-  assert.equal(
-    f.mutations().at(-1).payload.instanceUrl,
-    'http://192.168.1.10:8787',
-  );
-});
+for (const [button, shouldEnable] of [
+  ['save', false],
+  ['primary', true],
+]) {
+  test(`port retry after ${shouldEnable ? 'Save and enable' : 'Save'} preserves the requested action`, async (t) => {
+    const f = await fixture(t, { deferMethods: ['setConfig'] });
+    await f.click('receiver');
+    await f.input('receiver-input', 'http://192.168.1.10');
+    await f.click('receiver-apply');
+    await f.click(button);
+    await f.reply(
+      f.pending.at(-1),
+      JSON.stringify({
+        returnValue: false,
+        errorText: 'Connection refused',
+        retryDefaultPort: true,
+      }),
+    );
+    assert.equal(f.el('save').textContent, 'Try port 8787');
+    await f.click('save');
+    const retry = f.mutations().at(-1);
+    assert.equal(retry.payload.instanceUrl, 'http://192.168.1.10:8787');
+    assert.equal(f.value.enabled, false);
+    await f.reply(
+      f.pending.at(-1),
+      JSON.stringify({ ...f.value, config: retry.payload }),
+    );
+    assert.deepEqual(
+      f.mutations().map(({ method }) => method),
+      shouldEnable
+        ? ['setConfig', 'setConfig', 'start']
+        : ['setConfig', 'setConfig'],
+    );
+    assert.equal(f.value.enabled, shouldEnable);
+  });
+}
 
 test('the calibration relay uses the saved HTTPS origin', async (t) => {
   const f = await fixture(t, { instanceUrl: 'https://prysm.example' });

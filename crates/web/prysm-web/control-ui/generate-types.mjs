@@ -1,4 +1,4 @@
-// Invoked by xtask for both frontends; generation never runs inside a Cargo build script.
+// Generate the host API types for xtask.
 import { readFileSync } from 'node:fs';
 import openapiTS, { astToString } from 'openapi-typescript';
 

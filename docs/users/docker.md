@@ -107,8 +107,7 @@ group_add:
 
 The numeric group must match the host device's group. A stable
 `/dev/v4l/by-id/...` path can be used on the left side of the device mapping.
-Remove the TV port mapping if unused. Privileged mode and host networking are
-unnecessary. See [device setup](quickstart.md) for supported modes and LED wiring.
+Keep the HTTP port mapping so the panel remains reachable. See [device setup](quickstart.md) for supported modes and LED wiring.
 
 ## Update, build, and verify
 

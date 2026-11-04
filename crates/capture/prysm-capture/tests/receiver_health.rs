@@ -171,3 +171,33 @@ async fn ready_tvs_are_ordered_and_an_active_session_survives_a_busy_handshake()
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn idle_waiters_keep_their_place_across_renewals_and_video_loss() {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        let receiver = WebosReceiver::new().unwrap();
+        let url = endpoint(&receiver).await;
+        let mut first = connect(&url).await;
+        assert_eq!(reply(&mut first).await, ControlMessage::Idle);
+        let mut second = connect(&url).await;
+        assert_eq!(reply(&mut second).await, ControlMessage::Idle);
+        assert_eq!(reply(&mut first).await, ControlMessage::Idle);
+        assert_eq!(reply(&mut second).await, ControlMessage::Idle);
+        drop(first);
+        // Allow the receiver to observe the departure before requesting capture.
+        assert_eq!(reply(&mut second).await, ControlMessage::Idle);
+        let stop = CancellationToken::new();
+        let (_frames, completed, _) = receiver
+            .capture(4, 2, 30.try_into().unwrap(), stop.clone())
+            .unwrap();
+        assert!(matches!(
+            reply(&mut second).await,
+            ControlMessage::CaptureSettings { .. }
+        ));
+        stop.cancel();
+        completed.cancelled().await;
+        receiver.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

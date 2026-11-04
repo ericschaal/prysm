@@ -8,7 +8,7 @@ use axum::{
     routing::get,
 };
 use futures::Stream;
-use prysm_webos_protocol::{CAPTURE_PATH, ControlMessage, HEADER_LEN, HELLO};
+use prysm_webos_protocol::{CAPTURE_PATH, ControlMessage, HEADER_LEN, HELLO, IDLE_RENEWAL};
 use std::{
     num::NonZeroU32,
     sync::{Arc, Mutex},
@@ -229,19 +229,31 @@ async fn connection(
     if !active {
         send(&mut socket, ControlMessage::Idle).await?;
     }
-    let _turn = if let Some(guard) = place {
-        guard
-    } else {
-        tokio::select! {
-            biased;
-            guard = turn.lock() => guard,
-            _ = requested(&mut capture) => return send(&mut socket,ControlMessage::Busy).await,
-            _ = binary(&mut socket) => return Ok(()),
-        }
+    let claim = async {
+        let guard = if let Some(guard) = place {
+            guard
+        } else {
+            tokio::select! {
+                biased;
+                guard = turn.lock() => guard,
+                result = requested(&mut capture) => { result?; return anyhow::Ok(None); }
+            }
+        };
+        Ok(Some((guard, requested(&mut capture).await?)))
     };
-    let request = tokio::select! {
-        result = requested(&mut capture) => result?,
-        _ = binary(&mut socket) => return Ok(()),
+    let (_turn, request) = {
+        tokio::pin!(claim);
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut claim => match result? {
+                    Some(owned) => break owned,
+                    None => return send(&mut socket, ControlMessage::Busy).await,
+                },
+                _ = binary(&mut socket) => return Ok(()),
+                () = tokio::time::sleep(IDLE_RENEWAL) => send(&mut socket, ControlMessage::Idle).await?,
+            }
+        }
     };
     send(&mut socket, request.settings).await?;
     tokio::select! {

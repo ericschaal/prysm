@@ -61,7 +61,7 @@ The service starts the worker without arguments and supplies:
 
 - `PRYSM_WORKER_CONFIG`: bounded JSON containing a validated HTTP(S) instance origin,
   `source` (`video`, `both`), `compression` (`none`, `lz4`, `h264-software`, `h264-hardware`), and
-  `metrics` (boolean, defaults off).
+  `metrics` (required boolean, initially false).
 - `PRYSM_EVENTS_FD`: an owned inherited pipe for typed lifecycle events.
 - stdin: the required private readiness/reset control pipe.
 
@@ -134,15 +134,14 @@ result. Each new session owns fresh codec state and begins with decoder
 configuration and an IDR frame. Periodic IDRs are disabled for reliable TCP;
 scene-change detection remains enabled.
 
-There is no application frame queue. TCP connect and initial handshake I/O have four-second timeouts. Complete frame writes have a 100 ms deadline.
+There is no application frame queue. DNS, TCP, TLS, the WebSocket upgrade and the initial control reply share one four-second deadline. While idle, Prysm renews its reply every second. The worker gives each complete reply four seconds and releases the connection when video becomes unavailable. Complete frame writes have a 100 ms deadline.
 The idle wait is interruptible. A partial/failed write disconnects immediately,
 before potentially blocking native teardown. Kernel TCP buffering and
 retransmissions can still increase latency.
 
 The sole active version source is
 [`wire-version.txt`](../../crates/capture/prysm-webos-protocol/wire-version.txt). It drives the JSON
-hello version, four-byte frame magic, Rust fixtures, and TV smoke receiver. This
-version requires both ends to use the WebSocket transport. Each binary message holds one JSON control or one frame with its 24-byte header:
+hello version, four-byte frame magic, Rust fixtures, and TV smoke receiver. Version 5 requires the receiver to renew idle sessions. Update the host and TV package together. Each binary message holds one JSON control or one frame with its 24-byte header:
 
 | Offset | Bytes | Field |
 | --- | --- | --- |
@@ -162,6 +161,8 @@ Use WS on a trusted LAN or WSS through a trusted HTTPS endpoint. The receiver is
 in the pipeline; the worker no longer exposes a standalone Prometheus CLI option.
 
 ## Verification
+
+The TLS integration test uses the OpenSSL CLI to issue a temporary certificate for its loopback receiver.
 
 ```sh
 cargo test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-capture -p prysm-webos-service

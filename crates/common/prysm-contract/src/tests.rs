@@ -2,30 +2,22 @@ use super::*;
 use serde_json::json;
 use utoipa::PartialSchema;
 
-const CONFIG: &str = r#"
-revision = "0"
-source = "prysm"
-[input]
-capture_resolution = [640, 360]
-refresh_rate_hz = 30
-type = "device"
-device = "/dev/video0"
-[output]
-type = "wled"
-url = "http://wled.local/"
-[output.leds]
-top = 51
-right = 31
-bottom = 49
-left = 31
-[processing]
-brightness_percent = 75
-shadow_lift_percent = 0
-smoothing_seconds = 0.1
-sample_density = 128
-spatial_reach_percent = 10
-remove_black_bars = true
-"#;
+fn config_json() -> serde_json::Value {
+    json!({
+        "revision": "0",
+        "source": "prysm",
+        "input": {"type":"device", "device":"/dev/video0", "capture_resolution":[640,360], "refresh_rate_hz":30},
+        "output": {"type":"wled", "url":"http://wled.local/", "leds":{"top":51,"right":31,"bottom":49,"left":31}},
+        "processing": {
+            "brightness_percent":75, "shadow_lift_percent":0, "smoothing_seconds":0.1,
+            "sample_density":128, "spatial_reach_percent":10, "remove_black_bars":true
+        }
+    })
+}
+
+fn config() -> Config {
+    serde_json::from_value(config_json()).unwrap()
+}
 
 #[test]
 fn numeric_values_are_checked_at_deserialization() {
@@ -55,25 +47,26 @@ fn revisions_preserve_u64_precision_and_reject_noncanonical_strings() {
     }
 }
 #[test]
-fn one_configuration_round_trips_between_toml_json_and_processor() {
-    let config: Config = toml::from_str(CONFIG).unwrap();
+fn configuration_round_trips_as_json_and_maps_to_the_processor() {
+    let config = config();
     config.validate().unwrap();
     assert_eq!(
         serde_json::from_str::<Config>(&serde_json::to_string(&config).unwrap()).unwrap(),
         config
     );
     assert_eq!(
-        toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
-        config
-    );
-    assert_eq!(
         ProcessingSettings::default().to_core(),
         prysm_core::Config::default()
     );
-    assert!(
-        toml::from_str::<Config>(&CONFIG.replace("brightness_percent = 75", "typo = 75")).is_err()
-    );
-    assert!(toml::from_str::<Config>(&CONFIG.replace("remove_black_bars = true", "")).is_err());
+    let mut extra = config_json();
+    extra["processing"]["typo"] = json!(75);
+    assert!(serde_json::from_value::<Config>(extra).is_err());
+    let mut missing = config_json();
+    missing["processing"]
+        .as_object_mut()
+        .unwrap()
+        .remove("remove_black_bars");
+    assert!(serde_json::from_value::<Config>(missing).is_err());
 }
 #[test]
 fn configuration_rejects_invalid_resources() {
@@ -104,19 +97,20 @@ fn configuration_rejects_invalid_resources() {
         "http://wled.local/api",
         "http://wled.local/?query=true",
     ] {
-        assert!(toml::from_str::<Config>(&CONFIG.replace("http://wled.local/", invalid)).is_err());
+        let mut value = config_json();
+        value["output"]["url"] = json!(invalid);
+        assert!(serde_json::from_value::<Config>(value).is_err());
     }
 }
 #[test]
 fn webos_input_round_trips() {
-    let config: Config = toml::from_str(CONFIG).unwrap();
-    let mut next = config.clone();
+    let mut next = config();
     next.input = Input::Webos {
         capture_resolution: [640, 360].try_into().unwrap(),
         refresh_rate_hz: 30.try_into().unwrap(),
     };
     assert_eq!(
-        toml::from_str::<Config>(&toml::to_string(&next).unwrap()).unwrap(),
+        serde_json::from_value::<Config>(serde_json::to_value(&next).unwrap()).unwrap(),
         next
     );
     assert_eq!(
@@ -180,7 +174,7 @@ fn schema_matches_serialized_values() {
 
 #[test]
 fn every_input_output_pair_is_valid() {
-    let base: Config = toml::from_str(CONFIG).unwrap();
+    let base = config();
     let inputs = [
         json!({"type":"device", "capture_resolution":[640,360], "refresh_rate_hz":30, "device":"/dev/video0"}),
         json!({"type":"file", "capture_resolution":[640,360], "refresh_rate_hz":30, "path":"/tmp/video.mkv"}),
@@ -194,7 +188,7 @@ fn every_input_output_pair_is_valid() {
             config.output = serde_json::from_value(output.clone()).unwrap();
             config.validate().unwrap();
             assert_eq!(
-                toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
+                serde_json::from_value::<Config>(serde_json::to_value(&config).unwrap()).unwrap(),
                 config
             );
             config.source = Source::Wled;
@@ -220,7 +214,7 @@ fn input_rates_are_required_positive_and_output_rates_are_rejected() {
         valid["refresh_rate_hz"] = json!(30);
         assert!(serde_json::from_value::<Input>(valid).is_ok());
     }
-    let base: Config = toml::from_str(CONFIG).unwrap();
+    let base = config();
     let mut output = serde_json::to_value(base.output).unwrap();
     output["refresh_rate_hz"] = json!(30);
     assert!(serde_json::from_value::<Output>(output).is_err());
@@ -228,7 +222,7 @@ fn input_rates_are_required_positive_and_output_rates_are_rejected() {
 
 #[test]
 fn webos_capture_rate_cannot_exceed_native_limit() {
-    let mut config: Config = toml::from_str(CONFIG).unwrap();
+    let mut config = config();
     for rate in [1, 60, 61] {
         config.input = Input::Webos {
             capture_resolution: [640, 360].try_into().unwrap(),
@@ -240,7 +234,7 @@ fn webos_capture_rate_cannot_exceed_native_limit() {
 
 #[test]
 fn capture_resolution_belongs_to_input_and_webos_dimensions_are_validated() {
-    let base: Config = toml::from_str(CONFIG).unwrap();
+    let base = config();
     for mut input in [
         json!({"type":"device", "device":"/dev/video0", "refresh_rate_hz":30}),
         json!({"type":"file", "path":"video.mkv", "refresh_rate_hz":30}),
@@ -268,7 +262,7 @@ fn capture_resolution_belongs_to_input_and_webos_dimensions_are_validated() {
 
 #[test]
 fn wled_url_is_required_and_ddp_uses_its_host_with_fixed_port() {
-    let base: Config = toml::from_str(CONFIG).unwrap();
+    let base = config();
     for (url, address) in [
         ("http://wled.local/", "wled.local:4048"),
         ("https://192.168.18.39:8443/", "192.168.18.39:4048"),

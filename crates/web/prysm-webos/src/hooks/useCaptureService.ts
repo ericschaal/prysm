@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import {
   createServiceClient,
   parseReply,
+  parseSetupReply,
   type Config,
   type Status,
   type Reply,
@@ -15,6 +16,10 @@ const defaults: Config = {
   autostart: false,
   metrics: false,
 };
+interface SaveRequest {
+  config: Config;
+  enableAfterSave: boolean;
+}
 interface State {
   online: boolean | null;
   status: Status | null;
@@ -22,24 +27,14 @@ interface State {
   draft: Config;
   changing: boolean;
   notice: string;
-  retryUrl?: string;
+  retry?: SaveRequest;
   error: boolean;
 }
-function normalizeConfig(value: Config): Config {
-  return {
-    instanceUrl: value.instanceUrl,
-    source: value.source,
-    compression: value.compression,
-    autostart: value.autostart,
-    metrics: value.metrics === true,
-  };
-}
-
 type Action =
   | { type: 'observe'; status: Status; subscribed?: boolean }
   | { type: 'offline'; text: string }
   | { type: 'edit'; patch: Partial<Config> }
-  | { type: 'notice'; text: string; error: boolean; retryUrl?: string }
+  | { type: 'notice'; text: string; error: boolean; retry?: SaveRequest }
   | { type: 'changing'; value: boolean }
   | { type: 'saved'; config: Config; cleanup: boolean };
 
@@ -60,10 +55,8 @@ function reducer(state: State, action: Action): State {
         ...state,
         online: true,
         status: action.status,
-        saved: state.saved ?? normalizeConfig(action.status.config),
-        draft: state.saved
-          ? state.draft
-          : normalizeConfig(action.status.config),
+        saved: state.saved ?? action.status.config,
+        draft: state.saved ? state.draft : action.status.config,
         notice:
           action.subscribed && state.online === false
             ? 'Service connected.'
@@ -76,7 +69,7 @@ function reducer(state: State, action: Action): State {
     case 'edit':
       return {
         ...state,
-        retryUrl: undefined,
+        retry: undefined,
         draft: { ...state.draft, ...action.patch },
       };
     case 'notice':
@@ -84,17 +77,17 @@ function reducer(state: State, action: Action): State {
         ...state,
         notice: action.text,
         error: action.error,
-        retryUrl: action.retryUrl,
+        retry: action.retry,
       };
     case 'changing':
       return { ...state, changing: action.value };
     case 'saved':
       return {
         ...state,
-        saved: normalizeConfig(action.config),
+        saved: action.config,
         draft: action.cleanup
           ? { ...state.draft, autostart: false }
-          : normalizeConfig(action.config),
+          : action.config,
       };
   }
 }
@@ -105,7 +98,7 @@ export function useCaptureService(openReceiver: () => void) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const busy = useRef(false);
   const reconnect = useRef(() => {});
-  const { online, status: status, saved, draft } = state;
+  const { online, status, saved, draft } = state;
   const dirty =
     !saved ||
     (Object.keys(draft) as (keyof Config)[]).some(
@@ -167,19 +160,18 @@ export function useCaptureService(openReceiver: () => void) {
           failed(error instanceof Error ? error.message : String(error));
           return;
         }
-        if (
-          !value ||
-          value.returnValue !== true ||
-          !value.config ||
-          value.subscribed !== true
-        ) {
-          failed(value?.errorText);
+        if (!value.returnValue) {
+          failed(value.errorText);
+          return;
+        }
+        if (!value.subscribed) {
+          failed();
           return;
         }
         clearTimeout(timer);
         dispatch({
           type: 'observe',
-          status: value as Status,
+          status: value,
           subscribed: true,
         });
       };
@@ -212,61 +204,80 @@ export function useCaptureService(openReceiver: () => void) {
     };
   }, [client]);
 
-  function request(
-    method: 'setConfig' | 'start' | 'stop' | 'cleanup',
-    payload: object = {},
-    success?: () => void,
-  ) {
+  function request(change: SaveRequest | 'start' | 'stop' | 'cleanup') {
     if (busy.current) return;
     busy.current = true;
     dispatch({ type: 'changing', value: true });
-    call('luna://io.prysm.capture.service/' + method, payload, (value) => {
-      busy.current = false;
-      dispatch({ type: 'changing', value: false });
-      if (value.returnValue !== true || !value.config) {
-        // An explicit :80 is also a port choice, even though URL normalizes it away.
-        const host =
-          method === 'setConfig' &&
-          value.retryDefaultPort &&
-          /^http:\/\/(\[[^\]]+\]|[^/:?#@]+)\/?$/i.exec(
-            draft.instanceUrl.trim(),
+    const saving = typeof change === 'object';
+    const method = saving ? 'setConfig' : change;
+    const payload = saving ? change.config : {};
+    call(
+      'luna://io.prysm.capture.service/' + method,
+      payload,
+      parseReply,
+      (value) => {
+        busy.current = false;
+        dispatch({ type: 'changing', value: false });
+        if (!value.returnValue) {
+          // An explicit :80 is also a port choice, even though URL normalizes it away.
+          const host =
+            saving &&
+            value.retryDefaultPort &&
+            /^http:\/\/(\[[^\]]+\]|[^/:?#@]+)\/?$/i.exec(
+              change.config.instanceUrl.trim(),
+            );
+          if (host) {
+            dispatch({
+              type: 'notice',
+              text: value.errorText || 'Could not reach Prysm.',
+              error: true,
+              retry: {
+                ...change,
+                config: {
+                  ...change.config,
+                  instanceUrl: `http://${host[1]}:8787`,
+                },
+              },
+            });
+            return;
+          }
+          notice(
+            value.errorText || 'The service could not complete this action.',
+            true,
           );
-        if (host) {
-          dispatch({
-            type: 'notice',
-            text: value.errorText || 'Could not reach Prysm.',
-            error: true,
-            retryUrl: `http://${host[1]}:8787`,
-          });
           return;
         }
-        notice(
-          value.errorText || 'The service could not complete this action.',
-          true,
-        );
-        return;
-      }
-      dispatch({ type: 'observe', status: value as Status });
-      if (method === 'setConfig' || method === 'cleanup') {
-        dispatch({
-          type: 'saved',
-          config: value.config,
-          cleanup: method === 'cleanup',
-        });
-      }
-      success?.();
-    });
+        dispatch({ type: 'observe', status: value });
+        if (saving || change === 'cleanup') {
+          dispatch({
+            type: 'saved',
+            config: value.config,
+            cleanup: change === 'cleanup',
+          });
+        }
+        if (saving) {
+          notice('Settings saved.');
+          if (change.enableAfterSave) request('start');
+        } else if (change === 'stop') {
+          notice('');
+        } else if (change === 'cleanup') {
+          notice('Service setup removed. Receiver settings kept.');
+        }
+      },
+    );
   }
-  function saveSettings(success?: () => void) {
+  function saveSettings() {
+    if (state.retry) {
+      edit('instanceUrl', state.retry.config.instanceUrl);
+      request(state.retry);
+      return;
+    }
     if (!draft.instanceUrl) {
       notice('Add the Prysm instance URL first.', true);
       openReceiver();
       return;
     }
-    request('setConfig', normalizeConfig(draft), () => {
-      notice('Settings saved.');
-      success?.();
-    });
+    request({ config: draft, enableAfterSave: false });
   }
   function setup() {
     if (busy.current) return;
@@ -279,17 +290,12 @@ export function useCaptureService(openReceiver: () => void) {
         command:
           '/media/developer/apps/usr/palm/services/io.prysm.capture.service/setup.sh',
       },
+      parseSetupReply,
       (value) => {
         busy.current = false;
         dispatch({ type: 'changing', value: false });
-        if (value.returnValue === false || value.error || value.stderrString) {
-          notice(
-            value.errorText ||
-              value.error ||
-              value.stderrString ||
-              'Service setup failed.',
-            true,
-          );
+        if (!value.returnValue) {
+          notice(value.errorText, true);
         } else {
           notice('Service setup complete.');
           reconnect.current();
@@ -304,14 +310,14 @@ export function useCaptureService(openReceiver: () => void) {
       return;
     }
     if (enabled) {
-      request('stop', {}, () => notice(''));
+      request('stop');
       return;
     }
     if (!draft.instanceUrl) {
       openReceiver();
       return;
     }
-    if (dirty) saveSettings(() => request('start'));
+    if (dirty) request({ config: draft, enableAfterSave: true });
     else request('start');
   }
 
@@ -320,20 +326,8 @@ export function useCaptureService(openReceiver: () => void) {
     dirty,
     edit,
     saveSettings,
-    retryDefaultPort: () => {
-      if (!state.retryUrl) return;
-      edit('instanceUrl', state.retryUrl);
-      request(
-        'setConfig',
-        { ...normalizeConfig(draft), instanceUrl: state.retryUrl },
-        () => notice('Settings saved.'),
-      );
-    },
     primary,
     setup,
-    cleanup: () =>
-      request('cleanup', {}, () =>
-        notice('Service setup removed. Receiver settings kept.'),
-      ),
+    cleanup: () => request('cleanup'),
   };
 }

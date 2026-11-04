@@ -109,13 +109,14 @@ impl App {
                 }
             }
             AppRequest::Cleanup => {
-                self.state.enabled = false;
                 let mut config = self.state.config.clone();
                 config.autostart = false;
-                self.files.autostart(false)?;
                 if config.instance_url.is_some() {
                     self.files.persist(&config)?;
+                } else {
+                    self.files.autostart(false)?;
                 }
+                self.state.enabled = false;
                 self.state.config = config;
                 self.state.stop(now, true);
                 self.pending = Some(Pending::Cleanup);
@@ -129,16 +130,7 @@ impl App {
         }
     }
     fn save(&mut self, config: Config, now: Instant) -> Result<()> {
-        let had_saved_config = self.files.root.join("config.json").try_exists()?;
         self.files.persist(&config)?;
-        if let Err(error) = self.files.autostart(config.autostart) {
-            if had_saved_config {
-                self.files.persist(&self.state.config)?;
-            } else {
-                Files::remove(&self.files.root.join("config.json"))?;
-            }
-            return Err(error);
-        }
         self.state.configure(config, now);
         Ok(())
     }
@@ -288,8 +280,8 @@ impl App {
             self.scan = None;
             ensure!(!timed_out, "Luna service rescan timed out");
             ensure!(exit.success(), "Luna service rescan failed: {exit}");
-            ensure!(!self.shutting_down, "Service is shutting down");
-            if matches!(self.pending, Some(Pending::Start)) && !self.shutting_down {
+            if matches!(self.pending, Some(Pending::Start)) {
+                ensure!(!self.shutting_down, "Service is shutting down");
                 self.state.start(now)?;
                 self.execute(now)?;
             }
@@ -300,6 +292,7 @@ impl App {
             return Ok(None);
         }
         if let Some(Pending::Verify { config, .. }) = &self.pending {
+            ensure!(!self.shutting_down, "Service is shutting down");
             let child = Command::new(&self.files.worker)
                 .arg("--verify-instance")
                 .arg(
@@ -328,7 +321,9 @@ impl App {
     }
     pub fn shutdown(&mut self, now: Instant) {
         self.shutting_down = true;
-        if let Some(scan) = &mut self.scan {
+        if !matches!(self.pending, Some(Pending::Cleanup))
+            && let Some(scan) = &mut self.scan
+        {
             let _ = scan.child.kill();
         }
         self.state.enabled = false;

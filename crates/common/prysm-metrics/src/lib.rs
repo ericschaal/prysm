@@ -95,7 +95,7 @@ impl Metrics {
         );
         registry.register(
             "prysm_stream_bytes",
-            "Owning component application bytes at a boundary; SocketAccepted includes headers and partial writes, CompletePayload excludes headers; no TCP overhead",
+            "Application bytes at each boundary. SocketAccepted counts the capture header and payload of each completely written frame. CompletePayload excludes headers. Transport overhead is excluded.",
             bytes.clone(),
         );
         registry.register(
