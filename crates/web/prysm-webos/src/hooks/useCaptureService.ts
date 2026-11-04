@@ -182,19 +182,20 @@ export function useCaptureService(openReceiver: () => void) {
         failed(error instanceof Error ? error.message : String(error));
       }
     }
-    const visible = () => {
-      if (!document.hidden) watch();
+    const visibilityChanged = () => {
+      if (document.hidden) stop();
+      else watch();
     };
     reconnect.current = watch;
     watch();
     window.addEventListener('pagehide', stop);
     window.addEventListener('pageshow', watch);
-    document.addEventListener('visibilitychange', visible);
+    document.addEventListener('visibilitychange', visibilityChanged);
     return () => {
       stop();
       window.removeEventListener('pagehide', stop);
       window.removeEventListener('pageshow', watch);
-      document.removeEventListener('visibilitychange', visible);
+      document.removeEventListener('visibilitychange', visibilityChanged);
       reconnect.current = () => {};
       client.cancelAll();
       busy.current = false;

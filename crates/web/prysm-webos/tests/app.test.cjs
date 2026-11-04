@@ -398,6 +398,28 @@ test('a silent activation times out; hiding the page cancels retries and synchro
   assert.equal(f.el('connection').textContent, 'Sender disabled');
 });
 
+test('switching apps pauses sender updates until Prysm is visible again', async (t) => {
+  const f = await fixture(t, { cancelReentry: true });
+  const previous = f.subscription();
+  async function setHidden(hidden) {
+    Object.defineProperty(f.w.document, 'hidden', {
+      value: hidden,
+      configurable: true,
+    });
+    await f.settle(() =>
+      f.w.document.dispatchEvent(new f.w.Event('visibilitychange')),
+    );
+  }
+  await setHidden(true);
+  assert.equal(previous.cancelled, true);
+  await f.reply(previous, '{"returnValue":false}');
+  await f.advance(30000);
+  assert.equal(f.calls.length, 1);
+  await setHidden(false);
+  assert.notEqual(f.subscription(), previous);
+  assert.equal(f.el('connection').textContent, 'Sender disabled');
+});
+
 test('malformed or unsubscribed status replies are cancelled and retried', async (t) => {
   const f = await fixture(t);
   await f.reply(f.subscription(), '{');
