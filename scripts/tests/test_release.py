@@ -50,6 +50,7 @@ with open(os.environ['CALLS'], 'a') as log:
 if tool == 'dpkg-deb':
     print({'Package':'prysm-led', 'Architecture':'arm64', 'Version':'0.2.0-1'}[args[-1]])
 elif tool == 'gh':
+    assert os.environ.get('GH_REPO') == os.environ['GITHUB_REPOSITORY'], 'gh requires repository context outside the checkout'
     if args[:2] == ['release', 'view']:
         print(json.dumps({'isDraft': os.environ['ALREADY_PUBLISHED'] != 'true'}))
     elif args[0] == 'api':
@@ -81,6 +82,7 @@ elif tool == 'docker':
                     (root / name).write_text(name)
                 env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
                            GITHUB_REPOSITORY='ericschaal/prysm', RELEASE_DIRECTORY=str(root),
+                           GITHUB_WORKSPACE=str(release.ROOT),
                            RELEASE_VERSION='0.2.0', RELEASE_TAG='v0.2.0', RELEASE_SHA='commit',
                            ALREADY_PUBLISHED=str(published).lower(), CALLS=str(root / 'calls'),
                            NEWER=str(newer).lower(), REVISION=revision)
