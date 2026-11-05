@@ -43,4 +43,6 @@ python3 -m unittest discover -s scripts/tests
 python3 scripts/check-doc-links.py
 ```
 
-[CI](../../.github/workflows/documentation.yml) also checks public URLs.
+[CI](../../.github/workflows/documentation.yml) checks repository links on every PR.
+Public URLs are checked weekly and on manual workflow runs; external availability
+does not block merging a PR.
