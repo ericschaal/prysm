@@ -148,6 +148,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
+      RUSTUP_TOOLCHAIN: 1.99.1
       WEBOS_SDK: ${{ github.workspace }}/.webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,9 +161,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential file python3
-          rustup update stable --no-self-update
-          rustup default stable
-          rustup target add armv7-unknown-linux-gnueabi
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target armv7-unknown-linux-gnueabi --no-self-update
           npm install --global @webos-tools/cli@3.2.6
       - name: Install pinned webOS SDK
         run: |
@@ -268,7 +267,7 @@ jobs:
 
   debian-arm64:
     runs-on: ubuntu-24.04-arm
-    container: rust:bookworm
+    container: rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

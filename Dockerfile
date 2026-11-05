@@ -6,7 +6,7 @@ COPY crates/web/prysm-web/control-ui/package.json crates/web/prysm-web/control-u
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund
 
-FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS build
+FROM rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev nasm pkg-config \
     && rm -rf /var/lib/apt/lists/*
