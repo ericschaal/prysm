@@ -53,6 +53,10 @@ are retained for seven days. To retry an existing tag from scratch:
 gh workflow run release.yml --ref main -f tag=v0.2.0
 ```
 
+Manual recovery uses publication tooling from the workflow revision. Product
+files and all build inputs still come from the original release tag. Merge a
+publisher fix before dispatching recovery; the release tag stays in place.
+
 The workflow rejects tag/version mismatches and commits outside `main`. Existing
 versioned images must identify the same source commit. Draft assets may be
 replaced during recovery; published assets are preserved. A published release

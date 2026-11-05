@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export GH_REPO="$GITHUB_REPOSITORY"
 image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-root=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$RELEASE_DIRECTORY"
 cd "$RELEASE_DIRECTORY"
 
@@ -16,7 +16,7 @@ else
 fi
 
 if [ "$ALREADY_PUBLISHED" != true ]; then
-  cp "$root/compose.yaml" .
+  cp "$GITHUB_WORKSPACE/compose.yaml" .
   test "$(find . -maxdepth 1 -name '*.deb' | wc -l)" -eq 1
   test "$(find . -maxdepth 1 -name '*.ipk' | wc -l)" -eq 1
   test -f "io.prysm.capture_${RELEASE_VERSION}_all.ipk"
