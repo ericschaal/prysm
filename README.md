@@ -26,7 +26,8 @@ Both setups need a separate computer running Prysm.
 2. Connect a [capture card](docs/users/quickstart.md) or [webOS capturer](docs/users/webos.md).
 3. [Configure WLED and start Screen sync](docs/users/configuration.md).
 
-No official release yet. Installation uses CI builds or a local build.
+Download packages from [Releases](https://github.com/ericschaal/prysm/releases),
+or pull the Docker image from `ghcr.io/ericschaal/prysm`.
 
 ## In action
 

@@ -109,8 +109,7 @@ async fn target_transaction(reject_switch: bool) {
     let fixture = tokio::spawn(async move {
         axum::serve(listener, router)
             .with_graceful_shutdown(stopped.cancelled_owned())
-            .await
-            .unwrap();
+            .await;
     });
     let directory = tempfile::tempdir().unwrap();
     let mut config = test_support::config();

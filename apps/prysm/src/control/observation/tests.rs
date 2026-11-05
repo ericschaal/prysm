@@ -76,7 +76,8 @@ impl Device {
                     if let Some(gate) = gate {
                         gate.await.unwrap();
                     }
-                    Json(document)
+                    // Clock advances must not race a pooled connection's header timeout.
+                    ([(axum::http::header::CONNECTION, "close")], Json(document))
                 }),
             )
             .route("/ws", get(websocket))
@@ -89,8 +90,7 @@ impl Device {
         let server = tokio::spawn(async move {
             axum::serve(listener, router)
                 .with_graceful_shutdown(shutdown.cancelled_owned())
-                .await
-                .unwrap();
+                .await;
         });
         Self { state, url, server }
     }

@@ -20,7 +20,7 @@ struct Application {
 }
 
 enum Stopped {
-    Http(std::io::Result<()>),
+    Http,
     Controller(Result<()>),
     Requested,
 }
@@ -61,7 +61,7 @@ impl Application {
             .into_future();
         tokio::pin!(server);
         let stopped = tokio::select! {
-            result = &mut server => Stopped::Http(result),
+            () = &mut server => Stopped::Http,
             result = controller.wait() => Stopped::Controller(result),
             () = shutdown_signal() => Stopped::Requested,
             () = shutdown.cancelled() => Stopped::Requested,
@@ -71,29 +71,23 @@ impl Application {
         let (controller_result, finished_http) = match stopped {
             Stopped::Controller(result) => (
                 result.and(Err(anyhow::anyhow!("controller stopped unexpectedly"))),
-                None,
+                false,
             ),
-            Stopped::Http(result) => (controller.shutdown().await, Some(result)),
-            Stopped::Requested => (controller.shutdown().await, None),
+            Stopped::Http => (controller.shutdown().await, true),
+            Stopped::Requested => (controller.shutdown().await, false),
         };
         let receiver_result = receiver.shutdown().await;
         let preview_result = preview.shutdown().await;
-        let http_result = match finished_http {
-            Some(result) => result.context("HTTP server failed"),
-            None => {
-                if let Ok(result) = tokio::time::timeout(Duration::from_secs(5), &mut server).await
-                {
-                    result.context("HTTP server failed")
-                } else {
-                    tracing::warn!("HTTP shutdown timed out; closing remaining connections");
-                    Ok(())
-                }
-            }
-        };
+        if !finished_http
+            && tokio::time::timeout(Duration::from_secs(5), &mut server)
+                .await
+                .is_err()
+        {
+            tracing::warn!("HTTP shutdown timed out; closing remaining connections");
+        }
         controller_result?;
         receiver_result?;
         preview_result?;
-        http_result?;
         tracing::info!("capture, lighting and preview stopped");
         Ok(())
     }

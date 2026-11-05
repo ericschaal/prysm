@@ -1,7 +1,9 @@
 # Experimental hardware H.264
 
-`cargo xtask package webos --hardware-h264` enables both binaries. The UI capability
-reports build support, not a working encoder. Default builds use software H.264.
+`cargo xtask package webos` includes hardware H.264 support in both binaries by
+default.
+The UI capability reports build support, not a working encoder. Select the
+encoder in the TV settings; new configurations default to LZ4.
 
 ## Native boundary
 

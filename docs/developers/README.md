@@ -38,6 +38,6 @@ builds need [GStreamer dependencies](../../.github/workflows/check.yml).
 [Settings/API](control-api.md) · [Frontend](frontend.md) · [Calibration](calibration.md) ·
 [webOS](webos.md) · [Hardware H.264](hardware-h264.md) ·
 [WLED renderer](../../crates/rendering/prysm-renderer-wled/README.md) ·
-[Monitoring](monitoring.md) · [Packaging](packaging.md)
+[Monitoring](monitoring.md) · [Packaging](packaging.md) · [Releasing](releasing.md)
 
 [Contribution rules](guidelines.md) · [Errors](error-handling.md) · [Decisions](decisions/README.md)

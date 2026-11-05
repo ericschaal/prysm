@@ -42,9 +42,6 @@ enum Task {
     Package {
         #[arg(value_enum)]
         target: Package,
-        /// Include the experimental TV hardware encoder.
-        #[arg(long)]
-        hardware_h264: bool,
     },
 }
 
@@ -245,42 +242,28 @@ fn main() -> Result<()> {
         }
         Task::Check { suite } => check(suite),
         Task::Codegen { contract, check } => codegen(contract, check),
-        Task::Package {
-            target,
-            hardware_h264,
-        } => {
-            ensure!(
-                !hardware_h264 || matches!(target, Package::Webos),
-                "--hardware-h264 is only supported for webos packages"
-            );
-            match target {
-                Package::Deb => {
-                    codegen(Some(Contract::Api), true)?;
-                    run(cargo().args([
-                        "build",
-                        "--locked",
-                        "--release",
-                        "-p",
-                        "prysm",
-                        "--no-default-features",
-                        "--bins",
-                    ]))?;
-                    run(cargo().args(["deb", "-p", "prysm", "--no-build"]))
-                }
-                Package::Docker => {
-                    run(Command::new("docker").args(["build", "--tag", "prysm:local", "."]))
-                }
-                Package::Webos => {
-                    codegen(Some(Contract::Webos), true)?;
-                    let mut command = Command::new("bash");
-                    command.arg("packaging/webos/build-ipk.sh");
-                    if hardware_h264 {
-                        command.arg("--hardware-h264");
-                    }
-                    run(&mut command)
-                }
+        Task::Package { target } => match target {
+            Package::Deb => {
+                codegen(Some(Contract::Api), true)?;
+                run(cargo().args([
+                    "build",
+                    "--locked",
+                    "--release",
+                    "-p",
+                    "prysm",
+                    "--no-default-features",
+                    "--bins",
+                ]))?;
+                run(cargo().args(["deb", "-p", "prysm", "--no-build"]))
             }
-        }
+            Package::Docker => {
+                run(Command::new("docker").args(["build", "--tag", "prysm:local", "."]))
+            }
+            Package::Webos => {
+                codegen(Some(Contract::Webos), true)?;
+                run(Command::new("bash").arg("packaging/webos/build-ipk.sh"))
+            }
+        },
     }
 }
 
