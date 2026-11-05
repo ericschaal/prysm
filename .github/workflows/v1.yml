@@ -1,0 +1,42 @@
+name: V1 contracts and composition
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: v1/frontend/package-lock.json
+      - name: Rust toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add clippy rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v1 -> target
+      - name: Headless libraries without codegen or frontend assets
+        run: cargo check --manifest-path v1/Cargo.toml --workspace --exclude prysm-export-contracts --lib --no-default-features --locked
+      - run: npm --prefix v1/frontend ci
+      # Check before the build, which intentionally regenerates contracts.
+      - run: npm --prefix v1/frontend run codegen:check
+      - run: npm --prefix v1/frontend test
+      - name: Rust checks
+        run: |
+          cargo fmt --manifest-path v1/Cargo.toml -p prysm-contract -p prysm-flow -p prysm-application -p prysm-web-portal -p prysm-testkit -p prysm-assemblies -p prysm-export-contracts -p prysm-capture-desktop -p prysm-capture-webos -p prysm-output-wled -p prysm-remote-capture -- --check
+          cargo test --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked
+          cargo clippy --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-server --locked
+          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-webos --locked
+          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-webos-slim --locked

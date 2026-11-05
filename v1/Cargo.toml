@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/contract", "crates/flow", "crates/application", "crates/web-portal", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-desktop", "adapters/capture-webos", "adapters/output-wled", "adapters/remote-capture"]
+default-members = ["assemblies"]
+
+[workspace.package]
+version = "1.0.0-alpha.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+prysm-core = { path = "../crates/common/prysm-core" }
+prysm-processor = { path = "../crates/processing/prysm-processor" }
+prysm-contract = { path = "crates/contract" }
+prysm-flow = { path = "crates/flow" }
+prysm-application = { path = "crates/application" }
+prysm-web-portal = { path = "crates/web-portal" }
+prysm-testkit = { path = "testkit" }
+prysm-capture-desktop = { path = "adapters/capture-desktop" }
+prysm-capture-webos = { path = "adapters/capture-webos" }
+prysm-output-wled = { path = "adapters/output-wled" }
+prysm-remote-capture = { path = "adapters/remote-capture" }
+futures = "0.3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+utoipa = "6"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+

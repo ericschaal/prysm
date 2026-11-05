@@ -1,0 +1,16 @@
+[package]
+name = "prysm-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prysm-contract.workspace = true
+prysm-core.workspace = true
+prysm-flow.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+

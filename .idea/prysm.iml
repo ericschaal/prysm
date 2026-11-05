@@ -27,7 +27,23 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/common/prysm-metrics/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/xtask/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/xtask/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm/runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/application/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/contract/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/flow/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/testkit/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-desktop/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-wled/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/tools/export-contracts/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
+      <excludeFolder url="file://$MODULE_DIR$/v1/target" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

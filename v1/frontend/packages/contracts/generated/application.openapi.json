@@ -1,0 +1,439 @@
+{
+  "components": {
+    "schemas": {
+      "Accepted": {
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationId"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "type": "object"
+      },
+      "CalibrationPresentation": {
+        "description": "These private presentation messages never appear in ClientSnapshot.",
+        "properties": {
+          "pairing": {
+            "type": "string"
+          },
+          "pattern": {
+            "$ref": "#/components/schemas/PatternRequest"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "pairing",
+          "pattern"
+        ],
+        "type": "object"
+      },
+      "CaptureCapabilities": {
+        "properties": {
+          "supports_patterns": {
+            "description": "Whether this source supports calibration using presented test patterns.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "supports_patterns"
+        ],
+        "type": "object"
+      },
+      "ClientFailure": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "outcome_unknown"
+                ],
+                "type": "string"
+              },
+              "operation": {
+                "$ref": "#/components/schemas/OperationId"
+              }
+            },
+            "required": [
+              "operation",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unknown_operation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ClientSnapshot_Value_Value": {
+        "properties": {
+          "capture": {},
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          },
+          "output": {},
+          "revision": {
+            "$ref": "#/components/schemas/SettingsRevision"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "cursor",
+          "revision",
+          "capture",
+          "output",
+          "target"
+        ],
+        "type": "object"
+      },
+      "ClientUpdate_Value_Value": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "snapshot"
+                ],
+                "type": "string"
+              },
+              "snapshot": {
+                "$ref": "#/components/schemas/ClientSnapshot_Value_Value"
+              }
+            },
+            "required": [
+              "snapshot",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "resync_required"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConfigureRequest_Value": {
+        "properties": {
+          "expected": {
+            "$ref": "#/components/schemas/SettingsRevision"
+          },
+          "id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "settings": {}
+        },
+        "required": [
+          "id",
+          "expected",
+          "settings"
+        ],
+        "type": "object"
+      },
+      "Cursor": {
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "sequence": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance",
+          "sequence"
+        ],
+        "type": "object"
+      },
+      "EndPresentationRequest": {
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session"
+        ],
+        "type": "object"
+      },
+      "Failure": {
+        "description": "Displayable failure information for snapshots, separate from local error chains.",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "InstanceId": {
+        "pattern": "^[1-9][0-9]*$",
+        "type": "string"
+      },
+      "LightingTarget": {
+        "enum": [
+          "off",
+          "processed",
+          "device_native"
+        ],
+        "type": "string"
+      },
+      "OperationId": {
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceId"
+          },
+          "request": {
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance",
+          "request"
+        ],
+        "type": "object"
+      },
+      "OperationStatus": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "pending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "succeeded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "failure": {
+                "$ref": "#/components/schemas/Failure"
+              },
+              "kind": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "OutputCapabilities": {
+        "properties": {
+          "native_mode": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "native_mode"
+        ],
+        "type": "object"
+      },
+      "PatternRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "PlaybackFeedback": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "ready"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "released"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PresentationFeedback": {
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "playback": {
+            "$ref": "#/components/schemas/PlaybackFeedback"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session",
+          "playback"
+        ],
+        "type": "object"
+      },
+      "SettingsRevision": {
+        "pattern": "^(0|[1-9][0-9]*)$",
+        "type": "string"
+      },
+      "TargetRequest": {
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "id",
+          "target"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "prysm-contract",
+    "version": "1.0.0-alpha.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

@@ -1,0 +1,18 @@
+[package]
+name = "prysm-remote-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+wire = ["dep:serde"]
+schema = ["wire", "dep:utoipa"]
+
+[dependencies]
+prysm-contract.workspace = true
+serde = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+
+[lints]
+workspace = true

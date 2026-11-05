@@ -1,0 +1,22 @@
+[package]
+name = "prysm-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+wire = ["dep:serde", "dep:serde_json"]
+schema = ["wire", "dep:utoipa"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+prysm-core.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+

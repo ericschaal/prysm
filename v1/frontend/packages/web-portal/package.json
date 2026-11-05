@@ -1,0 +1,15 @@
+{
+  "name": "@prysm/web-portal",
+  "version": "1.0.0-alpha.0",
+  "private": true,
+  "type": "module",
+  "exports": "./index.tsx",
+  "peerDependencies": {
+    "react": "19.3.0"
+  },
+  "dependencies": {
+    "@prysm/application-client": "1.0.0-alpha.0",
+    "@prysm/application-react": "1.0.0-alpha.0",
+    "@prysm/application-state": "1.0.0-alpha.0"
+  }
+}

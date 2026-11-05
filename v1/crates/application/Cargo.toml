@@ -1,0 +1,21 @@
+[package]
+name = "prysm-application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+prysm-contract.workspace = true
+prysm-core.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+prysm-flow.workspace = true
+prysm-processor.workspace = true
+tokio = { workspace = true, features = ["time"] }
+
+[lints]
+workspace = true
+

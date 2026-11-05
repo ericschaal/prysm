@@ -1,0 +1,43 @@
+{
+  "components": {
+    "schemas": {
+      "TvHostCommand": {
+        "enum": [
+          "inspect_service",
+          "repair_service"
+        ],
+        "type": "string"
+      },
+      "TvHostStatus": {
+        "properties": {
+          "capture_available": {
+            "type": "boolean"
+          },
+          "forwarding": {
+            "type": "boolean"
+          },
+          "service_ready": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "service_ready",
+          "capture_available",
+          "forwarding"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "prysm-assemblies",
+    "version": "1.0.0-alpha.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

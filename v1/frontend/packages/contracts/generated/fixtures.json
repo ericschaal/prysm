@@ -1,0 +1,79 @@
+{
+  "DesktopCaptureSettings": [
+    {
+      "path": "/dev/video0",
+      "rate": 30,
+      "resolution": [
+        320,
+        180
+      ],
+      "source": "device"
+    },
+    {
+      "path": "fixture.mp4",
+      "rate": 30,
+      "resolution": [
+        320,
+        180
+      ],
+      "source": "file"
+    }
+  ],
+  "RemoteCaptureSettings": [
+    {
+      "peer": "127.0.0.1:9000"
+    }
+  ],
+  "ServerCaptureSettings": [
+    {
+      "adapter": "desktop",
+      "settings": {
+        "path": "/dev/video0",
+        "rate": 30,
+        "resolution": [
+          320,
+          180
+        ],
+        "source": "device"
+      }
+    },
+    {
+      "adapter": "desktop",
+      "settings": {
+        "path": "fixture.mp4",
+        "rate": 30,
+        "resolution": [
+          320,
+          180
+        ],
+        "source": "file"
+      }
+    },
+    {
+      "adapter": "remote",
+      "settings": {
+        "peer": "127.0.0.1:9000"
+      }
+    }
+  ],
+  "TvCaptureSettings": [
+    {
+      "rate": 30,
+      "resolution": [
+        320,
+        180
+      ]
+    }
+  ],
+  "WledSettings": [
+    {
+      "address": "192.0.2.1",
+      "leds": [
+        10,
+        20,
+        30,
+        40
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+[package]
+name = "prysm-output-wled"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+wire = ["dep:serde"]
+schema = ["wire", "dep:utoipa"]
+
+[dependencies]
+prysm-contract.workspace = true
+prysm-core.workspace = true
+prysm-renderer-wled = { path = "../../../crates/rendering/prysm-renderer-wled" }
+tokio = { workspace = true, features = ["time", "net"] }
+futures.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde_json.workspace = true
+serde = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+
+[dev-dependencies]
+prysm-application.workspace = true
+prysm-flow.workspace = true
+prysm-processor.workspace = true
+tokio = { workspace = true, features = ["test-util", "io-util"] }
+
+[lints]
+workspace = true
