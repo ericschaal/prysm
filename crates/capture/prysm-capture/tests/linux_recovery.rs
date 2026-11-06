@@ -6,11 +6,10 @@
 
 use anyhow::{Context, Result, ensure};
 use futures::StreamExt;
-use prysm_capture::{PrysmCapturer, V4lCapturer};
+use prysm_capture::DeviceCapture;
 use std::io::Write;
 use std::time::Duration;
 use tokio::time::{interval, timeout};
-use tokio_util::sync::CancellationToken;
 use v4l::control::{Control, Value};
 use v4l::video::Output;
 use v4l::{Device, Format, FourCC};
@@ -40,11 +39,17 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
     );
     producer.write_all(&[16, 128, 16, 128].repeat(64 * 48 / 2))?;
 
-    let shutdown = CancellationToken::new();
-    let _cancel_on_exit = shutdown.clone().drop_guard();
-    let capturer = V4lCapturer::new(Some(&path), shutdown.clone())?;
-    let completed = capturer.completion();
-    let frames = capturer.into_stream(64, 48, 30.try_into().unwrap());
+    let capture = DeviceCapture::open(Some(&path), 64, 48, 30.try_into().unwrap())?;
+    let mut worker = capture.worker;
+    let frames = futures::stream::unfold(capture.frames, |mut frames| async {
+        loop {
+            frames.changed().await.ok()?;
+            let frame = frames.borrow_and_update().clone();
+            if let Some(frame) = frame {
+                return Some((Ok::<_, anyhow::Error>(frame), frames));
+            }
+        }
+    });
     futures::pin_mut!(frames);
     for luma in [16, 235] {
         let pixels = [luma, 128, luma, 128].repeat(64 * 48 / 2);
@@ -74,7 +79,7 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
             "Capture closed while the producer was paused"
         );
     }
-    shutdown.cancel();
+    worker.cancel();
     timeout(Duration::from_secs(2), async {
         while let Some(frame) = frames.next().await {
             frame?;
@@ -83,9 +88,12 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
     })
     .await
     .context("Cancellation did not close the stalled capture")??;
-    timeout(Duration::from_secs(2), completed.cancelled())
+    let exit = timeout(Duration::from_secs(2), worker.join())
         .await
-        .context("Capture worker did not release the stalled device")?;
+        .context("Capture worker did not release the stalled device")??;
+    if let Some(error) = exit.failure {
+        return Err(error.into());
+    }
     // Reconfiguration must succeed immediately after worker completion.
     Device::with_path(&path)?.set_format(&format)?;
     Ok(())

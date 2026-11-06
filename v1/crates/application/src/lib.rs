@@ -32,16 +32,17 @@ enum Command<S> {
     Operation(OperationId, Reply<OperationStatus>),
 }
 
-pub struct ApplicationWiring<C, P, O, R, Policy> {
-    pub capture: C,
-    pub processing: P,
-    pub output: O,
-    pub settings: R,
-    pub policy: Policy,
+struct ApplicationWiring<C, P, O, R, Policy> {
+    capture: C,
+    processing: P,
+    output: O,
+    settings: R,
+    policy: Policy,
 }
 
+/// Owns the injected ports. Retain emergency control clones before constructing the application.
 pub struct ApplicationOwner<C: CaptureControl, P, O: OutputControl, R, Policy> {
-    pub wiring: ApplicationWiring<C, P, O, R, Policy>,
+    wiring: ApplicationWiring<C, P, O, R, Policy>,
     commands: mpsc::Receiver<Command<Settings<C::Settings, O::Settings>>>,
 }
 

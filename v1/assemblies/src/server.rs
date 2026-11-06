@@ -1,5 +1,5 @@
 //! Source selection belongs to the server host, not either capture adapter.
-use prysm_capture_desktop::DesktopCaptureSettings;
+use prysm_capture_device::DeviceCaptureSettings;
 use prysm_remote_capture::RemoteCaptureSettings;
 
 #[derive(Debug, Clone)]
@@ -10,7 +10,7 @@ use prysm_remote_capture::RemoteCaptureSettings;
 )]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum ServerCaptureSettings {
-    Desktop(DesktopCaptureSettings),
+    Device(DeviceCaptureSettings),
     Remote(RemoteCaptureSettings),
 }
 

@@ -1,13 +1,10 @@
-use crate::{
-    CaptureError, Frame, FramePool, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix,
-};
+use crate::{CaptureError, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix};
 use anyhow::Context;
-use futures::Stream;
 use std::num::NonZeroU32;
 use tokio_util::sync::CancellationToken;
 use v4l::buffer::Type;
-use v4l::io::traits::{CaptureStream, Stream as _};
-use v4l::prelude::MmapStream;
+mod stream;
+use stream::Stream;
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
 
@@ -123,199 +120,163 @@ fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow:
     Ok(())
 }
 
-pub struct V4lCapturer {
-    device_path: String,
-    shutdown_token: CancellationToken,
-    completed: CancellationToken,
+fn configure_stream(
+    device: &mut Device,
+    width: u32,
+    height: u32,
+    refresh_rate_hz: NonZeroU32,
+) -> Result<(Format, YuvRange, YuvStandardMatrix)> {
+    let mut fmt = device.format().context("failed to read capture format")?;
+
+    fmt.width = width;
+    fmt.height = height;
+
+    // Try formats in order of preference (YUYV is smaller and more efficient)
+    let preferred_formats = [
+        FourCC::new(b"YUYV"), // YUV 4:2:2 (2 bytes/pixel)
+        FourCC::new(b"RGB3"), // RGB24 (3 bytes/pixel)
+        FourCC::new(b"BGR3"), // BGR24 (3 bytes/pixel)
+    ];
+
+    let mut last_error = None;
+    for fourcc in preferred_formats {
+        fmt.fourcc = fourcc;
+        match device.set_format(&fmt) {
+            Ok(_) => {
+                let format = device
+                    .format()
+                    .context("failed to read negotiated capture format")?;
+
+                // Drivers may substitute dimensions; require the configured native size.
+                if format.width != width || format.height != height {
+                    continue;
+                }
+                if format.fourcc == FourCC::new(b"YUYV") && !format.width.is_multiple_of(2) {
+                    continue;
+                }
+                if format.fourcc == FourCC::new(b"YUYV")
+                    || format.fourcc == FourCC::new(b"RGB3")
+                    || format.fourcc == FourCC::new(b"BGR3")
+                {
+                    tracing::info!(
+                        "Video format set to: {:?} {}x{} (stride: {})",
+                        format.fourcc,
+                        format.width,
+                        format.height,
+                        format.stride
+                    );
+
+                    let (range, matrix) = if format.fourcc == FourCC::new(b"YUYV") {
+                        negotiated_colorimetry(device)?
+                    } else {
+                        (YuvRange::Full, YuvStandardMatrix::Bt601)
+                    };
+                    configure_frame_rate(device, refresh_rate_hz)?;
+                    return Ok((format, range, matrix));
+                }
+            }
+            Err(e) => {
+                last_error = Some(crate::check_format_rejection(e)?);
+            }
+        }
+    }
+
+    Err(CaptureError::UnsupportedFormat {
+        details: format!("device must support {width}x{height} capture in YUYV, RGB3 or BGR3"),
+        source: last_error,
+    })
 }
 
-impl V4lCapturer {
-    /// Opens a capture device. `device_path` selects a v4l device node;
-    /// `None` defaults to `/dev/video0`.
-    pub fn new(device_path: Option<&str>, shutdown_token: CancellationToken) -> Result<Self> {
-        Ok(Self {
-            device_path: device_path.unwrap_or("/dev/video0").to_string(),
-            shutdown_token,
-            completed: CancellationToken::new(),
-        })
+pub(crate) fn run(
+    device_path: Option<&str>,
+    width: u32,
+    height: u32,
+    rate: NonZeroU32,
+    frames: &tokio::sync::watch::Sender<Option<Frame>>,
+    ready: tokio::sync::oneshot::Sender<()>,
+    shutdown: &CancellationToken,
+) -> Result<()> {
+    if shutdown.is_cancelled() {
+        return Ok(());
     }
-
-    /// Cancelled after the capture worker has released its device and session.
-    #[must_use]
-    pub fn completion(&self) -> CancellationToken {
-        self.completed.clone()
-    }
-
-    fn create_stream(
-        device: &mut Device,
-        width: u32,
-        height: u32,
-        refresh_rate_hz: NonZeroU32,
-    ) -> Result<(MmapStream<'_>, Format, YuvRange, YuvStandardMatrix)> {
-        let mut fmt = device.format().context("failed to read capture format")?;
-
-        fmt.width = width;
-        fmt.height = height;
-
-        // Try formats in order of preference (YUYV is smaller and more efficient)
-        let preferred_formats = [
-            FourCC::new(b"YUYV"), // YUV 4:2:2 (2 bytes/pixel)
-            FourCC::new(b"RGB3"), // RGB24 (3 bytes/pixel)
-            FourCC::new(b"BGR3"), // BGR24 (3 bytes/pixel)
-        ];
-
-        let mut last_error = None;
-        for fourcc in preferred_formats {
-            fmt.fourcc = fourcc;
-            match device.set_format(&fmt) {
-                Ok(_) => {
-                    let format = device
-                        .format()
-                        .context("failed to read negotiated capture format")?;
-
-                    // Drivers may substitute dimensions; require the configured native size.
-                    if format.width != width || format.height != height {
-                        continue;
-                    }
-                    if format.fourcc == FourCC::new(b"YUYV") && !format.width.is_multiple_of(2) {
-                        continue;
-                    }
-                    if format.fourcc == FourCC::new(b"YUYV")
-                        || format.fourcc == FourCC::new(b"RGB3")
-                        || format.fourcc == FourCC::new(b"BGR3")
-                    {
-                        tracing::info!(
-                            "Video format set to: {:?} {}x{} (stride: {})",
-                            format.fourcc,
-                            format.width,
-                            format.height,
-                            format.stride
-                        );
-
-                        let (range, matrix) = if format.fourcc == FourCC::new(b"YUYV") {
-                            negotiated_colorimetry(device)?
-                        } else {
-                            (YuvRange::Full, YuvStandardMatrix::Bt601)
-                        };
-                        configure_frame_rate(device, refresh_rate_hz)?;
-                        let mmap_stream = MmapStream::with_buffers(device, Type::VideoCapture, 4)
-                            .context("Failed to create stream")?;
-
-                        return Ok((mmap_stream, format, range, matrix));
+    let path = device_path.unwrap_or("/dev/video0");
+    let mut device = Device::with_path(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            CaptureError::DeviceNotFound {
+                device: Some(path.into()),
+                source: Some(error),
+            }
+        } else {
+            CaptureError::Backend(
+                anyhow::Error::new(error).context(format!("failed to open video device {path}")),
+            )
+        }
+    })?;
+    let (format, range, matrix) = configure_stream(&mut device, width, height, rate)?;
+    let pixel_format = match format.fourcc.str() {
+        Ok("YUYV") => PixelFormat::YUYV { range, matrix },
+        Ok("RGB3") => PixelFormat::RGB24,
+        Ok("BGR3") => PixelFormat::BGR24,
+        _ => unreachable!("validated capture format"),
+    };
+    let timeout =
+        std::time::Duration::from_secs(1) + std::time::Duration::from_secs(1) / rate.get();
+    let mut stream = Stream::new(&device, timeout)?;
+    let result = (|| -> Result<()> {
+        if shutdown.is_cancelled() {
+            return Ok(());
+        }
+        stream.start().context("failed to start capture stream")?;
+        let _ = ready.send(());
+        let mut pool = FramePool::default();
+        let mut stats = prysm_metrics::TraceStats::new("v4l_capture");
+        loop {
+            if shutdown.is_cancelled() || frames.is_closed() {
+                return Ok(());
+            }
+            let started = stats.start();
+            match stream.frame(|data, flags| {
+                pool.copy_from_strided(
+                    data,
+                    format.width,
+                    format.height,
+                    pixel_format,
+                    format.stride as usize,
+                    flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0,
+                )
+            }) {
+                Ok(Some(frame)) => {
+                    stats.record(started, frame.len(), Some(pool.stats()));
+                    if frames.send(Some(frame)).is_err() {
+                        return Ok(());
                     }
                 }
-                Err(e) => {
-                    last_error = Some(crate::check_format_rejection(e)?);
+                Ok(None) => {
+                    stats.failure();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                    stats.failure();
+                    stream
+                        .stop()
+                        .context("failed to stop stalled capture stream")?;
+                    if !shutdown.is_cancelled() {
+                        stream
+                            .start()
+                            .context("failed to restart stalled capture stream")?;
+                    }
+                }
+                Err(error) => {
+                    return Err(anyhow::Error::new(error)
+                        .context("error capturing frame")
+                        .into());
                 }
             }
         }
-
-        Err(CaptureError::UnsupportedFormat {
-            details: format!("device must support {width}x{height} capture in YUYV, RGB3 or BGR3"),
-            source: last_error,
-        })
-    }
-}
-
-impl PrysmCapturer for V4lCapturer {
-    fn into_stream(
-        self,
-        width: u32,
-        height: u32,
-        refresh_rate_hz: NonZeroU32,
-    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
-        let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
-        let completed = self.completed.clone().drop_guard();
-        std::thread::spawn(move || {
-            let _completed = completed;
-            let result = (|| -> Result<()> {
-                tracing::info!("Opening video device: {}", self.device_path);
-                let mut device =
-                    Device::with_path(&self.device_path).map_err(|error| {
-                        if error.kind() == std::io::ErrorKind::NotFound {
-                            CaptureError::DeviceNotFound {
-                                device: Some(self.device_path.clone()),
-                                source: Some(error),
-                            }
-                        } else {
-                            CaptureError::Backend(anyhow::Error::new(error).context(format!(
-                                "failed to open video device {}",
-                                self.device_path
-                            )))
-                        }
-                    })?;
-                let (mut input_stream, format, range, matrix) =
-                    Self::create_stream(&mut device, width, height, refresh_rate_hz)?;
-                // Bound the wait so a stalled camera cannot prevent cancellation.
-                input_stream.set_timeout(
-                    std::time::Duration::from_secs(1)
-                        + std::time::Duration::from_secs(1) / refresh_rate_hz.get(),
-                );
-                let pixel_format = match format.fourcc.str() {
-                    Ok("YUYV") => PixelFormat::YUYV { range, matrix },
-                    Ok("RGB3") => PixelFormat::RGB24,
-                    Ok("BGR3") => PixelFormat::BGR24,
-                    _ => {
-                        return Err(CaptureError::UnsupportedFormat {
-                            details: format!("{:?}", format.fourcc),
-                            source: None,
-                        });
-                    }
-                };
-                tracing::info!("Stream started with format: {:?}", pixel_format);
-                let mut pool = FramePool::default();
-                let mut stats = prysm_metrics::TraceStats::new("v4l_capture");
-                loop {
-                    if self.shutdown_token.is_cancelled() || tx.is_closed() {
-                        return Ok(());
-                    }
-                    let started = stats.start();
-                    match input_stream.next() {
-                        Ok((buffer, metadata)) => {
-                            let Some(frame) =
-                                buffer.get(..metadata.bytesused as usize).and_then(|data| {
-                                    pool.copy_from_strided(
-                                        data,
-                                        format.width,
-                                        format.height,
-                                        pixel_format,
-                                        format.stride as usize,
-                                        metadata.flags.contains(v4l::buffer::Flags::ERROR),
-                                    )
-                                })
-                            else {
-                                if stats.failure() {
-                                    tracing::warn!(
-                                        "Discarding corrupt or incomplete capture frames; further failures counted in statistics"
-                                    );
-                                }
-                                continue;
-                            };
-                            stats.record(started, frame.len(), Some(pool.stats()));
-                            if tx.send(Some(frame)).is_err() {
-                                return Ok(());
-                            }
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            if stats.failure() {
-                                tracing::warn!("V4L capture timed out; restarting stream");
-                            }
-                            // next() queues a buffer before waiting; restart to avoid queueing it twice.
-                            input_stream
-                                .stop()
-                                .context("Failed to stop stalled capture stream")?;
-                        }
-                        Err(e) => {
-                            stats.failure();
-                            return Err(e).context("Error capturing frame").map_err(Into::into);
-                        }
-                    }
-                }
-            })();
-            let _ = finished.send(result);
-        });
-        frames
-    }
+    })();
+    stream
+        .release()
+        .map_err(|error| CaptureError::Cleanup(error.into()))?;
+    result
 }
 
 #[cfg(test)]
@@ -325,28 +286,23 @@ mod tests {
 
     #[tokio::test]
     async fn missing_device_preserves_its_io_cause() {
-        use futures::StreamExt;
-        let capturer = V4lCapturer::new(
+        let mut capture = crate::DeviceCapture::open(
             Some("/dev/prysm-test-missing-device"),
-            CancellationToken::new(),
+            640,
+            360,
+            30.try_into().unwrap(),
         )
         .unwrap();
-        let completed = capturer.completion();
-        let frames = capturer.into_stream(640, 360, 30.try_into().unwrap());
-        futures::pin_mut!(frames);
-        let error = frames.next().await.unwrap().unwrap_err();
-        let CaptureError::DeviceNotFound {
+        assert!((&mut capture.ready).await.is_err());
+        let exit = capture.worker.join().await.unwrap();
+        let Some(CaptureError::DeviceNotFound {
             source: Some(source),
             ..
-        } = error
+        }) = exit.failure
         else {
             panic!("expected missing device error")
         };
         assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
-        assert!(frames.next().await.is_none());
-        tokio::time::timeout(std::time::Duration::from_secs(2), completed.cancelled())
-            .await
-            .unwrap();
     }
 
     #[test]

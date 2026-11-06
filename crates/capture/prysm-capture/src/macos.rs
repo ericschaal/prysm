@@ -1,7 +1,6 @@
 use std::num::NonZeroU32;
 use std::slice;
 use std::sync::Mutex;
-use std::sync::mpsc as std_mpsc;
 
 use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
@@ -29,7 +28,6 @@ use core_video::pixel_buffer::{
 };
 use core_video::r#return::kCVReturnSuccess;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
-use futures::Stream;
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send, sel};
@@ -39,9 +37,7 @@ use objc2_foundation::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    CaptureError, Frame, FramePool, PixelFormat, PrysmCapturer, Result, YuvRange, YuvStandardMatrix,
-};
+use crate::{CaptureError, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix};
 
 struct CaptureState {
     sender: tokio::sync::watch::Sender<Option<Frame>>,
@@ -264,14 +260,26 @@ fn video_settings(width: u32, height: u32) -> Retained<NSDictionary<NSString, NS
 /// Keeps the `AVFoundation` objects alive for as long as frames are flowing.
 struct RunningSession {
     session: Retained<AVCaptureSession>,
-    _output: Retained<AVCaptureVideoDataOutput>,
+    output: Retained<AVCaptureVideoDataOutput>,
     delegate: Retained<Delegate>,
-    _queue: DispatchRetained<DispatchQueue>,
+    queue: DispatchRetained<DispatchQueue>,
 }
 
 impl Drop for RunningSession {
     fn drop(&mut self) {
+        // Publication ends before stop; the serial barrier settles every queued callback.
+        self.delegate
+            .ivars()
+            .capture
+            .lock()
+            .expect("capture mutex poisoned")
+            .take();
         self.session.stop_running();
+        // SAFETY: clearing the native delegate prevents future callback scheduling.
+        unsafe {
+            let _: () = msg_send![&*self.output, setSampleBufferDelegate: std::ptr::null::<AnyObject>(), queue: std::ptr::null::<AnyObject>()];
+        }
+        self.queue.exec_sync(|| {});
     }
 }
 
@@ -328,7 +336,11 @@ fn start_session(
     width: u32,
     height: u32,
     refresh_rate_hz: NonZeroU32,
-) -> Result<RunningSession> {
+    shutdown: &CancellationToken,
+) -> Result<Option<RunningSession>> {
+    if shutdown.is_cancelled() {
+        return Ok(None);
+    }
     let device = match device_uid {
         Some(uid) => AVCaptureDevice::device_with_unique_id(&NSString::from_str(uid)),
         None => AVCaptureDevice::default_device_with_media_type(unsafe { AVMediaTypeVideo }),
@@ -374,10 +386,13 @@ fn start_session(
 
     let running = RunningSession {
         session,
-        _output: output,
+        output,
         delegate,
-        _queue: queue,
+        queue,
     };
+    if shutdown.is_cancelled() {
+        return Ok(None);
+    }
     running.session.start_running();
     let actual = device
         .get_active_format()
@@ -408,95 +423,53 @@ fn start_session(
         return Err(anyhow!("capture session failed to start").into());
     }
     tracing::info!("Video format set to: YUYV {width}x{height}");
-    Ok(running)
-}
-
-pub struct AVFoundationCapturer {
-    device_uid: Option<String>,
-    shutdown_token: CancellationToken,
-    completed: CancellationToken,
+    Ok(Some(running))
 }
 
 async fn stop_when_capture_closes(
     sender: tokio::sync::watch::Sender<Option<Frame>>,
     shutdown: CancellationToken,
     failure: CancellationToken,
-    stop: std_mpsc::Sender<()>,
 ) {
     tokio::select! {
         () = shutdown.cancelled() => {},
         () = sender.closed() => {},
         () = failure.cancelled() => {},
     }
-    let _ = stop.send(());
 }
 
-impl AVFoundationCapturer {
-    /// Opens a capture device. `device_uid` selects a device by its
-    /// `AVFoundation` unique ID; `None` picks the system default video device.
-    pub fn new(device_uid: Option<&str>, shutdown_token: CancellationToken) -> Result<Self> {
-        Ok(Self {
-            device_uid: device_uid.map(str::to_string),
-            shutdown_token,
-            completed: CancellationToken::new(),
-        })
+pub(crate) fn run(
+    device_uid: Option<&str>,
+    width: u32,
+    height: u32,
+    rate: NonZeroU32,
+    frames: tokio::sync::watch::Sender<Option<Frame>>,
+    ready: tokio::sync::oneshot::Sender<()>,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let Some(session) = start_session(device_uid, frames.clone(), width, height, rate, &shutdown)?
+    else {
+        return Ok(());
+    };
+    if shutdown.is_cancelled() {
+        return Ok(());
     }
-
-    /// Cancelled after the capture worker has released its device and session.
-    #[must_use]
-    pub fn completion(&self) -> CancellationToken {
-        self.completed.clone()
-    }
-}
-
-impl PrysmCapturer for AVFoundationCapturer {
-    fn into_stream(
-        self,
-        width: u32,
-        height: u32,
-        refresh_rate_hz: NonZeroU32,
-    ) -> impl Stream<Item = Result<Frame>> + Send + 'static {
-        let (tx, finished, frames) = crate::capture_channel(self.shutdown_token.clone());
-        // AVFoundation objects stay on an OS thread because they are not Send.
-        let (stop_tx, stop_rx) = std_mpsc::channel::<()>();
-        let runtime = tokio::runtime::Handle::current();
-        let completed = self.completed.clone().drop_guard();
-        std::thread::spawn(move || {
-            let _completed = completed;
-            let result = (|| -> Result<()> {
-                let session = start_session(
-                    self.device_uid.as_deref(),
-                    tx.clone(),
-                    width,
-                    height,
-                    refresh_rate_hz,
-                )?;
-                runtime.spawn(stop_when_capture_closes(
-                    tx,
-                    self.shutdown_token,
-                    session.delegate.ivars().failure.clone(),
-                    stop_tx,
-                ));
-                stop_rx
-                    .recv()
-                    .context("Capture stop monitor ended unexpectedly")?;
-                tracing::info!("Stopping AVFoundation capture");
-                if let Some(error) = session
-                    .delegate
-                    .ivars()
-                    .error
-                    .lock()
-                    .expect("capture error mutex poisoned")
-                    .take()
-                {
-                    return Err(error);
-                }
-                Ok(())
-            })();
-            let _ = finished.send(result);
-        });
-        frames
-    }
+    let _ = ready.send(());
+    // The native thread itself waits; there is no detached monitor or nested runtime.
+    futures::executor::block_on(stop_when_capture_closes(
+        frames,
+        shutdown,
+        session.delegate.ivars().failure.clone(),
+    ));
+    let error = session
+        .delegate
+        .ivars()
+        .error
+        .lock()
+        .expect("capture error mutex poisoned")
+        .take();
+    drop(session);
+    error.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -549,13 +522,8 @@ mod tests {
             let delegate = Delegate::new(sender.clone());
             delegate.observe_failure(name, &object);
             let failure = delegate.ivars().failure.clone();
-            let (stop_tx, stop_rx) = std_mpsc::channel();
-            let bridge = stop_when_capture_closes(
-                sender,
-                CancellationToken::new(),
-                failure.clone(),
-                stop_tx,
-            );
+            let bridge =
+                stop_when_capture_closes(sender, CancellationToken::new(), failure.clone());
             futures::pin_mut!(bridge);
             assert!(futures::poll!(&mut bridge).is_pending());
 
@@ -574,7 +542,6 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_secs(1), bridge)
                 .await
                 .unwrap();
-            assert!(stop_rx.try_recv().is_ok());
             let error = delegate.ivars().error.lock().unwrap().take().unwrap();
             assert!(error.to_string().contains(&name.to_string()));
             assert_eq!(
@@ -593,24 +560,22 @@ mod tests {
 
     #[tokio::test]
     async fn failed_startup_preserves_capture_error() {
-        use futures::StreamExt;
-        let shutdown = CancellationToken::new();
-        let capturer =
-            AVFoundationCapturer::new(Some("prysm-test-missing-device"), shutdown.clone()).unwrap();
-        let completed = capturer.completion();
-        let stream = capturer.into_stream(640, 360, 30.try_into().unwrap());
-        futures::pin_mut!(stream);
-        let error = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+        let mut capture = crate::DeviceCapture::open(
+            Some("prysm-test-missing-device"),
+            640,
+            360,
+            30.try_into().unwrap(),
+        )
+        .unwrap();
+        assert!((&mut capture.ready).await.is_err());
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), capture.worker.join())
             .await
             .unwrap()
-            .unwrap()
-            .unwrap_err();
-        assert!(matches!(error, CaptureError::DeviceNotFound { .. }));
-        assert!(stream.next().await.is_none());
-        tokio::time::timeout(std::time::Duration::from_secs(2), completed.cancelled())
-            .await
             .unwrap();
-        assert!(!shutdown.is_cancelled());
+        assert!(matches!(
+            exit.failure,
+            Some(CaptureError::DeviceNotFound { .. })
+        ));
     }
 
     #[tokio::test]
@@ -618,13 +583,7 @@ mod tests {
         for cancel in [false, true] {
             let (sender, receiver) = tokio::sync::watch::channel(None::<Frame>);
             let shutdown = CancellationToken::new();
-            let (stop_tx, stop_rx) = std_mpsc::channel();
-            let stop = stop_when_capture_closes(
-                sender,
-                shutdown.clone(),
-                CancellationToken::new(),
-                stop_tx,
-            );
+            let stop = stop_when_capture_closes(sender, shutdown.clone(), CancellationToken::new());
             futures::pin_mut!(stop);
             assert!(futures::poll!(&mut stop).is_pending());
             if cancel {
@@ -633,7 +592,6 @@ mod tests {
                 drop(receiver);
             }
             stop.await;
-            assert!(stop_rx.try_recv().is_ok());
         }
     }
 

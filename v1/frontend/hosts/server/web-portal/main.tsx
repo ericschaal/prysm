@@ -8,7 +8,7 @@ import { ServerWebPortal } from './app';
 const fixture = fakeApplicationPort<ServerCaptureConfig, WledOutputConfig>({
   revision: '0',
   capture: {
-    adapter: 'desktop',
+    adapter: 'device',
     settings: {
       source: 'device',
       path: '/dev/video0',

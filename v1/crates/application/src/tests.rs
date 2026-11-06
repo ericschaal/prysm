@@ -240,6 +240,8 @@ impl SettingsRepository<TestSettings> for Repository {
 
 struct Running {
     control: ApplicationHandle<TestSettings>,
+    capture_control: Capture,
+    output_control: Output,
     processing: ProcessingHandle,
     calls: mpsc::UnboundedReceiver<Called>,
     capture: Observed<CaptureState>,
@@ -276,16 +278,18 @@ impl Running {
             },
             ProcessingExecution::DedicatedThread,
         );
+        let capture_control = Capture {
+            calls: calls.clone(),
+            observed: capture.clone(),
+        };
+        let output_control = Output {
+            calls,
+            observed: output.clone(),
+        };
         let application = Application::new(
-            Capture {
-                calls: calls.clone(),
-                observed: capture.clone(),
-            },
+            capture_control.clone(),
             flow.control.clone(),
-            Output {
-                calls,
-                observed: output.clone(),
-            },
+            output_control.clone(),
             Repository(settings),
             policy::V1Policy,
         );
@@ -300,6 +304,8 @@ impl Running {
         }));
         let running = Self {
             control: application.control,
+            capture_control,
+            output_control,
             processing,
             calls: receiver,
             capture,
@@ -479,6 +485,60 @@ async fn start_wait_resume_stop_with_real_flow_and_distinct_observed_revisions()
     .ok();
     assert!(matches!(app.result(3).await, OperationStatus::Succeeded));
     app.close().await;
+}
+
+#[tokio::test]
+async fn retained_controls_complete_cleanup_after_a_running_coordinator_is_aborted() {
+    let mut app = Running::new(settings()).await;
+    app.start().await;
+    app.capture.set(CaptureState::Available(epoch(1)));
+    app.call(Call::Admit(epoch(1))).await.ok();
+    app.state(|s| matches!(s.session, SessionState::Running(_)))
+        .await;
+    app.frames
+        .send(CapturedFrame {
+            stamp: FrameStamp {
+                epoch: epoch(1),
+                sequence: 1,
+            },
+            frame: Frame::fill(200, 8, 4, PixelFormat::RGB24).unwrap(),
+        })
+        .await
+        .unwrap();
+    within(app.colors.recv()).await.unwrap();
+
+    app.app.abort();
+    assert!(within(&mut app.app).await.unwrap_err().is_cancelled());
+    assert!(within(app.control.observe()).await.is_err());
+
+    // These handles were retained before their clones moved into Application::new.
+    let capture = app.capture_control.clone();
+    let processing = app.processing.clone();
+    let output = app.output_control.clone();
+    let cleanup = tokio::spawn(async move {
+        output.hold(epoch(1), EdgeColors::default()).await.unwrap();
+        let stopped = capture.stop(session()).await.unwrap();
+        assert_eq!(stopped.session, session());
+        let drained = processing.barrier(session()).await.unwrap();
+        assert_eq!(drained.session, session());
+        output.finish(session(), IdleOutputMode::Off).await.unwrap();
+    });
+    app.call(Call::Hold(epoch(1))).await.ok();
+    let stopped = app.call(Call::Stop(session())).await;
+    assert!(!cleanup.is_finished());
+    assert!(
+        app.calls.try_recv().is_err(),
+        "final output must await capture cleanup"
+    );
+    stopped.ok();
+    app.call(Call::Finish(session(), IdleOutputMode::Off))
+        .await
+        .ok();
+    within(cleanup).await.unwrap();
+
+    app.flow_shutdown.send(()).unwrap();
+    assert_eq!(within(app.flow).await.unwrap().unwrap(), OwnerStopped);
+    assert!(within(app.processing.observe()).await.is_err());
 }
 
 #[tokio::test]

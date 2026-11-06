@@ -38,7 +38,7 @@ state uses Redux Toolkit; RTK Query remains deferred.
 
 ## Read the composition
 
-- [Server browser surface](hosts/server/web-portal/app.tsx): shared portal + host-owned desktop/remote capture selection + WLED panels.
+- [Server browser surface](hosts/server/web-portal/app.tsx): shared portal + host-owned device/remote capture selection + WLED panels.
 - [webOS browser surface](hosts/webos/web-portal/app.tsx): shared portal + webOS capture + WLED panels.
 - [Shared portal](packages/web-portal/index.tsx): typed browser panels and command feedback.
 - [TV UI](packages/tv-ui/index.tsx), [embedded TV assembly](hosts/webos/tv-ui/app.tsx),
@@ -49,7 +49,7 @@ state uses Redux Toolkit; RTK Query remains deferred.
   commands and hooks, separate from either UI. [State wiring](STATE.md) shows the
   slice, listener, command and host boundaries. [Platform/presenter ports](packages/webos-platform/index.ts)
   handle television-specific responsibilities.
-- [Desktop capture](packages/capture-desktop-ui/index.tsx),
+- [Video device capture](packages/capture-device-ui/index.tsx),
   [remote capture](packages/remote-capture-ui/index.tsx),
   [webOS capture](packages/capture-webos-ui/index.tsx), and
   [WLED output](packages/output-wled-ui/index.tsx): independent companion packages.
@@ -70,14 +70,14 @@ transport must translate its methods into application commands, preserving commo
 processing/calibration settings, use revision checks, validate responses and
 implement snapshot resynchronization. Backend adapter validation is authoritative.
 Adapter settings types are generated from Rust; panels and hosts import them
-from `@prysm/contracts/desktop`, `/remote-capture`, `/webos` and `/wled`. Client requests, private presentation messages, operation outcomes and the current
+from `@prysm/contracts/device`, `/remote-capture`, `/webos` and `/wled`. Client requests, private presentation messages, operation outcomes and the current
 snapshot projection are also generated from Rust. Complete application state/events
 and endpoint mappings remain outside this milestone.
 
 ## Rust is the settings source of truth
 
 [Contract ownership and generation](../CONTRACTS.md) is the review guide.
-Adapter settings now live in independent Rust crates: [desktop](../adapters/capture-desktop/src/lib.rs),
+Adapter settings now live in independent Rust crates: [device](../adapters/capture-device/src/lib.rs),
 [webOS](../adapters/capture-webos/src/lib.rs), and [WLED](../adapters/output-wled/src/lib.rs).
 Each library owns a schema document and optional `wire`/`schema` features.
 Shared public wire types are registered by [prysm-protocol](../crates/protocol/src/schema.rs).
@@ -114,9 +114,11 @@ Build and dev commands regenerate automatically. The isolated
 [v1 CI workflow](../../.github/workflows/v1.yml) checks committed artifacts first,
 then runs the frontend and Rust checks. The exporter uses the locked Cargo workspace.
 
-Desktop sources are a tagged union: `device`/`file` carry `path`. Remote capture
+The device settings contract still contains the provisional `device`/`file` tagged
+union, both carrying `path`; the runtime rejects `file` until its separate adapter
+is implemented. Remote capture
 owns a separate `{ peer }` connection contract, without resolution/rate. The server
-owns `{ adapter: 'desktop' | 'remote', settings: ... }` and composes the respective
+owns `{ adapter: 'device' | 'remote', settings: ... }` and composes the respective
 panels in [its selector](hosts/server/web-portal/capture-settings.tsx). Selecting a
 panel edits the form; only submitting it sends a command. Runtime adapter switching
 and configuration of the producing source over the network remain deferred. Resolutions serialize as `[width, height]`. WLED LED counts use four `u32`

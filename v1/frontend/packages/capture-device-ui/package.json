@@ -1,5 +1,5 @@
 {
-  "name": "@prysm/capture-desktop-ui",
+  "name": "@prysm/capture-device-ui",
   "version": "1.0.0-alpha.0",
   "private": true,
   "type": "module",

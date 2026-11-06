@@ -1,5 +1,5 @@
 //! Host-side types for reviewing composition. Examples use explicitly fake adapters.
-pub use prysm_capture_desktop::DesktopCaptureSettings;
+pub use prysm_capture_device::DeviceCaptureSettings;
 pub use prysm_capture_webos::TvCaptureSettings;
 use prysm_contract::{
     capture::CaptureControl, output::OutputControl, processing::ProcessingControl,

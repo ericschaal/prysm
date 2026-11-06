@@ -1,7 +1,7 @@
 #![cfg(feature = "wire")]
 
 use prysm_assemblies::{
-    DesktopCaptureSettings, RemoteCaptureSettings, ServerCaptureSettings, TvCaptureSettings,
+    DeviceCaptureSettings, RemoteCaptureSettings, ServerCaptureSettings, TvCaptureSettings,
     WledSettings,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -17,8 +17,8 @@ fn adapter_settings_roundtrip_the_documented_wire_shapes() {
     for source in ["device", "file"] {
         let value =
             json!({"source": source, "path": "fixture", "rate": 30, "resolution": [320, 180]});
-        roundtrip::<DesktopCaptureSettings>(value.clone());
-        roundtrip::<ServerCaptureSettings>(json!({"adapter": "desktop", "settings": value}));
+        roundtrip::<DeviceCaptureSettings>(value.clone());
+        roundtrip::<ServerCaptureSettings>(json!({"adapter": "device", "settings": value}));
     }
     let remote = json!({"peer": "127.0.0.1:9000"});
     roundtrip::<RemoteCaptureSettings>(remote.clone());
@@ -47,7 +47,7 @@ fn decoding_keeps_domain_validation() {
             .is_err()
     );
     assert!(
-        serde_json::from_value::<DesktopCaptureSettings>(
+        serde_json::from_value::<DeviceCaptureSettings>(
             json!({"source": "remote", "peer": "127.0.0.1:9000", "rate": 30, "resolution": [320, 180]})
         )
         .is_err()

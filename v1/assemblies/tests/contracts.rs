@@ -16,7 +16,7 @@ fn host_contracts_include_shared_types_and_only_their_adapters() {
     let shared = names(prysm_protocol::schema::document());
     let mut server_expected = shared.clone();
     server_expected.extend([
-        "DesktopCaptureSettings".into(),
+        "DeviceCaptureSettings".into(),
         "RemoteCaptureSettings".into(),
         "ServerCaptureSettings".into(),
         "WledSettings".into(),
@@ -28,8 +28,8 @@ fn host_contracts_include_shared_types_and_only_their_adapters() {
     assert_eq!(names(server().unwrap()), server_expected);
     assert_eq!(names(webos().unwrap()), webos_expected);
     assert_eq!(
-        names(prysm_capture_desktop::schema::document()),
-        ["DesktopCaptureSettings"]
+        names(prysm_capture_device::schema::document()),
+        ["DeviceCaptureSettings"]
     );
     assert_eq!(
         names(prysm_remote_capture::schema::document()),

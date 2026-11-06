@@ -2,13 +2,21 @@
 pub use prysm_core::{
     Frame, FrameError, FramePool, PixelFormat, YuvRange, YuvStandardMatrix, yuyv,
 };
+#[cfg(feature = "remote")]
 mod receiver;
+#[cfg(feature = "remote")]
 mod webos;
+#[cfg(feature = "remote")]
 pub use receiver::WebosReceiver;
+mod device;
+pub use device::{CaptureExit, CaptureWorker, DeviceCapture};
 
+#[cfg(any(feature = "remote", test))]
 use futures::{Stream, StreamExt};
-use std::num::NonZeroU32;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
+#[cfg(any(feature = "remote", test))]
+use tokio::sync::watch;
+#[cfg(any(feature = "remote", test))]
 use tokio_util::sync::CancellationToken;
 
 /// Terminal capture failures. Cancellation closes the stream successfully.
@@ -31,6 +39,8 @@ pub enum CaptureError {
     },
     #[error("capture thread ended unexpectedly")]
     WorkerStopped(#[source] oneshot::error::RecvError),
+    #[error("native capture cleanup failed: {0}")]
+    Cleanup(#[source] anyhow::Error),
     #[error(transparent)]
     Backend(#[from] anyhow::Error),
 }
@@ -48,21 +58,8 @@ fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
     }
 }
 
-/// Live capture yields the newest available frame, or a terminal capture error.
-/// Intermediate frames may be skipped under load; cancellation closes the stream.
-/// The requested rate configures the device or remote sender; unsupported device rates fail.
-pub trait PrysmCapturer {
-    fn into_stream(
-        self,
-        width: u32,
-        height: u32,
-        refresh_rate_hz: NonZeroU32,
-    ) -> impl Stream<Item = Result<Frame>> + Send + 'static
-    where
-        Self: Sized + Send + 'static;
-}
-
 // Keep the terminal result separate so a final frame cannot overwrite a failure.
+#[cfg(any(feature = "remote", test))]
 fn capture_channel(
     shutdown: CancellationToken,
 ) -> (
@@ -206,14 +203,6 @@ mod tests {
 
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "linux")]
-pub use linux::V4lCapturer;
-#[cfg(target_os = "linux")]
-pub use linux::V4lCapturer as Capturer;
 
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "macos")]
-pub use macos::AVFoundationCapturer;
-#[cfg(target_os = "macos")]
-pub use macos::AVFoundationCapturer as Capturer;

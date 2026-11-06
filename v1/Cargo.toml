@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-desktop", "adapters/capture-webos", "adapters/output-wled", "adapters/remote-capture"]
+members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-device", "adapters/capture-webos", "adapters/output-wled", "adapters/remote-capture"]
 default-members = ["assemblies"]
 
 [workspace.package]
@@ -18,7 +18,7 @@ prysm-flow = { path = "crates/flow" }
 prysm-application = { path = "crates/application" }
 prysm-web-portal = { path = "crates/web-portal" }
 prysm-testkit = { path = "testkit" }
-prysm-capture-desktop = { path = "adapters/capture-desktop" }
+prysm-capture-device = { path = "adapters/capture-device" }
 prysm-capture-webos = { path = "adapters/capture-webos" }
 prysm-output-wled = { path = "adapters/output-wled" }
 prysm-remote-capture = { path = "adapters/remote-capture" }

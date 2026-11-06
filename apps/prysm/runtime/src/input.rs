@@ -5,7 +5,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 #[cfg(feature = "host-input")]
-use prysm_capture::{Capturer, PrysmCapturer, WebosReceiver};
+use prysm_capture::{DeviceCapture, WebosReceiver};
 use prysm_core::Frame;
 use tokio_util::sync::CancellationToken;
 
@@ -107,15 +107,37 @@ impl InputSource {
                         refresh_rate_hz,
                         ..
                     } => {
-                        let capturer = Capturer::new(Some(device.as_str()), shutdown)?;
-                        let completed = capturer.completion();
+                        let capture = DeviceCapture::open(
+                            Some(device.as_str()),
+                            width,
+                            height,
+                            refresh_rate_hz,
+                        )?;
+                        let frames = futures::stream::unfold(capture.frames, |mut frames| async {
+                            loop {
+                                frames.changed().await.ok()?;
+                                let frame = frames.borrow_and_update().clone();
+                                if let Some(frame) = frame {
+                                    return Some((Ok(frame), frames));
+                                }
+                            }
+                        })
+                        .boxed();
+                        let mut worker = capture.worker;
+                        let cleanup = tokio::spawn(async move {
+                            let exit = tokio::select! {
+                                result = worker.join() => result?,
+                                () = shutdown.cancelled() => {
+                                    worker.cancel();
+                                    worker.join().await?
+                                }
+                            };
+                            exit.failure.map_or(Ok(()), |error| Err(error.into()))
+                        });
                         InputStream {
-                            frames: capturer
-                                .into_stream(width, height, refresh_rate_hz)
-                                .map(|frame| frame.map_err(anyhow::Error::from))
-                                .boxed(),
-                            completed: Some(completed),
-                            cleanup: None,
+                            frames,
+                            completed: None,
+                            cleanup: Some(cleanup),
                             availability: None,
                         }
                     }

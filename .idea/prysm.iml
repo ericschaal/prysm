@@ -37,6 +37,7 @@
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/portal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/testkit/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-desktop/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-device/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-wled/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/src" isTestSource="false" />

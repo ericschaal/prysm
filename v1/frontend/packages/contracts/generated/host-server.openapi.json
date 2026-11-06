@@ -208,8 +208,8 @@
         ],
         "type": "object"
       },
-      "DesktopCaptureSettings": {
-        "description": "These choices belong to the desktop adapter, never the shared application.",
+      "DeviceCaptureSettings": {
+        "description": "These choices belong to the device adapter, never the shared application.",
         "oneOf": [
           {
             "properties": {
@@ -534,12 +534,12 @@
             "properties": {
               "adapter": {
                 "enum": [
-                  "desktop"
+                  "device"
                 ],
                 "type": "string"
               },
               "settings": {
-                "$ref": "#/components/schemas/DesktopCaptureSettings"
+                "$ref": "#/components/schemas/DeviceCaptureSettings"
               }
             },
             "required": [

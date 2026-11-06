@@ -1,13 +1,13 @@
 import type { SettingsPanelProps } from '@prysm/web-portal';
 
-import type { DesktopCaptureSettings as DesktopCaptureConfig } from '@prysm/contracts/desktop';
+import type { DeviceCaptureSettings as DeviceCaptureConfig } from '@prysm/contracts/device';
 
 /** Minimal composition panel; resolution/rate controls remain deferred. */
-export function DesktopCaptureSettings({
+export function DeviceCaptureSettings({
   settings,
   disabled,
   onSubmit,
-}: SettingsPanelProps<DesktopCaptureConfig>) {
+}: SettingsPanelProps<DeviceCaptureConfig>) {
   const defaultLocation = settings?.path ?? '';
   return (
     <form
@@ -19,7 +19,7 @@ export function DesktopCaptureSettings({
         if (source !== 'device' && source !== 'file') return;
         const location = data.get('location');
         if (typeof location !== 'string') return;
-        const resolution: DesktopCaptureConfig['resolution'] =
+        const resolution: DeviceCaptureConfig['resolution'] =
           settings?.resolution ?? [320, 180];
         const common = {
           resolution,
@@ -28,7 +28,7 @@ export function DesktopCaptureSettings({
         void onSubmit({ ...common, source, path: location });
       }}
     >
-      <h2>Desktop capture</h2>
+      <h2>Video device capture</h2>
       <fieldset disabled={disabled}>
         <legend>Source</legend>
         <label>

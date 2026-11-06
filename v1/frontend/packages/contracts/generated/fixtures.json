@@ -1,5 +1,5 @@
 {
-  "DesktopCaptureSettings": [
+  "DeviceCaptureSettings": [
     {
       "path": "/dev/video0",
       "rate": 30,
@@ -41,7 +41,7 @@
   ],
   "ServerCaptureSettings": [
     {
-      "adapter": "desktop",
+      "adapter": "device",
       "settings": {
         "path": "/dev/video0",
         "rate": 30,
@@ -53,7 +53,7 @@
       }
     },
     {
-      "adapter": "desktop",
+      "adapter": "device",
       "settings": {
         "path": "fixture.mp4",
         "rate": 30,

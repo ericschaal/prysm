@@ -1991,6 +1991,7 @@ dependencies = [
  "core-video",
  "dispatch2",
  "futures",
+ "libc",
  "objc2",
  "objc2-foundation",
  "prysm-core",

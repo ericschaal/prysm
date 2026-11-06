@@ -9,7 +9,7 @@ use prysm_web_portal::{FrontendAsset, HttpPolicy, WebPortal};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    // This fixture stands in for host-owned selection between desktop capture and
+    // This fixture stands in for host-owned selection between video device capture and
     // RemoteCaptureReceiver. Runtime switching/ownership is deferred.
     let capture = FakeCapture::<ServerCaptureSettings>::new(
         CaptureCapabilities {

@@ -8,7 +8,7 @@ pub fn server() -> Result<OpenApi, String> {
         "Prysm server",
         [
             prysm_protocol::schema::document(),
-            prysm_capture_desktop::schema::document(),
+            prysm_capture_device::schema::document(),
             prysm_remote_capture::schema::document(),
             crate::server::document(),
             prysm_output_wled::schema::document(),
@@ -32,7 +32,7 @@ pub fn documents() -> Result<BTreeMap<&'static str, OpenApi>, String> {
     Ok(BTreeMap::from([
         ("application", prysm_protocol::schema::document()),
         ("tv-host", crate::tv::document()),
-        ("desktop", prysm_capture_desktop::schema::document()),
+        ("device", prysm_capture_device::schema::document()),
         ("remote-capture", prysm_remote_capture::schema::document()),
         ("webos", prysm_capture_webos::schema::document()),
         ("wled", prysm_output_wled::schema::document()),

@@ -3,8 +3,8 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description These choices belong to the desktop adapter, never the shared application. */
-        DesktopCaptureSettings: {
+        /** @description These choices belong to the device adapter, never the shared application. */
+        DeviceCaptureSettings: {
             path: string;
             /** Format: int32 */
             rate: number;
@@ -32,6 +32,6 @@ export interface components {
     headers: never;
     pathItems: never;
 }
-export type DesktopCaptureSettings = components['schemas']['DesktopCaptureSettings'];
+export type DeviceCaptureSettings = components['schemas']['DeviceCaptureSettings'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

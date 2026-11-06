@@ -6,12 +6,16 @@ This is a greenfield v1: no compatibility layer or data migration is required.
 
 A [compilable architecture workspace](../../v1/README.md) now lives in isolated
 `v1/`. It supplies typed assemblies, a running passive processing flow, application
-lighting-session sequencing, a real WLED output adapter and explicit unavailable
+lighting-session sequencing, video device capture, a real WLED output adapter and explicit unavailable
 shells for the remaining runtime behavior. The WLED
 [transition table](../../v1/adapters/output-wled/TRANSITIONS.md) documents write
 ownership, admission and the boundary between local ordering and physical UDP
 delivery. Consult its source for
 the current signatures; the sketches here explain the architecture.
+The device [transition table](../../v1/adapters/capture-device/TRANSITIONS.md)
+defines native readiness, Stop/open races, availability and verified release.
+Device capture's old stream/completion-token API has been replaced; backward
+compatibility is not an implementation constraint.
 
 ## Recommendation
 
@@ -296,9 +300,10 @@ setup is represented explicitly. Capture/output ports validate their own setting
 without opening hardware. The coordinator validates cross-field/domain rules and
 revisions, persists atomically, then applies changes.
 
-`DesktopCaptureSettings` selects local device/file sources. `RemoteCaptureSettings`
+`DeviceCaptureSettings` configures local video devices; its provisional `File`
+variant returns unavailable until a separate file adapter is implemented. `RemoteCaptureSettings`
 belongs to the remote transport and contains only its peer address. The server
-composition owns `ServerCaptureSettings::Desktop`/`Remote`; neither adapter knows
+composition owns `ServerCaptureSettings::Device`/`Remote`; neither adapter knows
 about the other. Resolution/rate belong to the producing source, with remote source
 configuration still deferred. The TV adapter defines `TvCaptureSettings`. These
 types live with their adapters/host composition, not in a closed shared `Input` enum.
@@ -346,6 +351,10 @@ Each constructor returns named parts, such as `capture.owner`, `capture.control`
 and `capture.frames`. Client handles are cloneable; owners and consuming stream
 ends have exclusive ownership. Only the host holds owner lifetimes. Dropping a
 browser client does not stop the owner or cancel an accepted operation.
+Dependencies become private owner state after construction. The host retains
+emergency control handles before transferring their clones to the application;
+neither host code nor assembly tests access an owner's internal wiring. Tests
+that claim runtime behavior drive the actual owner through its public ports.
 
 Inside a module, keep one visible protocol and owner loop:
 
@@ -516,7 +525,7 @@ async fn main() -> Result<()> {
     let portal = WebPortal::new(
         application.control.clone(),
         flow.preview,
-        server_frontend::ASSETS, // Host-built shared portal + desktop/WLED panels.
+        server_frontend::ASSETS, // Host-built shared portal + device/WLED panels.
         deployment.http_policy,
     );
     let listener = TcpListener::bind(deployment.portal_listen).await?;

@@ -1,20 +1,29 @@
 use anyhow::Context;
 use futures::{Stream, StreamExt};
-use prysm_capture::{CaptureError, Capturer, Frame, PrysmCapturer};
+use prysm_capture::{CaptureError, DeviceCapture, Frame};
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let shutdown_token = CancellationToken::new();
-    let capturer = Capturer::new(None, shutdown_token.clone())?;
-    let stream = capturer.into_stream(800, 600, 30.try_into().unwrap());
-
-    let result = check_capture(stream).await;
-    shutdown_token.cancel();
+    let capture = DeviceCapture::open(None, 800, 600, 30.try_into().unwrap())?;
+    let mut worker = capture.worker;
+    let frames = futures::stream::unfold(capture.frames, |mut frames| async {
+        loop {
+            frames.changed().await.ok()?;
+            let frame = frames.borrow_and_update().clone();
+            if let Some(frame) = frame {
+                return Some((Ok(frame), frames));
+            }
+        }
+    });
+    let result = check_capture(frames).await;
+    worker.cancel();
+    if let Some(error) = worker.join().await?.failure {
+        return Err(error.into());
+    }
     result
 }
 

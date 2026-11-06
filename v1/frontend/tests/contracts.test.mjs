@@ -42,16 +42,16 @@ test('generated schemas accept actual Rust serialization for every adapter varia
 });
 
 test('schemas reject wrong variants, invalid resolution/rate and wrong LED tuple length', () => {
-  const desktop = fixtures.DesktopCaptureSettings[0];
+  const device = fixtures.DeviceCaptureSettings[0];
   const tv = fixtures.TvCaptureSettings[0];
   const output = fixtures.WledSettings[0];
   assert.equal(
-    validate('DesktopCaptureSettings')({ ...desktop, source: 'remote' }),
+    validate('DeviceCaptureSettings')({ ...device, source: 'remote' }),
     false,
   );
   assert.equal(
-    validate('DesktopCaptureSettings')({
-      ...desktop,
+    validate('DeviceCaptureSettings')({
+      ...device,
       path: undefined,
       peer: '127.0.0.1:9000',
     }),
@@ -62,7 +62,7 @@ test('schemas reject wrong variants, invalid resolution/rate and wrong LED tuple
     false,
   );
   assert.equal(
-    validate('ServerCaptureSettings')({ adapter: 'remote', settings: desktop }),
+    validate('ServerCaptureSettings')({ adapter: 'remote', settings: device }),
     false,
   );
   for (const resolution of [[0, 180], [3841, 180], [320, 2161], [320]]) {

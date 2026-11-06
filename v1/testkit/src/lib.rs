@@ -7,7 +7,7 @@ use prysm_contract::{
         CaptureCapabilities, CaptureControl, CaptureStart, CaptureStarted, CaptureState,
         CaptureStopped, CapturedFrame, FrameSource,
     },
-    identity::{SessionId, SettingsRevision, StreamEpoch},
+    identity::{SessionId, StreamEpoch},
     observation::Observation,
     output::{
         ColorFrame, ColorSink, IdleOutputMode, OfferResult, OutputApplied, OutputCapabilities,
@@ -16,7 +16,6 @@ use prysm_contract::{
     storage::SettingsRepository,
 };
 use prysm_core::EdgeColors;
-use prysm_flow::FlowWiring;
 use std::{
     future::Future,
     marker::PhantomData,
@@ -235,22 +234,4 @@ impl<S: Clone + Send + 'static> SettingsRepository<S> for MemorySettings<S> {
         *self.0.lock().expect("fixture lock") = Some(settings);
         Ok(())
     }
-}
-
-/// One-frame harness, not the production flow driver. It proves endpoint compatibility
-/// using the existing processor, without implementing scheduling or session policy.
-pub async fn process_one<F: FrameSource, O: ColorSink>(
-    wiring: &mut FlowWiring<F, O>,
-    revision: SettingsRevision,
-) -> Result<bool, ControlError> {
-    let Some(captured) = wiring.frames.next_frame().await? else {
-        return Ok(false);
-    };
-    let colors = wiring.processor.process_frame(captured.frame);
-    wiring.colors.offer(ColorFrame {
-        stamp: captured.stamp,
-        revision,
-        colors,
-    })?;
-    Ok(true)
 }

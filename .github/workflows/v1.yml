@@ -34,7 +34,7 @@ jobs:
       - run: npm --prefix v1/frontend test
       - name: Rust checks
         run: |
-          cargo fmt --manifest-path v1/Cargo.toml -p prysm-contract -p prysm-flow -p prysm-application -p prysm-web-portal -p prysm-testkit -p prysm-assemblies -p prysm-export-contracts -p prysm-capture-desktop -p prysm-capture-webos -p prysm-output-wled -p prysm-remote-capture -- --check
+          cargo fmt --manifest-path v1/Cargo.toml -p prysm-contract -p prysm-flow -p prysm-application -p prysm-web-portal -p prysm-testkit -p prysm-assemblies -p prysm-export-contracts -p prysm-capture-device -p prysm-capture-webos -p prysm-output-wled -p prysm-remote-capture -- --check
           cargo test --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked
           cargo clippy --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
           cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-server --locked

@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import type { SettingsPanelProps } from '@prysm/web-portal';
 import type { ServerCaptureSettings as ServerCaptureConfig } from '@prysm/contracts/host-server';
-import { DesktopCaptureSettings } from '@prysm/capture-desktop-ui';
+import { DeviceCaptureSettings } from '@prysm/capture-device-ui';
 import { RemoteCaptureSettings } from '@prysm/remote-capture-ui';
 
 export function ServerCaptureSettings(
   props: SettingsPanelProps<ServerCaptureConfig>,
 ) {
   return (
-    <CaptureEditor key={props.settings?.adapter ?? 'desktop'} {...props} />
+    <CaptureEditor key={props.settings?.adapter ?? 'device'} {...props} />
   );
 }
 
@@ -18,7 +18,7 @@ function CaptureEditor({
   onSubmit,
 }: SettingsPanelProps<ServerCaptureConfig>) {
   const [adapter, setAdapter] = useState<ServerCaptureConfig['adapter']>(
-    settings?.adapter ?? 'desktop',
+    settings?.adapter ?? 'device',
   );
   return (
     <section>
@@ -30,19 +30,19 @@ function CaptureEditor({
           value={adapter}
           onChange={(event) => {
             const value = event.currentTarget.value;
-            if (value === 'desktop' || value === 'remote') setAdapter(value);
+            if (value === 'device' || value === 'remote') setAdapter(value);
           }}
         >
-          <option value="desktop">Desktop</option>
+          <option value="device">Device</option>
           <option value="remote">Remote</option>
         </select>
       </label>
-      {adapter === 'desktop' ? (
-        <DesktopCaptureSettings
-          settings={settings?.adapter === 'desktop' ? settings.settings : null}
+      {adapter === 'device' ? (
+        <DeviceCaptureSettings
+          settings={settings?.adapter === 'device' ? settings.settings : null}
           disabled={disabled}
           onSubmit={(value) =>
-            onSubmit({ adapter: 'desktop', settings: value })
+            onSubmit({ adapter: 'device', settings: value })
           }
         />
       ) : (

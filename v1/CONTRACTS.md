@@ -9,7 +9,7 @@ commands and observations are not yet defined.
 | Owner | Public schema declaration | Frontend import |
 | --- | --- | --- |
 | Application wire contracts (`prysm-protocol`) | [Shared roots](crates/protocol/src/schema.rs) | `@prysm/contracts/application` |
-| Desktop capture | [Desktop roots](adapters/capture-desktop/src/schema.rs) | `@prysm/contracts/desktop` |
+| Video device capture | [Device roots](adapters/capture-device/src/schema.rs) | `@prysm/contracts/device` |
 | Remote capture | [Remote roots](adapters/remote-capture/src/schema.rs) | `@prysm/contracts/remote-capture` |
 | webOS capture | [webOS roots](adapters/capture-webos/src/schema.rs) | `@prysm/contracts/webos` |
 | WLED output | [WLED roots](adapters/output-wled/src/schema.rs) | `@prysm/contracts/wled` |
@@ -38,7 +38,7 @@ task handles, frame buffers and private credentials are not automatically export
 
 ## Hosts own composition
 
-The server host combines shared, desktop capture, remote capture and WLED documents,
+The server host combines shared, video device capture, remote capture and WLED documents,
 plus its own [source selection](assemblies/src/server.rs). The webOS
 host combines shared, webOS capture and WLED documents. Each library document is
 also exported independently, allowing adapter UI packages to import their own

@@ -1,10 +1,13 @@
 # V1 architecture workspace
 
 This is an independent Cargo workspace for the v1 architecture. The passive
-processing flow, application lifecycle and WLED output adapter run; capture and
-other production boundaries remain skeletons. It has its own lockfile and target directory.
-The existing root workspace, npm hooks, packaging and webOS toolchain are unchanged.
-The existing `prysm-core`, `prysm-processor` and `prysm-renderer-wled` are reused by path dependency.
+processing flow, application lifecycle, video device capture and WLED output
+run; TV capture and remote transport remain skeletons. It has its own lockfile and target directory.
+The npm hooks, packaging and webOS toolchain are unchanged. Existing root capture
+callers now use the same explicit native ownership API.
+The existing `prysm-core`, `prysm-processor`, `prysm-capture` and `prysm-renderer-wled`
+are used by path dependency. Video device capture disables the native crate's remote
+transport/codec feature.
 A separate npm workspace builds four frontend surfaces for three applications; their generated bundles
 are required when compiling the Rust host examples.
 
@@ -24,7 +27,7 @@ names the complete feature, with its browser code in the companion npm package.
 The library is optional to hosts; the current `prysm-webos` assembly includes it.
 `prysm-server` accepts transport adapters, including remote capture from webOS,
 without making webOS part of the processing contract. Its [source selection](assemblies/src/server.rs)
-composes local desktop settings and remote connection settings. The [remote receiver](adapters/remote-capture/src/receiver.rs)
+composes local device settings and remote connection settings. The [remote receiver](adapters/remote-capture/src/receiver.rs)
 exposes the same control/frame ports as local capture, with explicit unavailable
 responses until networking is implemented. Capture resolution/rate belong to the
 producing source, not the receiver connection. The server example still uses a
@@ -51,6 +54,9 @@ fixture for aggregate source selection; runtime adapter switching is deferred.
 6. [WLED transitions](adapters/output-wled/TRANSITIONS.md) and
    [protocol/integration tests](adapters/output-wled/src/tests/network.rs): real
    output with local HTTP/DDP fixtures, including the application and processing flow.
+7. [Video device capture transitions](adapters/capture-device/TRANSITIONS.md) and
+   [tests](adapters/capture-device/src/tests.rs): readiness, epochs, interrupted
+   opening and verified release, with the native boundary controlled by test gates.
 
 Review the [UI and host assemblies](UI-ASSEMBLIES.md), including both TV compositions,
 the [RTK frontend state wiring](frontend/STATE.md),
@@ -74,6 +80,10 @@ flowchart LR
 The application and portal depend on contracts, not concrete devices. The
 application does not depend on the flow implementation. The flow owns an existing
 processor and its input/output ports. Nothing exposes Tokio channel ends.
+Constructors transfer dependencies into private owner wiring. Hosts retain only
+the public owner/control/data endpoints and clone any emergency controls before
+passing them to the application; they cannot reach through an owner to drive its
+processor or devices directly.
 Capture/output settings are associated types, so server and TV compositions use
 different settings types without a shared deployment flag. Hosts compose the
 shared frontend with adapter settings panels and supply the resulting assets to
@@ -120,25 +130,29 @@ assembly examples/tests, never a fallback adapter inside a production library.
 | --- | --- |
 | Domain traits, data types, error/cleanup outcomes | Physical-device verification |
 | Typed assemblies and coordinated application shutdown | Host supervision, deadlines and escalation |
-| Passive flow, bounded frame handoff, configuration acknowledgments and session barriers | Native capture cleanup |
+| Passive flow, bounded frame handoff, configuration acknowledgments and session barriers | TV capture cleanup |
 | Typed settings loaded through the repository port, frontend compositions and asset boundary | Settings replacement/saving, concrete repositories and complete frontend panels |
 | Application/session sequencing, operation registry and component observations | Preview tap, JPEG work and client serving |
-| WLED mode writes, DDP delivery, admission fencing and refresh | Native capture and remote transport adapters |
-| Fake source/sink and one-frame test harness | Calibration workflow and credential generation |
+| Video device ownership, readiness, cleanup and availability epochs; WLED mode writes, DDP delivery and refresh | TV capture, file playback and remote transport adapters |
+| Fake source/sink connected through the real flow owner | Calibration workflow and credential generation |
 
 Constructors create inert wiring. The application and flow have working bounded
-control mailboxes, driven by host-owned `run(instance, shutdown)` futures. WLED
+control mailboxes, driven by host-owned `run(instance, shutdown)` futures. WLED and video device capture
 receives the instance at construction and exposes `owner.run(shutdown)`. Portal
-execution, calibration, settings replacement, preview and capture shells remain
+execution, calibration, settings replacement, preview and remaining capture shells remain
 explicitly unavailable. No placeholder claims device cleanup or delivery.
 
-`prysm-testkit` contains named fake adapters that record calls. Its one-frame
-harness feeds the real processor and records output. These fixtures do not
-implement real admission, hardware cleanup or remote delivery guarantees.
-The assembly tests prove structural connections and selected ownership properties.
+`prysm-testkit` contains named fake adapters that record calls and frames; it
+depends on contracts and core values, not the flow implementation. These fixtures
+do not implement real admission, hardware cleanup or remote delivery guarantees.
+The assembly tests run the real flow through its public configuration, observation,
+frame and barrier ports, then await owner completion on source closure or failure.
 Application tests use separate gated capture/output fixtures with the real flow
-to exercise lifecycle ordering, delayed replies and cleanup failures. WLED adds
-gated-write and real HTTP/DDP tests; native capture cleanup remains unimplemented.
+to exercise lifecycle ordering, delayed replies and cleanup failures, including
+cleanup through retained controls after aborting a running coordinator. WLED adds
+gated-write and real HTTP/DDP tests. Device tests exercise the real application
+and flow with controlled native readiness/release, plus actual missing-device failure.
+Successful physical device acquisition/release still needs hardware verification.
 
 All four frontend compositions compile, bundle and run against in-memory fixtures.
 Their tests check panel/client type compatibility, submissions and snapshot updates.
@@ -285,11 +299,64 @@ packets already in the network; local send ordering cannot guarantee their arriv
 order. Native preserves the selected effect/preset and brightness is untouched.
 Hardware verification remains necessary.
 
+## Video device capture
+
+Construct `DeviceCapture::new(instance)`, connect `control` to the application and
+`frames` to the flow, and retain `owner.run(shutdown)` on host Tokio. One native
+worker owns the device; the adapter keeps commands and observations responsive
+while opening or releasing it. Review the
+[transition table](adapters/capture-device/TRANSITIONS.md) first.
+
+The [session](adapters/capture-device/src/session.rs) owns Start/Stop replies,
+availability epochs and completion. Its phases are Starting, Waiting, Available
+and Stopping; only Available owns a silence deadline. `next_event()` selects by
+priority, and `progress()` applies the selected transition without another await.
+The [owner](adapters/capture-device/src/owner.rs)
+dispatches commands and blocks reuse after unconfirmed release. The
+[mailbox](adapters/capture-device/src/mailbox.rs) owns one pending frame and atomic
+observations. The private [backend boundary](adapters/capture-device/src/backend.rs)
+translates native results; it contains no platform-specific device logic.
+
+```mermaid
+flowchart LR
+    Application -->|Start / Stop| Owner[Device owner]
+    Owner --> Session[Retained session]
+    Session --> Native[Native device worker]
+    Native -->|Readiness and joined completion| Session
+    Native -->|Latest frame| Session
+    Session -->|Stamped latest frame| Flow[Processing flow]
+```
+
+Start succeeds after native activation, independently of the first frame. Stop
+seals the session, cancels opening/running capture and waits for verified release
+and thread join. A late open cannot resume a stopped session. Native operational
+failure with proven release permits a new session; cleanup failure or panic reports
+`RecoveryRequired` and blocks reuse. Caller cancellation does not cancel accepted work.
+
+Delivery silence for max(2 seconds, 3 frame periods) advances to a waiting epoch;
+resumption advances again. This measures delivery continuity, not physical signal
+or acquisition age. Black frames are valid. While idle/waiting/stopped, the frame
+port stays pending; only owner closure ends it.
+
+The [native backend](../crates/capture/prysm-capture/src/device.rs) exposes readiness,
+frames and an owned worker. Linux explicitly starts streaming before readiness and
+releases mapped buffers without panicking on cleanup errors. macOS disables frame
+publication, detaches its delegate, stops capture and drains its callback queue.
+The old stream/completion-token device API was replaced; existing root callers and
+the smoke example use the new API.
+
+`Device.path` identifies a Linux device node or a macOS AVFoundation device UID;
+the current settings require an explicit nonempty UTF-8 identifier. The existing
+File settings variant returns unavailable until a dedicated file adapter owns
+FFmpeg readiness, frame reads and process reaping. Native platform code is isolated
+from the safe v1 adapter. Host abort/drop requests cancellation but is not proof of
+cleanup; the host must retain the owner through shutdown.
+
 ## Next implementation boundary
 
-Implement a production capture adapter against these interfaces, proving native
-cleanup and availability epochs. Verify WLED behavior on physical hardware.
-Then add host supervision, typed settings replacement/persistence and calibration.
+Verify video device capture cleanup and WLED behavior on physical hardware, then add
+host supervision and a runnable headless composition. File/TV/remote capture,
+typed settings replacement/persistence and calibration remain separate milestones.
 Preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
 workspace only after those libraries are usable. No backward compatibility or
 data migration is planned.

@@ -56,8 +56,8 @@ export interface components {
             instance: components["schemas"]["InstanceId"];
             sequence: string;
         };
-        /** @description These choices belong to the desktop adapter, never the shared application. */
-        DesktopCaptureSettings: {
+        /** @description These choices belong to the device adapter, never the shared application. */
+        DeviceCaptureSettings: {
             path: string;
             /** Format: int32 */
             rate: number;
@@ -135,8 +135,8 @@ export interface components {
         };
         ServerCaptureSettings: {
             /** @enum {string} */
-            adapter: "desktop";
-            settings: components["schemas"]["DesktopCaptureSettings"];
+            adapter: "device";
+            settings: components["schemas"]["DeviceCaptureSettings"];
         } | {
             /** @enum {string} */
             adapter: "remote";
@@ -172,7 +172,7 @@ export type ClientSnapshot_Value_Value = components['schemas']['ClientSnapshot_V
 export type ClientUpdate_Value_Value = components['schemas']['ClientUpdate_Value_Value'];
 export type ConfigureRequest_Value = components['schemas']['ConfigureRequest_Value'];
 export type Cursor = components['schemas']['Cursor'];
-export type DesktopCaptureSettings = components['schemas']['DesktopCaptureSettings'];
+export type DeviceCaptureSettings = components['schemas']['DeviceCaptureSettings'];
 export type EndPresentationRequest = components['schemas']['EndPresentationRequest'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];

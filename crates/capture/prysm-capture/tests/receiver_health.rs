@@ -1,3 +1,5 @@
+#![cfg(feature = "remote")]
+
 //! Exercise exported health metrics through a real receiver connection and capture lifecycle.
 use futures::{SinkExt, StreamExt};
 use prysm_capture::WebosReceiver;

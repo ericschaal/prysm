@@ -9,6 +9,10 @@ keywords.workspace = true
 categories.workspace = true
 description = "Camera, file and webOS video capture for Prysm"
 
+[features]
+default = ["remote"]
+remote = ["dep:axum", "dep:prysm-webos-protocol", "dep:yuv"]
+
 [lints]
 workspace = true
 
@@ -17,17 +21,17 @@ name = "capture_smoke"
 test = true
 
 [dependencies]
-axum = { workspace = true, features = ["ws"] }
+axum = { workspace = true, features = ["ws"], optional = true }
 prysm-core = { path = "../../common/prysm-core" }
 prysm-metrics = { path = "../../common/prysm-metrics" }
 futures.workspace = true
-yuv = { workspace = true, default-features = true, features = ["fast_mode"] }
+yuv = { workspace = true, default-features = true, features = ["fast_mode"], optional = true }
 tracing.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros", "net", "io-util", "time"] }
 tokio-util.workspace = true
-prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"] }
+prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"], optional = true }
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
@@ -35,6 +39,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
 v4l = { git = "https://github.com/raymanfx/libv4l-rs.git", rev = "30f6dbaeed5cdb1b33760fc5b35c1b545cfe0e46", features = [] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

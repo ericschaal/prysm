@@ -25,11 +25,11 @@ pub enum ProcessingExecution {
 }
 
 /// The host connects data endpoints once; starting capture reuses this wiring.
-pub struct FlowWiring<F, O> {
-    pub frames: F,
-    pub processor: PrysmProcessor,
-    pub colors: O,
-    pub execution: ProcessingExecution,
+struct FlowWiring<F, O> {
+    frames: F,
+    processor: PrysmProcessor,
+    colors: O,
+    execution: ProcessingExecution,
 }
 
 pub struct ProcessingFlow<F, O> {
@@ -38,8 +38,9 @@ pub struct ProcessingFlow<F, O> {
     pub preview: PreviewHandle,
 }
 
+/// Owns the processor and connected data ports; interaction goes through the returned handles.
 pub struct FlowOwner<F, O> {
-    pub wiring: FlowWiring<F, O>,
+    wiring: FlowWiring<F, O>,
     commands: mpsc::Receiver<Command>,
     mailbox: Arc<Mailbox>,
 }

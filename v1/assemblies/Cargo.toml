@@ -7,15 +7,15 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-wire = ["dep:serde", "dep:prysm-protocol", "prysm-capture-desktop/wire", "prysm-capture-webos/wire", "prysm-output-wled/wire", "prysm-remote-capture/wire"]
-schema = ["wire", "dep:utoipa", "prysm-protocol/schema", "prysm-capture-desktop/schema", "prysm-capture-webos/schema", "prysm-output-wled/schema", "prysm-remote-capture/schema"]
+wire = ["dep:serde", "dep:prysm-protocol", "prysm-capture-device/wire", "prysm-capture-webos/wire", "prysm-output-wled/wire", "prysm-remote-capture/wire"]
+schema = ["wire", "dep:utoipa", "prysm-protocol/schema", "prysm-capture-device/schema", "prysm-capture-webos/schema", "prysm-output-wled/schema", "prysm-remote-capture/schema"]
 
 [dependencies]
 prysm-remote-capture.workspace = true
 prysm-contract.workspace = true
 prysm-protocol = { workspace = true, optional = true }
 prysm-core.workspace = true
-prysm-capture-desktop.workspace = true
+prysm-capture-device.workspace = true
 prysm-capture-webos.workspace = true
 prysm-output-wled.workspace = true
 serde = { workspace = true, optional = true }
@@ -27,7 +27,7 @@ prysm-flow.workspace = true
 prysm-web-portal.workspace = true
 prysm-processor.workspace = true
 prysm-testkit.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["time"] }
 futures.workspace = true
 serde_json.workspace = true
 

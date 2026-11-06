@@ -18,7 +18,7 @@ test('both hosts mount their panels, submit typed settings, and receive snapshot
     [
       ServerWebPortal,
       {
-        adapter: 'desktop',
+        adapter: 'device',
         settings: {
           source: 'device',
           path: '/dev/video0',
@@ -26,7 +26,7 @@ test('both hosts mount their panels, submit typed settings, and receive snapshot
           rate: 30,
         },
       },
-      'Desktop capture',
+      'Video device capture',
       'location',
       '/dev/video1',
       'path',
@@ -34,10 +34,10 @@ test('both hosts mount their panels, submit typed settings, and receive snapshot
     [
       ServerWebPortal,
       {
-        adapter: 'desktop',
+        adapter: 'device',
         settings: { source: 'file', path: 'old.mp4', resolution, rate: 30 },
       },
-      'Desktop capture',
+      'Video device capture',
       'location',
       'new.mp4',
       'path',
@@ -74,7 +74,7 @@ test('both hosts mount their panels, submit typed settings, and receive snapshot
       assert(document.body.textContent.includes('WLED output'));
       assert(
         !document.body.textContent.includes(
-          Host === ServerWebPortal ? 'webOS capture' : 'Desktop capture',
+          Host === ServerWebPortal ? 'webOS capture' : 'Video device capture',
         ),
       );
 
@@ -443,7 +443,7 @@ test('server selects adapters without leaking local capture settings into remote
     revision: '0',
     output,
     capture: {
-      adapter: 'desktop',
+      adapter: 'device',
       settings: { source: 'file', path: 'fixture.mp4', resolution, rate: 24 },
     },
   });
@@ -458,7 +458,7 @@ test('server selects adapters without leaking local capture settings into remote
       ),
       ['device', 'file'],
     );
-    for (const adapter of ['remote', 'desktop']) {
+    for (const adapter of ['remote', 'device']) {
       const previous = client.selectors.selectSnapshot(
         client.store.getState(),
       ).capture;

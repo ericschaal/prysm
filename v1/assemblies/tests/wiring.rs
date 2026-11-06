@@ -4,28 +4,35 @@ use prysm_application::{
     policy::{ApplicationPolicy, FailureAction, V1Policy},
 };
 use prysm_assemblies::{
-    DesktopCaptureSettings, EmergencyControls, HostAction, OwnerExit, TvCaptureSettings,
-    WledSettings, v1_host_action,
+    DeviceCaptureSettings, HostAction, OwnerExit, TvCaptureSettings, WledSettings, v1_host_action,
 };
 use prysm_contract::{
     ControlError,
     application::LightingTarget,
     capture::{CaptureCapabilities, CaptureControl, CaptureStart, CapturedFrame, FrameSource},
     identity::{FrameStamp, InstanceId, SessionId, SettingsRevision, StreamEpoch},
-    output::{IdleOutputMode, OutputControl},
+    observation::Update,
     preview::{PreviewLease, PreviewSource},
+    processing::{ProcessingControl, ProcessingUpdate},
 };
-use prysm_core::Frame;
+use prysm_core::{BrightnessPercent, Config, EdgeColors, Frame, PixelFormat};
 use prysm_flow::{ProcessingExecution, ProcessingFlow};
 use prysm_processor::PrysmProcessor;
-use prysm_testkit::{Call, Calls, FakeCapture, FakeOutput, MemorySettings, process_one};
+use prysm_testkit::{Calls, FakeCapture, FakeOutput, MemorySettings};
 use std::{
     num::NonZeroU64,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
+
+async fn within<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(5), future)
+        .await
+        .expect("assembly made no progress")
+}
 
 fn session() -> SessionId {
     SessionId {
@@ -35,29 +42,42 @@ fn session() -> SessionId {
 }
 
 #[tokio::test]
-async fn real_processor_connects_fake_source_to_output_without_a_portal() {
-    let capture = FakeCapture::<DesktopCaptureSettings>::new(
+async fn running_flow_configures_processes_and_reports_source_closure_without_a_portal() {
+    let mut capture = FakeCapture::<DeviceCaptureSettings>::new(
         CaptureCapabilities {
             supports_patterns: false,
         },
         Calls::default(),
     );
     let output = FakeOutput::<WledSettings>::new(Calls::default());
-    let mut flow = ProcessingFlow::connect(
+    assert!(
+        capture.frames.next_frame().now_or_never().is_none(),
+        "idle is pending, not EOF"
+    );
+    let flow = ProcessingFlow::connect(
         capture.frames,
         PrysmProcessor::new(&Default::default()),
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
-    assert!(
-        flow.owner
-            .wiring
-            .frames
-            .next_frame()
-            .now_or_never()
-            .is_none(),
-        "idle is pending, not EOF"
+    let owner = tokio::spawn(flow.owner.run(session().instance, std::future::pending()));
+    let revision = SettingsRevision(7);
+    let configured = within(flow.control.configure(ProcessingUpdate {
+        revision,
+        config: Config {
+            brightness_percent: BrightnessPercent(0),
+            ..Default::default()
+        },
+    }))
+    .await
+    .unwrap();
+    assert_eq!(configured.revision, revision);
+    let mut observation = within(flow.control.observe()).await.unwrap();
+    assert_eq!(
+        observation.initial.state.configured_revision,
+        Some(revision)
     );
+    assert_eq!(observation.initial.state.applied_revision, None);
     assert!(output.received.latest().is_none());
     let stamp = FrameStamp {
         epoch: StreamEpoch {
@@ -70,80 +90,40 @@ async fn real_processor_connects_fake_source_to_output_without_a_portal() {
         .feed
         .send(CapturedFrame {
             stamp,
-            frame: Frame::dummy(4, 2).unwrap(),
+            frame: Frame::fill(255, 8, 4, PixelFormat::RGB24).unwrap(),
         })
         .await
         .unwrap();
-    let revision = SettingsRevision(7);
-    assert!(process_one(&mut flow.owner.wiring, revision).await.unwrap());
+    within(async {
+        loop {
+            match observation.updates.next().await.unwrap().unwrap() {
+                Update::Snapshot(snapshot) if snapshot.state.applied_revision == Some(revision) => {
+                    break;
+                }
+                Update::ResyncRequired => panic!("test observer lagged"),
+                _ => {}
+            }
+        }
+    })
+    .await;
     let rendered = output.received.latest().unwrap();
     assert_eq!(rendered.stamp, stamp);
     assert_eq!(rendered.revision, revision);
-    drop(capture.feed);
-    assert!(
-        !process_one(&mut flow.owner.wiring, revision).await.unwrap(),
-        "closure is EOF"
-    );
-}
-
-#[tokio::test]
-async fn host_keeps_emergency_controls_after_coordinator_is_dropped() {
-    let calls = Calls::default();
-    let capture = FakeCapture::<TvCaptureSettings>::new(
-        CaptureCapabilities {
-            supports_patterns: true,
-        },
-        calls.clone(),
-    );
-    let output = FakeOutput::<WledSettings>::new(calls.clone());
-    let flow = ProcessingFlow::connect(
-        capture.frames,
-        PrysmProcessor::new(&Default::default()),
-        output.colors,
-        ProcessingExecution::DedicatedThread,
-    );
-    let emergency = EmergencyControls {
-        capture: capture.control.clone(),
-        processing: flow.control.clone(),
-        output: output.control.clone(),
-    };
-    let application = Application::new(
-        capture.control,
-        flow.control,
-        output.control,
-        MemorySettings::empty(),
-        V1Policy,
-    );
-    let settings = TvCaptureSettings {
-        resolution: Default::default(),
-        rate: 30.try_into().unwrap(),
-    };
-    application
-        .owner
-        .wiring
-        .capture
-        .start(CaptureStart {
-            session: session(),
-            settings,
-        })
-        .await
-        .unwrap();
-    drop(application);
-    emergency.capture.stop(session()).await.unwrap();
-    emergency
-        .output
-        .finish(session(), IdleOutputMode::Off)
-        .await
-        .unwrap();
+    assert_eq!(rendered.colors, EdgeColors::black(8, 4, Default::default()));
     assert_eq!(
-        calls.recorded(),
-        [
-            Call::CaptureStart(session()),
-            Call::CaptureStop(session()),
-            Call::OutputFinish(session(), IdleOutputMode::Off)
-        ]
+        within(flow.control.barrier(session()))
+            .await
+            .unwrap()
+            .session,
+        session()
     );
-    // This proves connection ownership, not the unimplemented cleanup/fencing protocol.
+    drop(capture.feed);
+    assert!(matches!(
+        within(owner).await.unwrap(),
+        Err(ControlError::Unavailable("capture frame owner closed"))
+    ));
+    assert!(within(flow.control.observe()).await.is_err());
+    assert!(within(observation.updates.next()).await.is_none());
 }
 
 #[tokio::test]
@@ -250,14 +230,14 @@ async fn remote_receiver_exposes_capture_ports_without_claiming_transport_succes
         Err(ControlError::Unavailable(_))
     ));
     let output = FakeOutput::<WledSettings>::new(Calls::default());
-    let mut flow = ProcessingFlow::connect(
+    let flow = ProcessingFlow::connect(
         receiver.frames,
         PrysmProcessor::new(&Default::default()),
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
     assert!(matches!(
-        flow.owner.wiring.frames.next_frame().await,
+        within(flow.owner.run(session().instance, std::future::pending())).await,
         Err(ControlError::Unavailable(_))
     ));
     assert!(output.received.latest().is_none());
