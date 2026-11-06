@@ -1,4 +1,4 @@
-//! Host-side types for reviewing composition. Examples use explicitly fake adapters.
+//! Concrete headless runtime and host-owned settings composition. UI examples use fixtures.
 pub use prysm_capture_device::DeviceCaptureSettings;
 pub use prysm_capture_webos::TvCaptureSettings;
 use prysm_contract::{
@@ -13,34 +13,6 @@ pub struct EmergencyControls<C: CaptureControl, P: ProcessingControl, O: OutputC
     pub capture: C,
     pub processing: P,
     pub output: O,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnerExit {
-    WebPortal,
-    Preview,
-    Capture,
-    Processing,
-    Output,
-    Coordinator,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostAction {
-    ReportOnly,
-    NotifyCoordinator,
-    EmergencyCleanup,
-}
-
-/// The host may replace this function without changing any port or data connection.
-pub fn v1_host_action(exit: OwnerExit) -> HostAction {
-    match exit {
-        OwnerExit::WebPortal | OwnerExit::Preview => HostAction::ReportOnly,
-        OwnerExit::Capture | OwnerExit::Processing | OwnerExit::Output => {
-            HostAction::NotifyCoordinator
-        }
-        OwnerExit::Coordinator => HostAction::EmergencyCleanup,
-    }
 }
 
 pub mod tv;

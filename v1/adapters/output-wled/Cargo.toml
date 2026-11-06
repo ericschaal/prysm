@@ -12,6 +12,7 @@ schema = ["wire", "dep:utoipa"]
 [dependencies]
 prysm-contract.workspace = true
 prysm-core.workspace = true
+prysm-output.workspace = true
 prysm-renderer-wled = { path = "../../../crates/rendering/prysm-renderer-wled" }
 tokio = { workspace = true, features = ["time", "net"] }
 futures.workspace = true

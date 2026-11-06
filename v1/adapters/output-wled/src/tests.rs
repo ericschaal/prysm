@@ -96,6 +96,9 @@ impl Wire for GatedWire {
         Ok(())
     }
     async fn mode(&mut self, mode: Mode) -> Result<(), WriteError> {
+        if mode == Mode::Release {
+            return Ok(());
+        }
         let (reply, result) = oneshot::channel();
         self.0
             .send(Call {
@@ -119,6 +122,7 @@ impl Wire for GatedWire {
 struct Running {
     control: WledHandle,
     colors: WledColors,
+    terminal: WledShutdown,
     calls: mpsc::UnboundedReceiver<Call>,
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<Result<OwnerStopped, ControlError>>,
@@ -134,6 +138,7 @@ impl Running {
         let mut running = Self {
             control: output.control,
             colors: output.colors,
+            terminal: output.shutdown,
             calls,
             shutdown: Some(shutdown),
             task,
@@ -219,7 +224,7 @@ fn validation_rejects_invalid_addresses_and_led_totals() {
 
 #[test]
 fn admission_retains_one_newest_future_candidate_and_keeps_its_watermark() {
-    let mut gate = admission::Admission::new(INSTANCE);
+    let mut gate = prysm_output::Admission::new(INSTANCE);
     gate.hold(epoch(0)).unwrap();
     assert_eq!(gate.offer(frame(2, 2)), OfferResult::Queued);
     assert_eq!(gate.offer(frame(1, 100)), OfferResult::DiscardedStale);
@@ -458,11 +463,87 @@ async fn shutdown_settles_the_current_write_and_then_turns_off() {
     assert!(!output.task.is_finished());
     assert!(within(output.control.observe()).await.is_ok());
     delayed.ok();
-    output.call(Kind::Colors(EdgeColors::default())).await.ok();
-    within(request).await.unwrap().unwrap();
+    assert!(within(request).await.unwrap().is_err());
     output.call(Kind::Mode(Mode::Off)).await.ok();
     assert!(within(queued).await.unwrap().is_err());
     output.close().await;
+}
+
+#[tokio::test]
+async fn terminal_fence_is_immediate_irreversible_and_keeps_failed_writes_visible() {
+    for failed in [false, true] {
+        let mut output = Running::new().await;
+        output.hold().await;
+        output.admit(1, EdgeColors::default()).await;
+        output.colors.offer(frame(1, 1)).unwrap();
+        let write = output.call(Kind::Colors(red())).await;
+        let control = output.control.clone();
+        let queued = tokio::spawn(async move { control.admit(epoch(2)).await });
+        tokio::task::yield_now().await;
+        output.terminal.request();
+        output.terminal.request();
+        assert!(output.colors.offer(frame(2, 2)).is_err());
+        assert!(within(output.control.admit(epoch(3))).await.is_err());
+        assert!(within(output.control.configure(settings())).await.is_err());
+        assert!(within(output.control.hold(epoch(4), red())).await.is_err());
+        assert!(
+            within(output.control.finish(session(1), IdleOutputMode::Native))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            output
+                .control
+                .observe()
+                .await
+                .unwrap()
+                .initial
+                .state
+                .admitted,
+            None
+        );
+        assert!(!output.task.is_finished());
+        assert!(output.calls.try_recv().is_err());
+        if failed {
+            write.fail(false);
+        } else {
+            write.ok();
+        }
+        output.call(Kind::Mode(Mode::Off)).await.ok();
+        assert!(within(queued).await.unwrap().is_err());
+        let result = within(output.task).await.unwrap();
+        assert_eq!(result.is_err(), failed);
+        if let Err(error) = result {
+            assert!(error.to_string().contains("test write failed"));
+        }
+        assert!(output.calls.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
+async fn terminal_request_before_run_rejects_work_without_configuring_transport() {
+    let output = WledOutput::new(INSTANCE);
+    output.shutdown.request();
+    assert!(output.control.configure(settings()).await.is_err());
+    let (wire, mut calls) = mpsc::unbounded_channel();
+    owner::run(output.owner, GatedWire(wire), std::future::pending())
+        .await
+        .unwrap();
+    assert!(calls.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn shutdown_preserves_both_write_failures_and_the_recovery_category() {
+    let mut output = Running::new().await;
+    let request = output.hold_request(0);
+    let write = output.call(Kind::Mode(Mode::Realtime)).await;
+    output.terminal.request();
+    write.fail(false);
+    assert!(within(request).await.unwrap().is_err());
+    output.call(Kind::Mode(Mode::Off)).await.fail(true);
+    let error = within(output.task).await.unwrap().unwrap_err();
+    assert_eq!(error.kind(), prysm_contract::FailureKind::RecoveryRequired);
+    assert!(error.to_string().contains("cleanup also failed"));
 }
 
 #[tokio::test]

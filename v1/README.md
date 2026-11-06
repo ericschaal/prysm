@@ -1,8 +1,9 @@
 # V1 architecture workspace
 
 This is an independent Cargo workspace for the v1 architecture. The passive
-processing flow, application lifecycle, video device capture and WLED output
-run; TV capture and remote transport remain skeletons. It has its own lockfile and target directory.
+processing flow, application lifecycle, video device capture and WLED/terminal output
+run in a supervised headless host; TV capture and remote transport remain skeletons.
+It has its own lockfile and target directory.
 The npm hooks, packaging and webOS toolchain are unchanged. Existing root capture
 callers now use the same explicit native ownership API.
 The existing `prysm-core`, `prysm-processor`, `prysm-capture` and `prysm-renderer-wled`
@@ -21,8 +22,9 @@ are required when compiling the Rust host examples.
 | `prysm-web-portal` / `@prysm/web-portal` | Complete browser feature: Rust HTTP/API/assets/preview boundary and browser UI |
 | `@prysm/tv-ui` | Reusable UI for TV navigation |
 
-The three application names are executable assembly examples in this milestone;
-production packaging and runtime behavior remain deferred. `prysm-web-portal`
+The three application names remain assembly examples in this milestone;
+`prysm-headless` runs the local device-to-WLED composition described below.
+Production packaging remains deferred. `prysm-web-portal`
 names the complete feature, with its browser code in the companion npm package.
 The library is optional to hosts; the current `prysm-webos` assembly includes it.
 `prysm-server` accepts transport adapters, including remote capture from webOS,
@@ -47,7 +49,7 @@ fixture for aggregate source selection; runtime adapter switching is deferred.
    [passive flow](crates/flow/src/lib.rs), and
    [portal assembly](crates/web-portal/src/lib.rs): compile-time dependency direction.
 4. [Application policy](crates/application/src/policy.rs) and
-   [host policy](assemblies/src/lib.rs): changeable defaults, separated from ports.
+   [host lifecycle](assemblies/src/server/lifecycle.rs): changeable defaults, separated from ports.
 5. [Flow runtime tests](crates/flow/src/tests.rs),
    [wiring checks](assemblies/tests/wiring.rs) and
    [independent portal client](assemblies/tests/portal.rs): what this milestone proves.
@@ -57,6 +59,8 @@ fixture for aggregate source selection; runtime adapter switching is deferred.
 7. [Video device capture transitions](adapters/capture-device/TRANSITIONS.md) and
    [tests](adapters/capture-device/src/tests.rs): readiness, epochs, interrupted
    opening and verified release, with the native boundary controlled by test gates.
+8. [Host ownership and failure transitions](assemblies/HOST-LIFECYCLE.md):
+   headless supervision, coordinated shutdown and terminal owner cleanup.
 
 Review the [UI and host assemblies](UI-ASSEMBLIES.md), including both TV compositions,
 the [RTK frontend state wiring](frontend/STATE.md),
@@ -278,8 +282,8 @@ flowchart LR
     Writer -->|500 ms refresh| Writer
 ```
 
-Review the [transition table](adapters/output-wled/TRANSITIONS.md) first. Private
-[admission](adapters/output-wled/src/admission.rs) owns session/epoch fences and
+Review the [transition table](adapters/output-wled/TRANSITIONS.md) first. Shared
+[admission](crates/output/src/lib.rs) owns session/epoch fences and
 the latest candidate; [mailbox](adapters/output-wled/src/mailbox.rs) owns shared
 state, notifications and atomic observations. The
 [owner](adapters/output-wled/src/owner.rs) serializes writes and refresh; the
@@ -352,10 +356,50 @@ FFmpeg readiness, frame reads and process reaping. Native platform code is isola
 from the safe v1 adapter. Host abort/drop requests cancellation but is not proof of
 cleanup; the host must retain the owner through shutdown.
 
+## Run the headless host
+
+Copy [the example configuration](assemblies/examples/headless.json), replace its
+WLED address and LED counts, and select your capture device. On Linux `path` is a
+device node; on macOS use an AVFoundation device UID. Processing uses the existing
+defaults. Settings are loaded once and are read-only for this milestone.
+
+```sh
+cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
+  --features headless --bin prysm-headless -- /path/to/config.json
+```
+
+The `output` selects an adapter, for example
+`{"adapter":"wled","settings":{"address":"192.0.2.1","leds":[30,18,30,18]}}`.
+For a live terminal display, use [the terminal configuration](assemblies/examples/terminal.json):
+`{"adapter":"terminal","settings":{"leds":[30,18,30,18]}}`.
+The [terminal output crate](adapters/output-terminal/README.md) displays four color
+edges, application/capture status, frame/revision information and recent diagnostics.
+It uses Ratatui/Crossterm, needs an interactive stdout, and restores the terminal
+on shutdown. It does not send colors to WLED or support device-native mode.
+
+This starts idle and does not open capture. Append `--start` to request processed
+lighting through the application after initialization. Ctrl-C or SIGTERM requests
+coordinated Off and joins every owner. The binary needs no frontend build or HTTP
+listener. WLED mode prints application status and operation results to stderr;
+terminal mode routes them through the screen owner, with stderr used after it closes.
+
+The [assembly](assemblies/src/server.rs) constructs the graph. The private
+[host loop](assemblies/src/server/host.rs) polls owners and application entry;
+[lifecycle](assemblies/src/server/lifecycle.rs) owns shutdown transitions and
+failure retention; [owners](assemblies/src/server/owners.rs) retains the concrete
+four tasks and their shutdown controls. There is no automatic restart.
+
+Initialization and coordinated shutdown each have a 10-second deadline. Expired
+coordinated shutdown switches to terminal cleanup. After another 10 seconds the
+host reports pending owners and keeps waiting; it never treats a timeout as proof
+of native release or output cleanup. Keep `run_headless` alive until it returns.
+The host retains the selected output's concrete shutdown handle, which fences new
+commands, frames and refresh immediately while an existing write remains owned.
+
 ## Next implementation boundary
 
-Verify video device capture cleanup and WLED behavior on physical hardware, then add
-host supervision and a runnable headless composition. File/TV/remote capture,
+Qualify video device capture cleanup and WLED behavior on physical hardware using
+the supervised headless host. File/TV/remote capture,
 typed settings replacement/persistence and calibration remain separate milestones.
 Preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
 workspace only after those libraries are usable. No backward compatibility or

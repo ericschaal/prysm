@@ -3,9 +3,7 @@ use prysm_application::{
     Application,
     policy::{ApplicationPolicy, FailureAction, V1Policy},
 };
-use prysm_assemblies::{
-    DeviceCaptureSettings, HostAction, OwnerExit, TvCaptureSettings, WledSettings, v1_host_action,
-};
+use prysm_assemblies::{DeviceCaptureSettings, TvCaptureSettings, WledSettings};
 use prysm_contract::{
     ControlError,
     application::LightingTarget,
@@ -182,19 +180,9 @@ async fn preview_lease_owns_and_releases_its_demand_guard() {
 }
 
 #[test]
-fn v1_policies_are_separate_from_ports() {
+fn application_policy_starts_idle_without_automatic_retry() {
     assert_eq!(V1Policy.initial_target(), LightingTarget::Off);
     assert_eq!(V1Policy.terminal_failure(), FailureAction::AwaitCommand);
-    assert_eq!(v1_host_action(OwnerExit::WebPortal), HostAction::ReportOnly);
-    assert_eq!(v1_host_action(OwnerExit::Preview), HostAction::ReportOnly);
-    assert_eq!(
-        v1_host_action(OwnerExit::Coordinator),
-        HostAction::EmergencyCleanup
-    );
-    assert_eq!(
-        v1_host_action(OwnerExit::Processing),
-        HostAction::NotifyCoordinator
-    );
 }
 
 #[tokio::test]

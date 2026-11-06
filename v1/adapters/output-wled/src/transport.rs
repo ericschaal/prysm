@@ -8,6 +8,7 @@ use std::{future::Future, net::SocketAddr, time::Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mode {
+    Release,
     Realtime,
     Off,
     Native,
@@ -137,8 +138,8 @@ impl Wire for Network {
     }
     async fn mode(&mut self, mode: Mode) -> Result<(), WriteError> {
         // A previous main-segment realtime session can ignore lor until released.
-        self.post(json!({"live":false})).await?;
         let value = match mode {
+            Mode::Release => json!({"live":false}),
             Mode::Realtime => json!({"on":true,"lor":0,"live":true,"tt":0}),
             Mode::Off => json!({"on":false,"lor":2,"tt":0}),
             Mode::Native => json!({"on":true,"lor":2,"tt":0}),

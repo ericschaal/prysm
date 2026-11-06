@@ -19,7 +19,9 @@ enum Session {
     Finishing(SessionId),
 }
 
-pub(super) struct Admission {
+/// Output session/epoch fences and one latest candidate. The adapter serializes
+/// access and owns writes, acknowledgments, observations and terminal shutdown.
+pub struct Admission {
     instance: InstanceId,
     sealed: u64,
     session: Session,

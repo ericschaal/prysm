@@ -27,6 +27,29 @@ struct HttpCall {
     json: Value,
     response: oneshot::Sender<Option<String>>,
 }
+
+#[tokio::test]
+async fn terminal_shutdown_during_release_skips_realtime_and_preserves_http_ownership() {
+    let (mut device, network) = Device::new().await;
+    let output = WledOutput::new(INSTANCE);
+    let owner = tokio::spawn(owner::run(output.owner, network, std::future::pending()));
+    output.control.configure(settings()).await.unwrap();
+    let control = output.control.clone();
+    let hold = tokio::spawn(async move { control.hold(epoch(0), red()).await });
+    let release = device.call(json!({"live":false})).await;
+    output.shutdown.request();
+    assert!(output.colors.offer(frame(1, 1)).is_err());
+    assert!(!owner.is_finished());
+    assert!(device.calls.try_recv().is_err());
+    release.ok();
+    assert!(within(hold).await.unwrap().is_err());
+    device.off().await;
+    within(owner).await.unwrap().unwrap();
+    let mut packet = [0; 128];
+    assert!(device.udp.try_recv(&mut packet).is_err());
+    assert!(device.calls.try_recv().is_err());
+    device.close().await;
+}
 impl HttpCall {
     fn ok(self) {
         self.response

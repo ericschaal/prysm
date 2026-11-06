@@ -1,0 +1,14 @@
+{
+  "capture": {
+    "source": "device",
+    "path": "/dev/video0",
+    "resolution": [640, 480],
+    "rate": 30
+  },
+  "output": {
+    "adapter": "terminal",
+    "settings": {
+      "leds": [30, 18, 30, 18]
+    }
+  }
+}

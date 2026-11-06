@@ -45,10 +45,24 @@ struct Writer<W> {
 }
 
 pub(super) async fn run<W: Wire>(
-    mut owner: WledOwner,
+    owner: WledOwner,
     wire: W,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<OwnerStopped, ControlError> {
+    let mailbox = owner.mailbox.clone();
+    let running = drive(owner, wire);
+    tokio::pin!(running);
+    tokio::select! {
+        biased;
+        _ = shutdown => {
+            mailbox.request_shutdown();
+            running.await
+        }
+        result = &mut running => result,
+    }
+}
+
+async fn drive<W: Wire>(mut owner: WledOwner, wire: W) -> Result<OwnerStopped, ControlError> {
     let mut writer = Writer {
         wire,
         mailbox: owner.mailbox.clone(),
@@ -60,11 +74,9 @@ pub(super) async fn run<W: Wire>(
         poisoned: false,
     };
     let mut commands_live = true;
-    tokio::pin!(shutdown);
-    loop {
+    while !owner.mailbox.stopping() {
         tokio::select! {
             biased;
-            _ = &mut shutdown => break,
             command = owner.commands.recv(), if commands_live => match command {
                 Some(command) => writer.command(command).await,
                 None => commands_live = false,
@@ -140,29 +152,31 @@ impl<W: Wire> Writer<W> {
         }
         Ok(())
     }
-    async fn mode(&mut self, mode: Mode) -> Result<(), ControlError> {
-        match self.wire.mode(mode).await {
-            Ok(()) => {
-                self.wire_mode = Some(mode);
-                Ok(())
+    async fn mode(&mut self, mode: Mode, terminal: bool) -> Result<(), ControlError> {
+        for write in [Mode::Release, mode] {
+            if !terminal {
+                self.mailbox.authorize()?;
             }
-            Err(error) => {
+            if let Err(error) = self.wire.mode(write).await {
                 let error = if error.uncertain {
                     ControlError::RecoveryRequired(Box::new(error.error))
                 } else {
                     error.error
                 };
-                Err(self.failed(error))
+                return Err(self.failed(error));
             }
         }
+        self.wire_mode = Some(mode);
+        Ok(())
     }
     async fn realtime(&mut self) -> Result<(), ControlError> {
         if self.wire_mode != Some(Mode::Realtime) {
-            self.mode(Mode::Realtime).await?;
+            self.mode(Mode::Realtime, false).await?;
         }
         Ok(())
     }
     async fn send(&mut self, colors: &EdgeColors) -> Result<(), ControlError> {
+        self.mailbox.authorize()?;
         if let Err(error) = self.wire.colors(colors).await {
             return Err(self.failed(error));
         }
@@ -235,10 +249,13 @@ impl<W: Wire> Writer<W> {
         self.mailbox.finish(session)?;
         self.ready()?;
         self.begin();
-        self.mode(match mode {
-            IdleOutputMode::Off => Mode::Off,
-            IdleOutputMode::Native => Mode::Native,
-        })
+        self.mode(
+            match mode {
+                IdleOutputMode::Off => Mode::Off,
+                IdleOutputMode::Native => Mode::Native,
+            },
+            false,
+        )
         .await?;
         self.mailbox.finished(session);
         Ok(self.applied(Display::Idle(mode)))
@@ -264,11 +281,50 @@ impl<W: Wire> Writer<W> {
         if self.poisoned {
             return self.ready();
         }
+        let prior = self.failure.clone();
         if self.configured && self.wire_mode != Some(Mode::Off) {
             self.begin();
-            self.mode(Mode::Off).await?;
+            if let Err(cleanup) = self.mode(Mode::Off, true).await {
+                return Err(match prior {
+                    Some(prior) => {
+                        let recovery =
+                            cleanup.kind() == prysm_contract::FailureKind::RecoveryRequired;
+                        let error = Box::new(ShutdownFailure { prior, cleanup });
+                        if recovery {
+                            ControlError::RecoveryRequired(error)
+                        } else {
+                            ControlError::Adapter(error)
+                        }
+                    }
+                    None => cleanup,
+                });
+            }
             self.applied(Display::Idle(IdleOutputMode::Off));
         }
-        Ok(())
+        prior.map_or(Ok(()), |failure| {
+            self.failure = Some(failure.clone());
+            self.publish();
+            Err(failure.into())
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ShutdownFailure {
+    prior: Failure,
+    cleanup: ControlError,
+}
+impl std::fmt::Display for ShutdownFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}; output cleanup also failed: {}",
+            self.prior, self.cleanup
+        )
+    }
+}
+impl std::error::Error for ShutdownFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cleanup)
     }
 }

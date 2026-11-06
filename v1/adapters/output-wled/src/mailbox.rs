@@ -1,5 +1,5 @@
 //! Atomic admission/observation state shared with nonblocking color producers.
-use crate::{CAPACITY, CLOSED, admission::Admission};
+use crate::{CAPACITY, CLOSED};
 use futures::StreamExt;
 use prysm_contract::{
     ControlError,
@@ -7,6 +7,7 @@ use prysm_contract::{
     observation::{Cursor, Observation, Update, Versioned},
     output::{ColorFrame, OfferResult, OutputState},
 };
+use prysm_output::Admission;
 use std::sync::Mutex;
 use tokio::sync::{Notify, broadcast};
 
@@ -14,6 +15,7 @@ struct State {
     admission: Admission,
     snapshot: Versioned<OutputState>,
     closed: bool,
+    stopping: bool,
 }
 pub(super) struct Mailbox {
     state: Mutex<State>,
@@ -26,6 +28,7 @@ impl Mailbox {
             state: Mutex::new(State {
                 admission: Admission::new(instance),
                 closed: false,
+                stopping: false,
                 snapshot: Versioned {
                     cursor: Cursor {
                         instance,
@@ -69,6 +72,11 @@ impl Mailbox {
     }
     pub fn publish(&self, snapshot: OutputState) {
         let mut state = self.state.lock().expect("output mailbox lock");
+        let mut snapshot = snapshot;
+        if state.stopping {
+            snapshot.admitted = None;
+            snapshot.held = false;
+        }
         state.snapshot.cursor.sequence = state
             .snapshot
             .cursor
@@ -77,6 +85,33 @@ impl Mailbox {
             .expect("observation sequence exhausted");
         state.snapshot.state = snapshot;
         let _ = self.updates.send(Some(state.snapshot.clone()));
+    }
+    pub fn request_shutdown(&self) {
+        let mut state = self.state.lock().expect("output mailbox lock");
+        if state.stopping || state.closed {
+            return;
+        }
+        state.stopping = true;
+        state.admission.suspend();
+        state.snapshot.state.admitted = None;
+        state.snapshot.state.held = false;
+        state.snapshot.state.confirmation = None;
+        state.snapshot.cursor.sequence = state
+            .snapshot
+            .cursor
+            .sequence
+            .checked_add(1)
+            .expect("observation sequence exhausted");
+        let _ = self.updates.send(Some(state.snapshot.clone()));
+        self.wake.notify_one();
+    }
+    pub fn stopping(&self) -> bool {
+        self.state.lock().expect("output mailbox lock").stopping
+    }
+    /// The single writer claims its next write under the terminal fence's lock.
+    /// A claimed write remains owned even if shutdown races its first poll.
+    pub fn authorize(&self) -> Result<(), ControlError> {
+        self.state.lock().expect("output mailbox lock").accepting()
     }
     pub fn close(&self) {
         let mut state = self.state.lock().expect("output mailbox lock");
@@ -87,32 +122,24 @@ impl Mailbox {
         self.wake.notify_one();
     }
     pub fn can_configure(&self) -> Result<(), ControlError> {
-        self.state
-            .lock()
-            .expect("output mailbox lock")
-            .admission
-            .can_configure()
+        let state = self.state.lock().expect("output mailbox lock");
+        state.accepting()?;
+        state.admission.can_configure()
     }
     pub fn hold(&self, epoch: StreamEpoch) -> Result<(), ControlError> {
-        self.state
-            .lock()
-            .expect("output mailbox lock")
-            .admission
-            .hold(epoch)
+        let mut state = self.state.lock().expect("output mailbox lock");
+        state.accepting()?;
+        state.admission.hold(epoch)
     }
     pub fn admit(&self, epoch: StreamEpoch) -> Result<(), ControlError> {
-        self.state
-            .lock()
-            .expect("output mailbox lock")
-            .admission
-            .admit(epoch)
+        let mut state = self.state.lock().expect("output mailbox lock");
+        state.accepting()?;
+        state.admission.admit(epoch)
     }
     pub fn finish(&self, session: SessionId) -> Result<(), ControlError> {
-        self.state
-            .lock()
-            .expect("output mailbox lock")
-            .admission
-            .finish(session)
+        let mut state = self.state.lock().expect("output mailbox lock");
+        state.accepting()?;
+        state.admission.finish(session)
     }
     pub fn finished(&self, session: SessionId) {
         self.state
@@ -130,9 +157,7 @@ impl Mailbox {
     }
     pub fn offer(&self, frame: ColorFrame) -> Result<OfferResult, ControlError> {
         let mut state = self.state.lock().expect("output mailbox lock");
-        if state.closed {
-            return Err(CLOSED);
-        }
+        state.accepting()?;
         let result = state.admission.offer(frame);
         drop(state);
         if result == OfferResult::Queued {
@@ -149,5 +174,15 @@ impl Mailbox {
     }
     pub async fn notified(&self) {
         self.wake.notified().await;
+    }
+}
+
+impl State {
+    fn accepting(&self) -> Result<(), ControlError> {
+        if self.closed || self.stopping {
+            Err(CLOSED)
+        } else {
+            Ok(())
+        }
     }
 }

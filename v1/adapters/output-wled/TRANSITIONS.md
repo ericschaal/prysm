@@ -17,7 +17,7 @@ cancels an accepted write. No separate refresh task or deadline scheduler exists
 | Finish(session, mode) | Configured; matching active/finishing session, or non-regressing idle session | Seal session, discard its candidate, disable refresh; retain finishing obligation | Settle prior writes; release realtime, apply Off or Native, then release session/device for reuse |
 | Repeated finish | Same last sealed session; no newer active session | Keep admission sealed | Reapply requested idle mode |
 | New session | Previous streaming session finished | Claim fresh session; reset per-session frame watermark | Enter through hold/admit |
-| Shutdown | Host request | Close admission and command intake | Settle current write, discard queued work, apply Off if needed, release resources |
+| Shutdown | Host request | Permanently fence admission, command intake and refresh immediately | Settle current write, discard queued work, apply Off if needed, release resources |
 
 A future-session offer cannot claim the output. A newer-epoch candidate may be
 retained before its availability notification, but is not sent until exact epoch
@@ -25,6 +25,16 @@ admission. The received-frame watermark survives taking the slot, so duplicate
 frames cannot replay. Configuring another device never erases session seals.
 A rejected finish retains its session and device configuration until a same-session
 finish retry succeeds. New sessions and reconfiguration cannot bypass cleanup.
+
+The host retains `WledOutput.shutdown`; its synchronous, idempotent `request()`
+works even while HTTP is pending. The owner shutdown future drives the same latch
+without dropping the writer future. Each HTTP request or color write is authorized
+under the latch lock; a previously authorized write remains owned. Terminal
+shutdown prevents subsequent ordinary writes, including the second HTTP request
+of an interrupted mode change. Only the final Off sequence bypasses this fence.
+Observations remain available until owner completion. Completion preserves a
+pending write failure even when final Off succeeds, and an uncertain final Off
+retains `RecoveryRequired` along with any earlier failure.
 
 ## Wire behavior and failures
 

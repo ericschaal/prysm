@@ -6,7 +6,8 @@ This is a greenfield v1: no compatibility layer or data migration is required.
 
 A [compilable architecture workspace](../../v1/README.md) now lives in isolated
 `v1/`. It supplies typed assemblies, a running passive processing flow, application
-lighting-session sequencing, video device capture, a real WLED output adapter and explicit unavailable
+lighting-session sequencing, video device capture, WLED and
+[terminal output](../../v1/adapters/output-terminal/README.md) adapters and explicit unavailable
 shells for the remaining runtime behavior. The WLED
 [transition table](../../v1/adapters/output-wled/TRANSITIONS.md) documents write
 ownership, admission and the boundary between local ordering and physical UDP
@@ -639,18 +640,28 @@ After startup, the v1 match is conceptually:
 ```text
 portal exit       -> report unavailable; continue observing other owners
 preview failure   -> report preview unavailable; lighting continues
-capture/output or
-flow failure      -> notify coordinator through retained failure state;
+session failure   -> notify coordinator through retained failure state;
                      terminate active session and await remaining cleanup
-coordinator exit  -> host uses retained emergency controls to close output
-                     admission, stop capture, join processing, finalize output
+required adapter
+owner exit        -> terminate the composition through terminal owner shutdown
+coordinator exit  -> host permanently fences output admission and requests
+                     terminal owner shutdown; retain and join every owner
 process shutdown  -> stop accepting commands; request coordinated cleanup;
                      then close and join remaining owners
 ```
 
-Host emergency controls are cloned before moving regular controls into the
+Host shutdown capabilities are retained before moving regular controls into the
 coordinator; they bypass a dead coordinator, not device serialization or cleanup
-barriers. Session faults are distinct from owner-task death. A dead owner cannot
+barriers. A last application snapshot is not authority for emergency session/epoch
+arguments: accepted work may be ahead of publication. Terminal shutdown therefore
+uses owner-scoped controls and an irreversible output admission fence. Remaining
+owners clean up independently; output Off need not wait for capture release once
+reopening is impossible, but the host still joins every owner and preserves any
+unconfirmed cleanup. Only the resource-free coordinator may be cancelled during
+this takeover; device/flow owners remain retained. See the concrete
+[host ownership and failure transitions](../../v1/assemblies/HOST-LIFECYCLE.md).
+
+Session faults are distinct from owner-task death. A dead owner cannot
 accept a new Start; the host must explicitly reconstruct that composition or
 terminate it. No automatic actor restart is assumed.
 

@@ -8,6 +8,7 @@ publish.workspace = true
 
 [features]
 wire = ["dep:serde", "dep:prysm-protocol", "prysm-capture-device/wire", "prysm-capture-webos/wire", "prysm-output-wled/wire", "prysm-remote-capture/wire"]
+headless = ["wire", "dep:serde_json", "tokio/signal", "prysm-output-terminal/wire"]
 schema = ["wire", "dep:utoipa", "prysm-protocol/schema", "prysm-capture-device/schema", "prysm-capture-webos/schema", "prysm-output-wled/schema", "prysm-remote-capture/schema"]
 
 [dependencies]
@@ -15,24 +16,32 @@ prysm-remote-capture.workspace = true
 prysm-contract.workspace = true
 prysm-protocol = { workspace = true, optional = true }
 prysm-core.workspace = true
+prysm-application.workspace = true
+prysm-flow.workspace = true
+prysm-processor.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["time"] }
+serde_json = { workspace = true, optional = true }
 prysm-capture-device.workspace = true
 prysm-capture-webos.workspace = true
 prysm-output-wled.workspace = true
+prysm-output-terminal.workspace = true
 serde = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
-prysm-application.workspace = true
-prysm-flow.workspace = true
 prysm-web-portal.workspace = true
-prysm-processor.workspace = true
 prysm-testkit.workspace = true
-tokio = { workspace = true, features = ["time"] }
-futures.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "prysm-headless"
+path = "src/bin/headless.rs"
+required-features = ["headless"]
 
 [[example]]
 name = "prysm-server"

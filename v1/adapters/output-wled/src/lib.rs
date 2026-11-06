@@ -1,5 +1,4 @@
 //! One owned WLED writer: session fences, latest colors, mode changes and refresh.
-mod admission;
 mod mailbox;
 mod owner;
 mod transport;
@@ -32,6 +31,7 @@ pub struct WledOutput {
     pub owner: WledOwner,
     pub control: WledHandle,
     pub colors: WledColors,
+    pub shutdown: WledShutdown,
 }
 impl WledOutput {
     /// Inert wiring. Use the same host instance as the application and flow.
@@ -47,8 +47,19 @@ impl WledOutput {
                 commands,
                 mailbox: mailbox.clone(),
             },
-            colors: WledColors(mailbox),
+            colors: WledColors(mailbox.clone()),
+            shutdown: WledShutdown(mailbox),
         }
+    }
+}
+
+/// Irreversibly retires this output. Requesting shutdown is not proof of cleanup;
+/// retain and await the owner, including any write already in flight.
+#[derive(Clone)]
+pub struct WledShutdown(Arc<Mailbox>);
+impl WledShutdown {
+    pub fn request(&self) {
+        self.0.request_shutdown();
     }
 }
 pub struct WledOwner {
@@ -81,6 +92,7 @@ impl WledHandle {
         &self,
         command: impl FnOnce(Reply) -> Command,
     ) -> Result<OutputApplied, ControlError> {
+        self.mailbox.authorize()?;
         let (reply, response) = oneshot::channel();
         self.commands
             .send(command(reply))

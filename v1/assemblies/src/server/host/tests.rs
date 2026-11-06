@@ -1,0 +1,420 @@
+use super::*;
+use crate::server::{FixedSettings, HeadlessSettings, lifecycle::DEADLINE, owners::Task};
+use futures::stream;
+use prysm_application::{Application, policy::V1Policy};
+use prysm_capture_device::DeviceCapture;
+use prysm_contract::{
+    application::{OperationStatus, SessionState},
+    calibration::{CalibrationCommand, CalibrationReply, CalibrationStatus},
+    capture::CaptureCapabilities,
+    observation::{Cursor, Observation, Versioned},
+    output::OutputCapabilities,
+};
+use prysm_flow::{ProcessingExecution, ProcessingFlow};
+use prysm_output_wled::WledOutput;
+use prysm_processor::PrysmProcessor;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
+use tokio::sync::{Notify, mpsc, oneshot};
+
+const INSTANCE: InstanceId = InstanceId(NonZeroU64::MIN);
+fn settings() -> HeadlessSettings {
+    HeadlessSettings {
+        capture: None,
+        output: None,
+        processing: Default::default(),
+        profiles: vec![],
+        active_profile: None,
+    }
+}
+async fn within<T>(future: impl Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(2), future)
+        .await
+        .expect("host did not progress")
+}
+
+#[derive(Clone)]
+struct Control {
+    initialized: Arc<Notify>,
+    submitted: Arc<AtomicBool>,
+}
+impl ApplicationControl for Control {
+    type Settings = HeadlessSettings;
+    async fn observe(&self) -> Result<ApplicationObservation<HeadlessSettings>, ControlError> {
+        self.initialized.notified().await;
+        Ok(Observation {
+            initial: Versioned {
+                cursor: Cursor {
+                    instance: INSTANCE,
+                    sequence: 0,
+                },
+                state: ApplicationSnapshot {
+                    instance: INSTANCE,
+                    settings: settings(),
+                    saved_revision: prysm_contract::identity::SettingsRevision(0),
+                    configured_revision: None,
+                    applied_revision: None,
+                    desired: LightingTarget::Off,
+                    session: SessionState::Idle,
+                    capture: CaptureCapabilities {
+                        supports_patterns: false,
+                    },
+                    output: OutputCapabilities { native_mode: true },
+                    observed_capture: None,
+                    observed_output: None,
+                    calibration: CalibrationStatus::Idle,
+                },
+            },
+            updates: stream::pending().boxed(),
+        })
+    }
+    async fn submit(
+        &self,
+        request: Request<ApplicationCommand<HeadlessSettings>>,
+    ) -> Result<Accepted, ControlError> {
+        self.submitted.store(true, Ordering::SeqCst);
+        Ok(Accepted {
+            operation: request.id,
+        })
+    }
+    async fn operation(&self, _: OperationId) -> Result<OperationStatus, ControlError> {
+        Ok(OperationStatus::Succeeded)
+    }
+    async fn calibrate(
+        &self,
+        _: Request<CalibrationCommand>,
+    ) -> Result<CalibrationReply, ControlError> {
+        unreachable!()
+    }
+}
+
+struct Gate {
+    stopped: oneshot::Receiver<()>,
+    release: oneshot::Sender<Result<OwnerStopped, ControlError>>,
+}
+fn gated_task() -> (Task, Gate) {
+    let (stopped, requested) = oneshot::channel();
+    let (release, done) = oneshot::channel();
+    let task = Task::spawn(|stop| async move {
+        stop.await;
+        stopped.send(()).ok();
+        done.await.unwrap()
+    });
+    (
+        task,
+        Gate {
+            stopped: requested,
+            release,
+        },
+    )
+}
+fn fixture() -> (Owners, Control, [Gate; 4]) {
+    let (application, app_gate) = gated_task();
+    let (capture, capture_gate) = gated_task();
+    let (flow, flow_gate) = gated_task();
+    let (output, output_gate) = gated_task();
+    let wled = WledOutput::new(INSTANCE);
+    let control = Control {
+        initialized: Arc::new(Notify::new()),
+        submitted: Arc::new(AtomicBool::new(false)),
+    };
+    (
+        Owners {
+            application,
+            capture,
+            flow,
+            output,
+            output_shutdown: wled.shutdown.into(),
+        },
+        control,
+        [app_gate, capture_gate, flow_gate, output_gate],
+    )
+}
+fn events() -> (
+    impl FnMut(HostEvent) + Send + 'static,
+    mpsc::UnboundedReceiver<HostEvent>,
+) {
+    let (sender, events) = mpsc::unbounded_channel();
+    (
+        move |event| {
+            sender.send(event).unwrap();
+        },
+        events,
+    )
+}
+async fn ready(events: &mut mpsc::UnboundedReceiver<HostEvent>) {
+    within(async { while !matches!(events.recv().await.unwrap(), HostEvent::Ready(_)) {} }).await;
+}
+
+#[tokio::test]
+async fn command_entry_waits_for_initialization_and_normal_stop_joins_in_order() {
+    let (owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+    let initialized = control.initialized.clone();
+    let submitted = control.submitted.clone();
+    let (stop, stopped) = oneshot::channel();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        control,
+        stream::iter([LightingTarget::Processed]),
+        async {
+            stopped.await.unwrap();
+        },
+        report,
+    ));
+    tokio::task::yield_now().await;
+    assert!(!submitted.load(Ordering::SeqCst));
+    initialized.notify_one();
+    ready(&mut events).await;
+    within(async {
+        while !submitted.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    stop.send(()).unwrap();
+    within(&mut app.stopped).await.unwrap();
+    assert!(flow.stopped.try_recv().is_err());
+    assert!(capture.stopped.try_recv().is_err());
+    assert!(output.stopped.try_recv().is_err());
+    app.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut flow.stopped).await.unwrap();
+    assert!(capture.stopped.try_recv().is_err());
+    flow.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut capture.stopped).await.unwrap();
+    within(&mut output.stopped).await.unwrap();
+    output.release.send(Ok(OwnerStopped)).unwrap();
+    assert!(!host.is_finished());
+    capture.release.send(Ok(OwnerStopped)).unwrap();
+    within(host).await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_timeout_stops_every_owner_retains_late_completion_and_failure() {
+    let (owners, control, [_app, mut capture, mut flow, mut output]) = fixture();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(owners, control, stream::pending(), pending(), report));
+    tokio::task::yield_now().await;
+    tokio::time::advance(DEADLINE).await;
+    // Automatic paused-time advancement also covers the case before the host's first poll.
+    within(&mut capture.stopped).await.unwrap();
+    within(&mut flow.stopped).await.unwrap();
+    within(&mut output.stopped).await.unwrap();
+    flow.release.send(Ok(OwnerStopped)).unwrap();
+    output.release.send(Ok(OwnerStopped)).unwrap();
+    tokio::time::advance(DEADLINE).await;
+    within(async {
+        while !matches!(
+            events.recv().await.unwrap(),
+            HostEvent::CleanupOverdue { .. }
+        ) {}
+    })
+    .await;
+    assert!(!host.is_finished());
+    capture
+        .release
+        .send(Err(ControlError::RecoveryRequired(Box::new(
+            std::io::Error::other("release failed"),
+        ))))
+        .unwrap();
+    let errors = within(host).await.unwrap().unwrap_err().failures;
+    assert!(errors.iter().any(|e| e.message.contains("deadline")));
+    assert!(errors.iter().any(|e| e.message.contains("release failed")));
+}
+
+#[tokio::test]
+async fn every_unexpected_owner_exit_retires_the_composition_even_when_successful() {
+    for failed in ["application", "capture", "processing", "output"] {
+        let (mut owners, control, gates) = fixture();
+        control.initialized.notify_one();
+        let slot = match failed {
+            "application" => &mut owners.application,
+            "capture" => &mut owners.capture,
+            "processing" => &mut owners.flow,
+            _ => &mut owners.output,
+        };
+        // Settle and join the fixture being replaced; it must not become a detached task.
+        slot.request_stop();
+        let mut gates: Vec<_> = gates.into_iter().map(Some).collect();
+        let index = match failed {
+            "application" => 0,
+            "capture" => 1,
+            "processing" => 2,
+            _ => 3,
+        };
+        let mut replaced = gates[index].take().unwrap();
+        within(&mut replaced.stopped).await.unwrap();
+        replaced.release.send(Ok(OwnerStopped)).unwrap();
+        within(slot.completion()).await.unwrap().unwrap();
+        slot.take_completed();
+        *slot = Task::spawn(|_| async { Ok(OwnerStopped) });
+        let (report, _events) = events();
+        let host = tokio::spawn(run(owners, control, stream::pending(), pending(), report));
+        for (i, gate) in gates.into_iter().enumerate() {
+            if let Some(mut gate) = gate {
+                if i == 0 {
+                    continue;
+                } // The application is deliberately cancelled.
+                within(&mut gate.stopped).await.unwrap();
+                gate.release.send(Ok(OwnerStopped)).unwrap();
+            }
+        }
+        let error = within(host).await.unwrap().unwrap_err();
+        assert!(
+            error
+                .failures
+                .iter()
+                .any(|e| e.message.contains(failed) && e.message.contains("unexpected"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn real_idle_owners_start_and_close_without_source_closure_faults() {
+    let capture = DeviceCapture::new(INSTANCE);
+    let output = WledOutput::new(INSTANCE);
+    let flow = ProcessingFlow::connect(
+        capture.frames,
+        PrysmProcessor::new(&Default::default()),
+        output.colors,
+        ProcessingExecution::DedicatedThread,
+    );
+    let application = Application::new(
+        capture.control,
+        flow.control,
+        output.control,
+        FixedSettings(settings()),
+        V1Policy,
+    );
+    let owners = Owners {
+        output: Task::spawn(|stop| output.owner.run(stop)),
+        capture: Task::spawn(|stop| capture.owner.run(stop)),
+        flow: Task::spawn(|stop| flow.owner.run(INSTANCE, stop)),
+        application: Task::spawn(|stop| application.owner.run(INSTANCE, stop)),
+        output_shutdown: output.shutdown.into(),
+    };
+    let (stop, stopped) = oneshot::channel();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        application.control,
+        stream::pending(),
+        async {
+            let _ = stopped.await;
+        },
+        report,
+    ));
+    ready(&mut events).await;
+    stop.send(()).unwrap();
+    within(host).await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn coordinated_deadline_takes_over_from_stalled_application_or_flow() {
+    for stall_flow in [false, true] {
+        let (owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+        control.initialized.notify_one();
+        let (stop, stopped) = oneshot::channel();
+        let (report, mut events) = events();
+        let host = tokio::spawn(run(
+            owners,
+            control,
+            stream::pending(),
+            async {
+                let _ = stopped.await;
+            },
+            report,
+        ));
+        ready(&mut events).await;
+        stop.send(()).unwrap();
+        within(&mut app.stopped).await.unwrap();
+        if stall_flow {
+            app.release.send(Ok(OwnerStopped)).unwrap();
+            within(&mut flow.stopped).await.unwrap();
+        }
+        assert!(capture.stopped.try_recv().is_err());
+        assert!(output.stopped.try_recv().is_err());
+        tokio::time::advance(DEADLINE).await;
+        within(&mut capture.stopped).await.unwrap();
+        within(&mut output.stopped).await.unwrap();
+        if !stall_flow {
+            within(&mut flow.stopped).await.unwrap();
+        }
+        capture.release.send(Ok(OwnerStopped)).unwrap();
+        output.release.send(Ok(OwnerStopped)).unwrap();
+        assert!(!host.is_finished());
+        flow.release.send(Ok(OwnerStopped)).unwrap();
+        let error = within(host).await.unwrap().unwrap_err();
+        assert_eq!(error.failures.len(), 1);
+        assert!(error.to_string().contains("coordinated shutdown deadline"));
+    }
+}
+
+#[tokio::test]
+async fn coordinator_panic_after_command_acceptance_stops_independent_owners() {
+    let (mut owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+    owners.application.request_stop();
+    within(&mut app.stopped).await.unwrap();
+    app.release.send(Ok(OwnerStopped)).unwrap();
+    within(owners.application.completion())
+        .await
+        .unwrap()
+        .unwrap();
+    owners.application.take_completed();
+    let (crash, crashed) = oneshot::channel();
+    owners.application = Task::spawn(|_| async {
+        crashed.await.unwrap();
+        panic!("coordinator crash");
+    });
+    control.initialized.notify_one();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        control,
+        stream::iter([LightingTarget::Processed]),
+        pending(),
+        report,
+    ));
+    ready(&mut events).await;
+    within(async { while !matches!(events.recv().await.unwrap(), HostEvent::Accepted(_)) {} })
+        .await;
+    crash.send(()).unwrap();
+    within(&mut capture.stopped).await.unwrap();
+    within(&mut flow.stopped).await.unwrap();
+    within(&mut output.stopped).await.unwrap();
+    output.release.send(Ok(OwnerStopped)).unwrap();
+    flow.release.send(Ok(OwnerStopped)).unwrap();
+    assert!(!host.is_finished());
+    capture.release.send(Ok(OwnerStopped)).unwrap();
+    let error = within(host).await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("coordinator crash"));
+}
+
+#[tokio::test]
+async fn shutdown_during_initialization_never_opens_command_entry() {
+    let (owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+    let submitted = control.submitted.clone();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        control,
+        stream::iter([LightingTarget::Processed]),
+        async {},
+        report,
+    ));
+    within(&mut app.stopped).await.unwrap();
+    app.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut flow.stopped).await.unwrap();
+    flow.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut capture.stopped).await.unwrap();
+    within(&mut output.stopped).await.unwrap();
+    capture.release.send(Ok(OwnerStopped)).unwrap();
+    output.release.send(Ok(OwnerStopped)).unwrap();
+    within(host).await.unwrap().unwrap();
+    assert!(!submitted.load(Ordering::SeqCst));
+    assert!(matches!(events.try_recv(), Ok(HostEvent::Stopping)));
+    assert!(events.try_recv().is_err());
+}
