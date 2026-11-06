@@ -349,8 +349,9 @@ capture/output changes use the session cleanup protocol.
 The [settings replacement transition table](../../v1/crates/application/SETTINGS-TRANSITIONS.md)
 specifies acceptance, save/apply failures, Off/shutdown races and the concrete
 repository ownership required for file persistence. The application workflow is
-implemented against the typed repository port; concrete file persistence and its
-host-owned I/O worker remain deferred.
+implemented against the typed repository port. The [file adapter](../../v1/adapters/settings-file/README.md)
+implements atomic replacement with a host-owned I/O worker; host command entry for
+settings replacement remains next.
 
 ## Readable local implementation
 
@@ -427,8 +428,8 @@ and authorize control access before dispatching application commands.
 The current application implements the sequences below through
 `application.owner.run(instance, shutdown)`, using the same host identity as the
 flow. It loads and replaces settings through the repository port, persists before
-applying, and keeps Off responsive while saves are pending. Concrete file persistence
-and calibration remain deferred; video device capture, WLED/terminal output and
+applying, and keeps Off responsive while saves are pending. File persistence and its
+independently retained host owner are implemented. Calibration remains deferred; video device capture, WLED/terminal output and
 headless host supervision are implemented. Its
 mailbox and observation buffers hold 16 entries; its operation registry retains
 64 results and never evicts pending work. The implementation supports the v1

@@ -2,6 +2,7 @@
 use prysm_contract::{ControlError, OwnerStopped};
 use prysm_output_terminal::TerminalShutdown;
 use prysm_output_wled::WledShutdown;
+use prysm_settings_file::FileSettingsShutdown;
 use std::future::{Future, pending};
 use tokio::{
     sync::oneshot,
@@ -16,6 +17,7 @@ pub(super) enum Owner {
     Capture,
     Processing,
     Output,
+    Settings,
 }
 impl Owner {
     pub fn name(self) -> &'static str {
@@ -24,6 +26,7 @@ impl Owner {
             Self::Capture => "capture",
             Self::Processing => "processing",
             Self::Output => "output",
+            Self::Settings => "settings",
         }
     }
 }
@@ -83,6 +86,19 @@ pub(super) struct Owners {
     pub flow: Task,
     pub output: Task,
     pub output_shutdown: OutputShutdown,
+    pub settings: Option<SettingsOwner>,
+}
+pub(super) struct SettingsOwner {
+    pub task: Task,
+    pub shutdown: FileSettingsShutdown,
+}
+
+/// Memory-only repositories have no worker to join; keep their select branch inactive.
+pub(super) async fn settings_completion(settings: &mut Option<SettingsOwner>) -> Completion {
+    match settings {
+        Some(settings) => settings.task.completion().await,
+        None => pending().await,
+    }
 }
 pub(super) enum OutputShutdown {
     Wled(WledShutdown),
@@ -113,17 +129,25 @@ impl Owners {
             Owner::Capture => &mut self.capture,
             Owner::Processing => &mut self.flow,
             Owner::Output => &mut self.output,
+            Owner::Settings => &mut self.settings.as_mut().expect("owned repository").task,
         }
     }
     pub fn terminate(&mut self) {
         self.output_shutdown.request();
+        self.stop_settings();
         self.application.abort_coordinator();
         self.capture.request_stop();
         self.flow.request_stop();
         self.output.request_stop();
     }
+    pub fn stop_settings(&mut self) {
+        if let Some(settings) = &mut self.settings {
+            settings.shutdown.request();
+            settings.task.request_stop();
+        }
+    }
     pub fn pending(&self) -> Vec<&'static str> {
-        [
+        let mut pending: Vec<_> = [
             ("application", &self.application),
             ("capture", &self.capture),
             ("processing", &self.flow),
@@ -131,6 +155,14 @@ impl Owners {
         ]
         .into_iter()
         .filter_map(|(name, task)| task.pending().then_some(name))
-        .collect()
+        .collect();
+        if self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.task.pending())
+        {
+            pending.push("settings");
+        }
+        pending
     }
 }

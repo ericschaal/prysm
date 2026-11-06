@@ -11,7 +11,7 @@ your capture device, then run from the repository root:
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
-  --features headless --bin prysm-headless -- /path/to/terminal.json --start
+  --features headless --bin prysm-headless -- /path/to/terminal.json --terminal --start
 ```
 
 Without `--start` the host stays idle. Stdout must be an interactive terminal.
@@ -125,5 +125,5 @@ input-mode restoration without capture hardware (omit `--start`):
 
 ```sh
 python3 v1/adapters/output-terminal/tests/check_input.py \
-  v1/target/debug/prysm-headless v1/assemblies/examples/terminal.json
+  v1/target/debug/prysm-headless v1/assemblies/examples/terminal.json --terminal
 ```

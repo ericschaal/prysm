@@ -19,6 +19,38 @@ impl Default for ColorCorrection {
     }
 }
 impl ColorCorrection {
+    /// Reconstruct validated numerical coefficients without changing their precision.
+    ///
+    /// # Errors
+    /// Rejects gains outside 0.5–1 or tone outside 0.5–2, including non-finite values.
+    pub fn from_coefficients(gains: [f32; 3], tone: f32) -> Result<Self, &'static str> {
+        if gains.iter().any(|gain| !(0.5..=1.0).contains(gain)) || !(0.5..=2.0).contains(&tone) {
+            return Err("color correction coefficients are outside their valid range");
+        }
+        Ok(Self {
+            gains,
+            tone,
+            ..Self::default()
+        })
+    }
+
+    #[must_use]
+    pub const fn gains(&self) -> [f32; 3] {
+        self.gains
+    }
+    #[must_use]
+    pub const fn tone(&self) -> f32 {
+        self.tone
+    }
+    #[must_use]
+    pub const fn intensity(&self) -> i16 {
+        self.intensity
+    }
+    #[must_use]
+    pub const fn hue(&self) -> [i16; 6] {
+        self.hue
+    }
+
     /// Controls span -100 to 100; zero is identity. Positive values warm, add
     /// magenta, and lighten midtones respectively. Gains only attenuate.
     ///
@@ -248,5 +280,42 @@ mod tests {
         assert!(ColorCorrection::new(101, 0, 0).is_err());
         assert!(ColorCorrection::new(0, -101, 0).is_err());
         assert!(ColorCorrection::new(0, 0, i16::MAX).is_err());
+    }
+
+    #[test]
+    fn coefficients_reconstruct_existing_controls_exactly() {
+        for warmth in [-100, -33, 0, 17, 100] {
+            for tint in [-100, 0, 100] {
+                for midtones in [-100, 0, 100] {
+                    let original = ColorCorrection::new(warmth, tint, midtones)
+                        .unwrap()
+                        .with_chroma(37, [-100, -50, 0, 50, 75, 100])
+                        .unwrap();
+                    let restored =
+                        ColorCorrection::from_coefficients(original.gains(), original.tone())
+                            .unwrap()
+                            .with_chroma(original.intensity(), original.hue())
+                            .unwrap();
+                    assert_eq!(original, restored);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_coefficients_are_rejected_before_color_processing() {
+        for bad in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            0.0,
+            -1.0,
+            0.49,
+            2.01,
+        ] {
+            assert!(ColorCorrection::from_coefficients([bad, 1.0, 1.0], 1.0).is_err());
+            assert!(ColorCorrection::from_coefficients([1.0; 3], bad).is_err());
+        }
+        assert!(ColorCorrection::from_coefficients([1.01, 1.0, 1.0], 1.0).is_err());
     }
 }

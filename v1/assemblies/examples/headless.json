@@ -2,14 +2,19 @@
   "capture": {
     "source": "device",
     "path": "/dev/video0",
-    "resolution": [640, 480],
+    "resolution": [
+      640,
+      480
+    ],
     "rate": 30
   },
   "output": {
-    "adapter": "wled",
-    "settings": {
-      "address": "192.0.2.1",
-      "leds": [30, 18, 30, 18]
-    }
+    "address": "192.0.2.1",
+    "leds": [
+      30,
+      18,
+      30,
+      18
+    ]
   }
 }

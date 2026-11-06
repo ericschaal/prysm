@@ -123,6 +123,7 @@ fn fixture() -> (Owners, Control, [Gate; 4]) {
     };
     (
         Owners {
+            settings: None,
             application,
             capture,
             flow,
@@ -290,6 +291,7 @@ async fn real_idle_owners_start_and_close_without_source_closure_faults() {
         V1Policy,
     );
     let owners = Owners {
+        settings: None,
         output: Task::spawn(|stop| output.owner.run(stop)),
         capture: Task::spawn(|stop| capture.owner.run(stop)),
         flow: Task::spawn(|stop| flow.owner.run(INSTANCE, stop)),
@@ -417,4 +419,194 @@ async fn shutdown_during_initialization_never_opens_command_entry() {
     assert!(!submitted.load(Ordering::SeqCst));
     assert!(matches!(events.try_recv(), Ok(HostEvent::Stopping)));
     assert!(events.try_recv().is_err());
+}
+
+#[cfg(feature = "headless")]
+#[tokio::test]
+async fn real_file_repository_loads_saves_and_joins_with_idle_owners() {
+    use crate::server::owners::SettingsOwner;
+    use prysm_contract::{identity::SettingsRevision, storage::SettingsRepository};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let store = prysm_settings_file::FileSettings::new(path.clone()).unwrap();
+    let capture = DeviceCapture::new(INSTANCE);
+    let output = WledOutput::new(INSTANCE);
+    let flow = ProcessingFlow::connect(
+        capture.frames,
+        PrysmProcessor::new(&Default::default()),
+        output.colors,
+        ProcessingExecution::DedicatedThread,
+    );
+    let application = Application::new(
+        capture.control,
+        flow.control,
+        output.control,
+        store.repository,
+        V1Policy,
+    );
+    let control = application.control.clone();
+    let owners = Owners {
+        settings: Some(SettingsOwner {
+            task: Task::spawn(|stop| store.owner.run(stop)),
+            shutdown: store.shutdown,
+        }),
+        output: Task::spawn(|stop| output.owner.run(stop)),
+        capture: Task::spawn(|stop| capture.owner.run(stop)),
+        flow: Task::spawn(|stop| flow.owner.run(INSTANCE, stop)),
+        application: Task::spawn(|stop| application.owner.run(INSTANCE, stop)),
+        output_shutdown: output.shutdown.into(),
+    };
+    let (stop, stopped) = oneshot::channel();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        application.control,
+        stream::pending(),
+        async {
+            let _ = stopped.await;
+        },
+        report,
+    ));
+    ready(&mut events).await;
+    assert!(!path.exists());
+    let mut saved = settings();
+    saved.processing.brightness_percent = prysm_core::BrightnessPercent(42);
+    let id = OperationId {
+        instance: INSTANCE,
+        request: NonZeroU64::MIN,
+    };
+    control
+        .submit(Request {
+            id,
+            command: ApplicationCommand::ReplaceSettings {
+                expected: SettingsRevision(0),
+                settings: saved.clone(),
+            },
+        })
+        .await
+        .unwrap();
+    within(async {
+        while matches!(
+            control.operation(id).await.unwrap(),
+            OperationStatus::Pending
+        ) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(matches!(
+        control.operation(id).await.unwrap(),
+        OperationStatus::Succeeded
+    ));
+    stop.send(()).unwrap();
+    within(host).await.unwrap().unwrap();
+    let restarted = prysm_settings_file::FileSettings::new(path).unwrap();
+    assert_eq!(restarted.repository.load().await.unwrap(), Some(saved));
+    restarted.shutdown.request();
+    within(restarted.owner.run(pending())).await.unwrap();
+}
+
+#[cfg(feature = "headless")]
+#[tokio::test]
+async fn terminal_shutdown_fences_file_writes_and_joins_commit_after_application_abort() {
+    use crate::server::owners::SettingsOwner;
+    use prysm_contract::storage::SettingsRepository;
+    use std::sync::{Mutex, mpsc as sync};
+    // Serialization executes inside the real retained file worker.
+    #[derive(serde::Deserialize)]
+    struct Gated {
+        #[serde(skip)]
+        gate: Mutex<Option<(oneshot::Sender<()>, sync::Receiver<bool>)>>,
+    }
+    impl serde::Serialize for Gated {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                if release.recv().unwrap() {
+                    return Err(serde::ser::Error::custom("late settings write failure"));
+                }
+            }
+            serializer.serialize_unit()
+        }
+    }
+    for fail in [false, true] {
+        let (mut owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+        owners.application.request_stop();
+        within(&mut app.stopped).await.unwrap();
+        app.release.send(Ok(OwnerStopped)).unwrap();
+        within(owners.application.completion())
+            .await
+            .unwrap()
+            .unwrap();
+        owners.application.take_completed();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let store = prysm_settings_file::FileSettings::<Gated, ()>::new(path.clone()).unwrap();
+        let repository = store.repository.clone();
+        let (entered, started) = oneshot::channel();
+        let (release, released) = sync::sync_channel(1);
+        let saved = prysm_contract::application::Settings {
+            capture: Some(Gated {
+                gate: Mutex::new(Some((entered, released))),
+            }),
+            output: None,
+            processing: Default::default(),
+            profiles: vec![],
+            active_profile: None,
+        };
+        owners.application = Task::spawn(|stop| async move {
+            store.repository.save(saved).await?;
+            stop.await;
+            Ok(OwnerStopped)
+        });
+        owners.settings = Some(SettingsOwner {
+            task: Task::spawn(|stop| store.owner.run(stop)),
+            shutdown: store.shutdown,
+        });
+        // A device failure forces terminal shutdown while the application awaits save.
+        owners.capture.request_stop();
+        within(&mut capture.stopped).await.unwrap();
+        control.initialized.notify_one();
+        let (report, mut events) = events();
+        let host = tokio::spawn(run(owners, control, stream::pending(), pending(), report));
+        ready(&mut events).await;
+        within(started).await.unwrap();
+        capture
+            .release
+            .send(Err(ControlError::Unavailable("capture failed")))
+            .unwrap();
+        within(&mut flow.stopped).await.unwrap();
+        within(&mut output.stopped).await.unwrap();
+        flow.release.send(Ok(OwnerStopped)).unwrap();
+        output.release.send(Ok(OwnerStopped)).unwrap();
+        assert!(repository.load().await.is_err()); // Admission fenced before app abort.
+        assert!(!host.is_finished());
+        tokio::time::pause();
+        tokio::time::advance(DEADLINE).await;
+        let pending = within(async {
+            loop {
+                if let HostEvent::CleanupOverdue { pending } = events.recv().await.unwrap() {
+                    break pending;
+                }
+            }
+        })
+        .await;
+        assert_eq!(pending, vec!["settings"]);
+        assert!(!host.is_finished());
+        tokio::time::resume();
+        release.send(fail).unwrap();
+        let failures = within(host).await.unwrap().unwrap_err().failures;
+        assert!(
+            failures
+                .iter()
+                .any(|f| f.message.contains("capture failed"))
+        );
+        assert_eq!(
+            failures
+                .iter()
+                .any(|f| f.message.contains("late settings write failure")),
+            fail
+        );
+        assert_eq!(path.exists(), !fail);
+    }
 }

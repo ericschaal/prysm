@@ -135,15 +135,17 @@ assembly examples/tests, never a fallback adapter inside a production library.
 | Domain traits, data types, error/cleanup outcomes | Physical-device verification |
 | Typed assemblies, host supervision, deadlines and coordinated shutdown | Physical shutdown qualification |
 | Passive flow, bounded frame handoff, configuration acknowledgments and session barriers | TV capture cleanup |
-| Typed settings load/replacement through the repository port, frontend compositions and asset boundary | Concrete file persistence and complete frontend panels |
+| Typed settings load/replacement through the repository port, frontend compositions and asset boundary | Complete frontend panels |
 | Application/session sequencing, operation registry and component observations; demand-driven preview tap and terminal video | Browser preview encoding and client serving |
 | Video device ownership, readiness, cleanup and availability epochs; WLED mode writes, DDP delivery and refresh | TV capture, file playback and remote transport adapters |
 | Fake source/sink connected through the real flow owner | Calibration workflow and credential generation |
 
-Constructors create inert wiring. The application and flow have working bounded
+Device and application constructors create inert wiring. The file settings adapter
+starts its owned I/O thread at construction; retain its returned owner immediately.
+The application and flow have working bounded
 control mailboxes, driven by host-owned `run(instance, shutdown)` futures. WLED and video device capture
 receives the instance at construction and exposes `owner.run(shutdown)`. Portal
-execution, calibration, concrete file persistence and remaining capture shells remain
+execution, calibration and remaining capture shells remain
 explicitly unavailable. No placeholder claims device cleanup or delivery.
 
 `prysm-testkit` contains named fake adapters that record calls and frames; it
@@ -235,9 +237,10 @@ retains its own result. Saved, worker-configured and frame-applied revisions rem
 distinct. See the [settings transition table](crates/application/SETTINGS-TRANSITIONS.md)
 and [gated repository tests](crates/application/src/tests/settings.rs).
 
-The headless composition still uses a read-only repository and exposes only target
-commands. A writable file adapter must retain started I/O independently of the
-application and be joined by the host; that integration is not implemented yet.
+The headless composition uses the [file settings adapter](adapters/settings-file/README.md).
+The host owns its I/O worker independently of the application and joins accepted
+commits during shutdown. Command entry currently exposes only lighting targets;
+exposing settings replacement through a host command adapter is the next step.
 
 The lifecycle's [transition model](crates/application/src/session/model.rs) is
 synchronous, with explicit Idle, Starting, Active, Stopping and Blocked phases.
@@ -380,17 +383,25 @@ cleanup; the host must retain the owner through shutdown.
 Copy [the example configuration](assemblies/examples/headless.json), replace its
 WLED address and LED counts, and select your capture device. On Linux `path` is a
 device node; on macOS use an AVFoundation device UID. Processing uses the existing
-defaults. Settings are loaded once and are read-only for this milestone.
+defaults unless overridden in the settings file. The application loads through
+the owned file repository; a missing file starts unconfigured and is not created
+until a settings replacement is saved. Invalid files fail initialization.
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
-  --features headless --bin prysm-headless -- /path/to/config.json
+  --features headless --bin prysm-headless -- /path/to/settings.json
 ```
 
-The `output` selects an adapter, for example
-`{"adapter":"wled","settings":{"address":"192.0.2.1","leds":[30,18,30,18]}}`.
-For a live terminal display, use [the terminal configuration](assemblies/examples/terminal.json):
-`{"adapter":"terminal","settings":{"leds":[30,18,30,18]}}`.
+WLED is the default host composition. Its `output` settings object contains
+`{"address":"192.0.2.1","leds":[30,18,30,18]}`.
+For a live terminal display, use [the terminal configuration](assemblies/examples/terminal.json)
+with `--terminal`; its `output` contains `{"leds":[30,18,30,18]}`. For example:
+
+```sh
+cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
+  --features headless --bin prysm-headless -- /path/to/terminal.json --terminal --start
+```
+
 The [terminal output crate](adapters/output-terminal/README.md) displays four color
 edges, application/capture status, frame/revision information and recent diagnostics.
 It uses Ratatui/Crossterm, needs an interactive stdout, and restores the terminal
@@ -404,11 +415,11 @@ terminal mode routes them through the screen owner, with stderr used after it cl
 Terminal mode also subscribes to the flow preview and displays cropped source imagery
 inside the admitted LED perimeter. See [terminal video behavior](adapters/output-terminal/README.md#live-video-preview).
 
-The [assembly](assemblies/src/server.rs) constructs the graph. The private
+The [assembly](assemblies/src/server/runtime.rs) constructs the graph. The private
 [host loop](assemblies/src/server/host.rs) polls owners and application entry;
 [lifecycle](assemblies/src/server/lifecycle.rs) owns shutdown transitions and
 failure retention; [owners](assemblies/src/server/owners.rs) retains the concrete
-four tasks and their shutdown controls. There is no automatic restart.
+five tasks and their shutdown controls, including the file settings owner. There is no automatic restart.
 
 Initialization and coordinated shutdown each have a 10-second deadline. Expired
 coordinated shutdown switches to terminal cleanup. After another 10 seconds the
@@ -419,14 +430,13 @@ commands, frames and refresh immediately while an existing write remains owned.
 
 ## Next implementation boundary
 
-Implement concrete file persistence and its host-owned I/O worker following the
-[settings replacement transition table](crates/application/SETTINGS-TRANSITIONS.md).
-The application workflow already covers validation, persist-before-apply ordering,
-live processing updates and device cleanup/restart with gated repository tests.
+Expose typed settings replacement through a host command adapter, using the
+existing application port and owned [file repository](adapters/settings-file/README.md).
+Persistence and host shutdown integration are implemented; no new application
+workflow or generic storage layer is needed. HTTP remains a separate milestone.
 
 Qualify video device capture cleanup and WLED behavior on physical hardware using
-the supervised headless host. File/TV/remote capture,
-file persistence and calibration remain separate milestones.
+the supervised headless host. File/TV/remote capture and calibration remain separate milestones.
 Browser preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
 workspace only after those libraries are usable. No backward compatibility or
 data migration is planned.

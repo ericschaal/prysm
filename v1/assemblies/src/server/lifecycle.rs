@@ -124,6 +124,7 @@ impl Lifecycle {
             self.terminate(owners);
         } else if owner == Owner::Application && self.phase == Phase::StopApplication {
             self.phase = Phase::StopFlow;
+            owners.stop_settings();
             owners.flow.request_stop();
         } else if owner == Owner::Processing && self.phase == Phase::StopFlow {
             self.phase = Phase::StopOwners;

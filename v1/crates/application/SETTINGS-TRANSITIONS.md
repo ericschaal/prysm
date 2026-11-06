@@ -1,8 +1,8 @@
 # Typed settings replacement and persistence
 
 The application workflow is implemented and exercised with gated repositories and
-device ports. Concrete file persistence and its host-owned I/O worker remain the
-next implementation step. This extends the [lighting lifecycle](TRANSITIONS.md) and follows the
+device ports. The [file adapter](../../adapters/settings-file/README.md) and its
+host-owned I/O worker are implemented. Host command entry for replacement is next. This extends the [lighting lifecycle](TRANSITIONS.md) and follows the
 [architecture plan](../../../docs/plans/prysm-v1-architecture.md): validate,
 persist atomically, then apply. Storage and hardware do not form one transaction.
 
@@ -237,7 +237,7 @@ sequenceDiagram
 ## Repository guarantees and host integration
 
 The typed `load`/`save` port distinguishes confirmed failure from uncertain commit.
-The application handles these outcomes; concrete disk persistence remains deferred:
+The application handles these outcomes; the concrete file adapter implements them:
 
 | Save outcome | Required meaning |
 | --- | --- |
@@ -299,8 +299,8 @@ device fixtures/real flow. Do not test a second handwritten transition model.
    the repository rejects new writes, and host completion waits for the retained
    commit/worker and reports its outcome. No orphaned blocking task remains.
 
-Implementation order: application workflow and revision semantics against gated
-repositories; then concrete file persistence plus host ownership; then expose
-replacement through a host command adapter. HTTP, calibration implementation,
+Implemented: application workflow and revision semantics against gated repositories,
+then concrete file persistence plus host ownership. Next: expose replacement through
+a host command adapter. HTTP, calibration implementation,
 file migration, hot adapter-type switching and general transaction abstractions
 remain outside this step.

@@ -14,6 +14,9 @@ and [application transitions](../crates/application/TRANSITIONS.md).
 flowchart TB
     Host[Headless host]
     Host -->|retains task and shutdown control| App[Application owner]
+    Host -->|fences admission and joins| Store[File settings owner]
+    App -->|SettingsRepository| Store
+    Store -->|owns and joins| IO[File I/O worker]
     Host -->|retains task and shutdown control| Capture[Device capture owner]
     Host -->|retains task and shutdown control| Flow[Processing flow owner]
     Host -->|retains task and terminal shutdown control| Output[Selected output owner]
@@ -34,10 +37,10 @@ The host never reads a mailbox, joins an adapter's inner worker directly, assign
 session epochs, or implements another lighting lifecycle. Snapshots are reports,
 not recovery instructions.
 
-Keep implementation in the assembly: `server.rs` constructs the concrete graph;
+Keep implementation in the assembly: `server/runtime.rs` constructs the concrete graph;
 a private `server/host.rs` drives one explicit `select!` loop. `server/lifecycle.rs`
 owns the phases, deadlines and failure retention; `server/owners.rs` retains the
-four task handles and shutdown controls. Tests live beside the host loop.
+five task handles and shutdown controls (memory-only test repositories need no owner). Tests live beside the host loop.
 Use named task slots, not a task registry, generic supervisor or state-machine
 dependency. Completed tasks are consumed once and removed from the select loop.
 Retain the initiating failure and subsequent cleanup failures separately; a later
@@ -45,10 +48,11 @@ successful join cannot erase the original failure.
 
 ## Startup
 
-1. Validate host configuration and create one instance identity. Construct inert
-   adapters, settings repository, processor and application; retain shutdown
-   controls before transferring ordinary controls into the application.
-2. Launch output, capture and flow owners, retaining each handle immediately.
+1. Validate host configuration and create one instance identity. Device adapters,
+   processor and application are inert at construction. The file repository starts
+   its I/O thread immediately: retain its returned owner and shutdown control before
+   transferring the repository handle into the application.
+2. Launch the file settings, output, capture and flow owners, retaining each handle immediately.
    Launch the application last. Watch owner exits throughout startup.
 3. Await an application observation response as the initialization handshake,
    while still selecting owner exits and process shutdown. It proves settings
@@ -74,9 +78,9 @@ permission to discard ownership.
 | Running | Capture temporarily waits | Application holds black and reconciles later epochs | Running |
 | Running | Session operation fails; owners remain alive | Application owns cleanup and reports the failed operation; host does not retry | Running |
 | Running | Session cleanup is blocked or recovery is required | Keep ownership and report failure; application forbids Start until its obligations are discharged; no host reconstruction | Running |
-| Starting / Running / Coordinated stop | Capture, flow or output task exits unexpectedly, including `Ok` or panic | Record exit; component observations also tell the application; terminate this composition without waiting for cleanup through a dead port | Terminal stop |
+| Starting / Running / Coordinated stop | Capture, flow, output or settings task exits unexpectedly, including `Ok` or panic | Record exit; component observations also tell the application; terminate this composition without waiting for cleanup through a dead port | Terminal stop |
 | Running | Application task exits, including unexpected `Ok` | Record exit; take over owner shutdown without consulting its last session snapshot | Terminal stop |
-| Coordinated stop | Application joins successfully | Session cleanup is complete; shut down flow before closing capture's frame endpoint, then close capture/output and join all | Coordinated stop |
+| Coordinated stop | Application joins successfully | Session cleanup and accepted saves are complete; close settings admission and join its owner, shut down flow before closing capture's frame endpoint, then close capture/output and join all | Coordinated stop |
 | Coordinated stop | Application returns an error, or cleanup deadline expires | Retain failure/overdue diagnostic; take over terminal shutdown | Terminal stop |
 | Terminal stop | Another owner exits | Record its result; continue independent cleanup; never restart it | Terminal stop |
 | Coordinated stop / Terminal stop | All launched tasks have joined | Return the accumulated result; incomplete cleanup remains a failure | Stopped |
@@ -98,13 +102,16 @@ sequenceDiagram
     participant O as Output
     participant C as Capture
     participant F as Flow
+    participant S as File settings
     H->>H: Close command entry
     H->>A: Request shutdown
     A->>O: Hold black; close epoch admission
     A->>C: Stop; await release and racing open
     A->>F: Session barrier
     A->>O: Finish Off
+    Note over A,S: Accepted saves settle before application completion
     A-->>H: Owner completion
+    H->>S: Fence requests, drain and join
     H->>F: Shutdown and join
     H->>C: Shutdown and join
     H->>O: Shutdown and join
@@ -128,10 +135,11 @@ loss; it does not establish an arbitrary-crash recovery protocol.
 Terminal shutdown permanently retires the composition:
 
 1. Close command entry and synchronously request terminal WLED shutdown. This
-   permanently fences new output work without awaiting a network operation.
+   permanently fences new output work without awaiting a network operation. Fence file
+   repository admission synchronously as well; accepted I/O remains owned.
 2. Request cancellation of the application task if still alive, without awaiting
    its join yet. This is deliberate only
-   for the coordinator: its accepted device work remains owned by the retained
+   for the coordinator: its accepted device and file work remains owned by the retained
    adapters. It retires the command issuer instead of asking it to clean up
    through ports that are closing. Adapter shutdown fences also reject commands
    racing with cancellation.
@@ -141,7 +149,7 @@ Terminal shutdown permanently retires the composition:
    independently settles its current write and attempts Off.
 4. Join the coordinator and observe every remaining owner to completion. One stalled owner must not
    prevent shutdown requests or observation of the others. Preserve errors and
-   unconfirmed cleanup; never abort capture, flow or output as a timeout strategy.
+   unconfirmed cleanup; never abort capture, flow, output or settings as a timeout strategy.
 
 Output may finish Off before capture releases in this terminal path. The permanent
 fence makes that safe: no later frame or command can reopen output. This differs
@@ -204,3 +212,8 @@ no in-process design contains process abort or arbitrary native memory corruptio
 
 Use existing public ports and owner tests with controlled gates. Physical capture
 release and WLED behavior still need hardware qualification; mocks cannot prove them.
+
+The file owner retains the latest operation error even if delivery to the application
+reply channel succeeded: delivery does not prove observation before cancellation.
+Uncertain commits fence future writes and retire the owner. Normal errors permit
+retry but remain in the final owner result. See the [file adapter guarantees](../adapters/settings-file/README.md).

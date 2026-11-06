@@ -9,14 +9,11 @@
     "rate": 30
   },
   "output": {
-    "adapter": "terminal",
-    "settings": {
-      "leds": [
-        51,
-        31,
-        31,
-        49
-      ]
-    }
+    "leds": [
+      51,
+      31,
+      31,
+      49
+    ]
   }
 }

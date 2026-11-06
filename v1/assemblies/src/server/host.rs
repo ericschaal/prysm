@@ -1,7 +1,7 @@
 //! Composition lifetime only. The application owns all session transitions.
 use super::{
     lifecycle::Lifecycle,
-    owners::{Owner, Owners},
+    owners::{Owner, Owners, settings_completion},
 };
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use prysm_contract::{
@@ -80,28 +80,47 @@ pub(super) async fn run<C: ApplicationControl>(
         let accepting = lifecycle.accepting();
         tokio::select! {
             biased;
-            result = owners.application.completion() => lifecycle.exited(Owner::Application, result, &mut owners, &mut report),
-            result = owners.capture.completion() => lifecycle.exited(Owner::Capture, result, &mut owners, &mut report),
-            result = owners.flow.completion() => lifecycle.exited(Owner::Processing, result, &mut owners, &mut report),
-            result = owners.output.completion() => lifecycle.exited(Owner::Output, result, &mut owners, &mut report),
+            result = owners.application.completion() => {
+                lifecycle.exited(Owner::Application, result, &mut owners, &mut report);
+            },
+            result = owners.capture.completion() => {
+                lifecycle.exited(Owner::Capture, result, &mut owners, &mut report);
+            },
+            result = owners.flow.completion() => {
+                lifecycle.exited(Owner::Processing, result, &mut owners, &mut report);
+            },
+            result = owners.output.completion() => {
+                lifecycle.exited(Owner::Output, result, &mut owners, &mut report);
+            },
+            result = settings_completion(&mut owners.settings) => {
+                lifecycle.exited(Owner::Settings, result, &mut owners, &mut report);
+            },
             _ = &mut shutdown, if lifecycle.observing() => {
                 report(HostEvent::Stopping);
                 lifecycle.stop(&mut owners);
             }
-            _ = async { match lifecycle.deadline() { Some(at) => sleep_until(at).await, None => pending().await } } => {
+            _ = async {
+                match lifecycle.deadline() {
+                    Some(at) => sleep_until(at).await,
+                    None => pending().await,
+                }
+            } => {
                 lifecycle.timed_out(&mut owners, &mut report);
             }
             result = optional(&mut observing), if lifecycle.observing() => {
                 observing = None;
                 match result {
                     Ok(connected) => {
-                        if instance.is_some_and(|expected| expected != connected.initial.state.instance) {
-                            lifecycle.failure("application observation", ControlError::Conflict("application instance changed"), &mut report);
+                        let connected_instance = connected.initial.state.instance;
+                        if instance.is_some_and(|expected| expected != connected_instance) {
+                            let error = ControlError::Conflict("application instance changed");
+                            lifecycle.failure("application observation", error, &mut report);
                             lifecycle.terminate(&mut owners);
                             continue;
                         }
-                        instance = Some(connected.initial.state.instance);
-                        report(HostEvent::Application(Box::new(project(Update::Snapshot(connected.initial.clone())))));
+                        instance = Some(connected_instance);
+                        let snapshot = project(Update::Snapshot(connected.initial.clone()));
+                        report(HostEvent::Application(Box::new(snapshot)));
                         observation = Some(connected);
                         if lifecycle.initialized() {
                             report(HostEvent::Ready(instance.expect("initialized instance")));
@@ -113,7 +132,12 @@ pub(super) async fn run<C: ApplicationControl>(
                     }
                 }
             }
-            update = async { match &mut observation { Some(o) => o.updates.next().await, None => pending().await } }, if accepting => {
+            update = async {
+                match &mut observation {
+                    Some(observation) => observation.updates.next().await,
+                    None => pending().await,
+                }
+            }, if accepting => {
                 match update {
                     Some(Ok(Update::ResyncRequired)) => {
                         observation = None;
@@ -121,7 +145,9 @@ pub(super) async fn run<C: ApplicationControl>(
                     }
                     Some(Ok(update)) => report(HostEvent::Application(Box::new(project(update)))),
                     failed => {
-                        let error = failed.and_then(Result::err).unwrap_or(ControlError::Unavailable("application observation closed"));
+                        let error = failed
+                            .and_then(Result::err)
+                            .unwrap_or(ControlError::Unavailable("application observation closed"));
                         lifecycle.failure("application observation", error, &mut report);
                         lifecycle.terminate(&mut owners);
                     }
@@ -129,19 +155,32 @@ pub(super) async fn run<C: ApplicationControl>(
             }
             result = optional(&mut request), if accepting => {
                 request = None;
-                match result { Ok(accepted) => report(HostEvent::Accepted(accepted)), Err(error) => report(HostEvent::CommandRejected(error.into())) }
+                match result {
+                    Ok(accepted) => report(HostEvent::Accepted(accepted)),
+                    Err(error) => report(HostEvent::CommandRejected(error.into())),
+                }
             }
             target = commands.next(), if accepting && commands_live && request.is_none() => {
                 if let Some(target) = target {
                     if let Some(id) = next_id {
                         next_id = id.get().checked_add(1).and_then(NonZeroU64::new);
                         let control = control.clone();
-                        let id = OperationId { instance: instance.expect("ready instance"), request: id };
-                        request = Some(async move { control.submit(Request { id, command: ApplicationCommand::SetTarget(target) }).await }.boxed());
+                        let id = OperationId {
+                            instance: instance.expect("ready instance"),
+                            request: id,
+                        };
+                        let command = Request {
+                            id,
+                            command: ApplicationCommand::SetTarget(target),
+                        };
+                        request = Some(async move { control.submit(command).await }.boxed());
                     } else {
-                        report(HostEvent::CommandRejected(ControlError::Unavailable("operation ids exhausted").into()));
+                        let error = ControlError::Unavailable("operation ids exhausted");
+                        report(HostEvent::CommandRejected(error.into()));
                     }
-                } else { commands_live = false; }
+                } else {
+                    commands_live = false;
+                }
             }
         }
         if !lifecycle.observing() {

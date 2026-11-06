@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "crates/output", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-device", "adapters/capture-webos", "adapters/output-wled", "adapters/output-terminal", "adapters/remote-capture"]
+members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "crates/output", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-device", "adapters/capture-webos", "adapters/output-wled", "adapters/output-terminal", "adapters/remote-capture", "adapters/settings-file"]
 default-members = ["assemblies"]
 
 [workspace.package]
@@ -24,6 +24,8 @@ prysm-output-wled = { path = "adapters/output-wled" }
 prysm-output = { path = "crates/output" }
 prysm-output-terminal = { path = "adapters/output-terminal" }
 prysm-remote-capture = { path = "adapters/remote-capture" }
+prysm-settings-file = { path = "adapters/settings-file" }
+tempfile = "3.27"
 futures = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "sync"] }
