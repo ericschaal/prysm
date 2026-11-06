@@ -123,7 +123,7 @@ use prysm_protocol::wire::resolution as resolution_wire;
 use std::{num::NonZeroU32, path::PathBuf};
 
 /// These choices belong to the device adapter, never the shared application.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wire", serde(tag = "source", rename_all = "snake_case"))]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

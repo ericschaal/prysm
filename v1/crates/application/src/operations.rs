@@ -1,34 +1,32 @@
-//! Bounded acceptance/result history. At most one accepted operation is pending.
+//! Bounded typed request/result history. Workflows own and complete their own IDs.
 use prysm_contract::{
-    ControlError, Failure, FailureKind,
-    application::{ApplicationEvent, LightingTarget, OperationStatus},
+    ControlError, Failure,
+    application::{ApplicationCommand, ApplicationEvent, OperationStatus},
     identity::{InstanceId, OperationId},
 };
 use std::collections::VecDeque;
 const RETAINED: usize = 64;
-struct Entry {
+struct Entry<S> {
     id: OperationId,
-    target: LightingTarget,
+    command: ApplicationCommand<S>,
     status: OperationStatus,
 }
 
-pub(super) struct Operations {
+pub(super) struct Operations<S> {
     instance: InstanceId,
-    entries: VecDeque<Entry>,
-    active: Option<OperationId>,
+    entries: VecDeque<Entry<S>>,
 }
-impl Operations {
+impl<S: PartialEq> Operations<S> {
     pub fn new(instance: InstanceId) -> Self {
         Self {
             instance,
             entries: VecDeque::new(),
-            active: None,
         }
     }
     pub fn recognizes(
         &self,
         id: OperationId,
-        target: LightingTarget,
+        command: &ApplicationCommand<S>,
     ) -> Result<bool, ControlError> {
         if id.instance != self.instance {
             return Err(ControlError::Conflict(
@@ -36,7 +34,7 @@ impl Operations {
             ));
         }
         match self.entries.iter().find(|entry| entry.id == id) {
-            Some(entry) if entry.target != target => Err(ControlError::Conflict(
+            Some(entry) if entry.command != *command => Err(ControlError::Conflict(
                 "operation ID reused for a different command",
             )),
             entry => Ok(entry.is_some()),
@@ -49,39 +47,34 @@ impl Operations {
             .map(|entry| entry.status.clone())
             .ok_or(ControlError::UnknownOperation)
     }
-    /// Acceptance follows validation; it supersedes the prior pending operation.
-    pub fn accept(&mut self, id: OperationId, target: LightingTarget) -> Vec<ApplicationEvent> {
-        let mut events = Vec::with_capacity(2);
-        if let Some(event) = self.finish(Some(Failure::new(
-            FailureKind::Interrupted,
-            "superseded by stop",
-        ))) {
-            events.push(event);
-        }
-        // finish() discharged the only pending entry, so eviction cannot lose work.
+    pub fn accept(&mut self, id: OperationId, command: ApplicationCommand<S>) -> ApplicationEvent {
         if self.entries.len() == RETAINED {
-            self.entries.pop_front();
+            let completed = self
+                .entries
+                .iter()
+                .position(|entry| !matches!(entry.status, OperationStatus::Pending))
+                .expect("at most one replacement and one lighting operation are pending");
+            self.entries.remove(completed);
         }
         self.entries.push_back(Entry {
             id,
-            target,
+            command,
             status: OperationStatus::Pending,
         });
-        self.active = Some(id);
-        events.push(ApplicationEvent::OperationChanged {
+        ApplicationEvent::OperationChanged {
             id,
             status: OperationStatus::Pending,
-        });
-        events
+        }
     }
-    pub fn finish(&mut self, failure: Option<Failure>) -> Option<ApplicationEvent> {
-        let id = self.active.take()?;
+    pub fn finish(&mut self, id: OperationId, failure: Option<Failure>) -> ApplicationEvent {
         let status = failure.map_or(OperationStatus::Succeeded, OperationStatus::Failed);
-        self.entries
+        let entry = self
+            .entries
             .iter_mut()
             .find(|entry| entry.id == id)
-            .expect("pending operation retained")
-            .status = status.clone();
-        Some(ApplicationEvent::OperationChanged { id, status })
+            .expect("pending operation retained");
+        debug_assert!(matches!(entry.status, OperationStatus::Pending));
+        entry.status = status.clone();
+        ApplicationEvent::OperationChanged { id, status }
     }
 }

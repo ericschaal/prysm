@@ -151,7 +151,7 @@ impl<S: Clone + Send + Sync + 'static> SettingsRepository<S> for FixedSettings<S
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "wire",

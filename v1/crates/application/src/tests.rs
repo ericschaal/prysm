@@ -24,7 +24,7 @@ use std::{
 use tokio::{sync::broadcast, task::JoinHandle};
 
 const INSTANCE: InstanceId = InstanceId(NonZeroU64::MIN);
-type TestSettings = Settings<(), ()>;
+type TestSettings = Settings<u32, u32>;
 type Snapshot = ApplicationSnapshot<TestSettings>;
 
 async fn within<T>(future: impl Future<Output = T>) -> T {
@@ -52,8 +52,8 @@ fn epoch(generation: u64) -> StreamEpoch {
 }
 fn settings() -> TestSettings {
     Settings {
-        capture: Some(()),
-        output: Some(()),
+        capture: Some(0),
+        output: Some(0),
         processing: Default::default(),
         profiles: vec![],
         active_profile: None,
@@ -106,6 +106,8 @@ impl<S: Clone + Send + 'static> Observed<S> {
 #[derive(Debug, PartialEq, Eq)]
 enum Call {
     Configure,
+    ConfigureSettings(u32),
+    StartSettings(SessionId, u32),
     Hold(StreamEpoch),
     Start(SessionId),
     Admit(StreamEpoch),
@@ -139,17 +141,29 @@ struct Capture {
     observed: Observed<CaptureState>,
 }
 impl CaptureControl for Capture {
-    type Settings = ();
+    type Settings = u32;
     fn capabilities(&self) -> CaptureCapabilities {
         CaptureCapabilities {
             supports_patterns: false,
         }
     }
-    fn validate(&self, _: &()) -> Result<(), ControlError> {
+    fn validate(&self, settings: &u32) -> Result<(), ControlError> {
+        if *settings == u32::MAX {
+            return Err(ControlError::Invalid {
+                field: "device",
+                reason: "invalid fixture device".into(),
+            });
+        }
         Ok(())
     }
-    async fn start(&self, request: CaptureStart<()>) -> Result<CaptureStarted, ControlError> {
-        self.calls.call(Call::Start(request.session)).await?;
+    async fn start(&self, request: CaptureStart<u32>) -> Result<CaptureStarted, ControlError> {
+        self.calls
+            .call(if request.settings == 0 {
+                Call::Start(request.session)
+            } else {
+                Call::StartSettings(request.session, request.settings)
+            })
+            .await?;
         Ok(CaptureStarted {
             session: request.session,
         })
@@ -177,15 +191,26 @@ impl Output {
     }
 }
 impl OutputControl for Output {
-    type Settings = ();
+    type Settings = u32;
     fn capabilities(&self) -> OutputCapabilities {
         OutputCapabilities { native_mode: true }
     }
-    fn validate(&self, _: &()) -> Result<(), ControlError> {
+    fn validate(&self, settings: &u32) -> Result<(), ControlError> {
+        if *settings == u32::MAX {
+            return Err(ControlError::Invalid {
+                field: "device",
+                reason: "invalid fixture device".into(),
+            });
+        }
         Ok(())
     }
-    async fn configure(&self, _: ()) -> Result<OutputApplied, ControlError> {
-        self.apply(Call::Configure).await
+    async fn configure(&self, settings: u32) -> Result<OutputApplied, ControlError> {
+        self.apply(if settings == 0 {
+            Call::Configure
+        } else {
+            Call::ConfigureSettings(settings)
+        })
+        .await
     }
     async fn admit(&self, epoch: StreamEpoch) -> Result<OutputApplied, ControlError> {
         self.apply(Call::Admit(epoch)).await
@@ -256,6 +281,19 @@ struct Running {
 }
 impl Running {
     async fn new(settings: TestSettings) -> Self {
+        Self::with_repository(settings.clone(), Repository(settings)).await
+    }
+    async fn with_repository(
+        settings: TestSettings,
+        repository: impl SettingsRepository<TestSettings>,
+    ) -> Self {
+        Self::with_processing(settings, repository, |processing| processing).await
+    }
+    async fn with_processing<P: ProcessingControl>(
+        settings: TestSettings,
+        repository: impl SettingsRepository<TestSettings>,
+        wrap: impl FnOnce(ProcessingHandle) -> P,
+    ) -> Self {
         let (calls, receiver) = mpsc::unbounded_channel();
         let calls = Calls(calls);
         let capture = Observed::new(CaptureState::Idle);
@@ -288,9 +326,9 @@ impl Running {
         };
         let application = Application::new(
             capture_control.clone(),
-            flow.control.clone(),
+            wrap(flow.control.clone()),
             output_control.clone(),
-            Repository(settings),
+            repository,
             policy::V1Policy,
         );
         let (shutdown, stop) = oneshot::channel();
@@ -1235,3 +1273,6 @@ async fn stopping_before_the_first_start_poll_never_issues_a_late_open() {
     assert!(receiver.try_recv().is_err());
     app.close().await;
 }
+
+#[path = "tests/settings.rs"]
+mod settings_workflow;

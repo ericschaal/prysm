@@ -145,7 +145,7 @@ impl ColorSink for WledColors {
 }
 
 /// Fixed-width LED counts have the same JSON range on every host architecture.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wire", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

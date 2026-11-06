@@ -32,7 +32,7 @@ impl<C: CaptureControl, F: FrameSource> RemoteCaptureSender<C, F> {
 }
 
 /// Receiver connection settings. Resolution/rate belong to the producing source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wire", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

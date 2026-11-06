@@ -16,7 +16,7 @@ fn epoch(generation: u64) -> StreamEpoch {
 fn complete(model: &mut Model, action: Action) -> Outcome {
     assert_eq!(model.next_action(), Some(action));
     model.scheduled(action);
-    model.completed(action, Ok(()))
+    model.completed(action, Ok(())).outcome
 }
 fn prepare(model: &mut Model) {
     model.request(LightingTarget::Processed, true);
@@ -93,10 +93,12 @@ fn blocked_cleanup_has_no_action_until_an_explicit_retry() {
     model.request(LightingTarget::Off, true);
     complete(&mut model, Action::CloseAdmission(epoch(0)));
     assert!(matches!(
-        model.completed(
-            Action::StopCapture(session()),
-            Err(ControlError::CleanupPending(session()))
-        ),
+        model
+            .completed(
+                Action::StopCapture(session()),
+                Err(ControlError::CleanupPending(session()))
+            )
+            .outcome,
         Outcome::Blocked(_)
     ));
     assert!(matches!(
@@ -127,7 +129,10 @@ fn obsolete_native_finish_is_followed_by_off_before_stopped() {
     let native = Action::Finish(session(), IdleOutputMode::Native);
     model.scheduled(native);
     model.stop(IdleOutputMode::Off, true);
-    assert!(matches!(model.completed(native, Ok(())), Outcome::Changed));
+    assert!(matches!(
+        model.completed(native, Ok(())).outcome,
+        Outcome::Changed
+    ));
     assert!(!model.is_idle());
     assert!(matches!(
         complete(&mut model, Action::Finish(session(), IdleOutputMode::Off)),
@@ -157,10 +162,12 @@ fn failed_cleanup_hold_keeps_the_requested_native_mode_and_reports_failure() {
     prepare(&mut model);
     model.request(LightingTarget::DeviceNative, true);
     assert!(matches!(
-        model.completed(
-            Action::CloseAdmission(epoch(0)),
-            Err(ControlError::Unavailable("black write failed"))
-        ),
+        model
+            .completed(
+                Action::CloseAdmission(epoch(0)),
+                Err(ControlError::Unavailable("black write failed"))
+            )
+            .outcome,
         Outcome::Changed
     ));
     complete(&mut model, Action::StopCapture(session()));
@@ -188,4 +195,59 @@ fn failed_cleanup_hold_keeps_the_requested_native_mode_and_reports_failure() {
         model.next_action(),
         Some(Action::Finish(next, IdleOutputMode::Off))
     );
+}
+
+#[test]
+fn blocked_settings_cleanup_completes_once_and_off_retry_only_cleans_resources() {
+    let mut model = Model::new(INSTANCE);
+    prepare(&mut model);
+    model.restart_settings(LightingTarget::Processed);
+    complete(&mut model, Action::CloseAdmission(epoch(0)));
+    let blocked = model.completed(
+        Action::StopCapture(session()),
+        Err(ControlError::CleanupPending(session())),
+    );
+    assert!(matches!(blocked.outcome, Outcome::Blocked(_)));
+    assert!(blocked.settings.unwrap().is_err());
+
+    model.request(LightingTarget::Off, true);
+    for action in [
+        Action::CloseAdmission(epoch(0)),
+        Action::StopCapture(session()),
+        Action::Barrier(session()),
+        Action::Finish(session(), IdleOutputMode::Off),
+    ] {
+        assert_eq!(model.next_action(), Some(action));
+        assert!(model.completed(action, Ok(())).settings.is_none());
+    }
+    assert!(model.is_off());
+    assert_eq!(model.next_action(), None);
+}
+
+#[test]
+fn off_after_old_cleanup_prevents_installation_and_completes_settings_once() {
+    let mut model = Model::new(INSTANCE);
+    prepare(&mut model);
+    model.restart_settings(LightingTarget::Processed);
+    for action in [
+        Action::CloseAdmission(epoch(0)),
+        Action::StopCapture(session()),
+        Action::Barrier(session()),
+        Action::Finish(session(), IdleOutputMode::Off),
+    ] {
+        complete(&mut model, action);
+    }
+    assert_eq!(model.next_action(), Some(Action::InstallSettings));
+
+    model.stop(IdleOutputMode::Off, true);
+    let next = SessionId {
+        sequence: NonZeroU64::new(2).unwrap(),
+        ..session()
+    };
+    assert_eq!(model.next_action(), Some(Action::Barrier(next)));
+    let stopped = model.completed(Action::Barrier(next), Ok(()));
+    assert!(matches!(stopped.outcome, Outcome::Stopped(None)));
+    assert!(stopped.settings.unwrap().is_ok());
+    assert!(model.is_off());
+    assert_eq!(model.next_action(), None);
 }

@@ -19,6 +19,8 @@ pub(super) struct Devices<C: CaptureControl, P, O: OutputControl> {
     processing: P,
     output: O,
     settings: DeviceSettings<C, O>,
+    revision: SettingsRevision,
+    staged: Option<(DeviceSettings<C, O>, SettingsRevision)>,
     waiting_colors: EdgeColors,
 }
 impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O> {
@@ -33,28 +35,59 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
             processing,
             output,
             settings,
+            revision: SettingsRevision(0),
+            staged: None,
             waiting_colors,
         }
     }
     pub fn settings(&self) -> &DeviceSettings<C, O> {
         &self.settings
     }
+    pub fn install(&mut self, settings: DeviceSettings<C, O>, revision: SettingsRevision) {
+        self.settings = settings;
+        self.revision = revision;
+    }
+    pub fn stage(&mut self, settings: DeviceSettings<C, O>, revision: SettingsRevision) {
+        assert!(self.staged.is_none(), "one settings application at a time");
+        self.staged = Some((settings, revision));
+    }
+    pub fn install_staged(&mut self) {
+        let (settings, revision) = self.staged.take().expect("staged settings");
+        self.install(settings, revision);
+    }
+    pub fn discard_staged(&mut self) {
+        self.staged = None;
+    }
+    pub fn update_processing(&self) -> Pending {
+        let (settings, revision) = self.staged.as_ref().expect("staged settings");
+        self.configure_processing(settings, *revision)
+    }
     pub fn validate(&self, target: LightingTarget) -> Result<(), ControlError> {
-        if target == LightingTarget::Processed {
-            self.capture.validate(self.settings.capture.as_ref().ok_or(
-                ControlError::Invalid {
-                    field: "capture",
-                    reason: "capture settings are required".into(),
-                },
-            )?)?;
+        self.validate_settings(&self.settings, target)
+    }
+    pub fn validate_settings(
+        &self,
+        settings: &DeviceSettings<C, O>,
+        target: LightingTarget,
+    ) -> Result<(), ControlError> {
+        settings.validate()?;
+        if let Some(capture) = &settings.capture {
+            self.capture.validate(capture)?;
         }
-        if target != LightingTarget::Off || self.settings.output.is_some() {
-            self.output.validate(self.settings.output.as_ref().ok_or(
-                ControlError::Invalid {
-                    field: "output",
-                    reason: "output settings are required".into(),
-                },
-            )?)?;
+        if let Some(output) = &settings.output {
+            self.output.validate(output)?;
+        }
+        if target == LightingTarget::Processed && settings.capture.is_none() {
+            return Err(ControlError::Invalid {
+                field: "capture",
+                reason: "capture settings are required".into(),
+            });
+        }
+        if target != LightingTarget::Off && settings.output.is_none() {
+            return Err(ControlError::Invalid {
+                field: "output",
+                reason: "output settings are required".into(),
+            });
         }
         if target == LightingTarget::DeviceNative && !self.output.capabilities().native_mode {
             return Err(ControlError::Unavailable(
@@ -63,39 +96,51 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
         }
         Ok(())
     }
+    fn configure_processing(
+        &self,
+        settings: &DeviceSettings<C, O>,
+        revision: SettingsRevision,
+    ) -> Pending {
+        let processing = self.processing.clone();
+        let mut config = settings.processing;
+        if let Some(id) = settings.active_profile {
+            config.correction = settings
+                .profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .expect("validated profile")
+                .correction;
+        }
+        Pending {
+            action: Action::ConfigureProcessing,
+            started: false,
+            future: Box::pin(async move {
+                let reply = processing
+                    .configure(ProcessingUpdate { revision, config })
+                    .await?;
+                if reply.revision != revision {
+                    return Err(ControlError::Conflict(
+                        "wrong processing configuration acknowledgment",
+                    ));
+                }
+                Ok(())
+            }),
+        }
+    }
     pub fn begin(&self, action: Action) -> Pending {
+        if matches!(action, Action::ConfigureProcessing) {
+            return self.configure_processing(&self.settings, self.revision);
+        }
         let capture = self.capture.clone();
         let processing = self.processing.clone();
         let output = self.output.clone();
         let capture_settings = self.settings.capture.clone();
         let output_settings = self.settings.output.clone();
-        let mut config = self.settings.processing;
-        if let Some(profile) = self
-            .settings
-            .active_profile
-            .filter(|_| matches!(action, Action::ConfigureProcessing))
-        {
-            config.correction = self
-                .settings
-                .profiles
-                .iter()
-                .find(|candidate| candidate.id == profile)
-                .expect("validated profile")
-                .correction;
-        }
         let waiting_colors = self.waiting_colors.clone();
         let future = Box::pin(async move {
             match action {
-                Action::ConfigureProcessing => {
-                    let revision = SettingsRevision(0);
-                    let reply = processing
-                        .configure(ProcessingUpdate { revision, config })
-                        .await?;
-                    if reply.revision != revision {
-                        return Err(ControlError::Conflict(
-                            "wrong processing configuration acknowledgment",
-                        ));
-                    }
+                Action::InstallSettings | Action::ConfigureProcessing => {
+                    unreachable!("handled above")
                 }
                 Action::ConfigureOutput => {
                     output
@@ -156,6 +201,9 @@ pub(super) struct Pending {
     started: bool,
 }
 impl Pending {
+    pub fn started(&self) -> bool {
+        self.started
+    }
     pub async fn wait(&mut self) -> Result<(), ControlError> {
         self.started = true;
         self.future.as_mut().await

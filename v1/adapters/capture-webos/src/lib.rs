@@ -6,7 +6,7 @@ use prysm_protocol::schema::resolution as resolution_schema;
 use prysm_protocol::wire::resolution as resolution_wire;
 use std::num::NonZeroU32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "wire", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

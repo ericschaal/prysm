@@ -8,10 +8,11 @@ use prysm_contract::{
 };
 use std::num::NonZeroU64;
 
-use super::{Outcome, Requested};
+use super::{Outcome, Progress, Requested};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
+    InstallSettings,
     ConfigureProcessing,
     ConfigureOutput,
     Prepare(StreamEpoch),
@@ -73,6 +74,7 @@ impl Session {
 
 #[derive(Clone, Copy)]
 enum Preparation {
+    InstallSettings,
     Processing,
     Output,
     Black,
@@ -86,10 +88,47 @@ enum CleanupStage {
     Barrier,
     Finish,
 }
+#[derive(Clone, Copy, Default)]
+enum Completion {
+    #[default]
+    Lighting,
+    Settings,
+}
+impl Completion {
+    fn finish(self, outcome: Outcome, failure: Option<Failure>) -> Progress {
+        Progress {
+            outcome,
+            settings: matches!(self, Self::Settings).then(|| failure.map_or(Ok(()), Err)),
+        }
+    }
+}
+
+#[derive(Default)]
+enum AfterStop {
+    #[default]
+    Idle,
+    Restart(LightingTarget),
+    CompleteSettings,
+}
+impl AfterStop {
+    fn interrupt(&mut self) {
+        if matches!(self, Self::Restart(_)) {
+            *self = Self::CompleteSettings;
+        }
+    }
+    fn completion(&self) -> Completion {
+        match self {
+            Self::Idle => Completion::Lighting,
+            Self::Restart(_) | Self::CompleteSettings => Completion::Settings,
+        }
+    }
+}
+
 struct Cleanup {
     session: Session,
     mode: IdleOutputMode,
     stage: CleanupStage,
+    after: AfterStop,
     failure: Option<Failure>,
 }
 impl Cleanup {
@@ -99,6 +138,7 @@ impl Cleanup {
             mode,
             failure,
             stage: CleanupStage::Hold,
+            after: AfterStop::Idle,
         }
     }
 }
@@ -112,6 +152,7 @@ enum Phase {
         session: Session,
         target: LightingTarget,
         stage: Preparation,
+        completion: Completion,
     },
     Active {
         session: Session,
@@ -159,6 +200,25 @@ impl Model {
     }
     pub fn is_stopping(&self) -> bool {
         matches!(self.phase, Phase::Stopping(_) | Phase::Blocked(_))
+    }
+    pub fn is_off(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Idle {
+                mode: IdleOutputMode::Off,
+                ..
+            }
+        )
+    }
+    pub fn is_active(&self) -> bool {
+        matches!(self.phase, Phase::Active { .. })
+    }
+    pub fn check_replacement(&self) -> Result<(), ControlError> {
+        match &self.phase {
+            Phase::Idle { .. } | Phase::Active { .. } => Ok(()),
+            Phase::Blocked(cleanup) => Err(ControlError::CleanupPending(cleanup.session.id)),
+            _ => Err(ControlError::Conflict("session operation is in progress")),
+        }
     }
     pub fn status(&self) -> SessionState {
         match &self.phase {
@@ -225,6 +285,7 @@ impl Model {
                     session,
                     target,
                     stage,
+                    completion: Completion::Lighting,
                 };
             }
             Phase::Active { .. } if target == LightingTarget::Processed => {
@@ -253,14 +314,25 @@ impl Model {
                 Phase::Stopping(cleanup)
             }
             idle @ Phase::Idle { .. } => idle,
-            Phase::Starting { session, .. } | Phase::Active { session, .. } => {
-                Phase::Stopping(Cleanup::new(session, mode, None))
+            Phase::Starting {
+                session,
+                completion,
+                ..
+            } => {
+                let mut cleanup = Cleanup::new(session, mode, None);
+                if matches!(completion, Completion::Settings) {
+                    cleanup.after = AfterStop::CompleteSettings;
+                }
+                Phase::Stopping(cleanup)
             }
+            Phase::Active { session, .. } => Phase::Stopping(Cleanup::new(session, mode, None)),
             Phase::Stopping(mut cleanup) => {
+                cleanup.after.interrupt();
                 cleanup.mode = mode;
                 Phase::Stopping(cleanup)
             }
             Phase::Blocked(mut cleanup) if retry => {
+                cleanup.after.interrupt();
                 cleanup.mode = mode;
                 cleanup.stage = CleanupStage::Hold;
                 cleanup.failure = None;
@@ -313,7 +385,9 @@ impl Model {
                 session,
                 target,
                 stage,
+                ..
             } => Some(match stage {
+                Preparation::InstallSettings => Action::InstallSettings,
                 Preparation::Processing => Action::ConfigureProcessing,
                 Preparation::Output => Action::ConfigureOutput,
                 Preparation::Black => Action::Prepare(StreamEpoch {
@@ -361,55 +435,98 @@ impl Model {
             cleanup.session.capture_owned = false;
         }
     }
-    pub fn completed(&mut self, action: Action, result: Result<(), ControlError>) -> Outcome {
+    /// Settings restart uses the same cleanup and preparation as a lighting request.
+    pub fn restart_settings(&mut self, target: LightingTarget) {
+        self.stop(IdleOutputMode::Off, true);
+        let Phase::Stopping(cleanup) = &mut self.phase else {
+            unreachable!("replacement restart owns active or Native resources")
+        };
+        cleanup.after = AfterStop::Restart(target);
+    }
+    pub fn processing_update_failed(&mut self, failure: Failure) {
+        self.fail(failure);
+        if let Phase::Stopping(cleanup) = &mut self.phase {
+            cleanup.after = AfterStop::CompleteSettings;
+        }
+    }
+    pub fn completed(&mut self, action: Action, result: Result<(), ControlError>) -> Progress {
         if let Err(error) = result {
             let failure = Failure::from(error);
             if !action.cleanup() {
-                self.fail(failure);
-                return Outcome::Failed;
+                self.fail(failure.clone());
+                return Outcome::Failed(failure).into();
             }
             let mut cleanup = match std::mem::replace(&mut self.phase, Self::idle()) {
                 Phase::Stopping(cleanup) => cleanup,
                 Phase::Starting {
-                    session, target, ..
-                } => Cleanup::new(
                     session,
-                    if target == LightingTarget::DeviceNative {
-                        IdleOutputMode::Native
-                    } else {
-                        IdleOutputMode::Off
-                    },
-                    None,
-                ),
+                    target,
+                    completion,
+                    ..
+                } => {
+                    let mut cleanup = Cleanup::new(
+                        session,
+                        if target == LightingTarget::DeviceNative {
+                            IdleOutputMode::Native
+                        } else {
+                            IdleOutputMode::Off
+                        },
+                        None,
+                    );
+                    if matches!(completion, Completion::Settings) {
+                        cleanup.after = AfterStop::CompleteSettings;
+                    }
+                    cleanup
+                }
                 _ => unreachable!("cleanup calls belong to an output transaction or Stop"),
             };
             cleanup.failure = Some(failure.clone());
+            cleanup.after.interrupt();
             if !matches!(action, Action::CloseAdmission(_)) {
+                let completion = std::mem::take(&mut cleanup.after).completion();
                 self.phase = Phase::Blocked(cleanup);
-                return Outcome::Blocked(failure);
+                return completion.finish(Outcome::Blocked(failure.clone()), Some(failure));
             }
-            // A failed black write does not cancel the requested final idle mode.
+            // A failed black write still requires stop, barrier and finish.
             self.phase = Phase::Stopping(cleanup);
         }
-        let (phase, outcome) = match std::mem::replace(&mut self.phase, Self::idle()) {
+        let (phase, progress) = match std::mem::replace(&mut self.phase, Self::idle()) {
             Phase::Starting {
                 session,
                 target,
                 stage,
-            } => stage.completed(session, target, action),
+                completion,
+            } => stage.completed(session, target, completion, action),
             Phase::Active { session, .. } => {
                 let applied = match action {
                     Action::Admit(epoch) => Availability::Available(epoch),
                     Action::Hold(epoch) => Availability::Waiting(epoch),
                     _ => unreachable!("active session only reconciles admission"),
                 };
-                (Phase::Active { session, applied }, Outcome::Changed)
+                (Phase::Active { session, applied }, Outcome::Changed.into())
             }
-            Phase::Stopping(cleanup) => cleanup.completed(action),
+            Phase::Stopping(mut cleanup) => {
+                if !cleanup.advance(action) {
+                    (Phase::Stopping(cleanup), Outcome::Changed.into())
+                } else if let AfterStop::Restart(target) = cleanup.after {
+                    debug_assert!(cleanup.failure.is_none());
+                    (
+                        Phase::Starting {
+                            session: self.allocate(false),
+                            target,
+                            stage: Preparation::InstallSettings,
+                            completion: Completion::Settings,
+                        },
+                        Outcome::Changed.into(),
+                    )
+                } else {
+                    cleanup.finished()
+                }
+            }
             _ => unreachable!("device completions belong to a live phase"),
         };
         self.phase = phase;
-        outcome
+        progress
     }
 }
 
@@ -418,9 +535,17 @@ impl Preparation {
         self,
         session: Session,
         target: LightingTarget,
+        completion: Completion,
         action: Action,
-    ) -> (Phase, Outcome) {
+    ) -> (Phase, Progress) {
         let stage = match (self, action) {
+            (Self::InstallSettings, Action::InstallSettings) => {
+                if target == LightingTarget::Processed {
+                    Self::Processing
+                } else {
+                    Self::Output
+                }
+            }
             (Self::Processing, Action::ConfigureProcessing) => Self::Output,
             (Self::Output, Action::ConfigureOutput) => {
                 if target == LightingTarget::Processed {
@@ -435,7 +560,10 @@ impl Preparation {
                     session: session.id,
                     generation: 0,
                 });
-                return (Phase::Active { session, applied }, Outcome::Ready);
+                return (
+                    Phase::Active { session, applied },
+                    completion.finish(Outcome::Ready, None),
+                );
             }
             (Self::IdleMode, Action::Finish(_, mode)) => {
                 return (
@@ -443,7 +571,7 @@ impl Preparation {
                         mode,
                         failure: None,
                     },
-                    Outcome::Stopped(None),
+                    completion.finish(Outcome::Stopped(None), None),
                 );
             }
             _ => unreachable!("preparation completion matches the dispatched stage"),
@@ -453,37 +581,37 @@ impl Preparation {
                 session,
                 target,
                 stage,
+                completion,
             },
-            Outcome::Changed,
+            Outcome::Changed.into(),
         )
     }
 }
 
 impl Cleanup {
-    fn completed(mut self, action: Action) -> (Phase, Outcome) {
+    /// True only after all acquired resources have reached the requested idle mode.
+    fn advance(&mut self, action: Action) -> bool {
         match action {
             Action::CloseAdmission(_) => self.stage = CleanupStage::Capture,
             Action::StopCapture(_) => self.stage = CleanupStage::Barrier,
             Action::Barrier(_) => self.stage = CleanupStage::Finish,
-            Action::Finish(_, mode) if mode == self.mode => return self.finished(),
+            Action::Finish(_, mode) if mode == self.mode => return true,
             Action::Finish(..) => self.stage = CleanupStage::Finish,
             // An older preparation/admission completion cannot resume Start.
             _ => {}
         }
-        if matches!(self.stage, CleanupStage::Finish) && !self.session.output_owned {
-            debug_assert_eq!(self.mode, IdleOutputMode::Off);
-            self.finished()
-        } else {
-            (Phase::Stopping(self), Outcome::Changed)
-        }
+        matches!(self.stage, CleanupStage::Finish) && !self.session.output_owned
     }
-    fn finished(self) -> (Phase, Outcome) {
-        let outcome = Outcome::Stopped(self.failure.clone());
+    fn finished(self) -> (Phase, Progress) {
+        let progress = self
+            .after
+            .completion()
+            .finish(Outcome::Stopped(self.failure.clone()), self.failure.clone());
         let phase = Phase::Idle {
             mode: self.mode,
             failure: self.failure.map(|failure| (self.session.id, failure)),
         };
-        (phase, outcome)
+        (phase, progress)
     }
 }
 

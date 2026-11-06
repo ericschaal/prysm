@@ -133,9 +133,9 @@ assembly examples/tests, never a fallback adapter inside a production library.
 | Present | Deferred |
 | --- | --- |
 | Domain traits, data types, error/cleanup outcomes | Physical-device verification |
-| Typed assemblies and coordinated application shutdown | Host supervision, deadlines and escalation |
+| Typed assemblies, host supervision, deadlines and coordinated shutdown | Physical shutdown qualification |
 | Passive flow, bounded frame handoff, configuration acknowledgments and session barriers | TV capture cleanup |
-| Typed settings loaded through the repository port, frontend compositions and asset boundary | Settings replacement/saving, concrete repositories and complete frontend panels |
+| Typed settings load/replacement through the repository port, frontend compositions and asset boundary | Concrete file persistence and complete frontend panels |
 | Application/session sequencing, operation registry and component observations; demand-driven preview tap and terminal video | Browser preview encoding and client serving |
 | Video device ownership, readiness, cleanup and availability epochs; WLED mode writes, DDP delivery and refresh | TV capture, file playback and remote transport adapters |
 | Fake source/sink connected through the real flow owner | Calibration workflow and credential generation |
@@ -143,7 +143,7 @@ assembly examples/tests, never a fallback adapter inside a production library.
 Constructors create inert wiring. The application and flow have working bounded
 control mailboxes, driven by host-owned `run(instance, shutdown)` futures. WLED and video device capture
 receives the instance at construction and exposes `owner.run(shutdown)`. Portal
-execution, calibration, settings replacement and remaining capture shells remain
+execution, calibration, concrete file persistence and remaining capture shells remain
 explicitly unavailable. No placeholder claims device cleanup or delivery.
 
 `prysm-testkit` contains named fake adapters that record calls and frames; it
@@ -222,6 +222,22 @@ command acceptance and dispatch. The private [lifecycle](crates/application/src/
 owns phases, resource obligations and pending device calls; its fields are private.
 The coordinator keeps serving commands, operation queries and observations while
 a device reply is pending.
+
+The private [settings workflow](crates/application/src/settings.rs) validates
+replacement revisions, retains one save and publishes the last confirmed saved
+value. [Lifecycle settings entry points](crates/application/src/session/settings.rs)
+choose immediate installation, live processing update, or adapter restart. The
+existing lifecycle model owns restart and cleanup; there is no separate replacement
+state machine. It keeps old resource settings through cleanup even after new settings
+are saved. Completions return directly to the coordinator with the lifecycle outcome. Off can interrupt a
+replacement without cancelling its save or allowing a late restart; each operation
+retains its own result. Saved, worker-configured and frame-applied revisions remain
+distinct. See the [settings transition table](crates/application/SETTINGS-TRANSITIONS.md)
+and [gated repository tests](crates/application/src/tests/settings.rs).
+
+The headless composition still uses a read-only repository and exposes only target
+commands. A writable file adapter must retain started I/O independently of the
+application and be joined by the host; that integration is not implemented yet.
 
 The lifecycle's [transition model](crates/application/src/session/model.rs) is
 synchronous, with explicit Idle, Starting, Active, Stopping and Blocked phases.
@@ -403,9 +419,14 @@ commands, frames and refresh immediately while an existing write remains owned.
 
 ## Next implementation boundary
 
+Implement concrete file persistence and its host-owned I/O worker following the
+[settings replacement transition table](crates/application/SETTINGS-TRANSITIONS.md).
+The application workflow already covers validation, persist-before-apply ordering,
+live processing updates and device cleanup/restart with gated repository tests.
+
 Qualify video device capture cleanup and WLED behavior on physical hardware using
 the supervised headless host. File/TV/remote capture,
-typed settings replacement/persistence and calibration remain separate milestones.
+file persistence and calibration remain separate milestones.
 Browser preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
 workspace only after those libraries are usable. No backward compatibility or
 data migration is planned.

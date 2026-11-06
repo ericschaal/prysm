@@ -5,6 +5,10 @@ publication. The private `session::Lifecycle` owns the complete lighting protoco
 phase, session/epoch identity, acquired resources, device calls and cleanup.
 It is driven by the existing application task; it has no task or mailbox of its own.
 
+The [settings replacement transitions](SETTINGS-TRANSITIONS.md) extend this
+lifecycle with persist-before-apply ordering. The application workflow is
+implemented; the concrete file repository and its host ownership remain deferred.
+
 ## Phases and ownership
 
 | Phase | Retained data | Next work |
@@ -33,6 +37,7 @@ invent device-confirmed display state.
 | Starting / Active | Off | Enter Stopping; retain any in-flight write; supersede the old accepted operation |
 | Active | Processed | Complete immediately; preserve the active session |
 | Stopping | Another command | Reject as conflicting; retained request IDs still deduplicate |
+| Replacement-driven Stopping | First Off interrupting that replacement | Cancel its restart and attach Off to the existing cleanup; retain pending calls |
 | Cleanup blocked | Processed / Native | Reject with CleanupPending |
 | Cleanup blocked | Off | Clear the previous diagnostic and retry cleanup from hold-black |
 | Starting / Active | Matching, strictly newer capture epoch | Record availability; Active reconciles hold/admission after any outstanding call |
@@ -69,8 +74,12 @@ invent device-confirmed display state.
 ## Review invariants
 
 - Session phases are private and mutually exclusive; the coordinator cannot edit them.
-- One ordinary device call is retained at a time. Only a racing capture open may
-  coexist with cleanup. Losing a select branch never drops either device future.
+- Settings restart uses the same preparation and cleanup phases. Cleanup owns its
+  continuation; Off cancels restart without dropping resource obligations.
+  Completion is returned directly, and blocked cleanup consumes it before retry.
+- One ordinary device call is retained at a time. A racing capture open or live
+  processing configuration may coexist with cleanup; both must settle before
+  the barrier. Losing a select branch never drops these device futures.
 - Transition decisions are synchronous. The device-call implementation only
   translates domain actions into port calls and checks acknowledgments.
 - A blocked phase has no automatic action. A closed input never causes a busy loop.

@@ -4,6 +4,7 @@ mod observations;
 mod operations;
 pub mod policy;
 mod session;
+mod settings;
 
 use policy::ApplicationPolicy;
 use prysm_contract::{
@@ -57,6 +58,8 @@ where
     P: ProcessingControl,
     O: OutputControl,
     R: SettingsRepository<Settings<C::Settings, O::Settings>>,
+    C::Settings: PartialEq,
+    O::Settings: PartialEq,
     Policy: ApplicationPolicy,
 {
     pub fn new(capture: C, processing: P, output: O, settings: R, policy: Policy) -> Self {
@@ -83,6 +86,8 @@ where
     P: ProcessingControl,
     O: OutputControl,
     R: SettingsRepository<Settings<C::Settings, O::Settings>>,
+    C::Settings: PartialEq,
+    O::Settings: PartialEq,
     Policy: ApplicationPolicy,
 {
     /// Use the host's instance identity, shared with the flow. Shutdown requests

@@ -346,6 +346,12 @@ hardware. The snapshot reports that outcome rather than pretending storage and
 hardware updates were atomic. Processing changes apply at frame boundaries;
 capture/output changes use the session cleanup protocol.
 
+The [settings replacement transition table](../../v1/crates/application/SETTINGS-TRANSITIONS.md)
+specifies acceptance, save/apply failures, Off/shutdown races and the concrete
+repository ownership required for file persistence. The application workflow is
+implemented against the typed repository port; concrete file persistence and its
+host-owned I/O worker remain deferred.
+
 ## Readable local implementation
 
 Each constructor returns named parts, such as `capture.owner`, `capture.control`
@@ -420,8 +426,10 @@ and authorize control access before dispatching application commands.
 
 The current application implements the sequences below through
 `application.owner.run(instance, shutdown)`, using the same host identity as the
-flow. It loads settings through the repository port; settings replacement/saving,
-calibration, real device adapters and host supervision remain deferred. Its
+flow. It loads and replaces settings through the repository port, persists before
+applying, and keeps Off responsive while saves are pending. Concrete file persistence
+and calibration remain deferred; video device capture, WLED/terminal output and
+headless host supervision are implemented. Its
 mailbox and observation buffers hold 16 entries; its operation registry retains
 64 results and never evicts pending work. The implementation supports the v1
 idle/hold-black/await-command policy and rejects unimplemented policy choices.

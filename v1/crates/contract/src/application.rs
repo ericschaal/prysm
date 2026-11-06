@@ -20,7 +20,7 @@ pub enum LightingTarget {
 }
 
 /// C/O are adapter-owned types. The shared application never matches vendor enums.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings<C, O> {
     pub capture: Option<C>,
     pub output: Option<O>,
@@ -33,6 +33,24 @@ impl<C, O> Settings<C, O> {
     /// Validate aggregate relationships, including an intentionally unconfigured setup.
     /// Adapter-specific settings are validated by their owning ports.
     pub fn validate(&self) -> Result<(), ControlError> {
+        // ColorCorrection's private fields are validated by its constructors.
+        if !self.processing.smoothing_seconds.0.is_finite() {
+            return Err(ControlError::Invalid {
+                field: "processing",
+                reason: "processing and profile numbers must be finite".into(),
+            });
+        }
+        for (index, profile) in self.profiles.iter().enumerate() {
+            if self.profiles[..index]
+                .iter()
+                .any(|prior| prior.id == profile.id)
+            {
+                return Err(ControlError::Invalid {
+                    field: "profiles",
+                    reason: "profile IDs must be unique".into(),
+                });
+            }
+        }
         if let Some(id) = self.active_profile
             && !self.profiles.iter().any(|profile| profile.id == id)
         {
@@ -45,7 +63,7 @@ impl<C, O> Settings<C, O> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ApplicationCommand<S> {
     SetTarget(LightingTarget),
     ReplaceSettings {

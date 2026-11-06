@@ -5,7 +5,8 @@ use crate::{
     observations::{self, ComponentUpdate, Observed, Publisher},
     operations::Operations,
     policy::{ApplicationPolicy, FailureAction, UnavailableAction},
-    session::{Lifecycle, Outcome, Requested},
+    session::{Lifecycle, Outcome, Progress, Requested},
+    settings::{Saved, SettingsWorkflow},
 };
 use futures::StreamExt;
 use prysm_contract::{
@@ -15,7 +16,7 @@ use prysm_contract::{
     },
     calibration::CalibrationStatus,
     capture::CaptureControl,
-    identity::{InstanceId, SettingsRevision},
+    identity::{InstanceId, OperationId},
     output::OutputControl,
     processing::ProcessingControl,
     storage::SettingsRepository,
@@ -25,12 +26,14 @@ use tokio::sync::mpsc;
 
 type AppSettings<C, O> = Settings<<C as CaptureControl>::Settings, <O as OutputControl>::Settings>;
 
-struct Coordinator<C: CaptureControl, P, O: OutputControl> {
+struct Coordinator<C: CaptureControl, P, O: OutputControl, R> {
     instance: InstanceId,
     desired: LightingTarget,
     lifecycle: Lifecycle<C, P, O>,
     observed: Observed,
-    operations: Operations,
+    operations: Operations<AppSettings<C, O>>,
+    lighting_operation: Option<OperationId>,
+    settings: SettingsWorkflow<AppSettings<C, O>, R>,
     publication: Publisher<ApplicationSnapshot<AppSettings<C, O>>>,
     shutting_down: bool,
     fatal: Option<Failure>,
@@ -48,12 +51,14 @@ where
     O: OutputControl,
     R: SettingsRepository<AppSettings<C, O>>,
     Policy: ApplicationPolicy,
+    C::Settings: PartialEq,
+    O::Settings: PartialEq,
 {
     let ApplicationWiring {
         capture,
         processing,
         output,
-        settings,
+        settings: repository,
         policy,
     } = wiring;
     let UnavailableAction::WaitHolding(waiting_colors) = policy.input_unavailable() else {
@@ -68,7 +73,7 @@ where
             "automatic start/retry policy is not implemented",
         ));
     }
-    let loaded = settings.load();
+    let loaded = repository.load();
     let initialize = async {
         let settings = loaded.await?.unwrap_or(Settings {
             capture: None,
@@ -78,6 +83,12 @@ where
             active_profile: None,
         });
         settings.validate()?;
+        if let Some(value) = &settings.capture {
+            capture.validate(value)?;
+        }
+        if let Some(value) = &settings.output {
+            output.validate(value)?;
+        }
         let (observed, updates) = observations::connect(
             capture.clone(),
             processing.clone(),
@@ -98,18 +109,23 @@ where
         lifecycle: Lifecycle::new(
             instance,
             (capture, processing, output),
-            settings,
+            settings.clone(),
             waiting_colors,
         ),
         observed,
         operations: Operations::new(instance),
+        lighting_operation: None,
+        settings: SettingsWorkflow::new(settings, repository),
         publication: Publisher::new(instance),
         shutting_down: false,
         fatal: None,
     };
     let (mut commands_live, mut updates_live) = (true, true);
     loop {
-        if owner.lifecycle.is_idle() && (owner.shutting_down || owner.fatal.is_some()) {
+        if owner.lifecycle.is_idle()
+            && !owner.settings.busy()
+            && (owner.shutting_down || owner.fatal.is_some())
+        {
             return match owner.fatal {
                 Some(failure) => Err(failure.into()),
                 None => Ok(OwnerStopped),
@@ -121,7 +137,11 @@ where
                 Some(command) => owner.command(command),
                 None => commands_live = false,
             },
-            outcome = owner.lifecycle.progress() => owner.progressed(outcome),
+            progress = owner.lifecycle.progress() => {
+                owner.progressed(progress);
+                owner.publish();
+            },
+            saved = owner.settings.progress() => owner.saved(saved),
             update = updates.next(), if updates_live => match update {
                 Some(update) => owner.observed(update),
                 None => updates_live = false,
@@ -130,12 +150,21 @@ where
     }
 }
 
-impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P, O> {
+impl<
+    C: CaptureControl,
+    P: ProcessingControl,
+    O: OutputControl,
+    R: SettingsRepository<AppSettings<C, O>>,
+> Coordinator<C, P, O, R>
+where
+    C::Settings: PartialEq,
+    O::Settings: PartialEq,
+{
     fn snapshot(&self) -> ApplicationSnapshot<AppSettings<C, O>> {
         ApplicationSnapshot {
             instance: self.instance,
-            settings: self.lifecycle.settings().clone(),
-            saved_revision: SettingsRevision(0),
+            settings: self.settings.saved().clone(),
+            saved_revision: self.settings.revision(),
             configured_revision: self.observed.processing.configured_revision,
             applied_revision: self.observed.processing.applied_revision,
             desired: self.desired,
@@ -151,8 +180,8 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P
         self.publication.snapshot(self.snapshot());
     }
     fn finish_operation(&mut self, failure: Option<Failure>) {
-        if let Some(event) = self.operations.finish(failure) {
-            self.publication.event(event);
+        if let Some(id) = self.lighting_operation.take() {
+            self.publication.event(self.operations.finish(id, failure));
         }
     }
     fn command(&mut self, command: Command<AppSettings<C, O>>) {
@@ -172,67 +201,145 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P
         &mut self,
         request: Request<ApplicationCommand<AppSettings<C, O>>>,
     ) -> Result<Accepted, ControlError> {
-        let target = match request.command {
-            ApplicationCommand::SetTarget(target) => target,
-            ApplicationCommand::ReplaceSettings { settings, .. } => {
-                settings.validate()?;
-                return Err(ControlError::Unavailable(
-                    "settings replacement is not implemented",
-                ));
-            }
-        };
-        if self.operations.recognizes(request.id, target)? {
+        if self.operations.recognizes(request.id, &request.command)? {
             return Ok(Accepted {
                 operation: request.id,
             });
         }
-        if (self.shutting_down || self.fatal.is_some()) && target != LightingTarget::Off {
+        let off = matches!(
+            request.command,
+            ApplicationCommand::SetTarget(LightingTarget::Off)
+        );
+        if (self.shutting_down || self.fatal.is_some()) && !off {
             return Err(ControlError::Unavailable("application is shutting down"));
         }
-        let result = self.lifecycle.request(target)?;
-        for event in self.operations.accept(request.id, target) {
-            self.publication.event(event);
-        }
-        self.desired = target;
-        if matches!(result, Requested::Complete) {
-            self.finish_operation(None);
+        match &request.command {
+            ApplicationCommand::ReplaceSettings { expected, settings } => {
+                let revision = self.settings.next_revision(*expected)?;
+                self.lifecycle
+                    .validate_replacement(settings, self.desired)?;
+                self.settings.begin(request.id, settings.clone(), revision);
+                self.publication
+                    .event(self.operations.accept(request.id, request.command));
+            }
+            ApplicationCommand::SetTarget(target) => {
+                let target = *target;
+                let result = if self.settings.busy() {
+                    if !off || self.lighting_operation.is_some() {
+                        return Err(ControlError::Conflict(
+                            "settings replacement is in progress",
+                        ));
+                    }
+                    self.settings.interrupt(Failure::new(
+                        FailureKind::Interrupted,
+                        "settings application interrupted by Off",
+                    ));
+                    let progress = self.lifecycle.stop();
+                    self.progressed(progress);
+                    if self.lifecycle.is_idle() {
+                        Requested::Complete
+                    } else {
+                        Requested::Pending
+                    }
+                } else {
+                    self.lifecycle
+                        .install_saved_if_off(self.settings.saved(), self.settings.revision());
+                    self.lifecycle.request(target)?
+                };
+                self.finish_operation(Some(Failure::new(
+                    FailureKind::Interrupted,
+                    "superseded by stop",
+                )));
+                self.publication
+                    .event(self.operations.accept(request.id, request.command));
+                self.lighting_operation = Some(request.id);
+                self.desired = target;
+                if matches!(result, Requested::Complete) {
+                    self.finish_operation(None);
+                }
+            }
         }
         self.publish();
         Ok(Accepted {
             operation: request.id,
         })
     }
+    fn saved(&mut self, saved: Saved) {
+        // Publish durability before any device application can begin.
+        self.publish();
+        match saved {
+            Saved::Committed => {
+                let progress = self.lifecycle.replace(
+                    self.settings.saved().clone(),
+                    self.settings.revision(),
+                    self.desired,
+                );
+                self.progressed(progress);
+            }
+            Saved::Finished(id, failure) => {
+                if failure.kind == FailureKind::RecoveryRequired {
+                    self.fatal = Some(failure.clone());
+                    self.fault(failure.clone());
+                }
+                self.publication
+                    .event(self.operations.finish(id, Some(failure)));
+            }
+        }
+        self.publish();
+    }
     fn shutdown(&mut self) {
         self.shutting_down = true;
+        self.settings.interrupt(Failure::new(
+            FailureKind::Interrupted,
+            "settings application interrupted by shutdown",
+        ));
         self.desired = LightingTarget::Off;
         self.finish_operation(Some(Failure::new(
             FailureKind::Interrupted,
             "interrupted by shutdown",
         )));
-        self.lifecycle.shutdown();
+        let progress = self.lifecycle.stop();
+        self.progressed(progress);
         self.publish();
     }
-    fn progressed(&mut self, outcome: Outcome) {
-        match outcome {
+    fn progressed(&mut self, progress: Progress) {
+        match progress.outcome {
             Outcome::Changed => {}
             Outcome::Ready => self.finish_operation(None),
-            Outcome::Failed => self.desired = LightingTarget::Off,
-            Outcome::Stopped(failure) => self.finish_operation(failure),
-            Outcome::Blocked(failure) => self.finish_operation(Some(failure)),
+            Outcome::Failed(failure) => {
+                self.desired = LightingTarget::Off;
+                self.settings.interrupt(failure);
+            }
+            Outcome::Stopped(failure) => {
+                if let Some(failure) = &failure {
+                    self.settings.interrupt(failure.clone());
+                }
+                self.finish_operation(failure);
+            }
+            Outcome::Blocked(failure) => {
+                self.desired = LightingTarget::Off;
+                self.settings.interrupt(failure.clone());
+                self.finish_operation(Some(failure));
+            }
         }
-        self.publish();
+        if let Some(result) = progress.settings {
+            if result.is_err() {
+                self.desired = LightingTarget::Off;
+            }
+            let (id, failure) = self.settings.applied(result);
+            self.publication.event(self.operations.finish(id, failure));
+        }
     }
     fn fault(&mut self, failure: Failure) {
-        self.desired = LightingTarget::Off;
-        self.lifecycle.fail(failure);
+        let progress = self.lifecycle.fail(failure);
+        self.progressed(progress);
     }
     fn observed(&mut self, update: ComponentUpdate) {
         match update {
             ComponentUpdate::Capture(state) => {
-                if self.lifecycle.capture_changed(&state) {
-                    self.desired = LightingTarget::Off;
-                }
+                let progress = self.lifecycle.capture_changed(&state);
                 self.observed.capture = state;
+                self.progressed(progress);
             }
             ComponentUpdate::Output(state) => {
                 if let Some(failure) = &state.failure {

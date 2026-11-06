@@ -12,7 +12,7 @@ pub struct PairingToken(pub [u8; 32]);
 #[derive(Clone, PartialEq, Eq)]
 pub struct CalibrationToken(pub [u8; 32]);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CalibrationProfile {
     pub id: ProfileId,
     pub name: String,
