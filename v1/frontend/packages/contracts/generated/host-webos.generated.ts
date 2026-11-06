@@ -60,10 +60,13 @@ export interface components {
             id: components["schemas"]["OperationId"];
             session: string;
         };
-        /** @description Displayable failure information for snapshots, separate from local error chains. */
+        /** @description Local source errors and their implementation types never enter the wire format. */
         Failure: {
+            kind: components["schemas"]["FailureKind"];
             message: string;
         };
+        /** @enum {string} */
+        FailureKind: "unavailable" | "invalid" | "conflict" | "outcome_unknown" | "cleanup_pending" | "unknown_operation" | "adapter" | "recovery_required" | "interrupted";
         InstanceId: string;
         /** @enum {string} */
         LightingTarget: "off" | "processed" | "device_native";
@@ -144,6 +147,7 @@ export type ConfigureRequest_Value = components['schemas']['ConfigureRequest_Val
 export type Cursor = components['schemas']['Cursor'];
 export type EndPresentationRequest = components['schemas']['EndPresentationRequest'];
 export type Failure = components['schemas']['Failure'];
+export type FailureKind = components['schemas']['FailureKind'];
 export type InstanceId = components['schemas']['InstanceId'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type OperationId = components['schemas']['OperationId'];

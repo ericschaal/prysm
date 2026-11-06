@@ -47,18 +47,6 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
                     reason: "capture settings are required".into(),
                 },
             )?)?;
-            if let Some(id) = self.settings.active_profile
-                && !self
-                    .settings
-                    .profiles
-                    .iter()
-                    .any(|profile| profile.id == id)
-            {
-                return Err(ControlError::Invalid {
-                    field: "active_profile",
-                    reason: "profile does not exist".into(),
-                });
-            }
         }
         if target != LightingTarget::Off || self.settings.output.is_some() {
             self.output.validate(self.settings.output.as_ref().ok_or(

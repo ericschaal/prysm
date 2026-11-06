@@ -362,15 +362,34 @@ async fn ambiguous_http_failure_poison_cannot_be_cleared_by_configure_or_finish(
     let mut output = Running::new().await;
     let request = output.hold_request(0);
     output.call(Kind::Mode(Mode::Realtime)).await.fail(true);
-    assert!(within(request).await.unwrap().is_err());
+    assert_eq!(
+        within(request).await.unwrap().unwrap_err().kind(),
+        prysm_contract::FailureKind::RecoveryRequired
+    );
     let state = output.control.observe().await.unwrap().initial.state;
-    assert!(state.failure.is_some());
+    assert_eq!(
+        state.failure.unwrap().kind,
+        prysm_contract::FailureKind::RecoveryRequired
+    );
     assert_eq!(state.confirmation, None);
-    assert!(output.control.configure(settings()).await.is_err());
-    assert!(matches!(
-        output.control.finish(session(1), IdleOutputMode::Off).await,
-        Err(ControlError::CleanupPending(_))
-    ));
+    assert_eq!(
+        output
+            .control
+            .configure(settings())
+            .await
+            .unwrap_err()
+            .kind(),
+        prysm_contract::FailureKind::RecoveryRequired
+    );
+    assert_eq!(
+        output
+            .control
+            .finish(session(1), IdleOutputMode::Off)
+            .await
+            .unwrap_err()
+            .kind(),
+        prysm_contract::FailureKind::RecoveryRequired
+    );
     assert!(output.calls.try_recv().is_err());
     output.shutdown.take().unwrap().send(()).unwrap();
     assert!(within(output.task).await.unwrap().is_err());

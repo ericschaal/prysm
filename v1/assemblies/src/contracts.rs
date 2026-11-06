@@ -7,7 +7,7 @@ pub fn server() -> Result<OpenApi, String> {
     compose(
         "Prysm server",
         [
-            prysm_contract::schema::document(),
+            prysm_protocol::schema::document(),
             prysm_capture_desktop::schema::document(),
             prysm_remote_capture::schema::document(),
             crate::server::document(),
@@ -20,7 +20,7 @@ pub fn webos() -> Result<OpenApi, String> {
     compose(
         "Prysm webOS",
         [
-            prysm_contract::schema::document(),
+            prysm_protocol::schema::document(),
             prysm_capture_webos::schema::document(),
             prysm_output_wled::schema::document(),
         ],
@@ -30,7 +30,7 @@ pub fn webos() -> Result<OpenApi, String> {
 /// Package subpaths are selected here; no individual Rust type names enter codegen.
 pub fn documents() -> Result<BTreeMap<&'static str, OpenApi>, String> {
     Ok(BTreeMap::from([
-        ("application", prysm_contract::schema::document()),
+        ("application", prysm_protocol::schema::document()),
         ("tv-host", crate::tv::document()),
         ("desktop", prysm_capture_desktop::schema::document()),
         ("remote-capture", prysm_remote_capture::schema::document()),

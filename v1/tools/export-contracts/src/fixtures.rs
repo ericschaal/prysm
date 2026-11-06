@@ -4,6 +4,7 @@ use prysm_assemblies::{
     WledSettings,
 };
 use prysm_core::CaptureResolution;
+use prysm_protocol::application::{Failure, FailureKind, OperationStatus};
 use std::{error::Error, num::NonZeroU32};
 
 pub fn serialized() -> Result<serde_json::Value, Box<dyn Error>> {
@@ -22,5 +23,13 @@ pub fn serialized() -> Result<serde_json::Value, Box<dyn Error>> {
         ],
         "TvCaptureSettings": [TvCaptureSettings { resolution, rate }],
         "WledSettings": [WledSettings { address: "192.0.2.1".parse()?, leds: [10, 20, 30, 40] }],
+        "OperationStatus": [
+            OperationStatus::Pending,
+            OperationStatus::Succeeded,
+            OperationStatus::Failed(Failure {
+                kind: FailureKind::RecoveryRequired,
+                message: "owner recovery required".into(),
+            }),
+        ],
     }))
 }

@@ -851,9 +851,10 @@ async fn late_failure_observations_do_not_retry_blocked_cleanup() {
     app.result(2).await;
     app.capture.set(CaptureState::Failed {
         session: session(),
-        failure: prysm_contract::Failure {
-            message: "stop timed out".into(),
-        },
+        failure: prysm_contract::Failure::new(
+            prysm_contract::FailureKind::CleanupPending,
+            "stop timed out",
+        ),
         cleanup_complete: false,
     });
     app.state(|s| matches!(s.observed_capture, Some(CaptureState::Failed { .. })))
@@ -870,9 +871,10 @@ async fn observed_output_failure_cleans_up_without_claiming_device_confirmation(
     let mut app = Running::new(settings()).await;
     app.start().await;
     let mut failed = app.output.snapshot.lock().unwrap().state.clone();
-    failed.failure = Some(prysm_contract::Failure {
-        message: "device disconnected".into(),
-    });
+    failed.failure = Some(prysm_contract::Failure::new(
+        prysm_contract::FailureKind::Unavailable,
+        "device disconnected",
+    ));
     app.output.set(failed);
     app.cleanup(0, true, IdleOutputMode::Off).await;
     let state = app
@@ -982,6 +984,133 @@ async fn repository_needs_send_but_not_sync() {
     shutdown.send(()).unwrap();
     within(owner).await.unwrap().unwrap();
     app.close().await;
+}
+
+#[tokio::test]
+async fn invalid_profile_references_are_rejected_at_load_and_submission() {
+    use prysm_contract::calibration::ProfileId;
+    let app = Running::new(settings()).await;
+    let mut invalid = settings();
+    invalid.active_profile = Some(ProfileId(NonZeroU64::MIN));
+    let (calls, mut receiver) = mpsc::unbounded_channel();
+    let application = Application::new(
+        Capture {
+            calls: Calls(calls.clone()),
+            observed: app.capture.clone(),
+        },
+        app.processing.clone(),
+        Output {
+            calls: Calls(calls),
+            observed: app.output.clone(),
+        },
+        Repository(invalid.clone()),
+        policy::V1Policy,
+    );
+    assert!(matches!(
+        within(application.owner.run(INSTANCE, std::future::pending())).await,
+        Err(ControlError::Invalid {
+            field: "active_profile",
+            ..
+        })
+    ));
+    assert!(receiver.try_recv().is_err());
+    assert!(matches!(
+        app.control
+            .submit(Request {
+                id: id(1),
+                command: ApplicationCommand::ReplaceSettings {
+                    expected: SettingsRevision(0),
+                    settings: invalid
+                },
+            })
+            .await,
+        Err(ControlError::Invalid {
+            field: "active_profile",
+            ..
+        })
+    ));
+    assert!(matches!(
+        app.control.operation(id(1)).await,
+        Err(ControlError::UnknownOperation)
+    ));
+    assert!(
+        app.control
+            .observe()
+            .await
+            .unwrap()
+            .initial
+            .state
+            .settings
+            .active_profile
+            .is_none()
+    );
+    app.close().await;
+}
+
+#[tokio::test]
+async fn unconfigured_settings_are_valid_and_can_be_observed() {
+    use prysm_contract::calibration::{CalibrationProfile, ProfileId};
+    let mut unconfigured = settings();
+    unconfigured.capture = None;
+    unconfigured.output = None;
+    unconfigured.profiles.push(CalibrationProfile {
+        id: ProfileId(NonZeroU64::MIN),
+        name: "fixture".into(),
+        correction: Default::default(),
+    });
+    unconfigured.active_profile = Some(ProfileId(NonZeroU64::MIN));
+    let app = Running::new(unconfigured).await;
+    app.submit(1, LightingTarget::Off).await;
+    assert!(matches!(app.result(1).await, OperationStatus::Succeeded));
+    app.close().await;
+}
+
+#[tokio::test]
+async fn failure_categories_survive_operation_results_and_session_snapshots() {
+    use prysm_contract::FailureKind;
+    use std::error::Error;
+    for (error, expected) in [
+        (
+            ControlError::Unavailable("capture unavailable"),
+            FailureKind::Unavailable,
+        ),
+        (
+            ControlError::RecoveryRequired(Box::new(std::io::Error::other(
+                "capture outcome uncertain",
+            ))),
+            FailureKind::RecoveryRequired,
+        ),
+    ] {
+        let mut app = Running::new(settings()).await;
+        app.start().await;
+        app.submit(2, LightingTarget::Off).await;
+        app.call(Call::Hold(epoch(0))).await.ok();
+        app.call(Call::Stop(session())).await.fail(error);
+        let OperationStatus::Failed(failure) = app.result(2).await else {
+            panic!("operation should fail")
+        };
+        assert_eq!(failure.kind, expected);
+        assert!(failure.source().is_some());
+        let snapshot = app
+            .state(|s| {
+                matches!(
+                    s.session,
+                    SessionState::Failed {
+                        cleanup_complete: false,
+                        ..
+                    }
+                )
+            })
+            .await;
+        let SessionState::Failed { failure, .. } = snapshot.session else {
+            unreachable!()
+        };
+        assert_eq!(failure.kind, expected);
+        app.submit(3, LightingTarget::Off).await;
+        app.cleanup(0, true, IdleOutputMode::Off).await;
+        app.result(3).await;
+        app.close().await;
+    }
 }
 
 #[tokio::test]

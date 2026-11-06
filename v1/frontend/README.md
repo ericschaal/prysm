@@ -80,7 +80,7 @@ and endpoint mappings remain outside this milestone.
 Adapter settings now live in independent Rust crates: [desktop](../adapters/capture-desktop/src/lib.rs),
 [webOS](../adapters/capture-webos/src/lib.rs), and [WLED](../adapters/output-wled/src/lib.rs).
 Each library owns a schema document and optional `wire`/`schema` features.
-Shared public types are registered by [prysm-contract](../crates/contract/src/schema.rs).
+Shared public wire types are registered by [prysm-protocol](../crates/protocol/src/schema.rs).
 Neither feature is required by headless application traits. The existing core
 frame and resolution types stay unchanged; resolution decoding still validates
 through the core constructor.

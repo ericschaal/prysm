@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/contract", "crates/flow", "crates/application", "crates/web-portal", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-desktop", "adapters/capture-webos", "adapters/output-wled", "adapters/remote-capture"]
+members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-desktop", "adapters/capture-webos", "adapters/output-wled", "adapters/remote-capture"]
 default-members = ["assemblies"]
 
 [workspace.package]
@@ -13,6 +13,7 @@ publish = false
 prysm-core = { path = "../crates/common/prysm-core" }
 prysm-processor = { path = "../crates/processing/prysm-processor" }
 prysm-contract = { path = "crates/contract" }
+prysm-protocol = { path = "crates/protocol" }
 prysm-flow = { path = "crates/flow" }
 prysm-application = { path = "crates/application" }
 prysm-web-portal = { path = "crates/web-portal" }

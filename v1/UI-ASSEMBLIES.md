@@ -59,7 +59,7 @@ disable application controls. Automatic reconnect/resynchronization is deferred;
 a new connection must acquire a fresh observation. UI teardown only releases
 observation. It does not send a stop/off command or cancel accepted operations.
 
-[client wire projections](crates/contract/src/client.rs) define the reviewed UI
+[client wire projections](crates/protocol/src/client.rs) define the reviewed UI
 payloads in Rust. Configure-capture/output requests are frontend conveniences:
 the eventual mapping to `ApplicationControl` must preserve processing and profile
 settings and apply the expected revision. That mapping is unimplemented, not an

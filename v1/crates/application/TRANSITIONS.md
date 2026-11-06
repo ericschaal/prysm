@@ -77,5 +77,7 @@ invent device-confirmed display state.
 - Application snapshots are projections of owned state, not a second mutable
   lifecycle model. Operation retention and publication cannot mutate the lifecycle.
 - Component subscriptions recover gaps; only connection failures trigger cleanup.
+- Failure categories survive cleanup and operation publication. `RecoveryRequired`
+  needs host/device recovery; an explicit Off alone cannot repair that owner.
 - The host retains the owner future and emergency controls through stuck cleanup.
   There is no async Drop cleanup or detached retry task.

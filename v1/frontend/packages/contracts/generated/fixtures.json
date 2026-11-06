@@ -19,6 +19,21 @@
       "source": "file"
     }
   ],
+  "OperationStatus": [
+    {
+      "kind": "pending"
+    },
+    {
+      "kind": "succeeded"
+    },
+    {
+      "failure": {
+        "kind": "recovery_required",
+        "message": "owner recovery required"
+      },
+      "kind": "failed"
+    }
+  ],
   "RemoteCaptureSettings": [
     {
       "peer": "127.0.0.1:9000"

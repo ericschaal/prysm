@@ -13,7 +13,7 @@ fn names(document: OpenApi) -> Vec<String> {
 
 #[test]
 fn host_contracts_include_shared_types_and_only_their_adapters() {
-    let shared = names(prysm_contract::schema::document());
+    let shared = names(prysm_protocol::schema::document());
     let mut server_expected = shared.clone();
     server_expected.extend([
         "DesktopCaptureSettings".into(),

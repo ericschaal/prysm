@@ -1,6 +1,6 @@
 //! Bounded acceptance/result history. At most one accepted operation is pending.
 use prysm_contract::{
-    ControlError, Failure,
+    ControlError, Failure, FailureKind,
     application::{ApplicationEvent, LightingTarget, OperationStatus},
     identity::{InstanceId, OperationId},
 };
@@ -52,9 +52,10 @@ impl Operations {
     /// Acceptance follows validation; it supersedes the prior pending operation.
     pub fn accept(&mut self, id: OperationId, target: LightingTarget) -> Vec<ApplicationEvent> {
         let mut events = Vec::with_capacity(2);
-        if let Some(event) = self.finish(Some(Failure {
-            message: "superseded by stop".into(),
-        })) {
+        if let Some(event) = self.finish(Some(Failure::new(
+            FailureKind::Interrupted,
+            "superseded by stop",
+        ))) {
             events.push(event);
         }
         // finish() discharged the only pending entry, so eviction cannot lose work.

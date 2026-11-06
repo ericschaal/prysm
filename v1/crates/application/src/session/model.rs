@@ -363,9 +363,7 @@ impl Model {
     }
     pub fn completed(&mut self, action: Action, result: Result<(), ControlError>) -> Outcome {
         if let Err(error) = result {
-            let failure = Failure {
-                message: error.to_string(),
-            };
+            let failure = Failure::from(error);
             if !action.cleanup() {
                 self.fail(failure);
                 return Outcome::Failed;

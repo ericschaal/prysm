@@ -115,9 +115,7 @@ pub(super) async fn connect<C: CaptureControl, P: ProcessingControl, O: OutputCo
         .as_ref()
         .or(observed.output.failure.as_ref())
     {
-        return Err(ControlError::Adapter(Box::new(std::io::Error::other(
-            failure.message.clone(),
-        ))));
+        return Err(failure.clone().into());
     }
     let captures = states(capture_observation, instance, move || {
         let c = capture.clone();

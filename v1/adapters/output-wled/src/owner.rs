@@ -115,21 +115,23 @@ impl<W: Wire> Writer<W> {
         self.publish();
         OutputApplied::Sent
     }
-    fn failed(&mut self, error: &ControlError, uncertain: bool) {
-        self.poisoned |= uncertain;
+    fn failed(&mut self, error: ControlError) -> ControlError {
+        let failure = Failure::from(error);
+        self.poisoned |= failure.kind == prysm_contract::FailureKind::RecoveryRequired;
         self.wire_mode = None;
         self.display = Display::Applying;
-        self.failure = Some(Failure {
-            message: error.to_string(),
-        });
+        self.failure = Some(failure.clone());
         self.mailbox.suspend();
         self.publish();
+        failure.into()
     }
     fn ready(&self) -> Result<(), ControlError> {
         if self.poisoned {
-            return Err(ControlError::Unavailable(
-                "WLED mode outcome is unknown; owner recovery required",
-            ));
+            return Err(self
+                .failure
+                .clone()
+                .expect("poisoned owner retains its failure")
+                .into());
         }
         if !self.configured {
             return Err(ControlError::Unavailable(
@@ -145,8 +147,12 @@ impl<W: Wire> Writer<W> {
                 Ok(())
             }
             Err(error) => {
-                self.failed(&error.error, error.uncertain);
-                Err(error.error)
+                let error = if error.uncertain {
+                    ControlError::RecoveryRequired(Box::new(error.error))
+                } else {
+                    error.error
+                };
+                Err(self.failed(error))
             }
         }
     }
@@ -158,8 +164,7 @@ impl<W: Wire> Writer<W> {
     }
     async fn send(&mut self, colors: &EdgeColors) -> Result<(), ControlError> {
         if let Err(error) = self.wire.colors(colors).await {
-            self.failed(&error, false);
-            return Err(error);
+            return Err(self.failed(error));
         }
         self.refresh_at = Instant::now() + REFRESH;
         Ok(())
@@ -175,9 +180,7 @@ impl<W: Wire> Writer<W> {
     }
     fn configure(&mut self, settings: WledSettings) -> Result<OutputApplied, ControlError> {
         if self.poisoned {
-            return Err(ControlError::Unavailable(
-                "cannot reconfigure an uncertain WLED owner",
-            ));
+            self.ready()?;
         }
         settings.validate()?;
         self.mailbox.can_configure()?;
@@ -230,9 +233,6 @@ impl<W: Wire> Writer<W> {
             self.ready()?;
         }
         self.mailbox.finish(session)?;
-        if self.poisoned {
-            return Err(ControlError::CleanupPending(session));
-        }
         self.ready()?;
         self.begin();
         self.mode(match mode {
@@ -262,9 +262,7 @@ impl<W: Wire> Writer<W> {
     async fn shutdown(&mut self) -> Result<(), ControlError> {
         self.mailbox.suspend();
         if self.poisoned {
-            return Err(ControlError::Unavailable(
-                "WLED shutdown cannot confirm an uncertain mode write",
-            ));
+            return self.ready();
         }
         if self.configured && self.wire_mode != Some(Mode::Off) {
             self.begin();

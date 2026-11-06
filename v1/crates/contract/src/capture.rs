@@ -8,8 +8,6 @@ use prysm_core::Frame;
 use std::future::Future;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct CaptureCapabilities {
     /// Whether this source supports calibration using presented test patterns.
     pub supports_patterns: bool,

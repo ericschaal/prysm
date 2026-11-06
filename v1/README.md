@@ -78,7 +78,9 @@ Capture/output settings are associated types, so server and TV compositions use
 different settings types without a shared deployment flag. Hosts compose the
 shared frontend with adapter settings panels and supply the resulting assets to
 the Rust portal. The portal library has no adapter/editor enum; capabilities
-contain no schema identifiers. Adapter settings are generated from Rust through
+contain no schema identifiers. The domain contract crate has no serialization or schema
+dependencies; `prysm-protocol` owns application wire values, UI projections and schema roots.
+Adapter settings are generated from Rust through
 OpenAPI into the frontend contracts package, with a drift check before CI builds. Calibration has a private reply path
 for credentials; public observations contain only non-secret status.
 
@@ -187,7 +189,8 @@ Preview still returns explicit unavailability and retains no preview snapshots.
 
 The host drives `application.owner.run(instance, shutdown)` with the same instance
 as the flow, and retains both futures until completion. The application loads
-initial typed settings through its injected repository and starts with Off intent;
+initial typed settings through its injected repository, validates aggregate relationships
+before publishing them, and starts with Off intent;
 it does not automatically configure devices. The implemented policy is `V1Policy`
 (idle startup, hold black while waiting, explicit commands after failure).
 Automatic-start/retry and end-session-on-unavailability policies are unavailable.
@@ -223,7 +226,10 @@ Native write and follows it with Off. Partial startup failures compensate. A fai
 cleanup hold still proceeds toward the requested idle mode and reports the failure.
 Failed capture/barrier/finish cleanup retains the session, reports `cleanup_complete:
 false`, and blocks Start; an explicit Off retries. The snapshot keeps the latest
-failure diagnostic rather than an unbounded failure history.
+failure diagnostic rather than an unbounded failure history. Failures retain a stable
+category through snapshots and operation results; their local source chains are omitted
+from protocol projections. Uncertain WLED mode writes report `recovery_required`,
+distinct from failures that permit an explicit cleanup retry.
 
 Commands and observation updates each have capacity 16. The operation registry
 retains 64 results, evicting completed entries only. Reusing a retained request ID

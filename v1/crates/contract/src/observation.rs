@@ -3,12 +3,8 @@ use crate::{ControlError, identity::InstanceId};
 use futures::stream::BoxStream;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Cursor {
     pub instance: InstanceId,
-    #[cfg_attr(feature = "wire", serde(with = "crate::wire::decimal"))]
-    #[cfg_attr(feature = "schema", schema(value_type = String, pattern = "^(0|[1-9][0-9]*)$"))]
     pub sequence: u64,
 }
 

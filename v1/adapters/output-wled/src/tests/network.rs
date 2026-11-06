@@ -199,10 +199,15 @@ async fn incomplete_and_malformed_http_replies_are_uncertain_not_success() {
             .send(reply)
             .unwrap();
         assert!(within(hold).await.unwrap().is_err());
-        assert!(matches!(
-            output.control.finish(session(1), IdleOutputMode::Off).await,
-            Err(ControlError::CleanupPending(_))
-        ));
+        assert_eq!(
+            output
+                .control
+                .finish(session(1), IdleOutputMode::Off)
+                .await
+                .unwrap_err()
+                .kind(),
+            prysm_contract::FailureKind::RecoveryRequired
+        );
         shutdown.send(()).unwrap();
         assert!(within(owner).await.unwrap().is_err());
         assert!(device.calls.try_recv().is_err());

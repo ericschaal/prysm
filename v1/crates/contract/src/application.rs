@@ -13,9 +13,6 @@ use prysm_core::Config;
 use std::future::Future;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[cfg_attr(feature = "wire", serde(rename_all = "snake_case"))]
 pub enum LightingTarget {
     Off,
     Processed,
@@ -30,6 +27,22 @@ pub struct Settings<C, O> {
     pub processing: Config,
     pub profiles: Vec<CalibrationProfile>,
     pub active_profile: Option<ProfileId>,
+}
+
+impl<C, O> Settings<C, O> {
+    /// Validate aggregate relationships, including an intentionally unconfigured setup.
+    /// Adapter-specific settings are validated by their owning ports.
+    pub fn validate(&self) -> Result<(), ControlError> {
+        if let Some(id) = self.active_profile
+            && !self.profiles.iter().any(|profile| profile.id == id)
+        {
+            return Err(ControlError::Invalid {
+                field: "active_profile",
+                reason: "profile does not exist".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,19 +62,11 @@ pub struct Request<T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Accepted {
     pub operation: OperationId,
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "wire", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[cfg_attr(
-    feature = "wire",
-    serde(tag = "kind", content = "failure", rename_all = "snake_case")
-)]
 pub enum OperationStatus {
     Pending,
     Succeeded,

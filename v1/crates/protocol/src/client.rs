@@ -1,10 +1,6 @@
 //! UI-facing projection and adapter requests. Mapping to ApplicationControl is deferred.
 //! Configure requests must preserve settings outside this projection when mapped.
-use crate::{
-    application::LightingTarget,
-    identity::{OperationId, SettingsRevision},
-    observation::Cursor,
-};
+use crate::application::{Cursor, LightingTarget, OperationId, SettingsRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

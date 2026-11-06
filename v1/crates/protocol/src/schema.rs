@@ -1,16 +1,14 @@
 //! Explicit wire roots. Private calibration replies are separate from public snapshots.
 use crate::{
-    application::LightingTarget, capture::CaptureCapabilities, output::OutputCapabilities,
-};
-use crate::{
-    application::{Accepted, OperationStatus},
+    application::{
+        Accepted, CaptureCapabilities, Cursor, InstanceId, LightingTarget, OperationId,
+        OperationStatus, OutputCapabilities, SettingsRevision,
+    },
     client::{
         CalibrationPresentation, ClientFailure, ClientSnapshot, ClientUpdate, ConfigureRequest,
         EndPresentationRequest, PatternRequest, PlaybackFeedback, PresentationFeedback,
         TargetRequest,
     },
-    identity::{InstanceId, OperationId, SettingsRevision},
-    observation::Cursor,
 };
 use serde_json::Value;
 use utoipa::OpenApi;

@@ -38,7 +38,7 @@ finish retry succeeds. New sessions and reconfiguration cannot bypass cleanup.
 | UDP send failure | Close local admission, retain failure; explicit cleanup remains possible |
 | Completed WLED rejection | Retain failure and close admission; later cleanup may retry |
 | Connection establishment failure | No HTTP request was sent; close admission and allow cleanup retry |
-| Ambiguous HTTP failure (lost/incomplete/malformed response) | Poison the configured owner; reject further mutation/reconfiguration and report cleanup pending |
+| Ambiguous HTTP failure (lost/incomplete/malformed response) | Poison the configured owner; reject further mutation/reconfiguration with `RecoveryRequired` |
 | Slow HTTP response | Keep the write owned; observe remains responsive; subsequent control work waits |
 | Caller timeout/disconnect | Keep the accepted operation; a later Off cannot overtake its write |
 
@@ -54,6 +54,7 @@ no proxy and no automatic request retries. Host shutdown must retain the owner
 future through a stalled write. A poison cannot be cleared by configure, a later
 GET or a speculative Off: those do not prove an earlier request cannot apply late.
 Host/device recovery is required; owner shutdown returns an error, not OwnerStopped.
+Snapshots and operation failures retain this category without exposing local error sources.
 
 ## Guarantee boundary
 

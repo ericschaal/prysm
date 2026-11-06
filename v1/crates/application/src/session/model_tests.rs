@@ -104,9 +104,10 @@ fn blocked_cleanup_has_no_action_until_an_explicit_retry() {
         Err(ControlError::CleanupPending(_))
     ));
     assert_eq!(model.next_action(), None);
-    model.fail(Failure {
-        message: "late failure snapshot".into(),
-    });
+    model.fail(Failure::new(
+        prysm_contract::FailureKind::CleanupPending,
+        "late failure snapshot",
+    ));
     assert_eq!(model.next_action(), None);
     model.request(LightingTarget::Off, true);
     complete(&mut model, Action::CloseAdmission(epoch(0)));

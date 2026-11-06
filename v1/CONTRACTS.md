@@ -8,17 +8,22 @@ commands and observations are not yet defined.
 
 | Owner | Public schema declaration | Frontend import |
 | --- | --- | --- |
-| Shared application contracts | [Shared roots](crates/contract/src/schema.rs) | `@prysm/contracts/application` |
+| Application wire contracts (`prysm-protocol`) | [Shared roots](crates/protocol/src/schema.rs) | `@prysm/contracts/application` |
 | Desktop capture | [Desktop roots](adapters/capture-desktop/src/schema.rs) | `@prysm/contracts/desktop` |
 | Remote capture | [Remote roots](adapters/remote-capture/src/schema.rs) | `@prysm/contracts/remote-capture` |
 | webOS capture | [webOS roots](adapters/capture-webos/src/schema.rs) | `@prysm/contracts/webos` |
 | WLED output | [WLED roots](adapters/output-wled/src/schema.rs) | `@prysm/contracts/wled` |
 | Host composition | [Server/webOS assembly and export manifest](assemblies/src/contracts.rs) | `@prysm/contracts/host-server`, `/host-webos` |
 
-The adapter crates own their actual settings types, not copies for codegen. Their
-runtime/device implementations remain absent. `wire` enables Serde; `schema` adds
-utoipa. Shared serialization helpers adapt the existing core resolution type
-without changing it. Ordinary application traits acquire no serialization bounds.
+`prysm-contract` owns domain ports and models, with no Serde, JSON or OpenAPI
+dependency. `prysm-protocol` owns application wire values, UI projections, shared
+serialization helpers and optional OpenAPI roots. Explicit conversions connect
+those values to domain types; local error sources never enter the wire format.
+
+The adapter crates own their actual settings types, not copies for codegen.
+Their `wire` feature enables Serde; `schema` adds utoipa. Capture adapters reuse
+protocol helpers for core resolution values. Ordinary application traits acquire
+no serialization bounds.
 
 Each library exposes the same plain function, under its optional schema feature:
 

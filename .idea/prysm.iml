@@ -40,6 +40,7 @@
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-wled/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/protocol/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/tools/export-contracts/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

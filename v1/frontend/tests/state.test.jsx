@@ -42,11 +42,12 @@ test('RTK distinguishes submission, acceptance and completion without changing o
     application.commands.checkOperation(request.id),
   );
   assert.equal(application.store.getState().lastCommand.result.kind, 'pending');
-  result = { kind: 'failed', failure: { message: 'Device did not open' } };
+  result = { kind: 'failed', failure: { kind: 'unavailable', message: 'Device did not open' } };
   await application.store.dispatch(
     application.commands.checkOperation(request.id),
   );
   assert.equal(application.store.getState().lastCommand.result.kind, 'failed');
+  assert.equal(application.store.getState().lastCommand.result.failure.kind, 'unavailable');
   assert(!fixture.calls.includes('target:off'));
 });
 

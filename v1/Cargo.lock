@@ -678,6 +678,7 @@ dependencies = [
  "prysm-flow",
  "prysm-output-wled",
  "prysm-processor",
+ "prysm-protocol",
  "prysm-remote-capture",
  "prysm-testkit",
  "prysm-web-portal",
@@ -691,8 +692,8 @@ dependencies = [
 name = "prysm-capture-desktop"
 version = "1.0.0-alpha.0"
 dependencies = [
- "prysm-contract",
  "prysm-core",
+ "prysm-protocol",
  "serde",
  "utoipa",
 ]
@@ -701,8 +702,8 @@ dependencies = [
 name = "prysm-capture-webos"
 version = "1.0.0-alpha.0"
 dependencies = [
- "prysm-contract",
  "prysm-core",
+ "prysm-protocol",
  "serde",
  "utoipa",
 ]
@@ -713,10 +714,7 @@ version = "1.0.0-alpha.0"
 dependencies = [
  "futures",
  "prysm-core",
- "serde",
- "serde_json",
  "thiserror 2.0.21",
- "utoipa",
 ]
 
 [[package]]
@@ -732,6 +730,7 @@ version = "1.0.0-alpha.0"
 dependencies = [
  "prysm-assemblies",
  "prysm-core",
+ "prysm-protocol",
  "serde_json",
 ]
 
@@ -784,6 +783,17 @@ dependencies = [
  "futures",
  "prysm-core",
  "tracing",
+]
+
+[[package]]
+name = "prysm-protocol"
+version = "1.0.0-alpha.0"
+dependencies = [
+ "prysm-contract",
+ "prysm-core",
+ "serde",
+ "serde_json",
+ "utoipa",
 ]
 
 [[package]]

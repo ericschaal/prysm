@@ -59,6 +59,7 @@ of the same capture interface.
 | `prysm-core` | Frames, colors, geometry and numerical processing values | Tokio, HTTP, webOS, persistence |
 | `prysm-processor` | Stateful, synchronous frame processing and configuration | Capture lifetime, output devices, portal |
 | `prysm-contract` | Domain ports, validated settings, commands, outcomes and observation contracts | Concrete adapters, Tokio channels, HTTP status codes, OpenAPI |
+| `prysm-protocol` | Application wire values, UI projections, serialization helpers and optional OpenAPI roots | Domain workflows, concrete devices |
 | `prysm-flow` | Connect frame input to processor and color output; processing execution, barriers, preview tap | User intent, WLED, native capture, persistence |
 | `prysm-application` | Coordinator; settings, calibration and lighting-session workflows | HTTP routing, native device APIs, WLED protocol fields |
 | `prysm-web-portal` | Complete UI, HTTP API, validation at the HTTP boundary, access policy, on-demand preview encoding | Concrete coordinator, capture or output implementation |
@@ -79,8 +80,11 @@ flowchart TD
     Host --> Flow[prysm-flow]
     Host --> WebPortal[prysm-web-portal]
     Host --> Adapters[Capture, output and storage adapters]
+    Host --> Protocol[prysm-protocol]
+    Protocol --> Ports[prysm-contract]
     App --> Ports[prysm-contract]
     WebPortal --> Ports
+    WebPortal -.->|wire boundary when implemented| Protocol
     Adapters --> Ports
     Flow --> Ports
     Flow --> Processor[prysm-processor]

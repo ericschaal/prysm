@@ -1,9 +1,9 @@
 //! capture-desktop contract skeleton; device behavior remains deferred.
-#[cfg(feature = "schema")]
-use prysm_contract::schema::resolution as resolution_schema;
-#[cfg(feature = "wire")]
-use prysm_contract::wire::resolution as resolution_wire;
 use prysm_core::CaptureResolution;
+#[cfg(feature = "schema")]
+use prysm_protocol::schema::resolution as resolution_schema;
+#[cfg(feature = "wire")]
+use prysm_protocol::wire::resolution as resolution_wire;
 use std::{num::NonZeroU32, path::PathBuf};
 
 /// These choices belong to the desktop adapter, never the shared application.

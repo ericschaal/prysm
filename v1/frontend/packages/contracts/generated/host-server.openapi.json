@@ -317,16 +317,34 @@
         "type": "object"
       },
       "Failure": {
-        "description": "Displayable failure information for snapshots, separate from local error chains.",
+        "description": "Local source errors and their implementation types never enter the wire format.",
         "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/FailureKind"
+          },
           "message": {
             "type": "string"
           }
         },
         "required": [
+          "kind",
           "message"
         ],
         "type": "object"
+      },
+      "FailureKind": {
+        "enum": [
+          "unavailable",
+          "invalid",
+          "conflict",
+          "outcome_unknown",
+          "cleanup_pending",
+          "unknown_operation",
+          "adapter",
+          "recovery_required",
+          "interrupted"
+        ],
+        "type": "string"
       },
       "InstanceId": {
         "pattern": "^[1-9][0-9]*$",

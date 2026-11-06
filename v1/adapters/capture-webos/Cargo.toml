@@ -6,11 +6,11 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-wire = ["dep:serde", "dep:prysm-contract", "prysm-contract/wire"]
-schema = ["wire", "dep:utoipa", "prysm-contract/schema"]
+wire = ["dep:serde", "dep:prysm-protocol"]
+schema = ["wire", "dep:utoipa", "prysm-protocol/schema"]
 
 [dependencies]
-prysm-contract = { workspace = true, optional = true }
+prysm-protocol = { workspace = true, optional = true }
 prysm-core.workspace = true
 serde = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }

@@ -104,11 +104,10 @@ pub(super) fn run<O: ColorSink>(
                 let revision_changed = snapshot.state.applied_revision != Some(revision);
                 snapshot.state.applied_revision = Some(revision);
                 if let Err(error) = colors.offer(frame) {
-                    snapshot.state.failure = Some(Failure {
-                        message: error.to_string(),
-                    });
+                    let failure = Failure::from(error);
+                    snapshot.state.failure = Some(failure.clone());
                     publish(&mut snapshot, &updates);
-                    return Err(error);
+                    return Err(failure.into());
                 }
                 if revision_changed {
                     publish(&mut snapshot, &updates);

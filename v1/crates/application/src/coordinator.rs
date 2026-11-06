@@ -9,7 +9,7 @@ use crate::{
 };
 use futures::StreamExt;
 use prysm_contract::{
-    ControlError, Failure, OwnerStopped,
+    ControlError, Failure, FailureKind, OwnerStopped,
     application::{
         Accepted, ApplicationCommand, ApplicationSnapshot, LightingTarget, Request, Settings,
     },
@@ -33,7 +33,7 @@ struct Coordinator<C: CaptureControl, P, O: OutputControl> {
     operations: Operations,
     publication: Publisher<ApplicationSnapshot<AppSettings<C, O>>>,
     shutting_down: bool,
-    fatal: Option<String>,
+    fatal: Option<Failure>,
 }
 
 pub(super) async fn run<C, P, O, R, Policy>(
@@ -77,6 +77,7 @@ where
             profiles: vec![],
             active_profile: None,
         });
+        settings.validate()?;
         let (observed, updates) = observations::connect(
             capture.clone(),
             processing.clone(),
@@ -110,9 +111,7 @@ where
     loop {
         if owner.lifecycle.is_idle() && (owner.shutting_down || owner.fatal.is_some()) {
             return match owner.fatal {
-                Some(message) => Err(ControlError::Adapter(Box::new(std::io::Error::other(
-                    message,
-                )))),
+                Some(failure) => Err(failure.into()),
                 None => Ok(OwnerStopped),
             };
         }
@@ -173,10 +172,14 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P
         &mut self,
         request: Request<ApplicationCommand<AppSettings<C, O>>>,
     ) -> Result<Accepted, ControlError> {
-        let ApplicationCommand::SetTarget(target) = request.command else {
-            return Err(ControlError::Unavailable(
-                "settings replacement is not implemented",
-            ));
+        let target = match request.command {
+            ApplicationCommand::SetTarget(target) => target,
+            ApplicationCommand::ReplaceSettings { settings, .. } => {
+                settings.validate()?;
+                return Err(ControlError::Unavailable(
+                    "settings replacement is not implemented",
+                ));
+            }
         };
         if self.operations.recognizes(request.id, target)? {
             return Ok(Accepted {
@@ -202,9 +205,10 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P
     fn shutdown(&mut self) {
         self.shutting_down = true;
         self.desired = LightingTarget::Off;
-        self.finish_operation(Some(Failure {
-            message: "interrupted by shutdown".into(),
-        }));
+        self.finish_operation(Some(Failure::new(
+            FailureKind::Interrupted,
+            "interrupted by shutdown",
+        )));
         self.lifecycle.shutdown();
         self.publish();
     }
@@ -244,8 +248,10 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Coordinator<C, P
             }
             ComponentUpdate::Lost(component, error) => {
                 let message = format!("{component}: {error}");
-                self.fatal = Some(message.clone());
-                self.fault(Failure { message });
+                let mut failure = Failure::from(error);
+                failure.message = message;
+                self.fatal = Some(failure.clone());
+                self.fault(failure);
             }
         }
         self.publish();
