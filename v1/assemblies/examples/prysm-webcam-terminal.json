@@ -1,0 +1,22 @@
+{
+  "capture": {
+    "source": "device",
+    "path": "6C707041-05AC-0011-0008-000000000001",
+    "resolution": [
+      1280,
+      720
+    ],
+    "rate": 30
+  },
+  "output": {
+    "adapter": "terminal",
+    "settings": {
+      "leds": [
+        51,
+        31,
+        31,
+        49
+      ]
+    }
+  }
+}

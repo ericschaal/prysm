@@ -18,16 +18,17 @@ const TEXT: Color = Color::Rgb(225, 231, 239);
 const MUTED: Color = Color::Rgb(150, 164, 183);
 const BORDER: Color = Color::Rgb(64, 80, 101);
 const ACCENT: Color = Color::Rgb(102, 213, 219);
+// Terminal cells are typically twice as tall as they are wide.
+const SIDE_THICKNESS: u16 = 2;
 
-pub(super) fn render(frame: &mut Frame<'_>, view: &View) {
+pub(super) fn render(frame: &mut Frame<'_>, view: &View) -> Option<Rect> {
     frame.render_widget(
         Block::default().style(Style::default().bg(BACKGROUND).fg(TEXT)),
         frame.area(),
     );
     // Below this size, prioritize current host state and the newest diagnostic.
     if frame.area().width < 72 || frame.area().height < 22 {
-        compact(frame, view);
-        return;
+        return compact(frame, view);
     }
     let [header, host, content, events, footer] = Layout::vertical([
         Constraint::Length(2),
@@ -47,7 +48,7 @@ pub(super) fn render(frame: &mut Frame<'_>, view: &View) {
     let [preview, status] = Layout::horizontal([Constraint::Min(24), Constraint::Length(32)])
         .spacing(1)
         .areas(content);
-    preview_panel(frame, view, preview);
+    let image_area = preview_panel(frame, view, preview);
     frame.render_widget(
         Paragraph::new(vec![
             section("LAST APPLICATION SNAPSHOT"),
@@ -79,9 +80,10 @@ pub(super) fn render(frame: &mut Frame<'_>, view: &View) {
         events,
     );
     frame.render_widget(footer_line(), footer);
+    image_area
 }
 
-fn compact(frame: &mut Frame<'_>, view: &View) {
+fn compact(frame: &mut Frame<'_>, view: &View) -> Option<Rect> {
     let [header, host, preview, application, event, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(2),
@@ -96,9 +98,11 @@ fn compact(frame: &mut Frame<'_>, view: &View) {
         Paragraph::new(host_line(view)).wrap(Wrap { trim: true }),
         host,
     );
-    if preview.height >= 5 && preview.width >= 12 {
-        preview_panel(frame, view, preview);
-    }
+    let image_area = if preview.height >= 5 && preview.width >= 12 {
+        preview_panel(frame, view, preview)
+    } else {
+        None
+    };
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(format!(
@@ -113,6 +117,7 @@ fn compact(frame: &mut Frame<'_>, view: &View) {
         frame.render_widget(event_line(message), event);
     }
     frame.render_widget(footer_line(), footer);
+    image_area
 }
 
 fn header_line(view: &View) -> Line<'_> {
@@ -192,7 +197,7 @@ fn event_line(message: &Diagnostic) -> Line<'_> {
     ])
 }
 
-fn preview_panel(frame: &mut Frame<'_>, view: &View, area: Rect) {
+fn preview_panel(frame: &mut Frame<'_>, view: &View, area: Rect) -> Option<Rect> {
     let title = view.settings.as_ref().map_or_else(
         || " LED output · unconfigured ".to_owned(),
         |settings| format!(" LED output · {} LEDs ", settings.leds.iter().sum::<u32>()),
@@ -201,12 +206,22 @@ fn preview_panel(frame: &mut Frame<'_>, view: &View, area: Rect) {
     let inside = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Edges(view), inside);
+    if inside.width > 2 * SIDE_THICKNESS && inside.height >= 3 {
+        Some(Rect::new(
+            inside.x + SIDE_THICKNESS,
+            inside.y + 1,
+            inside.width - 2 * SIDE_THICKNESS,
+            inside.height - 2,
+        ))
+    } else {
+        None
+    }
 }
 
 struct Edges<'a>(&'a View);
 impl Widget for Edges<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        if area.width < 4 || area.height < 3 {
+        if area.width <= 2 * SIDE_THICKNESS || area.height < 3 {
             return;
         }
         let counts = self.0.settings.as_ref().map_or([0; 4], |s| s.leds);
@@ -229,24 +244,34 @@ impl Widget for Edges<'_> {
             );
         }
         for i in 0..area.height - 2 {
-            paint(
-                buffer,
-                (area.x, area.y + 1 + i),
-                &self.0.colors.left,
-                counts[3],
-                i,
-                area.height - 2,
-            );
-            paint(
-                buffer,
-                (area.right() - 1, area.y + 1 + i),
-                &self.0.colors.right,
-                counts[1],
-                i,
-                area.height - 2,
-            );
+            for offset in 0..SIDE_THICKNESS {
+                paint(
+                    buffer,
+                    (area.x + offset, area.y + 1 + i),
+                    &self.0.colors.left,
+                    counts[3],
+                    i,
+                    area.height - 2,
+                );
+                paint(
+                    buffer,
+                    (area.right() - 1 - offset, area.y + 1 + i),
+                    &self.0.colors.right,
+                    counts[1],
+                    i,
+                    area.height - 2,
+                );
+            }
         }
-        let center = Rect::new(area.x + 2, area.y + 1, area.width - 4, area.height - 2);
+        if !matches!(self.0.preview, crate::preview::Preview::Disabled) {
+            return;
+        }
+        let center = Rect::new(
+            area.x + SIDE_THICKNESS,
+            area.y + 1,
+            area.width - 2 * SIDE_THICKNESS,
+            area.height - 2,
+        );
         let mut lines = vec![
             section(format!("TOP {}  →", counts[0])),
             Line::styled(
@@ -346,6 +371,9 @@ mod tests {
             );
         }
         assert_eq!(buffer[(0, 2)].bg, Color::Rgb(0, 0, 255));
+        assert_eq!(buffer[(1, 2)].bg, Color::Rgb(0, 0, 255));
+        assert_eq!(buffer[(6, 2)].bg, buffer[(7, 2)].bg);
+        assert_eq!(buffer[(2, 2)].bg, Color::Reset);
     }
 
     #[test]
@@ -365,7 +393,11 @@ mod tests {
             });
         }
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &view)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &view);
+            })
+            .unwrap();
         let full = contents(terminal.backend().buffer());
         assert!(full.contains("cleanup unconfirmed"));
         assert!(full.contains("LAST APPLICATION SNAPSHOT"));
@@ -382,7 +414,11 @@ mod tests {
         ] {
             terminal.backend_mut().resize(width, height);
             terminal.autoresize().unwrap();
-            terminal.draw(|frame| render(frame, &view)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(frame, &view);
+                })
+                .unwrap();
             if width >= 40 && height >= 12 {
                 let text = contents(terminal.backend().buffer());
                 assert!(text.contains("cleanup unconfirmed"), "{width}x{height}");
@@ -402,7 +438,11 @@ mod tests {
         });
         view.info.messages.push_back(Diagnostic { severity: Severity::Error, text: "Operation 1: could not apply output configuration because required output capability is unavailable".into() });
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &view)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, &view);
+            })
+            .unwrap();
         let text = contents(terminal.backend().buffer());
         assert!(text.contains("capability is unavailable"));
         assert!(text.find("capability is unavailable") < text.find("older event"));
@@ -469,7 +509,11 @@ mod tests {
         }
         for (width, height) in [(72, 22), (80, 24), (120, 32)] {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| render(frame, &view)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(frame, &view);
+                })
+                .unwrap();
             let buffer = terminal.backend().buffer();
             let text = contents(buffer);
             assert!(text.contains("Frame 248"), "{width}x{height}");

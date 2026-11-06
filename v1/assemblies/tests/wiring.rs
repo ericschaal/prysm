@@ -153,6 +153,9 @@ async fn unavailable_observation_prevents_application_startup() {
             .await,
         Err(ControlError::Unavailable(_))
     ));
+    let mut preview = flow.preview.subscribe().await.unwrap();
+    drop(flow.owner);
+    assert!(within(preview.next()).await.is_none());
     assert!(matches!(
         flow.preview.subscribe().await,
         Err(ControlError::Unavailable(_))

@@ -2,7 +2,9 @@
 
 Implemented by the headless assembly. The first host
 composes video device capture, the passive processing flow, WLED or terminal output and the
-application. HTTP, preview serving, remote/TV capture and automatic restart are
+application. Terminal output optionally consumes the flow's diagnostic preview lease;
+preview failure is contained by that adapter and does not terminate lighting.
+HTTP, browser preview serving, remote/TV capture and automatic restart are
 outside this step. See the [architecture plan](../../docs/plans/prysm-v1-architecture.md)
 and [application transitions](../crates/application/TRANSITIONS.md).
 

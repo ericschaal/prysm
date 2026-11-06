@@ -2,6 +2,7 @@
 use crate::{
     CAPACITY,
     mailbox::{Command, Mailbox},
+    preview::Publisher,
 };
 use futures::StreamExt;
 use prysm_contract::{
@@ -9,8 +10,10 @@ use prysm_contract::{
     identity::InstanceId,
     observation::{Cursor, Observation, Update, Versioned},
     output::{ColorFrame, ColorSink},
+    preview::PreviewFrame,
     processing::{Configured, ProcessingState, Quiescent},
 };
+use prysm_core::ProcessedSnapshot;
 use prysm_processor::PrysmProcessor;
 use tokio::sync::{broadcast, mpsc};
 
@@ -20,6 +23,7 @@ pub(super) fn run<O: ColorSink>(
     mut commands: mpsc::Receiver<Command>,
     mailbox: &Mailbox,
     instance: InstanceId,
+    preview: Publisher,
 ) -> Result<(), ControlError> {
     mailbox.register_worker();
     let mut snapshot = Versioned {
@@ -96,11 +100,21 @@ pub(super) fn run<O: ColorSink>(
                     .state
                     .configured_revision
                     .expect("configured worker");
+                let source = preview.retain(&frame.frame);
                 let frame = ColorFrame {
                     stamp: frame.stamp,
                     revision,
                     colors: processor.process_frame(frame.frame),
                 };
+                let paired = source.map(|source| PreviewFrame {
+                    stamp: frame.stamp,
+                    revision,
+                    snapshot: ProcessedSnapshot {
+                        frame: source,
+                        viewport: processor.viewport(),
+                        colors: frame.colors.clone(),
+                    },
+                });
                 let revision_changed = snapshot.state.applied_revision != Some(revision);
                 snapshot.state.applied_revision = Some(revision);
                 if let Err(error) = colors.offer(frame) {
@@ -108,6 +122,9 @@ pub(super) fn run<O: ColorSink>(
                     snapshot.state.failure = Some(failure.clone());
                     publish(&mut snapshot, &updates);
                     return Err(failure.into());
+                }
+                if let Some(paired) = paired {
+                    preview.publish(paired);
                 }
                 if revision_changed {
                     publish(&mut snapshot, &updates);

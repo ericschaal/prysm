@@ -103,6 +103,7 @@ pub async fn run_terminal(
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
+    let output_owner = output.owner.with_preview(&flow.preview).await;
     let application = Application::new(
         capture.control,
         flow.control,
@@ -112,7 +113,7 @@ pub async fn run_terminal(
     );
     let diagnostics = output.diagnostics;
     let owners = owners::Owners {
-        output: owners::Task::spawn(|stop| output.owner.run(stop)),
+        output: owners::Task::spawn(|stop| output_owner.run(stop)),
         capture: owners::Task::spawn(|stop| capture.owner.run(stop)),
         flow: owners::Task::spawn(|stop| flow.owner.run(instance, stop)),
         application: owners::Task::spawn(|stop| application.owner.run(instance, stop)),

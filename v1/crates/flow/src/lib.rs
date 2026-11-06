@@ -1,15 +1,16 @@
 //! Passive processing: one owned worker, one pending frame, and ordered control replies.
 mod mailbox;
+mod preview;
 mod worker;
 
 use mailbox::{Command, Mailbox};
+pub use preview::PreviewHandle;
 use prysm_contract::{
     ControlError, OwnerStopped,
     capture::FrameSource,
     identity::{InstanceId, SessionId},
     observation::Observation,
     output::ColorSink,
-    preview::{PreviewLease, PreviewSource},
     processing::{Configured, ProcessingControl, ProcessingState, ProcessingUpdate, Quiescent},
 };
 use prysm_processor::PrysmProcessor;
@@ -43,6 +44,7 @@ pub struct FlowOwner<F, O> {
     wiring: FlowWiring<F, O>,
     commands: mpsc::Receiver<Command>,
     mailbox: Arc<Mailbox>,
+    preview: preview::Publisher,
 }
 
 impl<F: FrameSource, O: ColorSink> ProcessingFlow<F, O> {
@@ -54,6 +56,7 @@ impl<F: FrameSource, O: ColorSink> ProcessingFlow<F, O> {
     ) -> Self {
         let (mailbox, commands) = Mailbox::new();
         let mailbox = Arc::new(mailbox);
+        let (publisher, preview) = preview::Publisher::new();
         Self {
             owner: FlowOwner {
                 wiring: FlowWiring {
@@ -64,9 +67,10 @@ impl<F: FrameSource, O: ColorSink> ProcessingFlow<F, O> {
                 },
                 commands,
                 mailbox: mailbox.clone(),
+                preview: publisher,
             },
             control: ProcessingHandle { mailbox },
-            preview: PreviewHandle(()),
+            preview,
         }
     }
 }
@@ -94,8 +98,14 @@ impl<F: FrameSource, O: ColorSink> FlowOwner<F, O> {
             ProcessingExecution::DedicatedThread => std::thread::Builder::new()
                 .name("prysm-processing".into())
                 .spawn(move || {
-                    let result =
-                        worker::run(processor, colors, self.commands, &worker_mailbox, instance);
+                    let result = worker::run(
+                        processor,
+                        colors,
+                        self.commands,
+                        &worker_mailbox,
+                        instance,
+                        self.preview,
+                    );
                     // A panic drops this sender too, so the dispatcher still joins.
                     let _ = done.send(());
                     result
@@ -193,17 +203,6 @@ impl ProcessingControl for ProcessingHandle {
     }
     async fn observe(&self) -> Result<Observation<ProcessingState>, ControlError> {
         self.request(Command::Observe).await
-    }
-}
-
-#[derive(Clone)]
-pub struct PreviewHandle(());
-
-impl PreviewSource for PreviewHandle {
-    async fn subscribe(&self) -> Result<PreviewLease, ControlError> {
-        Err(ControlError::Unavailable(
-            "skeleton: preview tap is not implemented",
-        ))
     }
 }
 

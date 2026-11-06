@@ -136,14 +136,14 @@ assembly examples/tests, never a fallback adapter inside a production library.
 | Typed assemblies and coordinated application shutdown | Host supervision, deadlines and escalation |
 | Passive flow, bounded frame handoff, configuration acknowledgments and session barriers | TV capture cleanup |
 | Typed settings loaded through the repository port, frontend compositions and asset boundary | Settings replacement/saving, concrete repositories and complete frontend panels |
-| Application/session sequencing, operation registry and component observations | Preview tap, JPEG work and client serving |
+| Application/session sequencing, operation registry and component observations; demand-driven preview tap and terminal video | Browser preview encoding and client serving |
 | Video device ownership, readiness, cleanup and availability epochs; WLED mode writes, DDP delivery and refresh | TV capture, file playback and remote transport adapters |
 | Fake source/sink connected through the real flow owner | Calibration workflow and credential generation |
 
 Constructors create inert wiring. The application and flow have working bounded
 control mailboxes, driven by host-owned `run(instance, shutdown)` futures. WLED and video device capture
 receives the instance at construction and exposes `owner.run(shutdown)`. Portal
-execution, calibration, settings replacement, preview and remaining capture shells remain
+execution, calibration, settings replacement and remaining capture shells remain
 explicitly unavailable. No placeholder claims device cleanup or delivery.
 
 `prysm-testkit` contains named fake adapters that record calls and frames; it
@@ -201,7 +201,10 @@ request shutdown and await completion to keep their executor responsive.
 
 The flow barrier accounts for processing and synchronous `ColorSink::offer` calls,
 not queued device writes. Output admission/finish remain the output adapter's job.
-Preview still returns explicit unavailability and retains no preview snapshots.
+The [preview tap](crates/flow/README.md) publishes one latest coherent source/crop/colors
+snapshot while leases exist. Subscribing never starts capture. The last lease releases
+tap retention; flow closure ends subscriptions even while handles survive. Terminal
+preview conversion and encoding stay in the output adapter.
 
 ## Application lifecycle
 
@@ -382,6 +385,8 @@ lighting through the application after initialization. Ctrl-C or SIGTERM request
 coordinated Off and joins every owner. The binary needs no frontend build or HTTP
 listener. WLED mode prints application status and operation results to stderr;
 terminal mode routes them through the screen owner, with stderr used after it closes.
+Terminal mode also subscribes to the flow preview and displays cropped source imagery
+inside the admitted LED perimeter. See [terminal video behavior](adapters/output-terminal/README.md#live-video-preview).
 
 The [assembly](assemblies/src/server.rs) constructs the graph. The private
 [host loop](assemblies/src/server/host.rs) polls owners and application entry;
@@ -401,6 +406,6 @@ commands, frames and refresh immediately while an existing write remains owned.
 Qualify video device capture cleanup and WLED behavior on physical hardware using
 the supervised headless host. File/TV/remote capture,
 typed settings replacement/persistence and calibration remain separate milestones.
-Preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
+Browser preview and HTTP/Luna serving remain deferred. Integrate packaging and the old
 workspace only after those libraries are usable. No backward compatibility or
 data migration is planned.

@@ -1,8 +1,10 @@
 //! Terminal output through the same control/color ports as a physical output.
 mod diagnostics;
 mod mailbox;
+mod preview;
 mod screen;
 mod ui;
+mod video;
 mod worker;
 
 pub use diagnostics::{HostDiagnostic, TerminalDiagnostics};
@@ -15,6 +17,7 @@ use prysm_contract::{
         ColorFrame, ColorSink, IdleOutputMode, OfferResult, OutputApplied, OutputCapabilities,
         OutputControl, OutputState,
     },
+    preview::{PreviewLease, PreviewSource},
 };
 use prysm_core::EdgeColors;
 use std::{future::Future, sync::Arc};
@@ -65,6 +68,7 @@ impl TerminalOutput {
         Self {
             owner: TerminalOwner {
                 commands: receiver,
+                preview: None,
                 mailbox: mailbox.clone(),
             },
             control: TerminalControl {
@@ -78,10 +82,24 @@ impl TerminalOutput {
 }
 
 pub struct TerminalOwner {
+    preview: Option<PreviewLease>,
     commands: mpsc::Receiver<Command>,
     mailbox: Arc<Mailbox>,
 }
 impl TerminalOwner {
+    /// Subscribe to optional diagnostic imagery without starting capture.
+    /// A failed subscription disables preview only; lighting remains available.
+    pub async fn with_preview(mut self, source: &impl PreviewSource) -> Self {
+        match source.subscribe().await {
+            Ok(lease) => {
+                self.preview = Some(lease);
+                self.mailbox.preview_waiting();
+            }
+            Err(error) => self.mailbox.disable_preview(error.to_string()),
+        }
+        self
+    }
+
     /// Retain until completion. One joined thread owns screen writes/restoration;
     /// terminal I/O never runs on the host executor. No raw mode or input reader.
     pub async fn run(

@@ -5,6 +5,7 @@ use prysm_contract::{
     identity::{FrameStamp, SettingsRevision, StreamEpoch},
     observation::Update,
     output::{ColorFrame, OfferResult},
+    preview::PreviewSource,
 };
 use prysm_core::{BrightnessPercent, Config, Frame, PixelFormat, SmoothingSeconds};
 use std::{
@@ -124,6 +125,7 @@ struct Running {
     reads: watch::Receiver<usize>,
     cancelled: watch::Receiver<usize>,
     control: ProcessingHandle,
+    preview: PreviewHandle,
     shutdown: oneshot::Sender<()>,
     task: JoinHandle<Result<OwnerStopped, ControlError>>,
 }
@@ -154,6 +156,7 @@ impl Running {
             reads: read_count,
             cancelled: cancellation_count,
             control: flow.control,
+            preview: flow.preview,
             shutdown,
             task,
         }
@@ -477,6 +480,7 @@ async fn source_closure_and_failure_end_the_owner_without_claiming_shutdown_succ
     for fail in [false, true] {
         let (sink, _, dropped) = sink(None);
         let flow = Running::start(sink).await;
+        let mut preview = flow.preview.subscribe().await.unwrap();
         if fail {
             flow.frames
                 .send(Err(ControlError::Unavailable("source failed")))
@@ -492,6 +496,8 @@ async fn source_closure_and_failure_end_the_owner_without_claiming_shutdown_succ
             "capture frame owner closed"
         }));
         assert!(dropped.load(Ordering::SeqCst));
+        assert!(within(preview.next()).await.is_none());
+        assert!(flow.preview.subscribe().await.is_err());
     }
 }
 
@@ -509,10 +515,13 @@ impl ColorSink for FaultSink {
 async fn worker_failure_and_panic_are_joined_and_reported() {
     for panic in [false, true] {
         let flow = Running::start(FaultSink { panic }).await;
+        let mut preview = flow.preview.subscribe().await.unwrap();
         flow.configure(1, config()).await;
         let mut observation = within(flow.control.observe()).await.unwrap();
         flow.frames.send(Ok(frame(1, 1, 1, 255))).await.unwrap();
         let error = within(flow.task).await.unwrap().unwrap_err();
+        assert!(within(preview.next()).await.is_none());
+        assert!(flow.preview.subscribe().await.is_err());
         assert!(error.to_string().contains(if panic {
             "worker fault"
         } else {
@@ -546,15 +555,21 @@ async fn worker_failure_and_panic_are_joined_and_reported() {
 async fn cancelling_the_owner_still_releases_the_worker() {
     let (sink, _, dropped) = sink(None);
     let flow = Running::start(sink).await;
+    let mut preview = flow.preview.subscribe().await.unwrap();
     flow.configure(1, config()).await;
     flow.task.abort();
     assert!(within(flow.task).await.unwrap_err().is_cancelled());
     assert!(dropped.load(Ordering::SeqCst));
+    assert!(within(preview.next()).await.is_none());
+    assert!(flow.preview.subscribe().await.is_err());
     assert!(matches!(
         within(flow.control.observe()).await,
         Err(ControlError::Unavailable(_))
     ));
 }
+
+#[path = "tests/preview.rs"]
+mod preview;
 
 #[tokio::test]
 async fn bounded_commands_remain_owned_after_the_callers_are_dropped() {

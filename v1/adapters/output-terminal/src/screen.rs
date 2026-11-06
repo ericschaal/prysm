@@ -1,14 +1,24 @@
 //! Ratatui owns layout/diffing; this guard owns terminal acquisition/restoration.
-use crate::{TerminalSettings, diagnostics::Info};
+use crate::{
+    TerminalSettings,
+    diagnostics::Info,
+    preview::{Presentation, Preview},
+};
 use crossterm::{
     cursor::{Hide, Show},
     execute,
     style::{Attribute, ResetColor, SetAttribute},
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use prysm_contract::{ControlError, output::ColorFrame};
 use prysm_core::EdgeColors;
 use ratatui::{Terminal, backend::CrosstermBackend};
+#[cfg(unix)]
+use rustix::termios::{
+    InputModes, LocalModes, OptionalActions, QueueSelector, Termios, tcflush, tcgetattr, tcsetattr,
+};
 use std::io::{self, IsTerminal, Stdout, Write};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,6 +48,7 @@ pub(super) struct View {
     pub admitted: Option<prysm_contract::identity::StreamEpoch>,
     pub mode: Mode,
     pub info: Info,
+    pub preview: Preview,
 }
 impl Default for View {
     fn default() -> Self {
@@ -48,6 +59,7 @@ impl Default for View {
             admitted: None,
             mode: Mode::Idle,
             info: Info::default(),
+            preview: Preview::Disabled,
         }
     }
 }
@@ -55,11 +67,17 @@ impl Default for View {
 pub(super) trait Display: Send + 'static {
     fn draw(&mut self, view: &View) -> io::Result<()>;
     fn restore(&mut self) -> io::Result<()>;
+    fn preview_failure(&mut self) -> Option<String> {
+        None
+    }
 }
 
 pub(super) struct Screen {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     restored: bool,
+    #[cfg(unix)]
+    input_mode: Option<Termios>,
+    preview: Presentation,
 }
 impl Screen {
     pub fn open() -> Result<Self, ControlError> {
@@ -72,8 +90,24 @@ impl Screen {
             terminal: Terminal::new(CrosstermBackend::new(io::stdout()))
                 .map_err(|e| ControlError::Adapter(Box::new(e)))?,
             restored: false,
+            #[cfg(unix)]
+            input_mode: None,
+            preview: Presentation::default(),
         };
         let acquired = (|| -> io::Result<()> {
+            #[cfg(unix)]
+            {
+                let original = tcgetattr(io::stdout())?;
+                let mut quiet = original.clone();
+                // Suppress scroll-key echo without disabling Ctrl-C signal delivery.
+                quiet
+                    .local_modes
+                    .remove(LocalModes::ECHO | LocalModes::ECHONL);
+                // An input-overflow BEL on macOS can terminate an in-flight image OSC.
+                quiet.input_modes.remove(InputModes::IMAXBEL);
+                screen.input_mode = Some(original);
+                tcsetattr(io::stdout(), OptionalActions::Now, &quiet)?;
+            }
             execute!(screen.terminal.backend_mut(), EnterAlternateScreen, Hide)?;
             screen.terminal.clear()
         })();
@@ -120,11 +154,33 @@ impl std::error::Error for RestorationFailed {
 }
 impl Display for Screen {
     fn draw(&mut self, view: &View) -> io::Result<()> {
-        self.terminal.draw(|frame| crate::ui::render(frame, view))?;
+        // This dashboard has no input actions; keep scrolling from filling the input queue.
+        #[cfg(unix)]
+        tcflush(io::stdout(), QueueSelector::IFlush)?;
+        let preview = &mut self.preview;
+        draw_frame(&mut self.terminal, |frame| {
+            let area = crate::ui::render(frame, view);
+            preview.render(frame, area, view);
+        })?;
         Ok(())
     }
+    fn preview_failure(&mut self) -> Option<String> {
+        self.preview.failure()
+    }
     fn restore(&mut self) -> io::Result<()> {
+        self.preview.stop();
         if !self.restored {
+            let resumed = execute!(self.terminal.backend_mut(), EndSynchronizedUpdate);
+            let graphics = if self.preview.uses_kitty() {
+                // Delete only the one image slot owned by this screen.
+                write!(
+                    self.terminal.backend_mut(),
+                    "\x1b_Ga=d,d=I,i={},q=2\x1b\\",
+                    crate::video::KITTY_IMAGE_ID
+                )
+            } else {
+                Ok(())
+            };
             // Attempt both even if restoring the cursor fails.
             let style = execute!(
                 self.terminal.backend_mut(),
@@ -134,11 +190,37 @@ impl Display for Screen {
             let cursor = execute!(self.terminal.backend_mut(), Show);
             let screen = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
             let flush = self.terminal.backend_mut().flush();
-            style.and(cursor).and(screen).and(flush)?;
+            let input = (|| -> io::Result<()> {
+                #[cfg(unix)]
+                if let Some(original) = &self.input_mode {
+                    // Discard unused dashboard input before returning control to the shell.
+                    tcsetattr(io::stdout(), OptionalActions::Flush, original)?;
+                    self.input_mode = None;
+                }
+                Ok(())
+            })();
+            resumed
+                .and(graphics)
+                .and(style)
+                .and(cursor)
+                .and(screen)
+                .and(flush)
+                .and(input)?;
             self.restored = true;
         }
         Ok(())
     }
+}
+
+fn draw_frame<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    render: impl FnOnce(&mut ratatui::Frame<'_>),
+) -> io::Result<()> {
+    execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    let drawn = terminal.draw(render).map(|_| ());
+    // Resume rendering even if drawing fails; restoration also retries this on unwind.
+    let resumed = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
+    drawn.and(resumed)
 }
 impl Drop for Screen {
     fn drop(&mut self) {
@@ -149,6 +231,93 @@ impl Drop for Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_erasure_and_replacement_are_one_synchronized_update() {
+        use ratatui::{TerminalOptions, Viewport, layout::Rect};
+        use ratatui_image::{
+            Image,
+            protocol::{Protocol, iterm2::Iterm2},
+        };
+        let area = Rect::new(0, 0, 10, 5);
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
+        for color in [[255, 0, 0], [0, 255, 0]] {
+            let image = image::RgbImage::from_pixel(80, 80, image::Rgb(color));
+            let protocol = Protocol::ITerm2(Iterm2::new(image.into(), area, false).unwrap());
+            draw_frame(&mut terminal, |frame| {
+                frame.render_widget(Image::new(&protocol), area)
+            })
+            .unwrap();
+        }
+        drop(terminal);
+        let output = String::from_utf8_lossy(&bytes);
+        let mut syncing = false;
+        let mut images = 0;
+        // Model what WezTerm may present between erase and image transmission.
+        for sequence in output.split('\x1b').skip(1) {
+            if sequence.starts_with("[?2026h") {
+                syncing = true;
+            }
+            if sequence.starts_with("[?2026l") {
+                syncing = false;
+            }
+            if sequence.starts_with("[10X") || sequence.starts_with("]1337;File=") {
+                assert!(syncing, "image update exposed an intermediate blank frame");
+            }
+            if sequence.starts_with("]1337;File=") {
+                images += 1;
+            }
+        }
+        assert_eq!(images, 2);
+        assert!(!syncing);
+    }
+
+    #[test]
+    fn failed_draw_still_ends_synchronized_rendering() {
+        use ratatui::{TerminalOptions, Viewport, layout::Rect, widgets::Paragraph};
+        #[derive(Default)]
+        struct Writer {
+            bytes: Vec<u8>,
+            failed: bool,
+        }
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if bytes == b"F" && !self.failed {
+                    self.failed = true;
+                    return Err(io::Error::other("draw failed"));
+                }
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let area = Rect::new(0, 0, 10, 5);
+        let mut writer = Writer::default();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut writer),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )
+        .unwrap();
+        let error = draw_frame(&mut terminal, |frame| {
+            frame.render_widget(Paragraph::new("FAIL"), area)
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "draw failed");
+        drop(terminal);
+        assert!(writer.bytes.starts_with(b"\x1b[?2026h"));
+        assert!(writer.bytes.ends_with(b"\x1b[?2026l"));
+    }
 
     #[test]
     fn failed_acquisition_and_restoration_preserve_recovery_requirement() {

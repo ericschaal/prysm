@@ -154,6 +154,8 @@ struct Paint {
     colors: EdgeColors,
     stamp: Option<FrameStamp>,
     messages: Vec<String>,
+    preview: Option<FrameStamp>,
+    preview_unavailable: bool,
     reply: std::sync::mpsc::SyncSender<io::Result<()>>,
 }
 impl Paint {
@@ -184,6 +186,14 @@ impl Display for GatedDisplay {
                     .iter()
                     .map(|message| message.text.clone())
                     .collect(),
+                preview: match &view.preview {
+                    crate::preview::Preview::Frame(sample) => Some(sample.frame.stamp),
+                    _ => None,
+                },
+                preview_unavailable: matches!(
+                    view.preview,
+                    crate::preview::Preview::Unavailable(_)
+                ),
                 reply,
             })
             .unwrap();
@@ -206,7 +216,9 @@ struct Running {
 }
 impl Running {
     async fn new() -> Self {
-        let terminal = TerminalOutput::new(INSTANCE);
+        Self::start(TerminalOutput::new(INSTANCE)).await
+    }
+    async fn start(terminal: TerminalOutput) -> Self {
         let (paints, receiver) = mpsc::unbounded_channel();
         let (restore, restores) = mpsc::unbounded_channel();
         let task = tokio::spawn(worker::run(
@@ -347,6 +359,138 @@ async fn latest_frames_obey_admission_and_diagnostics_cannot_revive_finished_col
     );
     paint.ok();
     terminal.close().await;
+}
+
+struct PreviewInput {
+    receiver: mpsc::UnboundedReceiver<Result<prysm_contract::preview::PreviewFrame, ControlError>>,
+    dropped: Arc<std::sync::atomic::AtomicBool>,
+}
+impl futures::Stream for PreviewInput {
+    type Item = Result<prysm_contract::preview::PreviewFrame, ControlError>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.receiver.poll_recv(cx)
+    }
+}
+impl Drop for PreviewInput {
+    fn drop(&mut self) {
+        self.dropped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+#[derive(Clone)]
+struct PreviewSourceFixture(Arc<std::sync::Mutex<Option<PreviewInput>>>);
+impl PreviewSource for PreviewSourceFixture {
+    async fn subscribe(&self) -> Result<PreviewLease, ControlError> {
+        Ok(PreviewLease::new(
+            self.0.lock().unwrap().take().unwrap().boxed(),
+        ))
+    }
+}
+fn preview_frame(sequence: u64) -> prysm_contract::preview::PreviewFrame {
+    prysm_contract::preview::PreviewFrame {
+        stamp: frame(1, sequence).stamp,
+        revision: SettingsRevision(4),
+        snapshot: prysm_core::ProcessedSnapshot {
+            frame: prysm_core::Frame::dummy(8, 4).unwrap(),
+            viewport: None,
+            colors: red(),
+        },
+    }
+}
+
+#[tokio::test]
+async fn preview_coalesces_without_relighting_off_and_releases_demand_before_restore() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for fail in [false, true] {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let source = PreviewSourceFixture(Arc::new(std::sync::Mutex::new(Some(PreviewInput {
+            receiver,
+            dropped: dropped.clone(),
+        }))));
+        let mut output = TerminalOutput::new(INSTANCE);
+        output.owner = output.owner.with_preview(&source).await;
+        let mut terminal = Running::start(output).await;
+        terminal.hold(0).await;
+        let control = terminal.control.clone();
+        let finish =
+            tokio::spawn(async move { control.finish(session(), IdleOutputMode::Off).await });
+        terminal.paint("off").await.ok();
+        within(finish).await.unwrap().unwrap();
+        for sequence in 1..=100 {
+            sender.send(Ok(preview_frame(sequence))).unwrap();
+        }
+        let paint = terminal
+            .paint_matching(|paint| paint.preview == Some(preview_frame(100).stamp))
+            .await;
+        assert_eq!(paint.mode, "off");
+        assert_eq!(paint.colors, EdgeColors::default());
+        paint.ok();
+        if fail {
+            sender
+                .send(Err(ControlError::Unavailable("preview failed")))
+                .unwrap();
+            terminal
+                .paint_matching(|paint| paint.preview_unavailable)
+                .await
+                .ok();
+            assert!(dropped.load(Ordering::SeqCst));
+            // Preview failure leaves output controls usable after the sealed session.
+            let control = terminal.control.clone();
+            let configure = tokio::spawn(async move { control.configure(settings()).await });
+            terminal.paint("configured").await.ok();
+            within(configure).await.unwrap().unwrap();
+        }
+        terminal.shutdown.request();
+        let restore = within(async {
+            loop {
+                tokio::select! {
+                    Some(paint) = terminal.paints.recv() => paint.ok(),
+                    restore = terminal.restores.recv() => break restore.unwrap(),
+                }
+            }
+        })
+        .await;
+        within(async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(!terminal.task.is_finished());
+        restore.send(Ok(())).unwrap();
+        within(terminal.task).await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn preview_lease_drops_if_screen_never_starts_or_cannot_open() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for start in [false, true] {
+        let (_sender, receiver) = mpsc::unbounded_channel();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let source = PreviewSourceFixture(Arc::new(std::sync::Mutex::new(Some(PreviewInput {
+            receiver,
+            dropped: dropped.clone(),
+        }))));
+        let output = TerminalOutput::new(INSTANCE);
+        let owner = output.owner.with_preview(&source).await;
+        if start {
+            assert!(
+                worker::run::<GatedDisplay>(owner, std::future::pending(), || Err(
+                    ControlError::Unavailable("no terminal")
+                ))
+                .await
+                .is_err()
+            );
+        } else {
+            drop(owner);
+        }
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 }
 
 #[tokio::test]

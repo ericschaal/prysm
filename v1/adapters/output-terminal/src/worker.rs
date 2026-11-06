@@ -4,6 +4,7 @@ use crate::{
     mailbox::Mailbox,
     screen::{Display, Mode, View, restore_result},
 };
+use futures::StreamExt;
 use prysm_contract::{
     ControlError, OwnerStopped,
     output::{IdleOutputMode, OutputApplied},
@@ -20,11 +21,12 @@ use tokio::sync::oneshot;
 const REDRAW: Duration = Duration::from_millis(100);
 
 pub(super) async fn run<D: Display>(
-    owner: TerminalOwner,
+    mut owner: TerminalOwner,
     shutdown: impl Future<Output = ()> + Send,
     open: impl FnOnce() -> Result<D, ControlError> + Send + 'static,
 ) -> Result<OwnerStopped, ControlError> {
     let mailbox = owner.mailbox.clone();
+    let preview = owner.preview.take();
     let (done, mut finished) = oneshot::channel();
     let join = std::thread::Builder::new()
         .name("prysm-terminal".into())
@@ -37,17 +39,43 @@ pub(super) async fn run<D: Display>(
     let mut worker = Worker {
         join: Some(join),
         mailbox,
+        preview,
     };
-    tokio::select! {
-        _ = shutdown => { worker.mailbox.request_shutdown(); let _ = finished.await; }
-        _ = &mut finished => {}
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => {
+                worker.preview = None;
+                worker.mailbox.request_shutdown();
+                let _ = finished.await;
+                break;
+            }
+            _ = &mut finished => break,
+            _ = worker.mailbox.preview_stopped(), if worker.preview.is_some() => worker.preview = None,
+            item = async { worker.preview.as_mut().expect("preview branch enabled").next().await }, if worker.preview.is_some() => {
+                match item {
+                    Some(Ok(frame)) => {
+                        if !worker.mailbox.offer_preview(frame) { worker.preview = None; }
+                        tokio::task::consume_budget().await;
+                    }
+                    failed => {
+                        worker.preview = None;
+                        let reason = failed.and_then(Result::err).map_or_else(|| "preview source closed".into(), |error| error.to_string());
+                        worker.mailbox.disable_preview(reason);
+                    }
+                }
+            }
+        }
     }
+    worker.preview = None;
     worker.join()
 }
 
 struct Worker {
     join: Option<JoinHandle<Result<OwnerStopped, ControlError>>>,
     mailbox: Arc<Mailbox>,
+    preview: Option<prysm_contract::preview::PreviewLease>,
 }
 impl Worker {
     fn join(&mut self) -> Result<OwnerStopped, ControlError> {
@@ -64,6 +92,7 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        self.preview = None;
         if self.join.is_some() {
             self.mailbox.request_shutdown();
             // Cancellation fallback only; normal shutdown waits asynchronously first.
@@ -141,10 +170,14 @@ fn draw(
     view: &mut View,
 ) -> Result<(), ControlError> {
     view.info = mailbox.info();
+    view.preview = mailbox.preview();
     mailbox.authorize()?;
     display
         .draw(view)
         .map_err(|e| ControlError::Adapter(Box::new(e)))?;
+    if let Some(reason) = display.preview_failure() {
+        mailbox.disable_preview(reason);
+    }
     Ok(())
 }
 
