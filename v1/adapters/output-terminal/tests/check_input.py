@@ -1,6 +1,6 @@
-"""PTY regression: python3 check_input.py <terminal command and arguments>.
+"""PTY regression: python3 check_input.py <prysm-tui binary> <settings.json>.
 
-Run a terminal-output configuration without --start to avoid opening capture hardware.
+Run prysm-tui with a terminal-output configuration without --start to avoid opening capture hardware.
 """
 import fcntl
 import base64
@@ -28,12 +28,13 @@ def check_image_payloads(output):
     assert b"\x07" not in remaining, "unexpected bell outside image payload"
 
 
-def check(echo, stop):
+def check(echo, stop, command=None, interaction=None):
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     process = None
     try:
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 640, 384))
+        original_flags = fcntl.fcntl(slave, fcntl.F_GETFL)
         initial = termios.tcgetattr(slave)
         initial[0] |= termios.IMAXBEL
         initial[3] |= termios.ISIG | termios.ICANON
@@ -49,7 +50,7 @@ def check(echo, stop):
         env = dict(os.environ, TERM_PROGRAM="WezTerm", TERM="xterm-256color")
         env.pop("TMUX", None)
         env.pop("STY", None)
-        process = subprocess.Popen(sys.argv[1:], env=env, stdin=slave, stdout=slave,
+        process = subprocess.Popen(command or sys.argv[1:], env=env, stdin=slave, stdout=slave,
                                    stderr=slave, preexec_fn=own_terminal)
         output = bytearray()
 
@@ -61,6 +62,7 @@ def check(echo, stop):
                         output.extend(os.read(master, 65536))
                     except BlockingIOError:
                         pass
+            return bytes(output)
 
         deadline = time.monotonic() + 10
         while b"\x1b[?1049h" not in output and time.monotonic() < deadline:
@@ -83,6 +85,11 @@ def check(echo, stop):
             read_for(0.02)
         read_for(0.2)
         check_image_payloads(output)
+        if interaction is not None:
+            interaction(master, read_for)
+        # A partial sequence must not block the event reader or owner shutdown.
+        os.write(master, b"\x1b[" if stop == "ctrl-c" else b"\xc3")
+        read_for(0.2)
         if stop == "ctrl-c":
             os.write(master, b"\x03")
         else:
@@ -96,9 +103,10 @@ def check(echo, stop):
         assert b"\x1b[?1049l" in output, "alternate screen not restored"
         # macOS revokes the controlling slave when its session leader exits.
         assert termios.tcgetattr(master) == initial, "input settings not restored"
+        assert fcntl.fcntl(slave, fcntl.F_GETFL) & os.O_NONBLOCK == original_flags & os.O_NONBLOCK, "input blocking mode not restored"
         if stop == "sigterm":
             assert not select.select([slave], [], [], 0)[0], "input leaked back to shell"
-        print(f"PASS: echo={echo}, {stop}, no echo/overflow bell, restored settings and empty input")
+        print(f"PASS: echo={echo}, {stop}, no echo/overflow bell, partial input shutdown, restored settings and empty input")
     finally:
         if process is not None and process.poll() is None:
             process.kill()
@@ -107,7 +115,8 @@ def check(echo, stop):
         os.close(slave)
 
 
-assert len(sys.argv) > 1, __doc__
-for echo in (termios.ECHO | termios.ECHONL, 0):
-    for stop in ("ctrl-c", "sigterm"):
-        check(echo, stop)
+if __name__ == "__main__":
+    assert len(sys.argv) > 1, __doc__
+    for echo in (termios.ECHO | termios.ECHONL, 0):
+        for stop in ("ctrl-c", "sigterm"):
+            check(echo, stop)

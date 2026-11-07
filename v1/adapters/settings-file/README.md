@@ -1,8 +1,9 @@
 # File settings adapter
 
 `prysm-settings-file` implements `SettingsRepository<Settings<C, O>>`. The application
-sees typed values and domain errors. JSON, paths, temporary files, threading and
-shutdown controls stay in this crate. Adapter-owned `C` and `O` need Serde only at
+sees typed values and domain errors. File encoding, paths, temporary files, threading and
+shutdown controls stay in this crate. The full settings document is shared with
+command adapters through `prysm-protocol`. Adapter-owned `C` and `O` need Serde only at
 this composition boundary; no serialization dependency is added to the domain.
 
 ```mermaid
@@ -31,7 +32,7 @@ its reply receiver. Serialization also runs on the owned thread.
 To read the implementation, start with `lib.rs` for the public handles and owner.
 `admission.rs` owns acceptance and shutdown under one lock. `worker.rs` receives a
 request, loads or saves it, retains failures, and replies. `disk.rs` makes the
-rename boundary explicit; `format.rs` owns the private JSON representation.
+rename boundary explicit; `format.rs` encodes/decodes the shared `SettingsDocument` with file-specific errors.
 
 ## Disk format
 
@@ -58,8 +59,8 @@ nonzero JSON integers. Aggregate validation uses the domain's existing validator
 concrete capture/output validation stays with their ports during application load
 and replacement acceptance.
 
-The selected output adapter is host deployment configuration: the headless CLI
-uses WLED by default, or `--terminal`. The settings file's `output` is that adapter's
+The executable selects the output adapter: `prysm-headless` uses WLED, and
+`prysm-tui` uses terminal output. The settings file's `output` is that adapter's
 settings object, without an adapter tag. No migration, revision envelope, external
 edit monitoring or adapter-type switching is implemented.
 

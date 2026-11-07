@@ -128,6 +128,9 @@ fn render_loop(
 ) -> Result<(), ControlError> {
     let mut redraw = Instant::now();
     while !owner.mailbox.stopping() {
+        display
+            .poll_input()
+            .map_err(|error| ControlError::Adapter(Box::new(error)))?;
         if let Ok(command) = owner.commands.try_recv() {
             let result = apply(&command, &owner.mailbox, view)
                 .and_then(|()| draw(&owner.mailbox, display, view));
@@ -159,7 +162,11 @@ fn render_loop(
             }
             redraw = Instant::now() + REDRAW;
         }
-        std::thread::park_timeout(redraw.saturating_duration_since(Instant::now()));
+        // Read input faster than video redraws so scroll bursts cannot overflow the tty.
+        let wait = redraw
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(10));
+        std::thread::park_timeout(wait);
     }
     Ok(())
 }

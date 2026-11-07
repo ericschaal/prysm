@@ -3,4 +3,5 @@ pub mod application;
 pub mod client;
 #[cfg(feature = "schema")]
 pub mod schema;
+pub mod settings;
 pub mod wire;

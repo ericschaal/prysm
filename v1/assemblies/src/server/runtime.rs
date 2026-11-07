@@ -1,16 +1,19 @@
 //! Concrete host wiring; persistence is owned alongside device resources.
 use super::{HostError, HostEvent, host, new_instance, owners};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use prysm_application::{Application, policy::V1Policy};
 use prysm_capture_device::DeviceCapture;
-use prysm_contract::{OwnerStopped, application::LightingTarget};
+use prysm_contract::{
+    OwnerStopped,
+    application::{ApplicationCommand, LightingTarget},
+};
 use prysm_flow::{ProcessingExecution, ProcessingFlow};
-use prysm_output_wled::WledOutput;
 use prysm_processor::PrysmProcessor;
 use std::future::Future;
 
 /// Run one concrete composition. Keep this future alive through shutdown; cancelling
 /// it cannot certify native release. Commands are consumed only after initialization.
+#[cfg(feature = "headless")]
 pub async fn run_headless(
     settings_path: std::path::PathBuf,
     commands: impl Stream<Item = LightingTarget> + Unpin + Send,
@@ -21,7 +24,7 @@ pub async fn run_headless(
     let settings =
         prysm_settings_file::FileSettings::new(settings_path).map_err(HostError::configuration)?;
     let capture = DeviceCapture::new(instance);
-    let output = WledOutput::new(instance);
+    let output = prysm_output_wled::WledOutput::new(instance);
     let flow = ProcessingFlow::connect(
         capture.frames,
         PrysmProcessor::new(&Default::default()),
@@ -47,12 +50,14 @@ pub async fn run_headless(
         application: owners::Task::spawn(|stop| application.owner.run(instance, stop)),
         output_shutdown: output.shutdown.into(),
     };
+    let commands = commands.map(|target| Ok(ApplicationCommand::SetTarget(target)));
     host::run(owners, application.control, commands, shutdown, report).await
 }
 
 /// Run device capture into a terminal screen. Diagnostics are presented by its owner;
 /// events after screen closure go to `fallback`. Retain through shutdown.
-pub async fn run_terminal(
+#[cfg(feature = "tui")]
+pub async fn run_tui(
     settings_path: std::path::PathBuf,
     commands: impl Stream<Item = LightingTarget> + Unpin + Send,
     shutdown: impl Future<Output = ()> + Send,
@@ -69,13 +74,23 @@ pub async fn run_terminal(
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
-    let output_owner = output.owner.with_preview(&flow.preview).await;
+    let (input, receiver) = tokio::sync::mpsc::channel(16);
+    let output_owner = output
+        .owner
+        .with_commands(input)
+        .with_preview(&flow.preview)
+        .await;
     let application = Application::new(
         capture.control,
         flow.control,
         output.control,
         settings.repository,
         V1Policy,
+    );
+    let terminal_commands = prysm_control_terminal::commands(application.control.clone(), receiver);
+    let commands = futures::stream::select(
+        commands.map(|target| Ok(ApplicationCommand::SetTarget(target))),
+        terminal_commands,
     );
     let diagnostics = output.diagnostics;
     let settings_owner = owners::SettingsOwner {

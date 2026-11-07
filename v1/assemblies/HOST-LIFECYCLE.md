@@ -1,8 +1,8 @@
-# Headless host ownership and failure transitions
+# Host ownership and failure transitions
 
-Implemented by the headless assembly. The first host
-composes video device capture, the passive processing flow, WLED or terminal output and the
-application. Terminal output optionally consumes the flow's diagnostic preview lease;
+Shared by the `prysm-headless` and `prysm-tui` assemblies. Both compose video
+device capture, the passive processing flow and the application. `prysm-headless`
+uses WLED; `prysm-tui` uses terminal output and interactive commands. Terminal output optionally consumes the flow's diagnostic preview lease;
 preview failure is contained by that adapter and does not terminate lighting.
 HTTP, browser preview serving, remote/TV capture and automatic restart are
 outside this step. See the [architecture plan](../../docs/plans/prysm-v1-architecture.md)
@@ -12,7 +12,7 @@ and [application transitions](../crates/application/TRANSITIONS.md).
 
 ```mermaid
 flowchart TB
-    Host[Headless host]
+    Host[Shared host lifecycle]
     Host -->|retains task and shutdown control| App[Application owner]
     Host -->|fences admission and joins| Store[File settings owner]
     App -->|SettingsRepository| Store
@@ -20,7 +20,9 @@ flowchart TB
     Host -->|retains task and shutdown control| Capture[Device capture owner]
     Host -->|retains task and shutdown control| Flow[Processing flow owner]
     Host -->|retains task and terminal shutdown control| Output[Selected output owner]
-    Commands[Host command entry] -->|ApplicationControl| App
+    Writer -->|bounded command text| Input[Terminal command adapter]
+    Input -->|typed application commands| Commands[Host command entry]
+    Commands -->|ApplicationControl| App
     App -->|CaptureControl| Capture
     App -->|ProcessingControl| Flow
     App -->|OutputControl| Output
@@ -58,7 +60,7 @@ successful join cannot erase the original failure.
    while still selecting owner exits and process shutdown. It proves settings
    loading and component observation setup completed, not hardware readiness.
 4. Open command entry only after initialization. Initial intent is Off. Any
-   Processed request, including a future explicit launch option, uses the
+   Processed request, including `--start` and terminal `:on`, uses the
    application port. The host does not start capture directly.
 
 Failure after any launch cleans up every launched owner. No shared fail-fast
@@ -217,3 +219,17 @@ The file owner retains the latest operation error even if delivery to the applic
 reply channel succeeded: delivery does not prove observation before cancellation.
 Uncertain commits fence future writes and retire the owner. Normal errors permit
 retry but remain in the final owner result. See the [file adapter guarantees](../adapters/settings-file/README.md).
+
+## Terminal command entry
+
+The screen edits command text and sends it through a bounded channel. The separate
+`prysm-control-terminal` driving adapter interprets `on`, `off`, and `load <path>`.
+It captures the saved revision before reading a bounded candidate JSON document,
+then yields a typed `ReplaceSettings` command. It has no repository or device handle.
+On/Off remain responsive while one candidate file is being prepared.
+
+The host merges terminal commands with launch intent, assigns all operation IDs,
+and reports submission errors/acceptance. Existing application observation reports
+operation completion; admission never waits for save/apply completion. The
+host drops the command stream and closes input when shutdown begins. Dropping a prepared command cannot cancel
+an already accepted application operation. No additional owner task is needed.

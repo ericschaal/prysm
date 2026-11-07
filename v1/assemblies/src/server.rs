@@ -2,23 +2,25 @@
 use prysm_capture_device::DeviceCaptureSettings;
 use prysm_remote_capture::RemoteCaptureSettings;
 
-#[cfg(any(feature = "headless", test))]
+#[cfg(any(feature = "headless", feature = "tui", test))]
 mod host;
-#[cfg(any(feature = "headless", test))]
+#[cfg(any(feature = "headless", feature = "tui", test))]
 mod lifecycle;
-#[cfg(any(feature = "headless", test))]
+#[cfg(any(feature = "headless", feature = "tui", test))]
 mod owners;
-#[cfg(any(feature = "headless", test))]
+#[cfg(any(feature = "headless", feature = "tui", test))]
 pub use host::{HostError, HostEvent};
 pub use prysm_output_terminal::TerminalSettings;
 
 use prysm_contract::application::Settings;
 use prysm_output_wled::WledSettings;
 
-#[cfg(feature = "headless")]
+#[cfg(any(feature = "headless", feature = "tui"))]
 mod runtime;
 #[cfg(feature = "headless")]
-pub use runtime::{run_headless, run_terminal};
+pub use runtime::run_headless;
+#[cfg(feature = "tui")]
+pub use runtime::run_tui;
 
 pub type HeadlessSettings = Settings<DeviceCaptureSettings, WledSettings>;
 
@@ -58,7 +60,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     <Contract as utoipa::OpenApi>::openapi()
 }
 
-#[cfg(feature = "headless")]
+#[cfg(any(feature = "headless", feature = "tui"))]
 fn new_instance() -> prysm_contract::identity::InstanceId {
     use prysm_contract::identity::InstanceId;
     use std::num::NonZeroU64;

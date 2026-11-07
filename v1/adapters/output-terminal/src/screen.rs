@@ -6,6 +6,7 @@ use crate::{
 };
 use crossterm::{
     cursor::{Hide, Show},
+    event::{self, Event},
     execute,
     style::{Attribute, ResetColor, SetAttribute},
     terminal::{
@@ -17,7 +18,8 @@ use prysm_core::EdgeColors;
 use ratatui::{Terminal, backend::CrosstermBackend};
 #[cfg(unix)]
 use rustix::termios::{
-    InputModes, LocalModes, OptionalActions, QueueSelector, Termios, tcflush, tcgetattr, tcsetattr,
+    InputModes, LocalModes, OptionalActions, QueueSelector, SpecialCodeIndex, Termios, tcflush,
+    tcgetattr, tcsetattr,
 };
 use std::io::{self, IsTerminal, Stdout, Write};
 
@@ -67,6 +69,9 @@ impl Default for View {
 pub(super) trait Display: Send + 'static {
     fn draw(&mut self, view: &View) -> io::Result<()>;
     fn restore(&mut self) -> io::Result<()>;
+    fn poll_input(&mut self) -> io::Result<()> {
+        Ok(())
+    }
     fn preview_failure(&mut self) -> Option<String> {
         None
     }
@@ -77,13 +82,21 @@ pub(super) struct Screen {
     restored: bool,
     #[cfg(unix)]
     input_mode: Option<Termios>,
+    #[cfg(unix)]
+    input_flags: Option<rustix::fs::OFlags>,
     preview: Presentation,
+    commands: Option<crate::input::CommandLine>,
 }
 impl Screen {
-    pub fn open() -> Result<Self, ControlError> {
+    pub fn open(input: Option<tokio::sync::mpsc::Sender<String>>) -> Result<Self, ControlError> {
         if !io::stdout().is_terminal() {
             return Err(ControlError::Unavailable(
                 "terminal output requires an interactive stdout",
+            ));
+        }
+        if input.is_some() && !io::stdin().is_terminal() {
+            return Err(ControlError::Unavailable(
+                "terminal commands require an interactive stdin",
             ));
         }
         let mut screen = Self {
@@ -92,7 +105,10 @@ impl Screen {
             restored: false,
             #[cfg(unix)]
             input_mode: None,
+            #[cfg(unix)]
+            input_flags: None,
             preview: Presentation::default(),
+            commands: input.map(crate::input::CommandLine::new),
         };
         let acquired = (|| -> io::Result<()> {
             #[cfg(unix)]
@@ -105,6 +121,11 @@ impl Screen {
                     .remove(LocalModes::ECHO | LocalModes::ECHONL);
                 // An input-overflow BEL on macOS can terminate an in-flight image OSC.
                 quiet.input_modes.remove(InputModes::IMAXBEL);
+                if screen.commands.is_some() {
+                    quiet.local_modes.remove(LocalModes::ICANON);
+                    quiet.special_codes[SpecialCodeIndex::VMIN] = 1;
+                    quiet.special_codes[SpecialCodeIndex::VTIME] = 0;
+                }
                 screen.input_mode = Some(original);
                 tcsetattr(io::stdout(), OptionalActions::Now, &quiet)?;
             }
@@ -116,6 +137,46 @@ impl Screen {
             return restore_result(Err(ControlError::Adapter(Box::new(error))), restored);
         }
         Ok(screen)
+    }
+
+    fn read_commands(&mut self) -> io::Result<()> {
+        let Some(commands) = &mut self.commands else {
+            #[cfg(unix)]
+            tcflush(io::stdout(), QueueSelector::IFlush)?;
+            return Ok(());
+        };
+        #[cfg(unix)]
+        {
+            let flags = rustix::fs::fcntl_getfl(io::stdin())?;
+            self.input_flags = Some(flags);
+            // Crossterm retries reads on partial escape sequences, even with poll(0).
+            rustix::fs::fcntl_setfl(io::stdin(), flags | rustix::fs::OFlags::NONBLOCK)?;
+        }
+        let result = (|| {
+            // Bound input work so a paste/scroll flood cannot starve output or cleanup.
+            for _ in 0..256 {
+                // The poll-based backend needs a positive timeout to check its event buffer.
+                if !event::poll(std::time::Duration::from_millis(1))? {
+                    break;
+                }
+                if let Event::Key(key) = event::read()? {
+                    commands.key(key);
+                }
+            }
+            Ok(())
+        })();
+        // stdin/stdout can share file flags. Restore before any screen write.
+        let restored = self.restore_input_flags();
+        result.and(restored)
+    }
+
+    fn restore_input_flags(&mut self) -> io::Result<()> {
+        #[cfg(unix)]
+        if let Some(flags) = self.input_flags {
+            rustix::fs::fcntl_setfl(io::stdin(), flags)?;
+            self.input_flags = None;
+        }
+        Ok(())
     }
 }
 
@@ -153,14 +214,26 @@ impl std::error::Error for RestorationFailed {
     }
 }
 impl Display for Screen {
+    fn poll_input(&mut self) -> io::Result<()> {
+        self.read_commands()
+    }
     fn draw(&mut self, view: &View) -> io::Result<()> {
-        // This dashboard has no input actions; keep scrolling from filling the input queue.
-        #[cfg(unix)]
-        tcflush(io::stdout(), QueueSelector::IFlush)?;
         let preview = &mut self.preview;
+        let commands = &self.commands;
         draw_frame(&mut self.terminal, |frame| {
             let area = crate::ui::render(frame, view);
             preview.render(frame, area, view);
+            if let Some(commands) = commands {
+                let area = frame.area();
+                if area.height > 0 {
+                    let footer =
+                        ratatui::layout::Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                    frame.render_widget(
+                        ratatui::widgets::Paragraph::new(commands.text(usize::from(area.width))),
+                        footer,
+                    );
+                }
+            }
         })?;
         Ok(())
     }
@@ -170,6 +243,7 @@ impl Display for Screen {
     fn restore(&mut self) -> io::Result<()> {
         self.preview.stop();
         if !self.restored {
+            let flags = self.restore_input_flags();
             let resumed = execute!(self.terminal.backend_mut(), EndSynchronizedUpdate);
             let graphics = if self.preview.uses_kitty() {
                 // Delete only the one image slot owned by this screen.
@@ -199,7 +273,8 @@ impl Display for Screen {
                 }
                 Ok(())
             })();
-            resumed
+            flags
+                .and(resumed)
                 .and(graphics)
                 .and(style)
                 .and(cursor)

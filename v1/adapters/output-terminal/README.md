@@ -11,16 +11,21 @@ your capture device, then run from the repository root:
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
-  --features headless --bin prysm-headless -- /path/to/terminal.json --terminal --start
+  --features tui --bin prysm-tui -- /path/to/terminal.json --start
 ```
 
-Without `--start` the host stays idle. Stdout must be an interactive terminal.
-Ctrl-C and SIGTERM use the normal host shutdown path. There is no raw mode or
-keyboard-input worker. On Unix, the screen temporarily suppresses input echo and
-the input-overflow bell so scroll-generated arrow keys and typing cannot corrupt
-the dashboard or interrupt an image payload. Each redraw discards unused input to
-keep the input queue from filling. Signal handling stays enabled; restoration
-discards unused input and restores the original terminal
+Without `--start` the host stays idle. Stdin and stdout must be interactive terminals.
+Press `:` to open the command bar, type `on`, `off`, or `load /path/to/candidate.json`,
+then Enter. Escape cancels editing. Paths may contain spaces; use literal paths,
+without shell quotes or `~` expansion. See [terminal commands](../control-terminal/README.md)
+for replacement semantics and file preparation.
+
+Ctrl-C and SIGTERM use the normal host shutdown path. The screen thread reads
+keyboard events and writes the screen; there is no separate input worker. On Unix,
+command input disables canonical line buffering, echo and the input-overflow bell,
+while preserving signal handling. The screen worker drains a bounded number of events every ten milliseconds;
+scroll-generated arrows are ignored. Restoration discards unused input and restores
+the original terminal
 settings. The dashboard separates current host status from the last
 application snapshot, labels diagnostic severity and shows newest events first.
 Below 72 columns or 22 rows it switches to a compact layout, prioritizing host
@@ -125,5 +130,13 @@ input-mode restoration without capture hardware (omit `--start`):
 
 ```sh
 python3 v1/adapters/output-terminal/tests/check_input.py \
-  v1/target/debug/prysm-headless v1/assemblies/examples/terminal.json --terminal
+  v1/target/debug/prysm-tui v1/assemblies/examples/terminal.json
+```
+
+The command-entry PTY regression types a full replacement after a scroll flood,
+checks persistence and invalid-input rejection, then verifies cleanup. It uses only
+temporary files and does not open capture hardware:
+
+```sh
+python3 v1/adapters/output-terminal/tests/check_commands.py v1/target/debug/prysm-tui
 ```

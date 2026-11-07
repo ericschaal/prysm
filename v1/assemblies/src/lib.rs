@@ -1,4 +1,4 @@
-//! Concrete headless runtime and host-owned settings composition. UI examples use fixtures.
+//! Concrete headless/TUI runtimes and host-owned settings. Web/TV examples use fixtures.
 pub use prysm_capture_device::DeviceCaptureSettings;
 pub use prysm_capture_webos::TvCaptureSettings;
 use prysm_contract::{

@@ -156,7 +156,8 @@ impl Info {
             }
         };
         self.revisions = format!(
-            "Revision configured / applied: {} / {}",
+            "Revision saved / configured / applied: {} / {} / {}",
+            snapshot.saved_revision.0,
             snapshot
                 .configured_revision
                 .map_or("-".into(), |r| r.0.to_string()),

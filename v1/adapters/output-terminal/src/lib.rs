@@ -1,5 +1,6 @@
 //! Terminal output through the same control/color ports as a physical output.
 mod diagnostics;
+mod input;
 mod mailbox;
 mod preview;
 mod screen;
@@ -69,6 +70,7 @@ impl TerminalOutput {
             owner: TerminalOwner {
                 commands: receiver,
                 preview: None,
+                input: None,
                 mailbox: mailbox.clone(),
             },
             control: TerminalControl {
@@ -82,11 +84,18 @@ impl TerminalOutput {
 }
 
 pub struct TerminalOwner {
+    input: Option<mpsc::Sender<String>>,
     preview: Option<PreviewLease>,
     commands: mpsc::Receiver<Command>,
     mailbox: Arc<Mailbox>,
 }
 impl TerminalOwner {
+    /// The screen remains the only input reader. Text is interpreted by a driving adapter.
+    pub fn with_commands(mut self, input: mpsc::Sender<String>) -> Self {
+        self.input = Some(input);
+        self
+    }
+
     /// Subscribe to optional diagnostic imagery without starting capture.
     /// A failed subscription disables preview only; lighting remains available.
     pub async fn with_preview(mut self, source: &impl PreviewSource) -> Self {
@@ -101,12 +110,13 @@ impl TerminalOwner {
     }
 
     /// Retain until completion. One joined thread owns screen writes/restoration;
-    /// terminal I/O never runs on the host executor. No raw mode or input reader.
+    /// terminal I/O never runs on the host executor. Ctrl-C still delivers a signal.
     pub async fn run(
-        self,
+        mut self,
         shutdown: impl Future<Output = ()> + Send,
     ) -> Result<OwnerStopped, ControlError> {
-        worker::run(self, shutdown, screen::Screen::open).await
+        let input = self.input.take();
+        worker::run(self, shutdown, move || screen::Screen::open(input)).await
     }
 }
 impl Drop for TerminalOwner {

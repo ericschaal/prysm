@@ -3,6 +3,7 @@ use crate::server::{FixedSettings, HeadlessSettings, lifecycle::DEADLINE, owners
 use futures::stream;
 use prysm_application::{Application, policy::V1Policy};
 use prysm_capture_device::DeviceCapture;
+use prysm_contract::application::LightingTarget;
 use prysm_contract::{
     application::{OperationStatus, SessionState},
     calibration::{CalibrationCommand, CalibrationReply, CalibrationStatus},
@@ -157,10 +158,20 @@ async fn command_entry_waits_for_initialization_and_normal_stop_joins_in_order()
     let submitted = control.submitted.clone();
     let (stop, stopped) = oneshot::channel();
     let (report, mut events) = events();
+    let (input, receiver) = mpsc::channel(1);
+    input
+        .send(Ok(ApplicationCommand::SetTarget(LightingTarget::Processed)))
+        .await
+        .unwrap();
+    let commands = stream::unfold(receiver, |mut receiver| async {
+        let command = receiver.recv().await?;
+        Some((command, receiver))
+    })
+    .boxed();
     let host = tokio::spawn(run(
         owners,
         control,
-        stream::iter([LightingTarget::Processed]),
+        commands,
         async {
             stopped.await.unwrap();
         },
@@ -178,6 +189,7 @@ async fn command_entry_waits_for_initialization_and_normal_stop_joins_in_order()
     .await;
     stop.send(()).unwrap();
     within(&mut app.stopped).await.unwrap();
+    within(input.closed()).await; // Entry closes before owner cleanup completes.
     assert!(flow.stopped.try_recv().is_err());
     assert!(capture.stopped.try_recv().is_err());
     assert!(output.stopped.try_recv().is_err());
@@ -376,7 +388,7 @@ async fn coordinator_panic_after_command_acceptance_stops_independent_owners() {
     let host = tokio::spawn(run(
         owners,
         control,
-        stream::iter([LightingTarget::Processed]),
+        stream::iter([Ok(ApplicationCommand::SetTarget(LightingTarget::Processed))]),
         pending(),
         report,
     ));
@@ -403,7 +415,7 @@ async fn shutdown_during_initialization_never_opens_command_entry() {
     let host = tokio::spawn(run(
         owners,
         control,
-        stream::iter([LightingTarget::Processed]),
+        stream::iter([Ok(ApplicationCommand::SetTarget(LightingTarget::Processed))]),
         async {},
         report,
     ));
@@ -610,3 +622,6 @@ async fn terminal_shutdown_fences_file_writes_and_joins_commit_after_application
         assert_eq!(path.exists(), !fail);
     }
 }
+
+#[cfg(feature = "tui")]
+mod terminal_commands;

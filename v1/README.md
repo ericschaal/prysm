@@ -2,7 +2,7 @@
 
 This is an independent Cargo workspace for the v1 architecture. The passive
 processing flow, application lifecycle, video device capture and WLED/terminal output
-run in a supervised headless host; TV capture and remote transport remain skeletons.
+run in supervised headless and TUI hosts; TV capture and remote transport remain skeletons.
 It has its own lockfile and target directory.
 The npm hooks, packaging and webOS toolchain are unchanged. Existing root capture
 callers now use the same explicit native ownership API.
@@ -16,14 +16,16 @@ are required when compiling the Rust host examples.
 
 | Name | Responsibility |
 | --- | --- |
+| `prysm-headless` | Local device capture, processing and WLED output, with diagnostic logging |
+| `prysm-tui` | Local device capture, processing and interactive terminal preview/commands |
 | `prysm-server` | Processing, output and web portal, with local or remote capture |
 | `prysm-webos` | TV UI, native capture, processing, output and web portal |
 | `prysm-webos-slim` | TV UI, native capture and remote sender |
 | `prysm-web-portal` / `@prysm/web-portal` | Complete browser feature: Rust HTTP/API/assets/preview boundary and browser UI |
 | `@prysm/tv-ui` | Reusable UI for TV navigation |
 
-The three application names remain assembly examples in this milestone;
-`prysm-headless` runs the local device-to-WLED composition described below.
+The server and two webOS applications remain assembly examples in this milestone;
+`prysm-headless` and `prysm-tui` are runnable binaries described below.
 Production packaging remains deferred. `prysm-web-portal`
 names the complete feature, with its browser code in the companion npm package.
 The library is optional to hosts; the current `prysm-webos` assembly includes it.
@@ -378,7 +380,7 @@ FFmpeg readiness, frame reads and process reaping. Native platform code is isola
 from the safe v1 adapter. Host abort/drop requests cancellation but is not proof of
 cleanup; the host must retain the owner through shutdown.
 
-## Run the headless host
+## Run the headless or TUI host
 
 Copy [the example configuration](assemblies/examples/headless.json), replace its
 WLED address and LED counts, and select your capture device. On Linux `path` is a
@@ -392,27 +394,27 @@ cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
   --features headless --bin prysm-headless -- /path/to/settings.json
 ```
 
-WLED is the default host composition. Its `output` settings object contains
+`prysm-headless` always uses WLED. Its `output` settings object contains
 `{"address":"192.0.2.1","leds":[30,18,30,18]}`.
 For a live terminal display, use [the terminal configuration](assemblies/examples/terminal.json)
-with `--terminal`; its `output` contains `{"leds":[30,18,30,18]}`. For example:
+with `prysm-tui`; its `output` contains `{"leds":[30,18,30,18]}`. For example:
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies \
-  --features headless --bin prysm-headless -- /path/to/terminal.json --terminal --start
+  --features tui --bin prysm-tui -- /path/to/terminal.json --start
 ```
 
 The [terminal output crate](adapters/output-terminal/README.md) displays four color
 edges, application/capture status, frame/revision information and recent diagnostics.
-It uses Ratatui/Crossterm, needs an interactive stdout, and restores the terminal
+It uses Ratatui/Crossterm, needs interactive stdin/stdout, and restores the terminal
 on shutdown. It does not send colors to WLED or support device-native mode.
 
-This starts idle and does not open capture. Append `--start` to request processed
+Both binaries start idle and do not open capture by default. Append `--start` to request processed
 lighting through the application after initialization. Ctrl-C or SIGTERM requests
-coordinated Off and joins every owner. The binary needs no frontend build or HTTP
-listener. WLED mode prints application status and operation results to stderr;
-terminal mode routes them through the screen owner, with stderr used after it closes.
-Terminal mode also subscribes to the flow preview and displays cropped source imagery
+coordinated Off and joins every owner. Neither binary needs a frontend build or HTTP
+listener. `prysm-headless` prints application status and operation results to stderr;
+`prysm-tui` routes them through the screen owner, with stderr used after it closes.
+`prysm-tui` also subscribes to the flow preview and displays cropped source imagery
 inside the admitted LED perimeter. See [terminal video behavior](adapters/output-terminal/README.md#live-video-preview).
 
 The [assembly](assemblies/src/server/runtime.rs) constructs the graph. The private
@@ -424,16 +426,21 @@ five tasks and their shutdown controls, including the file settings owner. There
 Initialization and coordinated shutdown each have a 10-second deadline. Expired
 coordinated shutdown switches to terminal cleanup. After another 10 seconds the
 host reports pending owners and keeps waiting; it never treats a timeout as proof
-of native release or output cleanup. Keep `run_headless` alive until it returns.
+of native release or output cleanup. Keep `run_headless` or `run_tui` alive until it returns.
 The host retains the selected output's concrete shutdown handle, which fences new
 commands, frames and refresh immediately while an existing write remains owned.
 
+`prysm-tui` also accepts commands in the same screen. Press `:`, type `on`, `off`,
+or `load /path/to/candidate.json`, then Enter. Loading submits a full settings
+replacement through the application; diagnostics distinguish acceptance from
+completion and show saved/configured/applied revisions. Prepare edits in a separate
+candidate file so failed validation leaves the persisted file intact. See the
+[terminal command adapter](adapters/control-terminal/README.md).
+
 ## Next implementation boundary
 
-Expose typed settings replacement through a host command adapter, using the
-existing application port and owned [file repository](adapters/settings-file/README.md).
-Persistence and host shutdown integration are implemented; no new application
-workflow or generic storage layer is needed. HTTP remains a separate milestone.
+Typed settings replacement, persistence and host command entry are implemented.
+A field-based TUI settings editor and HTTP remain separate milestones.
 
 Qualify video device capture cleanup and WLED behavior on physical hardware using
 the supervised headless host. File/TV/remote capture and calibration remain separate milestones.

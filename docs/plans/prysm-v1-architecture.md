@@ -350,8 +350,13 @@ The [settings replacement transition table](../../v1/crates/application/SETTINGS
 specifies acceptance, save/apply failures, Off/shutdown races and the concrete
 repository ownership required for file persistence. The application workflow is
 implemented against the typed repository port. The [file adapter](../../v1/adapters/settings-file/README.md)
-implements atomic replacement with a host-owned I/O worker; host command entry for
-settings replacement remains next.
+implements atomic replacement with a host-owned I/O worker. The
+[terminal command adapter](../../v1/adapters/control-terminal/README.md) prepares typed
+replacements from candidate JSON files; the host owns request IDs and submission.
+The `prysm-headless` and `prysm-tui` binaries select WLED and terminal output
+respectively, sharing the existing host lifecycle. The terminal screen alone owns
+input and rendering. Persistence, validation and
+save/apply ordering remain in the application and its repository port.
 
 ## Readable local implementation
 

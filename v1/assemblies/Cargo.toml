@@ -8,10 +8,12 @@ publish.workspace = true
 
 [features]
 wire = ["dep:serde", "dep:prysm-protocol", "prysm-capture-device/wire", "prysm-capture-webos/wire", "prysm-output-wled/wire", "prysm-remote-capture/wire"]
-headless = ["wire", "tokio/signal", "prysm-output-terminal/wire"]
+headless = ["wire", "tokio/signal"]
+tui = ["wire", "tokio/signal", "dep:prysm-control-terminal", "prysm-output-terminal/wire"]
 schema = ["wire", "dep:utoipa", "prysm-protocol/schema", "prysm-capture-device/schema", "prysm-capture-webos/schema", "prysm-output-wled/schema", "prysm-remote-capture/schema"]
 
 [dependencies]
+prysm-control-terminal = { workspace = true, optional = true }
 prysm-remote-capture.workspace = true
 prysm-contract.workspace = true
 prysm-protocol = { workspace = true, optional = true }
@@ -43,6 +45,11 @@ workspace = true
 name = "prysm-headless"
 path = "src/bin/headless.rs"
 required-features = ["headless"]
+
+[[bin]]
+name = "prysm-tui"
+path = "src/bin/tui.rs"
+required-features = ["tui"]
 
 [[example]]
 name = "prysm-server"

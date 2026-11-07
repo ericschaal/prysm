@@ -8,7 +8,7 @@ use prysm_contract::{
     ControlError, Failure, OwnerStopped,
     application::{
         Accepted, ApplicationCommand, ApplicationControl, ApplicationEvent, ApplicationObservation,
-        ApplicationSnapshot, LightingTarget, Request,
+        ApplicationSnapshot, Request,
     },
     identity::{InstanceId, OperationId},
     observation::Update,
@@ -61,7 +61,7 @@ impl std::error::Error for HostError {
 pub(super) async fn run<C: ApplicationControl>(
     mut owners: Owners,
     control: C,
-    mut commands: impl Stream<Item = LightingTarget> + Unpin + Send,
+    commands: impl Stream<Item = Result<ApplicationCommand<C::Settings>, ControlError>> + Unpin + Send,
     shutdown: impl Future<Output = ()> + Send,
     mut report: impl FnMut(HostEvent),
 ) -> Result<OwnerStopped, HostError> {
@@ -71,7 +71,7 @@ pub(super) async fn run<C: ApplicationControl>(
     let mut request: Option<BoxFuture<'static, Result<Accepted, ControlError>>> = None;
     let mut instance = None;
     let mut next_id = Some(NonZeroU64::MIN);
-    let mut commands_live = true;
+    let mut commands = Some(commands);
     tokio::pin!(shutdown);
     loop {
         if owners.pending().is_empty() {
@@ -160,8 +160,15 @@ pub(super) async fn run<C: ApplicationControl>(
                     Err(error) => report(HostEvent::CommandRejected(error.into())),
                 }
             }
-            target = commands.next(), if accepting && commands_live && request.is_none() => {
-                if let Some(target) = target {
+            command = next_command(&mut commands), if accepting && request.is_none() => {
+                if let Some(command) = command {
+                    let command = match command {
+                        Ok(command) => command,
+                        Err(error) => {
+                            report(HostEvent::CommandRejected(error.into()));
+                            continue;
+                        }
+                    };
                     if let Some(id) = next_id {
                         next_id = id.get().checked_add(1).and_then(NonZeroU64::new);
                         let control = control.clone();
@@ -171,7 +178,7 @@ pub(super) async fn run<C: ApplicationControl>(
                         };
                         let command = Request {
                             id,
-                            command: ApplicationCommand::SetTarget(target),
+                            command,
                         };
                         request = Some(async move { control.submit(command).await }.boxed());
                     } else {
@@ -179,15 +186,23 @@ pub(super) async fn run<C: ApplicationControl>(
                         report(HostEvent::CommandRejected(error.into()));
                     }
                 } else {
-                    commands_live = false;
+                    commands = None;
                 }
             }
         }
         if !lifecycle.observing() {
+            commands = None;
             request = None;
             observing = None;
             observation = None;
         }
+    }
+}
+
+async fn next_command<S: Stream + Unpin>(commands: &mut Option<S>) -> Option<S::Item> {
+    match commands {
+        Some(commands) => commands.next().await,
+        None => pending().await,
     }
 }
 
