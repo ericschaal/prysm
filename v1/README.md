@@ -30,7 +30,7 @@ Production packaging remains deferred. `prysm-web-portal`
 names the complete feature, with its browser code in the companion npm package.
 The library is optional to hosts; the current `prysm-webos` assembly includes it.
 `prysm-server` accepts transport adapters, including remote capture from webOS,
-without making webOS part of the processing contract. Its [source selection](assemblies/src/server.rs)
+without making webOS part of the processing contract. Its [source selection](assemblies/src/server_capture.rs)
 composes local device settings and remote connection settings. The [remote receiver](adapters/remote-capture/src/receiver.rs)
 exposes the same control/frame ports as local capture, with explicit unavailable
 responses until networking is implemented. Capture resolution/rate belong to the
@@ -51,7 +51,7 @@ fixture for aggregate source selection; runtime adapter switching is deferred.
    [passive flow](crates/flow/src/lib.rs), and
    [portal assembly](crates/web-portal/src/lib.rs): compile-time dependency direction.
 4. [Application policy](crates/application/src/policy.rs) and
-   [host lifecycle](assemblies/src/server/lifecycle.rs): changeable defaults, separated from ports.
+   [host lifecycle](assemblies/src/host/lifecycle.rs): changeable defaults, separated from ports.
 5. [Flow runtime tests](crates/flow/src/tests.rs),
    [wiring checks](assemblies/tests/wiring.rs) and
    [independent portal client](assemblies/tests/portal.rs): what this milestone proves.
@@ -417,16 +417,18 @@ listener. `prysm-headless` prints application status and operation results to st
 `prysm-tui` also subscribes to the flow preview and displays cropped source imagery
 inside the admitted LED perimeter. See [terminal video behavior](adapters/output-terminal/README.md#live-video-preview).
 
-The [assembly](assemblies/src/server/runtime.rs) constructs the graph. The private
-[host loop](assemblies/src/server/host.rs) polls owners and application entry;
-[lifecycle](assemblies/src/server/lifecycle.rs) owns shutdown transitions and
-failure retention; [owners](assemblies/src/server/owners.rs) retains the concrete
+The [headless](assemblies/src/headless.rs) and [TUI](assemblies/src/tui.rs) assemblies
+construct their concrete graphs. The private [host loop](assemblies/src/host/mod.rs)
+polls owners and an [application connection](assemblies/src/host/connection.rs),
+which owns observation/resynchronisation and command submission;
+[lifecycle](assemblies/src/host/lifecycle.rs) owns shutdown transitions and
+failure retention; [owners](assemblies/src/host/owners.rs) retains the concrete
 five tasks and their shutdown controls, including the file settings owner. There is no automatic restart.
 
 Initialization and coordinated shutdown each have a 10-second deadline. Expired
 coordinated shutdown switches to terminal cleanup. After another 10 seconds the
 host reports pending owners and keeps waiting; it never treats a timeout as proof
-of native release or output cleanup. Keep `run_headless` or `run_tui` alive until it returns.
+of native release or output cleanup. Keep `headless::run` or `tui::run` alive until it returns.
 The host retains the selected output's concrete shutdown handle, which fences new
 commands, frames and refresh immediately while an existing write remains owned.
 

@@ -54,11 +54,12 @@ fn invalid_arguments_fail_before_settings_or_owner_initialization() {
 #[cfg(feature = "headless")]
 #[test]
 fn headless_example_uses_wled_settings() {
-    use prysm_assemblies::{DeviceCaptureSettings, WledSettings, server::HeadlessSettings};
+    use prysm_assemblies::{DeviceCaptureSettings, WledSettings};
     use prysm_protocol::settings::SettingsDocument;
     let document: SettingsDocument<DeviceCaptureSettings, WledSettings> =
         serde_json::from_str(include_str!("../examples/headless.json")).unwrap();
-    let _: HeadlessSettings = document.try_into().unwrap();
+    let _: prysm_contract::application::Settings<DeviceCaptureSettings, WledSettings> =
+        document.try_into().unwrap();
     assert!(
         serde_json::from_str::<SettingsDocument<DeviceCaptureSettings, WledSettings>>(
             include_str!("../examples/terminal.json")
@@ -70,8 +71,9 @@ fn headless_example_uses_wled_settings() {
 #[cfg(feature = "tui")]
 #[test]
 fn tui_examples_use_terminal_settings() {
-    use prysm_assemblies::{DeviceCaptureSettings, server::TerminalSettings};
+    use prysm_assemblies::DeviceCaptureSettings;
     use prysm_contract::application::Settings;
+    use prysm_output_terminal::TerminalSettings;
     use prysm_protocol::settings::SettingsDocument;
     for json in [
         include_str!("../examples/terminal.json"),

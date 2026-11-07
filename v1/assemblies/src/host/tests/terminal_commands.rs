@@ -1,12 +1,12 @@
 use super::*;
-use crate::server::owners::SettingsOwner;
+use crate::host::SettingsOwner;
 use prysm_application::ApplicationHandle;
 use prysm_contract::{FailureKind, identity::SettingsRevision, storage::SettingsRepository};
 use prysm_protocol::settings::SettingsDocument;
 use prysm_settings_file::FileSettingsHandle;
 
 struct Host {
-    control: ApplicationHandle<HeadlessSettings>,
+    control: ApplicationHandle<TestSettings>,
     input: mpsc::Sender<String>,
     stop: oneshot::Sender<()>,
     task: tokio::task::JoinHandle<Result<OwnerStopped, HostError>>,
@@ -14,7 +14,7 @@ struct Host {
 }
 impl Host {
     async fn start(
-        repository: impl SettingsRepository<HeadlessSettings>,
+        repository: impl SettingsRepository<TestSettings>,
         store: SettingsOwner,
     ) -> Self {
         let capture = DeviceCapture::new(INSTANCE);
@@ -99,7 +99,7 @@ impl Host {
     }
 }
 
-fn candidate(dir: &std::path::Path) -> (std::path::PathBuf, HeadlessSettings) {
+fn candidate(dir: &std::path::Path) -> (std::path::PathBuf, TestSettings) {
     let mut value = settings();
     value.processing.brightness_percent = prysm_core::BrightnessPercent(42);
     let path = dir.join("candidate.json");
@@ -185,14 +185,14 @@ async fn terminal_load_persists_reports_completion_and_reloads_on_restart() {
 }
 
 struct GatedSave {
-    file: FileSettingsHandle<HeadlessSettings>,
+    file: FileSettingsHandle<TestSettings>,
     entered: mpsc::Sender<oneshot::Sender<()>>,
 }
-impl SettingsRepository<HeadlessSettings> for GatedSave {
-    async fn load(&self) -> Result<Option<HeadlessSettings>, ControlError> {
+impl SettingsRepository<TestSettings> for GatedSave {
+    async fn load(&self) -> Result<Option<TestSettings>, ControlError> {
         self.file.load().await
     }
-    async fn save(&self, value: HeadlessSettings) -> Result<(), ControlError> {
+    async fn save(&self, value: TestSettings) -> Result<(), ControlError> {
         let (release, released) = oneshot::channel();
         self.entered.send(release).await.unwrap();
         released.await.unwrap();

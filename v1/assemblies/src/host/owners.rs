@@ -31,7 +31,7 @@ impl Owner {
     }
 }
 
-pub(super) struct Task {
+pub(crate) struct Task {
     join: Option<JoinHandle<Result<OwnerStopped, ControlError>>>,
     shutdown: Option<oneshot::Sender<()>>,
     expected: bool,
@@ -50,7 +50,7 @@ impl Task {
             expected: false,
         }
     }
-    pub fn request_stop(&mut self) {
+    pub(super) fn request_stop(&mut self) {
         if self.join.is_some() {
             self.expected = true;
         }
@@ -64,23 +64,23 @@ impl Task {
             join.abort();
         }
     }
-    pub async fn completion(&mut self) -> Completion {
+    pub(super) async fn completion(&mut self) -> Completion {
         match &mut self.join {
             Some(join) => join.await,
             None => pending().await,
         }
     }
-    pub fn take_completed(&mut self) -> bool {
+    pub(super) fn take_completed(&mut self) -> bool {
         self.join.take().expect("completed owner was retained");
         self.shutdown.take();
         self.expected
     }
-    pub fn pending(&self) -> bool {
+    pub(super) fn pending(&self) -> bool {
         self.join.is_some()
     }
 }
 
-pub(super) struct Owners {
+pub(crate) struct Owners {
     pub application: Task,
     pub capture: Task,
     pub flow: Task,
@@ -88,7 +88,7 @@ pub(super) struct Owners {
     pub output_shutdown: OutputShutdown,
     pub settings: Option<SettingsOwner>,
 }
-pub(super) struct SettingsOwner {
+pub(crate) struct SettingsOwner {
     pub task: Task,
     pub shutdown: FileSettingsShutdown,
 }
@@ -100,7 +100,7 @@ pub(super) async fn settings_completion(settings: &mut Option<SettingsOwner>) ->
         None => pending().await,
     }
 }
-pub(super) enum OutputShutdown {
+pub(crate) enum OutputShutdown {
     Wled(WledShutdown),
     Terminal(TerminalShutdown),
 }
@@ -123,7 +123,7 @@ impl OutputShutdown {
     }
 }
 impl Owners {
-    pub fn task(&mut self, owner: Owner) -> &mut Task {
+    pub(super) fn task(&mut self, owner: Owner) -> &mut Task {
         match owner {
             Owner::Application => &mut self.application,
             Owner::Capture => &mut self.capture,
@@ -132,7 +132,7 @@ impl Owners {
             Owner::Settings => &mut self.settings.as_mut().expect("owned repository").task,
         }
     }
-    pub fn terminate(&mut self) {
+    pub(super) fn terminate(&mut self) {
         self.output_shutdown.request();
         self.stop_settings();
         self.application.abort_coordinator();
@@ -140,13 +140,13 @@ impl Owners {
         self.flow.request_stop();
         self.output.request_stop();
     }
-    pub fn stop_settings(&mut self) {
+    pub(super) fn stop_settings(&mut self) {
         if let Some(settings) = &mut self.settings {
             settings.shutdown.request();
             settings.task.request_stop();
         }
     }
-    pub fn pending(&self) -> Vec<&'static str> {
+    pub(super) fn pending(&self) -> Vec<&'static str> {
         let mut pending: Vec<_> = [
             ("application", &self.application),
             ("capture", &self.capture),

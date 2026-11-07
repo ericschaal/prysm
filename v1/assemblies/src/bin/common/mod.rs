@@ -1,5 +1,5 @@
 //! Shared CLI mechanics. Each binary selects its concrete composition explicitly.
-use prysm_assemblies::server::HostEvent;
+use prysm_assemblies::HostEvent;
 use std::{future::Future, io, path::PathBuf};
 
 pub struct Arguments {

@@ -1,6 +1,6 @@
 //! Host phase transitions; no session identities or device operations.
 use super::{
-    host::{HostError, HostEvent},
+    HostError, HostEvent,
     owners::{Completion, Owner, Owners},
 };
 use prysm_contract::{ControlError, Failure, OwnerStopped};
@@ -31,9 +31,6 @@ impl Lifecycle {
             deadline: Some(Instant::now() + DEADLINE),
             failures: vec![],
         }
-    }
-    pub fn accepting(&self) -> bool {
-        self.phase == Phase::Running
     }
     pub fn observing(&self) -> bool {
         matches!(self.phase, Phase::Starting | Phase::Running)

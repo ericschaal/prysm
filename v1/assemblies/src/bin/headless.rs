@@ -2,7 +2,7 @@
 mod common;
 
 use futures::stream;
-use prysm_assemblies::server::run_headless;
+use prysm_assemblies::headless;
 use prysm_contract::application::LightingTarget;
 
 const USAGE: &str = "usage: prysm-headless <settings.json> [--start]
@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let shutdown = common::shutdown()?;
     let commands = stream::iter(args.start.then_some(LightingTarget::Processed));
-    run_headless(args.settings, commands, shutdown, common::report).await?;
+    headless::run(args.settings, commands, shutdown, common::report).await?;
     eprintln!("Stopped; all owners joined.");
     Ok(())
 }

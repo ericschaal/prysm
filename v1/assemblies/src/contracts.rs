@@ -10,7 +10,7 @@ pub fn server() -> Result<OpenApi, String> {
             prysm_protocol::schema::document(),
             prysm_capture_device::schema::document(),
             prysm_remote_capture::schema::document(),
-            crate::server::document(),
+            crate::server_capture::document(),
             prysm_output_wled::schema::document(),
         ],
     )

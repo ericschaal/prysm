@@ -39,7 +39,7 @@ task handles, frame buffers and private credentials are not automatically export
 ## Hosts own composition
 
 The server host combines shared, video device capture, remote capture and WLED documents,
-plus its own [source selection](assemblies/src/server.rs). The webOS
+plus its own [source selection](assemblies/src/server_capture.rs). The webOS
 host combines shared, webOS capture and WLED documents. Each library document is
 also exported independently, allowing adapter UI packages to import their own
 types without depending on a host. Host frontend entry points consume the combined

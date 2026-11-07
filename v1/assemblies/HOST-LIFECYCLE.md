@@ -39,10 +39,17 @@ The host never reads a mailbox, joins an adapter's inner worker directly, assign
 session epochs, or implements another lighting lifecycle. Snapshots are reports,
 not recovery instructions.
 
-Keep implementation in the assembly: `server/runtime.rs` constructs the concrete graph;
-a private `server/host.rs` drives one explicit `select!` loop. `server/lifecycle.rs`
-owns the phases, deadlines and failure retention; `server/owners.rs` retains the
+Keep implementation in the assembly: `headless.rs` and `tui.rs` construct their
+concrete graphs. The private `host` module supervises both: `host/mod.rs` selects
+owner exits, shutdown, deadlines and application interactions; `host/connection.rs`
+owns observation/resynchronisation, request IDs and pending submissions. It advances
+one interaction per host turn, preserving owner-exit and shutdown priority, and
+retains pending calls when another select branch wins. `host/lifecycle.rs` owns
+the phases, deadlines and failure retention; `host/owners.rs` retains the
 five task handles and shutdown controls (memory-only test repositories need no owner). Tests live beside the host loop.
+The compositions use the host module’s retained task types; lifecycle internals
+remain private. `server_capture.rs` only defines capture selection/schema for the server
+example.
 Use named task slots, not a task registry, generic supervisor or state-machine
 dependency. Completed tasks are consumed once and removed from the select loop.
 Retain the initiating failure and subsequent cleanup failures separately; a later

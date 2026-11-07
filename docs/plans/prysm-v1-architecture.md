@@ -354,7 +354,11 @@ implements atomic replacement with a host-owned I/O worker. The
 [terminal command adapter](../../v1/adapters/control-terminal/README.md) prepares typed
 replacements from candidate JSON files; the host owns request IDs and submission.
 The `prysm-headless` and `prysm-tui` binaries select WLED and terminal output
-respectively, sharing the existing host lifecycle. The terminal screen alone owns
+respectively. Their explicit `assemblies::headless` and `assemblies::tui` compositions
+share a private host module: supervision owns process lifetime, while its application
+connection owns observations and command submission. The private `server_capture` module retains
+only server-example capture selection/schema, re-exporting `ServerCaptureSettings`
+from the assembly crate root. The terminal screen alone owns
 input and rendering. Persistence, validation and
 save/apply ordering remain in the application and its repository port.
 

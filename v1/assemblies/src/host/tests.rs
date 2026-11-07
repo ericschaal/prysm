@@ -1,9 +1,12 @@
+use super::lifecycle::DEADLINE;
 use super::*;
-use crate::server::{FixedSettings, HeadlessSettings, lifecycle::DEADLINE, owners::Task};
+use futures::StreamExt;
 use futures::stream;
 use prysm_application::{Application, policy::V1Policy};
 use prysm_capture_device::DeviceCapture;
 use prysm_contract::application::LightingTarget;
+use prysm_contract::application::{ApplicationObservation, Request};
+use prysm_contract::identity::OperationId;
 use prysm_contract::{
     application::{OperationStatus, SessionState},
     calibration::{CalibrationCommand, CalibrationReply, CalibrationStatus},
@@ -14,6 +17,7 @@ use prysm_contract::{
 use prysm_flow::{ProcessingExecution, ProcessingFlow};
 use prysm_output_wled::WledOutput;
 use prysm_processor::PrysmProcessor;
+use std::num::NonZeroU64;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -21,9 +25,30 @@ use std::sync::{
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc, oneshot};
 
+#[cfg(test)]
+struct FixedSettings<S>(S);
+#[cfg(test)]
+impl<S: Clone + Send + Sync + 'static> prysm_contract::storage::SettingsRepository<S>
+    for FixedSettings<S>
+{
+    async fn load(&self) -> Result<Option<S>, prysm_contract::ControlError> {
+        Ok(Some(self.0.clone()))
+    }
+    async fn save(&self, _: S) -> Result<(), prysm_contract::ControlError> {
+        Err(prysm_contract::ControlError::Unavailable(
+            "headless settings are read-only",
+        ))
+    }
+}
+
+type TestSettings = prysm_contract::application::Settings<
+    prysm_capture_device::DeviceCaptureSettings,
+    prysm_output_wled::WledSettings,
+>;
+
 const INSTANCE: InstanceId = InstanceId(NonZeroU64::MIN);
-fn settings() -> HeadlessSettings {
-    HeadlessSettings {
+fn settings() -> TestSettings {
+    TestSettings {
         capture: None,
         output: None,
         processing: Default::default(),
@@ -43,38 +68,17 @@ struct Control {
     submitted: Arc<AtomicBool>,
 }
 impl ApplicationControl for Control {
-    type Settings = HeadlessSettings;
-    async fn observe(&self) -> Result<ApplicationObservation<HeadlessSettings>, ControlError> {
+    type Settings = TestSettings;
+    async fn observe(&self) -> Result<ApplicationObservation<TestSettings>, ControlError> {
         self.initialized.notified().await;
         Ok(Observation {
-            initial: Versioned {
-                cursor: Cursor {
-                    instance: INSTANCE,
-                    sequence: 0,
-                },
-                state: ApplicationSnapshot {
-                    instance: INSTANCE,
-                    settings: settings(),
-                    saved_revision: prysm_contract::identity::SettingsRevision(0),
-                    configured_revision: None,
-                    applied_revision: None,
-                    desired: LightingTarget::Off,
-                    session: SessionState::Idle,
-                    capture: CaptureCapabilities {
-                        supports_patterns: false,
-                    },
-                    output: OutputCapabilities { native_mode: true },
-                    observed_capture: None,
-                    observed_output: None,
-                    calibration: CalibrationStatus::Idle,
-                },
-            },
+            initial: snapshot(),
             updates: stream::pending().boxed(),
         })
     }
     async fn submit(
         &self,
-        request: Request<ApplicationCommand<HeadlessSettings>>,
+        request: Request<ApplicationCommand<TestSettings>>,
     ) -> Result<Accepted, ControlError> {
         self.submitted.store(true, Ordering::SeqCst);
         Ok(Accepted {
@@ -202,6 +206,54 @@ async fn command_entry_waits_for_initialization_and_normal_stop_joins_in_order()
     output.release.send(Ok(OwnerStopped)).unwrap();
     assert!(!host.is_finished());
     capture.release.send(Ok(OwnerStopped)).unwrap();
+    within(host).await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ready_shutdown_wins_over_command_after_initialization() {
+    let (owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();
+    control.initialized.notify_one();
+    let submitted = control.submitted.clone();
+    let consumed = Arc::new(AtomicBool::new(false));
+    let command_consumed = consumed.clone();
+    let (input, receiver) = mpsc::channel(1);
+    let commands = stream::unfold(receiver, |mut receiver| async {
+        let command = receiver.recv().await?;
+        Some((command, receiver))
+    })
+    .inspect(move |_| command_consumed.store(true, Ordering::SeqCst))
+    .boxed();
+    let (stop, stopped) = oneshot::channel();
+    let (report, mut events) = events();
+    let host = tokio::spawn(run(
+        owners,
+        control,
+        commands,
+        async { stopped.await.unwrap() },
+        report,
+    ));
+    ready(&mut events).await;
+
+    // No await between sends: on this single-thread runtime both are ready at the host's next poll.
+    input
+        .try_send(Ok(ApplicationCommand::SetTarget(LightingTarget::Processed)))
+        .unwrap();
+    stop.send(()).unwrap();
+
+    within(&mut app.stopped).await.unwrap();
+    within(input.closed()).await;
+    assert!(!consumed.load(Ordering::SeqCst));
+    assert!(!submitted.load(Ordering::SeqCst));
+    assert!(matches!(events.try_recv(), Ok(HostEvent::Stopping)));
+    assert!(events.try_recv().is_err());
+
+    app.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut flow.stopped).await.unwrap();
+    flow.release.send(Ok(OwnerStopped)).unwrap();
+    within(&mut capture.stopped).await.unwrap();
+    within(&mut output.stopped).await.unwrap();
+    capture.release.send(Ok(OwnerStopped)).unwrap();
+    output.release.send(Ok(OwnerStopped)).unwrap();
     within(host).await.unwrap().unwrap();
 }
 
@@ -436,7 +488,7 @@ async fn shutdown_during_initialization_never_opens_command_entry() {
 #[cfg(feature = "headless")]
 #[tokio::test]
 async fn real_file_repository_loads_saves_and_joins_with_idle_owners() {
-    use crate::server::owners::SettingsOwner;
+    use crate::host::SettingsOwner;
     use prysm_contract::{identity::SettingsRevision, storage::SettingsRepository};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
@@ -521,7 +573,7 @@ async fn real_file_repository_loads_saves_and_joins_with_idle_owners() {
 #[cfg(feature = "headless")]
 #[tokio::test]
 async fn terminal_shutdown_fences_file_writes_and_joins_commit_after_application_abort() {
-    use crate::server::owners::SettingsOwner;
+    use crate::host::SettingsOwner;
     use prysm_contract::storage::SettingsRepository;
     use std::sync::{Mutex, mpsc as sync};
     // Serialization executes inside the real retained file worker.
@@ -625,3 +677,30 @@ async fn terminal_shutdown_fences_file_writes_and_joins_commit_after_application
 
 #[cfg(feature = "tui")]
 mod terminal_commands;
+
+fn snapshot() -> Versioned<ApplicationSnapshot<TestSettings>> {
+    Versioned {
+        cursor: Cursor {
+            instance: INSTANCE,
+            sequence: 0,
+        },
+        state: ApplicationSnapshot {
+            instance: INSTANCE,
+            settings: settings(),
+            saved_revision: prysm_contract::identity::SettingsRevision(0),
+            configured_revision: None,
+            applied_revision: None,
+            desired: LightingTarget::Off,
+            session: SessionState::Idle,
+            capture: CaptureCapabilities {
+                supports_patterns: false,
+            },
+            output: OutputCapabilities { native_mode: true },
+            observed_capture: None,
+            observed_output: None,
+            calibration: CalibrationStatus::Idle,
+        },
+    }
+}
+
+mod connection;

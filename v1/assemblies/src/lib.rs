@@ -17,6 +17,15 @@ pub struct EmergencyControls<C: CaptureControl, P: ProcessingControl, O: OutputC
 
 pub mod tv;
 
-pub mod server;
+mod server_capture;
 pub use prysm_remote_capture::RemoteCaptureSettings;
-pub use server::ServerCaptureSettings;
+pub use server_capture::ServerCaptureSettings;
+
+#[cfg(any(feature = "headless", feature = "tui", test))]
+mod host;
+#[cfg(any(feature = "headless", feature = "tui", test))]
+pub use host::{HostError, HostEvent};
+#[cfg(feature = "headless")]
+pub mod headless;
+#[cfg(feature = "tui")]
+pub mod tui;
