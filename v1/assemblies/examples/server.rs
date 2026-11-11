@@ -1,6 +1,6 @@
 //! Embed the built frontend and construct wiring; no hardware or HTTP listener starts.
 use prysm_application::{Application, policy::V1Policy};
-use prysm_assemblies::{EmergencyControls, ServerCaptureSettings, WledSettings};
+use prysm_assemblies::{ServerCaptureSettings, WledSettings};
 use prysm_contract::capture::CaptureCapabilities;
 use prysm_flow::{ProcessingExecution, ProcessingFlow};
 use prysm_processor::PrysmProcessor;
@@ -27,11 +27,6 @@ async fn main() {
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
-    let emergency = EmergencyControls {
-        capture: capture.control.clone(),
-        processing: flow.control.clone(),
-        output: output.control.clone(),
-    };
     let application = Application::new(
         capture.control,
         flow.control,
@@ -50,7 +45,6 @@ async fn main() {
 
     // The future host supervisor owns these parts, including independent receiver I/O.
     let _owners = (capture.owner, flow.owner, output.owner, application.owner);
-    let _emergency = emergency;
     let _frame_producer = capture.feed;
     println!("prysm-server wiring constructed; production behavior is intentionally unavailable.");
 }

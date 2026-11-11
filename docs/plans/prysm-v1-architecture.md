@@ -510,6 +510,11 @@ APIs. The compilable [server assembly](../../v1/assemblies/examples/server.rs)
 and [receiver ports](../../v1/adapters/remote-capture/src/receiver.rs) are the current
 review surface. Transport establishment (including listener versus peer dialing),
 remote source configuration and runtime source selection remain deferred.
+The host retains every owner and its shutdown control before launching it. The
+output shutdown handle permanently fences admission; ordinary session controls
+and the latest snapshot are not crash-recovery authority. File settings also
+requires its independently retained owner and admission fence, as in the concrete
+headless/TUI compositions. These sketches omit those persistence details.
 
 ```rust,ignore
 #[tokio::main]
@@ -529,11 +534,8 @@ async fn main() -> Result<()> {
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
-    let emergency = EmergencyControls {
-        capture: capture.control.clone(),
-        processing: flow.control.clone(),
-        output: output.control.clone(),
-    };
+    // Retain permanent admission fencing independently of application session controls.
+    let output_shutdown = output.shutdown;
     let application = Application::new(
         capture.control,
         flow.control,
@@ -550,7 +552,7 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(deployment.portal_listen).await?;
 
     run_server(
-        emergency,
+        output_shutdown,
         receiver,
         capture.owner,
         flow.owner,
@@ -594,11 +596,8 @@ async fn main() -> Result<()> {
         output.colors,
         ProcessingExecution::DedicatedThread,
     );
-    let emergency = EmergencyControls {
-        capture: capture.control.clone(),
-        processing: flow.control.clone(),
-        output: output.control.clone(),
-    };
+    // Retain permanent admission fencing independently of application session controls.
+    let output_shutdown = output.shutdown;
     let application = Application::new(
         capture.control,
         flow.control,
@@ -615,7 +614,7 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(deployment.portal_listen).await?;
 
     run_tv(
-        emergency,
+        output_shutdown,
         platform,
         capture.owner,
         flow.owner,

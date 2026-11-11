@@ -143,7 +143,7 @@ owners still receive shutdown requests.
 
 Coordinator failure can occur after a device accepts work but before the
 application publishes it. WLED observations also omit held/finishing session
-identity. Therefore retained `EmergencyControls` plus a last snapshot cannot
+identity. Therefore retained session controls plus a last snapshot cannot
 reliably supply `hold(epoch)`, `stop(session)` and `barrier(session)` arguments.
 The existing known-session cancellation test proves those ports survive caller
 loss; it does not establish an arbitrary-crash recovery protocol.

@@ -18,7 +18,6 @@ async fn main() {
         },
         Calls::default(),
     );
-    let _emergency_capture = capture.control.clone();
     let sender = RemoteCaptureSender::connect(
         capture.control,
         capture.frames,
