@@ -542,7 +542,7 @@ async fn main() -> Result<()> {
         flow.control,
         output.control,
         JsonSettings::new(deployment.settings_path),
-        ApplicationPolicy::v1(),
+        ApplicationPolicy::default(),
     );
     let portal = WebPortal::new(
         application.control.clone(),
@@ -604,7 +604,7 @@ async fn main() -> Result<()> {
         flow.control,
         output.control,
         JsonSettings::new(deployment.settings_path),
-        ApplicationPolicy::v1(),
+        ApplicationPolicy::default(),
     );
     let portal = WebPortal::new(
         application.control.clone(),

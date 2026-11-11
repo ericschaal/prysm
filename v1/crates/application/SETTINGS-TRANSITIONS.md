@@ -2,7 +2,8 @@
 
 The application workflow is implemented and exercised with gated repositories and
 device ports. The [file adapter](../../adapters/settings-file/README.md) and its
-host-owned I/O worker are implemented. Host command entry for replacement is next. This extends the [lighting lifecycle](TRANSITIONS.md) and follows the
+host-owned I/O worker and terminal `load <path>` command entry are implemented.
+This extends the [lighting lifecycle](TRANSITIONS.md) and follows the
 [architecture plan](../../../docs/plans/prysm-v1-architecture.md): validate,
 persist atomically, then apply. Storage and hardware do not form one transaction.
 
@@ -45,8 +46,13 @@ the saved value; lifecycle transitions alone replace the resource-bound value.
 
 Read `settings.rs` for save ordering, then `session/settings.rs` for the three
 application choices. Restart continues through the existing phases in
-`session/model.rs`; `session/devices.rs` holds the staged value separately from
-the settings bound to the old resources.
+`session/model.rs`. Lifecycle owns `SettingsApplication`: either a restart
+candidate or a live processing call with an optional candidate to install. Devices
+holds only the settings bound to current resources and translates calls.
+Interruption removes a restart candidate or a live call's installation intent;
+an issued live call stays owned until completion. No separate interrupted flag
+can disagree with a candidate's presence. An unissued processing call is discarded and its
+settings completion is returned immediately.
 
 ```mermaid
 flowchart TD
@@ -133,9 +139,16 @@ substitute for domain rules.
 
 ## Replacement transitions
 
-These phases describe settings work only; they do not duplicate session phases.
-`Interrupted` retains the outstanding save or application completion and its
-cause. It forbids further settings-driven preparation/restart.
+The concrete settings phases are `Ready`, `Saving` and `Applying`. The optional
+phase slot is empty only while moving ownership synchronously; no await leaves it
+empty. `Interrupted` below is shorthand for interruption metadata on Saving or
+Applying, not a fourth phase. `Unavailable` describes coordinator admission after
+an uncertain save: the workflow returns its repository to Ready, then the
+coordinator records a fatal cause and rejects new replacement commands.
+
+Interruption retains the outstanding save or application completion and its cause.
+It forbids further settings-driven preparation/restart. Saving and Applying cannot
+coexist; lighting cleanup can proceed alongside either.
 
 | Phase | Event | Action / published result | Next |
 | --- | --- | --- | --- |
@@ -149,9 +162,9 @@ cause. It forbids further settings-driven preparation/restart.
 | Applying | Cleanup completes after failure | Publish failed replacement and lifecycle diagnostic; desired target is Off | Ready |
 | Applying | Cleanup becomes blocked | Fail replacement with cleanup failure; keep lifecycle resources and forbid replacement/Start until cleanup is resolved | Ready; lifecycle blocked |
 | Saving / Applying | Off, host shutdown, or component failure | Latch interruption; begin/continue Lifecycle cleanup toward Off without waiting for storage; retain already-issued work | Interrupted |
-| Interrupted | Save succeeds late | Publish saved value/revision; do not start settings application or revive old intent | Interrupted |
-| Interrupted | Save fails | Preserve previous confirmed value, or retire on uncertainty; retain persistence error in replacement result | Interrupted / Unavailable |
-| Interrupted | Save and any already-issued application work settle | Finish replacement as interrupted, or with a more specific save/application failure; never report cancellation of a committed save | Ready, or closing |
+| Interrupted Saving | Save succeeds late | Publish saved value/revision; finish replacement as interrupted without application or restart | Ready |
+| Interrupted Saving | Save fails | Finish replacement with persistence failure; preserve previous confirmed value or retire on uncertainty | Ready / Unavailable |
+| Interrupted Applying | Already-issued application work settles | Finish replacement as interrupted, or with a more specific application failure | Ready, or closing |
 | Any pending phase | Observe / query operation / client disconnect | Continue serving observations and lookups; accepted work stays owned | Same |
 
 An interrupted apply still leaves its session cleanup with Lifecycle. Its failure
@@ -198,15 +211,15 @@ even if Off has already completed. The first Off interrupting a replacement is a
 adapter-change cleanup has already put Lifecycle in Stopping: cancel the planned
 restart and attach the Off operation to that existing cleanup. Do not call the
 ordinary stopping-state request guard, launch a second cleanup sequence, or drop
-pending calls. This is an explicit extension to the current transition table,
-which otherwise rejects new requests while Stopping. A duplicate retained request
+pending calls. The ordinary target-request path otherwise rejects new requests
+while Stopping. A duplicate retained request
 still deduplicates first; a second distinct Off while one is pending may conflict.
 
 The operation registry must support **one replacement plus one lighting operation**
 while Off interrupts settings work. Keep its existing bound of 64 entries, evict
 only completed entries and finish by operation ID. Each workflow owns its own ID;
-do not retain the current single `active` slot or let a save completion finish an
-unrelated Off request. There is no queue of future replacements.
+the coordinator retains its lighting ID separately from the settings workflow ID.
+A save completion must not finish an unrelated Off request. There is no queue of future replacements.
 
 Off completes on acknowledged lighting cleanup; it need not wait for storage.
 The replacement stays pending until its issued work settles. Shutdown waits for
@@ -300,7 +313,7 @@ device fixtures/real flow. Do not test a second handwritten transition model.
    commit/worker and reports its outcome. No orphaned blocking task remains.
 
 Implemented: application workflow and revision semantics against gated repositories,
-then concrete file persistence plus host ownership. Next: expose replacement through
-a host command adapter. HTTP, calibration implementation,
+then concrete file persistence, host ownership and terminal command entry.
+HTTP, calibration implementation,
 file migration, hot adapter-type switching and general transaction abstractions
 remain outside this step.

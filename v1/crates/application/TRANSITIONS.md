@@ -7,7 +7,8 @@ It is driven by the existing application task; it has no task or mailbox of its 
 
 The [settings replacement transitions](SETTINGS-TRANSITIONS.md) extend this
 lifecycle with persist-before-apply ordering. The application workflow is
-implemented; the concrete file repository and its host ownership remain deferred.
+implemented, including the file repository, its independently retained host owner,
+and terminal command entry for replacement.
 
 ## Phases and ownership
 
@@ -17,13 +18,34 @@ implemented; the concrete file repository and its host ownership remain deferred
 | Starting | Session, latest capture availability, target and preparation stage | Configure processing/output, hold black, open capture; idle targets configure output then finish |
 | Active | Session, latest capture availability and last acknowledged admission | Hold/admit when the source epoch changes |
 | Stopping | Session resources, requested final mode, cleanup stage and latest failure | Hold black → stop capture → settle racing open → flow barrier → output finish |
-| Cleanup blocked | The same cleanup obligation and its failure | None until explicit Off (or host shutdown) retries |
+| Cleanup blocked | The same cleanup obligation and a required failure | None until explicit Off (or host shutdown) retries |
 
 Capture/output resource flags represent independent cleanup obligations, not
 lifecycle phases. A new Start inherits an existing Native output obligation.
 Preparing a device may acquire resources even if its reply fails. Only cleanup
 acknowledgments discharge those obligations. Output mode acknowledgments do not
 invent device-confirmed display state.
+
+## Application lifetime and results
+
+Initialization loads and validates settings before constructing the coordinator.
+After initialization, `shutting_down` records a host request and `fatal` records a
+reason to retire the application (lost observation connection or uncertain save).
+Both fence new non-Off commands. The owner returns only when the session is idle
+and settings work has settled; blocked cleanup retains the owner until explicit
+Off retries it or the host takes over terminal shutdown.
+
+Retirement cause and shutdown outcome are separate. `shutdown_failure` retains
+the first non-interruption failure observed during requested shutdown, including
+failed cleanup and accepted saves. Successful later cleanup or an explicit Off
+retry does not erase it. The owner returns the fatal cause if present, otherwise
+the retained shutdown failure, otherwise success. Earlier recoverable session
+failures do not make a later clean shutdown fail. Cleanup completion is not proof
+that every cleanup step succeeded.
+
+`ApplicationPolicy` contains waiting colors only (black by default). Startup is
+Off and recovery requires explicit commands. Calibration remains unimplemented;
+its published status is Idle and its command returns Unavailable.
 
 ## Requests and external events
 
@@ -88,5 +110,5 @@ invent device-confirmed display state.
 - Component subscriptions recover gaps; only connection failures trigger cleanup.
 - Failure categories survive cleanup and operation publication. `RecoveryRequired`
   needs host/device recovery; an explicit Off alone cannot repair that owner.
-- The host retains the owner future and emergency controls through stuck cleanup.
+- The host retains the owner future and owner-scoped shutdown controls through stuck cleanup.
   There is no async Drop cleanup or detached retry task.

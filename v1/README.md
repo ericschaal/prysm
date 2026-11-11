@@ -232,8 +232,9 @@ replacement revisions, retains one save and publishes the last confirmed saved
 value. [Lifecycle settings entry points](crates/application/src/session/settings.rs)
 choose immediate installation, live processing update, or adapter restart. The
 existing lifecycle model owns restart and cleanup; there is no separate replacement
-state machine. It keeps old resource settings through cleanup even after new settings
-are saved. Completions return directly to the coordinator with the lifecycle outcome. Off can interrupt a
+cleanup state machine. Lifecycle owns pending replacement candidates alongside
+their retained calls; device translation holds only resource-bound settings. Old
+resource settings survive through cleanup even after new settings are saved. Completions return directly to the coordinator with the lifecycle outcome. Off can interrupt a
 replacement without cancelling its save or allowing a late restart; each operation
 retains its own result. Saved, worker-configured and frame-applied revisions remain
 distinct. See the [settings transition table](crates/application/SETTINGS-TRANSITIONS.md)
@@ -241,8 +242,8 @@ and [gated repository tests](crates/application/src/tests/settings.rs).
 
 The headless composition uses the [file settings adapter](adapters/settings-file/README.md).
 The host owns its I/O worker independently of the application and joins accepted
-commits during shutdown. Command entry currently exposes only lighting targets;
-exposing settings replacement through a host command adapter is the next step.
+commits during shutdown. Terminal command entry exposes lighting targets and
+`load <path>` settings replacement.
 
 The lifecycle's [transition model](crates/application/src/session/model.rs) is
 synchronous, with explicit Idle, Starting, Active, Stopping and Blocked phases.
