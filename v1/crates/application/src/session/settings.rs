@@ -79,3 +79,36 @@ where
         }
     }
 }
+
+pub(crate) fn validate_settings<C: CaptureControl, O: OutputControl>(
+    capture: &C,
+    output: &O,
+    settings: &Value<C, O>,
+    target: LightingTarget,
+) -> Result<(), ControlError> {
+    settings.validate()?;
+    if let Some(value) = &settings.capture {
+        capture.validate(value)?;
+    }
+    if let Some(value) = &settings.output {
+        output.validate(value)?;
+    }
+    if target == LightingTarget::Processed && settings.capture.is_none() {
+        return Err(ControlError::Invalid {
+            field: "capture",
+            reason: "capture settings are required".into(),
+        });
+    }
+    if target != LightingTarget::Off && settings.output.is_none() {
+        return Err(ControlError::Invalid {
+            field: "output",
+            reason: "output settings are required".into(),
+        });
+    }
+    if target == LightingTarget::DeviceNative && !output.capabilities().native_mode {
+        return Err(ControlError::Unavailable(
+            "output does not support native mode",
+        ));
+    }
+    Ok(())
+}

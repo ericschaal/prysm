@@ -16,6 +16,7 @@ use prysm_contract::{
     processing::ProcessingControl,
 };
 use prysm_core::EdgeColors;
+pub(super) use settings::validate_settings;
 
 pub(super) enum Requested {
     Pending,

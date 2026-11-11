@@ -83,13 +83,7 @@ where
             profiles: vec![],
             active_profile: None,
         });
-        settings.validate()?;
-        if let Some(value) = &settings.capture {
-            capture.validate(value)?;
-        }
-        if let Some(value) = &settings.output {
-            output.validate(value)?;
-        }
+        crate::session::validate_settings(&capture, &output, &settings, LightingTarget::Off)?;
         let (observed, updates) = observations::connect(
             capture.clone(),
             processing.clone(),

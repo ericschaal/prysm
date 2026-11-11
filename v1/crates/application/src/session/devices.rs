@@ -70,31 +70,7 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
         settings: &DeviceSettings<C, O>,
         target: LightingTarget,
     ) -> Result<(), ControlError> {
-        settings.validate()?;
-        if let Some(capture) = &settings.capture {
-            self.capture.validate(capture)?;
-        }
-        if let Some(output) = &settings.output {
-            self.output.validate(output)?;
-        }
-        if target == LightingTarget::Processed && settings.capture.is_none() {
-            return Err(ControlError::Invalid {
-                field: "capture",
-                reason: "capture settings are required".into(),
-            });
-        }
-        if target != LightingTarget::Off && settings.output.is_none() {
-            return Err(ControlError::Invalid {
-                field: "output",
-                reason: "output settings are required".into(),
-            });
-        }
-        if target == LightingTarget::DeviceNative && !self.output.capabilities().native_mode {
-            return Err(ControlError::Unavailable(
-                "output does not support native mode",
-            ));
-        }
-        Ok(())
+        super::validate_settings(&self.capture, &self.output, settings, target)
     }
     fn configure_processing(
         &self,
