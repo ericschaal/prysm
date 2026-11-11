@@ -796,7 +796,7 @@ async fn loaded_adapter_values_and_duplicate_profiles_are_validated_before_initi
             app.processing.clone(),
             app.output_control.clone(),
             repository,
-            policy::V1Policy,
+            policy::ApplicationPolicy::default(),
         );
         let error = within(application.owner.run(INSTANCE, std::future::pending()))
             .await

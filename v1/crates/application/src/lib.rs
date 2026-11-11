@@ -33,26 +33,26 @@ enum Command<S> {
     Operation(OperationId, Reply<OperationStatus>),
 }
 
-struct ApplicationWiring<C, P, O, R, Policy> {
+struct ApplicationWiring<C, P, O, R> {
     capture: C,
     processing: P,
     output: O,
     settings: R,
-    policy: Policy,
+    policy: ApplicationPolicy,
 }
 
 /// Owns the injected ports. Retain emergency control clones before constructing the application.
-pub struct ApplicationOwner<C: CaptureControl, P, O: OutputControl, R, Policy> {
-    wiring: ApplicationWiring<C, P, O, R, Policy>,
+pub struct ApplicationOwner<C: CaptureControl, P, O: OutputControl, R> {
+    wiring: ApplicationWiring<C, P, O, R>,
     commands: mpsc::Receiver<Command<Settings<C::Settings, O::Settings>>>,
 }
 
-pub struct Application<C: CaptureControl, P, O: OutputControl, R, Policy> {
-    pub owner: ApplicationOwner<C, P, O, R, Policy>,
+pub struct Application<C: CaptureControl, P, O: OutputControl, R> {
+    pub owner: ApplicationOwner<C, P, O, R>,
     pub control: ApplicationHandle<Settings<C::Settings, O::Settings>>,
 }
 
-impl<C, P, O, R, Policy> Application<C, P, O, R, Policy>
+impl<C, P, O, R> Application<C, P, O, R>
 where
     C: CaptureControl,
     P: ProcessingControl,
@@ -60,9 +60,14 @@ where
     R: SettingsRepository<Settings<C::Settings, O::Settings>>,
     C::Settings: PartialEq,
     O::Settings: PartialEq,
-    Policy: ApplicationPolicy,
 {
-    pub fn new(capture: C, processing: P, output: O, settings: R, policy: Policy) -> Self {
+    pub fn new(
+        capture: C,
+        processing: P,
+        output: O,
+        settings: R,
+        policy: ApplicationPolicy,
+    ) -> Self {
         let (sender, commands) = mpsc::channel(CAPACITY);
         Self {
             owner: ApplicationOwner {
@@ -80,7 +85,7 @@ where
     }
 }
 
-impl<C, P, O, R, Policy> ApplicationOwner<C, P, O, R, Policy>
+impl<C, P, O, R> ApplicationOwner<C, P, O, R>
 where
     C: CaptureControl,
     P: ProcessingControl,
@@ -88,7 +93,6 @@ where
     R: SettingsRepository<Settings<C::Settings, O::Settings>>,
     C::Settings: PartialEq,
     O::Settings: PartialEq,
-    Policy: ApplicationPolicy,
 {
     /// Use the host's instance identity, shared with the flow. Shutdown requests
     /// coordinated cleanup; the host retains this future and emergency controls.

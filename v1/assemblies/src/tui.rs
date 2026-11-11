@@ -1,7 +1,7 @@
 //! Device capture to the terminal, including command and diagnostic routing.
 use crate::host::{self, HostError, HostEvent, Owners, SettingsOwner, Task, new_instance};
 use futures::{Stream, StreamExt};
-use prysm_application::{Application, policy::V1Policy};
+use prysm_application::{Application, policy::ApplicationPolicy};
 use prysm_capture_device::DeviceCapture;
 use prysm_contract::{
     OwnerStopped,
@@ -41,7 +41,7 @@ pub async fn run(
         flow.control,
         output.control,
         settings.repository,
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let terminal_commands = prysm_control_terminal::commands(application.control.clone(), receiver);
     let commands = futures::stream::select(

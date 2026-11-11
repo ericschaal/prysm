@@ -1,5 +1,5 @@
 //! Native webOS composition compiled on the development host using explicit fixtures.
-use prysm_application::{Application, policy::V1Policy};
+use prysm_application::{Application, policy::ApplicationPolicy};
 use prysm_assemblies::tv::{LunaApplicationBridge, LunaPlatformBridge};
 use prysm_assemblies::{TvCaptureSettings, WledSettings};
 use prysm_contract::capture::CaptureCapabilities;
@@ -35,7 +35,7 @@ async fn main() {
         flow.control,
         output.control,
         MemorySettings::empty(),
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let _portal = WebPortal::new(
         application.control.clone(),

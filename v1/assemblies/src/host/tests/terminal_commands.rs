@@ -30,7 +30,7 @@ impl Host {
             flow.control,
             output.control,
             repository,
-            V1Policy,
+            ApplicationPolicy::default(),
         );
         let owners = Owners {
             settings: Some(store),

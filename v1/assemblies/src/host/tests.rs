@@ -2,7 +2,7 @@ use super::lifecycle::DEADLINE;
 use super::*;
 use futures::StreamExt;
 use futures::stream;
-use prysm_application::{Application, policy::V1Policy};
+use prysm_application::{Application, policy::ApplicationPolicy};
 use prysm_capture_device::DeviceCapture;
 use prysm_contract::application::LightingTarget;
 use prysm_contract::application::{ApplicationObservation, Request};
@@ -479,7 +479,7 @@ async fn real_idle_owners_start_and_close_without_source_closure_faults() {
         flow.control,
         output.control,
         FixedSettings(settings()),
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let owners = Owners {
         settings: None,
@@ -633,7 +633,7 @@ async fn real_file_repository_loads_saves_and_joins_with_idle_owners() {
         flow.control,
         output.control,
         store.repository,
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let control = application.control.clone();
     let owners = Owners {

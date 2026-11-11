@@ -1,12 +1,8 @@
 use futures::{FutureExt, StreamExt};
-use prysm_application::{
-    Application,
-    policy::{ApplicationPolicy, FailureAction, V1Policy},
-};
+use prysm_application::{Application, policy::ApplicationPolicy};
 use prysm_assemblies::{DeviceCaptureSettings, TvCaptureSettings, WledSettings};
 use prysm_contract::{
     ControlError,
-    application::LightingTarget,
     capture::{CaptureCapabilities, CaptureControl, CaptureStart, CapturedFrame, FrameSource},
     identity::{FrameStamp, InstanceId, SessionId, SettingsRevision, StreamEpoch},
     observation::Update,
@@ -144,7 +140,7 @@ async fn unavailable_observation_prevents_application_startup() {
         flow.control,
         output.control,
         MemorySettings::empty(),
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     assert!(matches!(
         application
@@ -180,12 +176,6 @@ async fn preview_lease_owns_and_releases_its_demand_guard() {
     assert!(!released.load(Ordering::SeqCst));
     drop(lease);
     assert!(released.load(Ordering::SeqCst));
-}
-
-#[test]
-fn application_policy_starts_idle_without_automatic_retry() {
-    assert_eq!(V1Policy.initial_target(), LightingTarget::Off);
-    assert_eq!(V1Policy.terminal_failure(), FailureAction::AwaitCommand);
 }
 
 #[tokio::test]

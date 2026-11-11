@@ -4,7 +4,6 @@ use crate::{
     ApplicationWiring, Command,
     observations::{self, ComponentUpdate, Observed, Publisher},
     operations::Operations,
-    policy::{ApplicationPolicy, FailureAction, UnavailableAction},
     session::{Lifecycle, Outcome, Progress, Requested},
     settings::{Saved, SettingsWorkflow},
 };
@@ -40,8 +39,8 @@ struct Coordinator<C: CaptureControl, P, O: OutputControl, R> {
     shutdown_failure: Option<Failure>,
 }
 
-pub(super) async fn run<C, P, O, R, Policy>(
-    wiring: ApplicationWiring<C, P, O, R, Policy>,
+pub(super) async fn run<C, P, O, R>(
+    wiring: ApplicationWiring<C, P, O, R>,
     mut commands: mpsc::Receiver<Command<AppSettings<C, O>>>,
     instance: InstanceId,
     shutdown: impl Future<Output = ()> + Send,
@@ -51,7 +50,6 @@ where
     P: ProcessingControl,
     O: OutputControl,
     R: SettingsRepository<AppSettings<C, O>>,
-    Policy: ApplicationPolicy,
     C::Settings: PartialEq,
     O::Settings: PartialEq,
 {
@@ -62,18 +60,6 @@ where
         settings: repository,
         policy,
     } = wiring;
-    let UnavailableAction::WaitHolding(waiting_colors) = policy.input_unavailable() else {
-        return Err(ControlError::Unavailable(
-            "end-session availability policy is not implemented",
-        ));
-    };
-    if policy.initial_target() != LightingTarget::Off
-        || policy.terminal_failure() != FailureAction::AwaitCommand
-    {
-        return Err(ControlError::Unavailable(
-            "automatic start/retry policy is not implemented",
-        ));
-    }
     let loaded = repository.load();
     let initialize = async {
         let settings = loaded.await?.unwrap_or(Settings {
@@ -105,7 +91,7 @@ where
             instance,
             (capture, processing, output),
             settings.clone(),
-            waiting_colors,
+            policy.waiting_colors,
         ),
         observed,
         operations: Operations::new(instance),

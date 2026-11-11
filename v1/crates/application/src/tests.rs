@@ -329,7 +329,7 @@ impl Running {
             wrap(flow.control.clone()),
             output_control.clone(),
             repository,
-            policy::V1Policy,
+            policy::ApplicationPolicy::default(),
         );
         let (shutdown, stop) = oneshot::channel();
         let (flow_shutdown, flow_stop) = oneshot::channel();
@@ -1072,7 +1072,7 @@ async fn repository_needs_send_but_not_sync() {
             observed: app.output.clone(),
         },
         LocalRepository(std::cell::RefCell::new(settings())),
-        policy::V1Policy,
+        policy::ApplicationPolicy::default(),
     );
     let (shutdown, stop) = oneshot::channel();
     let owner = tokio::spawn(application.owner.run(INSTANCE, async {
@@ -1102,7 +1102,7 @@ async fn invalid_profile_references_are_rejected_at_load_and_submission() {
             observed: app.output.clone(),
         },
         Repository(invalid.clone()),
-        policy::V1Policy,
+        policy::ApplicationPolicy::default(),
     );
     assert!(matches!(
         within(application.owner.run(INSTANCE, std::future::pending())).await,

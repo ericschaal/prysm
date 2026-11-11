@@ -1,5 +1,5 @@
 use super::*;
-use prysm_application::{Application, ApplicationHandle, policy::V1Policy};
+use prysm_application::{Application, ApplicationHandle, policy::ApplicationPolicy};
 use prysm_contract::{
     application::{
         ApplicationCommand, ApplicationControl, ApplicationSnapshot, LightingTarget,
@@ -374,7 +374,7 @@ async fn application_and_real_flow_drive_real_output_through_start_wait_resume_a
             profiles: vec![],
             active_profile: None,
         }),
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let (app_shutdown, app_stop) = oneshot::channel();
     let app_owner = tokio::spawn(app.owner.run(INSTANCE, async {

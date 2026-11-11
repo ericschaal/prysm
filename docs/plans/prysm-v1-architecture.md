@@ -441,8 +441,9 @@ applying, and keeps Off responsive while saves are pending. File persistence and
 independently retained host owner are implemented. Calibration remains deferred; video device capture, WLED/terminal output and
 headless host supervision are implemented. Its
 mailbox and observation buffers hold 16 entries; its operation registry retains
-64 results and never evicts pending work. The implementation supports the v1
-idle/hold-black/await-command policy and rejects unimplemented policy choices.
+64 results and never evicts pending work. The application starts Off and requires explicit commands after session failure.
+`ApplicationPolicy` configures waiting colors (black by default); unsupported
+automatic startup, retry and end-session choices are not exposed.
 
 
 The coordinator stays responsive while one owned session operation runs. It does
@@ -704,10 +705,10 @@ expiry is reported to the host without pretending cleanup succeeded.
 
 These policies are named functions/state transitions in application and host
 modules. No general `PolicyEngine`, plugin registry or configurable workflow
-language is proposed. If another host needs a different rule, it can supply a
-small policy implementation at that seam without rewiring dataflow or changing
-domain messages. A changed public guarantee does require a contract change;
-changing a retry delay or waiting presentation does not.
+language is proposed. Waiting presentation is a concrete `ApplicationPolicy` value. A new startup or
+recovery rule requires implementing and testing its transitions before exposing
+it to hosts; there is no generic policy trait for unsupported behavior. A changed
+public guarantee requires a contract change.
 
 Calibration stays in the application: pairing authorization, temporary overrides,
 mutation exclusivity, profile save and restoration. Capabilities replace checks

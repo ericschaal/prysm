@@ -1,5 +1,5 @@
 //! Embed the built frontend and construct wiring; no hardware or HTTP listener starts.
-use prysm_application::{Application, policy::V1Policy};
+use prysm_application::{Application, policy::ApplicationPolicy};
 use prysm_assemblies::{ServerCaptureSettings, WledSettings};
 use prysm_contract::capture::CaptureCapabilities;
 use prysm_flow::{ProcessingExecution, ProcessingFlow};
@@ -32,7 +32,7 @@ async fn main() {
         flow.control,
         output.control,
         MemorySettings::empty(),
-        V1Policy,
+        ApplicationPolicy::default(),
     );
     let _portal = WebPortal::new(
         application.control.clone(),

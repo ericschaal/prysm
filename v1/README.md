@@ -216,9 +216,9 @@ The host drives `application.owner.run(instance, shutdown)` with the same instan
 as the flow, and retains both futures until completion. The application loads
 initial typed settings through its injected repository, validates aggregate relationships
 before publishing them, and starts with Off intent;
-it does not automatically configure devices. The implemented policy is `V1Policy`
-(idle startup, hold black while waiting, explicit commands after failure).
-Automatic-start/retry and end-session-on-unavailability policies are unavailable.
+it does not automatically configure devices. Recovery requires explicit commands.
+`ApplicationPolicy` configures waiting colors (black by default). Automatic startup,
+retry and end-session choices are not exposed until their transitions are implemented.
 
 Start a lifecycle review with the [transition table](crates/application/TRANSITIONS.md).
 The [coordinator](crates/application/src/coordinator.rs) handles application intent,
