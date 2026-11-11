@@ -106,10 +106,8 @@ impl Lifecycle {
         owners: &mut Owners,
         report: &mut impl FnMut(HostEvent),
     ) {
-        let task = owners.task(owner);
-        let expected = task.take_completed();
-        let error = match completion {
-            Ok(Ok(_)) if expected => None,
+        let error = match completion.result {
+            Ok(Ok(_)) if completion.expected => None,
             Ok(Ok(_)) => Some(ControlError::Unavailable("owner exited unexpectedly")),
             Ok(Err(error)) => Some(error),
             Err(error)

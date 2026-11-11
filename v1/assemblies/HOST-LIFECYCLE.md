@@ -51,7 +51,9 @@ The compositions use the host module’s retained task types; lifecycle internal
 remain private. `server_capture.rs` only defines capture selection/schema for the server
 example.
 Use named task slots, not a task registry, generic supervisor or state-machine
-dependency. Completed tasks are consumed once and removed from the select loop.
+dependency. Task completion consumes its retained handle before returning the result and
+stop-request fact to lifecycle policy; a cancelled pending wait retains ownership.
+Completed tasks are removed from the select loop.
 Retain the initiating failure and subsequent cleanup failures separately; a later
 successful join cannot erase the original failure.
 

@@ -399,8 +399,7 @@ async fn every_unexpected_owner_exit_retires_the_composition_even_when_successfu
         let mut replaced = gates[index].take().unwrap();
         within(&mut replaced.stopped).await.unwrap();
         replaced.release.send(Ok(OwnerStopped)).unwrap();
-        within(slot.completion()).await.unwrap().unwrap();
-        slot.take_completed();
+        within(slot.completion()).await.result.unwrap().unwrap();
         *slot = Task::spawn(|_| async { Ok(OwnerStopped) });
         let (report, _events) = events();
         let host = tokio::spawn(run(owners, control, stream::pending(), pending(), report));
@@ -513,9 +512,9 @@ async fn coordinator_panic_after_command_acceptance_stops_independent_owners() {
     app.release.send(Ok(OwnerStopped)).unwrap();
     within(owners.application.completion())
         .await
+        .result
         .unwrap()
         .unwrap();
-    owners.application.take_completed();
     let (crash, crashed) = oneshot::channel();
     owners.application = Task::spawn(|_| async {
         crashed.await.unwrap();
@@ -686,9 +685,9 @@ async fn terminal_shutdown_fences_file_writes_and_joins_commit_after_application
         app.release.send(Ok(OwnerStopped)).unwrap();
         within(owners.application.completion())
             .await
+            .result
             .unwrap()
             .unwrap();
-        owners.application.take_completed();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let store = prysm_settings_file::FileSettings::<Gated, ()>::new(path.clone()).unwrap();

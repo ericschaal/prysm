@@ -9,7 +9,10 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
-pub(super) type Completion = Result<Result<OwnerStopped, ControlError>, JoinError>;
+pub(super) struct Completion {
+    pub result: Result<Result<OwnerStopped, ControlError>, JoinError>,
+    pub expected: bool,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Owner {
@@ -65,15 +68,17 @@ impl Task {
         }
     }
     pub(super) async fn completion(&mut self) -> Completion {
-        match &mut self.join {
+        let result = match &mut self.join {
             Some(join) => join.await,
             None => pending().await,
-        }
-    }
-    pub(super) fn take_completed(&mut self) -> bool {
-        self.join.take().expect("completed owner was retained");
+        };
+        // Retire only after await: a losing select branch must retain ownership.
+        self.join.take();
         self.shutdown.take();
-        self.expected
+        Completion {
+            result,
+            expected: self.expected,
+        }
     }
     pub(super) fn pending(&self) -> bool {
         self.join.is_some()
@@ -123,6 +128,7 @@ impl OutputShutdown {
     }
 }
 impl Owners {
+    #[cfg(test)]
     pub(super) fn task(&mut self, owner: Owner) -> &mut Task {
         match owner {
             Owner::Application => &mut self.application,
@@ -164,5 +170,33 @@ impl Owners {
             pending.push("settings");
         }
         pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+
+    #[tokio::test]
+    async fn completion_retains_pending_tasks_and_retires_once() {
+        for request_stop in [false, true] {
+            let (release, done) = oneshot::channel();
+            let mut task = Task::spawn(|_| async {
+                done.await.unwrap();
+                Ok(OwnerStopped)
+            });
+            assert!(task.completion().now_or_never().is_none());
+            assert!(task.pending());
+            if request_stop {
+                task.request_stop();
+            }
+            release.send(()).unwrap();
+            let completion = task.completion().await;
+            completion.result.unwrap().unwrap();
+            assert_eq!(completion.expected, request_stop);
+            assert!(!task.pending());
+            assert!(task.completion().now_or_never().is_none());
+        }
     }
 }
