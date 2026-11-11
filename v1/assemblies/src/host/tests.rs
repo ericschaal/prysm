@@ -156,6 +156,34 @@ async fn ready(events: &mut mpsc::UnboundedReceiver<HostEvent>) {
 }
 
 #[tokio::test(start_paused = true)]
+async fn shutdown_stages_preserve_the_original_deadline() {
+    let (mut owners, _, [application, capture, flow, output]) = fixture();
+    let mut lifecycle = Lifecycle::new();
+    let (mut report, mut events) = events();
+    lifecycle.on_initialized(INSTANCE, &mut report);
+    lifecycle.request_stop(&mut owners, &mut report);
+    let deadline = lifecycle.deadline().unwrap();
+    for (owner, gate) in [
+        (Owner::Application, application),
+        (Owner::Processing, flow),
+        (Owner::Capture, capture),
+        (Owner::Output, output),
+    ] {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        gate.stopped.await.unwrap();
+        gate.release.send(Ok(OwnerStopped)).unwrap();
+        let completion = owners.task(owner).completion().await;
+        lifecycle.on_owner_exited(owner, completion, &mut owners, &mut report);
+        assert_eq!(lifecycle.deadline(), Some(deadline));
+    }
+    assert!(owners.pending().is_empty());
+    assert!(lifecycle.result().is_ok());
+    assert!(matches!(events.try_recv().unwrap(), HostEvent::Ready(_)));
+    assert!(matches!(events.try_recv().unwrap(), HostEvent::Stopping));
+    assert!(events.try_recv().is_err());
+}
+
+#[tokio::test(start_paused = true)]
 async fn lifecycle_ignores_duplicate_and_late_transitions() {
     for initialize in [false, true] {
         let (mut owners, _, gates) = fixture();
@@ -221,6 +249,20 @@ async fn lifecycle_ignores_duplicate_and_late_transitions() {
         lifecycle.on_timeout(&mut owners, &mut report);
         assert!(events.try_recv().is_err());
         assert!(lifecycle.deadline().is_none());
+        lifecycle.on_failure(
+            "test",
+            ControlError::Unavailable("failure after cleanup overdue"),
+            &mut owners,
+            &mut report,
+        );
+        assert!(matches!(events.try_recv().unwrap(), HostEvent::Failure(_)));
+        lifecycle.request_stop(&mut owners, &mut report);
+        lifecycle.on_initialized(INSTANCE, &mut report);
+        tokio::time::advance(DEADLINE).await;
+        lifecycle.on_timeout(&mut owners, &mut report);
+        assert!(lifecycle.deadline().is_none());
+        assert!(!lifecycle.is_active());
+        assert!(events.try_recv().is_err());
 
         for (owner, gate) in [
             Owner::Application,
@@ -237,7 +279,7 @@ async fn lifecycle_ignores_duplicate_and_late_transitions() {
         }
         assert!(owners.pending().is_empty());
         assert!(events.try_recv().is_err());
-        assert_eq!(lifecycle.result().unwrap_err().failures.len(), 2);
+        assert_eq!(lifecycle.result().unwrap_err().failures.len(), 3);
     }
 }
 

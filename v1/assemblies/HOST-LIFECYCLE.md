@@ -83,8 +83,11 @@ Failure after any launch cleans up every launched owner. No shared fail-fast
 ## Failure transitions
 
 These are host phases; capture availability and lighting session phases remain
-inside their existing owners. A deadline is a diagnostic, not another phase or
-permission to discard ownership.
+inside their existing owners. Timed phases carry their deadlines directly; Running
+has none. The three coordinated shutdown stages carry the same deadline forward.
+Terminal cleanup transitions to CleanupOverdue after its one diagnostic, retaining
+all owners without a timer. Further failures cannot rearm it. Deadline expiry never
+grants permission to discard ownership.
 
 | Phase | Event | Action | Next phase |
 | --- | --- | --- | --- |
