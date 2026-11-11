@@ -44,7 +44,12 @@ concrete graphs. The private `host` module supervises both: `host/mod.rs` select
 owner exits, shutdown, deadlines and application interactions; `host/connection.rs`
 owns observation/resynchronisation, request IDs and pending submissions. It advances
 one interaction per host turn, preserving owner-exit and shutdown priority, and
-retains pending calls when another select branch wins. `host/lifecycle.rs` owns
+retains pending calls when another select branch wins. Observation lifetime is
+explicitly acquiring, observing or closed; resynchronization reacquires a snapshot
+without resetting the instance or request IDs. Command intake and pending acceptance
+remain independent and continue during same-instance resynchronization. Input EOF
+closes command intake only. Connection interactions use fair selection so a busy
+observation cannot starve commands; the outer host still prioritizes exits and shutdown. `host/lifecycle.rs` owns
 the phases, deadlines and failure retention; `host/owners.rs` retains the
 five task handles and shutdown controls (memory-only test repositories need no owner). Tests live beside the host loop.
 The compositions use the host module’s retained task types; lifecycle internals

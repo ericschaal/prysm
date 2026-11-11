@@ -71,7 +71,7 @@ async fn pending_calls_survive_poll_cancellation_and_resync_preserves_request_id
     );
     assert!(matches!(
         connection.advance().await.unwrap(),
-        Some(Event::Connected { .. })
+        Some(Event::SnapshotAcquired { .. })
     ));
 
     assert!(connection.advance().await.unwrap().is_none());
@@ -94,6 +94,14 @@ async fn pending_calls_survive_poll_cancellation_and_resync_preserves_request_id
     assert!(
         matches!(connection.advance().await.unwrap(), Some(Event::Accepted(value)) if value.operation == first.id)
     );
+    commands
+        .unbounded_send(Ok(ApplicationCommand::SetTarget(LightingTarget::Off)))
+        .unwrap();
+    assert!(connection.advance().await.unwrap().is_none());
+    assert!(connection.advance().now_or_never().is_none());
+    let (second, accepted) = submitting.try_recv().unwrap();
+    assert_eq!(second.id.instance, INSTANCE);
+    assert_eq!(second.id.request.get(), 2);
     assert!(
         resync
             .send(Observation {
@@ -104,17 +112,9 @@ async fn pending_calls_survive_poll_cancellation_and_resync_preserves_request_id
     );
     assert!(matches!(
         connection.advance().await.unwrap(),
-        Some(Event::Connected { .. })
+        Some(Event::SnapshotAcquired { .. })
     ));
 
-    commands
-        .unbounded_send(Ok(ApplicationCommand::SetTarget(LightingTarget::Off)))
-        .unwrap();
-    assert!(connection.advance().await.unwrap().is_none());
-    assert!(connection.advance().now_or_never().is_none());
-    let (second, accepted) = submitting.try_recv().unwrap();
-    assert_eq!(second.id.instance, INSTANCE);
-    assert_eq!(second.id.request.get(), 2);
     connection.close();
     assert!(commands.is_closed());
     assert!(accepted.is_closed());
@@ -147,7 +147,7 @@ async fn changed_instance_or_closed_observation_fails_the_connection() {
         );
         assert!(matches!(
             connection.advance().await.unwrap(),
-            Some(Event::Connected { .. })
+            Some(Event::SnapshotAcquired { .. })
         ));
         if changed_instance {
             assert!(connection.advance().await.unwrap().is_none());
@@ -177,4 +177,90 @@ async fn changed_instance_or_closed_observation_fails_the_connection() {
         }
         connection.close();
     }
+}
+
+#[tokio::test]
+async fn busy_observation_does_not_starve_command_submission_or_acceptance() {
+    let (observations, mut observing) = mpsc::unbounded_channel();
+    let (submissions, mut submitting) = mpsc::unbounded_channel();
+    let mut connection = Connection::new(
+        GatedControl {
+            observations,
+            submissions,
+        },
+        stream::iter([Ok(ApplicationCommand::SetTarget(LightingTarget::Off))]),
+    );
+    assert!(connection.advance().now_or_never().is_none());
+    assert!(
+        observing
+            .try_recv()
+            .unwrap()
+            .send(Observation {
+                initial: snapshot(),
+                updates: stream::repeat(Update::Snapshot(snapshot())).map(Ok).boxed(),
+            })
+            .is_ok()
+    );
+    assert!(matches!(
+        connection.advance().await.unwrap(),
+        Some(Event::SnapshotAcquired { .. })
+    ));
+    within(async {
+        loop {
+            if matches!(
+                connection.advance().await.unwrap(),
+                Some(Event::Accepted(_))
+            ) {
+                break;
+            }
+            if let Ok((request, reply)) = submitting.try_recv() {
+                reply
+                    .send(Accepted {
+                        operation: request.id,
+                    })
+                    .unwrap();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    connection.close();
+}
+
+#[tokio::test]
+async fn input_eof_keeps_application_observation_alive() {
+    let (observations, mut observing) = mpsc::unbounded_channel();
+    let (submissions, _submitting) = mpsc::unbounded_channel();
+    let mut connection = Connection::new(
+        GatedControl {
+            observations,
+            submissions,
+        },
+        stream::empty(),
+    );
+    assert!(connection.advance().now_or_never().is_none());
+    let (updates, stream) = input::unbounded();
+    assert!(
+        observing
+            .try_recv()
+            .unwrap()
+            .send(Observation {
+                initial: snapshot(),
+                updates: stream.map(Ok).boxed(),
+            })
+            .is_ok()
+    );
+    assert!(matches!(
+        connection.advance().await.unwrap(),
+        Some(Event::SnapshotAcquired { .. })
+    ));
+    assert!(connection.advance().await.unwrap().is_none());
+    updates
+        .unbounded_send(Update::Snapshot(snapshot()))
+        .unwrap();
+    assert!(matches!(
+        connection.advance().await.unwrap(),
+        Some(Event::Updated(_))
+    ));
+    connection.close();
 }

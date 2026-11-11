@@ -105,7 +105,7 @@ pub(crate) async fn run<C: ApplicationControl>(
             }
             event = connection.advance(), if lifecycle.is_active() => {
                 match event {
-                    Ok(Some(Event::Connected { instance, snapshot })) => {
+                    Ok(Some(Event::SnapshotAcquired { instance, snapshot })) => {
                         report(HostEvent::Application(snapshot));
                         lifecycle.on_initialized(instance, &mut report);
                     }

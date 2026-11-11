@@ -1,5 +1,5 @@
 //! Application observation and command submission; no owner lifecycle decisions.
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use prysm_contract::{
     ControlError, Failure,
     application::{
@@ -12,7 +12,7 @@ use prysm_contract::{
 use std::{future::pending, num::NonZeroU64};
 
 pub(super) enum Event {
-    Connected {
+    SnapshotAcquired {
         instance: InstanceId,
         snapshot: Box<Update<ApplicationSnapshot<()>, ApplicationEvent>>,
     },
@@ -24,9 +24,7 @@ pub(super) enum Event {
 pub(super) struct Connection<C: ApplicationControl, S> {
     control: C,
     commands: Option<S>,
-    observing:
-        Option<BoxFuture<'static, Result<ApplicationObservation<C::Settings>, ControlError>>>,
-    observation: Option<ApplicationObservation<C::Settings>>,
+    observation: ObservationState<C::Settings>,
     request: Option<BoxFuture<'static, Result<Accepted, ControlError>>>,
     instance: Option<InstanceId>,
     next_id: Option<NonZeroU64>,
@@ -39,10 +37,9 @@ where
 {
     pub fn new(control: C, commands: S) -> Self {
         Self {
-            observing: Some(observe(control.clone())),
+            observation: ObservationState::Acquiring(observe(control.clone())),
             control,
             commands: Some(commands),
-            observation: None,
             request: None,
             instance: None,
             next_id: Some(NonZeroU64::MIN),
@@ -54,30 +51,8 @@ where
     /// None means a resync or submission started, or command input closed.
     pub async fn advance(&mut self) -> Result<Option<Event>, ControlError> {
         tokio::select! {
-            biased;
-            result = optional(&mut self.observing) => {
-                self.observing = None;
-                let connected = result?;
-                let instance = connected.initial.state.instance;
-                if self.instance.is_some_and(|expected| expected != instance) {
-                    return Err(ControlError::Conflict("application instance changed"));
-                }
-                self.instance = Some(instance);
-                let snapshot = Box::new(project(Update::Snapshot(connected.initial.clone())));
-                self.observation = Some(connected);
-                return Ok(Some(Event::Connected { instance, snapshot }));
-            }
-            update = next_update(&mut self.observation) => {
-                match update {
-                    Some(Ok(Update::ResyncRequired)) => {
-                        self.observation = None;
-                        self.observing = Some(observe(self.control.clone()));
-                    }
-                    Some(Ok(update)) => return Ok(Some(Event::Updated(Box::new(project(update))))),
-                    Some(Err(error)) => return Err(error),
-                    None => return Err(ControlError::Unavailable("application observation closed")),
-                }
-            }
+            // Fair selection keeps observation traffic from starving commands.
+            event = self.observation.advance(&self.control, &mut self.instance) => return event,
             result = optional(&mut self.request) => {
                 self.request = None;
                 return Ok(Some(match result {
@@ -118,8 +93,7 @@ where
     pub fn close(&mut self) {
         self.commands = None;
         self.request = None;
-        self.observing = None;
-        self.observation = None;
+        self.observation = ObservationState::Closed;
     }
 }
 
@@ -129,12 +103,53 @@ fn observe<C: ApplicationControl>(
     async move { control.observe().await }.boxed()
 }
 
-async fn next_update<S>(
-    observation: &mut Option<ApplicationObservation<S>>,
-) -> Option<Result<Update<ApplicationSnapshot<S>, ApplicationEvent>, ControlError>> {
-    match observation {
-        Some(observation) => observation.updates.next().await,
-        None => pending().await,
+enum ObservationState<S> {
+    Acquiring(BoxFuture<'static, Result<ApplicationObservation<S>, ControlError>>),
+    Observing(
+        BoxStream<'static, Result<Update<ApplicationSnapshot<S>, ApplicationEvent>, ControlError>>,
+    ),
+    Closed,
+}
+
+impl<S> ObservationState<S> {
+    async fn advance<C: ApplicationControl<Settings = S>>(
+        &mut self,
+        control: &C,
+        instance: &mut Option<InstanceId>,
+    ) -> Result<Option<Event>, ControlError> {
+        match self {
+            Self::Acquiring(acquiring) => {
+                let connected = acquiring.await;
+                *self = Self::Closed;
+                let connected = connected?;
+                let observed = connected.initial.state.instance;
+                if instance.is_some_and(|expected| expected != observed) {
+                    return Err(ControlError::Conflict("application instance changed"));
+                }
+                *instance = Some(observed);
+                let snapshot = Box::new(project(Update::Snapshot(connected.initial)));
+                *self = Self::Observing(connected.updates);
+                Ok(Some(Event::SnapshotAcquired {
+                    instance: observed,
+                    snapshot,
+                }))
+            }
+            Self::Observing(observation) => match observation.next().await {
+                Some(Ok(Update::ResyncRequired)) => {
+                    *self = Self::Acquiring(observe(control.clone()));
+                    Ok(None)
+                }
+                Some(Ok(update)) => Ok(Some(Event::Updated(Box::new(project(update))))),
+                result => {
+                    *self = Self::Closed;
+                    Err(match result {
+                        Some(Err(error)) => error,
+                        _ => ControlError::Unavailable("application observation closed"),
+                    })
+                }
+            },
+            Self::Closed => pending().await,
+        }
     }
 }
 
