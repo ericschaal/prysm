@@ -155,6 +155,92 @@ async fn ready(events: &mut mpsc::UnboundedReceiver<HostEvent>) {
     within(async { while !matches!(events.recv().await.unwrap(), HostEvent::Ready(_)) {} }).await;
 }
 
+#[tokio::test(start_paused = true)]
+async fn lifecycle_ignores_duplicate_and_late_transitions() {
+    for initialize in [false, true] {
+        let (mut owners, _, gates) = fixture();
+        let mut lifecycle = Lifecycle::new();
+        let (mut report, mut events) = events();
+        let startup_deadline = lifecycle.deadline();
+        lifecycle.on_timeout(&mut owners, &mut report);
+        assert_eq!(lifecycle.deadline(), startup_deadline);
+        assert!(events.try_recv().is_err());
+
+        if initialize {
+            lifecycle.on_initialized(INSTANCE, &mut report);
+            lifecycle.on_initialized(INSTANCE, &mut report);
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                HostEvent::Ready(INSTANCE)
+            ));
+            assert!(events.try_recv().is_err());
+            assert!(lifecycle.deadline().is_none());
+            lifecycle.on_timeout(&mut owners, &mut report);
+            assert!(events.try_recv().is_err());
+        }
+
+        lifecycle.request_stop(&mut owners, &mut report);
+        assert!(matches!(events.try_recv().unwrap(), HostEvent::Stopping));
+        assert!(!lifecycle.is_active());
+        let shutdown_deadline = lifecycle.deadline();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        lifecycle.request_stop(&mut owners, &mut report);
+        lifecycle.on_initialized(INSTANCE, &mut report);
+        assert_eq!(lifecycle.deadline(), shutdown_deadline);
+        assert!(!lifecycle.is_active());
+        assert!(events.try_recv().is_err());
+
+        lifecycle.on_failure(
+            "test",
+            ControlError::Unavailable("failed"),
+            &mut owners,
+            &mut report,
+        );
+        assert!(matches!(events.try_recv().unwrap(), HostEvent::Failure(_)));
+        let cleanup_deadline = lifecycle.deadline();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        lifecycle.request_stop(&mut owners, &mut report);
+        lifecycle.on_initialized(INSTANCE, &mut report);
+        lifecycle.on_failure(
+            "test",
+            ControlError::Unavailable("late failure"),
+            &mut owners,
+            &mut report,
+        );
+        assert!(matches!(events.try_recv().unwrap(), HostEvent::Failure(_)));
+        assert_eq!(lifecycle.deadline(), cleanup_deadline);
+        assert!(!lifecycle.is_active());
+        assert!(events.try_recv().is_err());
+
+        tokio::time::advance(DEADLINE).await;
+        lifecycle.on_timeout(&mut owners, &mut report);
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            HostEvent::CleanupOverdue { .. }
+        ));
+        lifecycle.on_timeout(&mut owners, &mut report);
+        assert!(events.try_recv().is_err());
+        assert!(lifecycle.deadline().is_none());
+
+        for (owner, gate) in [
+            Owner::Application,
+            Owner::Capture,
+            Owner::Processing,
+            Owner::Output,
+        ]
+        .into_iter()
+        .zip(gates)
+        {
+            let _ = gate.release.send(Ok(OwnerStopped));
+            let completion = owners.task(owner).completion().await;
+            lifecycle.on_owner_exited(owner, completion, &mut owners, &mut report);
+        }
+        assert!(owners.pending().is_empty());
+        assert!(events.try_recv().is_err());
+        assert_eq!(lifecycle.result().unwrap_err().failures.len(), 2);
+    }
+}
+
 #[tokio::test]
 async fn command_entry_waits_for_initialization_and_normal_stop_joins_in_order() {
     let (owners, control, [mut app, mut capture, mut flow, mut output]) = fixture();

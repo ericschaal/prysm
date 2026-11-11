@@ -1,9 +1,9 @@
-//! Host phase transitions; no session identities or device operations.
+//! Host phase transitions, deadlines, and lifecycle notifications.
 use super::{
     HostError, HostEvent,
     owners::{Completion, Owner, Owners},
 };
-use prysm_contract::{ControlError, Failure, OwnerStopped};
+use prysm_contract::{ControlError, Failure, OwnerStopped, identity::InstanceId};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -16,7 +16,7 @@ enum Phase {
     StopApplication,
     StopFlow,
     StopOwners,
-    Terminal,
+    CleaningUp,
 }
 
 pub(super) struct Lifecycle {
@@ -32,27 +32,34 @@ impl Lifecycle {
             failures: vec![],
         }
     }
-    pub fn observing(&self) -> bool {
+    pub fn is_active(&self) -> bool {
         matches!(self.phase, Phase::Starting | Phase::Running)
     }
     pub fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
-    pub fn initialized(&mut self) -> bool {
+    pub fn on_initialized(&mut self, instance: InstanceId, report: &mut impl FnMut(HostEvent)) {
         if self.phase != Phase::Starting {
-            return false;
+            return;
         }
         self.phase = Phase::Running;
         self.deadline = None;
-        true
+        report(HostEvent::Ready(instance));
     }
-    pub fn stop(&mut self, owners: &mut Owners) {
+    pub fn request_stop(&mut self, owners: &mut Owners, report: &mut impl FnMut(HostEvent)) {
+        if !self.is_active() {
+            return;
+        }
+        report(HostEvent::Stopping);
         self.phase = Phase::StopApplication;
         self.deadline = Some(Instant::now() + DEADLINE);
         owners.application.request_stop();
     }
-    pub fn timed_out(&mut self, owners: &mut Owners, report: &mut impl FnMut(HostEvent)) {
-        if self.phase == Phase::Terminal {
+    pub fn on_timeout(&mut self, owners: &mut Owners, report: &mut impl FnMut(HostEvent)) {
+        if self.deadline.is_none_or(|at| at > Instant::now()) {
+            return;
+        }
+        if self.phase == Phase::CleaningUp {
             self.deadline = None;
             report(HostEvent::CleanupOverdue {
                 pending: owners.pending(),
@@ -63,8 +70,7 @@ impl Lifecycle {
             } else {
                 "coordinated shutdown deadline expired"
             };
-            self.failure("host", ControlError::Unavailable(message), report);
-            self.terminate(owners);
+            self.on_failure("host", ControlError::Unavailable(message), owners, report);
         }
     }
     pub fn result(self) -> Result<OwnerStopped, HostError> {
@@ -76,25 +82,24 @@ impl Lifecycle {
             })
         }
     }
-    pub fn failure(
+    pub fn on_failure(
         &mut self,
         context: &str,
         error: impl Into<Failure>,
+        owners: &mut Owners,
         report: &mut impl FnMut(HostEvent),
     ) {
         let mut failure = error.into();
         failure.message = format!("{context}: {}", failure.message);
         report(HostEvent::Failure(failure.clone()));
         self.failures.push(failure);
-    }
-    pub fn terminate(&mut self, owners: &mut Owners) {
-        if self.phase != Phase::Terminal {
-            self.phase = Phase::Terminal;
+        if self.phase != Phase::CleaningUp {
+            self.phase = Phase::CleaningUp;
             self.deadline = Some(Instant::now() + DEADLINE);
             owners.terminate();
         }
     }
-    pub fn exited(
+    pub fn on_owner_exited(
         &mut self,
         owner: Owner,
         completion: Completion,
@@ -109,7 +114,7 @@ impl Lifecycle {
             Ok(Err(error)) => Some(error),
             Err(error)
                 if owner == Owner::Application
-                    && self.phase == Phase::Terminal
+                    && self.phase == Phase::CleaningUp
                     && error.is_cancelled() =>
             {
                 None
@@ -117,8 +122,7 @@ impl Lifecycle {
             Err(error) => Some(ControlError::RecoveryRequired(Box::new(error))),
         };
         if let Some(error) = error {
-            self.failure(owner.name(), error, report);
-            self.terminate(owners);
+            self.on_failure(owner.name(), error, owners, report);
         } else if owner == Owner::Application && self.phase == Phase::StopApplication {
             self.phase = Phase::StopFlow;
             owners.stop_settings();

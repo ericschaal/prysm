@@ -78,23 +78,22 @@ pub(crate) async fn run<C: ApplicationControl>(
         tokio::select! {
             biased;
             result = owners.application.completion() => {
-                lifecycle.exited(Owner::Application, result, &mut owners, &mut report);
+                lifecycle.on_owner_exited(Owner::Application, result, &mut owners, &mut report);
             },
             result = owners.capture.completion() => {
-                lifecycle.exited(Owner::Capture, result, &mut owners, &mut report);
+                lifecycle.on_owner_exited(Owner::Capture, result, &mut owners, &mut report);
             },
             result = owners.flow.completion() => {
-                lifecycle.exited(Owner::Processing, result, &mut owners, &mut report);
+                lifecycle.on_owner_exited(Owner::Processing, result, &mut owners, &mut report);
             },
             result = owners.output.completion() => {
-                lifecycle.exited(Owner::Output, result, &mut owners, &mut report);
+                lifecycle.on_owner_exited(Owner::Output, result, &mut owners, &mut report);
             },
             result = settings_completion(&mut owners.settings) => {
-                lifecycle.exited(Owner::Settings, result, &mut owners, &mut report);
+                lifecycle.on_owner_exited(Owner::Settings, result, &mut owners, &mut report);
             },
-            _ = &mut shutdown, if lifecycle.observing() => {
-                report(HostEvent::Stopping);
-                lifecycle.stop(&mut owners);
+            _ = &mut shutdown, if lifecycle.is_active() => {
+                lifecycle.request_stop(&mut owners, &mut report);
             }
             _ = async {
                 match lifecycle.deadline() {
@@ -102,28 +101,25 @@ pub(crate) async fn run<C: ApplicationControl>(
                     None => pending().await,
                 }
             } => {
-                lifecycle.timed_out(&mut owners, &mut report);
+                lifecycle.on_timeout(&mut owners, &mut report);
             }
-            event = connection.advance(), if lifecycle.observing() => {
+            event = connection.advance(), if lifecycle.is_active() => {
                 match event {
                     Ok(Some(Event::Connected { instance, snapshot })) => {
                         report(HostEvent::Application(snapshot));
-                        if lifecycle.initialized() {
-                            report(HostEvent::Ready(instance));
-                        }
+                        lifecycle.on_initialized(instance, &mut report);
                     }
                     Ok(Some(Event::Updated(update))) => report(HostEvent::Application(update)),
                     Ok(Some(Event::Accepted(accepted))) => report(HostEvent::Accepted(accepted)),
                     Ok(Some(Event::Rejected(failure))) => report(HostEvent::CommandRejected(failure)),
                     Ok(None) => {}
                     Err(error) => {
-                        lifecycle.failure("application observation", error, &mut report);
-                        lifecycle.terminate(&mut owners);
+                        lifecycle.on_failure("application observation", error, &mut owners, &mut report);
                     }
                 }
             }
         }
-        if !lifecycle.observing() {
+        if !lifecycle.is_active() {
             connection.close();
         }
     }
