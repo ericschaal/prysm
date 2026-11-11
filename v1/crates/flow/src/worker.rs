@@ -38,7 +38,7 @@ pub(super) fn run<O: ColorSink>(
         },
     };
     let (updates, _) = broadcast::channel(CAPACITY);
-    let mut config = None;
+    let mut configured = None;
     let mut epoch = None;
     loop {
         if mailbox.is_stopping() {
@@ -48,7 +48,7 @@ pub(super) fn run<O: ColorSink>(
             match command {
                 Command::Configure(update, reply) => {
                     processor.configure(&update.config);
-                    config = Some(update.config);
+                    configured = Some(update);
                     snapshot.state.configured_revision = Some(update.revision);
                     publish(&mut snapshot, &updates);
                     let _ = reply.send(Ok(Configured {
@@ -89,17 +89,14 @@ pub(super) fn run<O: ColorSink>(
             }
             continue;
         }
-        if let Some(config) = config {
+        if let Some(update) = configured {
             let frame = mailbox.take_frame();
             if let Some(frame) = frame {
                 if epoch != Some(frame.stamp.epoch) {
-                    processor = PrysmProcessor::new(&config);
+                    processor = PrysmProcessor::new(&update.config);
                     epoch = Some(frame.stamp.epoch);
                 }
-                let revision = snapshot
-                    .state
-                    .configured_revision
-                    .expect("configured worker");
+                let revision = update.revision;
                 let source = preview.retain(&frame.frame);
                 let frame = ColorFrame {
                     stamp: frame.stamp,
