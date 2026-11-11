@@ -1,4 +1,20 @@
-# Processing preview
+# Processing flow
+
+The Tokio dispatcher reads capture frames; one dedicated worker serializes controls
+and processing. The mailbox retains one pending frame, a newest-frame watermark
+and a sealed-session fence. Commands take priority over pending frames.
+
+Processing waits for configuration. The worker retains configuration and revision
+together; applied revision advances only when a frame is processed, not delivered.
+A new epoch resets processor history; live configuration preserves unrelated history.
+
+After capture cleanup, a barrier waits for in-flight processing, seals the old
+session and discards its pending frames. It does not await output device writes.
+Shutdown discards pending work and joins the worker. Cancellation also joins,
+synchronously as a fallback. Input and worker failures are both retained; if either
+requires recovery, the combined result does too. Otherwise the input category wins.
+
+## Preview
 
 `flow.preview.subscribe().await` returns a `PreviewLease`. Subscribing does not
 start capture or change processing/output state. It is valid before the owner

@@ -286,7 +286,8 @@ The implemented flow is driven by `flow.owner.run(instance, shutdown)`, using th
 host's application instance identity for observations and session fences. It waits
 for its first configuration before processing and retains only the newest frame
 while waiting. Session sequences increase within that instance, allowing barriers
-to reject sealed and earlier sessions with constant memory. Preview remains deferred.
+to reject sealed and earlier sessions with constant memory. The demand-aware preview
+tap is implemented; see the [flow protocol](../../v1/crates/flow/README.md).
 
 A flow barrier seals the old session after capture cleanup; late frames from a
 sealed session are rejected. A new capture session/discontinuity resets temporal
