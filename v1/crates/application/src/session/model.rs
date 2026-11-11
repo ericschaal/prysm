@@ -124,14 +124,14 @@ impl AfterStop {
     }
 }
 
-struct Cleanup {
+struct Cleanup<F> {
     session: Session,
     mode: IdleOutputMode,
     stage: CleanupStage,
     after: AfterStop,
-    failure: Option<Failure>,
+    failure: F,
 }
-impl Cleanup {
+impl Cleanup<Option<Failure>> {
     fn new(session: Session, mode: IdleOutputMode, failure: Option<Failure>) -> Self {
         Self {
             session,
@@ -139,6 +139,18 @@ impl Cleanup {
             failure,
             stage: CleanupStage::Hold,
             after: AfterStop::Idle,
+        }
+    }
+}
+
+impl<F> Cleanup<F> {
+    fn with_failure<T>(self, failure: T) -> Cleanup<T> {
+        Cleanup {
+            session: self.session,
+            mode: self.mode,
+            stage: self.stage,
+            after: self.after,
+            failure,
         }
     }
 }
@@ -158,8 +170,8 @@ enum Phase {
         session: Session,
         applied: Availability,
     },
-    Stopping(Cleanup),
-    Blocked(Cleanup),
+    Stopping(Cleanup<Option<Failure>>),
+    Blocked(Cleanup<Failure>),
 }
 
 pub(super) struct Model {
@@ -242,10 +254,7 @@ impl Model {
             Phase::Stopping(cleanup) => SessionState::Stopping(cleanup.session.id),
             Phase::Blocked(cleanup) => SessionState::Failed {
                 session: cleanup.session.id,
-                failure: cleanup
-                    .failure
-                    .clone()
-                    .expect("blocked cleanup has a failure"),
+                failure: cleanup.failure.clone(),
                 cleanup_complete: false,
             },
         }
@@ -335,23 +344,25 @@ impl Model {
                 cleanup.after.interrupt();
                 cleanup.mode = mode;
                 cleanup.stage = CleanupStage::Hold;
-                cleanup.failure = None;
-                Phase::Stopping(cleanup)
+                Phase::Stopping(cleanup.with_failure(None))
             }
             blocked @ Phase::Blocked(_) => blocked,
         };
     }
     pub fn fail(&mut self, failure: Failure) {
         self.stop(IdleOutputMode::Off, false);
-        if let Phase::Stopping(cleanup) | Phase::Blocked(cleanup) = &mut self.phase {
-            // Retain the latest diagnostic, never an unbounded failure history.
-            cleanup.failure = Some(failure);
+        // Retain the latest diagnostic, never an unbounded failure history.
+        match &mut self.phase {
+            Phase::Stopping(cleanup) => cleanup.failure = Some(failure),
+            Phase::Blocked(cleanup) => cleanup.failure = failure,
+            _ => {}
         }
     }
     pub fn capture_changed(&mut self, state: &CaptureState) -> bool {
         let session = match &mut self.phase {
             Phase::Starting { session, .. } | Phase::Active { session, .. } => session,
-            Phase::Stopping(cleanup) | Phase::Blocked(cleanup) => &mut cleanup.session,
+            Phase::Stopping(cleanup) => &mut cleanup.session,
+            Phase::Blocked(cleanup) => &mut cleanup.session,
             Phase::Idle { .. } => return false,
         };
         if let CaptureState::Failed {
@@ -480,14 +491,14 @@ impl Model {
                 }
                 _ => unreachable!("cleanup calls belong to an output transaction or Stop"),
             };
-            cleanup.failure = Some(failure.clone());
             cleanup.after.interrupt();
             if !matches!(action, Action::CloseAdmission(_)) {
                 let completion = std::mem::take(&mut cleanup.after).completion();
-                self.phase = Phase::Blocked(cleanup);
+                self.phase = Phase::Blocked(cleanup.with_failure(failure.clone()));
                 return completion.finish(Outcome::Blocked(failure.clone()), Some(failure));
             }
             // A failed black write still requires stop, barrier and finish.
+            cleanup.failure = Some(failure);
             self.phase = Phase::Stopping(cleanup);
         }
         let (phase, progress) = match std::mem::replace(&mut self.phase, Self::idle()) {
@@ -588,7 +599,7 @@ impl Preparation {
     }
 }
 
-impl Cleanup {
+impl Cleanup<Option<Failure>> {
     /// True only after all acquired resources have reached the requested idle mode.
     fn advance(&mut self, action: Action) -> bool {
         match action {
