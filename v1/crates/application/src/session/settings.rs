@@ -3,6 +3,15 @@ use super::*;
 use prysm_contract::identity::SettingsRevision;
 
 type Value<C, O> = Settings<<C as CaptureControl>::Settings, <O as OutputControl>::Settings>;
+pub(super) enum SettingsApplication<S> {
+    Restart(S, SettingsRevision),
+    Processing {
+        call: Pending,
+        // Interruption discards installation intent while retaining the issued call.
+        candidate: Option<(S, SettingsRevision)>,
+    },
+}
+
 impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Lifecycle<C, P, O>
 where
     C::Settings: PartialEq,
@@ -36,26 +45,31 @@ where
                 settings: Some(Ok(())),
             };
         }
-        self.devices.stage(settings, revision);
+        assert!(
+            self.settings_application.is_none(),
+            "one settings application at a time"
+        );
         if same_adapters && self.model.is_active() {
-            self.processing_update = Some(ProcessingUpdate {
-                call: self.devices.update_processing(),
-                interrupted: false,
+            self.settings_application = Some(SettingsApplication::Processing {
+                call: self.devices.configure_processing(&settings, revision),
+                candidate: Some((settings, revision)),
             });
         } else {
+            self.settings_application = Some(SettingsApplication::Restart(settings, revision));
             self.model.restart_settings(target);
         }
         Outcome::Changed.into()
     }
     pub(super) fn processing_updated(&mut self, result: Result<(), ControlError>) -> Progress {
-        let update = self
-            .processing_update
-            .take()
-            .expect("completed processing update");
+        let Some(SettingsApplication::Processing { candidate, .. }) =
+            self.settings_application.take()
+        else {
+            unreachable!("completed processing update")
+        };
         match result {
             Ok(()) => {
-                if !update.interrupted {
-                    self.devices.install_staged();
+                if let Some((settings, revision)) = candidate {
+                    self.devices.install(settings, revision);
                 }
                 Progress {
                     outcome: Outcome::Changed,
@@ -64,7 +78,7 @@ where
             }
             Err(error) => {
                 let failure = Failure::from(error);
-                let progress = if update.interrupted {
+                let progress = if candidate.is_none() {
                     self.model.fail(failure.clone());
                     Progress {
                         outcome: Outcome::Failed(failure.clone()),

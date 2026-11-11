@@ -20,7 +20,6 @@ pub(super) struct Devices<C: CaptureControl, P, O: OutputControl> {
     output: O,
     settings: DeviceSettings<C, O>,
     revision: SettingsRevision,
-    staged: Option<(DeviceSettings<C, O>, SettingsRevision)>,
     waiting_colors: EdgeColors,
 }
 impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O> {
@@ -36,7 +35,6 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
             output,
             settings,
             revision: SettingsRevision(0),
-            staged: None,
             waiting_colors,
         }
     }
@@ -46,21 +44,6 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
     pub fn install(&mut self, settings: DeviceSettings<C, O>, revision: SettingsRevision) {
         self.settings = settings;
         self.revision = revision;
-    }
-    pub fn stage(&mut self, settings: DeviceSettings<C, O>, revision: SettingsRevision) {
-        assert!(self.staged.is_none(), "one settings application at a time");
-        self.staged = Some((settings, revision));
-    }
-    pub fn install_staged(&mut self) {
-        let (settings, revision) = self.staged.take().expect("staged settings");
-        self.install(settings, revision);
-    }
-    pub fn discard_staged(&mut self) {
-        self.staged = None;
-    }
-    pub fn update_processing(&self) -> Pending {
-        let (settings, revision) = self.staged.as_ref().expect("staged settings");
-        self.configure_processing(settings, *revision)
     }
     pub fn validate(&self, target: LightingTarget) -> Result<(), ControlError> {
         self.validate_settings(&self.settings, target)
@@ -72,7 +55,7 @@ impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Devices<C, P, O>
     ) -> Result<(), ControlError> {
         super::validate_settings(&self.capture, &self.output, settings, target)
     }
-    fn configure_processing(
+    pub fn configure_processing(
         &self,
         settings: &DeviceSettings<C, O>,
         revision: SettingsRevision,

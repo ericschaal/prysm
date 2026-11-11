@@ -16,6 +16,7 @@ use prysm_contract::{
     processing::ProcessingControl,
 };
 use prysm_core::EdgeColors;
+use settings::SettingsApplication;
 pub(super) use settings::validate_settings;
 
 pub(super) enum Requested {
@@ -44,16 +45,11 @@ impl From<Outcome> for Progress {
     }
 }
 
-struct ProcessingUpdate {
-    call: Pending,
-    interrupted: bool,
-}
-
 pub(super) struct Lifecycle<C: CaptureControl, P, O: OutputControl> {
     model: Model,
     devices: Devices<C, P, O>,
     pending: Option<Pending>,
-    processing_update: Option<ProcessingUpdate>,
+    settings_application: Option<SettingsApplication<Settings<C::Settings, O::Settings>>>,
     opening: Option<BoxFuture<'static, Result<(), ControlError>>>,
 }
 impl<C: CaptureControl, P: ProcessingControl, O: OutputControl> Lifecycle<C, P, O>
@@ -72,7 +68,7 @@ where
             devices: Devices::new(controls, settings, waiting_colors),
             pending: None,
             opening: None,
-            processing_update: None,
+            settings_application: None,
         }
     }
     pub fn settings(&self) -> &Settings<C::Settings, O::Settings> {
@@ -111,14 +107,15 @@ where
     }
     fn interrupt_pending_calls(&mut self, mut progress: Progress) -> Progress {
         self.interrupt_open();
-        self.devices.discard_staged();
-        if let Some(update) = &mut self.processing_update {
-            if update.call.started() {
-                update.interrupted = true;
-            } else {
-                self.processing_update = None;
+        match &mut self.settings_application {
+            Some(SettingsApplication::Processing { call, candidate }) if call.started() => {
+                *candidate = None;
+            }
+            Some(SettingsApplication::Processing { .. }) => {
+                self.settings_application = None;
                 progress.settings = Some(Ok(()));
             }
+            _ => self.settings_application = None,
         }
         progress
     }
@@ -141,10 +138,19 @@ where
         if self.pending.is_none()
             && let Some(action) = self.model.next_action()
             && !(matches!(action, Action::Barrier(_))
-                && (self.opening.is_some() || self.processing_update.is_some()))
+                && (self.opening.is_some()
+                    || matches!(
+                        self.settings_application,
+                        Some(SettingsApplication::Processing { .. })
+                    )))
         {
             if action == Action::InstallSettings {
-                self.devices.install_staged();
+                let Some(SettingsApplication::Restart(settings, revision)) =
+                    self.settings_application.take()
+                else {
+                    unreachable!("settings restart retains its candidate")
+                };
+                self.devices.install(settings, revision);
                 return self.model.completed(action, Ok(()));
             }
             self.model.scheduled(action);
@@ -158,7 +164,12 @@ where
         let completed = tokio::select! {
             result = async { self.pending.as_mut().expect("guarded").wait().await }, if self.pending.is_some() => Completed::Device(result),
             _ = async { self.opening.as_mut().expect("guarded").as_mut().await }, if self.opening.is_some() => Completed::Open,
-            result = async { self.processing_update.as_mut().expect("guarded").call.wait().await }, if self.processing_update.is_some() => Completed::Processing(result),
+            result = async {
+                match &mut self.settings_application {
+                    Some(SettingsApplication::Processing { call, .. }) => call.wait().await,
+                    _ => std::future::pending().await,
+                }
+            } => Completed::Processing(result),
             else => std::future::pending().await,
         };
         let progress = match completed {
@@ -176,7 +187,7 @@ where
             return self.interrupt_pending_calls(progress);
         }
         if progress.settings.is_some() {
-            self.devices.discard_staged();
+            self.settings_application = None;
         }
         progress
     }
