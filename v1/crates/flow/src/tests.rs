@@ -664,3 +664,60 @@ async fn dropping_control_clients_does_not_stop_processing() {
     flow.shutdown.send(()).unwrap();
     assert_eq!(within(flow.task).await.unwrap().unwrap(), OwnerStopped);
 }
+
+#[tokio::test]
+async fn owner_retains_source_and_worker_failures() {
+    struct FailingSink {
+        sink: Sink,
+        failure: Mutex<Option<ControlError>>,
+    }
+    impl ColorSink for FailingSink {
+        fn offer(&self, frame: ColorFrame) -> Result<OfferResult, ControlError> {
+            self.sink.offer(frame)?;
+            Err(self.failure.lock().unwrap().take().unwrap())
+        }
+    }
+    fn failure(message: &'static str, recovery: bool) -> ControlError {
+        if recovery {
+            ControlError::RecoveryRequired(Box::new(std::io::Error::other(message)))
+        } else {
+            ControlError::Unavailable(message)
+        }
+    }
+    for (input_recovery, worker_recovery) in [(false, false), (true, false), (false, true)] {
+        let (release, gate) = std::sync::mpsc::channel();
+        let (sink, mut colors, _) = sink(Some(gate));
+        let mut flow = Running::start(FailingSink {
+            sink,
+            failure: Mutex::new(Some(failure("output failed after source", worker_recovery))),
+        })
+        .await;
+        flow.configure(1, config()).await;
+        flow.send(frame(1, 1, 1, 255)).await;
+        within(colors.recv()).await.unwrap();
+        flow.frames
+            .send(Err(failure("source failed first", input_recovery)))
+            .await
+            .unwrap();
+        within(async {
+            while !flow.control.mailbox.is_stopping() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        release.send(()).unwrap();
+        let error = within(flow.task).await.unwrap().unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("source failed first"));
+        assert!(message.contains("output failed after source"));
+        assert_eq!(
+            error.kind(),
+            if input_recovery || worker_recovery {
+                FailureKind::RecoveryRequired
+            } else {
+                FailureKind::Unavailable
+            }
+        );
+        assert!(std::error::Error::source(&error).is_some());
+    }
+}

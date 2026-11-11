@@ -6,7 +6,7 @@ mod worker;
 use mailbox::{Command, Mailbox};
 pub use preview::PreviewHandle;
 use prysm_contract::{
-    ControlError, OwnerStopped,
+    ControlError, Failure, FailureKind, OwnerStopped,
     capture::FrameSource,
     identity::{InstanceId, SessionId},
     observation::Observation,
@@ -137,9 +137,45 @@ impl<F: FrameSource, O: ColorSink> FlowOwner<F, O> {
         if !worker_finished {
             let _ = finished.await;
         }
-        worker.join()?;
-        result?;
-        Ok(OwnerStopped)
+        match (result, worker.join()) {
+            (Ok(()), Ok(())) => Ok(OwnerStopped),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(input), Err(worker)) => {
+                let kind = if input.kind() == FailureKind::RecoveryRequired
+                    || worker.kind() == FailureKind::RecoveryRequired
+                {
+                    FailureKind::RecoveryRequired
+                } else {
+                    input.kind()
+                };
+                let mut failure = Failure::from(ControlError::Adapter(Box::new(FlowFailure {
+                    input,
+                    worker,
+                })));
+                failure.kind = kind;
+                Err(failure.into())
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FlowFailure {
+    input: ControlError,
+    worker: ControlError,
+}
+impl std::fmt::Display for FlowFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "input failed: {}; processing worker also failed: {}",
+            self.input, self.worker
+        )
+    }
+}
+impl std::error::Error for FlowFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.worker)
     }
 }
 
