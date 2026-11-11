@@ -1276,3 +1276,53 @@ async fn stopping_before_the_first_start_poll_never_issues_a_late_open() {
 
 #[path = "tests/settings.rs"]
 mod settings_workflow;
+
+#[tokio::test]
+async fn shutdown_cleanup_failure_reaches_owner_result() {
+    let mut app = Running::new(settings()).await;
+    app.start().await;
+    std::mem::replace(&mut app.shutdown, oneshot::channel().0)
+        .send(())
+        .unwrap();
+    app.call(Call::Hold(epoch(0)))
+        .await
+        .fail(ControlError::Unavailable("shutdown hold failed"));
+    app.call(Call::Stop(session())).await.ok();
+    app.call(Call::Finish(session(), IdleOutputMode::Off))
+        .await
+        .ok();
+    let result = within(app.app).await.unwrap();
+    app.flow_shutdown.send(()).unwrap();
+    within(app.flow).await.unwrap().unwrap();
+    assert!(result.is_err(), "cleanup failure was lost: {result:?}");
+}
+
+#[tokio::test]
+async fn shutdown_retains_failure_after_explicit_cleanup_retry() {
+    let mut app = Running::new(settings()).await;
+    app.start().await;
+    std::mem::replace(&mut app.shutdown, oneshot::channel().0)
+        .send(())
+        .unwrap();
+    app.call(Call::Hold(epoch(0))).await.ok();
+    app.call(Call::Stop(session()))
+        .await
+        .fail(ControlError::Unavailable("shutdown stop failed"));
+    app.state(|s| {
+        matches!(
+            s.session,
+            SessionState::Failed {
+                cleanup_complete: false,
+                ..
+            }
+        )
+    })
+    .await;
+    assert!(!app.app.is_finished());
+    app.submit(2, LightingTarget::Off).await;
+    app.cleanup(0, true, IdleOutputMode::Off).await;
+    let error = within(app.app).await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("shutdown stop failed"));
+    app.flow_shutdown.send(()).unwrap();
+    within(app.flow).await.unwrap().unwrap();
+}

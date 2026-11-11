@@ -37,6 +37,7 @@ struct Coordinator<C: CaptureControl, P, O: OutputControl, R> {
     publication: Publisher<ApplicationSnapshot<AppSettings<C, O>>>,
     shutting_down: bool,
     fatal: Option<Failure>,
+    shutdown_failure: Option<Failure>,
 }
 
 pub(super) async fn run<C, P, O, R, Policy>(
@@ -119,6 +120,7 @@ where
         publication: Publisher::new(instance),
         shutting_down: false,
         fatal: None,
+        shutdown_failure: None,
     };
     let (mut commands_live, mut updates_live) = (true, true);
     loop {
@@ -126,7 +128,7 @@ where
             && !owner.settings.busy()
             && (owner.shutting_down || owner.fatal.is_some())
         {
-            return match owner.fatal {
+            return match owner.fatal.or(owner.shutdown_failure) {
                 Some(failure) => Err(failure.into()),
                 None => Ok(OwnerStopped),
             };
@@ -277,6 +279,7 @@ where
                 self.progressed(progress);
             }
             Saved::Finished(id, failure) => {
+                self.retain_shutdown_failure(&failure);
                 if failure.kind == FailureKind::RecoveryRequired {
                     self.fatal = Some(failure.clone());
                     self.fault(failure.clone());
@@ -302,7 +305,23 @@ where
         self.progressed(progress);
         self.publish();
     }
+    fn retain_shutdown_failure(&mut self, failure: &Failure) {
+        if self.shutting_down && failure.kind != FailureKind::Interrupted {
+            self.shutdown_failure.get_or_insert_with(|| failure.clone());
+        }
+    }
     fn progressed(&mut self, progress: Progress) {
+        match &progress.outcome {
+            Outcome::Failed(failure)
+            | Outcome::Blocked(failure)
+            | Outcome::Stopped(Some(failure)) => {
+                self.retain_shutdown_failure(failure);
+            }
+            _ => {}
+        }
+        if let Some(Err(failure)) = &progress.settings {
+            self.retain_shutdown_failure(failure);
+        }
         match progress.outcome {
             Outcome::Changed => {}
             Outcome::Ready => self.finish_operation(None),

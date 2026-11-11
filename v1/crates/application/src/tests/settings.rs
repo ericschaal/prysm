@@ -813,3 +813,32 @@ async fn loaded_adapter_values_and_duplicate_profiles_are_validated_before_initi
     assert!(app.calls.try_recv().is_err());
     app.close().await;
 }
+
+#[tokio::test]
+async fn shutdown_reports_accepted_save_failure_after_lighting_cleanup() {
+    let (repo, mut saves) = repository(Some(settings()));
+    let mut app = Running::with_repository(settings(), repo).await;
+    app.start().await;
+    replace(&app, 2, 0, settings()).await;
+    let pending = save(&mut saves).await;
+    app.shutdown.send(()).unwrap();
+    for expected in [
+        Call::Hold(epoch(0)),
+        Call::Stop(session()),
+        Call::Finish(session(), IdleOutputMode::Off),
+    ] {
+        let call = within(app.calls.recv()).await.unwrap();
+        assert_eq!(call.call, expected);
+        call.ok();
+    }
+    let state = within(app.control.observe()).await.unwrap().initial.state;
+    assert_eq!(state.desired, LightingTarget::Off);
+    assert!(!app.app.is_finished());
+    assert!(!pending.reply.is_closed());
+    pending.fail(ControlError::Unavailable("save failed during shutdown"));
+    let error = within(app.app).await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("save failed during shutdown"));
+    assert!(app.calls.try_recv().is_err());
+    app.flow_shutdown.send(()).unwrap();
+    within(app.flow).await.unwrap().unwrap();
+}
