@@ -1452,6 +1452,7 @@ dependencies = [
  "prysm-contract",
  "prysm-core",
  "prysm-processor",
+ "thiserror 2.0.21",
  "tokio",
 ]
 

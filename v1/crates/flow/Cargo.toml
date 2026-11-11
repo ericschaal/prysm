@@ -11,6 +11,7 @@ prysm-core.workspace = true
 prysm-processor.workspace = true
 tokio.workspace = true
 futures.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }

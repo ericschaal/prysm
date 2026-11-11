@@ -159,24 +159,12 @@ impl<F: FrameSource, O: ColorSink> FlowOwner<F, O> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("input failed: {input}; processing worker also failed: {worker}")]
 struct FlowFailure {
     input: ControlError,
+    #[source]
     worker: ControlError,
-}
-impl std::fmt::Display for FlowFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "input failed: {}; processing worker also failed: {}",
-            self.input, self.worker
-        )
-    }
-}
-impl std::error::Error for FlowFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.worker)
-    }
 }
 
 /// Retains the OS thread even if the host drops/aborts its driving future.
