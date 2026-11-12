@@ -299,12 +299,17 @@ test('addresses: instance origins, receivers and the derived receiver port', () 
   assert('error' in instanceAddress('http://prysm.local/portal'));
   assert('error' in instanceAddress('ftp://prysm'));
   assert.deepEqual(receiverAddress('192.168.1.20:7380'), { value: '192.168.1.20:7380' });
-  assert('error' in receiverAddress('prysm.local:7380'), 'receivers are socket addresses');
-  assert('error' in receiverAddress('192.168.1.20'));
+  assert.deepEqual(receiverAddress(' prysm.local:7380 '), { value: 'prysm.local:7380' }, 'the TV resolves names');
+  assert.deepEqual(receiverAddress('[fd00::2]:7380'), { value: '[fd00::2]:7380' });
+  assert.deepEqual(receiverAddress('Prysm-Desktop:7380'), { value: 'Prysm-Desktop:7380' });
+  for (const bad of ['192.168.1.20', 'prysm.local', 'prysm.local:0', 'prysm.local:70000', '0.0.0.0:7380', '[::]:7380', '192.168.1:7380', '300.1.1.1:7380', 'prysm_tv:7380', '-prysm:7380', 'prysm.local.:7380', 'http://prysm.local:7380', 'fd00::2:7380'])
+    assert('error' in receiverAddress(bad), bad);
   assert.equal(listenPort({ kind: 'remote', listen: '0.0.0.0:7380' }), 7380);
   assert.equal(listenPort({ kind: 'device', path: '/dev/video0' }), null);
   assert.equal(derivedReceiver('http://192.168.1.20:8787', 7380), '192.168.1.20:7380');
-  assert.equal(derivedReceiver('http://prysm.local:8787', 7380), null);
+  assert.equal(derivedReceiver('http://prysm.local:8787', 7380), 'prysm.local:7380');
+  assert.equal(derivedReceiver('http://[fd00::2]:8787', 7380), '[fd00::2]:7380');
+  assert.equal(derivedReceiver('http://prysm.local:8787', null), null);
   assert.equal(localPortal('http://192.168.1.5:8787/'), 'http://127.0.0.1:8787');
   assert.equal(localPortal(null), null);
 });
@@ -397,6 +402,11 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   assert.equal(other.description, 'worker failed: the encoder of capture lost. Open Service options for diagnostics.', 'only the structured kind counts, not the text');
   const otherRetrying = status(slim({ worker: 'retrying', failure: 'worker exited 1', failure_kind: 'other' }));
   assert.doesNotMatch(otherRetrying.description, /encoding/);
+  const paused = status(slim({ paused: true, encoding: 'h264_hardware' }));
+  assert.deepEqual([paused.title, paused.attention, paused.ready], ['Paused by Prysm', false, false]);
+  assert.match(paused.description, /lights are off on your computer/);
+  assert.match(diagnostics(slim({ paused: true })), /Capturing: no, paused by Prysm \(lights off on the computer\)/);
+  assert.match(diagnostics(slim()), /Capturing: no\n/);
   const wait = status(slim({ failure: 'waiting for the receiver: refused', failure_kind: 'receiver' }));
   assert.deepEqual([wait.title, wait.attention], ['Waiting for Prysm', false]);
   assert.doesNotMatch(wait.description, /encoding/);
@@ -521,13 +531,31 @@ test('the receiver is derived from the remote capture port, then Save and start 
   assert.equal(tv.text('primary'), 'Stop capture');
 });
 
+test('a Prysm addressed by name gets a receiver by name, and the receiver form accepts names', async (t) => {
+  const tv = await mountTv(t);
+  await tv.click('primary');
+  await tv.type('instance-input', 'prysm.local');
+  await tv.submit('instance-input');
+  await settle();
+  assert.deepEqual(tv.urls, ['http://prysm.local:8787']);
+  assert.equal(tv.text('receiver-value'), 'prysm.local:7380');
+  await tv.click('receiver');
+  await tv.type('receiver-input', '0.0.0.0:7380');
+  await tv.submit('receiver-input');
+  assert.match(tv.text('receiver-input-error'), /prysm\.local:7380 or 192\.168\.1\.20:7380/);
+  await tv.type('receiver-input', 'lights.home.arpa:7380');
+  await tv.submit('receiver-input');
+  assert.equal(tv.el('modal'), null);
+  assert.equal(tv.text('receiver-value'), 'lights.home.arpa:7380');
+});
+
 test('a failed save keeps the draft and never enables', async (t) => {
   const tv = await mountTv(t, { supervisor: { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' } } });
-  tv.supervisor.failNext('setPreferences', 'receiver: needs a host and a fixed port');
+  tv.supervisor.failNext('setPreferences', 'invalid setPreferences request: receiver `x`: needs a fixed port');
   await tv.click('autostart');
   await tv.choose('On');
   await tv.click('primary');
-  assert.equal(tv.text('notice'), 'receiver: needs a host and a fixed port');
+  assert.equal(tv.text('notice'), 'invalid setPreferences request: receiver `x`: needs a fixed port');
   assert(!tv.methods().includes('setEnabled'));
   assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.text('saved-state'), 'Unsaved changes');

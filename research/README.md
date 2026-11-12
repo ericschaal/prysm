@@ -9,6 +9,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | Investigation | Finding / status |
 | --- | --- |
 | [Stable black-bar detection](black-bar-detection-2026-11-02/README.md) | Live crop diagnosis, literature review, implemented temporal boundary estimator and offline replay validation; not deployed |
+| [Capture resolution and LED detail](processing/2026-11-12-resolution-detail/README.md) | Offline: 1280×720 adds ≤ 2 steps (p95) over 640×360 on real content; the bounded lattice costs less than dropping to 640; capture size changes black-bar crops in dark scenes |
 | [Sampling A/B protocol](sampling-ab-testing.md) | Historical proposal; not run, and based on a superseded edge-band sampler |
 | [webOS colorimetry](webos-capture/2026-11-01-colorimetry/README.md) | Target-TV evidence for limited-range BT.709 capture decoding |
 | [HDR and brightness](webos-capture/2026-11-01-hdr-brightness/README.md) | Capture reflects TV tone/gamut mapping; transfer calibration remains separate |

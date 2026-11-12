@@ -40,7 +40,7 @@ fn luna() -> Value {
     let slim_preferences = Preferences {
         autostart: true,
         instance: Some("http://192.168.1.20:8787".into()),
-        receiver: Some(SocketAddr::from(([192, 168, 1, 20], 7380))),
+        receiver: Some("prysm.local:7380".parse().expect("a receiver address")),
     };
     let full = TvState {
         flavor: Flavor::Full,
@@ -55,6 +55,7 @@ fn luna() -> Value {
         failure: None,
         failure_kind: None,
         encoding: None,
+        paused: false,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
     };
     let slim = TvState {
@@ -72,6 +73,7 @@ fn luna() -> Value {
         ),
         failure_kind: Some(FailureKind::Encoder),
         encoding: None,
+        paused: false,
         log: Vec::new(),
     };
     json!({

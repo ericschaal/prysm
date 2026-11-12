@@ -427,7 +427,7 @@
     {
       "autostart": true,
       "instance": "http://192.168.1.20:8787",
-      "receiver": "192.168.1.20:7380"
+      "receiver": "prysm.local:7380"
     }
   ],
   "luna/SetEnabledRequest": [
@@ -447,6 +447,7 @@
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
+      "paused": false,
       "portal": "http://192.168.1.5:8787/",
       "power": "active",
       "preferences": {
@@ -466,12 +467,13 @@
       "flavor": "slim",
       "lighting": null,
       "log": [],
+      "paused": false,
       "portal": null,
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
         "instance": "http://192.168.1.20:8787",
-        "receiver": "192.168.1.20:7380"
+        "receiver": "prysm.local:7380"
       },
       "video": "unknown",
       "worker": "running"
@@ -489,6 +491,7 @@
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
       ],
+      "paused": false,
       "portal": "http://192.168.1.5:8787/",
       "power": "active",
       "preferences": {
@@ -510,12 +513,13 @@
       "flavor": "slim",
       "lighting": null,
       "log": [],
+      "paused": false,
       "portal": null,
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
         "instance": "http://192.168.1.20:8787",
-        "receiver": "192.168.1.20:7380"
+        "receiver": "prysm.local:7380"
       },
       "returnValue": true,
       "video": "unknown",

@@ -277,7 +277,8 @@ fn sector_boundary(
     verification: u32,
 ) -> Sector {
     let ceiling = black_ceiling(frame);
-    let (base, _, _) = line(frame, edge, 0, cross.clone(), ceiling);
+    let positions = positions(&cross);
+    let (base, _, _) = line(frame, edge, 0, &positions, ceiling);
     // Weak detail can rule out a crop without being strong enough to locate its boundary.
     let threshold = ceiling.min(base.saturating_add(3));
     let sustained = (frame.width().min(frame.height()) / 18).max(3);
@@ -287,7 +288,7 @@ fn sector_boundary(
     let mut strong = ContentRun::default();
     let mut content = None;
     for depth in 0..extent.min(max_border.saturating_add(verification)) {
-        let (median, visible, chromatic) = line(frame, edge, depth, cross.clone(), threshold);
+        let (median, visible, chromatic) = line(frame, edge, depth, &positions, threshold);
         if content.is_none() {
             content = weak.observe(visible >= SAMPLES / 4, depth, sustained);
         }
@@ -364,24 +365,30 @@ fn informative(frame: &Frame) -> bool {
     false
 }
 
+/// The [`SAMPLES`] evenly spread positions across `cross` that [`line`] reads.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "sample coordinates remain within the u32 frame dimensions"
 )]
+fn positions(cross: &Range<u32>) -> [u32; SAMPLES] {
+    std::array::from_fn(|sample| {
+        cross.start
+            + ((u64::from(cross.end - cross.start) * (2 * sample + 1) as u64)
+                / (2 * SAMPLES) as u64) as u32
+    })
+}
+
 fn line(
     frame: &Frame,
     edge: usize,
     depth: u32,
-    cross: Range<u32>,
+    positions: &[u32; SAMPLES],
     threshold: u8,
 ) -> (u8, usize, usize) {
     let mut levels = [0; SAMPLES];
     let mut visible = 0;
     let mut chromatic = 0;
-    for (sample, level) in levels.iter_mut().enumerate() {
-        let position = cross.start
-            + ((u64::from(cross.end - cross.start) * (2 * sample + 1) as u64)
-                / (2 * SAMPLES) as u64) as u32;
+    for (level, &position) in levels.iter_mut().zip(positions) {
         let (x, y) = match edge {
             0 => (position, depth),
             1 => (frame.width() - 1 - depth, position),

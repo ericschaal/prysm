@@ -45,6 +45,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     video: 'available',
     worker: full ? 'running' : 'stopped',
     capturing: false,
+    paused: false,
     portal: full ? 'http://192.168.1.5:8787/' : null,
     failure: null,
     log: [],
@@ -119,8 +120,9 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           respond(error('instance: must be an origin such as http://192.168.1.20:8787'));
           return;
         }
-        if (preferences.receiver && !/^(\d+\.\d+\.\d+\.\d+|\[[0-9a-f:]+\]):\d+$/i.test(preferences.receiver)) {
-          respond(error(`invalid setPreferences request: invalid socket address syntax`));
+        // host:port, the host an IP address or a name (the TV resolves it).
+        if (preferences.receiver && !/^([a-z0-9.-]+|\[[0-9a-f:]+\]):\d+$/i.test(preferences.receiver)) {
+          respond(error(`invalid setPreferences request: receiver \`${preferences.receiver}\`: not a host name or IP address`));
           return;
         }
         state = {

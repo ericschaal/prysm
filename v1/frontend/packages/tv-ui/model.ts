@@ -67,11 +67,22 @@ export function hostOf(origin: string): string | null {
 }
 
 const ipv4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
-/** Receivers are socket addresses: an IP literal is needed, not a name. */
-export const isIpHost = (host: string) =>
-  ipv4.test(host) || /^\[[0-9a-f:.]+\]$/i.test(host);
+const label = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?';
+const hostName = new RegExp(`^(?=.{1,253}$)${label}(\\.${label})*$`, 'i');
+/**
+ * A receiver host as the supervisor accepts it: an IP address (IPv6 in
+ * brackets) other than `0.0.0.0` or `::`, or a host name such as
+ * `prysm.local` whose last label is not all digits. The TV resolves a name
+ * each time it connects.
+ */
+export const isReceiverHost = (host: string) =>
+  ipv4.test(host)
+    ? host !== '0.0.0.0'
+    : /^\[[0-9a-f:.]+\]$/i.test(host)
+      ? host !== '[::]'
+      : hostName.test(host) && !/(^|\.)\d+$/.test(host);
 
-/** A receiver address `ip:port`, checked the way the supervisor parses it. */
+/** A receiver address `host:port`, checked the way the supervisor parses it. */
 export function receiverAddress(
   input: string,
 ): { value: string | null } | { error: string } {
@@ -79,8 +90,10 @@ export function receiverAddress(
   if (!text) return { value: null };
   const match = /^(.+):(\d{1,5})$/.exec(text);
   const port = match ? Number(match[2]) : 0;
-  if (!match || !isIpHost(match[1]!) || port < 1 || port > 65535)
-    return { error: 'Enter an IP address and port, such as 192.168.1.20:7380.' };
+  if (!match || !isReceiverHost(match[1]!) || port < 1 || port > 65535)
+    return {
+      error: 'Enter an address and port, such as prysm.local:7380 or 192.168.1.20:7380.',
+    };
   return { value: text };
 }
 
@@ -100,7 +113,7 @@ export function derivedReceiver(
   port: number | null,
 ): string | null {
   const host = instance ? hostOf(instance) : null;
-  return host && port && isIpHost(host) ? `${host}:${port}` : null;
+  return host && port && isReceiverHost(host) ? `${host}:${port}` : null;
 }
 
 /**
@@ -232,6 +245,11 @@ export function tvStatus(
   } else if (!enabled) {
     title = 'Capture off';
     description = 'Start capture to send this TV’s picture to Prysm.';
+  } else if (state.paused) {
+    // Not a failure: lighting is off on the computer, so the TV stops capturing.
+    title = 'Paused by Prysm';
+    description =
+      'The lights are off on your computer, so this TV is not capturing. It starts again when Prysm turns them on.';
   } else if (waiting) {
     title = 'Waiting for Prysm';
     description = `This TV connects to ${state.preferences.receiver} again every second. Check that Prysm is running with Remote capture.`;
@@ -309,7 +327,7 @@ export function diagnostics(state: State | null): string {
     `Video: ${state.video}`,
     `Enabled: ${state.enabled ? 'yes' : 'no'}`,
     `Background process: ${phaseNames[state.worker]}`,
-    `Capturing: ${state.capturing ? 'yes' : 'no'}`,
+    `Capturing: ${state.capturing ? 'yes' : state.paused ? 'no, paused by Prysm (lights off on the computer)' : 'no'}`,
   ];
   if (state.flavor === 'slim')
     lines.push(

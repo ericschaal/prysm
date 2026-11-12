@@ -3,6 +3,7 @@
 mod capture;
 mod check;
 mod link;
+mod resolve;
 #[path = "../../webos/src/video.rs"]
 mod video;
 
@@ -15,10 +16,11 @@ use prysm_runtime::Forwarder;
 use prysm_runtime::logging::{self, Logs};
 use prysm_webos_link::SlimArgs;
 use prysm_webos_link::worker::{self, Link};
+use resolve::Resolver;
 use std::process::ExitCode;
 use std::time::Duration;
 
-const USAGE: &str = "prysm-webos-slim --receiver ADDR
+const USAGE: &str = "prysm-webos-slim --receiver HOST:PORT
 Started by prysm-webos-slim-service: commands on stdin, events on stdout, logs on stderr.
 The receiver's request sets what is captured and how it is encoded.
 prysm-webos-slim check-encoder --help: a bounded encoder check for the TV.";
@@ -47,10 +49,13 @@ fn main() -> ExitCode {
 /// failure). Each connection brings the receiver's request: the capture
 /// follows its size, rate and menus, the sender its encoding. A failing
 /// encoder is reported and refused to the receiver until the request
-/// changes; a failing capture ends the worker.
+/// changes; a failing capture ends the worker. The receiver's host name is
+/// resolved at each attempt, so a name that does not resolve (yet) is a
+/// wait like a receiver that is not listening. While the receiver has
+/// paused the stream the TV capture is closed.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
-    let receiver = args.receiver;
-    let (sink, flow) = Uplink::new(move || RemoteSender::connect(receiver));
+    let mut receiver = Resolver::new(args.receiver);
+    let (sink, flow) = Uplink::new(move || RemoteSender::connect(receiver.resolve()?));
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
     let source = RequestedCapture::new(flow.clone(), move |settings| {

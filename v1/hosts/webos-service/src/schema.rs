@@ -36,8 +36,8 @@ pub enum VideoSchema {
 /// What a failure is, so the app can offer the matching fix. `encoder`
 /// (slim): the encoder the receiver requested could not start or failed;
 /// the receiver is told, and another encoding chosen in its portal may work.
-/// `receiver` (slim): the receiver is unavailable or paused the stream; the
-/// worker keeps reconnecting. `other`: anything else.
+/// `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
+/// or its name does not resolve); the worker keeps reconnecting. `other`: anything else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = FailureKind)]
 #[serde(rename_all = "snake_case")]

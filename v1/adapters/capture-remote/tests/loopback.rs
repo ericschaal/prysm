@@ -412,6 +412,40 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
     Box::new(rebound).close().unwrap();
 }
 
+/// A sender with nothing to send (the slim TV stops capturing while paused)
+/// still learns of pause and resume through `idle`, and a receiver that
+/// closes (lighting stops) pauses it before the connection ends.
+#[test]
+fn idle_applies_pause_and_resume_and_close_pauses_first() {
+    let mut source = bind();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    sender.send(&frame(1, 4, 4)).unwrap();
+    receive(&mut source);
+    let until = |sender: &mut RemoteSender, paused: bool| {
+        let deadline = Instant::now() + BOUND;
+        loop {
+            sender.idle().unwrap();
+            if sender.paused() == paused {
+                return;
+            }
+            assert!(Instant::now() < deadline, "never paused: {paused}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    source.set_wanted(false);
+    until(&mut sender, true);
+    source.set_wanted(true);
+    until(&mut sender, false);
+
+    Box::new(source).close().unwrap();
+    let deadline = Instant::now() + BOUND;
+    while sender.idle().is_ok() {
+        assert!(Instant::now() < deadline, "sender never noticed the close");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(sender.paused(), "paused before the connection ended");
+}
+
 #[test]
 fn connecting_to_a_dead_peer_fails_with_a_source() {
     let addr = TcpListener::bind(any_port()).unwrap().local_addr().unwrap();

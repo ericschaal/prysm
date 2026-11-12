@@ -141,6 +141,7 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
         failure: failure.map(|failure| chain(failure)),
         failure_kind: failure.map(|_| FailureKind::Other),
         encoding: None,
+        paused: false,
     }
 }
 

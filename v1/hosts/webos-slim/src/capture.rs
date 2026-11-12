@@ -18,10 +18,13 @@ pub fn settings(request: &StreamRequest) -> WebosSettings {
 }
 
 /// A [`FrameSource`] that captures at the size, rate and menu blending the
-/// receiver last requested ([`Flow::requested`]): nothing before the first
-/// request, and closed and opened again when a request changes them. It
-/// keeps running while the receiver is away, so lighting going off and on
-/// at the desktop does not restart the TV capture.
+/// receiver wants ([`Flow::wanted`]): nothing before the first request,
+/// closed and opened again when a request changes them, and closed while the
+/// receiver has paused the stream (its lighting is off) until it resumes or
+/// a receiver connects again. It keeps running while a receiver that did not
+/// pause is away, so a dropped connection does not restart the TV capture.
+/// With nothing open, `next_frame` waits out its timeout and reports idle,
+/// which keeps the uplink reconnecting and reading the receiver's resume.
 pub struct RequestedCapture<O> {
     flow: Arc<Flow>,
     open: O,
@@ -46,16 +49,14 @@ where
     O: FnMut(WebosSettings) -> Result<Box<dyn FrameSource>> + Send,
 {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
-        if let Some(wanted) = self.flow.requested().map(|request| settings(&request))
-            && self
-                .current
-                .as_ref()
-                .is_none_or(|(open, _)| *open != wanted)
-        {
+        let wanted = self.flow.wanted().map(|request| settings(&request));
+        if self.current.as_ref().map(|(open, _)| *open) != wanted {
             if let Some((_, old)) = self.current.take() {
                 old.close()?;
             }
-            self.current = Some((wanted, (self.open)(wanted)?));
+            if let Some(wanted) = wanted {
+                self.current = Some((wanted, (self.open)(wanted)?));
+            }
         }
         match &mut self.current {
             Some((_, source)) => source.next_frame(timeout),

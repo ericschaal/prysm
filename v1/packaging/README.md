@@ -124,6 +124,14 @@ desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
 TV on every connection ([wire protocol](../adapters/capture-remote/README.md));
 the TV captures and encodes as asked. Saving other capture settings restarts
 lighting, the TV reconnects within a second and follows the new request.
+`receiver` is `host:port`, the host an IP address or a name such as
+`prysm.local` (checked for syntax only when saved); the slim worker resolves
+it at every connection attempt, waiting at most 0.5 s per attempt (a slower
+answer is used by the next one), so an address change is picked up on
+reconnect and a name that does not resolve shows as waiting for the receiver.
+While the desktop's lighting is off its receiver has paused the stream: the
+TV closes its capture and reports `paused` (not a failure) until lighting
+starts again.
 
 The slim TV app controls the desktop Prysm's portal from `Origin: null` (a
 packaged webOS app). Start the desktop Prysm with `--allow-origin null` for
@@ -270,7 +278,7 @@ and the first after a session restart half way, must be keyframes of the
 current picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
 encode_ms_mean=… encode_ms_max=… cpu_percent=…`, then how long releasing the
 encoder took. Exit 0 means every check passed; `check-encoder: FAILED: …`
-gives the cause chain. `--receiver HOST:7380` then streams `--frames` more of
+gives the cause chain. `--receiver HOST:7380` (an IP address or a name) then streams `--frames` more of
 the same pictures (use `--frames 600` for 20 s) through the real sender, at
 the default bitrate, to a desktop running
 `cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60 --pause-at 10 --width 640 --height 280 --encoding h264_hardware`,

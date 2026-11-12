@@ -3,17 +3,81 @@ use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleD
 #[cfg(feature = "parallel-projection")]
 use rayon::prelude::*;
 
+/// Most pixels cell averaging reads per frame: every pixel of a 640x360
+/// picture. Larger pictures are read on a lattice of every `step`th pixel and
+/// row, so sampling costs about the same at any capture size.
+pub(crate) const PIXEL_BUDGET: u64 = 640 * 360;
+
+/// The smallest lattice step that reads at most [`PIXEL_BUDGET`] pixels of a
+/// `width` x `height` picture.
+pub(crate) fn lattice_step(width: u32, height: u32) -> u32 {
+    let mut step = 1;
+    while u64::from(width.div_ceil(step)) * u64::from(height.div_ceil(step)) > PIXEL_BUDGET {
+        step += 1;
+    }
+    step
+}
+
 /// Projects the whole picture onto the perimeter using a smooth distance falloff.
 #[derive(Debug)]
 pub struct SpatialSampler {
     sample_density: SampleDensity,
     reach_ratio: f32,
     dimensions: Option<(u32, u32)>,
+    step: u32,
     cells: Vec<[u32; 4]>,
     cell_colors: Vec<LinearColor>,
     rgb: Vec<u8>,
     // One row of normalized cell weights per output sample, in strip order.
     sample_weights: [Vec<f32>; 4],
+}
+
+/// Samples projected together, so each cell color is loaded once per group.
+const GROUP: usize = 4;
+/// Cells summed in `f32` before the partial sum is added in `f64`: keeps the
+/// rounding error of a projected sample below about 1e-6 of its value.
+const BLOCK: usize = 64;
+
+/// Weighted sums of `colors` for up to [`GROUP`] samples, one weight row per
+/// sample in `rows`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "normalized weighted channel means fit the f32 color representation"
+)]
+fn project(colors: &[LinearColor], rows: &[f32], out: &mut [LinearColor]) {
+    let cells = colors.len();
+    // A short last group repeats its first row; the extra sums are discarded.
+    let row = |sample: usize| {
+        let start = if sample < out.len() {
+            sample * cells
+        } else {
+            0
+        };
+        &rows[start..start + cells]
+    };
+    let rows: [&[f32]; GROUP] = std::array::from_fn(row);
+    let mut total = [[0.0_f64; 3]; GROUP];
+    for start in (0..cells).step_by(BLOCK) {
+        let end = (start + BLOCK).min(cells);
+        let mut partial = [[0.0_f32; 3]; GROUP];
+        let weights = rows.map(|row| &row[start..end]);
+        for (cell, color) in colors[start..end].iter().enumerate() {
+            for (sums, weights) in partial.iter_mut().zip(weights) {
+                let weight = weights[cell];
+                sums[0] += color.r * weight;
+                sums[1] += color.g * weight;
+                sums[2] += color.b * weight;
+            }
+        }
+        for (total, partial) in total.iter_mut().zip(partial) {
+            for (total, partial) in total.iter_mut().zip(partial) {
+                *total += f64::from(partial);
+            }
+        }
+    }
+    for (out, [r, g, b]) in out.iter_mut().zip(total) {
+        *out = LinearColor::new(r as f32, g as f32, b as f32);
+    }
 }
 
 impl SpatialSampler {
@@ -22,6 +86,7 @@ impl SpatialSampler {
             sample_density,
             reach_ratio,
             dimensions: None,
+            step: 1,
             cells: Vec::new(),
             cell_colors: Vec::new(),
             rgb: Vec::new(),
@@ -44,13 +109,27 @@ impl SpatialSampler {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
         reason = "grid coordinates are bounded by u32 dimensions; weights use approximate f32 geometry"
     )]
     fn prepare_geometry(&mut self, width: u32, height: u32) {
         let horizontal = self.sample_density.samples_for_length(width as usize);
         let vertical = self.sample_density.samples_for_length(height as usize);
+        // A picture larger than the budget gets the grid of its copy scaled
+        // down to the budget, so cells hold about as many read pixels, and
+        // projection costs about the same, at any capture size.
+        let pixels = u64::from(width) * u64::from(height);
+        let budget_length = if pixels > PIXEL_BUDGET {
+            (f64::from(width.max(height)) * (PIXEL_BUDGET as f64 / pixels as f64).sqrt()).round()
+                as usize
+        } else {
+            width.max(height) as usize
+        };
         // shortcut: cap the grid at 128 cells per axis; raise only if footage shows lost detail.
-        let longest = horizontal.max(vertical).clamp(64, 128) as u32;
+        let longest = self
+            .sample_density
+            .samples_for_length(budget_length)
+            .clamp(64, 128) as u32;
         let grid_length = |length: u32| {
             (u64::from(length) * u64::from(longest) / u64::from(width.max(height)))
                 .clamp(1, u64::from(length)) as u32
@@ -103,6 +182,7 @@ impl SpatialSampler {
                 }
             }
         }
+        self.step = lattice_step(width, height);
         self.dimensions = Some((width, height));
     }
 
@@ -132,37 +212,22 @@ impl SpatialSampler {
         let cells = self.cell_colors.par_iter_mut().zip(&self.cells);
         #[cfg(not(feature = "parallel-projection"))]
         let cells = self.cell_colors.iter_mut().zip(&self.cells);
+        let step = self.step;
         cells.for_each(|(color, &[x0, y0, x1, y1])| {
-            *color = view.average_linear(x0, y0, x1, y1, rgb);
+            *color = view.average_linear_every(x0, y0, x1, y1, rgb, step);
         });
         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
             let cell_count = self.cell_colors.len();
             let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
             #[cfg(feature = "parallel-projection")]
-            let pairs = samples
-                .par_chunks_mut(2)
-                .zip(weights.par_chunks(2 * cell_count));
+            let groups = samples
+                .par_chunks_mut(GROUP)
+                .zip(weights.par_chunks(GROUP * cell_count));
             #[cfg(not(feature = "parallel-projection"))]
-            let pairs = samples.chunks_mut(2).zip(weights.chunks(2 * cell_count));
-            // Two adjacent samples reuse each widened cell color and keep independent sums.
-            pairs.for_each(|(out, rows)| {
-                let (first, second) = rows.split_at(cell_count);
-                let second = if second.is_empty() { first } else { second };
-                let mut first_sum = [0.0; 3];
-                let mut second_sum = [0.0; 3];
-                for ((color, &first_weight), &second_weight) in
-                    self.cell_colors.iter().zip(first).zip(second)
-                {
-                    for (channel, value) in [color.r, color.g, color.b].into_iter().enumerate() {
-                        let value = f64::from(value);
-                        first_sum[channel] += value * f64::from(first_weight);
-                        second_sum[channel] += value * f64::from(second_weight);
-                    }
-                }
-                for (dst, [r, g, b]) in out.iter_mut().zip([first_sum, second_sum]) {
-                    *dst = LinearColor::new(r as f32, g as f32, b as f32);
-                }
-            });
+            let groups = samples
+                .chunks_mut(GROUP)
+                .zip(weights.chunks(GROUP * cell_count));
+            groups.for_each(|(out, rows)| project(&self.cell_colors, rows, out));
             ColorStrip::new(samples).expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
@@ -321,7 +386,119 @@ mod tests {
                     LinearColor::new(sum(|c| c.r), sum(|c| c.g), sum(|c| c.b))
                 })
                 .collect();
-            assert_eq!(strip.resample(strip.len()), reference);
+            // Blocks of cells are summed in f32, so the sums agree to rounding.
+            for (actual, expected) in strip.resample(strip.len()).into_iter().zip(reference) {
+                for (a, e) in [actual.r, actual.g, actual.b]
+                    .into_iter()
+                    .zip([expected.r, expected.g, expected.b])
+                {
+                    assert!((a - e).abs() <= e.abs() * 1e-6, "{a} != {e}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lattice_reads_every_pixel_up_to_the_budget_and_about_the_budget_beyond() {
+        assert_eq!(lattice_step(1, 1), 1);
+        assert_eq!(lattice_step(640, 360), 1);
+        assert_eq!(lattice_step(360, 640), 1);
+        assert_eq!(lattice_step(642, 360), 2);
+        assert_eq!(lattice_step(960, 540), 2);
+        assert_eq!(lattice_step(1280, 720), 2);
+        assert_eq!(lattice_step(1920, 1080), 3);
+        assert_eq!(lattice_step(3840, 2160), 6);
+        for (width, height) in [
+            (642, 360),
+            (1280, 720),
+            (1281, 721),
+            (1920, 1080),
+            (5000, 7),
+        ] {
+            let step = lattice_step(width, height);
+            let read =
+                |step: u32| u64::from(width.div_ceil(step)) * u64::from(height.div_ceil(step));
+            assert!(read(step) <= PIXEL_BUDGET);
+            assert!(
+                step == 1 || read(step - 1) > PIXEL_BUDGET,
+                "{width}x{height}: {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn large_pictures_are_read_on_the_lattice_and_use_the_budget_sized_grid() {
+        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let _ = sampler.process(&picture(1280, 720, |_, _| [0; 3]));
+        assert_eq!(sampler.step, 2);
+        let mut small = SpatialSampler::new(SampleDensity(128), 0.1);
+        let _ = small.process(&picture(640, 360, |_, _| [0; 3]));
+        assert_eq!(small.step, 1);
+        assert_eq!(
+            sampler.cells.len(),
+            small.cells.len(),
+            "the grid of 640x360"
+        );
+        // Each cell averages exactly its lattice pixels.
+        let view = picture(1280, 720, |x, y| {
+            [
+                (x * 7).to_le_bytes()[0],
+                (y * 3).to_le_bytes()[0],
+                (x ^ y).to_le_bytes()[0],
+            ]
+        });
+        let _ = sampler.process(&view);
+        for (&[x0, y0, x1, y1], &actual) in sampler.cells.iter().zip(&sampler.cell_colors) {
+            let mut sum = [0.0_f64; 3];
+            let mut count = 0.0;
+            for y in (y0..y1).step_by(2) {
+                for x in (x0..x1).step_by(2) {
+                    let pixel = view.average_linear(x, y, x + 1, y + 1, None);
+                    for (sum, value) in sum.iter_mut().zip([pixel.r, pixel.g, pixel.b]) {
+                        *sum += f64::from(value);
+                    }
+                    count += 1.0;
+                }
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let expected = sum.map(|channel| (channel / count) as f32);
+            assert_eq!([actual.r, actual.g, actual.b], expected);
+        }
+    }
+
+    #[test]
+    fn a_doubled_picture_lights_exactly_like_the_original() {
+        // The lattice reads one pixel of each 2x2 block of a doubled picture.
+        // Half the density gives both the same samples and the same 64-cell grid.
+        let pixel = |x: u32, y: u32| {
+            if x < 200 && y < 180 {
+                [255, 64, 0]
+            } else if x > 500 {
+                [0, 90, 255]
+            } else {
+                [(x / 3).to_le_bytes()[0], 30, (y / 2).to_le_bytes()[0]]
+            }
+        };
+        let original =
+            SpatialSampler::new(SampleDensity(100), 0.1).process(&picture(640, 360, pixel));
+        let doubled =
+            SpatialSampler::new(SampleDensity(50), 0.1)
+                .process(&picture(1280, 720, |x, y| pixel(x / 2, y / 2)));
+        assert_eq!(doubled, original);
+    }
+
+    #[test]
+    fn small_highlights_on_the_lattice_still_reach_the_edges() {
+        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        let output = sampler.process(&picture(1280, 720, |x, y| {
+            if (638..640).contains(&x) && (358..360).contains(&y) {
+                [255, 0, 0]
+            } else {
+                [0, 0, 0]
+            }
+        }));
+        for strip in strips(&output) {
+            assert!(strip.sample_at(0.5).r > 0.0);
         }
     }
 

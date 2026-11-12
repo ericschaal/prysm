@@ -12,6 +12,8 @@ mod nodes;
 /// Detection keeps the raw capture format; sampling reads RGB and NV12 in place
 /// (NV12 per row, without a full-frame conversion) and converts YUYV into reusable
 /// RGB storage, before reducing the picture to a grid and projecting onto the perimeter.
+/// Pictures above 640x360 are averaged on a lattice of every nth pixel and row
+/// and get the grid of 640x360, so sampling costs about the same at any capture size.
 #[derive(Debug)]
 pub struct PrysmProcessor {
     config: Config,

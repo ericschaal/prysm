@@ -1,5 +1,6 @@
 use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
+use crate::resolve::Resolver;
 use crate::video::VideoFeed;
 use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest};
 use prysm_capture_webos::WebosSettings;
@@ -56,6 +57,8 @@ const SOFTWARE: StreamRequest = StreamRequest {
 struct Opened {
     log: CallLog,
     shapes: Arc<Mutex<Vec<WebosSettings>>>,
+    /// How many NV12 captures were closed.
+    closed: Arc<AtomicU32>,
     fake: FakeSourceSettings,
     /// NV12 pictures instead of the fake's RGB.
     nv12: bool,
@@ -66,6 +69,7 @@ impl Opened {
         Self {
             log: log.clone(),
             shapes: Arc::default(),
+            closed: Arc::default(),
             fake,
             nv12: false,
         }
@@ -82,10 +86,19 @@ impl Opened {
         self.shapes.lock().unwrap().clone()
     }
 
+    fn closed(&self) -> u32 {
+        self.closed.load(Ordering::SeqCst)
+    }
+
     fn open(&self, shape: WebosSettings) -> Result<Box<dyn FrameSource>> {
         self.shapes.lock().unwrap().push(shape);
         Ok(if self.nv12 {
-            Box::new(Nv12Source(0, shape.width, shape.height))
+            Box::new(Nv12Source {
+                count: 0,
+                width: shape.width,
+                height: shape.height,
+                closed: self.closed.clone(),
+            })
         } else {
             Box::new(FakeSource::new(&self.log, self.fake.clone()))
         })
@@ -137,6 +150,11 @@ fn status(event: &Event) -> Option<&WorkerStatus> {
 
 fn capturing(event: &Event) -> Option<bool> {
     status(event).map(|status| status.capturing)
+}
+
+fn paused(event: &Event) -> bool {
+    status(event)
+        .is_some_and(|status| status.paused && !status.capturing && status.failure.is_none())
 }
 
 fn waiting(event: &Event) -> Option<&str> {
@@ -432,16 +450,26 @@ async fn an_unconfirmed_release_fails_the_forwarder() {
 }
 
 /// The TV capture's NV12 pictures at the requested size, every 5 ms.
-struct Nv12Source(u32, u32, u32);
+struct Nv12Source {
+    count: u32,
+    width: u32,
+    height: u32,
+    closed: Arc<AtomicU32>,
+}
 
 impl FrameSource for Nv12Source {
     fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
         std::thread::sleep(Duration::from_millis(5));
-        self.0 += 1;
-        Ok(Pull::Frame(crate::check::picture(self.1, self.2, self.0)))
+        self.count += 1;
+        Ok(Pull::Frame(crate::check::picture(
+            self.width,
+            self.height,
+            self.count,
+        )))
     }
 
     fn close(self: Box<Self>) -> Result<()> {
+        self.closed.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -452,7 +480,8 @@ impl FrameSource for Nv12Source {
 async fn software_h264_reaches_a_receiver_and_is_reported() {
     let mut receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), SOFTWARE).unwrap();
     let address = receiver.local_addr();
-    let (mut peer, _feed, task) = start(&Opened::nv12(), move || RemoteSender::connect(address));
+    let opened = Opened::nv12();
+    let (mut peer, _feed, task) = start(&opened, move || RemoteSender::connect(address));
     peer.wait_for(|e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
@@ -473,26 +502,133 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
         (64, 32, prysm_h264::FORMAT)
     );
 
-    // The receiver pauses the stream: reported as the wait, nothing counted.
+    // The receiver pauses the stream: paused, not a failure, and the TV
+    // capture is closed until it resumes.
     receiver.set_wanted(false);
-    peer.wait_for(|e| {
-        capturing(e) == Some(false)
-            && waiting(e) == Some("the receiver paused the stream")
-            && encoding(e) == Some(SlimEncoding::H264Software)
-    })
-    .await
-    .unwrap();
-    receiver.set_wanted(true);
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
-    Box::new(receiver).close().unwrap();
-    // Lighting off: the receiver is gone, the worker waits and keeps running.
-    peer.wait_for(|e| waiting(e).is_some() && encoding(e).is_none())
+    peer.wait_for(|e| paused(e) && encoding(e) == Some(SlimEncoding::H264Software))
         .await
         .unwrap();
+    assert_eq!(opened.closed(), 1, "the capture stops while paused");
+    receiver.set_wanted(true);
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    assert_eq!(
+        opened.shapes(),
+        [settings(&SOFTWARE); 2],
+        "reopened on resume"
+    );
+    // Lighting off: the receiver pauses and closes. The capture stays
+    // stopped while the worker keeps reconnecting, and it is still paused.
+    Box::new(receiver).close().unwrap();
+    peer.wait_for(|e| paused(e) && encoding(e).is_none())
+        .await
+        .unwrap();
+    assert_eq!(opened.closed(), 2);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(opened.shapes().len(), 2, "no capture while lighting is off");
+    // Lighting on again: a new connection starts the capture.
+    let receiver = RemoteSource::bind(address, SOFTWARE).unwrap();
+    peer.wait_for(|e| capturing(e) == Some(true) && !status(e).unwrap().paused)
+        .await
+        .unwrap();
+    assert_eq!(opened.shapes().len(), 3);
+    Box::new(receiver).close().unwrap();
     assert!(!task.is_finished());
     peer.close();
     let (result, _) = task.await.unwrap();
     result.unwrap();
+}
+
+/// A receiver that vanishes without pausing (a crash, the network) keeps
+/// the capture running, as before.
+#[tokio::test]
+async fn a_receiver_lost_without_a_pause_keeps_the_capture() {
+    let log = CallLog::new();
+    let opened = Opened::fake(&log, FakeSourceSettings::default());
+    let attempts = Arc::new(AtomicU32::new(0));
+    let (mut peer, _feed, task) = start(&opened, {
+        let (log, attempts) = (log.clone(), attempts.clone());
+        move || match attempts.fetch_add(1, Ordering::SeqCst) {
+            0 => Ok(Fake::new(&log, RAW, 3)),
+            _ => Err(Error::other("cannot connect to receiver: refused")),
+        }
+    });
+    peer.wait_for(|e| waiting(e).is_some_and(|w| w.contains("refused")))
+        .await
+        .unwrap();
+    assert!(!log.events().iter().any(|e| e.starts_with("source.close")));
+    assert_eq!(opened.shapes(), [settings(&RAW)]);
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+/// The receiver given by name: resolved at each attempt, so a name that
+/// does not resolve yet is the wait, and frames flow once it does.
+#[tokio::test]
+async fn a_receiver_host_name_is_resolved_at_each_attempt() {
+    static RESOLVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    let receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), RAW).unwrap();
+    PORT.store(receiver.local_addr().port(), Ordering::SeqCst);
+    let mut resolver = Resolver::new("prysm.local:7380".parse().unwrap()).with_lookup(
+        |host, _| {
+            assert_eq!(host, "prysm.local");
+            if RESOLVES.load(Ordering::SeqCst) {
+                Ok(std::net::SocketAddr::from((
+                    [127, 0, 0, 1],
+                    PORT.load(Ordering::SeqCst),
+                )))
+            } else {
+                Err(std::io::Error::other("no such host"))
+            }
+        },
+        Duration::from_millis(100),
+    );
+    let log = CallLog::new();
+    let (mut peer, _feed, task) = start(
+        &Opened::fake(&log, FakeSourceSettings::default()),
+        move || RemoteSender::connect(resolver.resolve()?),
+    );
+    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    assert_eq!(
+        waiting(&event),
+        Some("waiting for the receiver: cannot resolve prysm.local:7380: no such host")
+    );
+    RESOLVES.store(true, Ordering::SeqCst);
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    Box::new(receiver).close().unwrap();
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+/// A resolver that never answers delays neither the reconnects nor the
+/// stop: each attempt waits at most its bound.
+#[tokio::test]
+async fn a_hanging_lookup_does_not_hold_up_the_stop() {
+    let mut resolver = Resolver::new("prysm.local:7380".parse().unwrap()).with_lookup(
+        |_, _| {
+            std::thread::sleep(Duration::from_secs(60));
+            Err(std::io::Error::other("too late"))
+        },
+        Duration::from_millis(100),
+    );
+    let log = CallLog::new();
+    let (mut peer, _feed, task) = start(
+        &Opened::fake(&log, FakeSourceSettings::default()),
+        move || RemoteSender::connect(resolver.resolve()?),
+    );
+    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    assert!(waiting(&event).unwrap().ends_with("no answer yet"));
+    let started = std::time::Instant::now();
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 /// The requested hardware encoder is unavailable (any desktop): the worker

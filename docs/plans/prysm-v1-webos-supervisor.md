@@ -131,6 +131,8 @@ pub struct WorkerStatus {
     pub portal: Option<String>,          // full: "http://192.168.1.5:8787/"
     pub failure: Option<String>,         // cause chain; texts are cut to 1 KiB
     pub failure_kind: Option<FailureKind>, // encoder | receiver | other, with `failure`
+    pub encoding: Option<SlimEncoding>,  // slim: the encoding sent while connected
+    pub paused: bool,                    // slim: the receiver paused the stream; capture closed, not a failure
 }
 pub mod exit { STOPPED = 0 /* TERM, EOF */, FAILED = 1, USAGE = 2, FAULTED = 3 }
 ```
@@ -231,7 +233,7 @@ fields marked "Full only" or "Slim only".
 pub struct Preferences {            // tv.json; unknown fields rejected
     pub autostart: bool,
     pub instance: Option<String>,   // slim: remote portal origin for the TV UI, http(s)://host[:port]
-    pub receiver: Option<SocketAddr>, // slim: frame receiver; full rejects both
+    pub receiver: Option<ReceiverAddress>, // slim: frame receiver, host:port (IP or name, resolved per connect); full rejects both
 }                                   // picture settings: the portals' (prysm-3jx.63)
 pub struct State {
     pub flavor: Flavor,             // full | slim
@@ -245,6 +247,8 @@ pub struct State {
     pub portal: Option<String>,
     pub failure: Option<String>,
     pub failure_kind: Option<FailureKind>, // encoder | receiver | other, set with `failure`
+    pub encoding: Option<SlimEncoding>, // slim only
+    pub paused: bool,               // slim only: the receiver paused the stream (lighting off)
     pub log: Vec<String>,           // last 20 worker stderr lines
 }
 ```

@@ -18,8 +18,8 @@ export interface components {
          * @description What a failure is, so the app can offer the matching fix. `encoder`
          *     (slim): the encoder the receiver requested could not start or failed;
          *     the receiver is told, and another encoding chosen in its portal may work.
-         *     `receiver` (slim): the receiver is unavailable or paused the stream; the
-         *     worker keeps reconnecting. `other`: anything else.
+         *     `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
+         *     or its name does not resolve); the worker keeps reconnecting. `other`: anything else.
          * @enum {string}
          */
         FailureKind: "encoder" | "receiver" | "other";
@@ -64,9 +64,13 @@ export interface components {
              */
             instance?: string | null;
             /**
-             * @description Slim only: where frames go, such as `192.168.1.20:7380`.
+             * @description Slim only: where frames go, `host:port`: an IP address (IPv6 in
+             *     brackets) or a host name, such as `192.168.1.20:7380` or
+             *     `prysm.local:7380`, with a fixed port. Only the syntax is checked when
+             *     saved; the TV resolves a name at every connection attempt, and one
+             *     that does not resolve is reported as the receiver wait.
              * @default null
-             * @example 192.168.1.20:7380
+             * @example prysm.local:7380
              */
             receiver?: string | null;
         };
@@ -107,6 +111,12 @@ export interface components {
             lighting?: components["schemas"]["LightingTarget"] | null;
             /** @description The latest worker stderr lines, oldest first (at most 20). */
             log: string[];
+            /**
+             * @description Slim only: the receiver paused the stream because its lighting is
+             *     off; the TV capture is stopped until the receiver asks again. Not a
+             *     failure. Always false unless `worker` is `running`.
+             */
+            paused: boolean;
             /** @description Full only: the portal's LAN address once the worker reported it. */
             portal?: string | null;
             power: components["schemas"]["Power"];

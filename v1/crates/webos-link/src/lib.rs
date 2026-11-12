@@ -15,7 +15,7 @@ mod codec;
 #[cfg(feature = "worker")]
 pub mod worker;
 
-pub use args::{FullArgs, SlimArgs, SlimEncoding};
+pub use args::{FullArgs, ReceiverAddress, SlimArgs, SlimEncoding};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 pub use prysm_ports::LightingTarget;
 
@@ -82,6 +82,11 @@ pub struct WorkerStatus {
     /// the receiver (always the one it requested).
     #[serde(default)]
     pub encoding: Option<SlimEncoding>,
+    /// Slim only: the receiver paused the stream (its lighting is off), and
+    /// the TV capture is stopped until it asks for frames again. Not a
+    /// failure: `failure` is unset meanwhile.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// What a reported failure is, so the TV app can offer the matching fix.
@@ -92,8 +97,9 @@ pub enum FailureKind {
     /// The worker refuses that request (the receiver is told) until the
     /// receiver asks for another; it never switches on its own.
     Encoder,
-    /// Slim: the receiver is unavailable (its host is not lighting or is
-    /// unreachable) or paused the stream. The worker keeps reconnecting.
+    /// Slim: the receiver is unavailable (its host is not lighting, is
+    /// unreachable or its name does not resolve). The worker keeps
+    /// reconnecting.
     Receiver,
     /// Anything else.
     Other,

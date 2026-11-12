@@ -261,6 +261,7 @@ impl Machine {
             failure,
             failure_kind,
             encoding: status.encoding,
+            paused: self.running() && status.paused,
             log: self.log.iter().cloned().collect(),
         }
     }
@@ -301,6 +302,7 @@ impl Machine {
             Spec::Slim => self
                 .preferences
                 .receiver
+                .clone()
                 .map(|receiver| SlimArgs { receiver }.to_args()),
         }
     }
@@ -423,8 +425,11 @@ impl Machine {
         match event {
             Event::Status(status) => {
                 // Up again (full: reporting without a failure; slim: frames
-                // flowing): the last worker's failure is no longer current.
-                let up = status.capturing || (self.spec != Spec::Slim && status.failure.is_none());
+                // flowing, or paused by a receiver it reached): the last
+                // worker's failure is no longer current.
+                let up = status.capturing
+                    || status.paused
+                    || (self.spec != Spec::Slim && status.failure.is_none());
                 if up {
                     self.failure = None;
                 }

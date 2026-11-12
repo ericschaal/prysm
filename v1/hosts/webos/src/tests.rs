@@ -94,6 +94,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             failure: None,
             failure_kind: None,
             encoding: None,
+            paused: false,
         }
     );
 

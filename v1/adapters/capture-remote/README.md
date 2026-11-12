@@ -42,7 +42,12 @@ connection (the slim TV worker retries every second) gets the new request.
 The slim TV worker wraps the sender in an uplink that reconnects at most
 every second and reports the wait, because the receiver listens only while
 its host is lighting. It captures at the requested size, rate and menus,
-reopening the TV capture when they change. When the requested encoder fails
+reopening the TV capture when they change, and closes the capture while the
+receiver has paused the stream (it keeps reading control messages through
+`FrameSink::idle`, so a resume reaches it); a receiver that pauses and then
+closes, as on lighting stop, leaves the capture closed until a receiver
+connects again. The receiver may be given by host name: the worker resolves
+it at every connection attempt. When the requested encoder fails
 it reports `failure_kind: encoder` and refuses every later connection with the
 same request (the receiver's source fails with the reason, so lighting stops
 with it in the portal) until the receiver asks for something else.
@@ -154,8 +159,9 @@ reply; anything else fails the sender's connection):
 
 The receiver sends pause when its source is closed (lighting stops) and when
 `set_wanted(false)` is called, and resume after `set_wanted(true)`. The
-sender reads pending messages without blocking at the start of each `send`;
-a receiver that has closed shows as `WireError::Closed`.
+sender reads pending messages without blocking at the start of each `send`
+and in `idle` (a sender with nothing to send, such as the paused slim TV); a
+receiver that has closed shows as `WireError::Closed`.
 
 - **Validation before allocation.** The receiver checks magic and version once
   per stream, then format, flags, dimensions and the payload length from each

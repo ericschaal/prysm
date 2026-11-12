@@ -36,7 +36,11 @@ struct Report {
     requested: Option<StreamRequest>,
     /// The encoding being sent, while connected.
     encoding: Option<SlimEncoding>,
-    /// Why no frames can be delivered: the receiver is unavailable or paused.
+    /// The receiver paused the stream (its lighting is off): the capture
+    /// stops. Kept when the receiver then closes the connection, as it does
+    /// when lighting stops, until a receiver connects again.
+    paused: bool,
+    /// Why no frames can be delivered: the receiver is unavailable.
     waiting: Option<String>,
     /// The requested encoder failed; that request is refused until it changes.
     encoder: Option<String>,
@@ -47,16 +51,25 @@ impl Flow {
         self.sent.load(Ordering::Relaxed)
     }
 
-    /// What the receiver last asked for; `None` before the first connection.
-    pub fn requested(&self) -> Option<StreamRequest> {
-        self.lock().requested
+    /// What to capture for: the receiver's latest request, kept while it is
+    /// away; `None` before the first connection and while it has paused
+    /// the stream.
+    pub fn wanted(&self) -> Option<StreamRequest> {
+        let report = self.lock();
+        if report.paused {
+            None
+        } else {
+            report.requested
+        }
     }
 
-    /// The status fields the uplink owns.
+    /// The status fields the uplink owns. A paused stream is not a failure.
     fn status(&self) -> WorkerStatus {
         let report = self.lock();
+        let paused = report.paused && report.encoder.is_none();
         let (failure, failure_kind) = match (&report.encoder, &report.waiting) {
             (Some(failure), _) => (Some(failure.clone()), Some(FailureKind::Encoder)),
+            (None, _) if paused => (None, None),
             (None, Some(waiting)) => (Some(waiting.clone()), Some(FailureKind::Receiver)),
             (None, None) => (None, None),
         };
@@ -64,6 +77,7 @@ impl Flow {
             failure,
             failure_kind,
             encoding: report.encoding,
+            paused,
             ..WorkerStatus::default()
         }
     }
@@ -111,10 +125,16 @@ impl Upstream for RemoteSender {
 /// lighting, so a refused connection or a dropped receiver is a normal wait:
 /// frames are dropped, a new connection is tried at most every
 /// [`RECONNECT`] (on the next frame or idle tick after it), and [`Flow`]
-/// carries the reason. A receiver that pauses the stream is reported the
-/// same way. Each connection publishes the receiver's request, which the
-/// capture follows; the frame that opens a connection is dropped, since it
-/// was captured before the request was known.
+/// carries the reason. Each connection publishes the receiver's request,
+/// which the capture follows; the frame that opens a connection is dropped,
+/// since it was captured before the request was known.
+///
+/// A receiver that pauses the stream (its lighting is off) stops the
+/// capture through [`Flow::wanted`]; idle ticks keep reading its control
+/// messages, so a resume starts it again. A receiver that pauses and then
+/// closes (lighting stopped) leaves the capture stopped until a receiver
+/// connects again; one that vanishes without pausing (a crash, the
+/// network) leaves it running.
 ///
 /// An encoder failure (a cause of type [`H264Error`]: the requested encoder
 /// cannot start or failed) is reported as such, and every later connection
@@ -182,13 +202,15 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         self.sink = Some(sink);
     }
 
-    /// The connection ended: wait for the receiver, or remember an encoder failure.
+    /// The connection ended: wait for the receiver, or remember an encoder
+    /// failure. A receiver that paused before closing stays paused.
     fn lost(&mut self, error: &Error) {
         let Some(sink) = self.sink.take() else {
             return;
         };
         let mut report = self.flow.lock();
         report.encoding = None;
+        report.paused = sink.paused();
         if encoder_failure(error) {
             let reason = chain(error);
             self.failed = Some((sink.request(), reason.clone()));
@@ -207,21 +229,30 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
             return Ok(());
         };
         match sink.send(frame) {
-            Ok(()) if sink.paused() => {
-                self.flow.lock().waiting = Some("the receiver paused the stream".into());
-            }
             Ok(()) => {
-                self.flow.sent.fetch_add(1, Ordering::Relaxed);
-                self.flow.lock().waiting = None;
+                let paused = sink.paused();
+                if !paused {
+                    self.flow.sent.fetch_add(1, Ordering::Relaxed);
+                }
+                let mut report = self.flow.lock();
+                report.paused = paused;
+                report.waiting = None;
             }
             Err(error) => self.lost(&error),
         }
         Ok(())
     }
 
+    /// Reconnect, or read the receiver's pause and resume while the
+    /// capture delivers nothing (it is stopped while paused).
     fn idle(&mut self) -> Result<()> {
-        if self.sink.is_none() {
+        let Some(sink) = &mut self.sink else {
             self.reconnect();
+            return Ok(());
+        };
+        match sink.idle() {
+            Ok(()) => self.flow.lock().paused = sink.paused(),
+            Err(error) => self.lost(&error),
         }
         Ok(())
     }
@@ -250,9 +281,9 @@ fn encoder_failure(error: &Error) -> bool {
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
 /// `capturing` while frames are delivered, `encoding` while connected,
-/// `failure` naming the encoder failure, or else the wait while the receiver
-/// is unavailable or paused. `Lighting` is protocol misuse here and stops
-/// the worker as failed.
+/// `paused` while the receiver paused the stream, `failure` naming the
+/// encoder failure, or else the wait while the receiver is unavailable.
+/// `Lighting` is protocol misuse here and stops the worker as failed.
 pub struct ForwarderLink<V> {
     link: Link,
     video: V,

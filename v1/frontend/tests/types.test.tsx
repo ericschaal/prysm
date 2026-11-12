@@ -93,6 +93,7 @@ const tvState: TvState = {
   video: 'available',
   worker: 'running',
   capturing: true,
+  paused: false,
   portal: null,
   failure: null,
   log: [],

@@ -22,8 +22,8 @@ pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// [`RemoteSender::refuse_encoding`]); anything else is the connection's.
 ///
 /// The receiver can pause the stream (frames are dropped unencoded until it
-/// resumes) and ask for a keyframe; each `send` reads those requests
-/// without blocking. A paused or resumed H.264 stream restarts its encoder
+/// resumes) and ask for a keyframe; each `send` and `idle` reads those
+/// requests without blocking. A paused or resumed H.264 stream restarts its encoder
 /// session, so the first picture after it is a keyframe, and a paused
 /// hardware encoder is released.
 #[derive(Debug)]
@@ -240,5 +240,11 @@ impl FrameSink for RemoteSender {
         };
         let len = self.buffer.len() - HEADER_LEN;
         self.write(&Header { keyframe, ..header }, len)
+    }
+
+    /// No frame to send: apply the receiver's pending control messages, so
+    /// a sender whose capture is stopped while paused learns of the resume.
+    fn idle(&mut self) -> Result<()> {
+        self.poll_control()
     }
 }

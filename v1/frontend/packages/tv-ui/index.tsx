@@ -359,7 +359,6 @@ function AddressForm({
   label,
   initial,
   placeholder,
-  inputMode,
   apply,
   button,
 }: {
@@ -367,7 +366,6 @@ function AddressForm({
   label: string;
   initial: string;
   placeholder: string;
-  inputMode: 'url' | 'decimal';
   apply: (text: string) => string | null;
   button: string;
 }) {
@@ -383,7 +381,7 @@ function AddressForm({
       <input
         id={id}
         type="text"
-        inputMode={inputMode}
+        inputMode="url"
         value={text}
         placeholder={placeholder}
         spellCheck={false}
@@ -443,7 +441,6 @@ function Dialogs({
           label="Address"
           initial={draft.instance ?? ''}
           placeholder="192.168.1.20 or http://prysm.local:8787"
-          inputMode="url"
           button="Use this address"
           apply={(text) => {
             const result = instanceAddress(text);
@@ -457,14 +454,13 @@ function Dialogs({
     case 'receiver':
       title = 'Frames go to';
       description =
-        'The IP address and port where Prysm receives this TV’s picture (its Remote capture “listen” port). Filled in for you when Prysm can be reached.';
+        'The address (a name such as prysm.local, or an IP address) and port where Prysm receives this TV’s picture (its Remote capture “listen” port). Filled in for you when Prysm can be reached.';
       content = (
         <AddressForm
           id="receiver-input"
-          label="IP address and port"
+          label="Address and port"
           initial={draft.receiver ?? ''}
-          placeholder="192.168.1.20:7380"
-          inputMode="decimal"
+          placeholder="prysm.local:7380"
           button="Use this address"
           apply={(text) => {
             const result = receiverAddress(text);

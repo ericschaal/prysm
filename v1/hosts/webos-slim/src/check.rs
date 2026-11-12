@@ -5,13 +5,12 @@ use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
 use prysm_h264::{Backend, Decoder, Encoder, EncoderSettings, FORMAT};
 use prysm_ports::FrameSink;
-use prysm_webos_link::SlimEncoding;
-use std::net::SocketAddr;
+use prysm_webos_link::{ReceiverAddress, SlimEncoding};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 pub const USAGE: &str = "prysm-webos-slim check-encoder [--encoding h264_hardware|h264_software]
-    [--width 640] [--height 280] [--fps 30] [--frames 90] [--bitrate 2000000] [--receiver ADDR]
+    [--width 640] [--height 280] [--fps 30] [--frames 90] [--bitrate 2000000] [--receiver HOST:PORT]
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
 compares it with its input, restarts the session half way (as on resume), and
 prints timings and sizes. With --receiver, then streams the same pictures to a
@@ -22,7 +21,7 @@ passed.";
 /// Largest accepted mean absolute NV12 difference per picture.
 const TOLERANCE: f64 = 8.0;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Options {
     backend: Backend,
     width: u32,
@@ -30,7 +29,7 @@ struct Options {
     fps: u32,
     frames: u32,
     bitrate: u32,
-    receiver: Option<SocketAddr>,
+    receiver: Option<ReceiverAddress>,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -252,13 +251,18 @@ fn run(options: Options) -> Result<(), String> {
 /// The real sending path: the same encoder inside a `RemoteSender`, if the
 /// receiver requests it.
 fn stream(
-    receiver: SocketAddr,
+    receiver: ReceiverAddress,
     settings: EncoderSettings,
     width: u32,
     height: u32,
     frames: u32,
 ) -> Result<(), String> {
-    let mut sender = RemoteSender::connect(receiver).map_err(|error| chain(&error))?;
+    let address = match receiver.socket_addr() {
+        Some(address) => address,
+        None => crate::resolve::system_lookup(receiver.host(), receiver.port())
+            .map_err(|error| format!("cannot resolve {receiver}: {error}"))?,
+    };
+    let mut sender = RemoteSender::connect(address).map_err(|error| chain(&error))?;
     let request = sender.request();
     let checked = (Some(settings.backend), width, height, settings.fps);
     if (
@@ -309,6 +313,7 @@ mod tests {
             &["--width", "641"],
             &["--frames", "0"],
             &["--receiver", "nope"],
+            &["--receiver", "0.0.0.0:7380"],
             &["--fps"],
             &["--colour", "red"],
         ] {

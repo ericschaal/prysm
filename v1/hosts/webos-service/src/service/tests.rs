@@ -231,7 +231,17 @@ fn only_the_app_may_change_anything() {
 fn preferences_are_validated_persisted_and_applied() {
     let mut h = Harness::new(slim_config(), None);
     let bad = h.app("setPreferences", r#"{"receiver":"0.0.0.0:7380"}"#);
-    assert!(bad["errorText"].as_str().unwrap().starts_with("receiver"));
+    assert_eq!(
+        bad["errorText"],
+        "invalid setPreferences request: receiver `0.0.0.0:7380`: needs the receiver's address, not 0.0.0.0"
+    );
+    // A host name is saved as typed; the TV resolves it when it connects.
+    let named = h.app("setPreferences", r#"{"receiver":"prysm.local:7380"}"#);
+    assert_eq!(named["preferences"]["receiver"], "prysm.local:7380");
+    assert_eq!(
+        h.service.store.0.as_ref().unwrap().receiver,
+        Some("prysm.local:7380".parse().unwrap())
+    );
     assert_eq!(
         h.app("setPreferences", r#"{"mode":"full"}"#)["returnValue"],
         false

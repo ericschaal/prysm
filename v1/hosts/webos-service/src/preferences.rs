@@ -1,10 +1,9 @@
 //! TV-local preferences (`tv.json`): one writer, the supervisor.
 use crate::state::Flavor;
-use prysm_webos_link::LightingTarget;
+use prysm_webos_link::{LightingTarget, ReceiverAddress};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::SocketAddr;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -27,12 +26,16 @@ pub struct Preferences {
         schema(max_length = 256, example = "http://192.168.1.20:8787")
     )]
     pub instance: Option<String>,
-    /// Slim only: where frames go, such as `192.168.1.20:7380`.
+    /// Slim only: where frames go, `host:port`: an IP address (IPv6 in
+    /// brackets) or a host name, such as `192.168.1.20:7380` or
+    /// `prysm.local:7380`, with a fixed port. Only the syntax is checked when
+    /// saved; the TV resolves a name at every connection attempt, and one
+    /// that does not resolve is reported as the receiver wait.
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<String>, example = "192.168.1.20:7380")
+        schema(value_type = Option<String>, max_length = 259, example = "prysm.local:7380")
     )]
-    pub receiver: Option<SocketAddr>,
+    pub receiver: Option<ReceiverAddress>,
 }
 
 impl Preferences {
@@ -45,13 +48,9 @@ impl Preferences {
             }
             return Ok(());
         }
+        // `receiver` was checked when it was parsed.
         if let Some(instance) = &self.instance {
             origin(instance).map_err(|reason| format!("instance: {reason}"))?;
-        }
-        if let Some(receiver) = self.receiver
-            && (receiver.port() == 0 || receiver.ip().is_unspecified())
-        {
-            return Err("receiver: needs a host and a fixed port".into());
         }
         Ok(())
     }
@@ -257,6 +256,12 @@ mod tests {
             receiver: Some("192.168.1.20:7380".parse().unwrap()),
         };
         slim.validate(Flavor::Slim).unwrap();
+        Preferences {
+            receiver: Some("prysm.local:7380".parse().unwrap()),
+            ..slim.clone()
+        }
+        .validate(Flavor::Slim)
+        .unwrap();
         assert!(slim.validate(Flavor::Full).is_err());
         Preferences::default().validate(Flavor::Full).unwrap();
         Preferences::default().validate(Flavor::Slim).unwrap();
@@ -282,20 +287,6 @@ mod tests {
                     ..slim.clone()
                 },
                 "instance",
-            ),
-            (
-                Preferences {
-                    receiver: Some("0.0.0.0:7380".parse().unwrap()),
-                    ..slim.clone()
-                },
-                "receiver",
-            ),
-            (
-                Preferences {
-                    receiver: Some("10.0.0.1:0".parse().unwrap()),
-                    ..slim.clone()
-                },
-                "receiver",
             ),
         ] {
             assert!(
@@ -330,6 +321,23 @@ mod tests {
             FileStore::new(dir.path().join("tv.json")).with_boot_id(dir.path().join("missing"));
         store.remember(LightingTarget::Processed).unwrap();
         assert_eq!(store.resume(), None);
+    }
+
+    #[test]
+    fn receivers_are_checked_when_read() {
+        let parsed: Preferences =
+            serde_json::from_str(r#"{"receiver":"prysm.local:7380"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap()["receiver"],
+            "prysm.local:7380"
+        );
+        for bad in ["0.0.0.0:7380", "10.0.0.1:0", "prysm.local", "http://x:1"] {
+            let error =
+                serde_json::from_value::<Preferences>(serde_json::json!({ "receiver": bad }))
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.starts_with(&format!("receiver `{bad}`: ")), "{error}");
+        }
     }
 
     #[test]

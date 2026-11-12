@@ -89,6 +89,10 @@ pub struct State {
         schema(value_type = Option<crate::schema::SlimEncodingSchema>)
     )]
     pub encoding: Option<SlimEncoding>,
+    /// Slim only: the receiver paused the stream because its lighting is
+    /// off; the TV capture is stopped until the receiver asks again. Not a
+    /// failure. Always false unless `worker` is `running`.
+    pub paused: bool,
     /// The latest worker stderr lines, oldest first (at most 20).
     pub log: Vec<String>,
 }
