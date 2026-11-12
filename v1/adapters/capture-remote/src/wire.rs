@@ -1,44 +1,39 @@
-//! The stream hello, its reply and the frame header. See the crate README for
-//! the protocol.
+//! The stream hello, its reply with the request, the frame header and the
+//! refusal. See the crate README for the protocol.
+use crate::request::{StreamEncoding, StreamRequest};
 use prysm_core::{FrameError, PixelFormat, YuvRange, YuvStandardMatrix};
 
 pub(crate) const MAGIC: [u8; 4] = *b"PRSM";
 /// The wire protocol version both ends must speak.
-pub const VERSION: u8 = 2;
-/// Hello (sender to receiver) and reply (receiver to sender).
+pub const VERSION: u8 = 3;
+/// The hello (sender to receiver) and the first half of the reply.
 pub(crate) const HELLO_LEN: usize = 8;
+/// The reply: the hello's layout with a status, then the request.
+pub(crate) const REPLY_LEN: usize = 16;
 pub(crate) const HEADER_LEN: usize = 16;
 /// Largest accepted width or height.
 pub const MAX_DIMENSION: u32 = 4096;
 /// Largest accepted payload: one 1080p RGB frame.
 pub const MAX_PAYLOAD_BYTES: usize = 1920 * 1080 * 3;
+/// Longest refusal reason, in bytes of UTF-8.
+pub const MAX_REASON_BYTES: usize = 1024;
 
 /// How a stream's frame payloads are encoded, fixed per connection by the
-/// hello.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Encoding {
+/// request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Encoding {
     /// Uncompressed pixels, exactly the frame's size.
-    #[default]
     Raw,
     /// One H.264 access unit per frame (Annex B, Baseline); the header's
     /// format is the decoded limited-range BT.709 NV12.
     H264,
 }
 
-impl Encoding {
-    pub(crate) const fn code(self) -> u8 {
-        match self {
-            Self::Raw => 0,
-            Self::H264 => 1,
-        }
-    }
-
-    fn from_code(code: u8) -> Result<Self, WireError> {
-        match code {
-            0 => Ok(Self::Raw),
-            1 => Ok(Self::H264),
-            _ => Err(WireError::Encoding(code)),
+impl From<StreamEncoding> for Encoding {
+    fn from(encoding: StreamEncoding) -> Self {
+        match encoding {
+            StreamEncoding::Raw => Self::Raw,
+            StreamEncoding::H264Hardware | StreamEncoding::H264Software => Self::H264,
         }
     }
 }
@@ -86,8 +81,12 @@ pub enum WireError {
     /// The two ends speak different protocol versions; update both.
     #[error("the peer speaks wire protocol version {theirs}, this end version {ours}")]
     Version { ours: u8, theirs: u8 },
-    #[error("unsupported stream encoding {0}")]
-    Encoding(u8),
+    /// The receiver asked for a stream this sender does not understand.
+    #[error("invalid stream request: {0}")]
+    Request(String),
+    /// The sender cannot produce the requested stream, in its own words.
+    #[error("{0}")]
+    Refused(String),
     #[error("unknown control message {0}")]
     Control(u8),
     #[error("the receiver closed the stream")]
@@ -96,9 +95,11 @@ pub enum WireError {
     Flags(u8),
     #[error("an encoded payload must be 1 to {MAX_PAYLOAD_BYTES} bytes, not {0}")]
     EncodedLength(usize),
+    #[error("a refusal reason must be 1 to {MAX_REASON_BYTES} bytes, not {0}")]
+    ReasonLength(usize),
     #[error("receiver rejected the stream with unknown status {0}")]
     Rejected(u8),
-    #[error("the receiver did not answer the hello (wire protocol version 1 never does)")]
+    #[error("the receiver did not answer the hello")]
     NoReply,
     #[error("unsupported pixel format `{0}`")]
     Format(String),
@@ -114,17 +115,16 @@ pub enum WireError {
     Geometry(#[source] FrameError),
 }
 
-/// The first bytes on a connection: `PRSM`, version, encoding, two zero bytes.
-pub(crate) fn hello(encoding: Encoding) -> [u8; HELLO_LEN] {
+/// The first bytes on a connection: `PRSM`, version, three zero bytes.
+pub(crate) fn hello() -> [u8; HELLO_LEN] {
     let mut bytes = [0; HELLO_LEN];
     bytes[..4].copy_from_slice(&MAGIC);
     bytes[4] = VERSION;
-    bytes[5] = encoding.code();
     bytes
 }
 
-/// The receiver's check of a hello.
-pub(crate) fn accept(bytes: &[u8; HELLO_LEN]) -> Result<Encoding, WireError> {
+/// Magic and version of a hello, or of a reply's first half.
+fn check_version(bytes: &[u8; HELLO_LEN]) -> Result<(), WireError> {
     if bytes[..4] != MAGIC {
         return Err(WireError::Magic);
     }
@@ -134,42 +134,111 @@ pub(crate) fn accept(bytes: &[u8; HELLO_LEN]) -> Result<Encoding, WireError> {
             theirs: bytes[4],
         });
     }
-    Encoding::from_code(bytes[5])
+    Ok(())
+}
+
+/// The receiver's check of a hello.
+pub(crate) fn accept(bytes: &[u8; HELLO_LEN]) -> Result<(), WireError> {
+    check_version(bytes)
 }
 
 /// Reply status codes.
 const ACCEPTED: u8 = 0;
 const UNSUPPORTED_VERSION: u8 = 1;
-const UNSUPPORTED_ENCODING: u8 = 2;
 
-/// The receiver's answer: `PRSM`, its version, a status, two zero bytes; then
-/// it closes the connection unless the status accepts the stream.
-pub(crate) fn reply(outcome: &Result<Encoding, WireError>) -> [u8; HELLO_LEN] {
-    let mut bytes = hello(Encoding::Raw);
-    bytes[5] = match outcome {
-        Ok(_) => ACCEPTED,
-        Err(WireError::Encoding(_)) => UNSUPPORTED_ENCODING,
-        Err(_) => UNSUPPORTED_VERSION,
-    };
+/// The receiver's answer: `PRSM`, its version, a status, five zero bytes;
+/// then, if accepted, the request: encoding, `include_ui` (0 or 1), width,
+/// height (`u16` each), fps, one zero byte. A refused stream's request bytes
+/// are zero and the receiver closes the connection.
+pub(crate) fn reply(outcome: Result<&StreamRequest, &WireError>) -> [u8; REPLY_LEN] {
+    let mut bytes = [0; REPLY_LEN];
+    bytes[..HELLO_LEN].copy_from_slice(&hello());
+    match outcome {
+        Ok(request) => {
+            let narrow = |value: u32| u16::try_from(value).unwrap_or(u16::MAX).to_be_bytes();
+            bytes[5] = ACCEPTED;
+            bytes[8] = request.encoding.code();
+            bytes[9] = u8::from(request.include_ui);
+            bytes[10..12].copy_from_slice(&narrow(request.width));
+            bytes[12..14].copy_from_slice(&narrow(request.height));
+            bytes[14] = u8::try_from(request.fps).unwrap_or(u8::MAX);
+        }
+        Err(_) => bytes[5] = UNSUPPORTED_VERSION,
+    }
     bytes
 }
 
-/// The sender's check of the receiver's reply to `encoding`.
-pub(crate) fn accepted(bytes: &[u8; HELLO_LEN], encoding: Encoding) -> Result<(), WireError> {
-    if bytes[..4] != MAGIC {
-        return Err(WireError::Magic);
-    }
-    if bytes[4] != VERSION {
-        return Err(WireError::Version {
-            ours: VERSION,
-            theirs: bytes[4],
-        });
-    }
+/// The sender's check of the reply's first half: same version, accepted.
+pub(crate) fn accepted(bytes: &[u8; HELLO_LEN]) -> Result<(), WireError> {
+    check_version(bytes)?;
     match bytes[5] {
         ACCEPTED => Ok(()),
-        UNSUPPORTED_ENCODING => Err(WireError::Encoding(encoding.code())),
         status => Err(WireError::Rejected(status)),
     }
+}
+
+/// The request in the reply's second half, validated.
+pub(crate) fn request(bytes: &[u8; HELLO_LEN]) -> Result<StreamRequest, WireError> {
+    let invalid = |why: String| Err(WireError::Request(why));
+    let Some(encoding) = StreamEncoding::from_code(bytes[0]) else {
+        return invalid(format!("unknown encoding {}", bytes[0]));
+    };
+    let include_ui = match bytes[1] {
+        0 => false,
+        1 => true,
+        other => return invalid(format!("include_ui {other}")),
+    };
+    if bytes[7] != 0 {
+        return invalid(format!("reserved byte {}", bytes[7]));
+    }
+    let request = StreamRequest {
+        width: u32::from(u16::from_be_bytes([bytes[2], bytes[3]])),
+        height: u32::from(u16::from_be_bytes([bytes[4], bytes[5]])),
+        fps: u32::from(bytes[6]),
+        include_ui,
+        encoding,
+    };
+    request
+        .validate()
+        .map_err(|error| WireError::Request(error.to_string()))?;
+    Ok(request)
+}
+
+/// A refusal: a header with format `0`, zeros, and the reason's length,
+/// followed by the reason (UTF-8, cut to [`MAX_REASON_BYTES`]).
+pub(crate) fn refusal(reason: &str) -> Vec<u8> {
+    let mut end = reason.len().min(MAX_REASON_BYTES);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    let reason = if end == 0 { "refused" } else { &reason[..end] };
+    let mut bytes = vec![0; HEADER_LEN];
+    // At most MAX_REASON_BYTES.
+    let len = u32::try_from(reason.len()).unwrap_or(0);
+    bytes[12..16].copy_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(reason.as_bytes());
+    bytes
+}
+
+/// `Some` for a refusal header (format `0`): the reason's length.
+pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<usize, WireError>> {
+    if bytes[0] != 0 {
+        return None;
+    }
+    if bytes[1..12].iter().any(|&byte| byte != 0) {
+        return Some(Err(WireError::FormatCode {
+            format: 0,
+            range: bytes[1],
+            matrix: bytes[2],
+        }));
+    }
+    let len = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+    let len = usize::try_from(len).unwrap_or(usize::MAX);
+    Some(if (1..=MAX_REASON_BYTES).contains(&len) {
+        Ok(len)
+    } else {
+        Err(WireError::ReasonLength(len))
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -489,45 +558,113 @@ mod tests {
         }
     }
 
-    #[test]
-    fn hello_and_reply_carry_version_and_encoding() {
-        let sent = hello(Encoding::Raw);
-        assert_eq!(sent, *b"PRSM\x02\x00\x00\x00");
-        let outcome = accept(&sent);
-        assert_eq!(outcome, Ok(Encoding::Raw));
-        assert_eq!(accepted(&reply(&outcome), Encoding::Raw), Ok(()));
+    fn split(reply: &[u8; REPLY_LEN]) -> ([u8; HELLO_LEN], [u8; HELLO_LEN]) {
+        let mut head = [0; HELLO_LEN];
+        let mut rest = [0; HELLO_LEN];
+        head.copy_from_slice(&reply[..HELLO_LEN]);
+        rest.copy_from_slice(&reply[HELLO_LEN..]);
+        (head, rest)
+    }
 
-        // A version-1 sender opens with its first frame header.
-        let old = *b"PRSM\x01\x01\x00\x00";
-        let outcome = accept(&old);
-        assert_eq!(outcome, Err(WireError::Version { ours: 2, theirs: 1 }));
+    #[test]
+    fn hello_and_reply_carry_version_and_request() {
+        let sent = hello();
+        assert_eq!(sent, *b"PRSM\x03\x00\x00\x00");
+        assert_eq!(accept(&sent), Ok(()));
+        let request = StreamRequest {
+            width: 640,
+            height: 280,
+            fps: 25,
+            include_ui: false,
+            encoding: StreamEncoding::H264Software,
+        };
+        let answer = reply(Ok(&request));
         assert_eq!(
-            accepted(&reply(&outcome), Encoding::Raw),
+            answer,
+            *b"PRSM\x03\x00\x00\x00\x02\x00\x02\x80\x01\x18\x19\x00"
+        );
+        let (head, rest) = split(&answer);
+        assert_eq!(accepted(&head), Ok(()));
+        assert_eq!(super::request(&rest), Ok(request));
+        for encoding in [StreamEncoding::H264Hardware, StreamEncoding::Raw] {
+            let request = StreamRequest {
+                encoding,
+                include_ui: true,
+                ..request
+            };
+            assert_eq!(super::request(&split(&reply(Ok(&request))).1), Ok(request));
+        }
+
+        // A version-2 sender's hello is refused with this end's version.
+        let old = *b"PRSM\x02\x01\x00\x00";
+        let outcome = accept(&old);
+        assert_eq!(outcome, Err(WireError::Version { ours: 3, theirs: 2 }));
+        let refused = reply(outcome.as_ref().map(|()| &request));
+        assert_eq!(
+            refused,
+            *b"PRSM\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+        assert_eq!(
+            accepted(&split(&refused).0),
             Err(WireError::Rejected(UNSUPPORTED_VERSION))
         );
         // A receiver of another version says so in its reply.
-        let mut newer = reply(&Ok(Encoding::Raw));
-        newer[4] = 3;
         assert_eq!(
-            accepted(&newer, Encoding::Raw),
-            Err(WireError::Version { ours: 2, theirs: 3 })
-        );
-
-        // H.264 is code 1.
-        let h264 = hello(Encoding::H264);
-        assert_eq!(h264, *b"PRSM\x02\x01\x00\x00");
-        assert_eq!(accept(&h264), Ok(Encoding::H264));
-        // Unknown encodings are refused, not misread.
-        let mut unknown = sent;
-        unknown[5] = 2;
-        let outcome = accept(&unknown);
-        assert_eq!(outcome, Err(WireError::Encoding(2)));
-        assert_eq!(
-            accepted(&reply(&outcome), Encoding::H264),
-            Err(WireError::Encoding(1))
+            accepted(b"PRSM\x02\x01\x00\x00"),
+            Err(WireError::Version { ours: 3, theirs: 2 })
         );
         assert_eq!(accept(b"GET / HT"), Err(WireError::Magic));
-        assert_eq!(accepted(b"HTTP/1.1", Encoding::Raw), Err(WireError::Magic));
+        assert_eq!(accepted(b"HTTP/1.1"), Err(WireError::Magic));
+    }
+
+    #[test]
+    fn malformed_requests_are_refused() {
+        let good = split(&reply(Ok(&StreamRequest::default()))).1;
+        for (at, value) in [(0, 3), (1, 2), (3, 3), (6, 0), (6, 61), (7, 1)] {
+            let mut bad = good;
+            bad[at] = value;
+            assert!(
+                matches!(super::request(&bad), Err(WireError::Request(_))),
+                "byte {at} = {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn refusals_carry_a_bounded_reason() {
+        let bytes = refusal("hardware H.264 encoder cannot start");
+        let mut header = [0; HEADER_LEN];
+        header.copy_from_slice(&bytes[..HEADER_LEN]);
+        assert_eq!(refusal_len(&header), Some(Ok(35)));
+        assert_eq!(&bytes[HEADER_LEN..], b"hardware H.264 encoder cannot start");
+        // Long reasons are cut on a character boundary.
+        let long = "é".repeat(MAX_REASON_BYTES);
+        let bytes = refusal(&long);
+        assert_eq!(bytes.len(), HEADER_LEN + MAX_REASON_BYTES);
+        assert!(std::str::from_utf8(&bytes[HEADER_LEN..]).is_ok());
+        assert_eq!(refusal("").len(), HEADER_LEN + "refused".len());
+        // Frames are not refusals; bad refusal headers are errors.
+        let frame = header_bytes();
+        assert_eq!(refusal_len(&frame), None);
+        let mut empty = [0; HEADER_LEN];
+        assert_eq!(refusal_len(&empty), Some(Err(WireError::ReasonLength(0))));
+        empty[12..16].copy_from_slice(&(MAX_REASON_BYTES as u32 + 1).to_be_bytes());
+        assert!(matches!(
+            refusal_len(&empty),
+            Some(Err(WireError::ReasonLength(_)))
+        ));
+        let mut flagged = header;
+        flagged[3] = 1;
+        assert!(matches!(
+            refusal_len(&flagged),
+            Some(Err(WireError::FormatCode { .. }))
+        ));
+    }
+
+    fn header_bytes() -> [u8; HEADER_LEN] {
+        header(4, 2, PixelFormat::RGB24)
+            .encode(Encoding::Raw, 0)
+            .unwrap()
     }
 
     #[test]

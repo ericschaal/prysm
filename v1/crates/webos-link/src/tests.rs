@@ -200,62 +200,35 @@ fn full_args_round_trip_and_reject_mistakes() {
 }
 
 #[test]
-fn slim_args_round_trip_and_validate_capture() {
+fn slim_args_carry_only_the_receiver() {
     let args = SlimArgs {
         receiver: "192.168.1.20:7380".parse::<SocketAddr>().unwrap(),
-        capture: SlimCapture::default(),
     };
     let argv = args.to_args();
-    assert_eq!(
-        argv,
-        strings(&[
-            "--receiver",
-            "192.168.1.20:7380",
-            "--width",
-            "320",
-            "--height",
-            "180",
-            "--fps",
-            "30",
-            "--include-ui",
-            "true",
-            "--encoding",
-            "h264_hardware"
-        ])
-    );
+    assert_eq!(argv, strings(&["--receiver", "192.168.1.20:7380"]));
     assert_eq!(SlimArgs::parse(&argv).unwrap(), args);
-    let mut odd = argv.clone();
-    odd[3] = "321".into();
-    assert!(SlimArgs::parse(&odd).unwrap_err().contains("capture.width"));
-    let mut fast = argv.clone();
-    fast[7] = "61".into();
-    assert!(SlimArgs::parse(&fast).unwrap_err().contains("capture.fps"));
-    let mut maybe = argv.clone();
-    maybe[9] = "maybe".into();
-    assert!(SlimArgs::parse(&maybe).is_err());
-    for encoding in [SlimEncoding::H264Software, SlimEncoding::Raw] {
-        let mut other = argv.clone();
-        other[11] = encoding.to_string();
-        assert_eq!(SlimArgs::parse(&other).unwrap().capture.encoding, encoding);
+    // Capture and encoding are the receiver's request, not arguments.
+    let mut old = argv.clone();
+    old.extend(strings(&["--width", "320"]));
+    assert!(SlimArgs::parse(&old).unwrap_err().contains("--width"));
+    assert!(SlimArgs::parse(&strings(&["--receiver", "nope"])).is_err());
+    assert!(SlimArgs::parse(&[]).unwrap_err().contains("--receiver"));
+}
+
+#[test]
+fn slim_encodings_have_their_serde_names() {
+    for encoding in [
+        SlimEncoding::H264Hardware,
+        SlimEncoding::H264Software,
+        SlimEncoding::Raw,
+    ] {
+        assert_eq!(encoding.to_string().parse(), Ok(encoding));
+        assert_eq!(
+            serde_json::to_value(encoding).unwrap(),
+            serde_json::Value::String(encoding.to_string())
+        );
     }
-    let mut unknown = argv.clone();
-    unknown[11] = "h265".into();
-    assert!(
-        SlimArgs::parse(&unknown)
-            .unwrap_err()
-            .contains("--encoding")
-    );
-    assert!(
-        SlimArgs::parse(&argv[..10])
-            .unwrap_err()
-            .contains("--encoding")
-    );
-    // Stored preferences without the field default to hardware H.264.
-    let stored: SlimCapture = serde_json::from_str(r#"{"fps": 15}"#).unwrap();
-    assert_eq!(stored.encoding, SlimEncoding::H264Hardware);
-    let soft: SlimCapture = serde_json::from_str(r#"{"encoding": "h264_software"}"#).unwrap();
-    assert_eq!(soft.encoding, SlimEncoding::H264Software);
-    assert!(serde_json::from_str::<SlimCapture>(r#"{"encoding": "lz4"}"#).is_err());
+    assert!("h265".parse::<SlimEncoding>().is_err());
 }
 
 #[test]

@@ -289,12 +289,11 @@ pub fn guard_parent() -> Result<(), String> {
 
 /// Parse argv, take over stdio, run `body` on a current-thread runtime until
 /// it returns, and exit with the code for how it ended. On failure a final
-/// status carries the cause and its kind, as `classify` names it.
+/// status carries the cause.
 pub fn main<A, F, Fut>(
     name: &'static str,
     usage: &str,
     parse: impl FnOnce(&[String]) -> Result<A, String>,
-    classify: fn(&Error) -> FailureKind,
     body: F,
 ) -> ExitCode
 where
@@ -347,7 +346,7 @@ where
         eprintln!("{name}: {failure}");
         events.send(&Event::Status(WorkerStatus {
             failure: Some(failure),
-            failure_kind: Some(classify(error)),
+            failure_kind: Some(FailureKind::Other),
             ..WorkerStatus::default()
         }));
     }

@@ -54,8 +54,9 @@ impl Forwarder {
         let mut worker = Worker::spawn("prysm-forwarder", move |flags| {
             // A source that ends finishes forwarding without a failure.
             let failure = flags
-                .pump(&mut *source, |frame| {
-                    frame.map_or(Ok(()), |frame| sink.send(&frame))
+                .pump(&mut *source, |frame| match frame {
+                    Some(frame) => sink.send(&frame),
+                    None => sink.idle(),
                 })
                 .failure();
             flags.set_phase(SessionPhase::ClosingSource);

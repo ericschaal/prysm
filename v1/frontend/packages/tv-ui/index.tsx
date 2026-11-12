@@ -3,13 +3,11 @@
  * the lights belong to a Prysm reached over HTTP: the full package's own
  * portal, or the computer the slim package forwards to.
  */
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode, type Ref } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode, type Ref } from 'react';
 import type { Flavor, TvService } from '@prysm/webos-platform';
 import {
-  captureOf,
   derivedReceiver,
   diagnostics,
-  encodingChoices,
   encodingName,
   hostOf,
   instanceAddress,
@@ -23,7 +21,6 @@ import {
   CaptureDialogBody,
   LightingCard,
   WledDialogBody,
-  captureChoices,
   describeCapture,
   describeWled,
   usePortal,
@@ -40,11 +37,6 @@ export { portalSupported } from './portal';
 type DialogId =
   | 'instance'
   | 'receiver'
-  | 'size'
-  | 'rate'
-  | 'source'
-  | 'encoding'
-  | 'switch-encoding'
   | 'autostart'
   | 'lights'
   | 'capture'
@@ -129,22 +121,9 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
   const disabled = !online || tv.changing;
   const rows: { id: DialogId; label: string; value: string; disabled?: boolean }[] = [];
   if (slim) {
-    const capture = captureOf(draft);
     rows.push(
       { id: 'instance', label: 'Prysm address', value: draft.instance ?? 'Add address' },
       { id: 'receiver', label: 'Frames go to', value: draft.receiver ?? 'Not set' },
-      {
-        id: 'size',
-        label: 'Capture size',
-        value: `${capture.width} × ${capture.height}`,
-      },
-      { id: 'rate', label: 'Frame rate', value: `${capture.fps} fps` },
-      {
-        id: 'source',
-        label: 'What to capture',
-        value: capture.include_ui ? 'Video + TV menus' : 'Video only',
-      },
-      { id: 'encoding', label: 'Stream encoding', value: encodingName(capture.encoding) },
     );
   }
   rows.push({
@@ -223,18 +202,6 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                 >
                   {tv.changing ? 'Please wait…' : status.label}
                 </button>
-                {status.changeEncoding && !mismatch ? (
-                  <button
-                    id="change-encoding"
-                    type="button"
-                    className="quiet"
-                    aria-haspopup="dialog"
-                    disabled={!online}
-                    onClick={() => nav.openDialog('switch-encoding')}
-                  >
-                    Change stream encoding
-                  </button>
-                ) : null}
                 <button
                   id="service-options"
                   type="button"
@@ -507,8 +474,6 @@ function Dialogs({
   onExit: () => void;
 }) {
   const { draft } = tv;
-  const capture = captureOf(draft);
-  const choices = useMemo(() => captureChoices(capture), [capture]);
   let title = '';
   let description = '';
   let content: ReactNode = null;
@@ -559,89 +524,6 @@ function Dialogs({
         />
       );
       break;
-    case 'size':
-      title = 'Capture size';
-      description = 'Smaller sizes use less network and processing. 320 × 180 is enough for most lights.';
-      content = choices.sizes.map(([width, height]) => (
-        <Choice
-          key={`${width}x${height}`}
-          title={`${width} × ${height}`}
-          selected={capture.width === width && capture.height === height}
-          action={() => choose({ capture: { ...capture, width: width!, height: height! } })}
-        />
-      ));
-      break;
-    case 'rate':
-      title = 'Frame rate';
-      description = 'Pictures per second sent to Prysm.';
-      content = choices.rates.map((fps) => (
-        <Choice
-          key={fps}
-          title={`${fps} fps`}
-          selected={capture.fps === fps}
-          action={() => choose({ capture: { ...capture, fps } })}
-        />
-      ));
-      break;
-    case 'source':
-      title = 'What to capture';
-      description = 'Choose what appears in the captured picture.';
-      content = (
-        <>
-          <Choice
-            title="Video + TV menus"
-            detail="Include the picture and on-screen menus."
-            selected={capture.include_ui}
-            action={() => choose({ capture: { ...capture, include_ui: true } })}
-          />
-          <Choice
-            title="Video only"
-            detail="Capture the video picture."
-            selected={!capture.include_ui}
-            action={() => choose({ capture: { ...capture, include_ui: false } })}
-          />
-        </>
-      );
-      break;
-    case 'encoding':
-      title = 'Stream encoding';
-      description =
-        'How this TV packs the picture it sends to Prysm. Hardware H.264 suits most TVs; if it fails, try Software H.264.';
-      content = encodingChoices.map((choice) => (
-        <Choice
-          key={choice.value}
-          id={`encoding-${choice.value}`}
-          title={choice.title}
-          detail={choice.detail}
-          selected={capture.encoding === choice.value}
-          action={() => choose({ capture: { ...capture, encoding: choice.value } })}
-        />
-      ));
-      break;
-    case 'switch-encoding': {
-      // Reached from an encoder failure: the choice is saved at once, and capture restarts with it.
-      const current = captureOf(tv.saved).encoding;
-      title = 'Change stream encoding';
-      description = `${encodingName(current)} failed on this TV. Choose another encoding; it is saved and used right away${tv.dirty ? ', together with your other unsaved changes' : ''}.`;
-      content = encodingChoices.map((choice) => (
-        <Choice
-          key={choice.value}
-          id={`switch-${choice.value}`}
-          title={choice.title}
-          detail={choice.value === current ? `Chosen now. ${choice.detail}` : choice.detail}
-          selected={current === choice.value}
-          action={() => {
-            if (choice.value === current) return closeDialog();
-            dismiss();
-            void tv.saveWith(
-              { capture: { ...capture, encoding: choice.value } },
-              `Stream encoding set to ${choice.name}. Capture starts again with it.`,
-            );
-          }}
-        />
-      ));
-      break;
-    }
     case 'autostart':
       title = slim ? 'Enable with TV' : 'Start screen sync with TV';
       description = slim

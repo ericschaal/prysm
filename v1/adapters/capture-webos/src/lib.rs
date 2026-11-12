@@ -3,14 +3,29 @@
 //! - [`WebosCapture`]: the factory registered under kind `"webos"`.
 //! - [`WebosSettings`]: size, rate and UI blending, with typed validation.
 //! - [`VideoSignal`]: the host feeds Luna `videooutput` readiness and context
-//!   changes here; the source releases the tap while video is unavailable.
+//!   changes here; the source releases the video tap while video is
+//!   unavailable.
 //! - [`WebosFrames`]: the open source. A private native thread owns the LG
 //!   tap; watchdogs, retries and release certification live here.
+//!
+//! ## TV UI without video
+//!
+//! With `include_ui` on, menus come blended into the video tap while video is
+//! available or unknown. While video is unavailable (Home, apps without
+//! video, settings over no input) the same native thread instead opens the
+//! graphics plane through HAL GAL (`libhalgal`, `/dev/gfx`) at a small fixed
+//! size (the configured size clamped to 256–320 × 144–180) and converts it to
+//! the same limited-range BT.709 NV12. The two taps never run together: a
+//! change of video availability releases one before the other opens. If the
+//! UI tap fails to open or to deliver its first frame, it is logged once as
+//! unsupported and the source idles without video, as with `include_ui` off.
+//! A transparent plane is delivered as black.
 //!
 //! All `unsafe` FFI is in `prysm-capture-webos-sys`.
 mod backend;
 mod settings;
 mod source;
+mod ui;
 mod video;
 
 pub use settings::WebosSettings;

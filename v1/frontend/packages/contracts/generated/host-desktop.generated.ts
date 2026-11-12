@@ -276,8 +276,36 @@ export interface components {
             /** Format: int32 */
             spatial_reach_percent: number;
         };
-        /** @description Settings for kind `"remote"`: `{ "kind": "remote", "listen": "0.0.0.0:7380" }`. */
+        /**
+         * @description Settings for kind `"remote"`: where to listen and the stream to ask the
+         *     sender for, `{ "kind": "remote", "listen": "0.0.0.0:7380", "width": 320,
+         *     "height": 180, "fps": 30, "include_ui": true, "encoding": "h264_hardware" }`.
+         *     Every field but `listen` is optional.
+         */
         RemoteReceiverSettings: {
+            /**
+             * @description How the sender encodes the stream. It uses exactly this encoder; if
+             *     that fails, lighting stops with the sender's reason.
+             * @default h264_hardware
+             */
+            encoding?: components["schemas"]["StreamEncoding"];
+            /**
+             * Format: int32
+             * @description Requested frames per second.
+             * @default 30
+             */
+            fps?: number;
+            /**
+             * Format: int32
+             * @description Requested picture height: even, 2 to 1080 (H.264: at least 16).
+             * @default 180
+             */
+            height?: number;
+            /**
+             * @description Blend the sender's on-screen menus (the TV's) into the picture.
+             * @default true
+             */
+            include_ui?: boolean;
             /** @enum {string} */
             kind: "remote";
             /**
@@ -285,6 +313,12 @@ export interface components {
              * @example 0.0.0.0:7380
              */
             listen: string;
+            /**
+             * Format: int32
+             * @description Requested picture width: even, 2 to 1920 (H.264: at least 16).
+             * @default 320
+             */
+            width?: number;
         };
         /** @description What the runtime is actually doing. */
         Session: {
@@ -340,6 +374,13 @@ export interface components {
             surface_failures: components["schemas"]["Failure"][];
             target: components["schemas"]["LightingTarget"];
         };
+        /**
+         * @description How the sender encodes the frames it sends. Exactly this encoder is used:
+         *     one that cannot start or fails ends the stream with a refusal, never a
+         *     switch to another.
+         * @enum {string}
+         */
+        StreamEncoding: "h264_hardware" | "h264_software" | "raw";
         /** @description `PUT /api/v1/target`. */
         TargetRequest: {
             target: components["schemas"]["LightingTarget"];
@@ -401,6 +442,7 @@ export type Settings = components['schemas']['Settings'];
 export type SettingsReplaced = components['schemas']['SettingsReplaced'];
 export type SettingsRequest = components['schemas']['SettingsRequest'];
 export type State = components['schemas']['State'];
+export type StreamEncoding = components['schemas']['StreamEncoding'];
 export type TargetRequest = components['schemas']['TargetRequest'];
 export type WledSettings = components['schemas']['WledSettings'];
 export type $defs = Record<string, never>;

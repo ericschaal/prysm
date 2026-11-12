@@ -1,6 +1,6 @@
 //! TV-local preferences (`tv.json`): one writer, the supervisor.
 use crate::state::Flavor;
-use prysm_webos_link::{LightingTarget, SlimCapture};
+use prysm_webos_link::LightingTarget;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -33,43 +33,15 @@ pub struct Preferences {
         schema(value_type = Option<String>, example = "192.168.1.20:7380")
     )]
     pub receiver: Option<SocketAddr>,
-    /// Slim only: capture size, rate, menu blending and encoding. Always set
-    /// in the slim package (a request without it gets the defaults); `null`
-    /// in the full package, whose capture is the portal's `settings.capture`.
-    #[cfg_attr(
-        feature = "schema",
-        schema(value_type = Option<crate::schema::SlimCaptureSchema>)
-    )]
-    pub capture: Option<SlimCapture>,
 }
 
 impl Preferences {
-    /// The preferences a package starts with: slim with the default capture.
-    #[must_use]
-    pub fn defaults(flavor: Flavor) -> Self {
-        Self::default().for_flavor(flavor)
-    }
-
-    /// Fill what the flavor always has: a slim capture left out of a request
-    /// or file becomes the default one. Full is unchanged (validation
-    /// rejects a capture there).
-    #[must_use]
-    pub fn for_flavor(mut self, flavor: Flavor) -> Self {
-        if flavor == Flavor::Slim {
-            self.capture.get_or_insert_with(SlimCapture::default);
-        }
-        self
-    }
-
     /// # Errors
     /// The first invalid field, as `field: reason`.
     pub fn validate(&self, flavor: Flavor) -> Result<(), String> {
         if flavor == Flavor::Full {
             if self.instance.is_some() || self.receiver.is_some() {
                 return Err("instance, receiver: only the slim package forwards frames".into());
-            }
-            if self.capture.is_some() {
-                return Err("capture: set in the portal for the full package".into());
             }
             return Ok(());
         }
@@ -81,7 +53,7 @@ impl Preferences {
         {
             return Err("receiver: needs a host and a fixed port".into());
         }
-        self.capture.as_ref().map_or(Ok(()), SlimCapture::validate)
+        Ok(())
     }
 }
 
@@ -283,23 +255,11 @@ mod tests {
             autostart: true,
             instance: Some("http://192.168.1.20:8787".into()),
             receiver: Some("192.168.1.20:7380".parse().unwrap()),
-            capture: Some(SlimCapture::default()),
         };
         slim.validate(Flavor::Slim).unwrap();
         assert!(slim.validate(Flavor::Full).is_err());
         Preferences::default().validate(Flavor::Full).unwrap();
         Preferences::default().validate(Flavor::Slim).unwrap();
-        // Any capture in the full package, even the slim default, is refused.
-        let full_capture = Preferences {
-            capture: Some(SlimCapture::default()),
-            ..Preferences::default()
-        };
-        assert!(
-            full_capture
-                .validate(Flavor::Full)
-                .unwrap_err()
-                .starts_with("capture")
-        );
 
         for (bad, field) in [
             (
@@ -337,16 +297,6 @@ mod tests {
                 },
                 "receiver",
             ),
-            (
-                Preferences {
-                    capture: Some(SlimCapture {
-                        fps: 0,
-                        ..SlimCapture::default()
-                    }),
-                    ..slim.clone()
-                },
-                "capture.fps",
-            ),
         ] {
             assert!(
                 bad.validate(Flavor::Slim).unwrap_err().starts_with(field),
@@ -383,45 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn capture_is_null_in_full_and_always_set_in_slim() {
-        let full = Preferences::defaults(Flavor::Full);
-        assert_eq!(full.capture, None);
-        assert_eq!(
-            serde_json::to_value(&full).unwrap()["capture"],
-            serde_json::Value::Null
-        );
-
-        let slim = Preferences::defaults(Flavor::Slim);
-        assert_eq!(slim.capture, Some(SlimCapture::default()));
-        let value = serde_json::to_value(&slim).unwrap();
-        assert_eq!(value["capture"]["width"], 320, "the default is written out");
-        assert_eq!(serde_json::from_value::<Preferences>(value).unwrap(), slim);
-
-        // A slim request or file without a capture gets the default one.
-        let parsed: Preferences = serde_json::from_str(r#"{"autostart":true}"#).unwrap();
-        assert_eq!(parsed.capture, None);
-        assert_eq!(
-            parsed.clone().for_flavor(Flavor::Slim).capture,
-            Some(SlimCapture::default())
-        );
-        assert_eq!(parsed.for_flavor(Flavor::Full).capture, None);
-        let chosen = Preferences {
-            capture: Some(SlimCapture {
-                width: 640,
-                height: 360,
-                ..SlimCapture::default()
-            }),
-            ..Preferences::default()
-        };
-        assert_eq!(chosen.clone().for_flavor(Flavor::Slim), chosen);
-    }
-
-    #[test]
     fn unknown_fields_are_rejected() {
         assert!(serde_json::from_str::<Preferences>(r#"{"mode":"slim"}"#).is_err());
+        // Picture settings are the receiver's (slim) or the portal's (full).
+        assert!(serde_json::from_str::<Preferences>(r#"{"capture":{"fps":30}}"#).is_err());
         let parsed: Preferences = serde_json::from_str(r#"{"autostart":true}"#).unwrap();
         assert!(parsed.autostart);
-        assert_eq!(parsed.capture, None);
     }
 
     #[test]

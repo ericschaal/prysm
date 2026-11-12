@@ -11,7 +11,9 @@ const OPTIONS: &str = "Options:
                             [default: 0.0.0.0:8787, every interface]
   --allow-origin ORIGIN     Also let browser pages from ORIGIN (such as
                             http://192.168.1.30:3000) use the API, repeatable;
-                            '*' allows every origin, including file:// pages
+                            'null' allows pages without an origin, such as the
+                            Prysm TV app (and sandboxed frames on any site);
+                            '*' allows every origin
                             [default: only the portal's own pages]
   --no-portal               Serve no web portal
   --start                   Request processed lighting at launch (else idle)
@@ -182,6 +184,8 @@ mod tests {
             "http://192.168.1.30:3000",
             "--allow-origin",
             "app://tv",
+            "--allow-origin",
+            "null",
             "--log-file",
             "prysm.log",
         ])
@@ -196,7 +200,8 @@ mod tests {
                     listen: "[::1]:0".parse().unwrap(),
                     access: Access::Origins(vec![
                         "http://192.168.1.30:3000".into(),
-                        "app://tv".into()
+                        "app://tv".into(),
+                        "null".into()
                     ]),
                 }),
             })

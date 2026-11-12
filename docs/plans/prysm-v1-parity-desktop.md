@@ -59,7 +59,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | TV receiver endpoint | `/api/capture` WebSocket on the portal port (`prysm-capture/src/receiver.rs`) | changed | Raw TCP on its own port, kind `remote` (`adapters/capture-remote`) |
 | TV receiver lifetime | Always listening; reports idle/busy to TVs | changed | Binds only while a session runs; the slim worker reconnects every second and reports "waiting for the receiver" without exiting, so frames resume about a second after lighting starts (D18, [rationale](prysm-v1-simplified-runtime.md#engine)). The TV keeps capturing while it waits |
 | Capture-settings negotiation | Server sends resolution/fps to the TV | missing | TV decides; server has no say (D18) |
-| Codecs | Raw, LZ4, H.264 (openh264 decode) (`prysm-capture/src/webos.rs`) | partial | Raw RGB24/BGR24/YUYV/NV12 only, wire version 2 with a per-stream encoding (H.264 reserved, prysm-3jx.12.2) |
+| Codecs | Raw, LZ4, H.264 (openh264 decode) (`prysm-capture/src/webos.rs`) | partial | Raw RGB24/BGR24/YUYV/NV12 and H.264 (OpenH264 decode to NV12), wire version 3: the receiver's settings request size, rate, menus and encoding (prysm-3jx.12.2, prysm-3jx.63) |
 | Multiple TVs | FIFO queue, `busy` reply, 16 clients | changed | Newest connection replaces the current one |
 | Receiver access control | Host allowlist on the HTTP port | missing | None; any LAN host can inject frames |
 | "Waiting for frames" status | `input unavailable; waiting for frames` (`pipeline/worker.rs`) | present | `State.input`: fps and `receiving`, sampled once a second; TUI shows "waiting for frames" or the rate (D17) |

@@ -34,9 +34,10 @@ pub enum VideoSchema {
 
 // Mirrors `prysm_webos_link::FailureKind`.
 /// What a failure is, so the app can offer the matching fix. `encoder`
-/// (slim): the configured encoder could not start or failed; another
-/// encoding may work. `receiver` (slim): the receiver is unavailable or
-/// paused the stream; the worker keeps reconnecting. `other`: anything else.
+/// (slim): the encoder the receiver requested could not start or failed;
+/// the receiver is told, and another encoding chosen in its portal may work.
+/// `receiver` (slim): the receiver is unavailable or paused the stream; the
+/// worker keeps reconnecting. `other`: anything else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = FailureKind)]
 #[serde(rename_all = "snake_case")]
@@ -58,53 +59,19 @@ pub enum LightingTargetSchema {
 }
 
 // Mirrors `prysm_webos_link::SlimEncoding`.
-/// How the slim package encodes the frames it sends. Exactly this encoder is
+/// How the slim package encodes the frames it sends: the encoding its
+/// receiver requested (set in the desktop portal). Exactly this encoder is
 /// used; one that cannot start or fails is a failure, never a switch to
 /// another. `h264_hardware`: the TV's hardware H.264 encoder (about
 /// 2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
 /// `raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = SlimEncoding)]
 #[serde(rename_all = "snake_case")]
 pub enum SlimEncodingSchema {
-    #[default]
     H264Hardware,
     H264Software,
     Raw,
-}
-
-// Mirrors `prysm_webos_link::SlimCapture`.
-/// Capture size, rate and menu blending of the slim package (the same rules
-/// as the `webos` capture settings), and how its frames are encoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = SlimCapture)]
-#[serde(default, deny_unknown_fields)]
-pub struct SlimCaptureSchema {
-    /// Even, 2 to 1920.
-    #[schema(minimum = 2, maximum = 1920, multiple_of = 2, default = 320)]
-    width: u32,
-    /// Even, 2 to 1080.
-    #[schema(minimum = 2, maximum = 1080, multiple_of = 2, default = 180)]
-    height: u32,
-    #[schema(minimum = 1, maximum = 60, default = 30)]
-    fps: u32,
-    /// Blend TV menus into the capture.
-    #[schema(default = true)]
-    include_ui: bool,
-    #[schema(default = "h264_hardware")]
-    encoding: SlimEncodingSchema,
-}
-
-impl Default for SlimCaptureSchema {
-    fn default() -> Self {
-        Self {
-            width: 320,
-            height: 180,
-            fps: 30,
-            include_ui: true,
-            encoding: SlimEncodingSchema::H264Hardware,
-        }
-    }
 }
 
 fn constant(value: bool) -> ObjectBuilder {
@@ -158,7 +125,6 @@ pub struct ErrorReply {
     Power,
     Phase,
     Preferences,
-    SlimCaptureSchema,
     SlimEncodingSchema,
     FailureKindSchema,
     VideoSchema,
@@ -184,7 +150,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{FailureKind, LightingTarget, SlimCapture, SlimEncoding, Video};
+    use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video};
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::fmt;
@@ -214,14 +180,6 @@ mod tests {
         ] {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
         }
-        same_shape::<SlimCapture, SlimCaptureSchema>(&SlimCapture::default());
-        same_shape::<SlimCapture, SlimCaptureSchema>(&SlimCapture {
-            width: 1920,
-            height: 1080,
-            fps: 60,
-            include_ui: false,
-            encoding: SlimEncoding::Raw,
-        });
         for kind in [
             FailureKind::Encoder,
             FailureKind::Receiver,
@@ -236,10 +194,6 @@ mod tests {
         ] {
             same_shape::<SlimEncoding, SlimEncodingSchema>(&encoding);
         }
-        assert_eq!(
-            serde_json::to_value(SlimCaptureSchema::default()).unwrap(),
-            serde_json::to_value(SlimCapture::default()).unwrap()
-        );
     }
 
     #[test]
@@ -254,7 +208,10 @@ mod tests {
         let preferences = &schemas["Preferences"];
         assert_eq!(preferences["additionalProperties"], json!(false));
         assert!(preferences.get("required").is_none_or(|r| r == &json!([])));
-        for field in ["instance", "receiver", "capture"] {
+        // Picture settings are the receiver's or the portal's, not the TV's.
+        assert_eq!(preferences["properties"].get("capture"), None);
+        assert_eq!(schemas.get("SlimCapture"), None);
+        for field in ["instance", "receiver"] {
             let described = &preferences["properties"][field];
             let text = described["description"]
                 .as_str()
@@ -263,14 +220,6 @@ mod tests {
                 .unwrap_or_default();
             assert!(text.starts_with("Slim only"), "{field}: {described}");
         }
-        // Nullable: always set in slim, null in full.
-        let capture = &preferences["properties"]["capture"];
-        assert_eq!(capture["default"], Value::Null);
-        assert_eq!(capture["oneOf"][1], json!({"type": "null"}));
-        assert_eq!(
-            schemas["SlimCapture"]["properties"]["fps"]["maximum"],
-            json!(60)
-        );
         assert_eq!(
             schemas["SlimEncoding"]["enum"],
             json!(["h264_hardware", "h264_software", "raw"])

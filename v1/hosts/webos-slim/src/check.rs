@@ -1,7 +1,7 @@
 //! `prysm-webos-slim check-encoder`: a bounded on-TV check of the configured
 //! H.264 encoder with synthetic pictures, and optionally a stream of them to
 //! a desktop receiver. Not used by the supervisor.
-use prysm_capture_remote::{RemoteSender, Stream};
+use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
 use prysm_h264::{Backend, Decoder, Encoder, EncoderSettings, FORMAT};
 use prysm_ports::FrameSink;
@@ -15,7 +15,9 @@ pub const USAGE: &str = "prysm-webos-slim check-encoder [--encoding h264_hardwar
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
 compares it with its input, restarts the session half way (as on resume), and
 prints timings and sizes. With --receiver, then streams the same pictures to a
-Prysm frame receiver for --frames more frames. Exit 0 when every check passed.";
+Prysm frame receiver for --frames more frames, at the default bitrate; the
+receiver must request this encoding, size and rate. Exit 0 when every check
+passed.";
 
 /// Largest accepted mean absolute NV12 difference per picture.
 const TOLERANCE: f64 = 8.0;
@@ -247,7 +249,8 @@ fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
-/// The real sending path: the same encoder inside a `RemoteSender`.
+/// The real sending path: the same encoder inside a `RemoteSender`, if the
+/// receiver requests it.
 fn stream(
     receiver: SocketAddr,
     settings: EncoderSettings,
@@ -255,8 +258,22 @@ fn stream(
     height: u32,
     frames: u32,
 ) -> Result<(), String> {
-    let mut sender =
-        RemoteSender::connect(receiver, Stream::H264(settings)).map_err(|error| chain(&error))?;
+    let mut sender = RemoteSender::connect(receiver).map_err(|error| chain(&error))?;
+    let request = sender.request();
+    let checked = (Some(settings.backend), width, height, settings.fps);
+    if (
+        request.encoding.backend(),
+        request.width,
+        request.height,
+        request.fps,
+    ) != checked
+    {
+        sender.refuse("check-encoder streams only what its flags say");
+        return Err(format!(
+            "the receiver requests {request}; give check-encoder the same \
+             --encoding, --width, --height and --fps"
+        ));
+    }
     let interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps));
     let mut paused = 0;
     for index in 0..frames {

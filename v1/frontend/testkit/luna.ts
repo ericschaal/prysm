@@ -28,8 +28,6 @@ export interface LunaCall {
   payload: Record<string, unknown>;
 }
 
-const slimDefaults = { width: 320, height: 180, fps: 30, include_ui: true };
-
 export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   const full = options.flavor === 'full';
   let offline = !!options.offline;
@@ -39,7 +37,6 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       autostart: false,
       instance: null,
       receiver: null,
-      capture: { ...slimDefaults },
       ...options.preferences,
     },
     enabled: false,
@@ -128,7 +125,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         }
         state = {
           ...state,
-          preferences: { autostart: false, instance: null, receiver: null, capture: { ...slimDefaults }, ...preferences },
+          preferences: { autostart: false, instance: null, receiver: null, ...preferences },
         };
         reconcile();
         respond(reply(state));

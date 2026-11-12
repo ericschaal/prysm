@@ -144,10 +144,10 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     /// Load preferences (invalid ones are reported and replaced by defaults).
     pub fn new(config: Config, launcher: L, mut store: S, installer: I, now: Instant) -> Self {
-        let defaults = Preferences::defaults(config.flavor);
+        let defaults = Preferences::default();
         let preferences = match store.load() {
             Ok(Some(preferences)) => match preferences.validate(config.flavor) {
-                Ok(()) => preferences.for_flavor(config.flavor),
+                Ok(()) => preferences,
                 Err(error) => {
                     eprintln!("prysm-webos-service: ignoring saved preferences: {error}");
                     defaults
@@ -242,7 +242,6 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let preferences: Preferences =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 preferences.validate(self.config.flavor)?;
-                let preferences = preferences.for_flavor(self.config.flavor);
                 self.store.save(&preferences)?;
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply())

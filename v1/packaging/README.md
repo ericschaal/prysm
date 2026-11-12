@@ -114,12 +114,24 @@ the old `io.prysm.capture` app: remove it (and its service setup) first.
 | `full` | captures, processes, drives WLED, serves the portal on 8787 | `prysm-webos-service` | `prysm-webos` | `frontend/dist/webos/tv-ui` |
 | `slim` | captures and forwards frames to a headless Prysm | `prysm-webos-slim-service` | `prysm-webos-slim` | `frontend/dist/webos-slim/tv-ui` |
 
-The TV capture (size, rate, menus) has one home per flavour: full, the
-`webos` capture section of the worker's `settings.json`, edited in the portal
-(default 640x360 at 30 fps); slim, the Luna preference `capture` (default
-320x180 at 30 fps, plus `encoding`), always present in the slim state and
-`tv.json` (a request without it gets the defaults). The full package rejects a
-`capture` preference; in its Luna state `capture` is `null`.
+Picture settings (size, rate, menus, encoding) live in a web portal in both
+flavours, never in the TV's Luna preferences (`tv.json` holds only
+`autostart`, and for slim `instance` and `receiver`). Full: the `webos`
+capture section of the worker's `settings.json`, edited in the TV's own
+portal (default 640x360 at 30 fps). Slim: the `remote` capture section of the
+desktop Prysm (`width`, `height`, `fps`, `include_ui`, `encoding`; default
+320x180 at 30 fps with menus, hardware H.264), which the receiver sends to the
+TV on every connection ([wire protocol](../adapters/capture-remote/README.md));
+the TV captures and encodes as asked. Saving other capture settings restarts
+lighting, the TV reconnects within a second and follows the new request.
+
+The slim TV app controls the desktop Prysm's portal from `Origin: null` (a
+packaged webOS app). Start the desktop Prysm with `--allow-origin null` for
+that, e.g. `docker run … prysm-headless:local --allow-origin null` or
+`ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --allow-origin
+null`; without it the TV app says how to allow it. `null` is also the origin
+of sandboxed frames on any site, so any web page opened on that network can
+then drive the lights, as with the portal's other LAN exposure.
 
 Requirements: the relocated webOS SDK (buildroot-nc4,
 `arm-webos-linux-gnueabi_sdk-buildroot`), `rustup target add
@@ -154,8 +166,11 @@ The slim worker encodes its stream with H.264 by default
 ([`prysm-h264`](../adapters/h264/src/lib.rs)): the TV's hardware encoder
 (`rvenc`, GStreamer with DMA-BUF input, in
 [`h264-rvenc-sys`](../adapters/h264-rvenc-sys/src/lib.rs)) or OpenH264 compiled
-in, chosen by the TV preference `capture.encoding` (`h264_hardware`, the
-default, `h264_software` or `raw`). It therefore links the sysroot's
+in, as the desktop's `remote` capture `encoding` requests (`h264_hardware`,
+the default, `h264_software` or `raw`). If that encoder fails the TV reports
+`failure_kind: encoder` and refuses the request, so lighting on the desktop
+stops with the TV's reason, until another encoding is saved there; nothing
+falls back on its own. It therefore links the sysroot's
 GStreamer 1.0 and GLib, which [`env.sh`](webos/env.sh) finds with the SDK's
 pkg-config; `ipk.py elf --gstreamer` allows those libraries for the slim
 worker only, and the slim package adds the OpenH264, gstreamer-rs and gtk-rs
@@ -255,7 +270,10 @@ and the first after a session restart half way, must be keyframes of the
 current picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
 encode_ms_mean=… encode_ms_max=… cpu_percent=…`, then how long releasing the
 encoder took. Exit 0 means every check passed; `check-encoder: FAILED: …`
-gives the cause chain. `--receiver HOST:7380` then streams `--frames` more of the same pictures (use `--frames 600` for 20 s)
-through the real sender to a desktop running
-`cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60 --pause-at 10`,
-which prints the decoded frames per second and pauses and resumes the TV.
+gives the cause chain. `--receiver HOST:7380` then streams `--frames` more of
+the same pictures (use `--frames 600` for 20 s) through the real sender, at
+the default bitrate, to a desktop running
+`cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60 --pause-at 10 --width 640 --height 280 --encoding h264_hardware`,
+which requests that stream, prints the decoded frames per second and pauses
+and resumes the TV. The check refuses a receiver whose request differs from
+its own flags.

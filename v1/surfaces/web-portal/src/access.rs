@@ -15,7 +15,9 @@ pub enum Access {
     /// Only pages the portal served itself.
     #[default]
     SameOrigin,
-    /// Also these exact origins, such as `http://192.168.1.20:3000`, with CORS.
+    /// Also these exact origins, such as `http://192.168.1.20:3000`, with
+    /// CORS. The entry `null` allows pages without an origin of their own:
+    /// packaged webOS apps (`file://`), but also sandboxed frames on any site.
     Origins(Vec<String>),
     /// Every origin, including `null` (`file://` pages, sandboxed frames), with
     /// CORS: any page the user's browser opens can then drive the lights.
@@ -36,16 +38,22 @@ impl Access {
     }
 }
 
+/// The opaque origin browsers send for `file://` pages and sandboxed frames.
+const NULL: &str = "null";
+
 fn normalize(origin: &str) -> Result<String, ValidationError> {
     let invalid = || {
         ValidationError::new(
             "portal.access",
             format!(
                 "`{origin}` is not an origin such as http://192.168.1.20:3000 \
-                 (use AnyOrigin for `null` or `*`)"
+                 or `null` (use AnyOrigin for `*`)"
             ),
         )
     };
+    if origin == NULL {
+        return Ok(NULL.into());
+    }
     let lower = origin.to_ascii_lowercase();
     let uri: Uri = lower.parse().map_err(|_| invalid())?;
     let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) else {

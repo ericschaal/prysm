@@ -54,6 +54,13 @@ pub enum Error {
     Exception(String),
     #[error("invalid native capture: {0}")]
     Invalid(&'static str),
+    /// The TV UI capture device is missing or cannot be mapped.
+    #[error("cannot use {path}")]
+    Device {
+        path: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl Error {
@@ -96,7 +103,7 @@ api!(VtApi {
     release: VtRelease = "vtCapture_release",
 });
 
-fn library(names: &[&str]) -> Result<Library, Error> {
+pub(crate) fn library(names: &[&str]) -> Result<Library, Error> {
     let mut last = None;
     for name in names {
         // SAFETY: only known LG system libraries are loaded. Their constructors

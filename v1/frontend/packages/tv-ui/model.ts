@@ -1,16 +1,8 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
-import type { Preferences, SlimCapture, State } from '@prysm/webos-platform';
+import type { Preferences, SlimEncoding, State } from '@prysm/webos-platform';
 
-export type SlimEncoding = Required<SlimCapture>['encoding'];
+export type { SlimEncoding };
 
-/** What Rust uses for omitted slim capture fields. */
-export const slimCaptureDefaults: Required<SlimCapture> = {
-  width: 320,
-  height: 180,
-  fps: 30,
-  include_ui: true,
-  encoding: 'h264_hardware',
-};
 export const PORTAL_PORT = 8787;
 
 /** The slim stream encodings in the order offered, with their trade-off. */
@@ -59,27 +51,14 @@ export function equal(a: unknown, b: unknown): boolean {
   return keys.every((key) => equal(left[key], right[key]));
 }
 
-/**
- * Preferences with every field present, as the supervisor stores them. The
- * slim capture block is completed when present and left out when absent (the
- * full package has none), so it is never sent where it does not belong.
- */
-export type SavedPreferences = Required<Omit<Preferences, 'capture'>> & {
-  capture?: Required<SlimCapture>;
-};
+/** Preferences with every field present, as the supervisor stores them. */
+export type SavedPreferences = Required<Preferences>;
 export function completePreferences(value: Preferences): SavedPreferences {
-  const saved: SavedPreferences = {
+  return {
     autostart: value.autostart ?? false,
     instance: value.instance ?? null,
     receiver: value.receiver ?? null,
   };
-  if (value.capture) saved.capture = captureOf(value);
-  return saved;
-}
-
-/** The slim capture settings, with Rust's defaults for anything absent. */
-export function captureOf(value: Preferences): Required<SlimCapture> {
-  return { ...slimCaptureDefaults, ...value.capture };
 }
 
 /**
@@ -341,7 +320,7 @@ export function diagnostics(state: State | null): string {
   if (state.flavor === 'slim')
     lines.push(
       `Frames go to: ${state.preferences.receiver ?? 'not set'}`,
-      `Stream encoding: ${encodingName(captureOf(state.preferences).encoding)} chosen, ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
+      `Stream encoding: ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
     );
   else lines.push(`Web portal: ${state.portal ?? 'not open'}`);
   lines.push('', state.failure ?? 'No errors reported.');

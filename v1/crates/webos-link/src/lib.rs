@@ -15,7 +15,7 @@ mod codec;
 #[cfg(feature = "worker")]
 pub mod worker;
 
-pub use args::{FullArgs, SlimArgs, SlimCapture, SlimEncoding};
+pub use args::{FullArgs, SlimArgs, SlimEncoding};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 pub use prysm_ports::LightingTarget;
 
@@ -79,7 +79,7 @@ pub struct WorkerStatus {
     #[serde(default)]
     pub failure_kind: Option<FailureKind>,
     /// Slim only: the encoding of the frames being sent, while connected to
-    /// the receiver (always the configured one).
+    /// the receiver (always the one it requested).
     #[serde(default)]
     pub encoding: Option<SlimEncoding>,
 }
@@ -88,8 +88,9 @@ pub struct WorkerStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureKind {
-    /// Slim: the configured encoder could not start or failed. Another
-    /// encoding may work; the worker never switches on its own.
+    /// Slim: the encoder the receiver requested could not start or failed.
+    /// The worker refuses that request (the receiver is told) until the
+    /// receiver asks for another; it never switches on its own.
     Encoder,
     /// Slim: the receiver is unavailable (its host is not lighting or is
     /// unreachable) or paused the stream. The worker keeps reconnecting.

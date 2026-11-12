@@ -140,11 +140,13 @@ async fn construction_accepts_any_address_and_rejects_bad_assets_and_origins() {
             "http://192.168.1.20:3000",
             "HTTPS://TV.example:443",
             "app://x",
+            "null",
         ]),
     )
     .unwrap();
     for origin in [
-        "null",
+        "NULL",
+        " null",
         "*",
         "192.168.1.20",
         "http://tv.example/",
@@ -365,6 +367,38 @@ async fn allowed_origins_get_cors() {
             .unwrap();
         assert_eq!(other.status(), StatusCode::FORBIDDEN);
         assert_secure(&other);
+        portal.shutdown().await.unwrap();
+
+        // A packaged webOS app sends `Origin: null`; listing `null` allows
+        // exactly that, not every origin.
+        let access = Access::Origins(vec!["null".into()]);
+        let portal = start_with(fakes::settings(), Duration::from_secs(5), access).await;
+        let put = portal
+            .request(Method::PUT, "/api/v1/target")
+            .header(header::ORIGIN, "null")
+            .json(&json!({ "target": "processed" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put.status(), StatusCode::NO_CONTENT);
+        assert_eq!(put.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+        let preflight = portal
+            .request(Method::OPTIONS, "/api/v1/target")
+            .header(header::ORIGIN, "null")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        for origin in ["http://anything.example", "http://192.168.1.30:3000"] {
+            let refused = portal
+                .request(Method::GET, "/api/v1/state")
+                .header(header::ORIGIN, origin)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{origin}");
+        }
         portal.shutdown().await.unwrap();
 
         let portal = start_with(fakes::settings(), Duration::from_secs(5), Access::AnyOrigin).await;

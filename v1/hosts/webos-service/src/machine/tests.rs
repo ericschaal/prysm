@@ -1,7 +1,7 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
 use crate::state::Phase as P;
-use prysm_webos_link::{FailureKind, SlimCapture, SlimEncoding};
+use prysm_webos_link::{FailureKind, SlimEncoding};
 use serde_json::Value;
 
 fn full() -> Machine {
@@ -25,7 +25,7 @@ fn receiver() -> SocketAddr {
 fn slim_prefs() -> Preferences {
     Preferences {
         receiver: Some(receiver()),
-        ..Preferences::defaults(crate::state::Flavor::Slim)
+        ..Preferences::default()
     }
 }
 
@@ -44,14 +44,13 @@ fn spawn_full(lighting: LightingTarget) -> Effect {
     )
 }
 
-fn spawn_slim(capture: SlimCapture) -> Effect {
-    Effect::Spawn(
-        SlimArgs {
-            receiver: receiver(),
-            capture,
-        }
-        .to_args(),
-    )
+fn spawn_slim(receiver: SocketAddr) -> Effect {
+    Effect::Spawn(SlimArgs { receiver }.to_args())
+}
+
+/// Another receiver, for preference changes.
+fn other_receiver() -> SocketAddr {
+    "192.168.1.21:7380".parse().unwrap()
 }
 
 fn video(video: Video) -> Effect {
@@ -223,7 +222,7 @@ fn slim_needs_a_receiver_and_enable() {
             (
                 2,
                 Input::Preferences(slim_prefs()),
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (3, Enabled(false), vec![Effect::Terminate]),
             (4, Exited(Exit::Code(0)), vec![]),
@@ -242,23 +241,20 @@ fn slim_needs_a_receiver_and_enable() {
         vec![(
             0,
             Pw(Active),
-            vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            vec![spawn_slim(receiver()), video(Video::Unknown)],
         )],
     );
     script(&mut m, t, vec![(1, Enabled(true), vec![])]);
 }
 
 #[test]
-fn slim_capture_change_restarts_without_backoff_after_reaping() {
+fn slim_receiver_change_restarts_without_backoff_after_reaping() {
     let mut m = slim(Preferences {
         autostart: true,
         ..slim_prefs()
     });
     let t = Instant::now();
-    let fast = SlimCapture {
-        fps: 60,
-        ..SlimCapture::default()
-    };
+    let fast = other_receiver();
     script(
         &mut m,
         t,
@@ -266,12 +262,12 @@ fn slim_capture_change_restarts_without_backoff_after_reaping() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (
                 1,
                 Input::Preferences(Preferences {
-                    capture: Some(fast),
+                    receiver: Some(fast),
                     ..slim_prefs()
                 }),
                 vec![Effect::Terminate],
@@ -289,7 +285,7 @@ fn slim_capture_change_restarts_without_backoff_after_reaping() {
             (
                 6,
                 Input::Preferences(Preferences {
-                    capture: Some(fast),
+                    receiver: Some(fast),
                     autostart: false,
                     ..slim_prefs()
                 }),
@@ -608,8 +604,6 @@ fn published_state_reflects_the_worker() {
     assert_eq!(json["power"], "active");
     assert_eq!(json["lighting"], "processed");
     assert_eq!(json["failure_kind"], Value::Null);
-    // The full package's capture is the portal's; Luna shows none.
-    assert_eq!(json["preferences"]["capture"], Value::Null);
     m.handle(Exited(Exit::Code(1)), t0);
     let state = m.state();
     assert!(!state.capturing);
@@ -705,7 +699,7 @@ fn failures_carry_their_kind() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (
                 1,
@@ -757,7 +751,7 @@ fn failures_carry_their_kind() {
             (
                 1_003,
                 Tick,
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (1_004, Input::SpawnFailed("no such file".into()), vec![]),
         ],
@@ -789,13 +783,13 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (1, Exited(Exit::Code(1)), vec![]),
             (
                 1_001,
                 Tick,
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             // Started but not yet streaming: the failure stays.
             (1_002, reported(WorkerStatus::default()), vec![]),
@@ -827,7 +821,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             (
                 5_000,
                 Tick,
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
         ],
     );
@@ -867,14 +861,11 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
         ..slim_prefs()
     });
     let t0 = Instant::now();
-    let raw = SlimCapture {
-        encoding: SlimEncoding::Raw,
-        ..SlimCapture::default()
-    };
+    let raw = other_receiver();
     let mut steps = vec![(
         0,
         Pw(Active),
-        vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+        vec![spawn_slim(receiver()), video(Video::Unknown)],
     )];
     // Fail often enough that the next delay is long.
     let mut now = 0;
@@ -883,7 +874,7 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
         steps.push((
             now + 1 + delay,
             Tick,
-            vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            vec![spawn_slim(receiver()), video(Video::Unknown)],
         ));
         now += 1 + delay;
     }
@@ -899,7 +890,7 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
             now + 2,
             Input::Preferences(Preferences {
                 autostart: true,
-                capture: Some(raw),
+                receiver: Some(raw),
                 ..slim_prefs()
             }),
             vec![spawn_slim(raw), video(Video::Unknown)],
@@ -928,10 +919,7 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
         ..slim_prefs()
     });
     let t0 = Instant::now();
-    let raw = SlimCapture {
-        encoding: SlimEncoding::Raw,
-        ..SlimCapture::default()
-    };
+    let raw = other_receiver();
     script(
         &mut m,
         t0,
@@ -939,7 +927,7 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
             (
                 0,
                 Pw(Active),
-                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+                vec![spawn_slim(receiver()), video(Video::Unknown)],
             ),
             (
                 1,
@@ -950,7 +938,7 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
                 2,
                 Input::Preferences(Preferences {
                     autostart: true,
-                    capture: Some(raw),
+                    receiver: Some(raw),
                     ..slim_prefs()
                 }),
                 vec![],

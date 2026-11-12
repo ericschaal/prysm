@@ -1,8 +1,9 @@
 //! The capture-host end: one TCP connection, one frame per `send`, encoded
-//! as the stream says.
+//! as the receiver requested.
+use crate::request::StreamRequest;
 use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::Frame;
-use prysm_h264::{Encoder, EncoderSettings};
+use prysm_h264::Encoder;
 use prysm_ports::{Error, FrameSink, Result};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -14,29 +15,11 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long one `send` may block on a receiver that stopped reading.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// What a connection carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stream {
-    /// Uncompressed frames.
-    Raw,
-    /// H.264 from exactly this encoder; it never switches backend.
-    H264(EncoderSettings),
-}
-
-impl Stream {
-    #[must_use]
-    pub fn encoding(self) -> Encoding {
-        match self {
-            Self::Raw => Encoding::Raw,
-            Self::H264(_) => Encoding::H264,
-        }
-    }
-}
-
-/// Sends frames to a [`RemoteSource`](crate::RemoteSource). Any failure is
-/// final: the caller drops the sender and connects a new one. A failure
-/// whose cause is a [`prysm_h264::H264Error`] is the encoder's; anything
-/// else is the connection's.
+/// Sends frames to a [`RemoteSource`](crate::RemoteSource), as its
+/// [`StreamRequest`] says. Any failure is final: the caller drops the sender
+/// and connects a new one. A failure whose cause is a
+/// [`prysm_h264::H264Error`] is the encoder's (the receiver was told, see
+/// [`RemoteSender::refuse`]); anything else is the connection's.
 ///
 /// The receiver can pause the stream (frames are dropped unencoded until it
 /// resumes) and ask for a keyframe; each `send` reads those requests
@@ -47,6 +30,8 @@ impl Stream {
 pub struct RemoteSender {
     stream: TcpStream,
     peer: SocketAddr,
+    request: StreamRequest,
+    /// H.264 only; opened at the first frame.
     encoder: Option<Encoder>,
     paused: bool,
     /// Header and payload, reused so each frame is a single write.
@@ -54,23 +39,14 @@ pub struct RemoteSender {
 }
 
 impl RemoteSender {
-    /// Connect and agree on the protocol version and the stream's encoding.
-    /// An H.264 encoder is checked first but opens only at the first frame.
+    /// Connect, agree on the protocol version and read the receiver's
+    /// request. The requested encoder opens at the first frame.
     ///
     /// # Errors
-    /// Invalid encoder settings (an [`H264Error`](prysm_h264::H264Error)
-    /// cause), or the receiver is unreachable, refused the connection, or
-    /// rejected the hello: a [`WireError::Version`] or
-    /// [`WireError::Encoding`] cause.
-    pub fn connect(peer: SocketAddr, kind: Stream) -> Result<Self> {
-        let encoder = match kind {
-            Stream::Raw => None,
-            Stream::H264(settings) => Some(
-                Encoder::new(settings)
-                    .map_err(|error| Error::adapter("cannot set up the H.264 encoder", error))?,
-            ),
-        };
-        let encoding = kind.encoding();
+    /// The receiver is unreachable, refused the connection, rejected the
+    /// hello (a [`WireError::Version`] cause) or sent an invalid request
+    /// ([`WireError::Request`]).
+    pub fn connect(peer: SocketAddr) -> Result<Self> {
         let mut stream = TcpStream::connect_timeout(&peer, CONNECT_TIMEOUT)
             .map_err(|error| Error::adapter(format!("cannot connect to receiver {peer}"), error))?;
         stream
@@ -80,28 +56,33 @@ impl RemoteSender {
             .map_err(|error| {
                 Error::adapter(format!("cannot configure connection to {peer}"), error)
             })?;
-        let mut reply = [0; HELLO_LEN];
         stream
-            .write_all(&wire::hello(encoding))
-            .and_then(|()| stream.read_exact(&mut reply))
-            .map_err(|error| match error.kind() {
-                // Version-1 receivers wait for a frame header and never reply;
-                // others close on a hello they cannot parse.
-                ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::UnexpectedEof => {
-                    Error::adapter(
-                        format!("receiver {peer} refused the stream"),
-                        WireError::NoReply,
-                    )
-                }
-                _ => Error::adapter(format!("cannot greet receiver {peer}"), error),
-            })?;
-        wire::accepted(&reply, encoding).map_err(|error| {
-            Error::adapter(format!("receiver {peer} refused the stream"), error)
-        })?;
+            .write_all(&wire::hello())
+            .map_err(|error| Error::adapter(format!("cannot greet receiver {peer}"), error))?;
+        let refused = |error| Error::adapter(format!("receiver {peer} refused the stream"), error);
+        let mut head = [0; HELLO_LEN];
+        let mut rest = [0; HELLO_LEN];
+        let read = |buf: &mut [u8]| {
+            (&stream)
+                .read_exact(buf)
+                .map_err(|error| match error.kind() {
+                    // A peer that closes on a hello it cannot parse, or stays silent.
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::UnexpectedEof => {
+                        refused(WireError::NoReply)
+                    }
+                    _ => Error::adapter(format!("cannot greet receiver {peer}"), error),
+                })
+        };
+        // A receiver of another version answers only the first half.
+        read(&mut head)?;
+        wire::accepted(&head).map_err(refused)?;
+        read(&mut rest)?;
+        let request = wire::request(&rest).map_err(refused)?;
         Ok(Self {
             stream,
             peer,
-            encoder,
+            request,
+            encoder: None,
             paused: false,
             buffer: Vec::new(),
         })
@@ -112,19 +93,24 @@ impl RemoteSender {
         self.peer
     }
 
+    /// What the receiver asked for; frames should match its size.
     #[must_use]
-    pub fn encoding(&self) -> Encoding {
-        if self.encoder.is_some() {
-            Encoding::H264
-        } else {
-            Encoding::Raw
-        }
+    pub fn request(&self) -> StreamRequest {
+        self.request
     }
 
     /// The receiver does not want frames; `send` drops them.
     #[must_use]
     pub fn paused(&self) -> bool {
         self.paused
+    }
+
+    /// Tell the receiver that this end cannot produce the requested stream
+    /// (`reason`, shown to its user), and end the connection. Best effort:
+    /// a receiver that is gone learns nothing.
+    pub fn refuse(&mut self, reason: &str) {
+        let _ = self.stream.write_all(&wire::refusal(reason));
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 
     /// Apply the receiver's pending control messages without blocking.
@@ -178,7 +164,7 @@ impl RemoteSender {
     /// One header and payload in a single write.
     fn write(&mut self, header: &Header, payload_len: usize) -> Result<()> {
         let bytes = header
-            .encode(self.encoding(), payload_len)
+            .encode(self.request.encoding.into(), payload_len)
             .map_err(|error| Error::adapter("cannot send frame", error))?;
         self.buffer[..HEADER_LEN].copy_from_slice(&bytes);
         self.stream.write_all(&self.buffer).map_err(|error| {
@@ -187,6 +173,28 @@ impl RemoteSender {
                 error,
             )
         })
+    }
+
+    /// Encode with the requested encoder, opening it first if needed.
+    /// `Ok(None)`: rate control skipped the frame.
+    fn encode(
+        &mut self,
+        frame: &Frame,
+    ) -> std::result::Result<Option<bool>, prysm_h264::H264Error> {
+        let encoder = match self.encoder.take() {
+            Some(encoder) => encoder,
+            None => Encoder::new(
+                self.request
+                    .encoder()
+                    .ok_or(prysm_h264::H264Error::Settings("raw has no encoder"))?,
+            )?,
+        };
+        let encoder = self.encoder.insert(encoder);
+        let Some(picture) = encoder.encode(frame)? else {
+            return Ok(None);
+        };
+        self.buffer.extend_from_slice(picture.data);
+        Ok(Some(picture.keyframe))
     }
 }
 
@@ -205,23 +213,34 @@ impl FrameSink for RemoteSender {
         // The buffer is header space followed by the payload.
         self.buffer.clear();
         self.buffer.resize(HEADER_LEN, 0);
-        let Some(encoder) = &mut self.encoder else {
+        if Encoding::from(self.request.encoding) == Encoding::Raw {
             self.buffer.extend_from_slice(frame.as_slice());
             return self.write(&header, 0);
-        };
-        let picture = encoder
-            .encode(frame)
-            .map_err(|error| Error::adapter("cannot encode frame", error))?;
-        let Some(picture) = picture else {
+        }
+        let keyframe = match self.encode(frame) {
+            Ok(Some(keyframe)) => keyframe,
             // Rate control skipped it; references are unaffected.
-            return Ok(());
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                let error = Error::adapter("cannot encode frame", error);
+                self.refuse(&chain(&error));
+                return Err(error);
+            }
         };
-        let header = Header {
-            keyframe: picture.keyframe,
-            ..header
-        };
-        self.buffer.extend_from_slice(picture.data);
-        let len = picture.data.len();
-        self.write(&header, len)
+        let len = self.buffer.len() - HEADER_LEN;
+        self.write(&Header { keyframe, ..header }, len)
     }
+}
+
+/// `error: cause: cause`, as the receiver shows a refusal.
+fn chain(error: &Error) -> String {
+    use std::error::Error as _;
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }

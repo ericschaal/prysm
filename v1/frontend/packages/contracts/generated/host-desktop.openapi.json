@@ -648,8 +648,35 @@
       },
       "RemoteReceiverSettings": {
         "additionalProperties": false,
-        "description": "Settings for kind `\"remote\"`: `{ \"kind\": \"remote\", \"listen\": \"0.0.0.0:7380\" }`.",
+        "description": "Settings for kind `\"remote\"`: where to listen and the stream to ask the\nsender for, `{ \"kind\": \"remote\", \"listen\": \"0.0.0.0:7380\", \"width\": 320,\n\"height\": 180, \"fps\": 30, \"include_ui\": true, \"encoding\": \"h264_hardware\" }`.\nEvery field but `listen` is optional.",
         "properties": {
+          "encoding": {
+            "$ref": "#/components/schemas/StreamEncoding",
+            "default": "h264_hardware",
+            "description": "How the sender encodes the stream. It uses exactly this encoder; if\nthat fails, lighting stops with the sender's reason."
+          },
+          "fps": {
+            "default": 30,
+            "description": "Requested frames per second.",
+            "format": "int32",
+            "maximum": 60,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 180,
+            "description": "Requested picture height: even, 2 to 1080 (H.264: at least 16).",
+            "format": "int32",
+            "maximum": 1080,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
+          },
+          "include_ui": {
+            "default": true,
+            "description": "Blend the sender's on-screen menus (the TV's) into the picture.",
+            "type": "boolean"
+          },
           "kind": {
             "enum": [
               "remote"
@@ -660,6 +687,15 @@
             "description": "Address and fixed port the capture host connects to.",
             "example": "0.0.0.0:7380",
             "type": "string"
+          },
+          "width": {
+            "default": 320,
+            "description": "Requested picture width: even, 2 to 1920 (H.264: at least 16).",
+            "format": "int32",
+            "maximum": 1920,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
           }
         },
         "required": [
@@ -837,6 +873,15 @@
           "surface_failures"
         ],
         "type": "object"
+      },
+      "StreamEncoding": {
+        "description": "How the sender encodes the frames it sends. Exactly this encoder is used:\none that cannot start or fails ends the stream with a refusal, never a\nswitch to another.",
+        "enum": [
+          "h264_hardware",
+          "h264_software",
+          "raw"
+        ],
+        "type": "string"
       },
       "TargetRequest": {
         "additionalProperties": false,

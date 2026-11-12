@@ -1,8 +1,9 @@
 //! The forwarder's side of the supervisor link, and the uplink sink that
-//! keeps reconnecting to the receiver and tells the link whether frames flow.
+//! keeps reconnecting to the receiver, follows its request and tells the
+//! link whether frames flow.
 use crate::video::VideoFeed;
 use futures::future::BoxFuture;
-use prysm_capture_remote::RemoteSender;
+use prysm_capture_remote::{RemoteSender, StreamEncoding, StreamRequest};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
 use prysm_ports::{Error, FrameSink, Result};
@@ -10,8 +11,8 @@ use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{Command, Event, FailureKind, HEARTBEAT, SlimEncoding, WorkerStatus};
 use std::error::Error as _;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::time::{Instant as TokioInstant, sleep_until};
 
@@ -22,14 +23,24 @@ const SAMPLE: Duration = Duration::from_secs(1);
 /// is unavailable (its host is not lighting, or unreachable).
 pub const RECONNECT: Duration = Duration::from_secs(1);
 
-/// What the uplink tells the link: frames delivered, the encoding while
-/// connected, and why it is waiting.
-#[derive(Debug)]
+/// What the uplink tells the capture and the link.
+#[derive(Debug, Default)]
 pub struct Flow {
-    encoding: SlimEncoding,
     sent: AtomicU64,
-    connected: AtomicBool,
-    waiting: Mutex<Option<String>>,
+    report: Mutex<Report>,
+}
+
+#[derive(Debug, Default)]
+struct Report {
+    /// The receiver's latest request, kept while it is away: the capture
+    /// follows it.
+    requested: Option<StreamRequest>,
+    /// The encoding being sent, while connected.
+    encoding: Option<SlimEncoding>,
+    /// Why no frames can be delivered: the receiver is unavailable or paused.
+    waiting: Option<String>,
+    /// The requested encoder failed; that request is refused until it changes.
+    encoder: Option<String>,
 }
 
 impl Flow {
@@ -37,74 +48,99 @@ impl Flow {
         self.sent.load(Ordering::Relaxed)
     }
 
-    /// The encoding of the frames being sent: the configured one, while connected.
-    fn encoding(&self) -> Option<SlimEncoding> {
-        self.connected
-            .load(Ordering::Relaxed)
-            .then_some(self.encoding)
+    /// What the receiver last asked for; `None` before the first connection.
+    pub fn requested(&self) -> Option<StreamRequest> {
+        self.lock().requested
     }
 
-    /// Why no frames can be delivered, while the receiver is unavailable
-    /// or has paused the stream.
-    fn waiting(&self) -> Option<String> {
-        self.lock().clone()
+    /// The status fields the uplink owns.
+    fn status(&self) -> WorkerStatus {
+        let report = self.lock();
+        let (failure, failure_kind) = match (&report.encoder, &report.waiting) {
+            (Some(failure), _) => (Some(failure.clone()), Some(FailureKind::Encoder)),
+            (None, Some(waiting)) => (Some(waiting.clone()), Some(FailureKind::Receiver)),
+            (None, None) => (None, None),
+        };
+        WorkerStatus {
+            failure,
+            failure_kind,
+            encoding: report.encoding,
+            ..WorkerStatus::default()
+        }
     }
 
-    fn set_waiting(&self, reason: Option<String>) {
-        *self.lock() = reason;
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<String>> {
-        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    fn lock(&self) -> MutexGuard<'_, Report> {
+        self.report.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// One connection to the receiver: a frame sink the receiver can pause.
+/// The Luna name of a requested encoding.
+#[must_use]
+pub fn slim_encoding(encoding: StreamEncoding) -> SlimEncoding {
+    match encoding {
+        StreamEncoding::H264Hardware => SlimEncoding::H264Hardware,
+        StreamEncoding::H264Software => SlimEncoding::H264Software,
+        StreamEncoding::Raw => SlimEncoding::Raw,
+    }
+}
+
+/// One connection to the receiver: a frame sink with the receiver's request
+/// that the receiver can pause.
 pub trait Upstream: FrameSink {
+    fn request(&self) -> StreamRequest;
     /// The receiver does not want frames; `send` drops them.
     fn paused(&self) -> bool;
+    /// Tell the receiver its request cannot be produced, and end the stream.
+    fn refuse(&mut self, reason: &str);
 }
 
 impl Upstream for RemoteSender {
+    fn request(&self) -> StreamRequest {
+        RemoteSender::request(self)
+    }
     fn paused(&self) -> bool {
         RemoteSender::paused(self)
+    }
+    fn refuse(&mut self, reason: &str) {
+        RemoteSender::refuse(self, reason);
     }
 }
 
 /// A [`FrameSink`] that delivers to whatever `connect` opens and keeps
-/// reconnecting. The receiver only listens while its host is lighting, so a
-/// refused connection or a dropped receiver is a normal wait, not a failure:
-/// frames are dropped, a new connection is tried at most every [`RECONNECT`]
-/// (on the next frame after it), and [`Flow`] carries the reason. A
-/// receiver that pauses the stream is reported the same way.
+/// reconnecting; it never fails. The receiver only listens while its host is
+/// lighting, so a refused connection or a dropped receiver is a normal wait:
+/// frames are dropped, a new connection is tried at most every
+/// [`RECONNECT`] (on the next frame or idle tick after it), and [`Flow`]
+/// carries the reason. A receiver that pauses the stream is reported the
+/// same way. Each connection publishes the receiver's request, which the
+/// capture follows; the frame that opens a connection is dropped, since it
+/// was captured before the request was known.
 ///
-/// The encoder is the exception: a failure whose cause is an
-/// [`H264Error`] (the configured encoder cannot start or failed) fails
-/// `send`, so the worker stops and the supervisor's retry and backoff
-/// apply. There is no switch to another encoder.
+/// An encoder failure (a cause of type [`H264Error`]: the requested encoder
+/// cannot start or failed) is reported as such, and every later connection
+/// with the same request is refused with that reason (the receiver shows
+/// it) until the receiver asks for something else. There is no switch to
+/// another encoder.
 pub struct Uplink<S, C> {
     connect: C,
     sink: Option<S>,
     retry_at: Option<Instant>,
     retry: Duration,
     flow: Arc<Flow>,
+    /// The request whose encoder failed, and why.
+    failed: Option<(StreamRequest, String)>,
 }
 
 impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
-    /// `encoding` is what `connect` opens; the status names it while connected.
-    pub fn new(encoding: SlimEncoding, connect: C) -> (Self, Arc<Flow>) {
-        let flow = Arc::new(Flow {
-            encoding,
-            sent: AtomicU64::new(0),
-            connected: AtomicBool::new(false),
-            waiting: Mutex::new(None),
-        });
+    pub fn new(connect: C) -> (Self, Arc<Flow>) {
+        let flow = Arc::new(Flow::default());
         let uplink = Self {
             connect,
             sink: None,
             retry_at: None,
             retry: RECONNECT,
             flow: flow.clone(),
+            failed: None,
         };
         (uplink, flow)
     }
@@ -115,65 +151,83 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         self
     }
 
-    /// Note why frames cannot be delivered; an encoder failure is returned.
-    fn unavailable(&mut self, error: Error) -> Result<()> {
-        self.sink = None;
-        self.flow.connected.store(false, Ordering::Relaxed);
-        if encoder_failure(&error) {
-            return Err(error);
+    /// Connect unless an attempt was made within [`RECONNECT`].
+    fn reconnect(&mut self) {
+        if self.retry_at.is_some_and(|at| Instant::now() < at) {
+            return;
         }
         self.retry_at = Some(Instant::now() + self.retry);
-        self.flow
-            .set_waiting(Some(format!("waiting for the receiver: {}", chain(&error))));
-        Ok(())
+        let mut sink = match (self.connect)() {
+            Ok(sink) => sink,
+            Err(error) => {
+                self.flow.lock().waiting =
+                    Some(format!("waiting for the receiver: {}", chain(&error)));
+                return;
+            }
+        };
+        let request = sink.request();
+        if let Some((failed, reason)) = &self.failed {
+            if *failed == request {
+                sink.refuse(reason);
+                return;
+            }
+            self.failed = None;
+        }
+        let mut report = self.flow.lock();
+        *report = Report {
+            requested: Some(request),
+            encoding: Some(slim_encoding(request.encoding)),
+            ..Report::default()
+        };
+        self.sink = Some(sink);
+    }
+
+    /// The connection ended: wait for the receiver, or remember an encoder failure.
+    fn lost(&mut self, error: &Error) {
+        let Some(sink) = self.sink.take() else {
+            return;
+        };
+        let mut report = self.flow.lock();
+        report.encoding = None;
+        if encoder_failure(error) {
+            let reason = chain(error);
+            self.failed = Some((sink.request(), reason.clone()));
+            report.encoder = Some(reason);
+            report.waiting = None;
+        } else {
+            report.waiting = Some(format!("waiting for the receiver: {}", chain(error)));
+        }
     }
 }
 
 impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
     fn send(&mut self, frame: &Frame) -> Result<()> {
-        if self.sink.is_none() {
-            if self.retry_at.is_some_and(|at| Instant::now() < at) {
-                return Ok(());
-            }
-            match (self.connect)() {
-                Ok(sink) => {
-                    self.sink = Some(sink);
-                    self.flow.connected.store(true, Ordering::Relaxed);
-                    self.flow.set_waiting(None);
-                }
-                Err(error) => return self.unavailable(error),
-            }
-        }
         let Some(sink) = &mut self.sink else {
+            self.reconnect();
             return Ok(());
         };
         match sink.send(frame) {
             Ok(()) if sink.paused() => {
-                self.flow
-                    .set_waiting(Some("the receiver paused the stream".into()));
-                Ok(())
+                self.flow.lock().waiting = Some("the receiver paused the stream".into());
             }
             Ok(()) => {
                 self.flow.sent.fetch_add(1, Ordering::Relaxed);
-                self.flow.set_waiting(None);
-                Ok(())
+                self.flow.lock().waiting = None;
             }
-            Err(error) => self.unavailable(error),
+            Err(error) => self.lost(&error),
         }
+        Ok(())
+    }
+
+    fn idle(&mut self) -> Result<()> {
+        if self.sink.is_none() {
+            self.reconnect();
+        }
+        Ok(())
     }
 }
 
-/// What ended the worker: the configured encoder, or something else (a
-/// receiver wait never ends it).
-pub fn failure_kind(error: &Error) -> FailureKind {
-    if encoder_failure(error) {
-        FailureKind::Encoder
-    } else {
-        FailureKind::Other
-    }
-}
-
-/// The configured encoder could not start or failed.
+/// The requested encoder could not start or failed.
 fn encoder_failure(error: &Error) -> bool {
     let Error::Adapter {
         source: Some(cause),
@@ -208,8 +262,9 @@ fn chain(error: &Error) -> String {
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
 /// `capturing` while frames are delivered, `encoding` while connected,
-/// `failure` naming the wait while the receiver is unavailable or paused. `Lighting` is protocol misuse here and stops the
-/// worker as failed.
+/// `failure` naming the encoder failure, or else the wait while the receiver
+/// is unavailable or paused. `Lighting` is protocol misuse here and stops
+/// the worker as failed.
 pub struct ForwarderLink<V> {
     link: Link,
     video: V,
@@ -264,10 +319,7 @@ impl<V: VideoFeed> ForwarderLink<V> {
                     let now = self.flow.sent();
                     let next = WorkerStatus {
                         capturing: now != counted,
-                        failure_kind: self.flow.waiting().map(|_| FailureKind::Receiver),
-                        failure: self.flow.waiting(),
-                        encoding: self.flow.encoding(),
-                        ..WorkerStatus::default()
+                        ..self.flow.status()
                     };
                     counted = now;
                     if next != status {

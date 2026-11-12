@@ -1,6 +1,7 @@
 //! Both ends on loopback with ephemeral ports. Every wait is bounded.
 use prysm_capture_remote::{
-    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, Stream, VERSION, WireError,
+    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, StreamEncoding,
+    StreamRequest, VERSION, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, SourceFactory};
@@ -16,6 +17,19 @@ const BOUND: Duration = Duration::from_secs(5);
 
 fn any_port() -> SocketAddr {
     "127.0.0.1:0".parse().unwrap()
+}
+
+/// Uncompressed frames of any size and format.
+const RAW: StreamRequest = StreamRequest {
+    width: 320,
+    height: 180,
+    fps: 30,
+    include_ui: true,
+    encoding: StreamEncoding::Raw,
+};
+
+fn bind() -> RemoteSource {
+    RemoteSource::bind(any_port(), RAW).unwrap()
 }
 
 /// An RGB frame whose first byte is `seed` and whose pixels are all distinct-ish.
@@ -40,7 +54,7 @@ fn receive(source: &mut RemoteSource) -> Frame {
 }
 
 /// Wait for the receiver to drop a raw client: EOF or reset, never a timeout.
-/// Returns what it answered first (at most the 8-byte hello reply).
+/// Returns what it answered first (at most the 16-byte hello reply).
 fn assert_dropped(mut client: TcpStream) -> Vec<u8> {
     client.set_read_timeout(Some(BOUND)).unwrap();
     let mut answer = Vec::new();
@@ -61,18 +75,22 @@ fn assert_dropped(mut client: TcpStream) -> Vec<u8> {
             }
         }
     }
-    assert!(answer.len() <= 8, "receiver answered {answer:?}");
+    assert!(answer.len() <= 16, "receiver answered {answer:?}");
     answer
 }
 
-/// A raw client that has completed the version-2 hello for a raw stream.
+/// A raw client that has completed the version-3 hello and read the request.
 fn greeted(addr: SocketAddr) -> TcpStream {
     let mut client = TcpStream::connect(addr).unwrap();
     client.set_read_timeout(Some(BOUND)).unwrap();
-    client.write_all(b"PRSM\x02\x00\x00\x00").unwrap();
-    let mut reply = [0; 8];
+    client.write_all(b"PRSM\x03\x00\x00\x00").unwrap();
+    let mut reply = [0; 16];
     client.read_exact(&mut reply).unwrap();
-    assert_eq!(&reply, b"PRSM\x02\x00\x00\x00");
+    // Accepted; raw, with menus, 320x180 at 30 fps.
+    assert_eq!(
+        &reply,
+        b"PRSM\x03\x00\x00\x00\x00\x01\x01\x40\x00\xb4\x1e\x00"
+    );
     client
 }
 
@@ -93,8 +111,8 @@ fn wire_cause(error: &prysm_ports::Error) -> WireError {
 
 #[test]
 fn round_trip_preserves_dimensions_format_and_pixels() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut source = bind();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
 
     let rgb = frame(7, 7, 5);
     sender.send(&rgb).unwrap();
@@ -129,7 +147,7 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
 
 #[test]
 fn next_frame_times_out_idle() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
+    let mut source = bind();
     let started = Instant::now();
     assert!(
         source
@@ -143,8 +161,8 @@ fn next_frame_times_out_idle() {
 
 #[test]
 fn a_slow_consumer_sees_only_the_newest_frame() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut source = bind();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
     for seed in 1..=20 {
         sender.send(&frame(seed, 8, 4)).unwrap();
     }
@@ -167,8 +185,8 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
 
 #[test]
 fn receiver_survives_disconnect_and_accepts_a_new_sender() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut first = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut source = bind();
+    let mut first = RemoteSender::connect(source.local_addr()).unwrap();
     first.send(&frame(1, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 1);
     drop(first);
@@ -181,7 +199,7 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
             .is_idle()
     );
 
-    let mut second = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut second = RemoteSender::connect(source.local_addr()).unwrap();
     second.send(&frame(2, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 2);
     Box::new(source).close().unwrap();
@@ -189,13 +207,13 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
 
 #[test]
 fn a_new_sender_replaces_a_stalled_one() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
+    let mut source = bind();
     // Half a header, then silence: a crashed TV whose socket never closed.
     let mut stalled = TcpStream::connect(source.local_addr()).unwrap();
-    stalled.write_all(b"PRSM\x02").unwrap();
+    stalled.write_all(b"PRSM\x03").unwrap();
     thread::sleep(Duration::from_millis(100));
 
-    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
     sender.send(&frame(3, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 3);
     assert_dropped(stalled);
@@ -204,7 +222,7 @@ fn a_new_sender_replaces_a_stalled_one() {
 
 #[test]
 fn malformed_and_oversized_headers_drop_only_that_connection() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
+    let mut source = bind();
 
     let mut garbage = TcpStream::connect(source.local_addr()).unwrap();
     garbage
@@ -228,7 +246,7 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
             .is_idle()
     );
 
-    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
     sender.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
     Box::new(source).close().unwrap();
@@ -236,39 +254,36 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
 
 #[test]
 fn version_mismatches_are_typed_errors_on_both_ends() {
-    // A version-1 sender opens with a frame header: refused with this
-    // receiver's version, then dropped.
-    let mut source = RemoteSource::bind(any_port()).unwrap();
+    // A version-2 sender's hello is refused with this receiver's version
+    // (and no request), then dropped.
+    let mut source = bind();
     let mut old = TcpStream::connect(source.local_addr()).unwrap();
-    old.write_all(b"PRSM\x01\x01\x00\x00\x00\x00\x00\x04")
-        .unwrap();
-    assert_eq!(
-        assert_dropped(old),
-        [b'P', b'R', b'S', b'M', VERSION, 1, 0, 0]
-    );
-    // An unknown encoding is refused the same way.
-    let mut h264 = TcpStream::connect(source.local_addr()).unwrap();
-    h264.write_all(b"PRSM\x02\x09\x00\x00").unwrap();
-    assert_eq!(
-        assert_dropped(h264),
-        [b'P', b'R', b'S', b'M', VERSION, 2, 0, 0]
-    );
+    old.write_all(b"PRSM\x02\x01\x00\x00").unwrap();
+    let mut refused = vec![b'P', b'R', b'S', b'M', VERSION, 1];
+    refused.resize(16, 0);
+    assert_eq!(assert_dropped(old), refused);
     // The receiver keeps serving current senders.
-    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
     sender.send(&frame(9, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 9);
     Box::new(source).close().unwrap();
 
-    // Receivers that answer with another version, or (version 1) not at all.
+    // Receivers that answer with another version (a version-2 receiver
+    // replies 8 bytes and closes), or not at all.
     for (answer, expected) in [
         (
-            Some(*b"PRSM\x03\x01\x00\x00"),
+            Some(&b"PRSM\x02\x01\x00\x00"[..]),
             WireError::Version {
                 ours: VERSION,
-                theirs: 3,
+                theirs: 2,
             },
         ),
         (None, WireError::NoReply),
+        // A request this sender cannot understand.
+        (
+            Some(&b"PRSM\x03\x00\x00\x00\x00\x09\x01\x40\x00\xb4\x1e\x00"[..]),
+            WireError::Request("include_ui 9".into()),
+        ),
     ] {
         let listener = TcpListener::bind(any_port()).unwrap();
         let addr = listener.local_addr().unwrap();
@@ -276,23 +291,83 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
             let (mut stream, _) = listener.accept().unwrap();
             let mut hello = [0; 8];
             stream.read_exact(&mut hello).unwrap();
+            assert_eq!(&hello, b"PRSM\x03\x00\x00\x00");
             match answer {
-                Some(answer) => stream.write_all(&answer).unwrap(),
+                Some(answer) => stream.write_all(answer).unwrap(),
                 None => drop(stream),
             }
         });
-        let error = RemoteSender::connect(addr, Stream::Raw).unwrap_err();
+        let error = RemoteSender::connect(addr).unwrap_err();
         assert_eq!(wire_cause(&error), expected, "{error}");
         assert!(error.to_string().contains(&addr.to_string()), "{error}");
         peer.join().unwrap();
     }
 }
 
+/// The sender learns the receiver's request at connect; a new request takes
+/// a new source, and the sender's next connection gets it.
+#[test]
+fn the_sender_receives_the_request_and_a_new_source_changes_it() {
+    let source = bind();
+    let addr = source.local_addr();
+    assert_eq!(source.request(), RAW);
+    let sender = RemoteSender::connect(addr).unwrap();
+    assert_eq!(sender.request(), RAW);
+    Box::new(source).close().unwrap();
+    drop(sender);
+
+    let changed = StreamRequest {
+        width: 640,
+        height: 360,
+        fps: 60,
+        include_ui: false,
+        encoding: StreamEncoding::H264Software,
+    };
+    let source = RemoteSource::bind(addr, changed).unwrap();
+    assert_eq!(RemoteSender::connect(addr).unwrap().request(), changed);
+    Box::new(source).close().unwrap();
+}
+
+/// A sender that cannot produce the request says why; the source fails with
+/// that reason once, then keeps listening.
+#[test]
+fn a_refusal_fails_the_source_with_the_senders_reason() {
+    let mut source = bind();
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    sender.refuse("the TV's capture is busy");
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the refusal never arrived");
+        match source.next_frame(Duration::from_millis(50)) {
+            Err(error) => break error,
+            Ok(pull) => assert!(pull.is_idle()),
+        }
+    };
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Refused("the TV's capture is busy".into())
+    );
+    assert_eq!(
+        prysm_ports::Error::to_string(&error),
+        "the sender cannot stream 320x180 at 30 fps with menus as raw"
+    );
+    assert!(
+        source
+            .next_frame(Duration::from_millis(50))
+            .unwrap()
+            .is_idle()
+    );
+    let mut again = RemoteSender::connect(source.local_addr()).unwrap();
+    again.send(&frame(8, 4, 4)).unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 8);
+    Box::new(source).close().unwrap();
+}
+
 #[test]
 fn close_is_prompt_frees_the_port_and_fails_the_sender() {
-    let mut source = RemoteSource::bind(any_port()).unwrap();
+    let mut source = bind();
     let addr = source.local_addr();
-    let mut sender = RemoteSender::connect(addr, Stream::Raw).unwrap();
+    let mut sender = RemoteSender::connect(addr).unwrap();
     sender.send(&frame(5, 4, 4)).unwrap();
     receive(&mut source);
 
@@ -314,14 +389,14 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
     };
     assert!(error.source().is_some(), "{error}");
 
-    let rebound = RemoteSource::bind(addr).unwrap();
+    let rebound = RemoteSource::bind(addr, RAW).unwrap();
     Box::new(rebound).close().unwrap();
 }
 
 #[test]
 fn connecting_to_a_dead_peer_fails_with_a_source() {
     let addr = TcpListener::bind(any_port()).unwrap().local_addr().unwrap();
-    let error = RemoteSender::connect(addr, Stream::Raw).unwrap_err();
+    let error = RemoteSender::connect(addr).unwrap_err();
     assert!(error.to_string().contains(&addr.to_string()), "{error}");
     assert!(error.source().is_some(), "{error}");
 }
@@ -331,19 +406,50 @@ fn factory_decodes_validates_and_opens() {
     let settings: RemoteReceiverSettings =
         serde_json::from_str(r#"{ "listen": "0.0.0.0:7380" }"#).unwrap();
     assert_eq!(settings.listen, "0.0.0.0:7380".parse().unwrap());
+    assert_eq!(settings.request(), StreamRequest::default());
+    assert_eq!(settings, RemoteReceiverSettings::new(settings.listen));
     assert!(RemoteReceiver.validate(&settings).is_ok());
-    assert!(serde_json::from_str::<RemoteReceiverSettings>(r#"{ "listen": "nope" }"#).is_err());
-    assert!(
-        serde_json::from_str::<RemoteReceiverSettings>(r#"{ "listen": "0.0.0.0:1", "x": 1 }"#)
-            .is_err()
-    );
-
-    let ephemeral = RemoteReceiverSettings { listen: any_port() };
+    let full: RemoteReceiverSettings = serde_json::from_str(
+        r#"{ "listen": "0.0.0.0:7380", "width": 640, "height": 280, "fps": 25,
+             "include_ui": false, "encoding": "raw" }"#,
+    )
+    .unwrap();
     assert_eq!(
-        RemoteReceiver.validate(&ephemeral).unwrap_err().field,
-        "capture.listen"
+        full.request(),
+        StreamRequest {
+            width: 640,
+            height: 280,
+            fps: 25,
+            include_ui: false,
+            encoding: StreamEncoding::Raw,
+        }
     );
+    for bad in [
+        r#"{ "listen": "nope" }"#,
+        r#"{ "listen": "0.0.0.0:1", "x": 1 }"#,
+        r#"{ "listen": "0.0.0.0:1", "encoding": "lz4" }"#,
+    ] {
+        assert!(
+            serde_json::from_str::<RemoteReceiverSettings>(bad).is_err(),
+            "{bad}"
+        );
+    }
+    for (bad, field) in [
+        (
+            RemoteReceiverSettings {
+                width: 321,
+                ..settings
+            },
+            "capture.width",
+        ),
+        (RemoteReceiverSettings { fps: 0, ..settings }, "capture.fps"),
+        (RemoteReceiverSettings::new(any_port()), "capture.listen"),
+    ] {
+        assert_eq!(RemoteReceiver.validate(&bad).unwrap_err().field, field);
+    }
+
     // `open` itself does not re-validate; port 0 keeps the test hermetic.
+    let ephemeral = RemoteReceiverSettings::with_request(any_port(), RAW);
     let mut source = RemoteReceiver.open(&ephemeral).unwrap();
     assert!(
         source
@@ -356,8 +462,8 @@ fn factory_decodes_validates_and_opens() {
 
 #[tokio::test]
 async fn forwarder_delivers_frames_end_to_end() {
-    let source = RemoteSource::bind(any_port()).unwrap();
-    let sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
+    let source = bind();
+    let sender = RemoteSender::connect(source.local_addr()).unwrap();
     let log = CallLog::new();
     let fake = FakeSource::new(&log, FakeSourceSettings::default());
 

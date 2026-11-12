@@ -1,8 +1,10 @@
-//! The real backend: LG VTCapture through `prysm-capture-webos-sys`, native
-//! NV12 frames, the cross-process device lock and signal isolation.
+//! The real backend: LG VTCapture and the HAL GAL UI plane through
+//! `prysm-capture-webos-sys`, NV12 frames, the cross-process device lock and
+//! signal isolation.
 use crate::WebosSettings;
 use crate::source::{Acquired, Backend, Fault, Tap};
-use prysm_capture_webos_sys::{self as sys, VtCapture};
+use crate::ui::Nv12Converter;
+use prysm_capture_webos_sys::{self as sys, UiCapture, VtCapture};
 use prysm_core::{Frame, FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{Error, Result};
 use std::fs::File;
@@ -65,17 +67,21 @@ fn fault(context: &str, error: sys::Error) -> Fault {
     }
 }
 
+/// A signal handler interrupting LG's native calls can corrupt their caller;
+/// signals go to the host's other threads instead.
+fn block_signals() -> Result<(), Fault> {
+    let mut signals = nix::sys::signal::SigSet::empty();
+    signals.add(nix::sys::signal::Signal::SIGINT);
+    signals.add(nix::sys::signal::Signal::SIGTERM);
+    signals.thread_block().map_err(|error| Fault {
+        error: Error::adapter("cannot block signals on the webOS capture thread", error),
+        fatal: true,
+    })
+}
+
 impl Backend for Lg {
     fn open(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
-        // A signal handler interrupting LG's preprocessing can corrupt its
-        // caller; signals go to the host's other threads instead.
-        let mut signals = nix::sys::signal::SigSet::empty();
-        signals.add(nix::sys::signal::Signal::SIGINT);
-        signals.add(nix::sys::signal::Signal::SIGTERM);
-        signals.thread_block().map_err(|error| Fault {
-            error: Error::adapter("cannot block signals on the webOS capture thread", error),
-            fatal: true,
-        })?;
+        block_signals()?;
         let capture = VtCapture::open(&settings.options())
             .map_err(|error| fault("cannot open webOS video capture", error))?;
         Ok(Box::new(LgTap {
@@ -83,6 +89,58 @@ impl Backend for Lg {
             nv12: Vec::new(),
             pool: FramePool::default(),
         }))
+    }
+
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+        block_signals()?;
+        let (width, height) = settings.ui_size();
+        let capture = UiCapture::open(width, height)
+            .map_err(|error| fault("cannot open webOS UI capture", error))?;
+        Ok(Box::new(HalTap {
+            capture,
+            converter: Nv12Converter::default(),
+            pool: FramePool::default(),
+        }))
+    }
+}
+
+/// The graphics plane alone, converted to the video tap's NV12.
+struct HalTap {
+    capture: UiCapture,
+    converter: Nv12Converter,
+    pool: FramePool,
+}
+
+impl Tap for HalTap {
+    fn acquire(&mut self) -> Result<Acquired, Fault> {
+        let plane = self
+            .capture
+            .capture()
+            .map_err(|error| fault("webOS UI capture failed", error))?;
+        let recoverable = |error| Fault {
+            error,
+            fatal: false,
+        };
+        let mut frame = self
+            .pool
+            .acquire(plane.width, plane.height, TAP_FORMAT)
+            .map_err(|error| recoverable(Error::adapter("cannot allocate an NV12 frame", error)))?;
+        self.converter
+            .convert(
+                plane.pixels,
+                plane.pitch,
+                plane.width as usize,
+                plane.height as usize,
+                frame.as_mut_slice(),
+            )
+            .map_err(recoverable)?;
+        Ok(Acquired::Frame(frame.finish()))
+    }
+
+    fn release(self: Box<Self>) -> Result<()> {
+        self.capture
+            .release()
+            .map_err(|error| Error::adapter("webOS UI capture cleanup failed", error))
     }
 }
 

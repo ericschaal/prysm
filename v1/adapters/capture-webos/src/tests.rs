@@ -7,7 +7,7 @@ use prysm_ports::{AdapterSettings, Error, Registry, Settings};
 use std::collections::VecDeque;
 use std::error::Error as _;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
-use std::thread;
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 const LIMIT: Duration = Duration::from_secs(5);
@@ -24,6 +24,11 @@ const TEST: Limits = Limits {
 
 fn frame(value: u8) -> Frame {
     Frame::fill(value, 8, 4, PixelFormat::RGB24).unwrap()
+}
+
+/// The fake UI tap's frames: a different size from video's, as on the TV.
+fn ui_frame(value: u8) -> Frame {
+    Frame::fill(value, 4, 2, PixelFormat::RGB24).unwrap()
 }
 
 fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
@@ -75,6 +80,29 @@ struct Script {
     opens: usize,
     releases: usize,
     acquires: usize,
+    /// The UI tap fails to open, fails every acquisition, or fails once.
+    ui_open_fails: bool,
+    ui_fails: bool,
+    ui_fail_once: bool,
+    ui_value: u8,
+    ui_opens: usize,
+    ui_releases: usize,
+    /// Taps open right now, and the most ever open together.
+    open_taps: usize,
+    most_open: usize,
+    /// Native calls other than video acquisitions, with their thread.
+    events: Vec<(&'static str, ThreadId)>,
+}
+
+impl Script {
+    fn record(&mut self, event: &'static str) {
+        self.events.push((event, thread::current().id()));
+    }
+
+    fn opened(&mut self) {
+        self.open_taps += 1;
+        self.most_open = self.most_open.max(self.open_taps);
+    }
 }
 
 /// The test's handle on the native driver.
@@ -93,6 +121,15 @@ impl Driver {
                 opens: 0,
                 releases: 0,
                 acquires: 0,
+                ui_open_fails: false,
+                ui_fails: false,
+                ui_fail_once: false,
+                ui_value: 200,
+                ui_opens: 0,
+                ui_releases: 0,
+                open_taps: 0,
+                most_open: 0,
+                events: Vec::new(),
             }),
             Condvar::new(),
         )))
@@ -132,19 +169,78 @@ impl Driver {
     fn count(&self, read: impl Fn(&Script) -> usize) -> usize {
         read(&self.script())
     }
+
+    /// Recorded native calls, repeated UI acquisitions collapsed; all must
+    /// have run on one thread, which is not the test's.
+    fn events(&self) -> Vec<&'static str> {
+        let script = self.script();
+        let threads: Vec<_> = script.events.iter().map(|(_, thread)| *thread).collect();
+        assert!(
+            threads.windows(2).all(|pair| pair[0] == pair[1]),
+            "threads differ"
+        );
+        assert!(!threads.contains(&thread::current().id()));
+        let mut events: Vec<_> = script.events.iter().map(|(event, _)| *event).collect();
+        events.dedup();
+        events
+    }
 }
 
 impl Backend for Driver {
     fn open(&mut self, _: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
         let mut script = self.enter("open");
         script.opens += 1;
+        script.record("open");
         if let Some(fatal) = script.open_fails {
             return Err(Fault {
                 error: Error::other("driver refused"),
                 fatal,
             });
         }
+        script.opened();
         Ok(Box::new(FakeTap(self.clone())))
+    }
+
+    fn open_ui(&mut self, settings: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+        assert_eq!(settings.ui_size(), (320, 180));
+        let mut script = self.enter("UI open");
+        script.ui_opens += 1;
+        script.record("UI open");
+        if script.ui_open_fails {
+            return Err(Fault {
+                error: Error::adapter(
+                    "cannot open webOS UI capture",
+                    std::io::Error::other("cannot load libhalgal.so.1"),
+                ),
+                fatal: false,
+            });
+        }
+        script.opened();
+        Ok(Box::new(FakeUiTap(self.clone())))
+    }
+}
+
+struct FakeUiTap(Driver);
+
+impl Tap for FakeUiTap {
+    fn acquire(&mut self) -> Result<Acquired, Fault> {
+        let mut script = self.0.enter("UI acquire");
+        script.record("UI acquire");
+        if script.ui_fails || std::mem::take(&mut script.ui_fail_once) {
+            return Err(Fault {
+                error: Error::other("HAL_GAL_CaptureFrameBuffer failed with status -1"),
+                fatal: true, // UI faults never end the source, even "fatal" ones
+            });
+        }
+        Ok(Acquired::Frame(ui_frame(script.ui_value)))
+    }
+
+    fn release(self: Box<Self>) -> prysm_ports::Result<()> {
+        let mut script = self.0.enter("UI release");
+        script.ui_releases += 1;
+        script.open_taps -= 1;
+        script.record("UI release");
+        Ok(())
     }
 }
 
@@ -172,6 +268,8 @@ impl Tap for FakeTap {
     fn release(self: Box<Self>) -> prysm_ports::Result<()> {
         let mut script = self.0.enter("release");
         script.releases += 1;
+        script.open_taps -= 1;
+        script.record("release");
         if script.release_fails {
             return Err(Error::other("vtCapture_stop failed with status 5"));
         }
@@ -179,12 +277,23 @@ impl Tap for FakeTap {
     }
 }
 
+/// Video-only settings: the video tap's lifecycle without the UI tap.
 fn start_with(driver: &Driver, video: &VideoSignal, limits: Limits) -> WebosFrames {
+    let settings = WebosSettings {
+        fps: 60,
+        include_ui: false,
+        ..WebosSettings::default()
+    };
+    WebosFrames::start(driver.clone(), settings, video.clone(), limits).unwrap()
+}
+
+/// Default settings (`include_ui` on), fast.
+fn start_ui(driver: &Driver, video: &VideoSignal) -> WebosFrames {
     let settings = WebosSettings {
         fps: 60,
         ..WebosSettings::default()
     };
-    WebosFrames::start(driver.clone(), settings, video.clone(), limits).unwrap()
+    WebosFrames::start(driver.clone(), settings, video.clone(), TEST).unwrap()
 }
 
 fn start(driver: &Driver, video: &VideoSignal) -> WebosFrames {
@@ -207,6 +316,18 @@ fn next(frames: &mut WebosFrames) -> Frame {
             return frame;
         }
         assert!(Instant::now() < deadline, "no frame");
+    }
+}
+
+/// Wait for the next frame that matches, failing the test after [`LIMIT`].
+fn next_where(frames: &mut WebosFrames, matches: impl Fn(&Frame) -> bool) -> Frame {
+    let deadline = Instant::now() + LIMIT;
+    loop {
+        let frame = next(frames);
+        if matches(&frame) {
+            return frame;
+        }
+        assert!(Instant::now() < deadline, "no matching frame");
     }
 }
 
@@ -415,6 +536,171 @@ fn watchdog_reports_a_hung_native_call() {
     // The driver returns late; the thread still releases the tap.
     driver.unhang();
     eventually(|| driver.count(|s| s.releases) == 1);
+}
+
+// ---- TV UI without video -------------------------------------------------
+
+#[test]
+fn ui_tap_replaces_video_only_while_there_is_none() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    driver.push([Step::Frame(1)]);
+    let mut frames = start_ui(&driver, &video);
+    assert_eq!(next(&mut frames).as_slice(), &[1; 96]);
+    assert_eq!(driver.count(|s| s.ui_opens), 0, "UI tap next to video");
+
+    // Home: video is released before the UI tap opens; its frames flow,
+    // at their own size.
+    video.set(Video::Unavailable);
+    let ui = next_where(&mut frames, |f| f.width() == 4);
+    assert_eq!(
+        (ui.width(), ui.height(), ui.as_slice()),
+        (4, 2, &[200; 24][..])
+    );
+    driver.with(|s| s.ui_value = 201);
+    assert_eq!(
+        next_where(&mut frames, |f| f.as_slice()[0] == 201).width(),
+        4
+    );
+
+    // Back to an input: UI released, video reopened.
+    driver.push([Step::Frame(2)]);
+    video.set(Video::Available);
+    assert_eq!(
+        next_where(&mut frames, |f| f.width() == 8).as_slice(),
+        &[2; 96]
+    );
+    // A context change on Home reopens the UI tap.
+    let captured = |opens| {
+        let script = driver.script();
+        script.ui_opens == opens && script.events.last().unwrap().0 == "UI acquire"
+    };
+    video.set(Video::Unavailable);
+    eventually(|| captured(2));
+    video.reset();
+    eventually(|| captured(3));
+    closes_cleanly(frames);
+
+    assert_eq!(driver.count(|s| s.most_open), 1, "two taps were open");
+    assert_eq!(
+        driver.events(),
+        [
+            "open",
+            "release",
+            "UI open",
+            "UI acquire",
+            "UI release",
+            "open",
+            "release",
+            "UI open",
+            "UI acquire",
+            "UI release",
+            "UI open",
+            "UI acquire",
+            "UI release",
+        ]
+    );
+}
+
+#[test]
+fn source_can_start_on_home() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    let mut frames = start_ui(&driver, &video);
+    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
+    assert_eq!(driver.count(|s| s.opens), 0);
+    closes_cleanly(frames);
+    assert_eq!(driver.events(), ["UI open", "UI acquire", "UI release"]);
+}
+
+#[test]
+fn without_include_ui_there_are_no_frames_without_video() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    let mut frames = start(&driver, &video);
+    thread::sleep(SHORT);
+    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert_eq!(driver.count(|s| s.ui_opens), 0);
+    closes_cleanly(frames);
+}
+
+/// The UI tap failed before its first frame: no retries, no failure, video
+/// still works, and the source idles without video from then on.
+fn assert_unsupported_once(driver: &Driver, video: &VideoSignal, mut frames: WebosFrames) {
+    eventually(|| driver.count(|s| s.ui_opens) == 1);
+    thread::sleep(TEST.retry * 20);
+    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
+
+    driver.push([Step::Frame(5)]);
+    video.set(Video::Available);
+    assert_eq!(next(&mut frames).as_slice(), &[5; 96]);
+    video.set(Video::Unavailable);
+    eventually(|| driver.count(|s| s.releases) == 1);
+    thread::sleep(TEST.retry * 20);
+    assert!(frames.next_frame(SHORT).unwrap().is_idle());
+    assert_eq!(driver.count(|s| s.ui_opens), 1, "UI capture was retried");
+    closes_cleanly(frames);
+}
+
+#[test]
+fn missing_ui_capture_is_unsupported_once() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| s.ui_open_fails = true);
+    let frames = start_ui(&driver, &video);
+    assert_unsupported_once(&driver, &video, frames);
+    assert_eq!(driver.count(|s| s.ui_releases), 0, "nothing was opened");
+}
+
+#[test]
+fn failed_first_ui_capture_is_unsupported_once() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    driver.with(|s| s.ui_fails = true);
+    let frames = start_ui(&driver, &video);
+    assert_unsupported_once(&driver, &video, frames);
+    assert_eq!(driver.count(|s| s.ui_releases), 1, "UI tap not released");
+}
+
+#[test]
+fn ui_fault_after_it_worked_reopens_without_an_error() {
+    let driver = Driver::new();
+    let video = VideoSignal::default();
+    video.set(Video::Unavailable);
+    let mut frames = start_ui(&driver, &video);
+    next(&mut frames);
+    driver.with(|s| s.ui_fail_once = true);
+    eventually(|| driver.count(|s| s.ui_opens) == 2);
+    assert_eq!(next(&mut frames).as_slice(), &[200; 24]);
+    assert_eq!(driver.count(|s| s.ui_releases), 1);
+    closes_cleanly(frames);
+}
+
+#[test]
+fn ui_size_is_capped_and_floored() {
+    let size = |width, height| {
+        WebosSettings {
+            width,
+            height,
+            ..WebosSettings::default()
+        }
+        .ui_size()
+    };
+    assert_eq!(size(640, 360), (320, 180), "default is capped");
+    assert_eq!(size(1920, 1080), (320, 180));
+    assert_eq!(size(320, 180), (320, 180));
+    assert_eq!(size(288, 162), (288, 162), "smaller sizes are kept");
+    assert_eq!(size(256, 144), (256, 144));
+    assert_eq!(size(160, 90), (256, 144), "HAL fails below 256x144");
+    assert_eq!(size(2, 2), (256, 144));
+    // Non-16:9: each axis on its own; the plane is stretched to fill.
+    assert_eq!(size(640, 480), (320, 180));
+    assert_eq!(size(200, 1080), (256, 180));
 }
 
 // ---- Close and drop ------------------------------------------------------

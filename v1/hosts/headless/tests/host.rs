@@ -52,6 +52,34 @@ fn starts_idle_serves_the_portal_without_a_token_and_stops_on_sigterm() {
     assert!(!dir.path().join("portal.token").exists());
 }
 
+/// The TV app (a packaged webOS app, `Origin: null`) may control a desktop
+/// Prysm started with `--allow-origin null`; other sites still may not.
+#[test]
+fn the_null_origin_is_allowed_only_when_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = null_settings(dir.path());
+    let mut host = Host::spawn(
+        BINARY,
+        &[
+            settings.to_str().unwrap(),
+            "--listen",
+            "127.0.0.1:0",
+            "--allow-origin",
+            "null",
+        ],
+    );
+    let port = host.portal_port();
+    let put = put_target(port, "off", Some("null"));
+    assert_eq!(put.status, 204, "{}", put.body);
+    assert_eq!(put.header("access-control-allow-origin"), Some("null"));
+    assert_eq!(
+        put_target(port, "off", Some("http://evil.example")).status,
+        403
+    );
+    let (status, stderr) = host.terminate();
+    assert!(status.success(), "{stderr:#?}");
+}
+
 #[test]
 fn allowed_origins_get_cors() {
     let dir = tempfile::tempdir().unwrap();

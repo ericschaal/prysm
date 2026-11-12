@@ -21,7 +21,6 @@ import {
 } from '@prysm/webos-platform';
 import { TvApp } from '@prysm/tv-ui';
 import {
-  captureOf,
   derivedReceiver,
   diagnostics,
   encodingName,
@@ -405,21 +404,12 @@ test('slim encoding failures offer a switch of encoding; waits and the full pack
   const full = { ...state(), flavor: 'full', worker: 'retrying', power: 'active', video: 'available', failure: 'worker exited 1', failure_kind: 'encoder' };
   assert.equal(status(full).changeEncoding, false);
   assert.doesNotMatch(status(full).description, /encoding/);
-  assert.match(
-    diagnostics(slim({ encoding: 'raw', preferences: { receiver: '192.168.1.20:7380', capture: { encoding: 'raw' } } })),
-    /Stream encoding: Uncompressed chosen, Uncompressed in use/,
-  );
-  assert.match(diagnostics(slim()), /Stream encoding: Hardware H\.264 chosen, none in use/);
+  assert.match(diagnostics(slim({ encoding: 'raw' })), /Stream encoding: Uncompressed in use/);
+  assert.match(diagnostics(slim()), /Stream encoding: none in use/);
 });
 
-test('preferences without a capture block stay without one; slim reads its defaults', () => {
+test('preferences are completed with their defaults', () => {
   assert.deepEqual(completePreferences({ autostart: true }), { autostart: true, instance: null, receiver: null });
-  assert.equal('capture' in completePreferences({}), false, 'full preferences never gain a capture block');
-  assert.deepEqual(completePreferences({ capture: { fps: 25 } }).capture, {
-    width: 320, height: 180, fps: 25, include_ui: true, encoding: 'h264_hardware',
-  });
-  assert.equal(captureOf({}).encoding, 'h264_hardware');
-  assert.equal(captureOf({ capture: { encoding: 'raw' } }).encoding, 'raw');
 });
 
 /* ---- Screens ---- */
@@ -451,11 +441,11 @@ test('remote arrows move focus through rows and columns without changing setting
   assert.equal(tv.focus(), 'instance', 'the row edge continues to the settings column');
   await tv.key(DOWN);
   await tv.key(DOWN);
-  assert.equal(tv.focus(), 'size');
+  assert.equal(tv.focus(), 'autostart');
   await tv.key(LEFT);
   assert.equal(tv.focus(), 'mode-off', 'left returns to the control last used there');
   await tv.key(RIGHT);
-  assert.equal(tv.focus(), 'size');
+  assert.equal(tv.focus(), 'autostart');
   await tv.key(UP);
   await tv.key(UP);
   await tv.key(UP);
@@ -466,26 +456,26 @@ test('remote arrows move focus through rows and columns without changing setting
 
 test('OK opens choices, arrows only focus, Back cancels, and Save alone persists', async (t) => {
   const tv = await mountTv(t, { supervisor: { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' } } });
-  tv.el('rate').focus();
-  await tv.click('rate');
-  assert.equal(tv.text('dialog-title'), 'Frame rate');
+  tv.el('autostart').focus();
+  await tv.click('autostart');
+  assert.equal(tv.text('dialog-title'), 'Enable with TV');
   assert.equal(document.activeElement.getAttribute('aria-pressed'), 'true', 'the current choice is focused');
   await tv.key(DOWN);
   await tv.key(BACK);
   assert.equal(tv.el('modal'), null);
-  assert.equal(tv.focus(), 'rate', 'focus returns to the row');
-  assert.equal(tv.text('rate-value'), '30 fps');
-  await tv.click('rate');
-  await tv.choose('50 fps');
-  assert.equal(tv.text('rate-value'), '50 fps');
+  assert.equal(tv.focus(), 'autostart', 'focus returns to the row');
+  assert.equal(tv.text('autostart-value'), 'Off');
+  await tv.click('autostart');
+  await tv.choose('On');
+  assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
   assert(!tv.methods().includes('setPreferences'), 'choosing does not save');
   await tv.click('save');
   const saved = tv.supervisor.calls.find((call) => call.method === 'setPreferences').payload;
-  assert.equal(saved.capture.fps, 50);
+  assert.equal(saved.autostart, true);
   assert.equal(saved.instance, 'http://192.168.1.20:8787');
   assert.equal(tv.text('saved-state'), 'Saved');
-  assert.equal(tv.supervisor.state().preferences.capture.fps, 50);
+  assert.equal(tv.supervisor.state().preferences.autostart, true);
 });
 
 test('the Prysm address is explicit: invalid text is explained and Back keeps the old one', async (t) => {
@@ -545,17 +535,17 @@ test('a failed save keeps the draft and never enables', async (t) => {
 
 test('status updates keep unsaved choices and focus; a change made elsewhere replaces the edit', async (t) => {
   const tv = await mountTv(t, { supervisor: { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' } } });
-  await tv.click('size');
-  await tv.choose('640 × 360');
-  tv.el('rate').focus();
+  await tv.click('autostart');
+  await tv.choose('On');
+  tv.el('receiver').focus();
   await act(async () => tv.supervisor.publish({ capturing: true, enabled: true, worker: 'running' }));
   await settle();
-  assert.equal(tv.text('size-value'), '640 × 360');
-  assert.equal(tv.focus(), 'rate');
+  assert.equal(tv.text('autostart-value'), 'On');
+  assert.equal(tv.focus(), 'receiver');
   const prefs = tv.supervisor.state().preferences;
-  await act(async () => tv.supervisor.publish({ preferences: { ...prefs, capture: { ...prefs.capture, width: 480, height: 270 } } }));
+  await act(async () => tv.supervisor.publish({ preferences: { ...prefs, autostart: true } }));
   await settle();
-  assert.equal(tv.text('size-value'), '480 × 270');
+  assert.equal(tv.text('autostart-value'), 'On');
   assert.match(tv.text('notice'), /changed elsewhere/);
   assert.equal(tv.text('saved-state'), 'Saved');
 });
@@ -622,19 +612,19 @@ test('hiding the page releases the subscriptions; showing it subscribes again', 
 test('a lost subscription recovers after 3 s without losing the draft', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, { supervisor: { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' } } });
-  await tv.click('source');
-  await tv.choose('Video only');
-  assert.equal(tv.text('source-value'), 'Video only');
+  await tv.click('autostart');
+  await tv.choose('On');
+  assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => tv.supervisor.drop('Service stopped'));
   await settle();
   assert.equal(tv.text('status-title'), 'TV service unavailable');
   assert.equal(tv.text('notice'), 'Service stopped');
-  assert.equal(tv.text('source-value'), 'Video only');
+  assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
   assert.equal(tv.text('status-title'), 'Disabled');
   assert.equal(tv.text('notice'), 'Service connected.');
-  assert.equal(tv.text('source-value'), 'Video only');
+  assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
 });
 
@@ -675,7 +665,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
   });
   await settle();
   assert.match(refused.text('lighting-status'), /does not allow control from the TV/);
-  assert.match(refused.text('lighting-detail'), /--allow-origin '\*'/);
+  assert.match(refused.text('lighting-detail'), /--allow-origin null/);
   assert(refused.el('mode-processed').closest('[hidden]'), 'no modes without a state');
   await refused.unmount();
   const unreachable = await mountTv(t, {
@@ -813,35 +803,6 @@ test('TV bundles are classic deferred scripts with relative URLs and no demo cod
 
 const linked = { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' };
 
-test('slim: the stream encoding is a setting reached with the remote and saved with the others', async (t) => {
-  const tv = await mountTv(t, { supervisor: { preferences: linked } });
-  assert.equal(tv.text('encoding-value'), 'Hardware H.264', 'the default is hardware');
-  tv.el('source').focus();
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'encoding');
-  await tv.click('encoding');
-  assert.equal(tv.text('dialog-title'), 'Stream encoding');
-  assert.equal(tv.focus(), 'encoding-h264_hardware', 'the current encoding is focused');
-  const options = [...document.querySelectorAll('#dialog-body .choice-name')].map((item) => item.textContent);
-  assert.deepEqual(options, ['Hardware H.264 (recommended)', 'Software H.264', 'Uncompressed']);
-  for (const id of ['h264_hardware', 'h264_software', 'raw'])
-    assert.match(tv.el(`encoding-${id}`).textContent, /network/, 'each option names its trade-off');
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'encoding-h264_software');
-  await tv.key(BACK);
-  assert.equal(tv.text('encoding-value'), 'Hardware H.264', 'arrows and Back change nothing');
-  await tv.click('encoding');
-  await tv.choose('Software H.264');
-  assert.equal(tv.text('encoding-value'), 'Software H.264');
-  assert.equal(tv.text('saved-state'), 'Unsaved changes');
-  assert(!tv.methods().includes('setPreferences'));
-  await tv.click('save');
-  const saved = tv.supervisor.calls.find((call) => call.method === 'setPreferences').payload;
-  assert.deepEqual(saved.capture, { width: 320, height: 180, fps: 30, include_ui: true, encoding: 'h264_software' });
-  assert.equal(saved.receiver, '192.168.1.20:7380');
-  assert.equal(tv.text('saved-state'), 'Saved');
-});
-
 test('slim: the status card shows the encoding in use while streaming', async (t) => {
   const tv = await mountTv(t, { supervisor: { preferences: linked, state: { enabled: true, worker: 'running' } } });
   assert.equal(tv.el('encoding-in-use'), null, 'nothing is in use before the receiver is connected');
@@ -856,51 +817,6 @@ test('slim: the status card shows the encoding in use while streaming', async (t
   await act(async () => tv.supervisor.publish({ capturing: false, encoding: null }));
   await settle();
   assert.equal(tv.el('encoding-in-use'), null);
-});
-
-test('slim: a failed worker shows the error and switches the encoding from the status card', async (t) => {
-  const failure = 'worker failed: the hardware H.264 encoder cannot start: no encoder device';
-  const tv = await mountTv(t, {
-    supervisor: { preferences: linked, state: { enabled: true, worker: 'retrying', failure, failure_kind: 'encoder' } },
-  });
-  assert.equal(tv.text('status-title'), 'Capture needs attention');
-  assert.match(tv.text('status-description'), /no encoder device\. Prysm tries again automatically\. If it keeps failing, choose another stream encoding\./);
-  assert.equal(tv.focus(), 'primary');
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'change-encoding', 'the switch is next to the primary button');
-  await tv.click('change-encoding');
-  assert.equal(tv.text('dialog-title'), 'Change stream encoding');
-  assert.match(tv.text('dialog-description'), /^Hardware H\.264 failed on this TV\./);
-  assert.equal(tv.focus(), 'switch-h264_hardware');
-  assert.match(tv.text('switch-h264_hardware'), /Chosen now/);
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'switch-h264_software');
-  await tv.click('switch-h264_software');
-  assert.equal(tv.el('modal'), null);
-  const saved = tv.supervisor.calls.filter((call) => call.method === 'setPreferences');
-  assert.equal(saved.length, 1, 'saved at once, without Save');
-  assert.equal(saved[0].payload.capture.encoding, 'h264_software');
-  assert.equal(saved[0].payload.receiver, '192.168.1.20:7380');
-  assert.equal(tv.text('notice'), 'Stream encoding set to Software H.264. Capture starts again with it.');
-  assert.equal(tv.text('encoding-value'), 'Software H.264');
-  assert.equal(tv.text('saved-state'), 'Saved');
-  // The worker starts with the new encoding.
-  await act(async () => tv.supervisor.publish({ worker: 'running', failure: null, failure_kind: null, capturing: true, encoding: 'h264_software' }));
-  await settle();
-  assert.equal(tv.el('change-encoding'), null);
-  assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Software H.264');
-  assert.equal(tv.focus(), 'primary', 'focus does not stay on the removed switch');
-});
-
-test('slim: choosing the encoding already set in the failure dialog saves nothing', async (t) => {
-  const tv = await mountTv(t, {
-    supervisor: { preferences: linked, state: { enabled: true, worker: 'running', failure: 'encoder failed', failure_kind: 'encoder' } },
-  });
-  assert.match(tv.text('status-description'), /^encoder failed\. If it keeps failing, choose another stream encoding\. Open Service options/);
-  await tv.click('change-encoding');
-  await tv.click('switch-h264_hardware');
-  assert.equal(tv.el('modal'), null);
-  assert(!tv.methods().includes('setPreferences'));
 });
 
 test('slim: a receiver wait is not offered an encoding switch', async (t) => {

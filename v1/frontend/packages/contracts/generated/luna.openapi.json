@@ -36,7 +36,7 @@
         "type": "object"
       },
       "FailureKind": {
-        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the configured encoder could not start or failed; another\nencoding may work. `receiver` (slim): the receiver is unavailable or\npaused the stream; the worker keeps reconnecting. `other`: anything else.",
+        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable or paused the stream; the\nworker keeps reconnecting. `other`: anything else.",
         "enum": [
           "encoder",
           "receiver",
@@ -100,18 +100,6 @@
             "description": "Start enabled (full: processed lighting) when the service starts.",
             "type": "boolean"
           },
-          "capture": {
-            "default": null,
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SlimCapture",
-                "description": "Slim only: capture size, rate, menu blending and encoding. Always set\nin the slim package (a request without it gets the defaults); `null`\nin the full package, whose capture is the portal's `settings.capture`."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "instance": {
             "default": null,
             "description": "Slim only: the headless Prysm's portal origin, such as\n`http://192.168.1.20:8787`. Only the TV app uses it.",
@@ -148,49 +136,8 @@
         ],
         "type": "object"
       },
-      "SlimCapture": {
-        "additionalProperties": false,
-        "description": "Capture size, rate and menu blending of the slim package (the same rules\nas the `webos` capture settings), and how its frames are encoded.",
-        "properties": {
-          "encoding": {
-            "$ref": "#/components/schemas/SlimEncoding",
-            "default": "h264_hardware"
-          },
-          "fps": {
-            "default": 30,
-            "format": "int32",
-            "maximum": 60,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "height": {
-            "default": 180,
-            "description": "Even, 2 to 1080.",
-            "format": "int32",
-            "maximum": 1080,
-            "minimum": 2,
-            "multipleOf": 2,
-            "type": "integer"
-          },
-          "include_ui": {
-            "default": true,
-            "description": "Blend TV menus into the capture.",
-            "type": "boolean"
-          },
-          "width": {
-            "default": 320,
-            "description": "Even, 2 to 1920.",
-            "format": "int32",
-            "maximum": 1920,
-            "minimum": 2,
-            "multipleOf": 2,
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
       "SlimEncoding": {
-        "description": "How the slim package encodes the frames it sends. Exactly this encoder is\nused; one that cannot start or fails is a failure, never a switch to\nanother. `h264_hardware`: the TV's hardware H.264 encoder (about\n2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);\n`raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).",
+        "description": "How the slim package encodes the frames it sends: the encoding its\nreceiver requested (set in the desktop portal). Exactly this encoder is\nused; one that cannot start or fails is a failure, never a switch to\nanother. `h264_hardware`: the TV's hardware H.264 encoder (about\n2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);\n`raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).",
         "enum": [
           "h264_hardware",
           "h264_software",
@@ -213,7 +160,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SlimEncoding",
-                "description": "Slim only: the encoding of the frames being sent while connected to\nthe receiver; always the configured `capture.encoding`."
+                "description": "Slim only: the encoding of the frames being sent while connected to\nthe receiver; always the one the receiver requested (set in the\ndesktop portal's remote capture settings)."
               },
               {
                 "type": "null"

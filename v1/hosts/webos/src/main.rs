@@ -11,8 +11,8 @@ use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
 use prysm_settings_file::FileSettings;
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use prysm_webos_link::FullArgs;
 use prysm_webos_link::worker::{self, Link};
-use prysm_webos_link::{FailureKind, FullArgs};
 use std::net::{SocketAddr, TcpListener, UdpSocket};
 use std::path::Path;
 use std::process::ExitCode;
@@ -31,13 +31,7 @@ const STOP_DEADLINE: Duration = Duration::from_secs(6);
 fn main() -> ExitCode {
     // stdout carries the supervisor protocol; log lines go to stderr only.
     logging::init("prysm-webos", Logs::Stderr);
-    worker::main(
-        "prysm-webos",
-        USAGE,
-        FullArgs::parse,
-        |_| FailureKind::Other,
-        run,
-    )
+    worker::main("prysm-webos", USAGE, FullArgs::parse, run)
 }
 
 async fn run(args: FullArgs, link: Link) -> Result<()> {

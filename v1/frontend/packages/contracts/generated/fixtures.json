@@ -112,8 +112,22 @@
   ],
   "RemoteReceiverSettings": [
     {
+      "encoding": "h264_hardware",
+      "fps": 30,
+      "height": 180,
+      "include_ui": true,
       "kind": "remote",
-      "listen": "0.0.0.0:7380"
+      "listen": "0.0.0.0:7380",
+      "width": 320
+    },
+    {
+      "encoding": "h264_software",
+      "fps": 25,
+      "height": 280,
+      "include_ui": false,
+      "kind": "remote",
+      "listen": "0.0.0.0:7380",
+      "width": 640
     }
   ],
   "Settings": [
@@ -407,19 +421,11 @@
   "luna/Preferences": [
     {
       "autostart": false,
-      "capture": null,
       "instance": null,
       "receiver": null
     },
     {
       "autostart": true,
-      "capture": {
-        "encoding": "h264_hardware",
-        "fps": 25,
-        "height": 180,
-        "include_ui": false,
-        "width": 320
-      },
       "instance": "http://192.168.1.20:8787",
       "receiver": "192.168.1.20:7380"
     }
@@ -445,7 +451,6 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "capture": null,
         "instance": null,
         "receiver": null
       },
@@ -456,7 +461,7 @@
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "worker failed: hardware H.264 encoder cannot start: rvenc unavailable",
+      "failure": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
       "failure_kind": "encoder",
       "flavor": "slim",
       "lighting": null,
@@ -465,18 +470,11 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "capture": {
-          "encoding": "h264_hardware",
-          "fps": 25,
-          "height": 180,
-          "include_ui": false,
-          "width": 320
-        },
         "instance": "http://192.168.1.20:8787",
         "receiver": "192.168.1.20:7380"
       },
       "video": "unknown",
-      "worker": "retrying"
+      "worker": "running"
     }
   ],
   "luna/StateReply": [
@@ -495,7 +493,6 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "capture": null,
         "instance": null,
         "receiver": null
       },
@@ -508,7 +505,7 @@
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "worker failed: hardware H.264 encoder cannot start: rvenc unavailable",
+      "failure": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
       "failure_kind": "encoder",
       "flavor": "slim",
       "lighting": null,
@@ -517,19 +514,12 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "capture": {
-          "encoding": "h264_hardware",
-          "fps": 25,
-          "height": 180,
-          "include_ui": false,
-          "width": 320
-        },
         "instance": "http://192.168.1.20:8787",
         "receiver": "192.168.1.20:7380"
       },
       "returnValue": true,
       "video": "unknown",
-      "worker": "retrying"
+      "worker": "running"
     }
   ],
   "luna/UninstallRequest": [

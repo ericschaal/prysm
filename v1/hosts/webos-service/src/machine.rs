@@ -298,13 +298,10 @@ impl Machine {
                 }
                 .to_args(),
             ),
-            Spec::Slim => self.preferences.receiver.map(|receiver| {
-                SlimArgs {
-                    receiver,
-                    capture: self.preferences.capture.unwrap_or_default(),
-                }
-                .to_args()
-            }),
+            Spec::Slim => self
+                .preferences
+                .receiver
+                .map(|receiver| SlimArgs { receiver }.to_args()),
         }
     }
 
@@ -370,9 +367,7 @@ impl Machine {
         now: Instant,
         effects: &mut Vec<Effect>,
     ) {
-        let relaunch = self.spec == Spec::Slim
-            && (self.preferences.receiver != preferences.receiver
-                || self.preferences.capture != preferences.capture);
+        let relaunch = self.spec == Spec::Slim && self.preferences.receiver != preferences.receiver;
         self.preferences = preferences;
         if !relaunch {
             return;

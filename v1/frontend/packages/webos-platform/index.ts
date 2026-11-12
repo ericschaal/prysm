@@ -10,7 +10,7 @@ import type {
   Phase,
   Power,
   Preferences,
-  SlimCapture,
+  SlimEncoding,
   State,
   Video,
 } from '@prysm/contracts/luna';
@@ -21,7 +21,7 @@ export type {
   Phase,
   Power,
   Preferences,
-  SlimCapture,
+  SlimEncoding,
   State,
   Video,
 };

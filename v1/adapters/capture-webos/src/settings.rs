@@ -65,6 +65,19 @@ impl WebosSettings {
         Ok(())
     }
 
+    /// The TV UI (graphics plane) capture size, used only while there is no
+    /// video: each axis of the configured size clamped to 256–320 × 144–180.
+    /// HAL's cost grows with the output size, and it fails below 256×144 on
+    /// the measured TV. Axes are clamped independently: the plane is 16:9 and
+    /// is scaled to fill the surface, exactly as the video tap fills a
+    /// non-16:9 configured size, so edge sampling sees the same picture.
+    pub(crate) fn ui_size(&self) -> (u16, u16) {
+        let clamp = |value: u32, min: u16, max: u16| {
+            u16::try_from(value.clamp(u32::from(min), u32::from(max))).unwrap_or(max)
+        };
+        (clamp(self.width, 256, 320), clamp(self.height, 144, 180))
+    }
+
     /// The driver's options; only called on validated settings.
     pub(crate) fn options(&self) -> prysm_capture_webos_sys::Options {
         let narrow = |value: u32| u16::try_from(value).unwrap_or(u16::MAX);

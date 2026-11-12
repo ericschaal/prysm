@@ -62,9 +62,9 @@ nothing has run in a TV browser yet.
 | Context-sensitive primary button (Set up service / Set receiver address / Save and enable / Enable / Disable / Pause / Allow TV capture) | same | present | Set up service / Set Prysm address / Save and enable / Enable / Disable; full: Start screen sync / Turn lights off (`setEnabled`) |
 | Settings rows with saved/unsaved badge and explicit Save | [Settings.tsx](../../crates/web/prysm-webos/src/components/Settings.tsx) | present | Save and Discard; a field changed elsewhere replaces the edit and says so |
 | Instance URL editor: host or IP → `http://host:8787`, https allowed | [CaptureDialog.tsx](../../crates/web/prysm-webos/src/components/CaptureDialog.tsx) | present | `receiver` filled from the remote `capture.listen` port when the instance is an IP; editable (IP:port only, W12) |
-| Capture choice: video + menus / video only | CaptureDialog | present | slim `preferences.capture.include_ui`; full: TV Capture dialog on its portal |
-| Capture size and rate on the TV | negotiated by the receiver | present | Presets (320×180 … 1280×720, 15–60 fps), the current value kept if custom; full: saved to its portal |
-| Compression choice (LZ4, none, H.264 SW, H.264 HW if built) | CaptureDialog | partial | `preferences.capture.encoding` (`h264_hardware`, `h264_software`, `raw`) and `State.encoding` exist; no TV UI selector yet |
+| Capture choice: video + menus / video only | CaptureDialog | partial | Slim: the desktop's `remote` capture `include_ui`, sent to the TV in the stream request (`prysm-3jx.63`); the TV UI's own rows were removed, the portal form is pending. Full: TV Capture dialog on its portal |
+| Capture size and rate on the TV | negotiated by the receiver | partial | Slim: the desktop's `remote` capture `width`/`height`/`fps` (default 320×180 at 30), sent in the stream request; portal form pending. Full: saved to its portal |
+| Compression choice (LZ4, none, H.264 SW, H.264 HW if built) | CaptureDialog | partial | The desktop's `remote` capture `encoding` (`h264_hardware`, `h264_software`, `raw`); `State.encoding` reports the one in use; portal form pending |
 | Enable with TV | CaptureDialog | present | `preferences.autostart` (full: "Start screen sync with TV") |
 | Prometheus metrics checkbox (port 9101) | Settings | changed | No metrics in v1 |
 | Service options: set up or repair, diagnostics, remove setup with confirmation | CaptureDialog | present | Homebrew `exec` of `…/services/io.prysm.tv.service/setup.sh`; `uninstall` |
@@ -79,7 +79,7 @@ nothing has run in a TV browser yet.
 | Behaviour tests (47 cases, calibration probe) | [app.test.cjs](../../crates/web/prysm-webos/tests/app.test.cjs) | present | [tv.test.jsx](../../v1/frontend/tests/tv.test.jsx) (28 cases, no calibration) |
 | Luna contract schema → generated TS types | xtask `codegen` `Contract::Webos`, [service.schema.json](../../crates/web/prysm-webos/service.schema.json) | present | `@prysm/contracts/luna`; replies checked at runtime by `isState` |
 | Chromium 53 build (classic script, relative URLs) | [vite.config.ts](../../crates/web/prysm-webos/vite.config.ts) | present | Luna path only; portal control needs webOS 5+ (`AbortController`, streamed `fetch`) and says so on older TVs |
-| Slim control of the remote portal from `Origin: null` | — | partial | Works when the headless Prysm runs with `--allow-origin '*'`; otherwise the TV says how to allow it (Q1) |
+| Slim control of the remote portal from `Origin: null` | — | present | The headless Prysm runs with `--allow-origin null` (exactly `null`, decided in `prysm-3jx.56`); otherwise the TV says how to allow it (Q1) |
 
 ### Luna service API
 
@@ -118,13 +118,13 @@ nothing has run in a TV browser yet.
 | --- | --- | --- | --- |
 | Transport | WS/WSS on the server's HTTP port `/api/capture` ([transport.rs](../../apps/prysm-webos-capture/src/transport.rs)) | changed | Raw TCP to `receiver` (e.g. `:7380`), [sender.rs](../../v1/adapters/capture-remote/src/sender.rs) |
 | Instance by hostname, `https`, TLS verified against the TV trust store | `InstanceUrl` | missing | `receiver` is a `SocketAddr`: IP only, no TLS (W12) |
-| Versioned hello; `idle`/`busy`/`capture_settings` replies | [control.rs](../../crates/capture/prysm-webos-protocol/src/control.rs) | partial | Wire version 2 hello (version, stream encoding) and accept/refuse reply; a mismatch is a typed `WireError` on both ends. No `idle`/`busy`/`capture_settings` |
-| Receiver chooses size and FPS (Screen sync) | `CaptureSettings` | changed | TV preferences; default 320×180@30 |
+| Versioned hello; `idle`/`busy`/`capture_settings` replies | [control.rs](../../crates/capture/prysm-webos-protocol/src/control.rs) | partial | Wire version 3: hello (version), reply with status and the receiver's stream request (size, rate, menus, encoding); the sender may refuse a request it cannot produce, with a reason; a mismatch is a typed `WireError` on both ends. No `idle`/`busy` |
+| Receiver chooses size and FPS (Screen sync) | `CaptureSettings` | present | The desktop's `remote` capture settings; a change restarts lighting and the TV's next connection gets the new request (`prysm-3jx.63`) |
 | Capture only while the server wants frames (`Idle`) | `wait_for_capture` | partial | The receiver pauses its sender on the open connection (one control byte; sent on `close`, or by `RemoteSource::set_wanted`) and nothing is encoded or sent; while the receiver is not listening nothing is encoded either. The TV capture itself keeps running: the `Forwarder` has no hook for a sink to stop its source (`prysm-3jx.12.2`) |
 | Verify instance before saving (`--verify-instance`) | worker CLI | changed | Connect failure = worker failure |
 | Receiver busy detection | `Busy` → event, UI state | changed | New connection replaces the old one |
 | Frame format on the wire | NV12 (native) | present | Native limited BT.709 NV12, sampled on the receiver without conversion (W13) |
-| Codecs: raw, LZ4, OpenH264, GStreamer `rvenc` HW with SW fallback | [encoder.rs](../../apps/prysm-webos-capture/src/encoder.rs), [gst.rs](../../apps/prysm-webos-capture/src/encoder/gst.rs) | built, unverified | [prysm-h264](../../v1/adapters/h264/src/lib.rs) + [h264-rvenc-sys](../../v1/adapters/h264-rvenc-sys/src/lib.rs): `capture.encoding` `h264_hardware` (default), `h264_software`, `raw`; exactly the configured encoder, a failure fails the worker, no automatic fallback. Receiver decodes to NV12 and asks for a keyframe after a lost picture. LZ4 dropped. Hardware path cross-built only (`prysm-3jx.12.2`) |
+| Codecs: raw, LZ4, OpenH264, GStreamer `rvenc` HW with SW fallback | [encoder.rs](../../apps/prysm-webos-capture/src/encoder.rs), [gst.rs](../../apps/prysm-webos-capture/src/encoder/gst.rs) | built, unverified | [prysm-h264](../../v1/adapters/h264/src/lib.rs) + [h264-rvenc-sys](../../v1/adapters/h264-rvenc-sys/src/lib.rs): the requested `encoding` `h264_hardware` (default), `h264_software`, `raw`; exactly that encoder, no automatic fallback: a failure is reported by the TV (`failure_kind: encoder`) and refused to the receiver (lighting stops with the reason) until the request changes. Receiver decodes to NV12 and asks for a keyframe after a lost picture. LZ4 dropped. Hardware path cross-built only (`prysm-3jx.12.2`) |
 | Backpressure | 100 ms frame deadline, drop on overrun, `MissedTick` | partial | 2 s write timeout ends the worker |
 | Reconnect | worker exit, supervisor backoff 1–5 s | partial | worker exit, backoff 1–30 s |
 | Pacing that skips missed ticks | session.rs `pace` | present | source.rs |
@@ -257,6 +257,9 @@ Wi-Fi, raw 640×360 RGB does not fit (Q2).
    accept only `Origin: null` plus a Host allowlist? Recommendation: add the
    `null`-only option now (W11). It keeps "no token" and closes cross-site
    control from any page a LAN user visits.
+   **Decided (`prysm-3jx.56`):** `--allow-origin null` accepts exactly
+   `Origin: null`; the slim setup starts the desktop Prysm with it. No relay
+   page.
 2. **Slim bandwidth.** Raw RGB at the old recommended 640×360 is ~166 Mbit/s.
    Recommendation: send NV12 (W13) and default slim to 320×180. Reintroduce LZ4
    (cheap, lossless) before H.264. Keep hardware H.264 out of v1 unless a
@@ -265,7 +268,11 @@ Wi-Fi, raw 640×360 RGB does not fit (Q2).
    the slim stream (`prysm-3jx.12.2`). The recommendation above no longer
    applies. Later the same day: no automatic fallback; `capture.encoding` is
    `h264_hardware`, `h264_software` or `raw`, and an encoder that cannot start
-   or fails is a reported worker failure.
+   or fails is a reported worker failure. **Changed by `prysm-3jx.63`:** the
+   desktop portal's `remote` capture settings own size, rate, menus and
+   encoding, sent to the TV in the wire-version-3 handshake; the TV has no
+   capture preference. An encoder failure no longer ends the worker: it is
+   reported and the request is refused until it changes.
 3. **Only capture when wanted.** Streaming continuously keeps the LG tap and
    ~40 Mbit/s busy while the lights are off. Recommendation: a one-byte
    "pause/resume" from receiver to sender on the existing TCP connection (W21),

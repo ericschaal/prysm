@@ -217,7 +217,7 @@ export function LightingCard({
     status = `${capitalize(where)} does not allow control from the TV.`;
     detail =
       flavor === 'slim'
-        ? "Start Prysm on your computer with --allow-origin '*' to use these buttons. Capture works without it."
+        ? "Start Prysm on your computer with --allow-origin null to use these buttons. Capture works without it."
         : 'Restart the TV app; if this persists, check the Prysm service.';
     attention = true;
   } else if (connection?.error) {

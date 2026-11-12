@@ -2,7 +2,7 @@
 //! schemas by the frontend contract tests.
 use prysm_capture_device::{DeviceSettings, DeviceSource};
 use prysm_capture_file::{FileSettings, FileSource};
-use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings};
+use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, StreamEncoding, StreamRequest};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
@@ -15,7 +15,7 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{FailureKind, SlimCapture, Video};
+use prysm_webos_link::{FailureKind, Video};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
@@ -41,11 +41,6 @@ fn luna() -> Value {
         autostart: true,
         instance: Some("http://192.168.1.20:8787".into()),
         receiver: Some(SocketAddr::from(([192, 168, 1, 20], 7380))),
-        capture: Some(SlimCapture {
-            fps: 25,
-            include_ui: false,
-            ..SlimCapture::default()
-        }),
     };
     let full = TvState {
         flavor: Flavor::Full,
@@ -69,11 +64,11 @@ fn luna() -> Value {
         lighting: None,
         power: Power::ScreenSaver,
         video: Video::Unknown,
-        worker: Phase::Retrying,
+        worker: Phase::Running,
         capturing: false,
         portal: None,
         failure: Some(
-            "worker failed: hardware H.264 encoder cannot start: rvenc unavailable".into(),
+            "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable".into(),
         ),
         failure_kind: Some(FailureKind::Encoder),
         encoding: None,
@@ -210,10 +205,25 @@ fn application() -> Value {
                 &FileSettings { width: 320, height: 180, fps: 24, ..FileSettings::new("clip.mp4") },
             ),
         ],
-        "RemoteReceiverSettings": [AdapterSettings::new(
-            RemoteReceiver::KIND,
-            &RemoteReceiverSettings { listen: SocketAddr::from(([0, 0, 0, 0], 7380)) },
-        )],
+        "RemoteReceiverSettings": [
+            AdapterSettings::new(
+                RemoteReceiver::KIND,
+                &RemoteReceiverSettings::new(SocketAddr::from(([0, 0, 0, 0], 7380))),
+            ),
+            AdapterSettings::new(
+                RemoteReceiver::KIND,
+                &RemoteReceiverSettings::with_request(
+                    SocketAddr::from(([0, 0, 0, 0], 7380)),
+                    StreamRequest {
+                        width: 640,
+                        height: 280,
+                        fps: 25,
+                        include_ui: false,
+                        encoding: StreamEncoding::H264Software,
+                    },
+                ),
+            ),
+        ],
         "WledSettings": [AdapterSettings::new(
             Wled::KIND,
             &WledSettings {

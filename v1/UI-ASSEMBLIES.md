@@ -38,7 +38,7 @@ On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
   of `setup.sh`) and an HTTP client factory for the Prysm that drives the
   lights. Full: the TV's own portal over loopback (`http://127.0.0.1:<port of
   State.portal>`). Slim: `preferences.instance`, the computer's portal, which
-  must allow the app's origin (`--allow-origin '*'`; a `file://` app sends
+  must allow the app's origin (`--allow-origin null`; a `file://` app sends
   `Origin: null`); the UI says so when that portal answers but refuses. The
   slim UI fills `preferences.receiver` from that portal's `capture.listen`
   port. `demo.html` in each host folder runs the same UI on in-memory fakes
@@ -62,7 +62,7 @@ result or rejecting with a typed `Failure`. The
 [HTTP client](frontend/packages/application-client/http.ts) implements it:
 `httpApplicationClient()` talks to the page's own portal, and
 `httpApplicationClient({ baseUrl: 'http://192.168.1.20:8787' })` to a remote one
-that allows the page's origin (`--allow-origin`; a `file://` app needs `'*'`, see
+that allows the page's origin (`--allow-origin`; a `file://` app needs `null`, see
 [portal access](surfaces/web-portal/HTTP-CONTRACT.md#access)). The portal needs
 no credentials.
 [application-state](frontend/STATE.md) holds the latest state and command

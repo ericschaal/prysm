@@ -1,4 +1,5 @@
 //! The lighting-host end: a listener thread that keeps only the newest frame.
+use crate::request::{StreamEncoding, StreamRequest};
 use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::{Frame, FramePool};
 use prysm_h264::Decoder;
@@ -7,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -16,7 +17,10 @@ use std::time::Duration;
 /// `close` returns within about one tick.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Settings for kind `"remote"`: `{ "kind": "remote", "listen": "0.0.0.0:7380" }`.
+/// Settings for kind `"remote"`: where to listen and the stream to ask the
+/// sender for, `{ "kind": "remote", "listen": "0.0.0.0:7380", "width": 320,
+/// "height": 180, "fps": 30, "include_ui": true, "encoding": "h264_hardware" }`.
+/// Every field but `listen` is optional.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
@@ -24,6 +28,89 @@ pub struct RemoteReceiverSettings {
     /// Address and fixed port the capture host connects to.
     #[cfg_attr(feature = "schema", schema(value_type = String, example = "0.0.0.0:7380"))]
     pub listen: SocketAddr,
+    /// Requested picture width: even, 2 to 1920 (H.264: at least 16).
+    #[serde(default = "defaults::width")]
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 2, maximum = 1920, multiple_of = 2, default = 320)
+    )]
+    pub width: u32,
+    /// Requested picture height: even, 2 to 1080 (H.264: at least 16).
+    #[serde(default = "defaults::height")]
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 2, maximum = 1080, multiple_of = 2, default = 180)
+    )]
+    pub height: u32,
+    /// Requested frames per second.
+    #[serde(default = "defaults::fps")]
+    #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 60, default = 30))]
+    pub fps: u32,
+    /// Blend the sender's on-screen menus (the TV's) into the picture.
+    #[serde(default = "defaults::include_ui")]
+    #[cfg_attr(feature = "schema", schema(default = true))]
+    pub include_ui: bool,
+    /// How the sender encodes the stream. It uses exactly this encoder; if
+    /// that fails, lighting stops with the sender's reason.
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schema(default = "h264_hardware"))]
+    pub encoding: StreamEncoding,
+}
+
+mod defaults {
+    use super::StreamRequest;
+
+    pub fn width() -> u32 {
+        StreamRequest::default().width
+    }
+    pub fn height() -> u32 {
+        StreamRequest::default().height
+    }
+    pub fn fps() -> u32 {
+        StreamRequest::default().fps
+    }
+    pub fn include_ui() -> bool {
+        StreamRequest::default().include_ui
+    }
+}
+
+impl RemoteReceiverSettings {
+    /// Listen on `listen` and ask for the default stream.
+    #[must_use]
+    pub fn new(listen: SocketAddr) -> Self {
+        Self::with_request(listen, StreamRequest::default())
+    }
+
+    #[must_use]
+    pub fn with_request(listen: SocketAddr, request: StreamRequest) -> Self {
+        let StreamRequest {
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding,
+        } = request;
+        Self {
+            listen,
+            width,
+            height,
+            fps,
+            include_ui,
+            encoding,
+        }
+    }
+
+    /// The stream asked of the sender.
+    #[must_use]
+    pub fn request(&self) -> StreamRequest {
+        StreamRequest {
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            include_ui: self.include_ui,
+            encoding: self.encoding,
+        }
+    }
 }
 
 /// Registers kind `"remote"`: frames sent by a [`RemoteSender`](crate::RemoteSender).
@@ -41,32 +128,43 @@ impl SourceFactory for RemoteReceiver {
                 "needs a fixed port the sender can connect to",
             ));
         }
-        Ok(())
+        settings.request().validate()
     }
 
     fn open(&self, settings: &RemoteReceiverSettings) -> Result<Box<dyn FrameSource>> {
-        Ok(Box::new(RemoteSource::bind(settings.listen)?))
+        Ok(Box::new(RemoteSource::bind(
+            settings.listen,
+            settings.request(),
+        )?))
     }
 }
 
 /// A listening socket and its receive thread. One sender at a time; a new
 /// connection replaces the current one. Frames are not queued: `next_frame`
 /// returns the newest complete frame received since the last call.
+///
+/// Every sender is asked for the same [`StreamRequest`]; a new request needs
+/// a new source (the engine reopens it when the settings change, and the
+/// sender reconnects). A sender that cannot produce the request refuses it:
+/// `next_frame` then fails with its reason.
 #[derive(Debug)]
 pub struct RemoteSource {
     local_addr: SocketAddr,
+    request: StreamRequest,
     frames: Arc<LatestSlot<Frame>>,
+    refused: Arc<Mutex<Option<String>>>,
     stop: Arc<AtomicBool>,
     wanted: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl RemoteSource {
-    /// Bind `listen` (port 0 picks a free port; see [`Self::local_addr`]).
+    /// Bind `listen` (port 0 picks a free port; see [`Self::local_addr`])
+    /// and ask every sender for `request`.
     ///
     /// # Errors
     /// The address cannot be bound or the receive thread cannot start.
-    pub fn bind(listen: SocketAddr) -> Result<Self> {
+    pub fn bind(listen: SocketAddr, request: StreamRequest) -> Result<Self> {
         let listener = TcpListener::bind(listen)
             .map_err(|error| Error::adapter(format!("cannot listen on {listen}"), error))?;
         let local_addr = listener
@@ -76,6 +174,7 @@ impl RemoteSource {
                 Error::adapter(format!("cannot configure listener {listen}"), error)
             })?;
         let frames = Arc::new(LatestSlot::new());
+        let refused = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let wanted = Arc::new(AtomicBool::new(true));
         let receiver = Receiver {
@@ -85,7 +184,9 @@ impl RemoteSource {
                 wanted: wanted.clone(),
                 told: Cell::new(true),
             },
+            request,
             frames: frames.clone(),
+            refused: refused.clone(),
             pool: FramePool::default(),
             rejected: None,
             payload: Vec::new(),
@@ -96,7 +197,9 @@ impl RemoteSource {
             .map_err(|error| Error::adapter("cannot start the remote receive thread", error))?;
         Ok(Self {
             local_addr,
+            request,
             frames,
+            refused,
             stop,
             wanted,
             thread: Some(thread),
@@ -109,6 +212,12 @@ impl RemoteSource {
     /// sender before ending the connection.
     pub fn set_wanted(&self, wanted: bool) {
         self.wanted.store(wanted, Ordering::Release);
+    }
+
+    /// What every sender is asked for.
+    #[must_use]
+    pub fn request(&self) -> StreamRequest {
+        self.request
     }
 
     /// The bound address, with the actual port.
@@ -128,6 +237,17 @@ impl RemoteSource {
 
 impl FrameSource for RemoteSource {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
+        let refused = self
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(reason) = refused {
+            return Err(Error::adapter(
+                format!("the sender cannot stream {}", self.request),
+                WireError::Refused(reason),
+            ));
+        }
         if let Some(frame) = self.frames.take_timeout(timeout) {
             return Ok(Pull::Frame(frame));
         }
@@ -248,7 +368,10 @@ impl Wake {
 
 struct Receiver {
     wake: Wake,
+    request: StreamRequest,
     frames: Arc<LatestSlot<Frame>>,
+    /// The sender's reason for refusing the request, until `next_frame` reports it.
+    refused: Arc<Mutex<Option<String>>>,
     pool: FramePool,
     /// The last refused hello, so a sender retrying every second is logged once.
     rejected: Option<WireError>,
@@ -283,27 +406,27 @@ impl Receiver {
                 },
             };
             next = match self.greet(&stream) {
-                Ok(encoding) => self.serve(&stream, encoding),
+                Ok(()) => self.serve(&stream, self.request.encoding.into()),
                 Err(next) => next,
             };
         }
     }
 
-    /// Read the hello and answer it. A refused stream is answered with this
-    /// end's version and closed; the refusal is logged.
-    fn greet(&mut self, mut stream: &TcpStream) -> Result<Encoding, Next> {
+    /// Read the hello and answer it with the request. A refused hello is
+    /// answered with this end's version and closed; the refusal is logged.
+    fn greet(&mut self, mut stream: &TcpStream) -> Result<(), Next> {
         let mut hello = [0; HELLO_LEN];
         self.wake.read_full(stream, &mut hello)?;
         let outcome = wire::accept(&hello);
         // The sender learns the outcome from the reply; if it is gone, the
         // next read ends the connection.
-        let _ = stream.write_all(&wire::reply(&outcome));
+        let _ = stream.write_all(&wire::reply(outcome.as_ref().map(|()| &self.request)));
         match outcome {
-            Ok(encoding) => {
+            Ok(()) => {
                 self.rejected = None;
                 self.wake.told.set(true);
                 self.wake.signal(stream);
-                Ok(encoding)
+                Ok(())
             }
             Err(error) => {
                 if self.rejected.as_ref() != Some(&error) {
@@ -334,6 +457,18 @@ impl Receiver {
             let mut header = [0; HEADER_LEN];
             if let Err(next) = self.wake.read_full(stream, &mut header) {
                 break next;
+            }
+            if let Some(len) = wire::refusal_len(&header) {
+                if let Ok(len) = len {
+                    self.payload.resize(len, 0);
+                    let mut reason = std::mem::take(&mut self.payload);
+                    let read = self.wake.read_full(stream, &mut reason);
+                    if read.is_ok() {
+                        self.refuse(&String::from_utf8_lossy(&reason));
+                    }
+                    self.payload = reason;
+                }
+                break Next::Wait;
             }
             // Validated before allocating.
             let Ok((header, len)) = Header::decode(&header, encoding) else {
@@ -372,6 +507,14 @@ impl Receiver {
             send_control(stream, Control::Pause);
         }
         next
+    }
+}
+
+impl Receiver {
+    /// The sender cannot produce the request: keep its reason for `next_frame`.
+    fn refuse(&self, reason: &str) {
+        tracing::warn!(request = %self.request, reason, "the remote sender refused the stream");
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(reason.to_owned());
     }
 }
 
@@ -474,11 +617,20 @@ mod schema_tests {
 
     #[test]
     fn schema_matches_serde_shape() {
-        let settings = RemoteReceiverSettings {
-            listen: "0.0.0.0:7380".parse().unwrap(),
-        };
+        let settings = RemoteReceiverSettings::new("0.0.0.0:7380".parse().unwrap());
         let schema = same_shape(&settings);
         assert_eq!(schema["required"], json!(["listen"]));
         assert_eq!(schema["properties"]["listen"]["type"], json!("string"));
+        for (field, default) in [
+            ("width", json!(320)),
+            ("height", json!(180)),
+            ("fps", json!(30)),
+            ("include_ui", json!(true)),
+            ("encoding", json!("h264_hardware")),
+        ] {
+            assert_eq!(schema["properties"][field]["default"], default, "{field}");
+            assert_eq!(serde_json::to_value(settings).unwrap()[field], default);
+        }
+        assert_eq!(schema["properties"]["fps"]["maximum"], json!(60));
     }
 }

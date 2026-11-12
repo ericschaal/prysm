@@ -31,8 +31,12 @@ Contracts: [ownership and generation](CONTRACTS.md), [portal HTTP](surfaces/web-
 
 A `file` source plays once (`"repeat": true` loops it); at its end lighting
 stops without a failure and the target becomes `off`. The `remote` source
-listens only while lighting runs; the TV's slim worker reconnects every second
-and reports that it is waiting meanwhile. While lighting runs, the state's
+listens only while lighting runs and asks the sender for the stream its
+settings describe (size, rate, menus, encoding; see
+[capture-remote](adapters/capture-remote/README.md)); the TV's slim worker
+reconnects every second, reports that it is waiting meanwhile, and captures
+and encodes as requested. A sender that cannot produce the request (its
+encoder failed) refuses it, and lighting stops with its reason. While lighting runs, the state's
 `input` gives the measured frame rate and whether frames are arriving; while
 none arrive lighting is waiting for video and the output is left to its own
 state.
@@ -44,8 +48,8 @@ cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.ex
 
 Both take a JSON settings file (examples: [headless](hosts/headless/settings.example.json),
 [tui](hosts/tui/settings.example.json)) and process options on the command line:
-`--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable, `'*'`
-for any), `--no-portal`, `--start` and `--log-file PATH`. Log lines (`tracing`
+`--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable;
+`null` for the slim TV app, `'*'` for any), `--no-portal`, `--start` and `--log-file PATH`. Log lines (`tracing`
 events, including those of the shared capture and processing crates) go to
 stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
 `RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the

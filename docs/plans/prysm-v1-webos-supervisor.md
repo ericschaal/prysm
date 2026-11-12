@@ -100,7 +100,8 @@ has one Luna binding.
 - **Start**: argv only, built without a shell
   ([args.rs](../../v1/crates/webos-link/src/args.rs)):
   `prysm-webos --settings /var/lib/io.prysm.tv/settings.json --listen 0.0.0.0:8787 --lighting off`;
-  `prysm-webos-slim --receiver 192.168.1.20:7380 --width 320 --height 180 --fps 30 --include-ui true`.
+  `prysm-webos-slim --receiver 192.168.1.20:7380` (size, rate, menus and
+  encoding come from the receiver's stream request, `prysm-3jx.63`).
 - **Commands**: worker stdin. **Events**: the worker's original stdout. The
   worker duplicates fd 1 (CLOEXEC) for events and points fd 1 at stderr so
   vendor output cannot corrupt the stream. Logs: stderr.
@@ -231,9 +232,7 @@ pub struct Preferences {            // tv.json; unknown fields rejected
     pub autostart: bool,
     pub instance: Option<String>,   // slim: remote portal origin for the TV UI, http(s)://host[:port]
     pub receiver: Option<SocketAddr>, // slim: frame receiver; full rejects both
-    pub capture: Option<SlimCapture>, // slim: always set (absent in a request: 320x180 @ 30,
-                                    // include_ui, h264_hardware); full: null (capture is the portal's)
-}
+}                                   // picture settings: the portals' (prysm-3jx.63)
 pub struct State {
     pub flavor: Flavor,             // full | slim
     pub preferences: Preferences,
@@ -258,7 +257,8 @@ in the app) and talks to the portal through the hidden
 `calibration-tv.html` relay. v1 keeps that split: the full TV UI uses its own
 portal (`State.portal`), the slim one `preferences.instance`. Neither the Luna
 API nor the worker protocol is involved; anything calibration later needs from
-capture is a portal setting (full) or `preferences.capture` (slim). Both enums
+capture is a portal setting (full: the TV's portal; slim: the desktop's
+`remote` capture, sent to the TV as the stream request). Both enums
 are tagged, so a TV-side step would be one added variant.
 
 ## 7. TV UI parity checklist

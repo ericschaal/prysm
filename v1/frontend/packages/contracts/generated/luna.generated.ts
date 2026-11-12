@@ -16,9 +16,10 @@ export interface components {
         };
         /**
          * @description What a failure is, so the app can offer the matching fix. `encoder`
-         *     (slim): the configured encoder could not start or failed; another
-         *     encoding may work. `receiver` (slim): the receiver is unavailable or
-         *     paused the stream; the worker keeps reconnecting. `other`: anything else.
+         *     (slim): the encoder the receiver requested could not start or failed;
+         *     the receiver is told, and another encoding chosen in its portal may work.
+         *     `receiver` (slim): the receiver is unavailable or paused the stream; the
+         *     worker keeps reconnecting. `other`: anything else.
          * @enum {string}
          */
         FailureKind: "encoder" | "receiver" | "other";
@@ -55,8 +56,6 @@ export interface components {
              * @default false
              */
             autostart?: boolean;
-            /** @default null */
-            capture?: components["schemas"]["SlimCapture"] | null;
             /**
              * @description Slim only: the headless Prysm's portal origin, such as
              *     `http://192.168.1.20:8787`. Only the TV app uses it.
@@ -77,37 +76,8 @@ export interface components {
             enabled: boolean;
         };
         /**
-         * @description Capture size, rate and menu blending of the slim package (the same rules
-         *     as the `webos` capture settings), and how its frames are encoded.
-         */
-        SlimCapture: {
-            /** @default h264_hardware */
-            encoding?: components["schemas"]["SlimEncoding"];
-            /**
-             * Format: int32
-             * @default 30
-             */
-            fps?: number;
-            /**
-             * Format: int32
-             * @description Even, 2 to 1080.
-             * @default 180
-             */
-            height?: number;
-            /**
-             * @description Blend TV menus into the capture.
-             * @default true
-             */
-            include_ui?: boolean;
-            /**
-             * Format: int32
-             * @description Even, 2 to 1920.
-             * @default 320
-             */
-            width?: number;
-        };
-        /**
-         * @description How the slim package encodes the frames it sends. Exactly this encoder is
+         * @description How the slim package encodes the frames it sends: the encoding its
+         *     receiver requested (set in the desktop portal). Exactly this encoder is
          *     used; one that cannot start or fails is a failure, never a switch to
          *     another. `h264_hardware`: the TV's hardware H.264 encoder (about
          *     2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
@@ -175,7 +145,6 @@ export type Phase = components['schemas']['Phase'];
 export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
-export type SlimCapture = components['schemas']['SlimCapture'];
 export type SlimEncoding = components['schemas']['SlimEncoding'];
 export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];

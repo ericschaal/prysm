@@ -453,32 +453,23 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
     assert_eq!(service.store.1, Some(LightingTarget::Off));
 }
 
+/// Picture settings are not TV preferences in either package: the slim
+/// worker follows its receiver's request, the full one the portal.
 #[test]
-fn slim_always_has_a_capture_and_full_never_does() {
+fn neither_package_has_a_capture_preference() {
+    for config in [slim_config(), config()] {
+        let mut harness = Harness::new(config, None);
+        let state = harness.call("getState", "x", "{}");
+        assert_eq!(state["preferences"].get("capture"), None, "{state}");
+        let refused = harness.app("setPreferences", r#"{"capture":{"width":320}}"#);
+        assert!(
+            refused["errorText"].as_str().unwrap().contains("capture"),
+            "{refused}"
+        );
+    }
     let mut slim = Harness::new(slim_config(), None);
-    assert_eq!(
-        slim.call("getState", "x", "{}")["preferences"]["capture"]["width"],
-        320
-    );
     let reply = slim.app("setPreferences", r#"{"receiver":"192.168.1.20:7380"}"#);
-    assert_eq!(reply["preferences"]["capture"]["encoding"], "h264_hardware");
-    assert_eq!(
-        slim.service.store.0.as_ref().unwrap().capture,
-        Some(prysm_webos_link::SlimCapture::default())
-    );
-
-    let mut full = Harness::new(config(), None);
-    assert_eq!(
-        full.call("getState", "x", "{}")["preferences"]["capture"],
-        Value::Null
-    );
-    let refused = full.app("setPreferences", r#"{"capture":{"width":320}}"#);
-    assert!(
-        refused["errorText"]
-            .as_str()
-            .unwrap()
-            .starts_with("capture")
-    );
+    assert_eq!(reply["preferences"]["receiver"], "192.168.1.20:7380");
 }
 
 #[test]
