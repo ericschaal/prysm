@@ -20,8 +20,9 @@ missing. Two v1 changes look accidental and would regress the shipping product.
 The full worker lost the NEON NV12 kernel and the Rayon processing, which the
 research says are worth 25 → 30 FPS at 640×360 and 17 → 30 FPS at 720p. The slim
 worker originally converted NV12 to RGB on the TV and sent RGB24; since W13 it
-forwards native NV12 (half the bytes), still with no compression and no
-"capture only while wanted". Everything below the TV
+forwards native NV12 (half the bytes); since `prysm-3jx.12.2` it encodes it
+with the hardware H.264 encoder by default (software OpenH264 or raw by
+setting), and the receiver pauses it when lighting stops. Everything below the TV
 UI is "built, unverified" until `prysm-3jx.22`.
 
 Status values: **present** (code exists and is tested on the host), **built,
@@ -36,7 +37,7 @@ intentional difference, see §3).
 | --- | --- | --- | --- |
 | IPK `io.prysm.capture` (app + service dir) | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | built, unverified | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) `full`/`slim`: both `io.prysm.tv`, built with the SDK; not installed on a TV (`prysm-3jx.20.2`) |
 | Payload hardening: root ownership, `go-w`, no control scripts, links or stray paths | [secure-ipk.py](../../packaging/webos/secure-ipk.py), [test_ipk.py](../../packaging/webos/tests/test_ipk.py) | present | [ipk.py](../../v1/packaging/webos/ipk.py): one allowlist (both flavours share paths), exact service file set, ELF checks; [tests](../../v1/packaging/webos/tests/test_ipk.py) |
-| Homebrew Channel `exec setup.sh` from the app (root) | [useCaptureService.ts](../../crates/web/prysm-webos/src/hooks/useCaptureService.ts) `setup()` | partial | `setup` CLI in [cli.rs](../../v1/hosts/webos-service/src/cli.rs), [setup.sh](../../v1/packaging/webos/service/setup.sh) packaged; no UI call |
+| Homebrew Channel `exec setup.sh` from the app (root) | [useCaptureService.ts](../../crates/web/prysm-webos/src/hooks/useCaptureService.ts) `setup()` | partial | `setup` CLI in [cli.rs](../../v1/hosts/webos-service/src/cli.rs), [setup.sh](../../v1/packaging/webos/service/setup.sh) packaged; UI call in [webos-platform](../../v1/frontend/packages/webos-platform/index.ts) `setup()` |
 | Role manifests (worker, supervisor), refuse unrelated files | [files.rs](../../apps/prysm-webos-service/src/files.rs) | built, unverified | [install.rs](../../v1/hosts/webos-service/src/install.rs); role/service/permission files in [service/](../../v1/packaging/webos/service/) |
 | Absolute `ls-control`/`luna-send` paths (0.1.10 boot failure) | [setup.rs](../../apps/prysm-webos-service/src/setup.rs) | present | `Layout` paths are absolute |
 | Bounded rescan and activation, `returnValue` checked | setup.rs (10 s) | present | 10 s `run_bounded` |
@@ -48,32 +49,37 @@ intentional difference, see §3).
 
 ### TV UI (extends [supervisor plan §7](prysm-v1-webos-supervisor.md#7-tv-ui-parity-checklist))
 
-The v1 [TV UI](../../v1/frontend/packages/tv-ui/index.tsx) runs only on
-fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/index.ts)
-(`service_ready`, `inspect_service`) matches neither Luna API.
+Updated 2026-11-12 (beads `prysm-3jx.21.1`, `.21.3`–`.21.5`). The v1
+[TV UI](../../v1/frontend/packages/tv-ui/index.tsx) runs on the
+[Luna client](../../v1/frontend/packages/webos-platform/index.ts) of the
+supervisor and on the HTTP API of the Prysm that drives the lights. Everything
+here is tested on the development host (jsdom, desktop browser at 1920×1080);
+nothing has run in a TV browser yet.
 
 | Capability | Shipping | v1 | Note |
 | --- | --- | --- | --- |
-| Status card, 12 states (connecting, unavailable, waiting for video/TV/Prysm, stopping, paused, ready, capturing, receiver in use, disabled, needs attention) | [capturePresentation.ts](../../crates/web/prysm-webos/src/capturePresentation.ts) | missing | `State` has the inputs except "receiver in use" |
-| Context-sensitive primary button (Set up service / Set receiver address / Save and enable / Enable / Disable / Pause / Allow TV capture) | same | missing | |
-| Settings rows with saved/unsaved badge and explicit Save | [Settings.tsx](../../crates/web/prysm-webos/src/components/Settings.tsx) | missing | |
-| Instance URL editor: host or IP → `http://host:8787`, https allowed | [CaptureDialog.tsx](../../crates/web/prysm-webos/src/components/CaptureDialog.tsx) | missing | v1 also needs `receiver` from remote `capture.listen` |
-| Capture choice: video + menus / video only | CaptureDialog | missing (API present) | slim `preferences.capture.include_ui`; full: portal |
-| Capture size and rate on the TV | negotiated by the receiver | missing (API present) | Slim needs a UI for `capture.width/height/fps` |
-| Compression choice (LZ4, none, H.264 SW, H.264 HW if built) | CaptureDialog | changed | Raw only |
-| Enable with TV | CaptureDialog | missing (API present) | `preferences.autostart` |
+| Status card, 12 states (connecting, unavailable, waiting for video/TV/Prysm, stopping, paused, ready, capturing, receiver in use, disabled, needs attention) | [capturePresentation.ts](../../crates/web/prysm-webos/src/capturePresentation.ts) | present | [model.ts](../../v1/frontend/packages/tv-ui/model.ts) `tvStatus`; "waiting for Prysm" from the slim worker's `waiting for the receiver` failure; "retrying" shows the failure but no retry time (`State` has none); "receiver in use" dropped with receiver busy |
+| Context-sensitive primary button (Set up service / Set receiver address / Save and enable / Enable / Disable / Pause / Allow TV capture) | same | present | Set up service / Set Prysm address / Save and enable / Enable / Disable; full: Start screen sync / Turn lights off (`setEnabled`) |
+| Settings rows with saved/unsaved badge and explicit Save | [Settings.tsx](../../crates/web/prysm-webos/src/components/Settings.tsx) | present | Save and Discard; a field changed elsewhere replaces the edit and says so |
+| Instance URL editor: host or IP → `http://host:8787`, https allowed | [CaptureDialog.tsx](../../crates/web/prysm-webos/src/components/CaptureDialog.tsx) | present | `receiver` filled from the remote `capture.listen` port when the instance is an IP; editable (IP:port only, W12) |
+| Capture choice: video + menus / video only | CaptureDialog | present | slim `preferences.capture.include_ui`; full: TV Capture dialog on its portal |
+| Capture size and rate on the TV | negotiated by the receiver | present | Presets (320×180 … 1280×720, 15–60 fps), the current value kept if custom; full: saved to its portal |
+| Compression choice (LZ4, none, H.264 SW, H.264 HW if built) | CaptureDialog | partial | `preferences.capture.encoding` (`h264_hardware`, `h264_software`, `raw`) and `State.encoding` exist; no TV UI selector yet |
+| Enable with TV | CaptureDialog | present | `preferences.autostart` (full: "Start screen sync with TV") |
 | Prometheus metrics checkbox (port 9101) | Settings | changed | No metrics in v1 |
-| Service options: set up or repair, diagnostics, remove setup with confirmation | CaptureDialog | missing (API present) | |
-| Diagnostics: power, video, receiver connected, enabled, process running, error or last log | CaptureDialog | missing (API present) | v1 `State.log` keeps 20 lines |
-| Portal address and "open on your phone" (full) | [CaptureOverview.tsx](../../crates/web/prysm-webos/src/components/CaptureOverview.tsx) | partial | `State.portal`; v1 UI shows a link, unusable on a TV |
-| Lights on/off on the processing instance | not on TV (portal) | partial | `TvUi` buttons on a fixture client |
-| Calibrate colors: QR pairing, relay iframe, MSE pattern player, 17 bundled clips | [Calibration.tsx](../../crates/web/prysm-webos/src/components/Calibration.tsx), [patternStream.ts](../../crates/web/prysm-webos/src/patternStream.ts) | missing | `prysm-3jx.11` |
-| Remote navigation: spatial `data-up/down/left/right`, numeric key codes, magic-remote hover focus, focus restore, caret-safe arrows in inputs | [useRemoteNavigation.ts](../../crates/web/prysm-webos/src/hooks/useRemoteNavigation.ts) | partial | v1 cycles focus linearly |
-| Back: closes dialog one level, then asks "Close Prysm Capture?" | same | changed | v1 Back exits immediately |
-| Drafts survive status updates; stale replies ignored by `pid`/`revision` | useCaptureService.ts | missing | v1 `State` has neither `pid` nor `revision` |
-| 30 s call timeout, 3 s resubscribe, pause on `visibilitychange`/`pagehide` | same | missing | |
-| Behaviour tests (47 cases, calibration probe) | [app.test.cjs](../../crates/web/prysm-webos/tests/app.test.cjs) | missing | v1 has composition tests only |
-| Luna contract schema → generated TS types | xtask `codegen` `Contract::Webos`, [service.schema.json](../../crates/web/prysm-webos/service.schema.json) | missing | v1 `State`/`Preferences` derive no schema |
+| Service options: set up or repair, diagnostics, remove setup with confirmation | CaptureDialog | present | Homebrew `exec` of `…/services/io.prysm.tv.service/setup.sh`; `uninstall` |
+| Diagnostics: power, video, receiver connected, enabled, process running, error or last log | CaptureDialog | present | No "receiver connected" in `State`; `capturing`, worker phase, failure and the 20 log lines instead |
+| Portal address and "open on your phone" (full) | [CaptureOverview.tsx](../../crates/web/prysm-webos/src/components/CaptureOverview.tsx) | present | Text, no QR code; the app itself uses `http://127.0.0.1:<port>` |
+| Lights on/off on the processing instance | not on TV (portal) | present | Screen sync / WLED effects / Off on the own (full) or remote (slim) portal; full also edits WLED address, LED counts and capture |
+| Calibrate colors: QR pairing, relay iframe, MSE pattern player, 17 bundled clips | [Calibration.tsx](../../crates/web/prysm-webos/src/components/Calibration.tsx), [patternStream.ts](../../crates/web/prysm-webos/src/patternStream.ts) | missing | Row shown disabled as "not available in this version yet" (`prysm-3jx.11`) |
+| Remote navigation: spatial `data-up/down/left/right`, numeric key codes, magic-remote hover focus, focus restore, caret-safe arrows in inputs | [useRemoteNavigation.ts](../../crates/web/prysm-webos/src/hooks/useRemoteNavigation.ts) | present | [navigation.ts](../../v1/frontend/packages/tv-ui/navigation.ts): two columns and `data-row` groups instead of per-control maps; key codes 37–40, 13, 27, 461 |
+| Back: closes dialog one level, then asks "Close Prysm Capture?" | same | present | "Close Prysm?"; the app sets `disableBackHistoryAPI` |
+| Drafts survive status updates; stale replies ignored by `pid`/`revision` | useCaptureService.ts | changed | No `pid`/`revision`: replies only confirm, the subscription is the only state; portal dialogs check the section and `stale_revision` |
+| 30 s call timeout, 3 s resubscribe, pause on `visibilitychange`/`pagehide` | same | present | Luna and the portal stream |
+| Behaviour tests (47 cases, calibration probe) | [app.test.cjs](../../crates/web/prysm-webos/tests/app.test.cjs) | present | [tv.test.jsx](../../v1/frontend/tests/tv.test.jsx) (28 cases, no calibration) |
+| Luna contract schema → generated TS types | xtask `codegen` `Contract::Webos`, [service.schema.json](../../crates/web/prysm-webos/service.schema.json) | present | `@prysm/contracts/luna`; replies checked at runtime by `isState` |
+| Chromium 53 build (classic script, relative URLs) | [vite.config.ts](../../crates/web/prysm-webos/vite.config.ts) | present | Luna path only; portal control needs webOS 5+ (`AbortController`, streamed `fetch`) and says so on older TVs |
+| Slim control of the remote portal from `Origin: null` | — | partial | Works when the headless Prysm runs with `--allow-origin '*'`; otherwise the TV says how to allow it (Q1) |
 
 ### Luna service API
 
@@ -114,11 +120,11 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | Instance by hostname, `https`, TLS verified against the TV trust store | `InstanceUrl` | missing | `receiver` is a `SocketAddr`: IP only, no TLS (W12) |
 | Versioned hello; `idle`/`busy`/`capture_settings` replies | [control.rs](../../crates/capture/prysm-webos-protocol/src/control.rs) | partial | Wire version 2 hello (version, stream encoding) and accept/refuse reply; a mismatch is a typed `WireError` on both ends. No `idle`/`busy`/`capture_settings` |
 | Receiver chooses size and FPS (Screen sync) | `CaptureSettings` | changed | TV preferences; default 320×180@30 |
-| Capture only while the server wants frames (`Idle`) | `wait_for_capture` | changed | Streams while awake and enabled (`prysm-3jx.12`) |
+| Capture only while the server wants frames (`Idle`) | `wait_for_capture` | partial | The receiver pauses its sender on the open connection (one control byte; sent on `close`, or by `RemoteSource::set_wanted`) and nothing is encoded or sent; while the receiver is not listening nothing is encoded either. The TV capture itself keeps running: the `Forwarder` has no hook for a sink to stop its source (`prysm-3jx.12.2`) |
 | Verify instance before saving (`--verify-instance`) | worker CLI | changed | Connect failure = worker failure |
 | Receiver busy detection | `Busy` → event, UI state | changed | New connection replaces the old one |
 | Frame format on the wire | NV12 (native) | present | Native limited BT.709 NV12, sampled on the receiver without conversion (W13) |
-| Codecs: raw, LZ4, OpenH264, GStreamer `rvenc` HW with SW fallback | [encoder.rs](../../apps/prysm-webos-capture/src/encoder.rs), [gst.rs](../../apps/prysm-webos-capture/src/encoder/gst.rs) | changed | Raw only (`prysm-3jx.12`) |
+| Codecs: raw, LZ4, OpenH264, GStreamer `rvenc` HW with SW fallback | [encoder.rs](../../apps/prysm-webos-capture/src/encoder.rs), [gst.rs](../../apps/prysm-webos-capture/src/encoder/gst.rs) | built, unverified | [prysm-h264](../../v1/adapters/h264/src/lib.rs) + [h264-rvenc-sys](../../v1/adapters/h264-rvenc-sys/src/lib.rs): `capture.encoding` `h264_hardware` (default), `h264_software`, `raw`; exactly the configured encoder, a failure fails the worker, no automatic fallback. Receiver decodes to NV12 and asks for a keyframe after a lost picture. LZ4 dropped. Hardware path cross-built only (`prysm-3jx.12.2`) |
 | Backpressure | 100 ms frame deadline, drop on overrun, `MissedTick` | partial | 2 s write timeout ends the worker |
 | Reconnect | worker exit, supervisor backoff 1–5 s | partial | worker exit, backoff 1–30 s |
 | Pacing that skips missed ticks | session.rs `pace` | present | source.rs |
@@ -158,8 +164,8 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | Capability | Shipping | v1 | Note |
 | --- | --- | --- | --- |
 | `cargo xtask package webos [--hardware-h264] [--embedded-prysm]` | [xtask](../../xtask/src/main.rs) | changed | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) `full\|slim`, outside xtask; TV feature flags dropped |
-| `profile.webos` (fat LTO, strip), `cortex-a9`, soft-float linker with `glibc_polyfills` | [Cargo.toml](../../Cargo.toml), [linker.sh](../../packaging/webos/linker.sh) | present | [v1/Cargo.toml](../../v1/Cargo.toml) `profile.webos`, [env.sh](../../v1/packaging/webos/env.sh), [linker.sh](../../v1/packaging/webos/linker.sh) (adds `-ldl`) |
-| Licences: Prysm, hyperion, tv-native-apis (+ OpenH264, gstreamer-rs, gtk-rs) | build-ipk.sh | present | Prysm, hyperion, tv-native-apis in `licenses/`; codec notices dropped with the codecs |
+| `profile.webos` (fat LTO, strip), `cortex-a9`, soft-float linker with `glibc_polyfills` | [Cargo.toml](../../Cargo.toml), [linker.sh](../../packaging/webos/linker.sh) | present | [v1/Cargo.toml](../../v1/Cargo.toml) `profile.webos`, [env.sh](../../v1/packaging/webos/env.sh) (`cortex-a9`, `-soft-float,+neon`: hardware floats with the soft-float ABI; target pkg-config for the slim worker's GStreamer), [linker.sh](../../v1/packaging/webos/linker.sh) (adds `-ldl`) |
+| Licences: Prysm, hyperion, tv-native-apis (+ OpenH264, gstreamer-rs, gtk-rs) | build-ipk.sh | present | Prysm, hyperion, tv-native-apis in `licenses/`; the slim package adds OpenH264, gstreamer-rs and gtk-rs |
 | Luna bindgen generator with `--check` | [codegen/main.rs](../../apps/prysm-webos-service/codegen/main.rs) | present | [generate-luna-bindings](../../v1/adapters/webos-luna-sys/codegen/main.rs) (`--features codegen`); `--check` passes against the SDK |
 | CI: armv7 qemu tests, SDK IPK artifact, Miri armv7 + x86-64 | [check.yml](../../.github/workflows/check.yml) | missing | [v1.yml](../../.github/workflows/v1.yml) names crates that no longer exist |
 | Native smoke on the TV (read-only, `--supervisor`, `--capture`) | [native-smoke.py](../../packaging/webos/tests/native-smoke.py) | built, unverified | [native-smoke.py](../../v1/packaging/webos/tests/native-smoke.py): probe `io.prysm.tv.probe`, `run --sandbox`; dry-run only, never run on a TV |
@@ -171,8 +177,8 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | --- | --- | --- |
 | Two packages; no in-app full/slim switching, no `location`, no `capabilities` | Plan §1.1 | No |
 | Portal on the LAN without a token | Plan §1.2 | Partly: `AnyOrigin` with no Host check also lets any website in a LAN browser drive the portal (W11) |
-| Slim streams continuously; only-capture-when-wanted is gone | Plan §1.3 | Yes: the TV now captures and sends while the server's lights are off, all evening |
-| Raw frames only; LZ4, OpenH264 and hardware H.264 dropped | Plan §2, §7 | Yes: 2.5 days of hardware-encoder qualification are lost, and LZ4 was the shipping default |
+| Slim streams continuously; only-capture-when-wanted is gone | Plan §1.3 | Partly addressed (`prysm-3jx.12.2`): nothing is encoded or sent while the server's lights are off, but the TV still captures |
+| LZ4 dropped; hardware H.264 (default), OpenH264 and raw are an explicit setting without automatic fallback | Q2 decision, `prysm-3jx.12.2` | The hardware encoder's DMA, normalisation and first-picture rules are ported; its TV qualification has to be repeated for v1 |
 | Receiver chooses size/FPS → TV preferences | Plan §6 | Partly: the server's capture settings and the TV's now drift apart |
 | WS/WSS on the server port → raw TCP on a second port, no TLS, IP only | [capture-remote README](../../v1/adapters/capture-remote/README.md) | Yes: hostnames (`prysm.local`), https instances and firewalls with one open port stop working |
 | Receiver busy and instance verification dropped | Plan §2 | Partly: two TVs now steal the receiver silently |
@@ -206,7 +212,7 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | W18 | Run TV acceptance for both packages | Plan §10 TV list, plus full 640×360 and 720p FPS/CPU (90 s soak), slim bandwidth at 320×180 and 640×360, wake with Freebox/CEC, cold boot, hung-capture KILL, uninstall | `research/webos-capture` evidence | M | TV | W1, W3, W5 | P1: refines `prysm-3jx.22` |
 | W19 | Calibrate from the TV app | Portal calibration API, `calibration-tv.html` relay, pattern clips and MSE player, QR pairing, for both packages | portal + `tv-ui` | L | dev host, TV | W8 | P1: refines `prysm-3jx.11` |
 | W20 | Rewrite TV docs for v1 | `docs/users/webos.md`, `docs/developers/{webos,packaging}.md`; delete `hardware-h264.md` | `docs/` | S | dev host | W3 | P1: required at deletion |
-| W21 | Decide compression and wanted-frames for slim | LZ4 or H.264 as a new wire-v2 stream encoding; pause frames while the server's lights are off; reconnect without restarting the process | `capture-remote`, `hosts/webos-slim`, headless receiver | M | dev host, TV | W13 | P2: refines `prysm-3jx.12`; see Q2, Q3 |
+| W21 | Decide compression and wanted-frames for slim | LZ4 or H.264 as a new wire-v2 stream encoding; pause frames while the server's lights are off; reconnect without restarting the process | `capture-remote`, `hosts/webos-slim`, headless receiver | M | dev host, TV | W13 | P2: refines `prysm-3jx.12`; see Q2, Q3. Done on the dev host (`prysm-3jx.12.2`): H.264 encodings, pause/resume and keyframe requests; the uplink already reconnects. Hardware encoder and TV run open (W18) |
 
 ## 5. Performance and bandwidth facts
 
@@ -256,12 +262,15 @@ Wi-Fi, raw 640×360 RGB does not fit (Q2).
    (cheap, lossless) before H.264. Keep hardware H.264 out of v1 unless a
    measurement shows Wi-Fi TVs need it.
    **Decided 2026-11-12:** the hardware H.264 encoder becomes the default for
-   the slim stream, with a software fallback (`prysm-3jx.12.2`). The
-   recommendation above no longer applies.
+   the slim stream (`prysm-3jx.12.2`). The recommendation above no longer
+   applies. Later the same day: no automatic fallback; `capture.encoding` is
+   `h264_hardware`, `h264_software` or `raw`, and an encoder that cannot start
+   or fails is a reported worker failure.
 3. **Only capture when wanted.** Streaming continuously keeps the LG tap and
    ~40 Mbit/s busy while the lights are off. Recommendation: a one-byte
    "pause/resume" from receiver to sender on the existing TCP connection (W21),
-   after first ship.
+   after first ship. **Done in `prysm-3jx.12.2`** for encoding and sending;
+   stopping the TV capture itself would need a `Forwarder` hook.
 4. **Upgrade from `io.prysm.capture`.** No migration was decided, but both
    packages' boot hooks would run. Recommendation: `setup` refuses while the old
    hook or manifests exist and tells the user to run the old app's **Remove

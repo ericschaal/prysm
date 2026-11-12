@@ -1,8 +1,10 @@
 //! The lighting-host end: a listener thread that keeps only the newest frame.
-use crate::wire::{self, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
+use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::{Frame, FramePool};
+use prysm_h264::Decoder;
 use prysm_ports::{Error, FrameSource, LatestSlot, Pull, Result, SourceFactory, ValidationError};
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
@@ -55,6 +57,7 @@ pub struct RemoteSource {
     local_addr: SocketAddr,
     frames: Arc<LatestSlot<Frame>>,
     stop: Arc<AtomicBool>,
+    wanted: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -74,14 +77,18 @@ impl RemoteSource {
             })?;
         let frames = Arc::new(LatestSlot::new());
         let stop = Arc::new(AtomicBool::new(false));
+        let wanted = Arc::new(AtomicBool::new(true));
         let receiver = Receiver {
             wake: Wake {
                 listener,
                 stop: stop.clone(),
+                wanted: wanted.clone(),
+                told: Cell::new(true),
             },
             frames: frames.clone(),
             pool: FramePool::default(),
             rejected: None,
+            payload: Vec::new(),
         };
         let thread = thread::Builder::new()
             .name("prysm-remote-receiver".into())
@@ -91,8 +98,17 @@ impl RemoteSource {
             local_addr,
             frames,
             stop,
+            wanted,
             thread: Some(thread),
         })
+    }
+
+    /// Ask the sender to pause (`false`: it stops encoding and sending) or
+    /// resume (`true`, the default). Takes effect within about
+    /// [`POLL_INTERVAL`]; a new sender is told at once. `close` pauses the
+    /// sender before ending the connection.
+    pub fn set_wanted(&self, wanted: bool) {
+        self.wanted.store(wanted, Ordering::Release);
     }
 
     /// The bound address, with the actual port.
@@ -145,11 +161,30 @@ enum Next {
 struct Wake {
     listener: TcpListener,
     stop: Arc<AtomicBool>,
+    wanted: Arc<AtomicBool>,
+    /// What the current sender was last told (a new one starts unpaused).
+    told: Cell<bool>,
 }
 
 impl Wake {
     fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
+    }
+
+    /// Tell the sender about a change of [`RemoteSource::set_wanted`].
+    fn signal(&self, stream: &TcpStream) {
+        let wanted = self.wanted.load(Ordering::Acquire);
+        if wanted != self.told.get() {
+            send_control(
+                stream,
+                if wanted {
+                    Control::Resume
+                } else {
+                    Control::Pause
+                },
+            );
+            self.told.set(wanted);
+        }
     }
 
     /// The newest pending connection, if any.
@@ -202,6 +237,7 @@ impl Wake {
                     if let Some(newer) = self.accept() {
                         return Err(Next::Switch(newer));
                     }
+                    self.signal(stream);
                 }
                 Err(_) => return Err(Next::Wait),
             }
@@ -216,6 +252,22 @@ struct Receiver {
     pool: FramePool,
     /// The last refused hello, so a sender retrying every second is logged once.
     rejected: Option<WireError>,
+    /// The current H.264 access unit, reused (at most `MAX_PAYLOAD_BYTES`).
+    payload: Vec<u8>,
+}
+
+/// One control byte to the sender. The socket's send buffer is empty in
+/// practice (the sender reads every frame), so this does not block; if the
+/// sender is gone, the next read ends the connection.
+fn send_control(mut stream: &TcpStream, control: Control) {
+    let _ = stream.write_all(&[control.code()]);
+}
+
+/// Decoding state of one H.264 connection.
+struct H264 {
+    decoder: Option<Decoder>,
+    /// Pictures are skipped until a keyframe; the sender was asked for one.
+    waiting: bool,
 }
 
 impl Receiver {
@@ -249,6 +301,8 @@ impl Receiver {
         match outcome {
             Ok(encoding) => {
                 self.rejected = None;
+                self.wake.told.set(true);
+                self.wake.signal(stream);
                 Ok(encoding)
             }
             Err(error) => {
@@ -262,35 +316,119 @@ impl Receiver {
     }
 
     /// Receive frames until the connection ends. Malformed input drops the
-    /// connection; the sender is expected to reconnect.
+    /// connection; the sender is expected to reconnect. On `close` the
+    /// sender is paused before the connection ends.
     fn serve(&mut self, stream: &TcpStream, encoding: Encoding) -> Next {
-        loop {
+        let mut h264 = H264 {
+            decoder: None,
+            waiting: false,
+        };
+        let next = loop {
             if self.wake.stopped() {
-                return Next::Stop;
+                break Next::Stop;
             }
             if let Some(newer) = self.wake.accept() {
-                return Next::Switch(newer);
+                break Next::Switch(newer);
             }
+            self.wake.signal(stream);
             let mut header = [0; HEADER_LEN];
             if let Err(next) = self.wake.read_full(stream, &mut header) {
-                return next;
+                break next;
             }
             // Validated before allocating.
-            let Ok((header, _)) = Header::decode(&header, encoding) else {
-                return Next::Wait;
+            let Ok((header, len)) = Header::decode(&header, encoding) else {
+                break Next::Wait;
             };
             let Ok(mut writer) = self
                 .pool
                 .acquire(header.width, header.height, header.format)
             else {
-                return Next::Wait;
+                break Next::Wait;
             };
-            if let Err(next) = self.wake.read_full(stream, writer.as_mut_slice()) {
-                return next;
+            if encoding == Encoding::Raw {
+                if let Err(next) = self.wake.read_full(stream, writer.as_mut_slice()) {
+                    break next;
+                }
+                self.frames.offer(writer.finish());
+                continue;
             }
-            self.frames.offer(writer.finish());
+            self.payload.resize(len, 0);
+            let mut payload = std::mem::take(&mut self.payload);
+            let read = self.wake.read_full(stream, &mut payload);
+            let decoded =
+                read.map(|()| h264.decode(stream, &header, &payload, writer.as_mut_slice()));
+            self.payload = payload;
+            match decoded {
+                Err(next) => break next,
+                Ok(Ok(true)) => {
+                    self.frames.offer(writer.finish());
+                }
+                Ok(Ok(false)) => {}
+                // A keyframe that does not decode: start over on a new connection.
+                Ok(Err(())) => break Next::Wait,
+            }
+        };
+        if matches!(next, Next::Stop) {
+            send_control(stream, Control::Pause);
+        }
+        next
+    }
+}
+
+impl H264 {
+    /// `Ok(true)`: `nv12` holds the picture. `Ok(false)`: skipped while
+    /// waiting for a keyframe (one was requested). `Err`: a keyframe failed
+    /// to decode, so the stream itself is broken.
+    fn decode(
+        &mut self,
+        stream: &TcpStream,
+        header: &Header,
+        payload: &[u8],
+        nv12: &mut [u8],
+    ) -> Result<bool, ()> {
+        if header.keyframe {
+            // A new encoder session: never carry references across sessions.
+            self.decoder = None;
+            self.waiting = false;
+        } else if self.waiting {
+            return Ok(false);
+        }
+        let decoded = match &mut self.decoder {
+            Some(decoder) => decoder.decode(payload, header.width, header.height, nv12),
+            None if header.keyframe => Decoder::new().and_then(|decoder| {
+                self.decoder
+                    .insert(decoder)
+                    .decode(payload, header.width, header.height, nv12)
+            }),
+            // A stream must start with a keyframe.
+            None => Err(prysm_h264::H264Error::NoPicture),
+        };
+        match decoded {
+            Ok(()) => Ok(true),
+            Err(error) if header.keyframe => {
+                tracing::warn!(error = %chain(&error), "a remote H.264 keyframe did not decode");
+                Err(())
+            }
+            Err(error) => {
+                tracing::debug!(error = %chain(&error), "remote H.264 picture lost; requesting a keyframe");
+                self.decoder = None;
+                self.waiting = true;
+                send_control(stream, Control::Keyframe);
+                Ok(false)
+            }
         }
     }
+}
+
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 #[cfg(all(test, feature = "schema"))]

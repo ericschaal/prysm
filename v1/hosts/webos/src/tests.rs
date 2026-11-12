@@ -92,6 +92,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             target: Some(LightingTarget::Off),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
+            encoding: None,
         }
     );
 

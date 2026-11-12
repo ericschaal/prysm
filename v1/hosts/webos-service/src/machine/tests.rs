@@ -593,6 +593,7 @@ fn published_state_reflects_the_worker() {
             target: Some(LightingTarget::Processed),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
+            encoding: None,
         })),
         t0,
     );

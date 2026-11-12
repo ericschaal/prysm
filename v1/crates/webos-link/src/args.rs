@@ -18,7 +18,8 @@ pub struct FullArgs {
     pub lighting: LightingTarget,
 }
 
-/// `prysm-webos-slim --receiver ADDR --width N --height N --fps N --include-ui BOOL`
+/// `prysm-webos-slim --receiver ADDR --width N --height N --fps N --include-ui BOOL
+/// --encoding h264_hardware|h264_software|raw`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlimArgs {
     /// The headless host's frame receiver.
@@ -26,8 +27,8 @@ pub struct SlimArgs {
     pub capture: SlimCapture,
 }
 
-/// Capture size and rate a slim worker sends. Same rules as the `webos`
-/// capture settings.
+/// Capture size, rate and menu blending a slim worker sends, and how the
+/// frames are encoded. Same capture rules as the `webos` capture settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SlimCapture {
@@ -36,6 +37,7 @@ pub struct SlimCapture {
     pub fps: u32,
     /// Blend TV menus into the capture.
     pub include_ui: bool,
+    pub encoding: SlimEncoding,
 }
 
 impl Default for SlimCapture {
@@ -45,7 +47,53 @@ impl Default for SlimCapture {
             height: 180,
             fps: 30,
             include_ui: true,
+            encoding: SlimEncoding::default(),
         }
+    }
+}
+
+/// How the slim worker encodes the frames it sends. Exactly this encoder is
+/// used: one that cannot start or fails is a worker failure, never a switch
+/// to another.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlimEncoding {
+    /// The TV's hardware H.264 encoder (about 2 Mbit/s).
+    #[default]
+    H264Hardware,
+    /// OpenH264 on the TV's CPU (about 2 Mbit/s).
+    H264Software,
+    /// Uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
+    Raw,
+}
+
+impl SlimEncoding {
+    const ALL: [Self; 3] = [Self::H264Hardware, Self::H264Software, Self::Raw];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::H264Hardware => "h264_hardware",
+            Self::H264Software => "h264_software",
+            Self::Raw => "raw",
+        }
+    }
+}
+
+impl std::fmt::Display for SlimEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for SlimEncoding {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|encoding| encoding.name() == name)
+            .ok_or_else(|| "expected h264_hardware, h264_software or raw".into())
     }
 }
 
@@ -106,6 +154,7 @@ impl SlimArgs {
             ("--height", c.height.to_string()),
             ("--fps", c.fps.to_string()),
             ("--include-ui", c.include_ui.to_string()),
+            ("--encoding", c.encoding.to_string()),
         ]
         .into_iter()
         .flat_map(|(key, value)| [key.to_owned(), value])
@@ -115,8 +164,17 @@ impl SlimArgs {
     /// # Errors
     /// A missing, repeated, unknown or invalid option.
     pub fn parse(args: &[String]) -> Result<Self, String> {
-        let mut options =
-            Options::parse(args, &["receiver", "width", "height", "fps", "include-ui"])?;
+        let mut options = Options::parse(
+            args,
+            &[
+                "receiver",
+                "width",
+                "height",
+                "fps",
+                "include-ui",
+                "encoding",
+            ],
+        )?;
         let parsed = Self {
             receiver: options.value("receiver")?,
             capture: SlimCapture {
@@ -124,6 +182,7 @@ impl SlimArgs {
                 height: options.value("height")?,
                 fps: options.value("fps")?,
                 include_ui: options.value("include-ui")?,
+                encoding: options.value("encoding")?,
             },
         };
         parsed.capture.validate()?;

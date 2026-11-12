@@ -50,6 +50,7 @@ export interface components {
             /**
              * @description Slim only: capture size, rate and menu blending.
              * @default {
+             *       "encoding": "h264_hardware",
              *       "fps": 30,
              *       "height": 180,
              *       "include_ui": true,
@@ -77,10 +78,12 @@ export interface components {
             enabled: boolean;
         };
         /**
-         * @description Capture size, rate and menu blending of the slim package; the same rules
-         *     as the `webos` capture settings.
+         * @description Capture size, rate and menu blending of the slim package (the same rules
+         *     as the `webos` capture settings), and how its frames are encoded.
          */
         SlimCapture: {
+            /** @default h264_hardware */
+            encoding?: components["schemas"]["SlimEncoding"];
             /**
              * Format: int32
              * @default 30
@@ -105,6 +108,15 @@ export interface components {
             width?: number;
         };
         /**
+         * @description How the slim package encodes the frames it sends. Exactly this encoder is
+         *     used; one that cannot start or fails is a failure, never a switch to
+         *     another. `h264_hardware`: the TV's hardware H.264 encoder (about
+         *     2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
+         *     `raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
+         * @enum {string}
+         */
+        SlimEncoding: "h264_hardware" | "h264_software" | "raw";
+        /**
          * @description The `getState` reply and subscription payload (plus LS2's `returnValue`).
          *     Fields marked "Full only" are `null` in the slim package.
          */
@@ -112,6 +124,7 @@ export interface components {
             capturing: boolean;
             /** @description Slim: frames should flow. Full: lighting is not off. */
             enabled: boolean;
+            encoding?: components["schemas"]["SlimEncoding"] | null;
             failure?: string | null;
             /** @description The installed package; both install as `io.prysm.tv`. */
             flavor: components["schemas"]["Flavor"];
@@ -156,6 +169,7 @@ export type Power = components['schemas']['Power'];
 export type Preferences = components['schemas']['Preferences'];
 export type SetEnabledRequest = components['schemas']['SetEnabledRequest'];
 export type SlimCapture = components['schemas']['SlimCapture'];
+export type SlimEncoding = components['schemas']['SlimEncoding'];
 export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];
 export type UninstallRequest = components['schemas']['UninstallRequest'];

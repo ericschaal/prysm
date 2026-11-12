@@ -169,6 +169,13 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
   most every second and reports "waiting for the receiver" in its status
   without exiting, so lighting resumes within about a second of being
   switched on and the TV supervisor neither backs off nor records a failure.
+  The uplink owns one `RemoteSender` at a time, and the sender owns the
+  configured H.264 encoder (a plain object; GStreamer's own streaming thread
+  is the only extra thread). On each frame the sender reads the receiver's
+  one-byte control messages without blocking: pause (sent when the source is
+  closed), resume and keyframe. An encoder failure is not a wait: it fails
+  `send`, so the worker exits and the supervisor's backoff applies. There is
+  no automatic switch between encoders (`prysm-3jx.12.2`).
 - Calibration keeps its private reply so credentials never enter the snapshot.
 
 ### Settings changes
@@ -228,7 +235,7 @@ Prysm::builder(FileSettings::new(path)?)
     .run(shutdown).await
 
 // prysm-webos-slim: no engine, no processor
-Forwarder::new(WebosCapture::new(luna), RemoteSender::new(peer))
+Forwarder::new(WebosCapture::new(luna), Uplink::new(encoding, || RemoteSender::connect(peer, stream)))
     .surface(LunaBridge::new(luna))
     .run(shutdown).await
 ```

@@ -220,6 +220,7 @@ impl Machine {
             capturing: status.capturing,
             portal: status.portal,
             failure: status.failure.or_else(|| self.failure.clone()),
+            encoding: status.encoding,
             log: self.log.iter().cloned().collect(),
         }
     }

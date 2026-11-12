@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Harden and verify the v1 TV packages.
 
-  ipk.py elf BINARY...   ARMv7 EABI5 soft-float, stripped, only TV libraries
+  ipk.py elf [--gstreamer] BINARY...
+                         ARMv7 EABI5 soft-float, stripped, only TV libraries
+                         (--gstreamer: also the TV's GStreamer and GLib, for
+                         the slim worker's hardware H.264 encoder)
   ipk.py secure PACKAGE  normalize ownership and modes, reject stray payload
   ipk.py verify PACKAGE  check a hardened package without changing it
 
@@ -35,6 +38,13 @@ SERVICE_FILES = EXECUTABLES | {SERVICE + name for name in (
     'licenses/hyperion.txt',
     'licenses/tv-native-apis.txt',
 )}
+# The slim package's H.264 encoders: OpenH264 (compiled in) and the GStreamer
+# and GLib Rust bindings. Allowed in either flavour, required in neither.
+OPTIONAL_SERVICE_FILES = {SERVICE + name for name in (
+    'licenses/openh264.txt',
+    'licenses/gstreamer-rs.txt',
+    'licenses/gtk-rs.txt',
+)}
 APP_REQUIRED = {APP + name for name in ('appinfo.json', 'index.html', 'icon.png')}
 MEMBERS = ['debian-binary', 'control.tar.gz', 'data.tar.gz']
 
@@ -43,8 +53,16 @@ LIBRARIES = {
     'ld-linux.so.3', 'libc.so.6', 'libm.so.6', 'libdl.so.2', 'libpthread.so.0',
     'librt.so.1', 'libgcc_s.so.1', 'libstdc++.so.6',
 }
+# The TV's GStreamer 1.0 and GLib, which the hardware H.264 encoder (rvenc) runs on.
+GSTREAMER_LIBRARIES = {
+    'libglib-2.0.so.0', 'libgobject-2.0.so.0', 'libgstreamer-1.0.so.0',
+    'libgstapp-1.0.so.0', 'libgstvideo-1.0.so.0', 'libgstallocators-1.0.so.0',
+    'libgstbase-1.0.so.0',
+}
 # Highest symbol version per library family; raise only after checking a TV.
-VERSIONS = {'GLIBC': (2, 12), 'GLIBCXX': (3, 4), 'CXXABI': (1, 3), 'GCC': (4, 3, 0)}
+# CXXABI 1.3.9 (sized operator delete, from OpenH264's C++ in the slim worker):
+# the old io.prysm.capture worker needed the same and ran OpenH264 on the TV.
+VERSIONS = {'GLIBC': (2, 12), 'GLIBCXX': (3, 4), 'CXXABI': (1, 3, 9), 'GCC': (4, 3, 0)}
 
 
 def write_ar(destination, members):
@@ -105,7 +123,7 @@ def check_member(archive, member):
         raise ValueError('unexpected package path: ' + member.name)
     if not allowed(name, member.isdir()):
         raise ValueError('unexpected package path: ' + member.name)
-    if member.isfile() and name.startswith(SERVICE) and name not in SERVICE_FILES:
+    if member.isfile() and name.startswith(SERVICE) and name not in SERVICE_FILES | OPTIONAL_SERVICE_FILES:
         raise ValueError('unexpected service file: ' + name)
     return name
 
@@ -183,7 +201,7 @@ def version_tuple(text):
     return tuple(int(part) for part in text.split('.'))
 
 
-def check_elf(binary):
+def check_elf(binary, gstreamer=False):
     """Raise unless `binary` is a stripped ARMv7 soft-float EABI5 executable for the TV."""
     header = readelf('-h', binary)
     for expected in ('ELF32', 'ARM', 'Version5 EABI', 'soft-float ABI'):
@@ -200,7 +218,7 @@ def check_elf(binary):
     if debug:
         raise ValueError(f'{binary}: not stripped: {", ".join(debug)}')
     needed = set(re.findall(r'\(NEEDED\)\s+Shared library: \[(.+?)\]', readelf('-d', binary)))
-    unknown = sorted(needed - LIBRARIES)
+    unknown = sorted(needed - LIBRARIES - (GSTREAMER_LIBRARIES if gstreamer else set()))
     if unknown:
         raise ValueError(f'{binary}: needs libraries the TV may lack: {", ".join(unknown)}')
     highest = {}
@@ -216,8 +234,12 @@ def check_elf(binary):
 
 def main(argv):
     if len(argv) >= 2 and argv[0] == 'elf':
-        for binary in argv[1:]:
-            needed, versions = check_elf(binary)
+        gstreamer = argv[1] == '--gstreamer'
+        binaries = argv[2:] if gstreamer else argv[1:]
+        if not binaries:
+            raise SystemExit(__doc__)
+        for binary in binaries:
+            needed, versions = check_elf(binary, gstreamer)
             print(f'{binary}: ok; needs {" ".join(needed)}; '
                   + ' '.join(f'{family}_{version}' for family, version in versions.items()))
         return

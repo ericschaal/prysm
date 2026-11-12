@@ -1,10 +1,12 @@
-use crate::link::{ForwarderLink, Uplink};
+use crate::link::{ForwarderLink, Uplink, Upstream};
 use crate::video::VideoFeed;
-use prysm_capture_remote::{RemoteSender, RemoteSource};
+use prysm_capture_remote::{RemoteSender, RemoteSource, Stream};
 use prysm_core::Frame;
+use prysm_h264::{Backend, EncoderSettings};
 use prysm_ports::{Error, FrameSink, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSink, FakeSource, FakeSourceSettings};
+use prysm_webos_link::SlimEncoding;
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimCapture, Video, WorkerStatus};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -38,20 +40,34 @@ fn start(settings: FakeSourceSettings) -> (Peer, Feed, Running) {
     start_with(settings, &log, move || Ok(FakeSink(sink.clone())))
 }
 
+impl Upstream for FakeSink {
+    fn paused(&self) -> bool {
+        false
+    }
+}
+
 /// The worker with `connect` opening its uplink, retried every 20 ms.
-fn start_with<S: FrameSink + 'static>(
+fn start_with<S: Upstream + 'static>(
     settings: FakeSourceSettings,
     log: &CallLog,
+    connect: impl FnMut() -> Result<S> + Send + 'static,
+) -> (Peer, Feed, Running) {
+    start_source(FakeSource::new(log, settings), SlimEncoding::Raw, connect)
+}
+
+/// The worker reading `source` and sending with `encoding`.
+fn start_source<S: Upstream + 'static>(
+    source: impl FrameSource + 'static,
+    encoding: SlimEncoding,
     connect: impl FnMut() -> Result<S> + Send + 'static,
 ) -> (Peer, Feed, Running) {
     let (link, peer) = Link::memory();
     let feed = Feed::default();
     let stop = link.stop.clone();
-    let (sink, flow) = Uplink::new(connect);
+    let (sink, flow) = Uplink::new(encoding, connect);
     let sink = sink.retry_every(Duration::from_millis(20));
     let surface = ForwarderLink::new(link, feed.clone(), flow)
         .with_timing(Duration::from_millis(30), Duration::from_millis(100));
-    let source = FakeSource::new(log, settings);
     let task = tokio::spawn(async move {
         let result = Forwarder::new(source, sink)
             .surface(surface)
@@ -81,6 +97,12 @@ fn waiting(event: &Event) -> Option<&str> {
 struct Dropping {
     log: CallLog,
     left: u32,
+}
+
+impl Upstream for Dropping {
+    fn paused(&self) -> bool {
+        false
+    }
 }
 
 impl FrameSink for Dropping {
@@ -146,7 +168,7 @@ async fn frames_reach_a_receiver_that_starts_listening_later() {
     };
     let log = CallLog::new();
     let (mut peer, _feed, task) = start_with(FakeSourceSettings::default(), &log, move || {
-        RemoteSender::connect(address)
+        RemoteSender::connect(address, Stream::Raw)
     });
     peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
 
@@ -188,7 +210,7 @@ async fn a_receiver_of_another_wire_version_is_reported_as_the_wait() {
     });
     let log = CallLog::new();
     let (mut peer, _feed, task) = start_with(FakeSourceSettings::default(), &log, move || {
-        RemoteSender::connect(address)
+        RemoteSender::connect(address, Stream::Raw)
     });
     let event = peer
         .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("version 3")))
@@ -258,6 +280,179 @@ async fn an_unconfirmed_release_fails_the_forwarder() {
     peer.close();
     let (result, _) = task.await.unwrap();
     assert!(result.unwrap_err().to_string().contains("unconfirmed"));
+}
+
+/// The TV capture's NV12 pictures, every 5 ms.
+struct Nv12Source(u32);
+
+impl FrameSource for Nv12Source {
+    fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
+        std::thread::sleep(Duration::from_millis(5));
+        self.0 += 1;
+        Ok(Pull::Frame(crate::check::picture(64, 32, self.0)))
+    }
+
+    fn close(self: Box<Self>) -> Result<()> {
+        Ok(())
+    }
+}
+
+const SOFTWARE: Stream = Stream::H264(EncoderSettings {
+    backend: Backend::Software,
+    fps: 30,
+    bitrate: prysm_h264::DEFAULT_BITRATE,
+});
+
+fn encoding(event: &Event) -> Option<SlimEncoding> {
+    match event {
+        Event::Status(status) => status.encoding,
+        Event::Faulted { .. } => None,
+    }
+}
+
+/// Software H.264 end to end: frames decode at a real receiver, and the
+/// status names the encoder while connected.
+#[tokio::test]
+async fn software_h264_reaches_a_receiver_and_is_reported() {
+    let mut receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = receiver.local_addr();
+    let (mut peer, _feed, task) =
+        start_source(Nv12Source(0), SlimEncoding::H264Software, move || {
+            RemoteSender::connect(address, SOFTWARE)
+        });
+    peer.wait_for(|e| {
+        capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
+    })
+    .await
+    .unwrap();
+    let (frame, receiver) = tokio::task::spawn_blocking(move || {
+        let frame = receiver
+            .next_frame(Duration::from_secs(5))
+            .unwrap()
+            .into_frame()
+            .expect("a decoded frame");
+        (frame, receiver)
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        (frame.width(), frame.height(), frame.format()),
+        (64, 32, prysm_h264::FORMAT)
+    );
+
+    // The receiver pauses the stream: reported as the wait, nothing counted.
+    receiver.set_wanted(false);
+    peer.wait_for(|e| {
+        capturing(e) == Some(false)
+            && waiting(e) == Some("the receiver paused the stream")
+            && encoding(e) == Some(SlimEncoding::H264Software)
+    })
+    .await
+    .unwrap();
+    receiver.set_wanted(true);
+    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    Box::new(receiver).close().unwrap();
+    // Lighting off: the receiver is gone, the worker waits and keeps running.
+    peer.wait_for(|e| waiting(e).is_some() && encoding(e).is_none())
+        .await
+        .unwrap();
+    assert!(!task.is_finished());
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+/// The configured encoder failing ends the worker with its cause; nothing
+/// switches to software or raw.
+#[tokio::test]
+async fn an_unavailable_hardware_encoder_fails_the_worker() {
+    let receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = receiver.local_addr();
+    let hardware = Stream::H264(EncoderSettings::new(Backend::Hardware, 30));
+    let (_peer, _feed, task) = start_source(Nv12Source(0), SlimEncoding::H264Hardware, move || {
+        RemoteSender::connect(address, hardware)
+    });
+    let (result, _) = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("the worker stops")
+        .unwrap();
+    let failure = prysm_webos_link::chain(&result.unwrap_err());
+    assert!(failure.contains("hardware H.264"), "{failure}");
+    Box::new(receiver).close().unwrap();
+}
+
+/// H.264 needs the capture's NV12: anything else is an encoder failure.
+#[tokio::test]
+async fn h264_of_other_pixels_fails_the_worker() {
+    let receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = receiver.local_addr();
+    let log = CallLog::new();
+    let (_peer, _feed, task) = start_source(
+        FakeSource::new(&log, FakeSourceSettings::default()),
+        SlimEncoding::H264Software,
+        move || RemoteSender::connect(address, SOFTWARE),
+    );
+    let (result, _) = task.await.unwrap();
+    let failure = prysm_webos_link::chain(&result.unwrap_err());
+    assert!(failure.contains("NV12"), "{failure}");
+    Box::new(receiver).close().unwrap();
+}
+
+/// A receiver that refuses H.264 is a wait naming the refusal; the worker
+/// does not downgrade to raw.
+#[tokio::test]
+async fn a_receiver_refusing_h264_is_reported_as_the_wait() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let hellos = Arc::new(Mutex::new(Vec::new()));
+    std::thread::spawn({
+        let hellos = hellos.clone();
+        move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut hello = [0; 8];
+                if stream.read_exact(&mut hello).is_ok() {
+                    hellos.lock().unwrap().push(hello[5]);
+                    let _ = stream.write_all(b"PRSM\x02\x02\x00\x00");
+                }
+            }
+        }
+    });
+    let (mut peer, _feed, task) =
+        start_source(Nv12Source(0), SlimEncoding::H264Software, move || {
+            RemoteSender::connect(address, SOFTWARE)
+        });
+    let event = peer
+        .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("encoding 1")))
+        .await
+        .unwrap();
+    assert!(waiting(&event).unwrap().contains("refused the stream"));
+    peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    assert!(!task.is_finished());
+    assert!(
+        hellos.lock().unwrap().iter().all(|&code| code == 1),
+        "never raw"
+    );
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
+#[test]
+fn encodings_map_to_streams() {
+    let capture = |encoding| SlimCapture {
+        encoding,
+        ..SlimCapture::default()
+    };
+    assert_eq!(
+        crate::stream(&capture(SlimEncoding::H264Hardware)),
+        Stream::H264(EncoderSettings::new(Backend::Hardware, 30))
+    );
+    assert_eq!(
+        crate::stream(&capture(SlimEncoding::H264Software)),
+        Stream::H264(EncoderSettings::new(Backend::Software, 30))
+    );
+    assert_eq!(crate::stream(&capture(SlimEncoding::Raw)), Stream::Raw);
 }
 
 #[test]

@@ -17,6 +17,8 @@ fn args(receiver: &str) -> Vec<String> {
         "30",
         "--include-ui",
         "true",
+        "--encoding",
+        "h264_hardware",
     ]
     .map(str::to_owned)
     .to_vec()
@@ -67,4 +69,44 @@ fn capture_off_the_tv_fails_with_its_cause() {
     let output = Command::new(BINARY).args(args(&address)).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(final_failure(&output).contains("webOS"));
+}
+
+/// The on-TV encoder check runs the software encoder anywhere; off the TV the
+/// hardware one fails with its cause.
+#[test]
+fn check_encoder_reports_the_encoder_it_used() {
+    let output = Command::new(BINARY)
+        .args([
+            "check-encoder",
+            "--encoding",
+            "h264_software",
+            "--frames",
+            "6",
+            "--fps",
+            "60",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("check-encoder: ok encoder=software H.264"),
+        "{text}"
+    );
+
+    let output = Command::new(BINARY)
+        .args(["check-encoder", "--frames", "2"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("FAILED") && text.contains("hardware"),
+        "{text}"
+    );
+    let usage = Command::new(BINARY)
+        .args(["check-encoder", "--width", "3"])
+        .output()
+        .unwrap();
+    assert_eq!(usage.status.code(), Some(2));
 }

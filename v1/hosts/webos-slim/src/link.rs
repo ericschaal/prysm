@@ -2,13 +2,15 @@
 //! keeps reconnecting to the receiver and tells the link whether frames flow.
 use crate::video::VideoFeed;
 use futures::future::BoxFuture;
+use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
+use prysm_h264::H264Error;
 use prysm_ports::{Error, FrameSink, Result};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{Command, Event, HEARTBEAT, WorkerStatus};
+use prysm_webos_link::{Command, Event, HEARTBEAT, SlimEncoding, WorkerStatus};
 use std::error::Error as _;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::time::{Instant as TokioInstant, sleep_until};
@@ -20,10 +22,13 @@ const SAMPLE: Duration = Duration::from_secs(1);
 /// is unavailable (its host is not lighting, or unreachable).
 pub const RECONNECT: Duration = Duration::from_secs(1);
 
-/// What the uplink tells the link: frames delivered, and why it is waiting.
-#[derive(Debug, Default)]
+/// What the uplink tells the link: frames delivered, the encoding while
+/// connected, and why it is waiting.
+#[derive(Debug)]
 pub struct Flow {
+    encoding: SlimEncoding,
     sent: AtomicU64,
+    connected: AtomicBool,
     waiting: Mutex<Option<String>>,
 }
 
@@ -32,7 +37,15 @@ impl Flow {
         self.sent.load(Ordering::Relaxed)
     }
 
-    /// Why no frames can be delivered, while the receiver is unavailable.
+    /// The encoding of the frames being sent: the configured one, while connected.
+    fn encoding(&self) -> Option<SlimEncoding> {
+        self.connected
+            .load(Ordering::Relaxed)
+            .then_some(self.encoding)
+    }
+
+    /// Why no frames can be delivered, while the receiver is unavailable
+    /// or has paused the stream.
     fn waiting(&self) -> Option<String> {
         self.lock().clone()
     }
@@ -46,12 +59,29 @@ impl Flow {
     }
 }
 
+/// One connection to the receiver: a frame sink the receiver can pause.
+pub trait Upstream: FrameSink {
+    /// The receiver does not want frames; `send` drops them.
+    fn paused(&self) -> bool;
+}
+
+impl Upstream for RemoteSender {
+    fn paused(&self) -> bool {
+        RemoteSender::paused(self)
+    }
+}
+
 /// A [`FrameSink`] that delivers to whatever `connect` opens and keeps
 /// reconnecting. The receiver only listens while its host is lighting, so a
 /// refused connection or a dropped receiver is a normal wait, not a failure:
 /// frames are dropped, a new connection is tried at most every [`RECONNECT`]
-/// (on the next frame after it), and [`Flow`] carries the reason. `send`
-/// never fails, so forwarding (and the worker) keep running.
+/// (on the next frame after it), and [`Flow`] carries the reason. A
+/// receiver that pauses the stream is reported the same way.
+///
+/// The encoder is the exception: a failure whose cause is an
+/// [`H264Error`] (the configured encoder cannot start or failed) fails
+/// `send`, so the worker stops and the supervisor's retry and backoff
+/// apply. There is no switch to another encoder.
 pub struct Uplink<S, C> {
     connect: C,
     sink: Option<S>,
@@ -60,9 +90,15 @@ pub struct Uplink<S, C> {
     flow: Arc<Flow>,
 }
 
-impl<S: FrameSink, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
-    pub fn new(connect: C) -> (Self, Arc<Flow>) {
-        let flow = Arc::new(Flow::default());
+impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
+    /// `encoding` is what `connect` opens; the status names it while connected.
+    pub fn new(encoding: SlimEncoding, connect: C) -> (Self, Arc<Flow>) {
+        let flow = Arc::new(Flow {
+            encoding,
+            sent: AtomicU64::new(0),
+            connected: AtomicBool::new(false),
+            waiting: Mutex::new(None),
+        });
         let uplink = Self {
             connect,
             sink: None,
@@ -79,16 +115,21 @@ impl<S: FrameSink, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         self
     }
 
-    /// Note the failure and wait [`RECONNECT`] before the next attempt.
-    fn unavailable(&mut self, error: &Error) {
+    /// Note why frames cannot be delivered; an encoder failure is returned.
+    fn unavailable(&mut self, error: Error) -> Result<()> {
         self.sink = None;
+        self.flow.connected.store(false, Ordering::Relaxed);
+        if encoder_failure(&error) {
+            return Err(error);
+        }
         self.retry_at = Some(Instant::now() + self.retry);
         self.flow
-            .set_waiting(Some(format!("waiting for the receiver: {}", chain(error))));
+            .set_waiting(Some(format!("waiting for the receiver: {}", chain(&error))));
+        Ok(())
     }
 }
 
-impl<S: FrameSink, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
+impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
     fn send(&mut self, frame: &Frame) -> Result<()> {
         if self.sink.is_none() {
             if self.retry_at.is_some_and(|at| Instant::now() < at) {
@@ -97,24 +138,49 @@ impl<S: FrameSink, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
             match (self.connect)() {
                 Ok(sink) => {
                     self.sink = Some(sink);
+                    self.flow.connected.store(true, Ordering::Relaxed);
                     self.flow.set_waiting(None);
                 }
-                Err(error) => {
-                    self.unavailable(&error);
-                    return Ok(());
-                }
+                Err(error) => return self.unavailable(error),
             }
         }
         let Some(sink) = &mut self.sink else {
             return Ok(());
         };
         match sink.send(frame) {
+            Ok(()) if sink.paused() => {
+                self.flow
+                    .set_waiting(Some("the receiver paused the stream".into()));
+                Ok(())
+            }
             Ok(()) => {
                 self.flow.sent.fetch_add(1, Ordering::Relaxed);
+                self.flow.set_waiting(None);
+                Ok(())
             }
-            Err(error) => self.unavailable(&error),
+            Err(error) => self.unavailable(error),
         }
-        Ok(())
+    }
+}
+
+/// The configured encoder could not start or failed.
+fn encoder_failure(error: &Error) -> bool {
+    let Error::Adapter {
+        source: Some(cause),
+        ..
+    } = error
+    else {
+        return false;
+    };
+    let mut cause: &(dyn std::error::Error + 'static) = &**cause;
+    loop {
+        if cause.is::<H264Error>() {
+            return true;
+        }
+        match cause.source() {
+            Some(next) => cause = next,
+            None => return false,
+        }
     }
 }
 
@@ -131,8 +197,8 @@ fn chain(error: &Error) -> String {
 }
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
-/// `capturing` while frames are delivered, `failure` naming the wait while the
-/// receiver is unavailable. `Lighting` is protocol misuse here and stops the
+/// `capturing` while frames are delivered, `encoding` while connected,
+/// `failure` naming the wait while the receiver is unavailable or paused. `Lighting` is protocol misuse here and stops the
 /// worker as failed.
 pub struct ForwarderLink<V> {
     link: Link,
@@ -189,6 +255,7 @@ impl<V: VideoFeed> ForwarderLink<V> {
                     let next = WorkerStatus {
                         capturing: now != counted,
                         failure: self.flow.waiting(),
+                        encoding: self.flow.encoding(),
                         ..WorkerStatus::default()
                     };
                     counted = now;

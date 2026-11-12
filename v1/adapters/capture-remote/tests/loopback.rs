@@ -1,6 +1,6 @@
 //! Both ends on loopback with ephemeral ports. Every wait is bounded.
 use prysm_capture_remote::{
-    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, VERSION, WireError,
+    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, Stream, VERSION, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, SourceFactory};
@@ -94,7 +94,7 @@ fn wire_cause(error: &prysm_ports::Error) -> WireError {
 #[test]
 fn round_trip_preserves_dimensions_format_and_pixels() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
 
     let rgb = frame(7, 7, 5);
     sender.send(&rgb).unwrap();
@@ -144,7 +144,7 @@ fn next_frame_times_out_idle() {
 #[test]
 fn a_slow_consumer_sees_only_the_newest_frame() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     for seed in 1..=20 {
         sender.send(&frame(seed, 8, 4)).unwrap();
     }
@@ -168,7 +168,7 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
 #[test]
 fn receiver_survives_disconnect_and_accepts_a_new_sender() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
-    let mut first = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut first = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     first.send(&frame(1, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 1);
     drop(first);
@@ -181,7 +181,7 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
             .is_idle()
     );
 
-    let mut second = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut second = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     second.send(&frame(2, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 2);
     Box::new(source).close().unwrap();
@@ -195,7 +195,7 @@ fn a_new_sender_replaces_a_stalled_one() {
     stalled.write_all(b"PRSM\x02").unwrap();
     thread::sleep(Duration::from_millis(100));
 
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     sender.send(&frame(3, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 3);
     assert_dropped(stalled);
@@ -228,7 +228,7 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
             .is_idle()
     );
 
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     sender.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
     Box::new(source).close().unwrap();
@@ -246,15 +246,15 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
         assert_dropped(old),
         [b'P', b'R', b'S', b'M', VERSION, 1, 0, 0]
     );
-    // A reserved encoding (1: H.264) is refused the same way.
+    // An unknown encoding is refused the same way.
     let mut h264 = TcpStream::connect(source.local_addr()).unwrap();
-    h264.write_all(b"PRSM\x02\x01\x00\x00").unwrap();
+    h264.write_all(b"PRSM\x02\x09\x00\x00").unwrap();
     assert_eq!(
         assert_dropped(h264),
         [b'P', b'R', b'S', b'M', VERSION, 2, 0, 0]
     );
     // The receiver keeps serving current senders.
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     sender.send(&frame(9, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 9);
     Box::new(source).close().unwrap();
@@ -281,7 +281,7 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
                 None => drop(stream),
             }
         });
-        let error = RemoteSender::connect(addr).unwrap_err();
+        let error = RemoteSender::connect(addr, Stream::Raw).unwrap_err();
         assert_eq!(wire_cause(&error), expected, "{error}");
         assert!(error.to_string().contains(&addr.to_string()), "{error}");
         peer.join().unwrap();
@@ -292,7 +292,7 @@ fn version_mismatches_are_typed_errors_on_both_ends() {
 fn close_is_prompt_frees_the_port_and_fails_the_sender() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
     let addr = source.local_addr();
-    let mut sender = RemoteSender::connect(addr).unwrap();
+    let mut sender = RemoteSender::connect(addr, Stream::Raw).unwrap();
     sender.send(&frame(5, 4, 4)).unwrap();
     receive(&mut source);
 
@@ -321,7 +321,7 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
 #[test]
 fn connecting_to_a_dead_peer_fails_with_a_source() {
     let addr = TcpListener::bind(any_port()).unwrap().local_addr().unwrap();
-    let error = RemoteSender::connect(addr).unwrap_err();
+    let error = RemoteSender::connect(addr, Stream::Raw).unwrap_err();
     assert!(error.to_string().contains(&addr.to_string()), "{error}");
     assert!(error.source().is_some(), "{error}");
 }
@@ -357,7 +357,7 @@ fn factory_decodes_validates_and_opens() {
 #[tokio::test]
 async fn forwarder_delivers_frames_end_to_end() {
     let source = RemoteSource::bind(any_port()).unwrap();
-    let sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let sender = RemoteSender::connect(source.local_addr(), Stream::Raw).unwrap();
     let log = CallLog::new();
     let fake = FakeSource::new(&log, FakeSourceSettings::default());
 

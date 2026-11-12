@@ -36,6 +36,7 @@ fn events_round_trip() {
         target: Some(LightingTarget::Processed),
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: None,
+        encoding: None,
     });
     let text = encode(&status).unwrap();
     assert!(text.starts_with(br#"{"type":"status","capturing":true"#));
@@ -211,7 +212,9 @@ fn slim_args_round_trip_and_validate_capture() {
             "--fps",
             "30",
             "--include-ui",
-            "true"
+            "true",
+            "--encoding",
+            "h264_hardware"
         ])
     );
     assert_eq!(SlimArgs::parse(&argv).unwrap(), args);
@@ -221,9 +224,32 @@ fn slim_args_round_trip_and_validate_capture() {
     let mut fast = argv.clone();
     fast[7] = "61".into();
     assert!(SlimArgs::parse(&fast).unwrap_err().contains("capture.fps"));
-    let mut maybe = argv;
+    let mut maybe = argv.clone();
     maybe[9] = "maybe".into();
     assert!(SlimArgs::parse(&maybe).is_err());
+    for encoding in [SlimEncoding::H264Software, SlimEncoding::Raw] {
+        let mut other = argv.clone();
+        other[11] = encoding.to_string();
+        assert_eq!(SlimArgs::parse(&other).unwrap().capture.encoding, encoding);
+    }
+    let mut unknown = argv.clone();
+    unknown[11] = "h265".into();
+    assert!(
+        SlimArgs::parse(&unknown)
+            .unwrap_err()
+            .contains("--encoding")
+    );
+    assert!(
+        SlimArgs::parse(&argv[..10])
+            .unwrap_err()
+            .contains("--encoding")
+    );
+    // Stored preferences without the field default to hardware H.264.
+    let stored: SlimCapture = serde_json::from_str(r#"{"fps": 15}"#).unwrap();
+    assert_eq!(stored.encoding, SlimEncoding::H264Hardware);
+    let soft: SlimCapture = serde_json::from_str(r#"{"encoding": "h264_software"}"#).unwrap();
+    assert_eq!(soft.encoding, SlimEncoding::H264Software);
+    assert!(serde_json::from_str::<SlimCapture>(r#"{"encoding": "lz4"}"#).is_err());
 }
 
 #[test]

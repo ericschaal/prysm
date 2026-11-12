@@ -15,7 +15,7 @@ mod codec;
 #[cfg(feature = "worker")]
 pub mod worker;
 
-pub use args::{FullArgs, SlimArgs, SlimCapture};
+pub use args::{FullArgs, SlimArgs, SlimCapture, SlimEncoding};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 pub use prysm_ports::LightingTarget;
 
@@ -73,6 +73,10 @@ pub struct WorkerStatus {
     pub portal: Option<String>,
     /// The last failure with its cause chain.
     pub failure: Option<String>,
+    /// Slim only: the encoding of the frames being sent, while connected to
+    /// the receiver (always the configured one).
+    #[serde(default)]
+    pub encoding: Option<SlimEncoding>,
 }
 
 /// Worker exit codes.

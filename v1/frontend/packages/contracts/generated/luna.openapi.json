@@ -94,6 +94,7 @@
           "capture": {
             "$ref": "#/components/schemas/SlimCapture",
             "default": {
+              "encoding": "h264_hardware",
               "fps": 30,
               "height": 180,
               "include_ui": true,
@@ -139,8 +140,12 @@
       },
       "SlimCapture": {
         "additionalProperties": false,
-        "description": "Capture size, rate and menu blending of the slim package; the same rules\nas the `webos` capture settings.",
+        "description": "Capture size, rate and menu blending of the slim package (the same rules\nas the `webos` capture settings), and how its frames are encoded.",
         "properties": {
+          "encoding": {
+            "$ref": "#/components/schemas/SlimEncoding",
+            "default": "h264_hardware"
+          },
           "fps": {
             "default": 30,
             "format": "int32",
@@ -174,6 +179,15 @@
         },
         "type": "object"
       },
+      "SlimEncoding": {
+        "description": "How the slim package encodes the frames it sends. Exactly this encoder is\nused; one that cannot start or fails is a failure, never a switch to\nanother. `h264_hardware`: the TV's hardware H.264 encoder (about\n2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);\n`raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).",
+        "enum": [
+          "h264_hardware",
+          "h264_software",
+          "raw"
+        ],
+        "type": "string"
+      },
       "State": {
         "description": "The `getState` reply and subscription payload (plus LS2's `returnValue`).\nFields marked \"Full only\" are `null` in the slim package.",
         "properties": {
@@ -183,6 +197,17 @@
           "enabled": {
             "description": "Slim: frames should flow. Full: lighting is not off.",
             "type": "boolean"
+          },
+          "encoding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SlimEncoding",
+                "description": "Slim only: the encoding of the frames being sent while connected to\nthe receiver; always the configured `capture.encoding`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "failure": {
             "type": [

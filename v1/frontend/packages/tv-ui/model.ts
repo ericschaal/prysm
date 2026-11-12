@@ -7,6 +7,7 @@ export const slimCaptureDefaults: Required<SlimCapture> = {
   height: 180,
   fps: 30,
   include_ui: true,
+  encoding: 'h264_hardware',
 };
 export const PORTAL_PORT = 8787;
 

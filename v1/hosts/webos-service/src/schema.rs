@@ -43,9 +43,25 @@ pub enum LightingTargetSchema {
     DeviceNative,
 }
 
+// Mirrors `prysm_webos_link::SlimEncoding`.
+/// How the slim package encodes the frames it sends. Exactly this encoder is
+/// used; one that cannot start or fails is a failure, never a switch to
+/// another. `h264_hardware`: the TV's hardware H.264 encoder (about
+/// 2 Mbit/s); `h264_software`: OpenH264 on the TV's CPU (about 2 Mbit/s);
+/// `raw`: uncompressed NV12 (320x180 at 30 fps is about 21 Mbit/s).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = SlimEncoding)]
+#[serde(rename_all = "snake_case")]
+pub enum SlimEncodingSchema {
+    #[default]
+    H264Hardware,
+    H264Software,
+    Raw,
+}
+
 // Mirrors `prysm_webos_link::SlimCapture`.
-/// Capture size, rate and menu blending of the slim package; the same rules
-/// as the `webos` capture settings.
+/// Capture size, rate and menu blending of the slim package (the same rules
+/// as the `webos` capture settings), and how its frames are encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[schema(as = SlimCapture)]
 #[serde(default, deny_unknown_fields)]
@@ -61,6 +77,8 @@ pub struct SlimCaptureSchema {
     /// Blend TV menus into the capture.
     #[schema(default = true)]
     include_ui: bool,
+    #[schema(default = "h264_hardware")]
+    encoding: SlimEncodingSchema,
 }
 
 impl Default for SlimCaptureSchema {
@@ -70,6 +88,7 @@ impl Default for SlimCaptureSchema {
             height: 180,
             fps: 30,
             include_ui: true,
+            encoding: SlimEncodingSchema::H264Hardware,
         }
     }
 }
@@ -126,6 +145,7 @@ pub struct ErrorReply {
     Phase,
     Preferences,
     SlimCaptureSchema,
+    SlimEncodingSchema,
     VideoSchema,
     LightingTargetSchema,
     GetStateRequest,
@@ -149,7 +169,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{LightingTarget, SlimCapture, Video};
+    use prysm_webos_link::{LightingTarget, SlimCapture, SlimEncoding, Video};
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::fmt;
@@ -185,7 +205,15 @@ mod tests {
             height: 1080,
             fps: 60,
             include_ui: false,
+            encoding: SlimEncoding::Raw,
         });
+        for encoding in [
+            SlimEncoding::H264Hardware,
+            SlimEncoding::H264Software,
+            SlimEncoding::Raw,
+        ] {
+            same_shape::<SlimEncoding, SlimEncodingSchema>(&encoding);
+        }
         assert_eq!(
             serde_json::to_value(SlimCaptureSchema::default()).unwrap(),
             serde_json::to_value(SlimCapture::default()).unwrap()
@@ -215,6 +243,10 @@ mod tests {
         assert_eq!(
             schemas["SlimCapture"]["properties"]["fps"]["maximum"],
             json!(60)
+        );
+        assert_eq!(
+            schemas["SlimEncoding"]["enum"],
+            json!(["h264_hardware", "h264_software", "raw"])
         );
         for name in ["GetStateRequest", "SetEnabledRequest", "UninstallRequest"] {
             assert_eq!(

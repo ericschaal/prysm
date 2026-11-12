@@ -14,6 +14,7 @@ schema = ["dep:utoipa"]
 prysm-core.workspace = true
 prysm-ports.workspace = true
 serde.workspace = true
+prysm-h264.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 utoipa = { workspace = true, optional = true }

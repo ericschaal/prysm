@@ -13,6 +13,9 @@ prysm-ports.workspace = true
 prysm-runtime = { workspace = true, features = ["logging"] }
 prysm-capture-webos.workspace = true
 prysm-capture-remote.workspace = true
+# Hardware H.264 is the default encoding; its GStreamer code is only built
+# for the TV (32-bit ARM Linux), so desktop builds of this crate need no GStreamer.
+prysm-h264 = { workspace = true, features = ["hardware"] }
 futures.workspace = true
 tokio = { workspace = true, features = ["time"] }
 

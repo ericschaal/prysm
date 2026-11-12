@@ -408,6 +408,7 @@
     {
       "autostart": false,
       "capture": {
+        "encoding": "h264_hardware",
         "fps": 30,
         "height": 180,
         "include_ui": true,
@@ -419,6 +420,7 @@
     {
       "autostart": true,
       "capture": {
+        "encoding": "h264_hardware",
         "fps": 25,
         "height": 180,
         "include_ui": false,
@@ -437,6 +439,7 @@
     {
       "capturing": true,
       "enabled": true,
+      "encoding": null,
       "failure": null,
       "flavor": "full",
       "lighting": "processed",
@@ -448,6 +451,7 @@
       "preferences": {
         "autostart": false,
         "capture": {
+          "encoding": "h264_hardware",
           "fps": 30,
           "height": 180,
           "include_ui": true,
@@ -462,6 +466,7 @@
     {
       "capturing": false,
       "enabled": true,
+      "encoding": null,
       "failure": "connect 192.168.1.20:7380: connection refused",
       "flavor": "slim",
       "lighting": null,
@@ -471,6 +476,7 @@
       "preferences": {
         "autostart": true,
         "capture": {
+          "encoding": "h264_hardware",
           "fps": 25,
           "height": 180,
           "include_ui": false,
@@ -487,6 +493,7 @@
     {
       "capturing": true,
       "enabled": true,
+      "encoding": null,
       "failure": null,
       "flavor": "full",
       "lighting": "processed",
@@ -498,6 +505,7 @@
       "preferences": {
         "autostart": false,
         "capture": {
+          "encoding": "h264_hardware",
           "fps": 30,
           "height": 180,
           "include_ui": true,
@@ -514,6 +522,7 @@
     {
       "capturing": false,
       "enabled": true,
+      "encoding": null,
       "failure": "connect 192.168.1.20:7380: connection refused",
       "flavor": "slim",
       "lighting": null,
@@ -523,6 +532,7 @@
       "preferences": {
         "autostart": true,
         "capture": {
+          "encoding": "h264_hardware",
           "fps": 25,
           "height": 180,
           "include_ui": false,

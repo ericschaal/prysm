@@ -137,6 +137,7 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
             .as_ref()
             .or(snapshot.surface_failures.last())
             .map(|failure| chain(failure)),
+        encoding: None,
     }
 }
 

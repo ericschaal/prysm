@@ -10,6 +10,8 @@ members = [
     "adapters/capture-remote",
     "adapters/capture-webos",
     "adapters/capture-webos-sys",
+    "adapters/h264",
+    "adapters/h264-rvenc-sys",
     "adapters/output-wled",
     "adapters/settings-file",
     "adapters/webos-luna-sys",
@@ -45,6 +47,7 @@ prysm-capture-device = { path = "adapters/capture-device" }
 prysm-capture-file = { path = "adapters/capture-file" }
 prysm-capture-remote = { path = "adapters/capture-remote" }
 prysm-capture-webos = { path = "adapters/capture-webos" }
+prysm-h264 = { path = "adapters/h264" }
 prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }
 prysm-output-wled = { path = "adapters/output-wled" }
 prysm-settings-file = { path = "adapters/settings-file" }

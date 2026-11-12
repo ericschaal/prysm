@@ -140,6 +140,27 @@ class PackageTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     ipk.secure(self.package)
 
+    def test_encoder_notices_are_allowed_but_not_required(self):
+        notices = sorted(ipk.OPTIONAL_SERVICE_FILES)
+        self.assertEqual(notices, [ipk.SERVICE + 'licenses/' + name for name in
+                                   ('gstreamer-rs.txt', 'gtk-rs.txt', 'openh264.txt')])
+        self.build(complete(*[(name, 'file') for name in notices]))
+        ipk.secure(self.package)
+        listed = {name for _, _, name in ipk.verify(self.package)}
+        self.assertTrue(set(notices) <= listed)
+        self.build(complete())
+        ipk.secure(self.package)
+        ipk.verify(self.package)
+        # The notices the slim package copies exist in the repository.
+        for path in ('adapters/h264/LICENSE.openh264', 'adapters/h264-rvenc-sys/LICENSE.gstreamer-rs',
+                     'adapters/h264-rvenc-sys/LICENSE.gtk-rs'):
+            self.assertTrue((V1 / path).is_file(), path)
+        self.assertIn('LICENSE.openh264', (HERE / 'build-ipk.sh').read_text())
+
+    def test_gstreamer_libraries_are_a_separate_allowance(self):
+        self.assertFalse(ipk.GSTREAMER_LIBRARIES & ipk.LIBRARIES)
+        self.assertIn('libgstreamer-1.0.so.0', ipk.GSTREAMER_LIBRARIES)
+
     def test_install_scripts_are_rejected(self):
         self.build(complete(), control=(('control', 'file'), ('postinst', 'file')))
         with self.assertRaisesRegex(ValueError, 'installation scripts'):

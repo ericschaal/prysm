@@ -58,6 +58,7 @@ fn luna() -> Value {
         capturing: true,
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: None,
+        encoding: None,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
     };
     let slim = TvState {
@@ -71,6 +72,7 @@ fn luna() -> Value {
         capturing: false,
         portal: None,
         failure: Some("connect 192.168.1.20:7380: connection refused".into()),
+        encoding: None,
         log: Vec::new(),
     };
     json!({

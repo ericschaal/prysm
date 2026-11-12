@@ -14,29 +14,68 @@ pub const MAX_DIMENSION: u32 = 4096;
 pub const MAX_PAYLOAD_BYTES: usize = 1920 * 1080 * 3;
 
 /// How a stream's frame payloads are encoded, fixed per connection by the
-/// hello. Code 1 is reserved for H.264 access units.
+/// hello.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Encoding {
     /// Uncompressed pixels, exactly the frame's size.
     #[default]
     Raw,
+    /// One H.264 access unit per frame (Annex B, Baseline); the header's
+    /// format is the decoded limited-range BT.709 NV12.
+    H264,
 }
 
 impl Encoding {
-    const fn code(self) -> u8 {
+    pub(crate) const fn code(self) -> u8 {
         match self {
             Self::Raw => 0,
+            Self::H264 => 1,
         }
     }
 
     fn from_code(code: u8) -> Result<Self, WireError> {
         match code {
             0 => Ok(Self::Raw),
+            1 => Ok(Self::H264),
             _ => Err(WireError::Encoding(code)),
         }
     }
 }
+
+/// Receiver-to-sender messages: one byte each, any time after the reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Control {
+    /// Frames are not wanted (lighting stopped): stop encoding and sending.
+    Pause,
+    /// Frames are wanted again; the next H.264 picture starts a new session.
+    Resume,
+    /// The receiver cannot decode: start a new H.264 session (a keyframe).
+    Keyframe,
+}
+
+impl Control {
+    pub(crate) const fn code(self) -> u8 {
+        match self {
+            Self::Pause => 1,
+            Self::Resume => 2,
+            Self::Keyframe => 3,
+        }
+    }
+
+    pub(crate) fn from_code(code: u8) -> Result<Self, WireError> {
+        match code {
+            1 => Ok(Self::Pause),
+            2 => Ok(Self::Resume),
+            3 => Ok(Self::Keyframe),
+            _ => Err(WireError::Control(code)),
+        }
+    }
+}
+
+/// Frame header flag: the first picture of an H.264 encoder session (SPS,
+/// PPS and IDR); the receiver decodes it with fresh state.
+pub(crate) const KEYFRAME: u8 = 1;
 
 /// Why a stream or frame cannot be encoded, or was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -49,6 +88,14 @@ pub enum WireError {
     Version { ours: u8, theirs: u8 },
     #[error("unsupported stream encoding {0}")]
     Encoding(u8),
+    #[error("unknown control message {0}")]
+    Control(u8),
+    #[error("the receiver closed the stream")]
+    Closed,
+    #[error("invalid frame header flags {0:#04x}")]
+    Flags(u8),
+    #[error("an encoded payload must be 1 to {MAX_PAYLOAD_BYTES} bytes, not {0}")]
+    EncodedLength(usize),
     #[error("receiver rejected the stream with unknown status {0}")]
     Rejected(u8),
     #[error("the receiver did not answer the hello (wire protocol version 1 never does)")]
@@ -130,6 +177,8 @@ pub(crate) struct Header {
     pub width: u32,
     pub height: u32,
     pub format: PixelFormat,
+    /// H.264 only: the first picture of an encoder session.
+    pub keyframe: bool,
 }
 
 impl Header {
@@ -150,19 +199,49 @@ impl Header {
         Ok(len)
     }
 
-    pub(crate) fn encode(&self, encoding: Encoding) -> Result<[u8; HEADER_LEN], WireError> {
+    /// `encoded` is the access unit's length for an H.264 stream; a raw
+    /// payload's length follows from the header.
+    pub(crate) fn encode(
+        &self,
+        encoding: Encoding,
+        encoded: usize,
+    ) -> Result<[u8; HEADER_LEN], WireError> {
+        let raw = self.payload_len()?;
         let len = match encoding {
-            Encoding::Raw => self.payload_len()?,
+            Encoding::Raw => raw,
+            Encoding::H264 => {
+                self.check_h264()?;
+                if !(1..=MAX_PAYLOAD_BYTES).contains(&encoded) {
+                    return Err(WireError::EncodedLength(encoded));
+                }
+                encoded
+            }
+        };
+        let flags = match encoding {
+            Encoding::H264 if self.keyframe => KEYFRAME,
+            _ => 0,
         };
         let (format, range, matrix) = format_code(self.format)?;
         let mut bytes = [0; HEADER_LEN];
-        bytes[..4].copy_from_slice(&[format, range, matrix, 0]);
+        bytes[..4].copy_from_slice(&[format, range, matrix, flags]);
         bytes[4..8].copy_from_slice(&self.width.to_be_bytes());
         bytes[8..12].copy_from_slice(&self.height.to_be_bytes());
-        // `payload_len` bounds `len` far below `u32::MAX`.
+        // Both lengths are bounded far below `u32::MAX`.
         let len = u32::try_from(len).map_err(|_| WireError::TooLarge(len))?;
         bytes[12..16].copy_from_slice(&len.to_be_bytes());
         Ok(bytes)
+    }
+
+    /// An H.264 stream carries limited-range BT.709 NV12 only.
+    fn check_h264(&self) -> Result<(), WireError> {
+        if self.format == prysm_h264::FORMAT {
+            Ok(())
+        } else {
+            Err(WireError::Format(format!(
+                "{} in an H.264 stream (limited-range BT.709 NV12 only)",
+                self.format
+            )))
+        }
     }
 
     /// Validates everything, including the declared length, before the
@@ -174,17 +253,19 @@ impl Header {
         let field = |at: usize| {
             u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
         };
-        if bytes[3] != 0 {
-            return Err(WireError::FormatCode {
-                format: bytes[0],
-                range: bytes[1],
-                matrix: bytes[2],
-            });
+        let flags = bytes[3];
+        let allowed = match encoding {
+            Encoding::Raw => 0,
+            Encoding::H264 => KEYFRAME,
+        };
+        if flags & !allowed != 0 {
+            return Err(WireError::Flags(flags));
         }
         let header = Self {
             width: field(4),
             height: field(8),
             format: parse_format(bytes[0], bytes[1], bytes[2])?,
+            keyframe: flags & KEYFRAME != 0,
         };
         let declared = usize::try_from(field(12)).unwrap_or(usize::MAX);
         if declared > MAX_PAYLOAD_BYTES {
@@ -197,6 +278,13 @@ impl Header {
                 actual: declared,
             }),
             Encoding::Raw => Ok((header, declared)),
+            Encoding::H264 => {
+                header.check_h264()?;
+                if declared == 0 {
+                    return Err(WireError::EncodedLength(0));
+                }
+                Ok((header, declared))
+            }
         }
     }
 }
@@ -284,6 +372,7 @@ mod tests {
             width,
             height,
             format,
+            keyframe: false,
         }
     }
 
@@ -308,14 +397,14 @@ mod tests {
             },
         ] {
             let sent = header(320, 180, format);
-            let bytes = sent.encode(Encoding::Raw).unwrap();
+            let bytes = sent.encode(Encoding::Raw, 0).unwrap();
             let (got, len) = Header::decode(&bytes, Encoding::Raw).unwrap();
             assert_eq!(got, sent);
             assert_eq!(Some(len), format.expected_size(320, 180).unwrap());
         }
         // NV12 is half of RGB24.
         let (_, nv12) = Header::decode(
-            &header(320, 180, NV12).encode(Encoding::Raw).unwrap(),
+            &header(320, 180, NV12).encode(Encoding::Raw, 0).unwrap(),
             Encoding::Raw,
         )
         .unwrap();
@@ -345,13 +434,13 @@ mod tests {
             (PixelFormat::RGB24, MAX_DIMENSION + 1),
         ] {
             assert!(
-                header(width, 2, format).encode(Encoding::Raw).is_err(),
+                header(width, 2, format).encode(Encoding::Raw, 0).is_err(),
                 "{format:?} {width}"
             );
         }
         // Within each dimension limit but over the payload limit.
         assert!(matches!(
-            header(4096, 4096, PixelFormat::RGB24).encode(Encoding::Raw),
+            header(4096, 4096, PixelFormat::RGB24).encode(Encoding::Raw, 0),
             Err(WireError::TooLarge(_))
         ));
     }
@@ -359,7 +448,7 @@ mod tests {
     #[test]
     fn malformed_headers_are_rejected_before_allocation() {
         let good = header(4, 2, PixelFormat::RGB24)
-            .encode(Encoding::Raw)
+            .encode(Encoding::Raw, 0)
             .unwrap();
         let with = |at: usize, patch: &[u8]| {
             let mut bytes = good;
@@ -368,7 +457,7 @@ mod tests {
         };
         assert!(matches!(with(0, &[9]), Err(WireError::FormatCode { .. })));
         assert!(matches!(with(1, &[1]), Err(WireError::FormatCode { .. })));
-        assert!(matches!(with(3, &[1]), Err(WireError::FormatCode { .. })));
+        assert!(matches!(with(3, &[1]), Err(WireError::Flags(1))));
         assert!(matches!(
             with(12, &u32::MAX.to_be_bytes()),
             Err(WireError::TooLarge(_))
@@ -391,7 +480,7 @@ mod tests {
                 matrix: YuvStandardMatrix::Bt709,
             },
         ] {
-            let mut odd = header(4, 2, format).encode(Encoding::Raw).unwrap();
+            let mut odd = header(4, 2, format).encode(Encoding::Raw, 0).unwrap();
             odd[4..8].copy_from_slice(&3u32.to_be_bytes());
             assert!(matches!(
                 Header::decode(&odd, Encoding::Raw),
@@ -424,16 +513,89 @@ mod tests {
             Err(WireError::Version { ours: 2, theirs: 3 })
         );
 
-        // Reserved encodings (1: H.264) are refused, not misread.
-        let mut h264 = sent;
-        h264[5] = 1;
-        let outcome = accept(&h264);
-        assert_eq!(outcome, Err(WireError::Encoding(1)));
+        // H.264 is code 1.
+        let h264 = hello(Encoding::H264);
+        assert_eq!(h264, *b"PRSM\x02\x01\x00\x00");
+        assert_eq!(accept(&h264), Ok(Encoding::H264));
+        // Unknown encodings are refused, not misread.
+        let mut unknown = sent;
+        unknown[5] = 2;
+        let outcome = accept(&unknown);
+        assert_eq!(outcome, Err(WireError::Encoding(2)));
         assert_eq!(
-            accepted(&reply(&outcome), Encoding::Raw),
-            Err(WireError::Encoding(0))
+            accepted(&reply(&outcome), Encoding::H264),
+            Err(WireError::Encoding(1))
         );
         assert_eq!(accept(b"GET / HT"), Err(WireError::Magic));
         assert_eq!(accepted(b"HTTP/1.1", Encoding::Raw), Err(WireError::Magic));
+    }
+
+    #[test]
+    fn h264_headers_carry_length_and_keyframe() {
+        let mut key = header(640, 360, NV12);
+        key.keyframe = true;
+        let bytes = key.encode(Encoding::H264, 1234).unwrap();
+        assert_eq!(bytes[3], KEYFRAME);
+        assert_eq!(Header::decode(&bytes, Encoding::H264).unwrap(), (key, 1234));
+        // Not a keyframe.
+        let plain = header(640, 360, NV12);
+        let bytes = plain.encode(Encoding::H264, 7).unwrap();
+        assert_eq!(bytes[3], 0);
+        assert_eq!(Header::decode(&bytes, Encoding::H264).unwrap(), (plain, 7));
+        // A raw stream ignores and rejects the flag.
+        assert_eq!(key.encode(Encoding::Raw, 0).unwrap()[3], 0);
+        let mut flagged = plain.encode(Encoding::Raw, 0).unwrap();
+        flagged[3] = KEYFRAME;
+        assert_eq!(
+            Header::decode(&flagged, Encoding::Raw),
+            Err(WireError::Flags(KEYFRAME))
+        );
+        // Unknown flags, empty or oversized payloads and other formats are refused.
+        let mut bits = bytes;
+        bits[3] = 2;
+        assert_eq!(
+            Header::decode(&bits, Encoding::H264),
+            Err(WireError::Flags(2))
+        );
+        assert_eq!(
+            plain.encode(Encoding::H264, 0),
+            Err(WireError::EncodedLength(0))
+        );
+        assert!(matches!(
+            plain.encode(Encoding::H264, MAX_PAYLOAD_BYTES + 1),
+            Err(WireError::EncodedLength(_))
+        ));
+        let mut empty = bytes;
+        empty[12..16].copy_from_slice(&0u32.to_be_bytes());
+        assert_eq!(
+            Header::decode(&empty, Encoding::H264),
+            Err(WireError::EncodedLength(0))
+        );
+        let mut huge = bytes;
+        huge[12..16].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(matches!(
+            Header::decode(&huge, Encoding::H264),
+            Err(WireError::TooLarge(_))
+        ));
+        let rgb = header(640, 360, PixelFormat::RGB24);
+        assert!(matches!(
+            rgb.encode(Encoding::H264, 10),
+            Err(WireError::Format(_))
+        ));
+        let mut rgb_bytes = rgb.encode(Encoding::Raw, 0).unwrap();
+        rgb_bytes[12..16].copy_from_slice(&10u32.to_be_bytes());
+        assert!(matches!(
+            Header::decode(&rgb_bytes, Encoding::H264),
+            Err(WireError::Format(_))
+        ));
+    }
+
+    #[test]
+    fn control_codes_round_trip() {
+        for control in [Control::Pause, Control::Resume, Control::Keyframe] {
+            assert_eq!(Control::from_code(control.code()), Ok(control));
+        }
+        assert_eq!(Control::from_code(0), Err(WireError::Control(0)));
+        assert_eq!(Control::from_code(4), Err(WireError::Control(4)));
     }
 }

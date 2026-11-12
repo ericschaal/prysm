@@ -1,6 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{LightingTarget, Video};
+use prysm_webos_link::{LightingTarget, SlimEncoding, Video};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to.
@@ -71,6 +71,13 @@ pub struct State {
     /// Full only: the portal's LAN address once the worker reported it.
     pub portal: Option<String>,
     pub failure: Option<String>,
+    /// Slim only: the encoding of the frames being sent while connected to
+    /// the receiver; always the configured `capture.encoding`.
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<crate::schema::SlimEncodingSchema>)
+    )]
+    pub encoding: Option<SlimEncoding>,
     /// The latest worker stderr lines, oldest first (at most 20).
     pub log: Vec<String>,
 }

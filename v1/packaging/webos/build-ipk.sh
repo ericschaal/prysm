@@ -19,6 +19,8 @@ usage() {
 flavour=${1:-}
 case "$flavour" in
   full) supervisor=prysm-webos-service worker=prysm-webos host=webos ;;
+  # The slim worker encodes with the TV's hardware H.264 encoder (GStreamer)
+  # or OpenH264, so it links the TV's GStreamer and GLib and ships their notices.
   slim) supervisor=prysm-webos-slim-service worker=prysm-webos-slim host=webos-slim ;;
   *) usage ;;
 esac
@@ -69,7 +71,12 @@ cargo build --manifest-path "$v1/Cargo.toml" --offline \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$target_dir" \
   -p "$worker" -p prysm-webos-service --bin "$worker" --bin "$supervisor"
 binaries="$target_dir/armv7-unknown-linux-gnueabi/webos"
-python3 "$here/ipk.py" elf "$binaries/$supervisor" "$binaries/$worker"
+python3 "$here/ipk.py" elf "$binaries/$supervisor"
+if [ "$flavour" = slim ]; then
+  python3 "$here/ipk.py" elf --gstreamer "$binaries/$worker"
+else
+  python3 "$here/ipk.py" elf "$binaries/$worker"
+fi
 
 output=${out:-$v1/target/webos-ipk/$flavour}
 mkdir -p "$output"
@@ -90,6 +97,12 @@ cp "$root/LICENSE" "$stage/service/licenses/prysm.txt"
 for notice in hyperion tv-native-apis; do
   cp "$v1/adapters/capture-webos-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
 done
+if [ "$flavour" = slim ]; then
+  cp "$v1/adapters/h264/LICENSE.openh264" "$stage/service/licenses/openh264.txt"
+  for notice in gstreamer-rs gtk-rs; do
+    cp "$v1/adapters/h264-rvenc-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
+  done
+fi
 chmod 755 "$stage/service/setup.sh" "$stage/service/prysm-webos-service" "$stage/service/prysm-webos-worker"
 chmod -R go-w "$stage"
 
