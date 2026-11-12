@@ -10,6 +10,14 @@ import {
 const COMMAND_TIMEOUT_MS = 20_000;
 const EVENT_LIMIT = 2 * 1024 * 1024;
 
+/** `AbortSignal.timeout` exists from Chromium 103; older TV browsers lack it. */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 const failure = (kind: Failure['kind'], message: string) =>
   new ApplicationError({ kind, message });
 
@@ -51,7 +59,7 @@ export function httpApplicationClient<C, O>({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+        signal: timeoutSignal(COMMAND_TIMEOUT_MS),
         cache: 'no-store',
         redirect: 'error',
       });
@@ -101,6 +109,27 @@ export function httpApplicationClient<C, O>({
       }
     },
   };
+}
+
+/**
+ * Whether anything answers at `baseUrl`, ignoring CORS: an opaque `no-cors`
+ * request for the portal page. A page that may not use the API (its origin is
+ * not allowed) still gets an answer, which tells it from an unreachable portal.
+ */
+export async function probePortal(
+  baseUrl: string,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    await fetcher(`${baseUrl.replace(/\/+$/, '')}/`, {
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: timeoutSignal(5_000),
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

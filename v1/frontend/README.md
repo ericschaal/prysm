@@ -18,14 +18,16 @@ compiling a Rust host that `include!`s the asset list; Cargo never launches npm.
 ```sh
 npm --prefix v1/frontend run dev:headless      # desktop portal, no API behind Vite
 npm --prefix v1/frontend run dev:webos-portal
-npm --prefix v1/frontend run dev:webos         # TV UI on a fixture
+npm --prefix v1/frontend run dev:webos         # TV UI: open /demo.html (in-memory fakes)
 npm --prefix v1/frontend run dev:webos-slim
 ```
 
 The browser portals connect at once to the same-origin
 [portal API](../surfaces/web-portal/HTTP-CONTRACT.md), which needs no
-credentials. The TV entry points run on
-in-memory fixtures until the Luna client for the TV supervisor exists. See the
+credentials. The TV entry points use the Luna client of the TV supervisor;
+their `demo.html` pages run the same UI on an
+[in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,
+`?refused`, `?unreachable`). See the
 [UI/host assembly guide](../UI-ASSEMBLIES.md) and [state wiring](STATE.md).
 
 ## Read the composition
@@ -64,8 +66,18 @@ in-memory fixtures until the Luna client for the TV supervisor exists. See the
   [WLED](packages/output-wled-ui/index.tsx) with the
   [LED layout](packages/output-wled-ui/layout.tsx), and the
   [null output](packages/output-null-ui/index.tsx).
-- [TV UI](packages/tv-ui/index.tsx) with the
-  [TV platform port](packages/webos-platform/index.ts).
+- [TV UI](packages/tv-ui/index.tsx) (both packages): status card and primary
+  action from the supervisor's state ([rules](packages/tv-ui/model.ts)),
+  settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
+  lighting modes and, for the full package, Lights (WLED) and Capture dialogs
+  on its portal ([portal](packages/tv-ui/portal.tsx)), service options
+  (set up or repair, diagnostics, remove setup) and remote control
+  ([navigation](packages/tv-ui/navigation.ts): arrows move focus between two
+  columns and within rows, OK chooses, Back closes one dialog level and then
+  asks before closing). Its [Luna client](packages/webos-platform/index.ts)
+  checks replies against the generated `luna` contract, times out after 30 s
+  and resubscribes after 3 s; the UI holds the subscriptions only while the
+  page is visible.
 - [Application client](packages/application-client/index.ts),
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and
@@ -117,8 +129,9 @@ Panels use their adapter's generated section type from
 
 ## Limits
 
-Calibration and first-run setup are not in the portal yet. The bundles target
-ES2020 and are styled by one stylesheet (the portal CSP allows no inline
+Calibration and first-run setup are not in the portal yet. The browser
+bundles target ES2020, the TV bundles Chromium 53 (classic scripts, like the
+root TV app); each is styled by one stylesheet (the portal CSP allows no inline
 styles, and no `data:` or `blob:` images, so the preview decodes its JPEG
 with `createImageBitmap` and draws it on a canvas); real webOS browser compatibility and
 remote navigation still need validation.

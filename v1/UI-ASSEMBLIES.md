@@ -19,8 +19,7 @@ supervisor over stdio and have no Luna surface.
 
 On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
 [simplified runtime](../docs/plans/prysm-v1-simplified-runtime.md) and the
-[portal HTTP contract](surfaces/web-portal/HTTP-CONTRACT.md). The TV UI's Luna
-client does not exist yet, so the TV entry points run on in-memory fixtures.
+[portal HTTP contract](surfaces/web-portal/HTTP-CONTRACT.md).
 
 ## Frontend wiring
 
@@ -30,21 +29,30 @@ client does not exist yet, so the TV entry points run on in-memory fixtures.
 - [webOS browser host](frontend/hosts/webos/web-portal/app.tsx): shared portal,
   capture kind `webos` and output kind `wled`, typed by
   `@prysm/contracts/host-webos`.
-- [Embedded TV](frontend/hosts/webos/tv-ui/app.tsx) and
-  [capture-only TV](frontend/hosts/webos-slim/tv-ui/app.tsx): the shared
-  [TV UI](frontend/packages/tv-ui/index.tsx) with an injected application
-  client and [TV platform client](frontend/packages/webos-platform/index.ts)
-  (still a provisional local shape; the Luna client will replace it with the
-  generated `luna` types).
+- [Embedded TV](frontend/hosts/webos/tv-ui/main.tsx) and
+  [capture-only TV](frontend/hosts/webos-slim/tv-ui/main.tsx): the shared
+  [TV UI](frontend/packages/tv-ui/index.tsx) with the
+  [Luna client](frontend/packages/webos-platform/index.ts) of the supervisor
+  (generated `luna` types; `getState` subscription, `setPreferences`,
+  `setEnabled`, `uninstall`, and set-up through the Homebrew Channel's `exec`
+  of `setup.sh`) and an HTTP client factory for the Prysm that drives the
+  lights. Full: the TV's own portal over loopback (`http://127.0.0.1:<port of
+  State.portal>`). Slim: `preferences.instance`, the computer's portal, which
+  must allow the app's origin (`--allow-origin '*'`; a `file://` app sends
+  `Origin: null`); the UI says so when that portal answers but refuses. The
+  slim UI fills `preferences.receiver` from that portal's `capture.listen`
+  port. `demo.html` in each host folder runs the same UI on in-memory fakes
+  (`npm run dev:webos`, then `/demo.html`); production builds load only
+  `index.html`.
 
 ```mermaid
 flowchart LR
     Browser[Browser portal UI] --> HTTP[HTTP client] --> Portal[WebPortal surface]
-    TV[TV UI, both packages] --> Luna[Luna client, not built yet] --> Supervisor[prysm-webos-service]
+    TV[TV UI, both packages] --> Luna[Luna client] --> Supervisor[prysm-webos-service]
     Supervisor -->|stdio| Worker[prysm-webos or prysm-webos-slim]
     TV -->|HTTP client: own portal| Portal
     Portal --> Engine
-    TV -.->|slim: HTTP client with baseUrl, not wired yet| Remote[Remote WebPortal]
+    TV -->|slim: HTTP client with baseUrl| Remote[Remote WebPortal]
 ```
 
 [application-client](frontend/packages/application-client/index.ts) is the
@@ -85,7 +93,13 @@ npm --prefix v1/frontend run dev:webos
 
 The build creates `dist/headless/web-portal` (both desktop hosts), `dist/webos/web-portal`,
 `dist/webos/tv-ui` and `dist/webos-slim/tv-ui`. Browser bundles also produce a
-Rust `assets.rs` list for `WebPortal`. TV bundles are packaged with the app.
+Rust `assets.rs` list for `WebPortal`. TV bundles are packaged with the app:
+`index.html` plus `assets/` (one classic deferred script with Chromium 53
+syntax and one stylesheet, relative URLs for `file://`). The Luna path needs
+nothing newer; controlling a portal over HTTP needs `AbortController` and
+streamed `fetch` bodies (webOS 5+), and older TVs are told to use the portal on
+another device.
 
-Not implemented: the TV UI's Luna client, wiring the slim TV UI to the HTTP client, TV
-calibration (not in the runtime yet), first-run setup in the portal, IPK packaging and validation on a real webOS browser.
+Not implemented: TV calibration (not in the runtime yet; the TV shows the entry
+as not available), first-run setup in the portal, IPK packaging and validation
+on a real webOS browser.

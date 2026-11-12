@@ -1,23 +1,6 @@
-import { ApplicationProvider } from '@prysm/application-react/provider';
-import { createApplicationRuntime } from '@prysm/application-state';
-import { useMemo } from 'react';
-import type { ApplicationClient } from '@prysm/application-client';
-import { TvUi, type TvUiProps } from '@prysm/tv-ui';
+import { TvApp, type TvAppProps } from '@prysm/tv-ui';
 
-/** The slim TV forwards frames; lighting runs on the server it controls. */
-export function WebosSlimApp<C, O>({
-  remoteApplication,
-  ...tv
-}: Omit<TvUiProps<C, O>, 'application' | 'portalUrl'> & {
-  remoteApplication: ApplicationClient<C, O>;
-}) {
-  const application = useMemo(
-    () => createApplicationRuntime(remoteApplication),
-    [remoteApplication],
-  );
-  return (
-    <ApplicationProvider application={application}>
-      <TvUi application={application} {...tv} />
-    </ApplicationProvider>
-  );
+/** The slim package: capture forwarded to Prysm on a computer, which it controls. */
+export function WebosSlimTvApp(props: Omit<TvAppProps, 'flavor'>) {
+  return <TvApp flavor="slim" {...props} />;
 }

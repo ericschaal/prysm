@@ -1,0 +1,212 @@
+/**
+ * The TV service as the UI sees it: the subscribed state, a draft of the
+ * preferences and the commands. The subscription is the only source of
+ * state; command replies only confirm (they may overtake an older push).
+ */
+import { useEffect, useReducer, useRef, useState } from 'react';
+import type {
+  LunaError,
+  ServiceEvent,
+  State,
+  TvService,
+} from '@prysm/webos-platform';
+import { completePreferences, equal, type SavedPreferences } from './model';
+
+type Saved = SavedPreferences;
+type Edits = Partial<Saved>;
+type Key = keyof Saved;
+
+interface ServiceState {
+  online: boolean | null;
+  state: State | null;
+  /** Unsaved values, and the saved value each edit started from. */
+  edits: Edits;
+  bases: Edits;
+  /** Sent with the last successful save, until the subscription shows it. */
+  pending: Saved | null;
+  changing: boolean;
+  notice: string;
+  error: boolean;
+}
+
+type Action =
+  | { type: 'event'; event: ServiceEvent }
+  | { type: 'edit'; patch: Edits }
+  | { type: 'saved'; sent: Saved }
+  | { type: 'settled' }
+  | { type: 'discard' }
+  | { type: 'changing'; value: boolean }
+  | { type: 'notice'; text: string; error: boolean };
+
+const keys = (edits: Edits) => Object.keys(edits) as Key[];
+
+function reducer(current: ServiceState, action: Action): ServiceState {
+  switch (action.type) {
+    case 'event': {
+      const { event } = action;
+      if (!event.online)
+        return {
+          ...current,
+          online: false,
+          notice: event.error.message,
+          error: true,
+        };
+      const saved = completePreferences(event.state.preferences);
+      const edits: Edits = { ...current.edits };
+      const bases: Edits = { ...current.bases };
+      let replaced = false;
+      for (const key of keys(edits)) {
+        if (!equal(bases[key], saved[key])) replaced = true;
+        if (!equal(bases[key], saved[key]) || equal(edits[key], saved[key])) {
+          delete edits[key];
+          delete bases[key];
+        }
+      }
+      const reconnected = current.online === false;
+      return {
+        ...current,
+        online: true,
+        state: event.state,
+        edits,
+        bases,
+        pending:
+          current.pending && !equal(current.pending, saved) ? current.pending : null,
+        notice: replaced
+          ? 'Settings were changed elsewhere; your unsaved change was replaced.'
+          : reconnected
+            ? 'Service connected.'
+            : current.notice,
+        error: replaced ? true : reconnected ? false : current.error,
+      };
+    }
+    case 'edit': {
+      const saved = completePreferences(current.state?.preferences ?? {});
+      const edits = { ...current.edits };
+      const bases = { ...current.bases };
+      for (const key of keys(action.patch)) {
+        if (!(key in bases)) (bases as Record<Key, unknown>)[key] = saved[key];
+        (edits as Record<Key, unknown>)[key] = action.patch[key];
+        if (equal(edits[key], saved[key])) {
+          delete edits[key];
+          delete bases[key];
+        }
+      }
+      return { ...current, edits, bases };
+    }
+    case 'saved': {
+      // The subscription may already show what was saved.
+      const shown = current.state && equal(completePreferences(current.state.preferences), action.sent);
+      return { ...current, edits: {}, bases: {}, pending: shown ? null : action.sent };
+    }
+    case 'settled':
+      return { ...current, pending: null };
+    case 'discard':
+      return { ...current, edits: {}, bases: {} };
+    case 'changing':
+      return { ...current, changing: action.value };
+    case 'notice':
+      return { ...current, notice: action.text, error: action.error };
+  }
+}
+
+const initial: ServiceState = {
+  online: null,
+  state: null,
+  edits: {},
+  bases: {},
+  pending: null,
+  changing: false,
+  notice: '',
+  error: false,
+};
+
+const messageOf = (error: unknown) =>
+  (error as LunaError | Error | undefined)?.message ?? String(error);
+
+export function useTvService(service: TvService, active: boolean) {
+  const [current, dispatch] = useReducer(reducer, initial);
+  const [generation, setGeneration] = useState(0);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      service.cancelAll();
+    };
+  }, [service]);
+  useEffect(() => {
+    if (!active) return;
+    return service.watch((event) => dispatch({ type: 'event', event }));
+  }, [service, active, generation]);
+  useEffect(() => {
+    if (!current.pending) return;
+    // The subscription normally confirms within a moment; never wait forever.
+    const timer = setTimeout(() => dispatch({ type: 'settled' }), 5000);
+    return () => clearTimeout(timer);
+  }, [current.pending]);
+
+  const saved = completePreferences(current.state?.preferences ?? {});
+  const draft: Saved = { ...(current.pending ?? saved), ...current.edits };
+  const dirty = keys(current.edits).length > 0;
+  const say = (text: string, error = false) =>
+    dispatch({ type: 'notice', text, error });
+
+  /** Run one command at a time; resolves `false` when it did not run or failed. */
+  async function run(work: () => Promise<unknown>, done?: string) {
+    if (busy.current) return false;
+    busy.current = true;
+    dispatch({ type: 'changing', value: true });
+    try {
+      await work();
+      if (done !== undefined && mounted.current) say(done);
+      return true;
+    } catch (error) {
+      if (mounted.current) say(messageOf(error), true);
+      return false;
+    } finally {
+      busy.current = false;
+      if (mounted.current) dispatch({ type: 'changing', value: false });
+    }
+  }
+
+  async function sendPreferences() {
+    const sent = { ...draft };
+    await service.setPreferences(sent);
+    if (mounted.current) dispatch({ type: 'saved', sent });
+  }
+
+  return {
+    ...current,
+    saved,
+    draft,
+    dirty,
+    syncing: current.pending !== null,
+    edit: (patch: Edits) => dispatch({ type: 'edit', patch }),
+    discard: () => dispatch({ type: 'discard' }),
+    say,
+    save: () => run(sendPreferences, 'Settings saved.'),
+    enable: (enabled: boolean) =>
+      run(() => service.setEnabled(enabled), ''),
+    saveAndEnable: () =>
+      run(async () => {
+        await sendPreferences();
+        await service.setEnabled(true);
+      }, 'Settings saved.'),
+    setup: () => {
+      say('Setting up the service. This may take a moment.');
+      return run(async () => {
+        await service.setup();
+        setGeneration((count) => count + 1);
+      }, 'Service setup complete.');
+    },
+    uninstall: () =>
+      run(
+        () => service.uninstall(),
+        'Service setup removed. Your settings are kept.',
+      ),
+  };
+}
+
+export type TvServiceView = ReturnType<typeof useTvService>;

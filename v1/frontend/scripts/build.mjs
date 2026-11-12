@@ -18,13 +18,40 @@ const assemblies = [
   { host: 'webos-slim', surface: 'tv-ui' },
 ];
 
+/**
+ * The TV app is a `file://` page in the TV's own browser. Keep the target of
+ * the root TV app: webOS 4.x runs Chromium 53, which cannot load ES modules,
+ * so TV bundles are one classic deferred script with Chromium 53 syntax.
+ */
+const tvBuild = {
+  target: 'chrome53',
+  modulePreload: false,
+  // One stylesheet file, never a style element injected by the script (CSP).
+  cssCodeSplit: false,
+  rolldownOptions: { output: { format: 'iife' } },
+};
+const classicScript = {
+  name: 'webos-classic-script',
+  apply: 'build',
+  transformIndexHtml: {
+    order: 'post',
+    handler: (html) =>
+      html.replace(/type="module" crossorigin/g, 'defer').replace(/ crossorigin/g, ''),
+  },
+};
+
 for (const { host, surface } of assemblies) {
   const outDir = resolve(root, 'dist', host, surface);
+  const tv = surface === 'tv-ui';
   await build({
     configFile: false,
     root: resolve(root, 'hosts', host, surface),
     base: './',
-    build: { outDir, emptyOutDir: true, target: 'es2020' },
+    logLevel: 'warn',
+    plugins: tv ? [classicScript] : [],
+    build: tv
+      ? { outDir, emptyOutDir: true, ...tvBuild }
+      : { outDir, emptyOutDir: true, target: 'es2020' },
   });
   const files = (
     await readdir(outDir, { recursive: true, withFileTypes: true })

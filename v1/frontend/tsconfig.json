@@ -18,6 +18,7 @@
     "packages/**/*.tsx",
     "hosts/**/*.tsx",
     "testkit/**/*.ts",
+    "testkit/**/*.tsx",
     "tests/**/*.tsx",
     "packages/**/*.ts"
   ]

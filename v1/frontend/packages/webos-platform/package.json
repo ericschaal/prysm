@@ -5,5 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./index.ts"
+  },
+  "dependencies": {
+    "@prysm/contracts": "1.0.0-alpha.0"
   }
 }

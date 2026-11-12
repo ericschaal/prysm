@@ -71,7 +71,8 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
         );
       return client.replaceSettings(
         expected,
-        change(structuredClone(snapshot.settings)),
+        // Settings are JSON; `structuredClone` needs Chromium 98, newer than many TVs.
+        change(JSON.parse(JSON.stringify(snapshot.settings)) as Settings<C, O>),
       );
     });
   }
