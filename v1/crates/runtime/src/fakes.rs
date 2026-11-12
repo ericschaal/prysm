@@ -88,7 +88,13 @@ pub struct FakeSourceSettings {
     /// Byte every frame pixel channel is filled with; 0 (black) by default.
     /// A gray frame lets tests observe the color correction in the preview.
     pub fill: u8,
+    /// Switch between `fill` and this every [`BLINK_FRAMES`] frames, so tests
+    /// can observe smoothing in the preview.
+    pub blink: Option<u8>,
 }
+
+/// Frames per `blink` phase of a [`FakeSource`].
+pub const BLINK_FRAMES: u32 = 25;
 
 /// Registers kind `"fake"`.
 pub struct FakeSources(pub CallLog);
@@ -155,7 +161,11 @@ impl FrameSource for FakeSource {
         }
         thread::sleep(timeout.min(Duration::from_millis(2)));
         self.frames += 1;
-        Frame::fill(self.settings.fill, 16, 9, PixelFormat::RGB24)
+        let fill = match self.settings.blink {
+            Some(other) if (self.frames / BLINK_FRAMES) % 2 == 1 => other,
+            _ => self.settings.fill,
+        };
+        Frame::fill(fill, 16, 9, PixelFormat::RGB24)
             .map(Pull::Frame)
             .map_err(|error| Error::adapter("fake frame", error))
     }

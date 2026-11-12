@@ -4,6 +4,7 @@
 //! no channels, identities or lifecycle state: opening is construction, and the
 //! consuming `close`/`idle` calls release exactly once.
 mod adapter;
+mod calibration;
 mod error;
 mod profiles;
 mod registry;
@@ -12,6 +13,7 @@ mod slot;
 mod snapshot;
 
 pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore};
+pub use calibration::{Calibration, Pattern};
 pub use error::{Error, Result, ValidationError, chain};
 pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,

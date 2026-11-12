@@ -328,7 +328,10 @@ async fn allowed_origins_get_cors() {
         assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
         let headers = preflight.headers();
         assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
-        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_METHODS], "GET, PUT");
+        assert_eq!(
+            headers[header::ACCESS_CONTROL_ALLOW_METHODS],
+            "GET, PUT, DELETE"
+        );
         assert_eq!(
             headers[header::ACCESS_CONTROL_ALLOW_HEADERS],
             "content-type"
@@ -390,6 +393,18 @@ async fn allowed_origins_get_cors() {
             .await
             .unwrap();
         assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        // The TV app clears a calibration pattern with DELETE.
+        let delete = portal
+            .request(Method::DELETE, "/api/v1/calibration")
+            .header(header::ORIGIN, "null")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            delete.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "null"
+        );
         for origin in ["http://anything.example", "http://192.168.1.30:3000"] {
             let refused = portal
                 .request(Method::GET, "/api/v1/state")
@@ -443,6 +458,94 @@ async fn state_read_and_set_target() {
         let (status, body) = portal.target("sideways").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["kind"], "bad_request");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let put = |body: Value| portal.json(Method::PUT, "/api/v1/calibration", body);
+        let gray = json!({ "pattern": "gray-192", "uncorrected": false });
+
+        // Lighting must be on first; the refusal names the target.
+        let (status, body) = put(gray.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["kind"], "invalid");
+        assert_eq!(body["field"], "target");
+        assert!(portal.state().await.get("calibration").is_none());
+
+        portal.target("processed").await;
+        let before = portal.state().await;
+        let (status, _) = put(gray.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let state = portal.state().await;
+        assert_eq!(state["calibration"], gray);
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(state["settings"], before["settings"]);
+
+        let grid = json!({ "pattern": "review-grid", "uncorrected": true });
+        assert_eq!(put(grid.clone()).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        // Closed pattern set, exact fields.
+        for bad in [
+            json!({ "pattern": "gray-64", "uncorrected": false }),
+            json!({ "pattern": "response", "uncorrected": false }),
+            json!({ "pattern": "red" }),
+            json!({ "pattern": "red", "uncorrected": false, "token": "x" }),
+            json!(null),
+        ] {
+            let (status, body) = put(bad.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(body["kind"], "bad_request");
+        }
+        let untyped = portal
+            .request(Method::PUT, "/api/v1/calibration")
+            .body(gray.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(untyped.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        let get = portal
+            .request(Method::GET, "/api/v1/calibration")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // A foreign page can neither set nor clear it.
+        for method in [Method::PUT, Method::DELETE] {
+            let refused = portal
+                .request(method.clone(), "/api/v1/calibration")
+                .header(header::ORIGIN, "http://evil.example")
+                .json(&gray)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{method}");
+        }
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        let cleared = portal
+            .request(Method::DELETE, "/api/v1/calibration")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
+        assert!(portal.state().await.get("calibration").is_none());
+
+        // Leaving processed lighting clears it.
+        assert_eq!(put(gray.clone()).await.0, StatusCode::NO_CONTENT);
+        portal.target("off").await;
+        let state = portal.state().await;
+        assert!(state.get("calibration").is_none());
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
         portal.shutdown().await.unwrap();
     })
     .await;

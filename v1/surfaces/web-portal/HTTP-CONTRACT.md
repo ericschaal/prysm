@@ -10,7 +10,7 @@ own beyond connection limits.
 ```mermaid
 flowchart LR
     Browser[Browser portal] -->|HTTP| Portal[WebPortal surface]
-    Portal -->|set_target, replace_settings| Engine
+    Portal -->|set_target, replace_settings, set_calibration| Engine
     Engine -->|watch: Snapshot| Portal
     Host[Host main] -->|listen address or listener, assets, access| Portal
 ```
@@ -51,8 +51,10 @@ into `@prysm/contracts/application`.
 | `GET /api/v1/preview/stream` | — | `200 text/event-stream`: `data: <PreviewEvent>` now, then at most 8 per second; see [Preview](#preview) |
 | `PUT /api/v1/target` | `TargetRequest { target }` | `204` once the engine has applied the target |
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
+| `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
+| `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
 
-`State` is `{ target, session, input?, output_issue?, settings, revision, failure, surface_failures }`.
+`State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
 `settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., profiles?: [{ id, name, correction }], active_profile? } }`.
@@ -82,6 +84,36 @@ The stream sends whole states, not deltas, so there are no cursors, gaps or
 resynchronization: a slow reader skips intermediate states, and a reconnecting
 client simply takes the first event. Idle streams carry a `:` comment every 15
 seconds. Streams end when the portal shuts down or the engine stops.
+
+## Calibration
+
+A calibration pattern is engine state like the target: never saved, not
+part of `settings`, and setting it changes no revision. Color profiles are
+edited as usual through `PUT /api/v1/settings` (`processing.profiles`,
+`active_profile`) and apply at the next frame; the pattern only says what the
+TV shows, so the TV app and the portal follow the same `State.calibration`
+on the state stream.
+
+- `PUT /api/v1/calibration` with `{ "pattern": "gray-192", "uncorrected": false }`
+  shows or switches the pattern. Both fields are required; unknown fields and
+  patterns are `400`. It needs `target` `processed` and does not start
+  lighting: otherwise `422 invalid` with `field` `target`.
+- While a pattern is set, the processor runs without smoothing, so a profile
+  change shows at once, and with `uncorrected: true` without any color
+  profile, to compare. Brightness, shadow lift, black bars and the saved
+  settings are unchanged; both return to the settings when it clears.
+- It clears on `DELETE`, when the target leaves `processed` (`off`,
+  `device_native`, or a file source ending), at shutdown, and 10 minutes
+  after the last `PUT` (each `PUT`, even unchanged, restarts that time), so
+  a client that vanished does not leave lighting unsmoothed.
+
+| `pattern` | TV shows |
+| --- | --- |
+| `gray-192` | Light gray |
+| `red`, `yellow`, `green`, `cyan`, `blue`, `magenta` | That color, full screen |
+| `blue-pair`, `red-pair`, `green-pair` | Moderate (left) and vivid (right) blue, red, green |
+| `coast`, `garden`, `dusk` | Peach/teal, rose/sage, amber/violet |
+| `review-grid` | A grid of colors |
 
 ## Preview
 
@@ -137,8 +169,8 @@ Source chains stay in the process; `message` is what the user can act on.
 | 408 | `bad_request` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 413 | `payload_too_large` | Body over 1 MiB |
-| 415 | `unsupported_media_type` | Command without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, or `Processed` without capture/output configured |
+| 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, `Processed` without capture/output configured, or a calibration pattern while the target is not `processed` (`target`) |
 | 429 | `busy` | More than 8 open state streams, or more than 4 preview streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle |
@@ -171,7 +203,7 @@ ignored.
 
 CORS responses echo the request's `Origin` in `Access-Control-Allow-Origin`. A
 preflight (`OPTIONS` from an allowed cross origin) answers `204` with
-`Access-Control-Allow-Methods: GET, PUT`, `Access-Control-Allow-Headers:
+`Access-Control-Allow-Methods: GET, PUT, DELETE`, `Access-Control-Allow-Headers:
 content-type`, `Access-Control-Max-Age: 600` and, when asked by Chromium's
 Private Network Access, `Access-Control-Allow-Private-Network: true`. No
 credentials are involved, so `Access-Control-Allow-Credentials` is never sent.
@@ -240,7 +272,7 @@ returns; nothing is detached.
 [`tests/http.rs`](tests/http.rs) runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
-origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, adapter failure (502),
+origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless processed, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable,
 media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the

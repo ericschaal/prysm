@@ -45,6 +45,11 @@ export function fakeApplicationPort<C, O>(initial: {
     snapshot = { ...snapshot, ...change };
     for (const changed of subscribers) changed(snapshot);
   }
+  /** As the engine: calibration ends when the target leaves `processed`. */
+  function clearCalibration() {
+    snapshot = { ...snapshot };
+    delete snapshot.calibration;
+  }
   function failIfScripted() {
     const failure = nextFailure;
     nextFailure = null;
@@ -109,6 +114,7 @@ export function fakeApplicationPort<C, O>(initial: {
         publish({ target, session: { state: 'stopped' }, failure });
         throw new ApplicationError(failure);
       }
+      if (target !== 'processed') clearCalibration();
       publish({
         target,
         failure: null,
@@ -117,6 +123,24 @@ export function fakeApplicationPort<C, O>(initial: {
             'stopped' | 'running' | 'native',
         },
       });
+    },
+    setCalibration: async (calibration) => {
+      calls.push(
+        calibration
+          ? `calibration:${calibration.pattern}${calibration.uncorrected ? ':uncorrected' : ''}`
+          : 'calibration:end',
+      );
+      failIfScripted();
+      if (!calibration) {
+        clearCalibration();
+        publish({});
+      } else if (snapshot.target !== 'processed') {
+        throw new ApplicationError({
+          kind: 'invalid',
+          field: 'target',
+          message: 'calibration patterns need lighting on: set the target to processed first',
+        });
+      } else publish({ calibration });
     },
   };
   return {

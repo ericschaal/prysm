@@ -1,13 +1,15 @@
 import type {
+  Calibration,
   Failure,
   LightingTarget,
   OutputIssue,
+  Pattern,
   PreviewEvent,
   Settings as GeneratedSettings,
   State,
 } from '@prysm/contracts/application';
 
-export type { Failure, LightingTarget, OutputIssue, PreviewEvent };
+export type { Calibration, Failure, LightingTarget, OutputIssue, Pattern, PreviewEvent };
 
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps
@@ -60,6 +62,11 @@ export interface Observation<C, O> {
 export interface ApplicationClient<C, O> {
   observe(signal: AbortSignal): Promise<Observation<C, O>>;
   setTarget(target: LightingTarget): Promise<void>;
+  /**
+   * Show a calibration pattern, or end calibration with `null`. Needs the
+   * target `processed`; the engine ends it after ten minutes without a call.
+   */
+  setCalibration(calibration: Calibration | null): Promise<void>;
   /** Returns the new settings revision. */
   replaceSettings(expected: number, settings: Settings<C, O>): Promise<number>;
 }

@@ -161,7 +161,7 @@ pub(crate) fn preflight(origin: HeaderValue, request: &HeaderMap) -> Response {
     let headers = response.headers_mut();
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, PUT"),
+        HeaderValue::from_static("GET, PUT, DELETE"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,

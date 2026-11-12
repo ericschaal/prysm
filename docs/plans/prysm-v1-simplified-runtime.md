@@ -151,7 +151,7 @@ recovery-required categories. Native watchdogs stay inside the capture adapter.
 pub enum Command {
     SetTarget(LightingTarget, Reply<()>),
     ReplaceSettings { expected: Revision, settings: Settings, reply: Reply<Revision> },
-    Calibrate(CalibrationCommand, Reply<CalibrationReply>),
+    SetCalibration(Option<Calibration>, Reply<()>),
 }
 
 #[derive(Clone)]
@@ -161,7 +161,7 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
 - Commands are processed in order and return their result directly. There is no
   accepted/operation registry; HTTP idempotency, if needed, belongs to the portal.
 - State is one `watch<Snapshot>`: target, session state, settings revision,
-  last failure, input, output issue. Late or slow observers always see the latest value.
+  last failure, input, output issue, calibration pattern. Late or slow observers always see the latest value.
 - Input: the session thread only counts frames (one relaxed atomic add); the
   engine samples the count once a second while a session runs and publishes
   `Snapshot::input` (frames per second to one decimal, and whether any frame
@@ -188,7 +188,14 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
   closed), resume and keyframe. An encoder failure is not a wait: it fails
   `send`, so the worker exits and the supervisor's backoff applies. There is
   no automatic switch between encoders (`prysm-3jx.12.2`).
-- Calibration keeps its private reply so credentials never enter the snapshot.
+- Calibration is not a session: color profiles are edited through settings
+  as usual, and `Snapshot::calibration` (the TV's pattern, and whether to
+  compare uncorrected) is ephemeral state beside the target. While set, the
+  session's config has no smoothing (and no correction when uncorrected);
+  settings and revision stay untouched. It needs target `Processed`, and
+  clears when the target leaves it, at shutdown, and after
+  `CALIBRATION_TIMEOUT` (10 minutes) without being set again. No tokens,
+  leases, heartbeats or locks.
 
 ### Settings changes
 

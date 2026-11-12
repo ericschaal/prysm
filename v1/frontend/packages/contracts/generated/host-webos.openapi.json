@@ -1,6 +1,24 @@
 {
   "components": {
     "schemas": {
+      "Calibration": {
+        "additionalProperties": false,
+        "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
+        "properties": {
+          "pattern": {
+            "$ref": "#/components/schemas/Pattern"
+          },
+          "uncorrected": {
+            "description": "Apply no color profile while the pattern shows, to compare.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern",
+          "uncorrected"
+        ],
+        "type": "object"
+      },
       "CaptureSettings": {
         "oneOf": [
           {
@@ -259,6 +277,26 @@
             "$ref": "#/components/schemas/WledSettings"
           }
         ]
+      },
+      "Pattern": {
+        "description": "A calibration pattern, by its TV clip name.",
+        "enum": [
+          "gray-192",
+          "red",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "magenta",
+          "blue-pair",
+          "red-pair",
+          "green-pair",
+          "coast",
+          "garden",
+          "dusk",
+          "review-grid"
+        ],
+        "type": "string"
       },
       "Phase": {
         "description": "Where a faulted session stopped making progress.",
@@ -662,6 +700,10 @@
       "State": {
         "description": "The observable runtime state, sent whole on every change.",
         "properties": {
+          "calibration": {
+            "$ref": "#/components/schemas/Calibration",
+            "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
+          },
           "failure": {
             "oneOf": [
               {

@@ -5,7 +5,7 @@ are generated from OpenAPI documents the Rust exporter prints.
 
 | Owner | Declares | Frontend import |
 | --- | --- | --- |
-| `prysm-ports` | `Settings`, `Processing`, `AdapterSettings`, `LightingTarget`, `Revision` and their serde shape (the settings file format). No OpenAPI dependency. | — |
+| `prysm-ports` | `Settings`, `Processing`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern` and their serde shape (the settings file format). No OpenAPI dependency. | — |
 | [`prysm-protocol`](crates/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](crates/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
 | [`prysm-webos-service`](hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `SlimEncoding`, `FailureKind`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |

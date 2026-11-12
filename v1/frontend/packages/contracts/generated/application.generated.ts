@@ -3,6 +3,15 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description A calibration pattern shown on the TV: the body of
+         *     `PUT /api/v1/calibration` and `State.calibration`.
+         */
+        Calibration: {
+            pattern: components["schemas"]["Pattern"];
+            /** @description Apply no color profile while the pattern shows, to compare. */
+            uncorrected: boolean;
+        };
         CaptureSettings: {
             kind: string;
         } & {
@@ -103,6 +112,11 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * @description A calibration pattern, by its TV clip name.
+         * @enum {string}
+         */
+        Pattern: "gray-192" | "red" | "yellow" | "green" | "cyan" | "blue" | "magenta" | "blue-pair" | "red-pair" | "green-pair" | "coast" | "garden" | "dusk" | "review-grid";
         /**
          * @description Where a faulted session stopped making progress.
          * @enum {string}
@@ -233,6 +247,11 @@ export interface components {
         };
         /** @description The observable runtime state, sent whole on every change. */
         State: {
+            /**
+             * @description The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
+             *     absent while not calibrating. Never saved.
+             */
+            calibration?: components["schemas"]["Calibration"];
             failure: components["schemas"]["Failure"] | null;
             /**
              * @description Frames arriving from the source, measured about once a second; absent
@@ -267,6 +286,7 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type Calibration = components['schemas']['Calibration'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type ColorProfile = components['schemas']['ColorProfile'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
@@ -277,6 +297,7 @@ export type Input = components['schemas']['Input'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
+export type Pattern = components['schemas']['Pattern'];
 export type Phase = components['schemas']['Phase'];
 export type PreviewColor = components['schemas']['PreviewColor'];
 export type PreviewColors = components['schemas']['PreviewColors'];

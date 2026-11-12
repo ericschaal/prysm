@@ -20,7 +20,7 @@ pub mod fakes;
 pub mod logging;
 
 pub use builder::{Builder, Prysm};
-pub use engine::{Engine, EngineHandle};
+pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
 pub use sample::sample_rgb;

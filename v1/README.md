@@ -130,7 +130,8 @@ members). Builds do not deploy.
 - TV: IPK packaging for the two packages, the TV UI on the new Luna API, and every
   check that needs the webOS SDK or a TV (the TV binaries build and are tested on
   the development host only).
-- Calibration and metrics.
+- Metrics, and the calibration screens (portal wizard, TV pattern player); the
+  engine state and [route](surfaces/web-portal/HTTP-CONTRACT.md#calibration) exist.
 - Verification against real capture hardware, WLED devices and TVs.
 
 ## Packaging

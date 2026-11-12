@@ -1,7 +1,9 @@
 use crate::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd};
+use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, Error, IdleMode, Input, LightingTarget, Registry, Result, Revision, Section,
-    SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
+    AdapterSettings, Calibration, Error, IdleMode, Input, LightingTarget, Registry, Result,
+    Revision, Section, SessionPhase, SessionState, Settings, SettingsStore, Snapshot,
+    ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -19,9 +21,14 @@ enum Command {
         settings: Box<Settings>,
         reply: Reply<Revision>,
     },
+    SetCalibration(Option<Calibration>, Reply<()>),
     SurfaceFailed(Error),
     Shutdown(Reply<()>),
 }
+
+/// A calibration pattern nobody has set again for this long is cleared, so a
+/// client that vanished does not leave lighting unsmoothed for good.
+pub const CALIBRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Cloneable access to a running engine.
 #[derive(Clone)]
@@ -54,6 +61,19 @@ impl EngineHandle {
             reply,
         })
         .await
+    }
+
+    /// Show a calibration pattern (`Some`), or end calibration (`None`).
+    /// Setting one again, even unchanged, restarts its
+    /// [`CALIBRATION_TIMEOUT`]. It is cleared when the target leaves
+    /// `Processed` and at shutdown.
+    ///
+    /// # Errors
+    /// A pattern while the target is not `Processed` (field `target`), or a
+    /// faulted or stopped engine.
+    pub async fn set_calibration(&self, calibration: Option<Calibration>) -> Result<()> {
+        self.call(|reply| Command::SetCalibration(calibration, reply))
+            .await
     }
 
     #[must_use]
@@ -127,6 +147,7 @@ impl Engine {
             store,
             session: None,
             meter: None,
+            calibration_expires: None,
             preview: preview.clone(),
             stop_deadline,
             state,
@@ -232,6 +253,8 @@ struct Core {
     session: Option<Session>,
     /// Present exactly while `session` is.
     meter: Option<Meter>,
+    /// When the snapshot's calibration is cleared; present exactly while it is.
+    calibration_expires: Option<Instant>,
     preview: Arc<PreviewSlot>,
     stop_deadline: Duration,
     state: watch::Sender<Snapshot>,
@@ -248,6 +271,10 @@ impl Core {
                 }
                 () = measure(&mut self.meter) => {
                     self.measure();
+                    continue;
+                }
+                () = expiry(self.calibration_expires) => {
+                    self.calibrate(None);
                     continue;
                 }
             };
@@ -267,6 +294,13 @@ impl Core {
                     let result = match self.faulted() {
                         Some(fault) => Err(fault),
                         None => self.set_target(target).await,
+                    };
+                    let _ = reply.send(result);
+                }
+                Some(Command::SetCalibration(calibration, reply)) => {
+                    let result = match self.faulted() {
+                        Some(fault) => Err(fault),
+                        None => self.set_calibration(calibration),
                     };
                     let _ = reply.send(result);
                 }
@@ -329,11 +363,17 @@ impl Core {
                 s.target = LightingTarget::Off;
             }
         });
+        if ended {
+            self.calibrate(None);
+        }
     }
 
     async fn set_target(&mut self, target: LightingTarget) -> Result<()> {
         let current = self.state.borrow().session;
         self.state.send_modify(|s| s.target = target);
+        if target != LightingTarget::Processed {
+            self.calibrate(None);
+        }
         let result = match (target, current) {
             (LightingTarget::Processed, SessionState::Running) => Ok(()),
             (LightingTarget::Processed, _) => self.start().await,
@@ -393,7 +433,7 @@ impl Core {
             }
             SessionState::Running if previous.processing != settings.processing => {
                 if let Some(session) = &self.session {
-                    session.configure(settings.processing.config());
+                    session.configure(effective(&self.state.borrow()));
                 }
                 Ok(())
             }
@@ -414,7 +454,7 @@ impl Core {
             let capture = configured(settings.capture.as_ref(), Section::Capture)?;
             let output = configured(settings.output.as_ref(), Section::Output)?;
             self.registry.validate(settings)?;
-            (capture, output, settings.processing.config())
+            (capture, output, effective(&snapshot))
         };
         let registry = self.registry.clone();
         let source = blocking(move || registry.open_source(&capture)).await??;
@@ -473,12 +513,43 @@ impl Core {
         result
     }
 
+    fn set_calibration(&mut self, calibration: Option<Calibration>) -> Result<()> {
+        if calibration.is_some() && self.state.borrow().target != LightingTarget::Processed {
+            return Err(ValidationError::new(
+                "target",
+                "calibration patterns need lighting on: set the target to processed first",
+            )
+            .into());
+        }
+        self.calibrate(calibration);
+        Ok(())
+    }
+
+    /// Publish `calibration`, restart its timeout and give a running session
+    /// the processing config it implies.
+    fn calibrate(&mut self, calibration: Option<Calibration>) {
+        self.calibration_expires = calibration.map(|_| Instant::now() + CALIBRATION_TIMEOUT);
+        let before = effective(&self.state.borrow());
+        self.state.send_if_modified(|s| {
+            let changed = s.calibration != calibration;
+            s.calibration = calibration;
+            changed
+        });
+        let after = effective(&self.state.borrow());
+        if let Some(session) = &self.session
+            && after != before
+        {
+            session.configure(after);
+        }
+    }
+
     fn record(&self, result: &Result<()>) {
         let failure = result.as_ref().err().cloned();
         self.state.send_modify(|s| s.failure = failure);
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        self.calibrate(None);
         if let Some(fault) = self.faulted() {
             return Err(fault);
         }
@@ -492,6 +563,22 @@ fn configured(settings: Option<&AdapterSettings>, section: Section) -> Result<Ad
     settings
         .cloned()
         .ok_or_else(|| ValidationError::new(section.as_str(), "not configured").into())
+}
+
+/// The processor config: the settings, adjusted while a calibration pattern shows.
+fn effective(snapshot: &Snapshot) -> Config {
+    let config = snapshot.settings.processing.config();
+    match snapshot.calibration {
+        Some(calibration) => calibration.adjust(config),
+        None => config,
+    }
+}
+
+async fn expiry(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn finished(session: &mut Option<Session>) -> Result<SessionEnd> {

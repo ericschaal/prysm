@@ -13,6 +13,7 @@ export type CommandKind =
   | 'configureOutput'
   | 'configureProcessing'
   | 'configureSetup'
+  | 'setCalibration'
   | 'setTarget';
 export interface CommandState {
   /** Local sequence number; only the latest command is shown. */

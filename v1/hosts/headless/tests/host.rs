@@ -113,7 +113,7 @@ fn allowed_origins_get_cors() {
     assert_eq!(preflight.header("access-control-allow-origin"), Some(tv));
     assert_eq!(
         preflight.header("access-control-allow-methods"),
-        Some("GET, PUT")
+        Some("GET, PUT, DELETE")
     );
     let put = put_target(port, "off", Some(tv));
     assert_eq!(put.status, 204, "{}", put.body);

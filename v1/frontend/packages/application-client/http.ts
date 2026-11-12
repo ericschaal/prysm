@@ -52,13 +52,18 @@ export function httpApplicationClient<C, O>({
   fetch: fetcher = fetch,
 }: HttpClientOptions = {}): ApplicationClient<C, O> {
   const api = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
-  async function command(path: string, body: unknown): Promise<Response> {
+  /** `PUT` the body, or `DELETE` when there is none. */
+  async function command(path: string, body?: unknown): Promise<Response> {
     let response: Response;
     try {
       response = await fetcher(`${api}/${path}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        ...(body === undefined
+          ? { method: 'DELETE' }
+          : {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            }),
         signal: timeoutSignal(COMMAND_TIMEOUT_MS),
         cache: 'no-store',
         redirect: 'error',
@@ -76,6 +81,9 @@ export function httpApplicationClient<C, O>({
   return {
     setTarget: async (target) => {
       await command('target', { target });
+    },
+    setCalibration: async (calibration) => {
+      await (calibration ? command('calibration', calibration) : command('calibration'));
     },
     replaceSettings: async (expected, settings) => {
       const reply: unknown = await (

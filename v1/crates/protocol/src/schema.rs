@@ -142,6 +142,41 @@ pub struct HueControlsSchema {
     magenta: i16,
 }
 
+// Mirrors `prysm_ports::Calibration`.
+/// A calibration pattern shown on the TV: the body of
+/// `PUT /api/v1/calibration` and `State.calibration`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Calibration)]
+#[serde(deny_unknown_fields)]
+pub struct CalibrationSchema {
+    pattern: PatternSchema,
+    /// Apply no color profile while the pattern shows, to compare.
+    uncorrected: bool,
+}
+
+// Mirrors `prysm_ports::Pattern`.
+/// A calibration pattern, by its TV clip name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Pattern)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatternSchema {
+    #[serde(rename = "gray-192")]
+    Gray192,
+    Red,
+    Yellow,
+    Green,
+    Cyan,
+    Blue,
+    Magenta,
+    BluePair,
+    RedPair,
+    GreenPair,
+    Coast,
+    Garden,
+    Dusk,
+    ReviewGrid,
+}
+
 // Mirrors `prysm_ports::LightingTarget`.
 /// What the user wants the LEDs to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -209,6 +244,8 @@ impl ToSchema for OutputSettings {}
     CorrectionControlsSchema,
     HueControlsSchema,
     LightingTargetSchema,
+    CalibrationSchema,
+    PatternSchema,
     CaptureSettings,
     OutputSettings,
     PreviewEvent,
@@ -357,8 +394,8 @@ impl std::error::Error for SchemaConflict {}
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, ColorProfile, CorrectionControls, FrameSource, HueControls,
-        LightingTarget, Processing, Result, Settings, ValidationError,
+        AdapterSettings, Calibration, ColorProfile, CorrectionControls, FrameSource, HueControls,
+        LightingTarget, Pattern, Processing, Result, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -420,6 +457,12 @@ mod tests {
             LightingTarget::DeviceNative,
         ] {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
+        }
+        for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
+            same_shape::<Calibration, CalibrationSchema>(&Calibration {
+                pattern,
+                uncorrected: index % 2 == 0,
+            });
         }
     }
 

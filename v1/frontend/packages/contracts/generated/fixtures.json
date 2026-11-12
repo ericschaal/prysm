@@ -1,4 +1,62 @@
 {
+  "Calibration": [
+    {
+      "pattern": "gray-192",
+      "uncorrected": false
+    },
+    {
+      "pattern": "red",
+      "uncorrected": true
+    },
+    {
+      "pattern": "yellow",
+      "uncorrected": false
+    },
+    {
+      "pattern": "green",
+      "uncorrected": true
+    },
+    {
+      "pattern": "cyan",
+      "uncorrected": false
+    },
+    {
+      "pattern": "blue",
+      "uncorrected": true
+    },
+    {
+      "pattern": "magenta",
+      "uncorrected": false
+    },
+    {
+      "pattern": "blue-pair",
+      "uncorrected": true
+    },
+    {
+      "pattern": "red-pair",
+      "uncorrected": false
+    },
+    {
+      "pattern": "green-pair",
+      "uncorrected": true
+    },
+    {
+      "pattern": "coast",
+      "uncorrected": false
+    },
+    {
+      "pattern": "garden",
+      "uncorrected": true
+    },
+    {
+      "pattern": "dusk",
+      "uncorrected": false
+    },
+    {
+      "pattern": "review-grid",
+      "uncorrected": true
+    }
+  ],
   "DeviceSettings": [
     {
       "fps": 30,
@@ -343,6 +401,68 @@
           "message": "portal listener failed"
         }
       ],
+      "target": "processed"
+    },
+    {
+      "calibration": {
+        "pattern": "gray-192",
+        "uncorrected": false
+      },
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "running"
+      },
+      "settings": {
+        "processing": {
+          "active_profile": "ps5",
+          "brightness_percent": 100,
+          "profiles": [
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": -5,
+                  "yellow": 0
+                },
+                "intensity": 15,
+                "midtones": 6,
+                "tint": -4,
+                "warmth": 12
+              },
+              "id": "ps5",
+              "name": "PS5"
+            },
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": 0,
+                  "yellow": 0
+                },
+                "intensity": 0,
+                "midtones": 0,
+                "tint": 0,
+                "warmth": 0
+              },
+              "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+              "name": "TV apps"
+            }
+          ],
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
       "target": "processed"
     },
     {

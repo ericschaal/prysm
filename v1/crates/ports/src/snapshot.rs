@@ -1,4 +1,4 @@
-use crate::{Error, OutputIssue, Revision, Settings};
+use crate::{Calibration, Error, OutputIssue, Revision, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -60,6 +60,10 @@ pub struct Snapshot {
     /// own checks; republished with `input`. `None` while they show them,
     /// while the output cannot tell, and while no session holds the output.
     pub output_issue: Option<OutputIssue>,
+    /// The calibration pattern shown, while the target is `Processed`. Not
+    /// persisted; while set, processing runs without smoothing (and without
+    /// correction when `uncorrected`), leaving `settings` untouched.
+    pub calibration: Option<Calibration>,
     /// Last lighting failure; cleared when lighting next starts successfully.
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.

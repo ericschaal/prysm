@@ -6,9 +6,9 @@ use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, StreamEncodin
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, ColorProfile, CorrectionControls, Error, HueControls, LightingTarget,
-    OutputIssue, Processing, Revision, SessionPhase, SessionState, Settings, Snapshot,
-    ValidationError,
+    AdapterSettings, Calibration, ColorProfile, CorrectionControls, Error, HueControls,
+    LightingTarget, OutputIssue, Pattern, Processing, Revision, SessionPhase, SessionState,
+    Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -144,6 +144,16 @@ fn application() -> Value {
             ..Snapshot::default()
         },
         Snapshot {
+            target: LightingTarget::Processed,
+            session: SessionState::Running,
+            settings: with_profiles(),
+            calibration: Some(Calibration {
+                pattern: Pattern::Gray192,
+                uncorrected: false,
+            }),
+            ..Snapshot::default()
+        },
+        Snapshot {
             target: LightingTarget::DeviceNative,
             session: SessionState::Native,
             ..Snapshot::default()
@@ -190,6 +200,12 @@ fn application() -> Value {
         ],
         "Failure": failures.iter().map(Failure::from).collect::<Vec<_>>(),
         "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
+        // Every pattern, as `PUT /api/v1/calibration` bodies.
+        "Calibration": Pattern::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, pattern)| Calibration { pattern, uncorrected: index % 2 == 1 })
+            .collect::<Vec<_>>(),
         "SettingsRequest": [
             SettingsRequest { expected: Revision(0), settings: Settings::default() },
             SettingsRequest { expected: Revision(7), settings: configured },

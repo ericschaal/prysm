@@ -2,6 +2,7 @@ import type { ThunkAction, UnknownAction } from '@reduxjs/toolkit';
 import {
   ApplicationError,
   type ApplicationClient,
+  type Calibration,
   type Failure,
   type LightingTarget,
   type Settings,
@@ -79,6 +80,8 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
   return {
     setTarget: (target: LightingTarget) =>
       submit('setTarget', (client) => client.setTarget(target)),
+    setCalibration: (calibration: Calibration | null) =>
+      submit('setCalibration', (client) => client.setCalibration(calibration)),
     configureCapture: (expected: number, capture: C) =>
       replaceSection('configureCapture', expected, (settings) => ({
         ...settings,

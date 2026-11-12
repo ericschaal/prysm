@@ -7,7 +7,7 @@
 use prysm_ports::Input as InputRate;
 use prysm_ports::OutputIssue as PortsOutputIssue;
 use prysm_ports::{
-    Error, LightingTarget, Revision, SessionPhase, SessionState, Settings, Snapshot,
+    Calibration, Error, LightingTarget, Revision, SessionPhase, SessionState, Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error as _;
@@ -36,6 +36,14 @@ pub struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schema(nullable = false))]
     pub output_issue: Option<OutputIssue>,
+    /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
+    /// absent while not calibrating. Never saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<schema::CalibrationSchema>, nullable = false)
+    )]
+    pub calibration: Option<Calibration>,
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
     /// Pass back as `expected` when replacing settings.
@@ -55,6 +63,7 @@ impl From<&Snapshot> for State {
             session: snapshot.session.into(),
             input: snapshot.input.map(Input::from),
             output_issue: snapshot.output_issue.map(OutputIssue::from),
+            calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
             failure: snapshot.failure.as_ref().map(Failure::from),
@@ -318,6 +327,10 @@ mod tests {
         );
         assert!(value.get("input").is_none(), "absent while stopped");
         assert!(value.get("output_issue").is_none(), "absent while stopped");
+        assert!(
+            value.get("calibration").is_none(),
+            "absent while not calibrating"
+        );
         let back: State = serde_json::from_value(value).unwrap();
         assert_eq!(back.session, snapshot.session.into());
 
@@ -330,7 +343,24 @@ mod tests {
             output_issue: Some(PortsOutputIssue::OtherSender),
             ..Snapshot::default()
         };
+        let running = Snapshot {
+            calibration: Some(Calibration {
+                pattern: prysm_ports::Pattern::BluePair,
+                uncorrected: true,
+            }),
+            ..running
+        };
         let value = serde_json::to_value(State::from(&running)).unwrap();
+        assert_eq!(
+            value["calibration"],
+            json!({ "pattern": "blue-pair", "uncorrected": true })
+        );
+        assert_eq!(
+            serde_json::from_value::<State>(value.clone())
+                .unwrap()
+                .calibration,
+            running.calibration
+        );
         assert_eq!(value["input"]["receiving"], true);
         assert_eq!(value["output_issue"], "other_sender");
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
