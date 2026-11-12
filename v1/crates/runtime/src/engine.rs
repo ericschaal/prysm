@@ -297,9 +297,11 @@ impl Core {
             return;
         };
         let input = Some(meter.sample(session.frames()));
+        let issue = session.output_issue();
         self.state.send_if_modified(|s| {
-            let changed = s.input != input;
+            let changed = s.input != input || s.output_issue != issue;
             s.input = input;
+            s.output_issue = issue;
             changed
         });
     }
@@ -321,6 +323,7 @@ impl Core {
         self.state.send_modify(|s| {
             s.session = session;
             s.input = None;
+            s.output_issue = None;
             s.failure = failure;
             if ended {
                 s.target = LightingTarget::Off;
@@ -446,6 +449,7 @@ impl Core {
         self.state.send_modify(|s| {
             s.session = state;
             s.input = None;
+            s.output_issue = None;
         });
         result.and_then(SessionEnd::result)
     }

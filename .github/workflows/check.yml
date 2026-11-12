@@ -1,6 +1,12 @@
 name: Check and package
 on:
   push:
+    # Every branch and every tag except the v1 release tags (v1.*), which belong
+    # to v1-release.yml: publish-image would fail its version check on them.
+    # Listing branches is required; with only tags-ignore, branch pushes would
+    # not trigger this workflow.
+    branches: ['**']
+    tags-ignore: ['v1.*']
   pull_request:
   workflow_dispatch:
 
@@ -104,7 +110,8 @@ jobs:
           compression-level: 0
 
   publish-image:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Shipping-product tags only; v1.* tags are excluded above and here.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !startsWith(github.ref, 'refs/tags/v1.')
     needs: [quality, frontend, docker, rust]
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -1,8 +1,11 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host, prefer_ipv4, resolve_within};
+use crate::observe::Observer;
 use crate::{LedCounts, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
-use prysm_ports::{AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, Registry};
+use prysm_ports::{
+    AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Registry,
+};
 use serde_json::{Value, json};
 use std::error::Error as _;
 use std::io::{self, ErrorKind, Read, Write};
@@ -21,6 +24,8 @@ enum Reply {
     Json(&'static str),
     /// These exact bytes, then close.
     Raw(String),
+    /// No reply: hold the connection until the client closes it.
+    Hang,
 }
 
 struct Device {
@@ -66,6 +71,10 @@ impl Device {
                         body.len()
                     ),
                     Reply::Raw(bytes) => bytes,
+                    Reply::Hang => {
+                        let _ = socket.read(&mut [0; 1]);
+                        continue;
+                    }
                 };
                 let _ = socket.write_all(response.as_bytes());
             }
@@ -76,6 +85,19 @@ impl Device {
             udp,
             calls,
         }
+    }
+
+    fn observer(&self) -> Observer {
+        let device = SocketAddr::from(([127, 0, 0, 1], self.http_port));
+        Observer::new(device, &self.address("127.0.0.1"), Duration::ZERO)
+    }
+
+    /// The next request must be a state check.
+    fn check_request(&self) {
+        let (head, _) = self.calls.recv_timeout(WAIT).expect("no state check");
+        assert!(head.starts_with("GET /json/si HTTP/1.1\r\n"), "{head}");
+        let host = format!("\r\nHost: {}\r\n", self.address("127.0.0.1"));
+        assert!(head.contains(&host), "{head}");
     }
 
     /// `host:port` of the HTTP fixture.
@@ -138,14 +160,13 @@ fn read_request(socket: &mut impl Read) -> (String, Value) {
         }
     };
     let head = String::from_utf8(bytes[..end].to_vec()).unwrap();
-    let length: usize = head
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse().unwrap())
-        })
-        .expect("Content-Length");
+    let Some(length) = head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().unwrap())
+    }) else {
+        return (head, Value::Null);
+    };
     while bytes.len() < end + length {
         let count = socket.read(&mut chunk).unwrap();
         assert_ne!(count, 0, "body ended early");
@@ -542,4 +563,221 @@ fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
     ] {
         assert!(serde_json::from_value::<WledSettings>(invalid).is_err());
     }
+}
+
+/// A `/json/si` reply; `healthy()` is WLED showing Prysm's DDP from 127.0.0.1.
+fn si(state: Value, info: Value) -> Reply {
+    let body = json!({ "state": state, "info": info }).to_string();
+    Reply::Raw(format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    ))
+}
+fn healthy() -> Reply {
+    sender("127.0.0.1")
+}
+fn sender(lip: &str) -> Reply {
+    si(
+        json!({"on": true, "lor": 0, "bri": 128, "seg": [{"id": 0}]}),
+        json!({"live": true, "lm": "DDP", "lip": lip, "ver": "0.15.0"}),
+    )
+}
+
+/// Run one state check to its end; what it found.
+fn check(observer: &mut Observer) -> Option<OutputIssue> {
+    let deadline = Instant::now() + WAIT;
+    let mut issue = observer.poll();
+    while observer.checking() {
+        assert!(Instant::now() < deadline, "check never finished");
+        thread::sleep(Duration::from_millis(2));
+        issue = observer.poll();
+    }
+    issue
+}
+
+#[test]
+fn each_takeover_cause_is_reported_and_clears_when_wled_shows_prysm_again() {
+    let cases = [
+        (healthy(), None),
+        (
+            si(
+                json!({"on": false, "lor": 0}),
+                json!({"live": true, "lm": "DDP", "lip": "127.0.0.1"}),
+            ),
+            Some(OutputIssue::Off),
+        ),
+        (healthy(), None),
+        (
+            si(
+                json!({"on": true, "lor": 1}),
+                json!({"live": true, "lm": "DDP", "lip": "127.0.0.1"}),
+            ),
+            Some(OutputIssue::Overridden),
+        ),
+        (
+            si(
+                json!({"on": true, "lor": 2}),
+                json!({"live": false, "lm": "", "lip": ""}),
+            ),
+            Some(OutputIssue::Overridden),
+        ),
+        (
+            si(
+                json!({"on": true, "lor": 0}),
+                json!({"live": false, "lm": "", "lip": ""}),
+            ),
+            Some(OutputIssue::NotLive),
+        ),
+        // Live only through Prysm's JSON request: no DDP packet arrived.
+        (
+            si(
+                json!({"on": true, "lor": 0}),
+                json!({"live": true, "lm": "", "lip": ""}),
+            ),
+            Some(OutputIssue::NotLive),
+        ),
+        (healthy(), None),
+        (sender("192.0.2.9"), Some(OutputIssue::OtherSender)),
+        (
+            si(
+                json!({"on": true, "lor": 0}),
+                json!({"live": true, "lm": "Hyperion", "lip": "192.0.2.9"}),
+            ),
+            Some(OutputIssue::OtherSender),
+        ),
+        (healthy(), None),
+        (Reply::Raw(String::new()), Some(OutputIssue::Unreachable)),
+        (
+            Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
+            Some(OutputIssue::Unreachable),
+        ),
+        (
+            Reply::Json(r#"{"state":{}}"#),
+            Some(OutputIssue::Unreachable),
+        ),
+        // Firmware without `lor`, `lm` or `lip` reports what it can.
+        (si(json!({"on": true}), json!({"live": true})), None),
+    ];
+    let (replies, expected): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    let device = Device::new(replies);
+    let mut observer = device.observer();
+    for (index, expected) in expected.into_iter().enumerate() {
+        assert_eq!(check(&mut observer), expected, "check {index}");
+        device.check_request();
+    }
+}
+
+#[test]
+fn the_sender_address_behind_nat_is_learned_from_wled() {
+    // Docker's bridge network: WLED sees the host's address, not ours.
+    let device = Device::new(vec![
+        sender("10.0.0.2"),
+        sender("10.0.0.2"),
+        sender("10.0.0.3"),
+        sender("10.0.0.2"),
+    ]);
+    let mut observer = device.observer();
+    let found: Vec<_> = (0..4).map(|_| check(&mut observer)).collect();
+    assert_eq!(found, [None, None, Some(OutputIssue::OtherSender), None]);
+
+    // Another sender was showing first; our own address corrects the guess.
+    let device = Device::new(vec![sender("192.0.2.9"), healthy(), sender("192.0.2.9")]);
+    let mut observer = device.observer();
+    let found: Vec<_> = (0..3).map(|_| check(&mut observer)).collect();
+    assert_eq!(found, [None, None, Some(OutputIssue::OtherSender)]);
+}
+
+#[test]
+fn an_unreachable_state_endpoint_is_reported_at_once() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let device = listener.local_addr().unwrap();
+    drop(listener);
+    let mut observer = Observer::new(device, "wled", Duration::ZERO);
+    let started = Instant::now();
+    assert_eq!(observer.poll(), Some(OutputIssue::Unreachable));
+    assert!(!observer.checking());
+    assert!(started.elapsed() < Duration::from_millis(250));
+}
+
+#[test]
+fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
+    let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK), Reply::Hang]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let started = Instant::now();
+    let mut slowest = Duration::ZERO;
+    let mut frames = 0;
+    let issue = loop {
+        let call = Instant::now();
+        output.write(&EdgeColors::default()).unwrap();
+        let issue = output.observe();
+        slowest = slowest.max(call.elapsed());
+        assert_eq!(device.rgb(), [0; 12], "every frame reaches WLED");
+        frames += 1;
+        if issue.is_some() {
+            break issue;
+        }
+        assert!(started.elapsed() < WAIT, "no verdict");
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(issue, Some(OutputIssue::Unreachable));
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "waited for the reply"
+    );
+    assert!(frames > 50, "{frames} frames");
+    assert!(slowest < Duration::from_millis(100), "{slowest:?}");
+}
+
+#[test]
+fn idle_abandons_a_check_in_flight_and_restores_the_device() {
+    for (mode, state) in [
+        (IdleMode::Off, off()),
+        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+    ] {
+        let device = Device::new(vec![
+            Reply::Json(OK),
+            Reply::Json(OK),
+            Reply::Hang,
+            Reply::Json(OK),
+            Reply::Json(OK),
+        ]);
+        let mut output = device.open(one_each()).unwrap();
+        device.expect(&[release(), live()]);
+        output.write(&EdgeColors::default()).unwrap();
+        assert_eq!(output.observe(), None, "check sent, no answer yet");
+        device.check_request();
+        let started = Instant::now();
+        output.idle(mode).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        device.expect(&[release(), state]);
+    }
+}
+
+#[test]
+fn findings_survive_until_the_next_check_and_idle_still_restores() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(OK),
+        si(
+            json!({"on": false, "lor": 0}),
+            json!({"live": true, "lm": "DDP", "lip": "127.0.0.1"}),
+        ),
+        Reply::Json(OK),
+        Reply::Json(OK),
+    ]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let deadline = Instant::now() + WAIT;
+    while output.observe() != Some(OutputIssue::Off) {
+        assert!(
+            Instant::now() < deadline,
+            "WLED switched off was not reported"
+        );
+        output.write(&EdgeColors::default()).unwrap();
+        thread::sleep(Duration::from_millis(2));
+    }
+    device.check_request();
+    output.idle(IdleMode::Off).unwrap();
+    device.expect(&[release(), off()]);
 }

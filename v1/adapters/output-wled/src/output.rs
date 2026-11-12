@@ -1,27 +1,40 @@
 use crate::address::Host;
+use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
-use prysm_ports::{Error, IdleMode, LedOutput, OutputFactory, Result, ValidationError};
+use prysm_ports::{
+    Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError,
+};
 use prysm_renderer_wled::WledRenderer;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
+use std::time::Duration;
 
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
 #[derive(Debug, Clone, Copy)]
 pub struct Wled {
     ddp_port: u16,
+    /// How often an open output checks WLED's state.
+    check_every: Duration,
 }
 
 impl Default for Wled {
     fn default() -> Self {
-        Self { ddp_port: 4048 }
+        Self {
+            ddp_port: 4048,
+            check_every: observe::EVERY,
+        }
     }
 }
 
 impl Wled {
+    /// Checks the state at every `observe`.
     #[cfg(test)]
     pub(crate) fn local(ddp_port: u16) -> Self {
-        Self { ddp_port }
+        Self {
+            ddp_port,
+            check_every: Duration::ZERO,
+        }
     }
 }
 
@@ -47,9 +60,12 @@ impl OutputFactory for Wled {
             Host::Ip(_) => address.to_string(),
             Host::Name(_) => format!("{address} ({ip})"),
         };
+        let device = SocketAddr::new(ip, address.port);
+        let host = address.to_string();
         let output = WledOutput {
-            device: SocketAddr::new(ip, address.port),
-            host: address.to_string(),
+            observer: Observer::new(device, &host, self.check_every),
+            device,
+            host,
             label,
             renderer,
             leds: settings.leds.edges(),
@@ -95,6 +111,7 @@ struct WledOutput {
     label: String,
     renderer: WledRenderer,
     leds: [usize; 4],
+    observer: Observer,
 }
 
 impl WledOutput {
@@ -126,12 +143,17 @@ impl LedOutput for WledOutput {
             })
     }
 
-    fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
+    fn idle(mut self: Box<Self>, mode: IdleMode) -> Result<()> {
+        self.observer.cancel();
         let mode = match mode {
             IdleMode::Off => Mode::Off,
             IdleMode::Native => Mode::Native,
         };
         self.enter(mode)
             .map_err(|source| Error::adapter(self.context(mode), source))
+    }
+
+    fn observe(&mut self) -> Option<OutputIssue> {
+        self.observer.poll()
     }
 }

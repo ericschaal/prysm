@@ -1,12 +1,16 @@
 # Release of the v1 prysm-headless host: a multi-arch image on GHCR
 # (ghcr.io/<owner>/prysm-headless) and Debian packages attached to a GitHub
-# release. Separate from the shipping product's release in check.yml, which
-# publishes ghcr.io/<owner>/prysm on its own tags.
+# release, together with the two webOS TV packages (IPKs). Separate from the
+# shipping product's release in check.yml, which publishes ghcr.io/<owner>/prysm
+# on its own tags and ignores v1.* tags.
 #
 # A `v1.*` tag must equal "v" + the [workspace.package] version in
-# v1/Cargo.toml (e.g. v1.0.0-alpha.0). Manual runs build and smoke-test both
-# architectures and keep the image and .deb as workflow artifacts; only a tag
-# publishes. Everything is built by v1/packaging/docker/Dockerfile.
+# v1/Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes the v1 gate
+# (v1.yml, which also builds the IPKs with the pinned webOS SDK); manual runs
+# build and smoke-test both architectures and keep the image, .deb and IPKs as
+# workflow artifacts; only a tag publishes. The image and .deb are built by
+# v1/packaging/docker/Dockerfile (its frontend stage runs npm ci and the bundle
+# build before cargo).
 name: V1 release
 on:
   push:
@@ -25,6 +29,11 @@ env:
   DOCKERFILE: v1/packaging/docker/Dockerfile
 
 jobs:
+  ci:
+    uses: ./.github/workflows/v1.yml
+    permissions:
+      contents: read
+
   build:
     strategy:
       fail-fast: false
@@ -93,7 +102,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.')
-    needs: build
+    needs: [ci, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -112,6 +121,8 @@ jobs:
           PY
       - uses: actions/download-artifact@v4
         with:
+          # Images, .debs and IPKs; not v1.yml's frontend bundle.
+          pattern: prysm-*
           path: ${{ runner.temp }}/artifacts
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -132,14 +143,27 @@ jobs:
           done
           docker buildx imagetools create --tag "$image:$version" "$image:$version-amd64" "$image:$version-arm64"
           docker buildx imagetools inspect --raw "$image:$version" | python3 -c 'import json,sys; assert {m["platform"]["architecture"] for m in json.load(sys.stdin)["manifests"] if m["platform"].get("os") == "linux"} == {"amd64", "arm64"}'
-      - name: Attach Debian packages to the release
+      - name: Attach Debian and TV packages to the release
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACTS: ${{ runner.temp }}/artifacts
         run: |
+          # Both flavours are named io.prysm.tv_<version>_all.ipk; add the flavour.
+          mkdir -p "$RUNNER_TEMP/ipk"
+          for flavour in full slim; do
+            for ipk in "$ARTIFACTS/prysm-tv-ipk-$flavour"/io.prysm.tv_*_all.ipk; do
+              name=$(basename "$ipk")
+              cp "$ipk" "$RUNNER_TEMP/ipk/io.prysm.tv-${flavour}_${name#io.prysm.tv_}"
+            done
+          done
+          # A pre-release version is a GitHub pre-release. Never "Latest": that
+          # stays the shipping product's release until v1 replaces it.
+          prerelease=false
+          case "$GITHUB_REF_NAME" in *-*) prerelease=true ;; esac
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease \
-              --title "Prysm $GITHUB_REF_NAME (headless)" \
-              --notes "prysm-headless $GITHUB_REF_NAME. Image: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/prysm-headless:${GITHUB_REF_NAME#v}. See v1/packaging/README.md."
+            gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease="$prerelease" --latest=false \
+              --title "Prysm $GITHUB_REF_NAME (v1)" \
+              --notes "Prysm v1 $GITHUB_REF_NAME. Image: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/prysm-headless:${GITHUB_REF_NAME#v}. Debian packages for prysm-headless and the full and slim webOS TV packages (io.prysm.tv) are attached. See v1/packaging/README.md."
           fi
-          gh release upload "$GITHUB_REF_NAME" --clobber "$ARTIFACTS"/prysm-headless-deb-*/*.deb
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "$ARTIFACTS"/prysm-headless-deb-*/*.deb "$RUNNER_TEMP"/ipk/*.ipk

@@ -86,7 +86,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | "WLED effects" (native) | `Source::Wled` | partial | Engine `DeviceNative`; TUI key `n`; no portal button (D5) |
 | Failed-start rollback to previous state | `switching.rs` | changed | v1 leaves output off and reports failure |
 | 12 s start confirmation (frames + WLED live) | `switching.rs` | changed | Start succeeds once source is ready and WLED acknowledged |
-| WLED state observation (WebSocket push, 30 s HTTP resync, backoff) | `control/observation.rs` | missing | Takeover from the WLED app goes unnoticed (D16) |
+| WLED state observation (WebSocket push, 30 s HTTP resync, backoff) | `control/observation.rs` | changed | `adapters/output-wled/src/observe.rs`: `GET /json/si` about once a second while lighting runs, read without blocking frames; `State.output_issue` says why the LEDs do not show Prysm (off, live override, not live, other sender, no answer). Reported, never fought (D16) |
 | Discovery, multiple devices | — | n/a | Neither |
 | Null output | — | added | Kind `null` |
 

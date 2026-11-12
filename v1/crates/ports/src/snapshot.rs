@@ -1,4 +1,4 @@
-use crate::{Error, Revision, Settings};
+use crate::{Error, OutputIssue, Revision, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -56,6 +56,10 @@ pub struct Snapshot {
     pub revision: Revision,
     /// Frames arriving from the source; `None` while no session runs.
     pub input: Option<Input>,
+    /// Why the LEDs are not showing the session's colours, from the output's
+    /// own checks; republished with `input`. `None` while they show them,
+    /// while the output cannot tell, and while no session holds the output.
+    pub output_issue: Option<OutputIssue>,
     /// Last lighting failure; cleared when lighting next starts successfully.
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.

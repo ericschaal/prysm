@@ -52,7 +52,7 @@ into `@prysm/contracts/application`.
 | `PUT /api/v1/target` | `TargetRequest { target }` | `204` once the engine has applied the target |
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
 
-`State` is `{ target, session, settings, revision, failure, surface_failures }`.
+`State` is `{ target, session, input?, output_issue?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
 `settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., profiles?: [{ id, name, correction }], active_profile? } }`.
@@ -62,7 +62,12 @@ Color profiles are part of `processing`: changing them, or which one is active, 
 at the first frame, so an output that cannot open ends the session and appears
 only in `failure`. While no frames arrive, `input.receiving` is `false`
 (waiting for video) and after a few seconds the output is returned to its own
-state until frames return.
+state until frames return. While the session runs, `output_issue` (absent when
+all is well) says why the lights are not showing its colours: `off` (switched
+off on the device), `overridden` (WLED's live override), `not_live` (the device
+is not taking realtime colours), `other_sender` or `unreachable`. It is not a
+failure: lighting keeps sending, nothing is switched back, and the field
+clears once the device shows the colours again.
 
 Settings replacement is whole-document and optimistic: send the `revision` you
 edited from as `expected`. The engine validates, persists, then applies. A

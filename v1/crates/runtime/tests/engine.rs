@@ -1,6 +1,6 @@
 use prysm_ports::{
-    AdapterSettings, Error, LightingTarget, Processing, Registry, Revision, SessionPhase,
-    SessionState, Settings, Snapshot,
+    AdapterSettings, Error, LightingTarget, OutputIssue, Processing, Registry, Revision,
+    SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -741,6 +741,42 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(handle.snapshot().borrow().input.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A device that stops showing the colours is reported, not fought: the
+/// session keeps writing, and the report goes with the session.
+#[tokio::test]
+async fn output_issues_are_reported_while_lighting_keeps_running() {
+    within(async {
+        let log = CallLog::new();
+        let overridden = settings(
+            FakeSourceSettings {
+                name: "s".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "o".into(),
+                overridden_after: Some(20),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, overridden, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        let reported = snapshot_until(&handle, |s| s.output_issue.is_some()).await;
+        assert_eq!(reported.output_issue, Some(OutputIssue::Overridden));
+        assert_eq!(reported.session, SessionState::Running);
+        assert!(reported.failure.is_none());
+        let writes = log.count("output.write:o");
+        assert!(
+            log.wait_for("output.write:o", writes + 10).await,
+            "still writing"
+        );
+
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(handle.snapshot().borrow().output_issue, None);
         engine.shutdown().await.unwrap();
     })
     .await;

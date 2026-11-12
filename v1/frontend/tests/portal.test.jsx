@@ -54,6 +54,31 @@ const elsewhere = (fixture, change) =>
     await sleep(0);
   });
 
+test('the lighting card says why the lights are not showing screen sync', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        output_issue: 'overridden',
+      }),
+    );
+    assert.equal($('.lighting-status').textContent, 'Screen sync is running.');
+    assert.match($('.lighting .output-issue').textContent, /^Live override is on/);
+    assert.equal($('.lighting [role="alert"]'), null, 'not a failure');
+
+    await act(async () => fixture.publish({ output_issue: 'off' }));
+    assert.match($('.lighting .output-issue').textContent, /switched off on the device/);
+
+    await act(async () => fixture.publish({ output_issue: undefined }));
+    assert.equal($('.lighting .output-issue'), null, 'cleared once the lights follow');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('lighting modes set the target and show what the session is doing', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;

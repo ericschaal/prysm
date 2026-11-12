@@ -310,6 +310,7 @@
     },
     {
       "failure": null,
+      "output_issue": "overridden",
       "revision": 7,
       "session": {
         "state": "running"

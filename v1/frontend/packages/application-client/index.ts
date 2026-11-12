@@ -1,12 +1,33 @@
 import type {
   Failure,
   LightingTarget,
+  OutputIssue,
   PreviewEvent,
   Settings as GeneratedSettings,
   State,
 } from '@prysm/contracts/application';
 
-export type { Failure, LightingTarget, PreviewEvent };
+export type { Failure, LightingTarget, OutputIssue, PreviewEvent };
+
+/**
+ * Why the lights are not showing screen sync, for people. Prysm keeps
+ * sending and does not switch the lights back; they follow again as soon as
+ * they take its colours.
+ */
+export function describeOutputIssue(issue: OutputIssue): string {
+  switch (issue) {
+    case 'off':
+      return 'The lights were switched off on the device. Switch them on there to see screen sync again.';
+    case 'overridden':
+      return 'Live override is on in the lights’ own app, so they ignore screen sync. Turn it off there.';
+    case 'not_live':
+      return 'The lights are not taking Prysm’s colours. In WLED, check that Sync Interfaces receives UDP realtime (DDP).';
+    case 'other_sender':
+      return 'Another program is sending colours to the lights. Stop it to see screen sync alone.';
+    case 'unreachable':
+      return 'The lights do not answer. Check that they are powered and on the network.';
+  }
+}
 export type { PreviewFrame } from '@prysm/contracts/application';
 export type { Session } from '@prysm/contracts/application';
 

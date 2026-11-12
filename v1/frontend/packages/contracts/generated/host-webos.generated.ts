@@ -111,6 +111,12 @@ export interface components {
          * @enum {string}
          */
         LightingTarget: "off" | "processed" | "device_native";
+        /**
+         * @description Why the lights are not showing Prysm's colours. Prysm keeps sending; they
+         *     follow again once the device takes the colours.
+         * @enum {string}
+         */
+        OutputIssue: "off" | "overridden" | "not_live" | "other_sender" | "unreachable";
         OutputSettings: components["schemas"]["WledSettings"];
         /**
          * @description Where a faulted session stopped making progress.
@@ -249,6 +255,12 @@ export interface components {
              */
             input?: components["schemas"]["Input"];
             /**
+             * @description Why the lights are not showing Prysm's colours while lighting runs,
+             *     from the output's own checks (about once a second); absent while they
+             *     show them, while the output cannot tell, and while no session runs.
+             */
+            output_issue?: components["schemas"]["OutputIssue"];
+            /**
              * Format: int64
              * @description Pass back as `expected` when replacing settings.
              */
@@ -337,6 +349,7 @@ export type HueControls = components['schemas']['HueControls'];
 export type Input = components['schemas']['Input'];
 export type LedCounts = components['schemas']['LedCounts'];
 export type LightingTarget = components['schemas']['LightingTarget'];
+export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Phase = components['schemas']['Phase'];
 export type PreviewColor = components['schemas']['PreviewColor'];

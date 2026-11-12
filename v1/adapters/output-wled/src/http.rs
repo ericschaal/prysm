@@ -1,4 +1,5 @@
 //! One blocking `POST /json/state` per call: no retries, no keep-alive, no proxy.
+//! [`parse`] also reads the state checks' replies.
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -78,8 +79,8 @@ fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError>
     }
 }
 
-/// `Ok(None)`: incomplete so far.
-fn parse(data: &[u8], eof: bool) -> Result<Option<(u16, Vec<u8>)>, RequestError> {
+/// A response's status and body; `Ok(None)`: incomplete so far.
+pub fn parse(data: &[u8], eof: bool) -> Result<Option<(u16, Vec<u8>)>, RequestError> {
     let Some(end) = find(data, b"\r\n\r\n") else {
         return Ok(None);
     };

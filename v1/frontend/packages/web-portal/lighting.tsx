@@ -1,8 +1,10 @@
 import { useId, useState } from 'react';
-import type {
-  Failure,
-  LightingTarget,
-  Session,
+import {
+  describeOutputIssue,
+  type Failure,
+  type LightingTarget,
+  type OutputIssue,
+  type Session,
 } from '@prysm/application-client';
 import { failureOf, type OutputLighting } from './adapters';
 
@@ -17,6 +19,8 @@ export interface LightingProps {
   target: LightingTarget;
   session: Session;
   failure: Failure | null;
+  /** Why the lights are not showing screen sync while it runs. */
+  outputIssue?: OutputIssue;
   hasCapture: boolean;
   hasOutput: boolean;
   /** What the configured output offers, `null` without an output. */
@@ -62,6 +66,7 @@ export function LightingControls({
   target,
   session,
   failure,
+  outputIssue,
   hasCapture,
   hasOutput,
   output,
@@ -165,6 +170,11 @@ export function LightingControls({
             {output.link.label}
             <span className="visually-hidden"> (opens in a new tab)</span>
           </a>
+        </p>
+      ) : null}
+      {outputIssue && session.state === 'running' ? (
+        <p className="notice warning output-issue" role="status">
+          {describeOutputIssue(outputIssue)}
         </p>
       ) : null}
       {failure ? (

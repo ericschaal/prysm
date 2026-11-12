@@ -23,8 +23,9 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    Failure, FailureKind, Input, Phase, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame,
-    PreviewViewport, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
+    Failure, FailureKind, Input, OutputIssue, Phase, PreviewColor, PreviewColors, PreviewEvent,
+    PreviewFrame, PreviewViewport, Session, SettingsReplaced, SettingsRequest, State,
+    TargetRequest,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use serde::{Deserialize, Serialize};
@@ -194,6 +195,7 @@ impl ToSchema for OutputSettings {}
 #[openapi(components(schemas(
     State,
     Input,
+    OutputIssue,
     Session,
     Phase,
     Failure,

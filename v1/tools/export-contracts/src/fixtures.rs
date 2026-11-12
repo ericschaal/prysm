@@ -7,7 +7,8 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, ColorProfile, CorrectionControls, Error, HueControls, LightingTarget,
-    Processing, Revision, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
+    OutputIssue, Processing, Revision, SessionPhase, SessionState, Settings, Snapshot,
+    ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -138,6 +139,7 @@ fn application() -> Value {
             session: SessionState::Running,
             settings: configured.clone(),
             revision: Revision(7),
+            output_issue: Some(OutputIssue::Overridden),
             surface_failures: vec![Error::other("portal listener failed")],
             ..Snapshot::default()
         },

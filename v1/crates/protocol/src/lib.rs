@@ -5,6 +5,7 @@
 //! a serializable session state and failure, and the request/response bodies.
 //! It has no HTTP or runtime dependencies.
 use prysm_ports::Input as InputRate;
+use prysm_ports::OutputIssue as PortsOutputIssue;
 use prysm_ports::{
     Error, LightingTarget, Revision, SessionPhase, SessionState, Settings, Snapshot,
 };
@@ -29,6 +30,12 @@ pub struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schema(nullable = false))]
     pub input: Option<Input>,
+    /// Why the lights are not showing Prysm's colours while lighting runs,
+    /// from the output's own checks (about once a second); absent while they
+    /// show them, while the output cannot tell, and while no session runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    pub output_issue: Option<OutputIssue>,
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
     /// Pass back as `expected` when replacing settings.
@@ -47,6 +54,7 @@ impl From<&Snapshot> for State {
             target: snapshot.target,
             session: snapshot.session.into(),
             input: snapshot.input.map(Input::from),
+            output_issue: snapshot.output_issue.map(OutputIssue::from),
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
             failure: snapshot.failure.as_ref().map(Failure::from),
@@ -76,6 +84,37 @@ impl From<InputRate> for Input {
         Self {
             fps: input.fps,
             receiving: input.receiving,
+        }
+    }
+}
+
+/// Why the lights are not showing Prysm's colours. Prysm keeps sending; they
+/// follow again once the device takes the colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum OutputIssue {
+    /// The device was switched off (WLED: power off).
+    Off,
+    /// The device's own override is on (WLED: live override).
+    Overridden,
+    /// The device is not taking the colours (WLED: not in live mode, or no
+    /// DDP arriving).
+    NotLive,
+    /// Another sender's colours reach the device.
+    OtherSender,
+    /// The device does not answer state requests.
+    Unreachable,
+}
+
+impl From<PortsOutputIssue> for OutputIssue {
+    fn from(issue: PortsOutputIssue) -> Self {
+        match issue {
+            PortsOutputIssue::Off => Self::Off,
+            PortsOutputIssue::Overridden => Self::Overridden,
+            PortsOutputIssue::NotLive => Self::NotLive,
+            PortsOutputIssue::OtherSender => Self::OtherSender,
+            PortsOutputIssue::Unreachable => Self::Unreachable,
         }
     }
 }
@@ -278,6 +317,7 @@ mod tests {
             serde_json::to_value(&snapshot.settings).unwrap()
         );
         assert!(value.get("input").is_none(), "absent while stopped");
+        assert!(value.get("output_issue").is_none(), "absent while stopped");
         let back: State = serde_json::from_value(value).unwrap();
         assert_eq!(back.session, snapshot.session.into());
 
@@ -287,10 +327,12 @@ mod tests {
                 fps: 29.9,
                 receiving: true,
             }),
+            output_issue: Some(PortsOutputIssue::OtherSender),
             ..Snapshot::default()
         };
         let value = serde_json::to_value(State::from(&running)).unwrap();
         assert_eq!(value["input"]["receiving"], true);
+        assert_eq!(value["output_issue"], "other_sender");
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
     }
 

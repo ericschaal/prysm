@@ -81,7 +81,13 @@ impl SourceFactory for Camera {
 
 An **output** is the same shape with `OutputFactory` and `LedOutput`
 (`write(&EdgeColors)`, `idle(self: Box<Self>, IdleMode)`); `idle` runs on every
-session exit, so it is also the failure compensation. The session opens the
+session exit, so it is also the failure compensation. An output that can ask
+its device whether it shows the colours implements `observe()` (default: no
+answer); the session calls it after every write, so it must not wait, and the
+engine republishes it as `Snapshot::output_issue` once a second. WLED checks
+its state about once a second and reports power off, live override, no live
+mode, another sender or no answer; Prysm keeps sending and does not switch
+WLED back. The session opens the
 output at the source's first frame, not at start, and idles it `Native` (the
 device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
 at the next frame; a source that never delivers never takes the device over. Register it with

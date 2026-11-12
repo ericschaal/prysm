@@ -166,6 +166,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           target={snapshot.target}
           session={session}
           failure={snapshot.failure}
+          outputIssue={snapshot.output_issue}
           hasCapture={!!settings.capture}
           hasOutput={!!output}
           output={outputLighting}

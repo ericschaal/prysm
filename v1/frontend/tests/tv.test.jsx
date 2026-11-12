@@ -739,6 +739,25 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.equal(tv.text('primary'), 'Turn lights off');
 });
 
+test('full: the lights card says why the lights do not follow the picture', async (t) => {
+  const tv = await mountTv(t, { flavor: 'full' });
+  await tv.click('mode-processed');
+  await act(async () =>
+    tv.application.publish({
+      session: { state: 'running' },
+      input: { fps: 30, receiving: true },
+      output_issue: 'other_sender',
+    }),
+  );
+  assert.equal(tv.text('lighting-status'), 'Screen sync is on.');
+  assert.match(tv.text('lighting-detail'), /Another program is sending colours/);
+  assert.match(document.querySelector('.card.lighting').className, /attention/);
+  await act(async () => tv.application.publish({ output_issue: undefined }));
+  assert.match(tv.text('lighting-detail'), /Picture arriving at 30\.0/);
+  assert.doesNotMatch(document.querySelector('.card.lighting').className, /attention/);
+  await tv.unmount();
+});
+
 test('neither package sets up capture, lights or the stream on the TV; both show the portal and the same labels', async (t) => {
   for (const flavor of ['full', 'slim']) {
     const tv = await mountTv(t, { flavor, supervisor: flavor === 'slim' ? { preferences: linked } : {} });

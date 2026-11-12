@@ -64,6 +64,44 @@ pub trait LedOutput: Send {
     fn write(&mut self, colors: &EdgeColors) -> Result<()>;
     /// Called once after the last `write`; also the failure-compensation path.
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()>;
+    /// Why the device is not showing the written colours, as far as it
+    /// last said; `None` while it shows them or the output cannot tell.
+    /// Called on the session thread after every `write`, so it returns
+    /// within milliseconds: an output that asks its device does so at its
+    /// own low rate and without waiting for the answer.
+    fn observe(&mut self) -> Option<OutputIssue> {
+        None
+    }
+}
+
+/// Why the LEDs are not showing Prysm's colours although lighting runs.
+/// Prysm reports it and keeps sending: the LEDs follow again as soon as the
+/// device takes the colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputIssue {
+    /// The device was switched off.
+    Off,
+    /// The device's own override is on (WLED: "live override").
+    Overridden,
+    /// The device is not taking the colours (realtime reception disabled,
+    /// or it left realtime mode).
+    NotLive,
+    /// Another sender's colours are reaching the device.
+    OtherSender,
+    /// The device does not answer state requests.
+    Unreachable,
+}
+
+impl std::fmt::Display for OutputIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Off => "switched off on the device",
+            Self::Overridden => "live override is on",
+            Self::NotLive => "not taking realtime colours",
+            Self::OtherSender => "another sender is driving it",
+            Self::Unreachable => "the device does not answer",
+        })
+    }
 }
 
 /// What an output shows once Prysm stops driving it.

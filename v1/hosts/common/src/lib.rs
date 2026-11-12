@@ -20,7 +20,7 @@ mod args;
 
 pub use args::{Options, Parsed, PortalOptions, parse};
 
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
+use prysm_ports::{Error, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain};
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
@@ -310,6 +310,7 @@ impl Surface for Status {
 struct Seen {
     state: Option<String>,
     failure: Option<String>,
+    output_issue: Option<OutputIssue>,
     surface_failures: usize,
 }
 
@@ -324,6 +325,18 @@ impl Seen {
         if self.state.as_ref() != Some(&state) {
             lines.push(state.clone());
             self.state = Some(state);
+        }
+        if snapshot.output_issue != self.output_issue {
+            match snapshot.output_issue {
+                Some(issue) => lines.push(format!(
+                    "lights not showing Prysm, lighting continues: {issue}"
+                )),
+                None if snapshot.session == SessionState::Running => {
+                    lines.push("lights showing Prysm again".to_owned());
+                }
+                None => {}
+            }
+            self.output_issue = snapshot.output_issue;
         }
         let failure = snapshot.failure.as_ref().map(|failure| chain(failure));
         if failure != self.failure {
@@ -383,6 +396,17 @@ mod tests {
             ]
         );
         assert!(seen.update(&snapshot).is_empty());
+
+        snapshot.session = SessionState::Running;
+        snapshot.failure = None;
+        let _ = seen.update(&snapshot);
+        snapshot.output_issue = Some(OutputIssue::Off);
+        assert_eq!(
+            seen.update(&snapshot),
+            ["lights not showing Prysm, lighting continues: switched off on the device"]
+        );
+        snapshot.output_issue = None;
+        assert_eq!(seen.update(&snapshot), ["lights showing Prysm again"]);
 
         snapshot.session = SessionState::Faulted(prysm_ports::SessionPhase::IdlingOutput);
         snapshot.failure = None;

@@ -98,16 +98,19 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
         leds_panel(frame, view, leds);
     }
     let snapshot = view.snapshot;
+    let issue = snapshot
+        .output_issue
+        .map_or_else(String::new, |issue| format!(" · Lights: {issue}"));
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(match input_label(snapshot) {
                 Some(input) => format!(
-                    "Target: {} · Session: {} · Input: {input}",
+                    "Target: {} · Session: {} · Input: {input}{issue}",
                     target_label(snapshot.target),
                     session_label(snapshot.session)
                 ),
                 None => format!(
-                    "Target: {} · Session: {}",
+                    "Target: {} · Session: {}{issue}",
                     target_label(snapshot.target),
                     session_label(snapshot.session)
                 ),
@@ -158,6 +161,12 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
     ];
     if let Some(input) = input_label(snapshot) {
         lines.push(field("Input", input));
+    }
+    if let Some(issue) = snapshot.output_issue {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<10}", "Lights"), Style::default().fg(MUTED)),
+            Span::styled(issue.to_string(), Style::default().fg(WARNING)),
+        ]));
     }
     lines.extend([
         field("Revision", snapshot.revision.to_string()),
@@ -678,5 +687,24 @@ mod tests {
             &view,
         );
         assert!(!text.contains("Input"), "{text}");
+    }
+    #[test]
+    fn status_says_why_the_lights_do_not_show_prysm() {
+        let mut snapshot = running();
+        snapshot.output_issue = Some(prysm_ports::OutputIssue::Overridden);
+        let ui = Ui::default();
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("Lights"), "{text}");
+        assert!(text.contains("live override"), "{text}");
+        let text = draw(&mut Terminal::new(TestBackend::new(70, 18)).unwrap(), &view);
+        assert!(text.contains("Lights: live override is on"), "{text}");
     }
 }

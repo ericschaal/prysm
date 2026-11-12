@@ -4,7 +4,8 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
-    OutputFactory, Pull, Result, Settings, SettingsStore, SourceFactory, ValidationError,
+    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory,
+    ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -181,6 +182,8 @@ pub struct FakeOutputSettings {
     pub fail_idle: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
+    /// `observe` reports the device overridden after this many writes.
+    pub overridden_after: Option<u32>,
 }
 
 /// Registers kind `"fake"`.
@@ -225,6 +228,13 @@ impl LedOutput for FakeOutput {
         self.log
             .record(format!("output.write:{}", self.settings.name));
         Ok(())
+    }
+
+    fn observe(&mut self) -> Option<OutputIssue> {
+        self.settings
+            .overridden_after
+            .is_some_and(|n| self.writes >= n)
+            .then_some(OutputIssue::Overridden)
     }
 
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {

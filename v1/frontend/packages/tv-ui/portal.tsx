@@ -11,6 +11,7 @@ import {
 } from 'react';
 import {
   ApplicationError,
+  describeOutputIssue,
   type ApplicationClient,
   type ApplicationSnapshot,
   type Failure,
@@ -194,6 +195,10 @@ export function LightingCard({
       detail = snapshot.input.receiving
         ? `Picture arriving at ${snapshot.input.fps.toFixed(1)} frames per second.`
         : 'No picture arriving yet.';
+    if (snapshot.output_issue && snapshot.session.state === 'running') {
+      detail = describeOutputIssue(snapshot.output_issue);
+      attention = true;
+    }
     if (flavor === 'slim') {
       const kind = (snapshot.settings.capture as { kind?: string } | undefined)?.kind;
       if (kind !== 'remote') {

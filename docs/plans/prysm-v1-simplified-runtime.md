@@ -161,11 +161,15 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
 - Commands are processed in order and return their result directly. There is no
   accepted/operation registry; HTTP idempotency, if needed, belongs to the portal.
 - State is one `watch<Snapshot>`: target, session state, settings revision,
-  last failure, input. Late or slow observers always see the latest value.
+  last failure, input, output issue. Late or slow observers always see the latest value.
 - Input: the session thread only counts frames (one relaxed atomic add); the
   engine samples the count once a second while a session runs and publishes
   `Snapshot::input` (frames per second to one decimal, and whether any frame
   arrived in that second) only when it changed.
+- Output issue: the session calls `LedOutput::observe` after every write and
+  keeps its answer; the engine publishes it with the input as
+  `Snapshot::output_issue`. An adapter asks its device at its own low rate
+  without waiting on the session thread (WLED: one connect, at most 200 ms).
 - A session that ends because its source returned `Pull::Ended` is completion:
   source released, output idled `Off`, `Stopped` with no failure, and the
   target set to `Off`, so a later settings change does not replay a finished

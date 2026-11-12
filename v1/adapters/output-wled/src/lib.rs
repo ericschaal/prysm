@@ -9,6 +9,10 @@
 //!   bottom-left corner.
 //! - `idle` powers the device off or returns it to its own effect; a failed open
 //!   turns it off before returning.
+//! - `observe` checks WLED's own state about once a second without waiting for
+//!   the reply, and reports when it is not showing the colours: switched off,
+//!   live override on, not in live mode, another sender, or no answer. Prysm
+//!   does not switch WLED back; the colours show again once WLED takes them.
 //!
 //! No threads or timers beyond a bounded resolver thread at open: the runtime
 //! rewrites the last colours while the source is briefly quiet, which keeps
@@ -16,6 +20,7 @@
 //! `Native` (WLED's own state) and opens it again at the next frame.
 mod address;
 mod http;
+mod observe;
 mod output;
 mod settings;
 

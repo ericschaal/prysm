@@ -1,6 +1,8 @@
 use crate::worker::{Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame, Viewport};
-use prysm_ports::{Error, FrameSource, IdleMode, LatestSlot, LedOutput, Result, SessionPhase};
+use prysm_ports::{
+    Error, FrameSource, IdleMode, LatestSlot, LedOutput, OutputIssue, Result, SessionPhase,
+};
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -161,6 +163,11 @@ impl Leds {
         }
     }
 
+    /// What a held output last learned about its device.
+    fn observe(&mut self) -> Option<OutputIssue> {
+        self.held().and_then(LedOutput::observe)
+    }
+
     fn held(&mut self) -> Option<&mut dyn LedOutput> {
         match self {
             Self::Held(output) => Some(output.as_mut()),
@@ -196,13 +203,21 @@ struct Control {
     idle: Mutex<IdleMode>,
     /// Frames taken from the source; read by the engine about once a second.
     frames: AtomicU64,
+    /// The held output's latest [`LedOutput::observe`]; read with `frames`.
+    issue: Mutex<Option<OutputIssue>>,
+}
+
+impl Control {
+    fn report(&self, issue: Option<OutputIssue>) {
+        *self.issue.lock().unwrap_or_else(PoisonError::into_inner) = issue;
+    }
 }
 
 /// One dedicated thread owning a source, the processor and an output.
 ///
 /// Loop: stop flag, pending config at the frame boundary, `next_frame`,
-/// count, process, open the output if not held, write, preview (only while
-/// watched); a quiet tick rewrites the last colors, and after
+/// count, process, open the output if not held, write, observe, preview (only
+/// while watched); a quiet tick rewrites (and observes) the last colors, and after
 /// [`VIDEO_GRACE`] without frames idles the output in [`RELEASE`] and closes
 /// it until the next frame; [`Pull::Ended`](prysm_ports::Pull::Ended) leaves
 /// the loop like a stop. Then the preview is cleared, `source.close()`, and
@@ -226,6 +241,7 @@ impl Session {
             config: LatestSlot::new(),
             idle: Mutex::new(IdleMode::Off),
             frames: AtomicU64::new(0),
+            issue: Mutex::new(None),
         });
         let shared = control.clone();
         let worker = Worker::spawn("prysm-session", move |flags| {
@@ -240,6 +256,7 @@ impl Session {
                     };
                     if last_frame.elapsed() >= VIDEO_GRACE {
                         last = None;
+                        shared.report(None);
                         return leds.release(RELEASE);
                     }
                     if let Some((colors, written)) = &mut last
@@ -247,6 +264,7 @@ impl Session {
                     {
                         output.write(colors)?;
                         *written = Instant::now();
+                        shared.report(output.observe());
                     }
                     return Ok(());
                 };
@@ -258,6 +276,7 @@ impl Session {
                 let shown = (preview.viewers() > 0).then(|| frame.clone());
                 let colors = processor.process_frame(frame);
                 leds.write(&colors, &mut open_output)?;
+                shared.report(leds.observe());
                 last = Some((colors.clone(), Instant::now()));
                 if let Some(shown) = shown {
                     let viewport = processor
@@ -269,6 +288,7 @@ impl Session {
             });
             let ended = matches!(pumped, Pumped::Ended);
             let failure = pumped.failure();
+            shared.report(None);
             preview.clear();
             flags.set_phase(SessionPhase::ClosingSource);
             let released = source.close();
@@ -294,6 +314,16 @@ impl Session {
     #[must_use]
     pub fn frames(&self) -> u64 {
         self.control.frames.load(Ordering::Relaxed)
+    }
+
+    /// Why the held output's LEDs are not showing the session's colours.
+    #[must_use]
+    pub fn output_issue(&self) -> Option<OutputIssue> {
+        *self
+            .control
+            .issue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Wait for the session to end on its own (a failure or the source
