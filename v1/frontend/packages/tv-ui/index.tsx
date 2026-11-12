@@ -3,8 +3,9 @@
  * the lights belong to a Prysm reached over HTTP: the full package's own
  * portal, or the computer the slim package forwards to.
  */
-import { useEffect, useState, type FormEvent, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react';
 import type { Flavor, TvService } from '@prysm/webos-platform';
+import { CalibrationScreen, calibrationBlocker } from './calibration';
 import {
   derivedReceiver,
   diagnostics,
@@ -17,11 +18,13 @@ import {
   tvStatus,
 } from './model';
 import { useRemoteNavigation } from './navigation';
-import { LightingCard, usePortal, type PortalOptions } from './portal';
+import { msePatternPlayer, type PatternPlayer } from './patterns';
+import { LightingCard, failureOf, usePortal, type PortalOptions } from './portal';
 import { useTvService } from './service';
 import './tv.css';
 
 export type { PortalOptions } from './portal';
+export type { PatternPlayer } from './patterns';
 export { portalSupported } from './portal';
 
 type DialogId =
@@ -44,6 +47,8 @@ export interface TvAppProps {
   portal: PortalOptions;
   /** Close the app (after the user confirmed). Lighting is left as it is. */
   onExit: () => void;
+  /** Plays the calibration patterns; default: the TV's MSE player. */
+  patterns?: PatternPlayer;
 }
 
 /** Visible pages hold the subscriptions; hidden ones release them. */
@@ -64,12 +69,22 @@ function useVisible() {
   return visible;
 }
 
-export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppProps) {
+export function TvApp({
+  flavor,
+  service,
+  portal: portalOptions,
+  onExit,
+  patterns = msePatternPlayer,
+}: TvAppProps) {
   const visible = useVisible();
   const tv = useTvService(service, visible);
+  /** The portal address while the calibration screen is open. */
+  const [calibrating, setCalibrating] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const refocus = useRef(false);
   const nav = useRemoteNavigation<DialogId>({
     parents,
-    onExitRequest: () => nav.openDialog('exit'),
+    onExitRequest: () => (calibrating ? leaveCalibration() : nav.openDialog('exit')),
   });
   const slim = flavor === 'slim';
   const { state, draft, online } = tv;
@@ -115,6 +130,36 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
     }
   }
 
+  /** Screen sync on (calibration needs it), then the calibration screen. */
+  async function startCalibration() {
+    setStarting(true);
+    try {
+      if (portal.snapshot?.target !== 'processed') await portal.setTarget('processed');
+      setCalibrating(portalAddress);
+    } catch (reason) {
+      tv.say(failureOf(reason).message, true);
+    } finally {
+      setStarting(false);
+    }
+  }
+  /** Back, or the app hidden: the pattern ends; lighting stays as it is. */
+  function leaveCalibration() {
+    setCalibrating(null);
+    refocus.current = true;
+    // Best effort: the engine also ends calibration 10 minutes after the last pattern.
+    portal.endCalibration().catch(() => {});
+  }
+  useEffect(() => {
+    if (!visible && calibrating) leaveCalibration();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on hiding.
+  }, [visible]);
+  useLayoutEffect(() => {
+    if (calibrating || !refocus.current) return;
+    refocus.current = false;
+    document.getElementById('calibrate')?.focus();
+  });
+  const blocker = calibrationBlocker(flavor, patterns, portal, state, draft.instance);
+
   const disabled = !online || tv.changing;
   const rows: { id: DialogId; label: string; value: string }[] = [];
   if (slim) {
@@ -128,6 +173,15 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
   let savedLabel = 'On this TV';
   if (state) savedLabel = tv.syncing ? 'Saving…' : tv.dirty ? 'Unsaved changes' : 'Saved';
 
+  if (calibrating)
+    return (
+      <CalibrationScreen
+        root={nav.root}
+        player={patterns}
+        pattern={portal.snapshot?.calibration?.pattern}
+        address={calibrating}
+      />
+    );
   return (
     // The handlers only follow pointer and focus to support remote navigation.
     // eslint-disable-next-line jsx-a11y-x/no-static-element-interactions
@@ -230,10 +284,13 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                 ))}
               </div>
               <div className="setting-list">
-                <button id="calibrate" type="button" className="setting" disabled>
-                  <span className="setting-label">Calibrate colours</span>
-                  <span className="setting-value">Not available in this version yet</span>
-                </button>
+                <SettingRow
+                  id="calibrate"
+                  label="Calibrate colours"
+                  value={blocker ?? (starting ? 'Starting screen sync…' : 'With your phone')}
+                  disabled={!!blocker || starting}
+                  open={() => void startCalibration()}
+                />
               </div>
               {portalAddress ? (
                 <p className="portal-address" id="portal-address">

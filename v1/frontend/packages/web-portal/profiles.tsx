@@ -37,7 +37,7 @@ export const hueLimits = {
 } as const;
 
 const noHue: HueControls = { red: 0, yellow: 0, green: 0, cyan: 0, blue: 0, magenta: 0 };
-const noCorrection: CorrectionControls = {
+export const noCorrection: CorrectionControls = {
   warmth: 0,
   tint: 0,
   midtones: 0,
@@ -46,7 +46,7 @@ const noCorrection: CorrectionControls = {
 };
 
 /** A profile's correction with absent controls as 0, as the engine reads it. */
-function correctionOf(profile: ColorProfile): CorrectionControls {
+export function correctionOf(profile: ColorProfile): CorrectionControls {
   const correction: Partial<CorrectionControls> = profile.correction ?? {};
   return { ...noCorrection, ...correction, hue: { ...noHue, ...correction.hue } };
 }
@@ -69,7 +69,7 @@ export function newProfileId(taken: readonly string[] = []): string {
 }
 
 /** `base`, else `base 2`, `base 3`, … — the first no profile uses, within the length limit. */
-function freeName(base: string, profiles: readonly ColorProfile[]) {
+export function freeName(base: string, profiles: readonly ColorProfile[]) {
   const names = new Set(profiles.map((profile) => profile.name));
   for (let count = 1; ; count++) {
     const suffix = count === 1 ? '' : ` ${count}`;
@@ -79,17 +79,17 @@ function freeName(base: string, profiles: readonly ColorProfile[]) {
 }
 
 /** Names are required, but a list edited by hand may lack one. */
-const nameOf = (profile: ColorProfile): string => profile.name ?? profile.id;
+export const nameOf = (profile: ColorProfile): string => profile.name ?? profile.id;
 
-const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
+export const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
 
-const corrections = [
+export const corrections = [
   ['warmth', 'Warmth', 'Positive warms the colours, negative cools them.'],
   ['tint', 'Tint', 'Positive adds magenta, negative adds green.'],
   ['midtones', 'Midtones', 'Positive lightens midtones, negative darkens them.'],
   ['intensity', 'Intensity', 'Positive makes colours more vivid, negative makes them paler.'],
 ] as const;
-const hues = [
+export const hues = [
   ['red', 'Red'],
   ['yellow', 'Yellow'],
   ['green', 'Green'],

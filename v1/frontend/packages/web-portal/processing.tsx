@@ -64,7 +64,7 @@ export function processingControls(processing: Processing): ProcessingControls {
  * `controls` with `profiles` and `active_profile` as the server sends them:
  * absent when empty or none, so a saved draft equals the state that follows.
  */
-function withProfiles<T extends object>(
+export function withProfiles<T extends object>(
   controls: T,
   profiles: Processing['profiles'],
   active: string | undefined,
@@ -82,6 +82,111 @@ function withProfiles<T extends object>(
 }
 
 const percent = (value: number) => `${value}%`;
+
+/**
+ * The processing section as a draft that saves itself: each change is applied
+ * shortly after the user stops adjusting it, and `commit` applies one at once.
+ * Shared by the Picture panel and the calibration wizard, so both save the
+ * same way. Render the fields inside `FieldScopeProvider value={scope}`.
+ */
+export function useLiveProcessing({
+  processing,
+  revision,
+  disabled,
+  save,
+}: {
+  processing: Processing;
+  revision: number;
+  disabled: boolean;
+  /** Save the whole processing section against `expected`. */
+  save: (expected: number, processing: Processing) => Promise<number>;
+}) {
+  const saved = processingControls(processing);
+  const draft = useDraft<ProcessingControls>({
+    saved,
+    revision,
+    fresh: () => saved,
+  });
+  const errors = useFieldErrors();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+  /** The draft that last failed; not retried until it changes. */
+  const [failed, setFailed] = useState<ProcessingControls | null>(null);
+  const [notice, setNotice] = useState('');
+  const scope = useFieldScope(disabled, errors, true);
+  const blocked =
+    disabled ||
+    busy ||
+    draft.syncing ||
+    Object.keys(errors.local).length > 0 ||
+    Object.keys(errors.server).length > 0 ||
+    (failed !== null && same(failed, draft.draft));
+
+  /** Save `value`; resolves with whether it was saved. */
+  async function apply(value: ProcessingControls): Promise<boolean> {
+    if (draft.conflicted) {
+      draft.reload();
+      setNotice(staleNotice);
+      return false;
+    }
+    setBusy(true);
+    try {
+      // `value` decides the profiles: an absent one was removed.
+      const next = await save(revision, {
+        ...withProfiles(processing, undefined, undefined),
+        ...value,
+      });
+      draft.saved(value, next);
+      setFailure('');
+      setFailed(null);
+      return true;
+    } catch (error) {
+      const reason = failureOf(error);
+      if (reason.kind === 'stale_revision') {
+        draft.reload();
+        setNotice(staleNotice);
+      } else {
+        if (reason.kind === 'invalid' && reason.field)
+          errors.setServer({ [reason.field]: reason.message });
+        setFailed(value);
+        setFailure(`Not applied: ${reason.message}`);
+      }
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Debounce: every change restarts the wait. A new revision (another section
+  // saved meanwhile) also restarts it, so `apply` sends the current one.
+  useEffect(() => {
+    if (!draft.dirty || blocked) return;
+    const timer = setTimeout(() => void apply(draft.draft), processingDelayMs);
+    return () => clearTimeout(timer);
+  }, [draft.draft, draft.dirty, blocked, revision]);
+
+  function replace(next: ProcessingControls) {
+    draft.setDraft(next);
+    setNotice('');
+  }
+  return {
+    value: draft.draft,
+    /** Changes when the draft is replaced from outside, to remount inputs. */
+    generation: draft.generation,
+    dirty: draft.dirty,
+    /** A save is on its way. */
+    saving: busy || draft.syncing,
+    failure,
+    notice,
+    scope,
+    /** Change the draft; it is applied after a short wait. */
+    replace,
+    /** Change the draft and apply it now (pending changes included). */
+    commit: (next: ProcessingControls) => {
+      replace(next);
+      return apply(next);
+    },
+  };
+}
 
 /**
  * Picture controls apply live: processing-only changes reach a running
@@ -102,85 +207,22 @@ export function ProcessingPanel({
   /** Save the whole processing section against `expected`. */
   save: (expected: number, processing: Processing) => Promise<number>;
 }) {
-  const saved = processingControls(processing);
-  const draft = useDraft<ProcessingControls>({
-    saved,
-    revision,
-    fresh: () => saved,
-  });
-  const errors = useFieldErrors();
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState('');
-  /** The draft that last failed; not retried until it changes. */
-  const [failed, setFailed] = useState<ProcessingControls | null>(null);
-  const [notice, setNotice] = useState('');
+  const live = useLiveProcessing({ processing, revision, disabled, save });
+  const { failure, notice, scope, replace } = live;
   const headingId = useId();
-  const scope = useFieldScope(disabled, errors, true);
-  const blocked =
-    disabled ||
-    busy ||
-    draft.syncing ||
-    Object.keys(errors.local).length > 0 ||
-    Object.keys(errors.server).length > 0 ||
-    (failed !== null && same(failed, draft.draft));
-
-  async function apply() {
-    if (draft.conflicted) {
-      draft.reload();
-      setNotice(staleNotice);
-      return;
-    }
-    const value = draft.draft;
-    setBusy(true);
-    try {
-      // `value` decides the profiles: an absent one was removed.
-      const next = await save(revision, {
-        ...withProfiles(processing, undefined, undefined),
-        ...value,
-      });
-      draft.saved(value, next);
-      setFailure('');
-      setFailed(null);
-    } catch (error) {
-      const reason = failureOf(error);
-      if (reason.kind === 'stale_revision') {
-        draft.reload();
-        setNotice(staleNotice);
-      } else {
-        if (reason.kind === 'invalid' && reason.field)
-          errors.setServer({ [reason.field]: reason.message });
-        setFailed(value);
-        setFailure(`Not applied: ${reason.message}`);
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-  // Debounce: every change restarts the wait. A new revision (another section
-  // saved meanwhile) also restarts it, so `apply` sends the current one.
-  useEffect(() => {
-    if (!draft.dirty || blocked) return;
-    const timer = setTimeout(() => void apply(), processingDelayMs);
-    return () => clearTimeout(timer);
-  }, [draft.draft, draft.dirty, blocked, revision]);
-
   function change(next: Partial<ProcessingControls>) {
-    replace({ ...draft.draft, ...next });
+    replace({ ...live.value, ...next });
   }
-  function replace(next: ProcessingControls) {
-    draft.setDraft(next);
-    setNotice('');
-  }
-  const value = draft.draft;
+  const value = live.value;
   let status = running ? 'Applied to your lights' : 'Saved; used when screen sync runs';
-  if (busy || draft.syncing) status = 'Applying…';
-  else if (draft.dirty) status = failure ? 'Not applied' : 'Waiting to apply…';
+  if (live.saving) status = 'Applying…';
+  else if (live.dirty) status = failure ? 'Not applied' : 'Waiting to apply…';
   return (
     <section className="card processing" aria-labelledby={headingId}>
       <div className="card-heading">
         <h2 id={headingId}>Picture</h2>
         <span
-          className={`badge${draft.dirty ? ' attention' : ''}`}
+          className={`badge${live.dirty ? ' attention' : ''}`}
           role="status"
         >
           {status}
@@ -190,7 +232,7 @@ export function ProcessingPanel({
         Changes apply as you adjust them, without restarting screen sync.
       </p>
       <FieldScopeProvider value={scope}>
-        <div key={draft.generation} className="grid">
+        <div key={live.generation} className="grid">
           <RangeField
             path="processing.brightness_percent"
             label="Brightness"
@@ -247,11 +289,11 @@ export function ProcessingPanel({
           />
         </div>
         <ProfileControls
-          key={`profiles-${draft.generation}`}
+          key={`profiles-${live.generation}`}
           profiles={value.profiles ?? []}
           active={value.active_profile}
           onChange={(profiles, active) =>
-            replace(withProfiles(draft.draft, profiles, active))
+            replace(withProfiles(live.value, profiles, active))
           }
         />
       </FieldScopeProvider>

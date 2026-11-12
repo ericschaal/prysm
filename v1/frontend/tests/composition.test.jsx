@@ -93,3 +93,6 @@ test('embedded TV and browser portal share one application; either may close', a
     dom.window.close();
   }
 });
+
+// Portal calibration wizard.
+import './calibrate.test.jsx';

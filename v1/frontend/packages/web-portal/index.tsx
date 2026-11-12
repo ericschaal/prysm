@@ -9,6 +9,7 @@ import {
   useApplicationDispatch,
 } from '@prysm/application-react';
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
+import { calibrateRoute, CalibrateWizard } from './calibrate';
 import { LightingControls } from './lighting';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel } from './processing';
@@ -17,11 +18,13 @@ import { SetupWizard } from './setup';
 import './portal.css';
 
 export * from './adapters';
+export { calibrateRoute, CalibrateWizard, type CalibrateProps } from './calibrate';
 export * from './fields';
 export { describeLighting, LightingControls } from './lighting';
 export {
   ProcessingPanel,
   processingControls,
+  useLiveProcessing,
   processingLimits,
   processingDelayMs,
   type ProcessingControls,
@@ -46,6 +49,25 @@ export interface WebPortalProps<C extends AdapterSection, O extends AdapterSecti
   preview?: PreviewClient;
 }
 
+/**
+ * Whether the page shows the Calibrate page (`#/calibrate`), and a way to
+ * open or leave it. The hash keeps the portal's own address and history.
+ */
+function useCalibrateRoute() {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const sync = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+  function open(calibrate: boolean) {
+    const next = calibrate ? calibrateRoute : '';
+    setHash(next);
+    window.location.hash = next;
+  }
+  return [hash === calibrateRoute, open] as const;
+}
+
 const sessionLabels = {
   stopped: 'stopped',
   running: 'running',
@@ -55,7 +77,8 @@ const sessionLabels = {
 
 /**
  * The browser portal: lighting modes, live picture controls and one form per
- * adapter section, or the guided setup while capture or lights are missing.
+ * adapter section, or the guided setup while capture or lights are missing,
+ * or the Calibrate page at `#/calibrate`.
  * The host chooses which capture and output kinds exist.
  */
 export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
@@ -79,6 +102,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
+  const [calibrating, openCalibrate] = useCalibrateRoute();
   useEffect(() => {
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
@@ -125,6 +149,30 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       Reconnecting; unsaved changes are kept.
     </p>
   ) : null;
+  if (calibrating)
+    return (
+      <div className="portal">
+        {header}
+        <main id="content">
+          <h1 className="visually-hidden">Prysm calibration</h1>
+          {offline}
+          <CalibrateWizard
+            processing={settings.processing}
+            revision={revision}
+            target={snapshot.target}
+            calibration={snapshot.calibration}
+            disabled={!online}
+            save={(expected, processing) =>
+              dispatch(application.commands.configureProcessing(expected, processing))
+            }
+            setCalibration={(calibration) =>
+              dispatch(application.commands.setCalibration(calibration))
+            }
+            leave={() => openCalibrate(false)}
+          />
+        </main>
+      </div>
+    );
   if (setup === 'open')
     return (
       <div className="portal">
@@ -192,6 +240,12 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             dispatch(application.commands.configureProcessing(expected, processing))
           }
         />
+        <div className="setup-entry">
+          <p>Match the lights to your TV with test patterns shown on the TV.</p>
+          <button type="button" onClick={() => openCalibrate(true)}>
+            Calibrate colours
+          </button>
+        </div>
         <div className="setup-entry">
           <p>
             {settings.capture && output

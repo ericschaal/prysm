@@ -36,7 +36,7 @@ On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
   (generated `luna` types; `getState` subscription, `setPreferences`,
   `setEnabled`, `uninstall`, and set-up through the Homebrew Channel's `exec`
   of `setup.sh`) and an HTTP client factory for the Prysm that drives the
-  lights. Full: the TV's own portal over loopback (`http://127.0.0.1:<port of
+  lights (lighting modes and calibration). Full: the TV's own portal over loopback (`http://127.0.0.1:<port of
   State.portal>`). Slim: `preferences.instance`, the computer's portal, which
   must allow the app's origin (`--allow-origin null`; a `file://` app sends
   `Origin: null`); the UI says so when that portal answers but refuses. The
@@ -80,6 +80,12 @@ there is more than one, and editors are controlled components built from the
 portal's fields. Saves copy the latest observed settings and replace one
 section, so unknown fields are kept; a section changed elsewhere is reloaded
 instead of overwritten ([saving settings](frontend/README.md#saving-settings)).
+Both browser hosts also have the Calibrate page at `#/calibrate` (the TV
+links its QR code there; the main page has a "Calibrate colours" entry): a
+phone wizard that shows one pattern at a time on the TV through
+`PUT /api/v1/calibration` while it edits a draft colour profile with the
+Picture panel's live save. It needs screen sync running on the TV and never
+starts lighting itself.
 UI teardown releases the state stream only; it never turns lighting off.
 
 ## Build and inspect
@@ -100,5 +106,14 @@ nothing newer; controlling a portal over HTTP needs `AbortController` and
 streamed `fetch` bodies (webOS 5+), and older TVs are told to use the portal on
 another device.
 
-Not implemented: TV calibration (not in the runtime yet; the TV shows the entry
-as not available).
+TV calibration (both packages): Calibrate colours turns screen sync on and
+shows a QR code of `<portal address>/#/calibrate`, the page where the phone
+chooses patterns. The TV follows `State.calibration` from the portal stream:
+while a pattern is set it shows only that pattern as full-screen video, from
+one Media Source Extensions stream of the bundled H.264 fragments
+([patterns](frontend/packages/tv-ui/patterns.ts), inlined in the script); the
+gray pattern already plays under the QR code so the video pipeline and capture
+run before the first pattern. Back (or hiding the app) ends calibration with
+`DELETE /api/v1/calibration` and leaves lighting on. Without MSE support
+for the fragments' codec, or while the lights do not follow this TV's
+picture, the row is disabled with the reason. Hardware validation is pending.

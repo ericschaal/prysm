@@ -57,6 +57,16 @@ their `demo.html` pages run the same UI on an
     (the same kind selector and editors as the forms), review. Nothing is saved
     until the end, which saves both sections with one request and can start
     screen sync; a refused field returns to its step.
+  - [Calibrate](packages/web-portal/calibrate.tsx): the page at
+    `#/calibrate` (entry "Calibrate colours" on the main page; the TV's QR
+    code points there). Start creates a draft profile (new, or a copy of
+    one) and makes it active; white balance (`gray-192`), one hue per colour,
+    intensity (`red-pair`, `green-pair`, `blue-pair`), mixed colours and a
+    review each show their pattern on the TV (`setCalibration`); sliders
+    save live through the Picture panel's `useLiveProcessing`. Finish names
+    the profile, Cancel deletes it and restores the previous active one;
+    both end calibration. Without screen sync it says to choose Calibrate on
+    the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless`
@@ -77,7 +87,10 @@ their `demo.html` pages run the same UI on an
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));
   capture, lights and the slim stream encoding are set up only in the web
   portal, whose address the TV shows (and names in the status card while no
-  lights are set up). Service options
+  lights are set up). [Calibration](packages/tv-ui/calibration.tsx): a QR
+  code of the portal's `#/calibrate` page, then the pattern the phone chose as
+  full-screen video ([MSE player](packages/tv-ui/patterns.ts),
+  [QR encoder](packages/tv-ui/qr.ts)). Service options
   (set up or repair, diagnostics, remove setup) and remote control
   ([navigation](packages/tv-ui/navigation.ts): arrows move focus between two
   columns and within rows, OK chooses, Back closes one dialog level and then
@@ -136,7 +149,7 @@ Panels use their adapter's generated section type from
 
 ## Limits
 
-Calibration is not in the portal yet. The browser
+The browser
 bundles target ES2020, the TV bundles Chromium 53 (classic scripts, like the
 root TV app); each is styled by one stylesheet (the portal CSP allows no inline
 styles, and no `data:` or `blob:` images, so the preview decodes its JPEG

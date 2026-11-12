@@ -33,6 +33,9 @@ import {
 } from '../packages/tv-ui/model';
 import { fakeApplicationPort } from '../testkit/application';
 import { fakeTvSupervisor } from '../testkit/luna';
+import { PATTERN_TYPE, STALL_MS, msePatternPlayer, streamPatterns } from '../packages/tv-ui/patterns';
+import { qrCode } from '../packages/tv-ui/qr';
+import { createHash } from 'node:crypto';
 
 const fixtures = JSON.parse(
   readFileSync(resolve(process.cwd(), 'packages/contracts/generated/fixtures.json'), 'utf8'),
@@ -89,6 +92,7 @@ async function mountTv(t, options = {}) {
         service={lunaTvService(supervisor.bridge)}
         portal={portal}
         onExit={() => exits++}
+        patterns={options.patterns}
       />,
     ),
   );
@@ -720,12 +724,6 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
   assert.deepEqual(old.urls, [], 'no HTTP client is created');
 });
 
-test('calibration is shown as not available yet', async (t) => {
-  const tv = await mountTv(t);
-  assert(tv.el('calibrate').disabled);
-  assert.match(tv.text('calibrate'), /Not available/);
-});
-
 test('full: the TV portal is used over loopback and its address is shown', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
   assert.deepEqual(tv.urls, ['http://127.0.0.1:8787']);
@@ -892,4 +890,271 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
   assert.equal(tv.el('encoding'), null);
   assert.equal(tv.el('encoding-in-use'), null);
   assert.doesNotMatch(document.body.textContent, /encoding/i);
+});
+
+/* ---- Calibration ---- */
+
+/** A pattern player without video: records what the TV asks it to play. */
+function fakePlayer(supported = true) {
+  const player = {
+    supported,
+    plays: 0,
+    stops: 0,
+    video: null,
+    pattern: null,
+    failed: null,
+    play(video, pattern, failed) {
+      player.plays++;
+      Object.assign(player, { video, pattern, failed });
+      return () => player.stops++;
+    },
+  };
+  return player;
+}
+const slimReady = { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' }, state: { enabled: true } };
+/** What a phone does through the portal. */
+async function phone(tv, calibration) {
+  await act(async () => tv.application.client.setCalibration(calibration));
+  await settle();
+}
+const visibleText = () => document.body.textContent.trim();
+
+test('calibration needs MSE: without it the row says so and is disabled', async (t) => {
+  // jsdom has no MediaSource, so the TV's own player is unsupported.
+  for (const patterns of [undefined, fakePlayer(false)]) {
+    const tv = await mountTv(t, { flavor: 'full', patterns });
+    assert(tv.el('calibrate').disabled);
+    assert.equal(tv.text('calibrate-value'), 'Calibration needs a newer TV');
+    await tv.unmount();
+  }
+  const old = await mountTv(t, { flavor: 'full', patterns: fakePlayer(), supported: false });
+  assert.equal(old.text('calibrate-value'), 'Calibration needs a newer TV');
+});
+
+test('calibration is disabled with a reason while the lights are not driven from this TV', async (t) => {
+  const cases = [
+    [{}, 'Add the Prysm address first'],
+    [{ supervisor: { preferences: slimReady.preferences } }, 'Start capture first'],
+    [{ supervisor: slimReady, block: true }, 'Needs a connection to Prysm'],
+    [{ supervisor: slimReady, portal: { capture: { kind: 'device', path: '/dev/video0' }, output: wled } }, 'Prysm is not using this TV’s picture'],
+    [{ flavor: 'full', portal: { capture: portals.full.capture } }, 'Set up capture and lights first'],
+  ];
+  for (const [options, reason] of cases) {
+    const tv = await mountTv(t, { patterns: fakePlayer(), ...options });
+    await settle();
+    assert(tv.el('calibrate').disabled, reason);
+    assert.equal(tv.text('calibrate-value'), reason);
+    await tv.unmount();
+  }
+  const ready = await mountTv(t, { patterns: fakePlayer(), supervisor: slimReady });
+  assert(!ready.el('calibrate').disabled);
+  assert.equal(ready.text('calibrate-value'), 'With your phone');
+});
+
+test('full: Calibrate turns screen sync on, shows the phone address and follows the patterns as video only', async (t) => {
+  const player = fakePlayer();
+  const tv = await mountTv(t, { flavor: 'full', patterns: player });
+  await tv.click('calibrate');
+  assert.deepEqual(tv.application.calls.filter((call) => call.startsWith('target:')), ['target:processed']);
+  assert.equal(tv.el('app'), null, 'the main screen is closed');
+  assert.equal(tv.text('calibration-address'), 'http://192.168.1.5:8787/#/calibrate');
+  assert.equal(tv.text('calibration-hint'), 'Scan with your phone to start.');
+  assert(tv.el('calibration-qr'));
+  // The gray pattern already plays under the waiting screen.
+  assert.equal(player.plays, 1);
+  assert.equal(player.video, tv.el('pattern-video'));
+  assert.equal(player.pattern(), 'gray-192');
+
+  await phone(tv, { pattern: 'red', uncorrected: false });
+  assert.equal(visibleText(), '', 'nothing but the video');
+  assert.equal(document.querySelector('svg'), null);
+  assert(tv.el('pattern-video'));
+  assert.equal(player.pattern(), 'red');
+  await phone(tv, { pattern: 'blue-pair', uncorrected: true });
+  assert.equal(player.pattern(), 'blue-pair');
+  assert.equal(player.plays, 1, 'one stream for every pattern');
+  assert.equal(player.stops, 0);
+
+  // The phone ends calibration: the TV waits for it again.
+  await phone(tv, null);
+  assert.equal(tv.text('calibration-address'), 'http://192.168.1.5:8787/#/calibrate');
+  assert.equal(player.pattern(), 'gray-192');
+  assert.equal(player.plays, 1);
+
+  // Back leaves: the pattern ends, lighting stays on.
+  const before = tv.application.calls.length;
+  await tv.key(BACK);
+  assert.deepEqual(tv.application.calls.slice(before), ['calibration:end']);
+  assert.equal(player.stops, 1);
+  assert(tv.el('app'));
+  assert.equal(tv.focus(), 'calibrate');
+  assert.equal(tv.el('modal'), null, 'Back does not ask to close the app');
+  assert(!tv.application.calls.includes('target:off'));
+  assert.equal(tv.application.snapshot().target, 'processed');
+});
+
+test('slim: calibration uses the computer portal, already on, and ends when the app is hidden', async (t) => {
+  const player = fakePlayer();
+  const tv = await mountTv(t, { patterns: player, supervisor: slimReady });
+  await act(async () => tv.application.client.setTarget('processed'));
+  await settle();
+  const before = tv.application.calls.length;
+  await tv.click('calibrate');
+  assert(!tv.application.calls.slice(before).some((call) => call.startsWith('target:')), 'already on');
+  assert.equal(tv.text('calibration-address'), 'http://192.168.1.20:8787/#/calibrate');
+  await phone(tv, { pattern: 'coast', uncorrected: false });
+  assert.equal(player.pattern(), 'coast');
+  Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+  await act(async () => document.dispatchEvent(new tv.dom.window.Event('visibilitychange')));
+  await settle();
+  assert.equal(tv.application.calls.at(-1), 'calibration:end');
+  assert.equal(player.stops, 1);
+  assert(tv.el('app'));
+  assert.equal(tv.application.snapshot().calibration, undefined);
+  assert.equal(tv.application.snapshot().target, 'processed');
+  Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+});
+
+test('calibration stays closed when screen sync cannot start; a failed video says so', async (t) => {
+  const player = fakePlayer();
+  const tv = await mountTv(t, { flavor: 'full', patterns: player });
+  tv.application.failNext({ kind: 'adapter', message: 'Capture could not open' });
+  await tv.click('calibrate');
+  assert(tv.el('app'));
+  assert.equal(tv.text('notice'), 'Capture could not open');
+  assert.equal(player.plays, 0);
+
+  await tv.click('calibrate');
+  await phone(tv, { pattern: 'green', uncorrected: false });
+  await act(async () => player.failed());
+  await settle();
+  assert.equal(tv.text('calibration-error'), 'The pattern video stopped. Press Back and try again.');
+  assert.equal(tv.el('pattern-video'), null);
+  await tv.key(BACK);
+  assert(tv.el('app'));
+});
+
+test('the QR code encoder matches the reference encoder and refuses what does not fit', () => {
+  const hash = (rows) =>
+    createHash('sha256')
+      .update(rows.map((row) => row.map((dark) => (dark ? '1' : '0')).join('')).join('\n'))
+      .digest('hex');
+  // From qrcode-generator 2.0.4 (the root TV app's), level M, with its mask.
+  assert.equal(
+    hash(qrCode('http://192.168.1.5:8787/#/calibrate', 6)),
+    '53a920e817486b59ffbf1c14a107334d4b472ebc1c0bd7c3c8bec25f22c1507a',
+  );
+  assert.equal(
+    hash(qrCode('http://prysm-living-room.local:8787/#/calibrate', 2)),
+    'b0a00bf61f1507d17d64bdf49a98ba07ca2ae4f1208efa91bc3ea8bd0fcace22',
+  );
+  assert.equal(qrCode('a').length, 21);
+  assert.equal(qrCode('x'.repeat(106)).length, 41);
+  assert.equal(qrCode('x'.repeat(107)), null);
+});
+
+test('the pattern fragments are the shipped clips, one per pattern of the contract', () => {
+  const fragments = JSON.parse(readFileSync(resolve(process.cwd(), 'packages/tv-ui/pattern-fragments.json'), 'utf8'));
+  const root = JSON.parse(readFileSync(resolve(process.cwd(), '../../crates/web/prysm-webos/src/pattern-fragments.json'), 'utf8'));
+  const openapi = JSON.parse(readFileSync(resolve(process.cwd(), 'packages/contracts/generated/application.openapi.json'), 'utf8'));
+  assert.deepEqual(Object.keys(fragments), openapi.components.schemas.Pattern.enum);
+  for (const [name, fragment] of Object.entries(fragments)) assert.equal(fragment, root[name], name);
+});
+
+test('the pattern stream appends the requested pattern in sequence mode and stops on a stall', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  const fragments = JSON.parse(readFileSync(resolve(process.cwd(), 'packages/tv-ui/pattern-fragments.json'), 'utf8'));
+  const bytes = (name) => Buffer.from(fragments[name], 'base64');
+  class FakeBuffer extends EventTarget {
+    mode = 'segments';
+    updating = false;
+    appended = [];
+    range = null;
+    get buffered() {
+      const range = this.range;
+      return { length: range ? 1 : 0, start: () => range[0], end: () => range[1] };
+    }
+    appendBuffer(data) {
+      this.appended.push(Buffer.from(data));
+      this.range = [this.range?.[0] ?? 0, (this.range?.[1] ?? 0) + 0.5];
+    }
+    remove(from, to) {
+      this.range = [to, this.range[1]];
+    }
+  }
+  const sources = [];
+  class FakeSource extends EventTarget {
+    static isTypeSupported = (type) => type === PATTERN_TYPE;
+    constructor() {
+      super();
+      sources.push(this);
+    }
+    addSourceBuffer(type) {
+      assert.equal(type, PATTERN_TYPE);
+      return (this.buffer = new FakeBuffer());
+    }
+  }
+  class FakeVideo extends EventTarget {
+    currentTime = 0;
+    src = '';
+    paused = true;
+    play() {
+      this.paused = false;
+      return Promise.resolve();
+    }
+    pause() {
+      this.paused = true;
+    }
+    removeAttribute(name) {
+      if (name === 'src') this.src = '';
+    }
+    load() {}
+  }
+  const revoked = [];
+  const previous = globalThis.window;
+  globalThis.window = {
+    MediaSource: FakeSource,
+    URL: { createObjectURL: () => 'blob:patterns', revokeObjectURL: (url) => revoked.push(url) },
+  };
+  t.after(() => {
+    globalThis.window = previous;
+  });
+  assert.equal(msePatternPlayer.supported, true);
+
+  const video = new FakeVideo();
+  let pattern = 'gray-192';
+  let failures = 0;
+  streamPatterns(video, () => pattern, () => failures++);
+  assert.equal(video.src, 'blob:patterns');
+  assert.equal(video.paused, false);
+  const [source] = sources;
+  source.dispatchEvent(new Event('sourceopen'));
+  const { buffer } = source;
+  assert.equal(buffer.mode, 'sequence');
+  // Two seconds are buffered before playback starts, then no more.
+  for (let i = 0; i < 8; i++) buffer.dispatchEvent(new Event('updateend'));
+  assert.equal(buffer.appended.length, 5);
+  for (const appended of buffer.appended) assert.deepEqual(appended, bytes('gray-192'));
+  // Playing: a new pattern is appended when less than half a second is left.
+  pattern = 'red';
+  video.currentTime = 1.5;
+  buffer.dispatchEvent(new Event('updateend'));
+  assert.equal(buffer.appended.length, 5);
+  video.currentTime = 2.2;
+  buffer.dispatchEvent(new Event('updateend'));
+  assert.equal(buffer.appended.length, 6);
+  assert.deepEqual(buffer.appended.at(-1), bytes('red'));
+  // Played video is dropped, keeping the last ten seconds.
+  video.currentTime = 40;
+  buffer.range = [0, 40.3];
+  buffer.dispatchEvent(new Event('updateend'));
+  assert.deepEqual(buffer.range, [30, 40.3]);
+  // No progress for too long: the stream stops and reports it once.
+  t.mock.timers.tick(STALL_MS + 200);
+  assert.equal(failures, 1);
+  assert.equal(video.src, '');
+  assert.equal(video.paused, true);
+  assert.deepEqual(revoked, ['blob:patterns']);
+  t.mock.timers.tick(STALL_MS + 200);
+  assert.equal(failures, 1);
 });

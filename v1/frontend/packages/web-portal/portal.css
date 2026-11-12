@@ -533,6 +533,30 @@ button.quiet {
   color: var(--muted);
 }
 
+/* Calibrate */
+.calibrate h2:focus {
+  outline: none;
+}
+.calibrate h2:focus-visible {
+  outline: 3px solid #7d61c9;
+}
+.calibrate-pattern {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+.calibrate-controls {
+  margin-top: 4px;
+}
+button.compare {
+  width: 100%;
+  margin: 4px 0 6px;
+}
+button.compare[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 @media (max-width: 640px) {
   .card {
     padding: 16px;

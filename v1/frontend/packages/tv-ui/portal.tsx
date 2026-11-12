@@ -116,6 +116,9 @@ export function usePortal(
     reach: error && reach?.error === error ? reach.reach : ('unknown' as Reach),
     setTarget: (target: LightingTarget) =>
       runtime!.store.dispatch(runtime!.commands.setTarget(target)),
+    /** End calibration: the lights return to the saved processing. */
+    endCalibration: () =>
+      runtime ? runtime.store.dispatch(runtime.commands.setCalibration(null)) : Promise.resolve(),
   };
 }
 export type PortalView = ReturnType<typeof usePortal>;
