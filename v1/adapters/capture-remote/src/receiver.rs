@@ -1,7 +1,7 @@
 //! The lighting-host end: a listener thread that keeps only the newest frame.
 use crate::wire::{HEADER_LEN, Header};
 use prysm_core::{Frame, FramePool};
-use prysm_ports::{Error, FrameSource, LatestSlot, Result, SourceFactory, ValidationError};
+use prysm_ports::{Error, FrameSource, LatestSlot, Pull, Result, SourceFactory, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::io::{ErrorKind, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -110,15 +110,15 @@ impl RemoteSource {
 }
 
 impl FrameSource for RemoteSource {
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if let Some(frame) = self.frames.take_timeout(timeout) {
-            return Ok(Some(frame));
+            return Ok(Pull::Frame(frame));
         }
         // The thread only exits early by panicking.
         if self.thread.as_ref().is_none_or(JoinHandle::is_finished) {
             return Err(Error::Panicked("remote receive thread"));
         }
-        Ok(None)
+        Ok(Pull::Idle)
     }
 
     fn close(mut self: Box<Self>) -> Result<()> {

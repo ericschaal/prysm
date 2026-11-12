@@ -10,9 +10,13 @@ import {
   useFieldErrors,
   useFieldScope,
 } from './fields';
+import { ProfileControls } from './profiles';
 import { staleNotice } from './section-form';
 
-/** The six controls this panel owns; other processing fields are preserved. */
+/**
+ * What this panel owns: six controls plus the colour profiles and the active
+ * one. Other processing fields are preserved.
+ */
 export type ProcessingControls = Pick<
   Processing,
   | 'brightness_percent'
@@ -21,6 +25,8 @@ export type ProcessingControls = Pick<
   | 'sample_density'
   | 'spatial_reach_percent'
   | 'remove_black_bars'
+  | 'profiles'
+  | 'active_profile'
 >;
 
 /**
@@ -40,13 +46,38 @@ export const processingLimits = {
 export const processingDelayMs = 400;
 
 export function processingControls(processing: Processing): ProcessingControls {
+  return withProfiles(
+    {
+      brightness_percent: processing.brightness_percent,
+      shadow_lift_percent: processing.shadow_lift_percent,
+      smoothing_seconds: processing.smoothing_seconds,
+      sample_density: processing.sample_density,
+      spatial_reach_percent: processing.spatial_reach_percent,
+      remove_black_bars: processing.remove_black_bars,
+    },
+    processing.profiles,
+    processing.active_profile,
+  );
+}
+
+/**
+ * `controls` with `profiles` and `active_profile` as the server sends them:
+ * absent when empty or none, so a saved draft equals the state that follows.
+ */
+function withProfiles<T extends object>(
+  controls: T,
+  profiles: Processing['profiles'],
+  active: string | undefined,
+): Omit<T, 'profiles' | 'active_profile'> & Pick<Processing, 'profiles' | 'active_profile'> {
+  const {
+    profiles: _profiles,
+    active_profile: _active,
+    ...rest
+  } = controls as T & Pick<Processing, 'profiles' | 'active_profile'>;
   return {
-    brightness_percent: processing.brightness_percent,
-    shadow_lift_percent: processing.shadow_lift_percent,
-    smoothing_seconds: processing.smoothing_seconds,
-    sample_density: processing.sample_density,
-    spatial_reach_percent: processing.spatial_reach_percent,
-    remove_black_bars: processing.remove_black_bars,
+    ...rest,
+    ...(profiles?.length ? { profiles } : {}),
+    ...(active === undefined ? {} : { active_profile: active }),
   };
 }
 
@@ -102,7 +133,11 @@ export function ProcessingPanel({
     const value = draft.draft;
     setBusy(true);
     try {
-      const next = await save(revision, { ...processing, ...value });
+      // `value` decides the profiles: an absent one was removed.
+      const next = await save(revision, {
+        ...withProfiles(processing, undefined, undefined),
+        ...value,
+      });
       draft.saved(value, next);
       setFailure('');
       setFailed(null);
@@ -130,7 +165,10 @@ export function ProcessingPanel({
   }, [draft.draft, draft.dirty, blocked, revision]);
 
   function change(next: Partial<ProcessingControls>) {
-    draft.setDraft({ ...draft.draft, ...next });
+    replace({ ...draft.draft, ...next });
+  }
+  function replace(next: ProcessingControls) {
+    draft.setDraft(next);
     setNotice('');
   }
   const value = draft.draft;
@@ -208,6 +246,14 @@ export function ProcessingPanel({
             onChange={(remove_black_bars) => change({ remove_black_bars })}
           />
         </div>
+        <ProfileControls
+          key={`profiles-${draft.generation}`}
+          profiles={value.profiles ?? []}
+          active={value.active_profile}
+          onChange={(profiles, active) =>
+            replace(withProfiles(draft.draft, profiles, active))
+          }
+        />
       </FieldScopeProvider>
       {notice ? (
         <p className="notice warning" role="status">

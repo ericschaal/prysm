@@ -8,8 +8,10 @@
 //!
 //! Requires FFmpeg 9+ on `PATH` (its `scale` filter maps HDR to sRGB). FFmpeg
 //! paces frames by presentation time (`realtime` filter). Playback runs once:
-//! at the end of the file `next_frame` fails with "finished playing", which
-//! ends the session; starting lighting again replays the file.
+//! at the end of the file `next_frame` returns [`Pull::Ended`](prysm_ports::Pull::Ended),
+//! the session stops without a failure and lighting turns off; starting
+//! lighting again replays the file. With `repeat` FFmpeg loops the file and
+//! the source never ends.
 mod settings;
 mod source;
 

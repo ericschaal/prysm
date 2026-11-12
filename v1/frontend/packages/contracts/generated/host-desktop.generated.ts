@@ -84,11 +84,11 @@ export interface components {
         /** @enum {string} */
         FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
         /**
-         * @description `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30 }`
+         * @description `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30, "repeat": false }`
          *
          *     FFmpeg scales every frame to `width`×`height` and caps the rate at `fps`
          *     (a slower file keeps its own rate). Size and rate default to 640×360 at
-         *     30 fps. Playback runs once.
+         *     30 fps. Playback runs once unless `repeat` is set.
          */
         FileSettings: {
             /**
@@ -110,6 +110,11 @@ export interface components {
              */
             path: string;
             /**
+             * @description Loop the file forever instead of ending lighting at its end.
+             * @default false
+             */
+            repeat?: boolean;
+            /**
              * Format: int32
              * @default 640
              */
@@ -129,6 +134,20 @@ export interface components {
             red: number;
             /** Format: int32 */
             yellow: number;
+        };
+        /** @description Whether frames are arriving, and how fast. */
+        Input: {
+            /**
+             * Format: float
+             * @description Frames per second over the last second, to one decimal.
+             * @example 29.9
+             */
+            fps: number;
+            /**
+             * @description At least one frame arrived in the last second. `false` right after
+             *     lighting starts and while the source is quiet (no signal, no sender).
+             */
+            receiving: boolean;
         };
         /** @description LEDs per edge, as seen from the front of the screen. An omitted edge has none. */
         LedCounts: {
@@ -306,6 +325,11 @@ export interface components {
         State: {
             failure: components["schemas"]["Failure"] | null;
             /**
+             * @description Frames arriving from the source, measured about once a second; absent
+             *     while no session runs.
+             */
+            input?: components["schemas"]["Input"];
+            /**
              * Format: int64
              * @description Pass back as `expected` when replacing settings.
              */
@@ -359,6 +383,7 @@ export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type FileSettings = components['schemas']['FileSettings'];
 export type HueControls = components['schemas']['HueControls'];
+export type Input = components['schemas']['Input'];
 export type LedCounts = components['schemas']['LedCounts'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type NullSettings = components['schemas']['NullSettings'];

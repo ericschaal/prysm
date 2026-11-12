@@ -14,7 +14,7 @@ use http_body_util::StreamBody;
 use hyper::{StatusCode, body::Frame as BodyFrame, header};
 use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
-use prysm_core::{ColorStrip, Frame, PixelFormat};
+use prysm_core::{ColorStrip, Frame, Viewport};
 use prysm_protocol::{
     FailureKind, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
 };
@@ -242,23 +242,11 @@ pub(crate) struct Rgb {
 /// longer side, keeping its aspect ratio. Reads only the sampled pixels.
 pub(crate) fn downscale(frame: &Frame) -> Result<Rgb, &'static str> {
     let (source_width, source_height) = (frame.width(), frame.height());
-    if source_width == 0 || source_height == 0 {
-        return Err("the frame is empty");
-    }
-    if frame.format() == PixelFormat::MJPEG {
-        return Err("MJPEG frames cannot be previewed");
-    }
     let longest = source_width.max(source_height).max(LONGEST_SIDE);
     let width = scale(LONGEST_SIDE, source_width, longest).max(1);
     let height = scale(LONGEST_SIDE, source_height, longest).max(1);
-    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    for y in 0..height {
-        let sy = scale(y, source_height, height);
-        for x in 0..width {
-            let sx = scale(x, source_width, width);
-            rgb.extend_from_slice(&pixel(frame, sx, sy));
-        }
-    }
+    let full = Viewport::full_frame(source_width, source_height);
+    let rgb = prysm_runtime::sample_rgb(frame, full, width, height)?.into_flattened();
     Ok(Rgb { width, height, rgb })
 }
 
@@ -269,33 +257,10 @@ fn scale(value: u32, numerator: u32, denominator: u32) -> u32 {
     u32::try_from(scaled).unwrap_or(u32::MAX)
 }
 
-fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
-    let data = frame.as_slice();
-    match frame.format() {
-        PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let offset = (y as usize * frame.width() as usize + x as usize) * 3;
-            let Some(&[a, b, c]) = data.get(offset..offset + 3) else {
-                return [0; 3];
-            };
-            if frame.format() == PixelFormat::RGB24 {
-                [a, b, c]
-            } else {
-                [c, b, a]
-            }
-        }
-        PixelFormat::YUYV { range, matrix } => {
-            let (r, g, b) =
-                prysm_core::yuyv::yuyv_pixel_to_rgb(data, x, y, frame.width(), range, matrix);
-            [r, g, b]
-        }
-        PixelFormat::MJPEG => [0; 3],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_core::{EdgeColors, LinearColor, Viewport};
+    use prysm_core::{EdgeColors, LinearColor, PixelFormat};
 
     fn preview(frame: Frame) -> Preview {
         let strip = |color| ColorStrip::new(vec![color; 600]).unwrap();

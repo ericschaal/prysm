@@ -1,5 +1,8 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
-import type { ApplicationSnapshot } from '@prysm/application-client';
+import type {
+  ApplicationSnapshot,
+  PreviewClient,
+} from '@prysm/application-client';
 import { useState } from 'react';
 import {
   useApplication,
@@ -7,6 +10,7 @@ import {
 } from '@prysm/application-react';
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { LightingControls } from './lighting';
+import { PreviewPanel } from './preview';
 import { ProcessingPanel } from './processing';
 import { SectionForm } from './section-form';
 import './portal.css';
@@ -21,6 +25,13 @@ export {
   processingDelayMs,
   type ProcessingControls,
 } from './processing';
+export {
+  correctionLimits,
+  hueLimits,
+  profileLimits,
+  newProfileId,
+} from './profiles';
+export { drawPreview, PreviewPanel, previewLayout } from './preview';
 export { SectionForm, staleNotice } from './section-form';
 
 export interface WebPortalProps<C extends AdapterSection, O extends AdapterSection> {
@@ -29,6 +40,8 @@ export interface WebPortalProps<C extends AdapterSection, O extends AdapterSecti
   captures: AdapterUis<NoInfer<C>>;
   /** The output kinds this host registers, in display order. */
   outputs: AdapterUis<NoInfer<O>>;
+  /** The live preview; without one the portal shows no Preview panel. */
+  preview?: PreviewClient;
 }
 
 const sessionLabels = {
@@ -46,6 +59,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   application,
   captures,
   outputs,
+  preview,
 }: WebPortalProps<C, O>) {
   const connection = useApplication(application);
   const dispatch = useApplicationDispatch<C, O>();
@@ -115,6 +129,14 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             dispatch(application.commands.setTarget(target))
           }
         />
+        {preview ? (
+          <PreviewPanel
+            client={preview}
+            online={online}
+            target={snapshot.target}
+            session={session}
+          />
+        ) : null}
         <ProcessingPanel
           processing={settings.processing}
           revision={revision}

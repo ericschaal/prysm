@@ -2,6 +2,7 @@ import type {
   CaptureSettings,
   OutputSettings,
 } from '@prysm/contracts/host-desktop';
+import type { PreviewClient } from '@prysm/application-client';
 import { ApplicationProvider } from '@prysm/application-react/provider';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import { WebPortal, type AdapterUis } from '@prysm/web-portal';
@@ -31,14 +32,17 @@ export const headlessOutputs: AdapterUis<HeadlessOutput> = {
 
 export function HeadlessWebPortal({
   application,
+  preview,
 }: {
   application: ApplicationRuntime<HeadlessCapture, HeadlessOutput>;
+  preview?: PreviewClient;
 }) {
   return (
     <ApplicationProvider application={application}>
       <WebPortal
         application={application}
         captures={headlessCaptures}
+        preview={preview}
         outputs={headlessOutputs}
       />
     </ApplicationProvider>

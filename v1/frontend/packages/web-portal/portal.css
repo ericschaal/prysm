@@ -337,6 +337,67 @@ fieldset {
   margin: 4px 0 10px;
 }
 
+/* Preview */
+.preview-body {
+  margin-top: 4px;
+}
+.preview-canvas {
+  display: block;
+  width: 100%;
+  max-width: 512px;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 8px;
+  background: #15161f;
+}
+.preview-canvas[hidden] {
+  display: none;
+}
+.preview-message {
+  margin: 0;
+  padding: 28px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  text-align: center;
+  color: var(--muted);
+}
+.preview-info {
+  text-align: center;
+}
+.notice p {
+  margin: 0 0 8px;
+}
+
+/* Colour profiles */
+.profiles {
+  margin: 4px 0 14px;
+}
+.profile-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.profile-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.profile-confirm p {
+  margin: 0;
+  flex: 1 1 200px;
+}
+.profile-editor {
+  margin-top: 4px;
+}
+
 /* Forms */
 .actions {
   display: flex;
@@ -387,7 +448,8 @@ code {
   }
   .modes,
   .grid.three,
-  .led-editor {
+  .led-editor,
+  .profile-choice {
     grid-template-columns: minmax(0, 1fr);
   }
   .actions button {

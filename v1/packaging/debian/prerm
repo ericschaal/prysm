@@ -1,0 +1,6 @@
+#!/bin/sh
+# Stops the service before its files go (remove, upgrade or deconfigure).
+set -e
+if [ -d /run/systemd/system ] && [ "$1" != failed-upgrade ]; then
+    deb-systemd-invoke stop prysm-headless.service >/dev/null || true
+fi

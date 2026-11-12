@@ -1,5 +1,5 @@
 //! The captured frame as Unicode half blocks: two square-ish pixels per cell.
-use prysm_core::{Frame, PixelFormat, Viewport};
+use prysm_core::{Frame, Viewport};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 /// A small RGB image sampled from a frame for one display area.
@@ -23,35 +23,16 @@ pub(crate) fn sample(frame: &Frame, width: u32, height: u32) -> Result<Image, &'
     if width == 0 || height == 0 {
         return Err("preview area is empty");
     }
-    if frame.width() == 0 || frame.height() == 0 {
-        return Err("frame is empty");
-    }
-    if matches!(frame.format(), PixelFormat::MJPEG) {
-        return Err("MJPEG frames cannot be previewed");
-    }
     let crop = cover(
         Viewport::full_frame(frame.width(), frame.height()),
         (width, height),
     );
-    let mut pixels = Vec::with_capacity(width as usize * height as usize);
-    for y in 0..height {
-        let sy = crop.y + scale(y, crop.height, height);
-        for x in 0..width {
-            let sx = crop.x + scale(x, crop.width, width);
-            pixels.push(pixel(frame, sx, sy));
-        }
-    }
+    let pixels = prysm_runtime::sample_rgb(frame, crop, width, height)?;
     Ok(Image {
         width,
         height,
         pixels,
     })
-}
-
-/// Map target coordinate `i` of `of` onto `span` source pixels.
-fn scale(i: u32, span: u32, of: u32) -> u32 {
-    // Bounded by `span`, which is a u32.
-    u32::try_from(u64::from(i) * u64::from(span) / u64::from(of)).unwrap_or(span - 1)
 }
 
 /// The largest centered part of `crop` with the aspect ratio of `target`.
@@ -73,29 +54,6 @@ fn cover(mut crop: Viewport, (width, height): (u32, u32)) -> Viewport {
 fn scale_to(value: u32, numerator: u32, denominator: u32) -> u32 {
     let scaled = u64::from(value) * u64::from(numerator) / u64::from(denominator);
     u32::try_from(scaled).unwrap_or(u32::MAX).max(1)
-}
-
-fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
-    let data = frame.as_slice();
-    match frame.format() {
-        PixelFormat::RGB24 | PixelFormat::BGR24 => {
-            let offset = (y as usize * frame.width() as usize + x as usize) * 3;
-            let Some(&[a, b, c]) = data.get(offset..offset + 3) else {
-                return [0; 3];
-            };
-            if frame.format() == PixelFormat::RGB24 {
-                [a, b, c]
-            } else {
-                [c, b, a]
-            }
-        }
-        PixelFormat::YUYV { range, matrix } => {
-            let (r, g, b) =
-                prysm_core::yuyv::yuyv_pixel_to_rgb(data, x, y, frame.width(), range, matrix);
-            [r, g, b]
-        }
-        PixelFormat::MJPEG => [0; 3],
-    }
 }
 
 /// Renders an image sampled at the area's width and twice its height.
@@ -126,7 +84,7 @@ impl Widget for HalfBlocks<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_core::{YuvRange, YuvStandardMatrix};
+    use prysm_core::{PixelFormat, YuvRange, YuvStandardMatrix};
 
     fn rgb(pixels: &[[u8; 3]]) -> Vec<u8> {
         pixels.iter().flatten().copied().collect()

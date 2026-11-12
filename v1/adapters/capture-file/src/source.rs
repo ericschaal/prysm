@@ -5,7 +5,7 @@ use crate::FileSettings;
 use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use prysm_core::{Frame, FramePool, PixelFormat};
-use prysm_ports::{Error, FrameSource, Result};
+use prysm_ports::{Error, FrameSource, Pull, Result};
 use std::fmt;
 use std::io::{self, Read};
 use std::os::fd::AsFd;
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 pub(crate) const STDERR_TAIL: usize = 2048;
 
 /// The FFmpeg invocation, as the shipping application runs it: decode the
-/// first video stream once, cap the rate at `fps`, scale to the frame size
+/// first video stream once (endlessly with `repeat`: `-stream_loop -1`), cap the rate at `fps`, scale to the frame size
 /// mapping HDR to sRGB (FFmpeg 9+), and release frames at their presentation
 /// time (`realtime`). Single-threaded video output so frames are not buffered
 /// again after pacing. `file:` keeps FFmpeg from reading the path as a URL.
@@ -27,14 +27,19 @@ pub(crate) fn ffmpeg(settings: &FileSettings) -> Command {
         width,
         height,
         fps,
+        repeat,
     } = settings;
     let filter = format!(
         "fps='min(source_fps,{fps})',scale={width}:{height}:flags=area:intent=perceptual:\
          out_primaries=bt709:out_transfer=srgb:out_range=full,realtime"
     );
     let mut command = Command::new("ffmpeg");
+    command.args(["-nostdin", "-v", "error", "-xerror"]);
+    if *repeat {
+        command.args(["-stream_loop", "-1"]);
+    }
     command
-        .args(["-nostdin", "-v", "error", "-xerror", "-i"])
+        .arg("-i")
         .arg(format!("file:{path}"))
         .args(["-map", "0:v:0", "-vf", &filter])
         .args(["-fps_mode", "passthrough", "-pix_fmt", "rgb24"])
@@ -276,8 +281,9 @@ pub(crate) struct FileFrames {
     /// The file, for messages.
     name: String,
     deadlines: Deadlines,
-    /// The terminal error, repeated by later `next_frame` calls.
-    ended: Option<Error>,
+    /// The terminal outcome, repeated by later `next_frame` calls: `Ok` when
+    /// the file finished playing, else the failure.
+    ended: Option<Result<(), Error>>,
     closed: bool,
 }
 
@@ -334,13 +340,13 @@ impl FileFrames {
         self.child.id()
     }
 
-    fn read(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    fn read(&mut self, timeout: Duration) -> Result<Pull> {
         if !self
             .pipes
             .stdout_ready(Instant::now() + timeout)
             .map_err(|error| Error::adapter("cannot wait for FFmpeg output", error))?
         {
-            return Ok(None);
+            return Ok(Pull::Idle);
         }
         match read_frame(
             &mut self.pipes,
@@ -348,8 +354,10 @@ impl FileFrames {
             self.size,
             self.deadlines.stall,
         )? {
-            Filled::Frame(frame) => Ok(Some(frame)),
-            Filled::Ended { filled, expected } => Err(self.ended(filled, expected)),
+            Filled::Frame(frame) => Ok(Pull::Frame(frame)),
+            Filled::Ended { filled, expected } => {
+                self.ended(filled, expected).map(|()| Pull::Ended)
+            }
             Filled::Stalled { filled, expected } => Err(Error::other(format!(
                 "FFmpeg stalled mid-frame playing `{}`: {filled} of {expected} bytes within {:?}",
                 self.name, self.deadlines.stall
@@ -358,7 +366,8 @@ impl FileFrames {
     }
 
     /// Stdout reached end of file: reap FFmpeg and say how playback ended.
-    fn ended(&mut self, filled: usize, expected: usize) -> Error {
+    /// `Ok`: the whole file played.
+    fn ended(&mut self, filled: usize, expected: usize) -> Result<()> {
         let deadline = Instant::now() + self.deadlines.exit;
         self.pipes.finish_stderr(deadline);
         let status = wait_until(&mut self.child, deadline);
@@ -374,10 +383,8 @@ impl FileFrames {
         } else {
             String::new()
         };
-        match status {
-            Ok(Some(status)) if status.success() && filled == 0 => {
-                Error::other(format!("video file `{}` finished playing", self.name))
-            }
+        Err(match status {
+            Ok(Some(status)) if status.success() && filled == 0 => return Ok(()),
             Ok(Some(status)) => failed(format!("{partial}FFmpeg exited with {status}"), stderr),
             Ok(None) => failed(
                 format!(
@@ -387,21 +394,22 @@ impl FileFrames {
                 stderr,
             ),
             Err(error) => Error::adapter("cannot wait for FFmpeg", error),
-        }
+        })
     }
 }
 
 impl FrameSource for FileFrames {
-    /// `Ok(None)` when no frame arrived within `timeout`. Every error is
-    /// terminal and repeated by later calls; the end of the file is the
-    /// error "finished playing".
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    /// `Idle` when no frame arrived within `timeout`. The end of the file
+    /// (`Ended`) and every error are terminal and repeated by later calls.
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if let Some(ended) = &self.ended {
-            return Err(ended.clone());
+            return ended.clone().map(|()| Pull::Ended);
         }
         let read = self.read(timeout);
-        if let Err(error) = &read {
-            self.ended = Some(error.clone());
+        match &read {
+            Ok(Pull::Ended) => self.ended = Some(Ok(())),
+            Err(error) => self.ended = Some(Err(error.clone())),
+            Ok(_) => {}
         }
         read
     }

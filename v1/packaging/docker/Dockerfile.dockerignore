@@ -1,0 +1,21 @@
+# Context for v1/packaging/docker/Dockerfile (BuildKit picks this file over the
+# root .dockerignore). Only source inputs: v1/ and the root crates it shares.
+**
+!Cargo.toml
+!clippy.toml
+!README.md
+!LICENSE
+!crates/
+!crates/**
+!v1/
+!v1/**
+**/node_modules
+**/target
+**/dist
+**/.test
+**/__pycache__
+**/.DS_Store
+**/.env*
+**/*.pem
+**/*.key
+**/settings.json

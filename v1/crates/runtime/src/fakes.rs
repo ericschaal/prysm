@@ -4,7 +4,7 @@ use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
-    OutputFactory, Result, Settings, SettingsStore, SourceFactory, ValidationError,
+    OutputFactory, Pull, Result, Settings, SettingsStore, SourceFactory, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -72,6 +72,8 @@ pub struct FakeSourceSettings {
     pub fail_after: Option<u32>,
     /// Produce no more frames after this many.
     pub quiet_after: Option<u32>,
+    /// Report [`Pull::Ended`] after this many frames, like a file at its end.
+    pub end_after: Option<u32>,
     pub fail_open: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
@@ -126,18 +128,21 @@ impl FakeSource {
 }
 
 impl FrameSource for FakeSource {
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         if self.settings.fail_after.is_some_and(|n| self.frames >= n) {
             return Err(Error::other("fake source failed"));
         }
+        if self.settings.end_after.is_some_and(|n| self.frames >= n) {
+            return Ok(Pull::Ended);
+        }
         if self.settings.quiet_after.is_some_and(|n| self.frames >= n) {
             thread::sleep(timeout);
-            return Ok(None);
+            return Ok(Pull::Idle);
         }
         thread::sleep(timeout.min(Duration::from_millis(2)));
         self.frames += 1;
         Frame::fill(self.settings.fill, 16, 9, PixelFormat::RGB24)
-            .map(Some)
+            .map(Pull::Frame)
             .map_err(|error| Error::adapter("fake frame", error))
     }
 

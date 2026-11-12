@@ -23,7 +23,7 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    Failure, FailureKind, Phase, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame,
+    Failure, FailureKind, Input, Phase, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame,
     PreviewViewport, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
@@ -193,6 +193,7 @@ impl ToSchema for OutputSettings {}
 #[derive(utoipa::OpenApi)]
 #[openapi(components(schemas(
     State,
+    Input,
     Session,
     Phase,
     Failure,

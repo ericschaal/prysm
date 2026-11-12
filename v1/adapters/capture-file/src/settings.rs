@@ -2,11 +2,11 @@ use prysm_core::CaptureResolution;
 use prysm_ports::ValidationError;
 use serde::{Deserialize, Serialize};
 
-/// `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30 }`
+/// `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30, "repeat": false }`
 ///
 /// FFmpeg scales every frame to `width`×`height` and caps the rate at `fps`
 /// (a slower file keeps its own rate). Size and rate default to 640×360 at
-/// 30 fps. Playback runs once.
+/// 30 fps. Playback runs once unless `repeat` is set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
@@ -27,6 +27,10 @@ pub struct FileSettings {
     #[serde(default = "default_fps")]
     #[cfg_attr(feature = "schema", schema(minimum = 1, default = default_fps))]
     pub fps: u32,
+    /// Loop the file forever instead of ending lighting at its end.
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schema(default = false))]
+    pub repeat: bool,
 }
 
 fn default_width() -> u32 {
@@ -49,6 +53,7 @@ impl FileSettings {
             width: default_width(),
             height: default_height(),
             fps: default_fps(),
+            repeat: false,
         }
     }
 

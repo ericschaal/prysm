@@ -1,13 +1,14 @@
 use crate::{PreviewSlot, PreviewWatch, Session, SessionEnd};
 use prysm_ports::{
-    AdapterSettings, Error, IdleMode, LightingTarget, Registry, Result, Revision, SessionPhase,
-    SessionState, Settings, SettingsStore, Snapshot, ValidationError,
+    AdapterSettings, Error, IdleMode, Input, LightingTarget, Registry, Result, Revision,
+    SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+use tokio::time::{Instant, Interval, MissedTickBehavior};
 
 type Reply<T> = oneshot::Sender<Result<T>>;
 
@@ -125,6 +126,7 @@ impl Engine {
             registry,
             store,
             session: None,
+            meter: None,
             preview: preview.clone(),
             stop_deadline,
             state,
@@ -178,10 +180,58 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
         .map_err(|_| Error::Panicked("blocking adapter call"))
 }
 
+/// How often [`Snapshot::input`] is measured and republished.
+const MEASURE: Duration = Duration::from_secs(1);
+
+/// Frame-rate measurement of the running session: the session thread only
+/// counts; the engine samples the count every [`MEASURE`].
+struct Meter {
+    interval: Interval,
+    frames: u64,
+    at: Instant,
+}
+
+impl Meter {
+    fn new() -> Self {
+        let mut interval = tokio::time::interval_at(Instant::now() + MEASURE, MEASURE);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        Self {
+            interval,
+            frames: 0,
+            at: Instant::now(),
+        }
+    }
+
+    /// The rate since the last sample, to one decimal.
+    fn sample(&mut self, frames: u64) -> Input {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.at).as_secs_f64();
+        let counted = frames.saturating_sub(self.frames);
+        self.frames = frames;
+        self.at = now;
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            reason = "a per-second frame count is far below f64 precision and f32 range"
+        )]
+        let fps = if elapsed > 0.0 {
+            ((counted as f64 / elapsed * 10.0).round() / 10.0) as f32
+        } else {
+            0.0
+        };
+        Input {
+            fps,
+            receiving: counted > 0,
+        }
+    }
+}
+
 struct Core {
     registry: Registry,
     store: Store,
     session: Option<Session>,
+    /// Present exactly while `session` is.
+    meter: Option<Meter>,
     preview: Arc<PreviewSlot>,
     stop_deadline: Duration,
     state: watch::Sender<Snapshot>,
@@ -194,6 +244,10 @@ impl Core {
                 command = inbox.recv() => command,
                 end = finished(&mut self.session) => {
                     self.session_ended(end).await;
+                    continue;
+                }
+                () = measure(&mut self.meter) => {
+                    self.measure();
                     continue;
                 }
             };
@@ -238,7 +292,23 @@ impl Core {
         }
     }
 
+    fn measure(&mut self) {
+        let (Some(session), Some(meter)) = (&self.session, &mut self.meter) else {
+            return;
+        };
+        let input = Some(meter.sample(session.frames()));
+        self.state.send_if_modified(|s| {
+            let changed = s.input != input;
+            s.input = input;
+            changed
+        });
+    }
+
+    /// The session stopped on its own: a failure, or its source ended. An
+    /// ended source is completion: the target becomes `Off`, so lighting does
+    /// not restart (a file would replay) until asked again.
     async fn session_ended(&mut self, end: Result<SessionEnd>) {
+        self.meter = None;
         if let Some(session) = self.session.take() {
             session.join().await;
         }
@@ -246,10 +316,15 @@ impl Core {
             Ok(end) if end.released.is_err() => UNRELEASED,
             _ => SessionState::Stopped,
         };
+        let ended = end.as_ref().is_ok_and(|end| end.ended);
         let failure = end.and_then(SessionEnd::result).err();
         self.state.send_modify(|s| {
             s.session = session;
+            s.input = None;
             s.failure = failure;
+            if ended {
+                s.target = LightingTarget::Off;
+            }
         });
     }
 
@@ -355,8 +430,11 @@ impl Core {
             config,
             self.preview.clone(),
         )?);
-        self.state
-            .send_modify(|s| s.session = SessionState::Running);
+        self.meter = Some(Meter::new());
+        self.state.send_modify(|s| {
+            s.session = SessionState::Running;
+            s.input = Some(Input::default());
+        });
         Ok(())
     }
 
@@ -364,6 +442,7 @@ impl Core {
         let Some(session) = self.session.take() else {
             return Ok(());
         };
+        self.meter = None;
         let result = session.stop(mode, self.stop_deadline).await;
         let state = match &result {
             Err(Error::Faulted(phase)) => SessionState::Faulted(*phase),
@@ -371,7 +450,10 @@ impl Core {
             Ok(end) if mode == IdleMode::Native && end.idled.is_ok() => SessionState::Native,
             _ => SessionState::Stopped,
         };
-        self.state.send_modify(|s| s.session = state);
+        self.state.send_modify(|s| {
+            s.session = state;
+            s.input = None;
+        });
         result.and_then(SessionEnd::result)
     }
 
@@ -415,6 +497,15 @@ fn configured(settings: Option<&AdapterSettings>, section: &str) -> Result<Adapt
 async fn finished(session: &mut Option<Session>) -> Result<SessionEnd> {
     match session {
         Some(session) => session.finished().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn measure(meter: &mut Option<Meter>) {
+    match meter {
+        Some(meter) => {
+            meter.interval.tick().await;
+        }
         None => std::future::pending().await,
     }
 }

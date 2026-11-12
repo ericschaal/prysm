@@ -51,8 +51,13 @@ export function useFieldErrors() {
     });
   }, []);
   const edited = useCallback((path: string) => {
-    // An edit also answers an error on its group, e.g. `output.leds`.
-    const covers = (key: string) => path === key || path.startsWith(`${key}.`);
+    // An edit also answers an error on its group, e.g. `output.leds`, and
+    // replacing a group (`processing.profiles`) answers errors inside it.
+    const within = (inner: string, outer: string) =>
+      inner === outer ||
+      inner.startsWith(`${outer}.`) ||
+      inner.startsWith(`${outer}[`);
+    const covers = (key: string) => within(path, key) || within(key, path);
     setServer((errors) => {
       if (!Object.keys(errors).some(covers)) return errors;
       return Object.fromEntries(
@@ -194,6 +199,84 @@ export function TextField({
         onChange={(event) => {
           field.scope.edited(path);
           onChange(event.currentTarget.value);
+        }}
+      />
+      {field.help}
+      {field.message}
+    </div>
+  );
+}
+
+/** Why `name` cannot be saved (`ColorProfile.name` rules), or `null`. */
+export function nameProblem(name: string, maxChars: number) {
+  if (!name) return 'Enter a name.';
+  if ([...name].length > maxChars) return `Use at most ${maxChars} characters.`;
+  // Rust's `char::is_control`: Unicode Cc.
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return 'Remove control characters.';
+  return null;
+}
+
+/**
+ * A name saved as a whole: committed, trimmed, when the field loses focus or
+ * on Enter, so a live save never sends half-typed text.
+ */
+export function NameField({
+  path,
+  label,
+  help,
+  className,
+  value,
+  onChange,
+  maxChars,
+}: FieldProps & {
+  value: string;
+  onChange: (value: string) => void;
+  maxChars: number;
+}) {
+  const field = useField(path, help);
+  const [text, setText] = useState(value);
+  const [shown, setShown] = useState(value);
+  /** Only the user's own typing is checked: a saved name is kept as it is. */
+  const [typed, setTyped] = useState(false);
+  if (shown !== value) {
+    setShown(value);
+    setText(value);
+    setTyped(false);
+  }
+  const name = text.trim();
+  const problem = nameProblem(name, maxChars);
+  useCheck(path, typed ? problem : null);
+  function commit() {
+    if (!typed || problem !== null) return;
+    setText(name);
+    setTyped(false);
+    if (name !== value) {
+      setShown(name);
+      onChange(name);
+    }
+  }
+  return (
+    <div className={className ? `field ${className}` : 'field'}>
+      <label htmlFor={field.id}>{label}</label>
+      <input
+        {...field.control}
+        type="text"
+        value={text}
+        autoComplete="off"
+        onChange={(event) => {
+          field.scope.edited(path);
+          field.touch();
+          setTyped(true);
+          setText(event.currentTarget.value);
+        }}
+        onBlur={() => {
+          field.touch();
+          commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commit();
         }}
       />
       {field.help}

@@ -100,11 +100,18 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
     let snapshot = view.snapshot;
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(format!(
-                "Target: {} · Session: {}",
-                target_label(snapshot.target),
-                session_label(snapshot.session)
-            )),
+            Line::from(match input_label(snapshot) {
+                Some(input) => format!(
+                    "Target: {} · Session: {} · Input: {input}",
+                    target_label(snapshot.target),
+                    session_label(snapshot.session)
+                ),
+                None => format!(
+                    "Target: {} · Session: {}",
+                    target_label(snapshot.target),
+                    session_label(snapshot.session)
+                ),
+            }),
             Line::from(format!(
                 "{} → {} · rev {}",
                 adapter_label(snapshot.settings.capture.as_ref()),
@@ -148,6 +155,11 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
                 Style::default().fg(session_color(snapshot.session)).bold(),
             ),
         ]),
+    ];
+    if let Some(input) = input_label(snapshot) {
+        lines.push(field("Input", input));
+    }
+    lines.extend([
         field("Revision", snapshot.revision.to_string()),
         Line::default(),
         field(
@@ -158,7 +170,7 @@ pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
             "Output",
             adapter_label(snapshot.settings.output.as_ref()).into(),
         ),
-    ];
+    ]);
     if let Some(preview) = view.shown() {
         let frame = &preview.frame;
         let colors = &preview.colors;
@@ -248,6 +260,18 @@ fn session_color(state: SessionState) -> Color {
         SessionState::Faulted(_) => ERROR,
         SessionState::Stopped => MUTED,
     }
+}
+
+/// Frame rate while frames arrive, "waiting for frames" while the running
+/// source is quiet, nothing without a session.
+pub(crate) fn input_label(snapshot: &Snapshot) -> Option<String> {
+    snapshot.input.map(|input| {
+        if input.receiving {
+            format!("{:.1} fps", input.fps)
+        } else {
+            "waiting for frames".to_owned()
+        }
+    })
 }
 
 fn adapter_label(settings: Option<&AdapterSettings>) -> &str {
@@ -608,5 +632,51 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let text = draw(&mut terminal, &view);
         assert!(text.contains("Preview unavailable"), "{text}");
+    }
+
+    #[test]
+    fn status_shows_frame_rate_or_waiting_while_running() {
+        let mut snapshot = running();
+        snapshot.input = Some(prysm_ports::Input {
+            fps: 29.94,
+            receiving: true,
+        });
+        let ui = Ui::default();
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("29.9 fps"), "{text}");
+        let text = draw(&mut Terminal::new(TestBackend::new(70, 18)).unwrap(), &view);
+        assert!(text.contains("Input: 29.9 fps"), "{text}");
+
+        snapshot.input = Some(prysm_ports::Input::default());
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(text.contains("waiting for frames"), "{text}");
+
+        snapshot.input = None;
+        let view = View {
+            snapshot: &snapshot,
+            preview: None,
+            ui: &ui,
+        };
+        let text = draw(
+            &mut Terminal::new(TestBackend::new(100, 30)).unwrap(),
+            &view,
+        );
+        assert!(!text.contains("Input"), "{text}");
     }
 }

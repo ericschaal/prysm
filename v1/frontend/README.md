@@ -37,8 +37,16 @@ in-memory fixtures until the Luna client for the TV supervisor exists. See the
     the output's own effects (`device_native`, "WLED effects") and Off; modes
     that cannot work are disabled with the reason; "Open WLED" for a WLED output.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
-    controls, applied live (debounced 400 ms) because processing-only changes
+    controls and the [colour profiles](packages/web-portal/profiles.tsx)
+    (choose the active one; new, rename, duplicate, delete; correction and hue
+    shift), applied live (debounced 400 ms) because processing-only changes
     reach a running session without restarting it.
+  - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
+    a canvas with each edge's colours around it and the sampled area outlined
+    when black bars are removed. Shown only on request; the stream is open only
+    while the panel is shown, the page is visible and the portal is connected
+    (the portal counts viewers). Hosts pass `httpPreviewClient()`; without a
+    preview client there is no panel.
   - [Section form](packages/web-portal/section-form.tsx) with its
     [draft](packages/web-portal/draft.ts): capture and output kind selector,
     explicit Save, Reset, dirty badge, field errors, stale reload.
@@ -71,12 +79,12 @@ in-memory fixtures until the Luna client for the TV supervisor exists. See the
 
 | Section | When it is sent | Conflict check |
 | --- | --- | --- |
-| Picture (`processing`) | 400 ms after the last change; a refused value is not retried until edited | The six controls must still match what the panel started from |
+| Picture (`processing`) | 400 ms after the last change (a profile name when it is committed with Enter or by leaving the field); a refused value is not retried until edited | The six controls, the profiles and the active profile must still match what the panel started from |
 | Capture, Lights (`capture`, `output`) | Save; Reset discards the draft | The section must still match what the form started from |
 
 Every save copies the latest observed settings, replaces one section and sends
-the current revision, so fields the UI does not show (new settings, colour
-profiles, unknown adapter fields) are kept, and saving one section never
+the current revision, so fields the UI does not show (new settings, unknown
+adapter fields) are kept, and saving one section never
 conflicts with another. If the section changed elsewhere, or the server answers
 `stale_revision` (409), the form reloads the current values and says so.
 `invalid` failures mark the control named by `field` (`capture.width`,
@@ -84,7 +92,8 @@ conflicts with another. If the section changed elsewhere, or the server answers
 show is reported in the form's alert. Limits come from the generated schemas
 and are checked against them in [tests](tests/portal.test.jsx); where a schema
 has no maximum the panel uses the Rust type bound (`sample_density` `u16`,
-file `fps` `u32`, device `fps` `i32` for AVFoundation).
+file `fps` `u32`, device `fps` `i32` for AVFoundation). Profile limits (32
+profiles, 64-character names, -100 to 100 per control) are checked the same way.
 
 ## Contracts
 
@@ -108,7 +117,8 @@ Panels use their adapter's generated section type from
 
 ## Limits
 
-Preview, colour profiles, calibration and first-run setup are not in the
-portal yet. The bundles target ES2020 and are styled by one stylesheet
-(the portal CSP allows no inline styles); real webOS browser compatibility and
+Calibration and first-run setup are not in the portal yet. The bundles target
+ES2020 and are styled by one stylesheet (the portal CSP allows no inline
+styles, and no `data:` or `blob:` images, so the preview decodes its JPEG
+with `createImageBitmap` and draws it on a canvas); real webOS browser compatibility and
 remote navigation still need validation.

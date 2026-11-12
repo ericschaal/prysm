@@ -3,6 +3,8 @@ import {
   type ApplicationClient,
   type ApplicationSnapshot,
   type Failure,
+  type PreviewClient,
+  type PreviewEvent,
 } from './index';
 
 const COMMAND_TIMEOUT_MS = 20_000;
@@ -77,42 +79,92 @@ export function httpApplicationClient<C, O>({
       return revision;
     },
     observe: async (signal) => {
-      const abort = new AbortController();
-      const stop = () => abort.abort();
-      signal.addEventListener('abort', stop, { once: true });
-      if (signal.aborted) stop();
-      let states: AsyncGenerator<ApplicationSnapshot<C, O>> | undefined;
-      const close = () => {
-        signal.removeEventListener('abort', stop);
-        stop();
-        void states?.return(undefined).catch(() => {});
-      };
+      const stream = await openEvents(
+        fetcher,
+        `${api}/state/stream`,
+        signal,
+        validState,
+        'state',
+      );
       try {
-        const response = await fetcher(`${api}/state/stream`, {
-          signal: abort.signal,
-          cache: 'no-store',
-          redirect: 'error',
-        });
-        if (!response.ok) throw await responseError(response);
-        if (
-          !response.headers
-            .get('content-type')
-            ?.startsWith('text/event-stream') ||
-          !response.body
-        )
-          throw failure('unavailable', 'Invalid state stream response.');
-        states = decodeStates<C, O>(response.body, abort.signal);
-        const first = await states.next();
+        const first = await stream.events.next();
         if (first.done)
           throw failure('unavailable', 'State stream ended before any state.');
-        return { initial: first.value, updates: states, close };
+        return {
+          initial: first.value as ApplicationSnapshot<C, O>,
+          updates: stream.events as AsyncIterable<ApplicationSnapshot<C, O>>,
+          close: stream.close,
+        };
       } catch (error) {
-        close();
-        if (error instanceof ApplicationError) throw error;
-        throw failure('unavailable', 'Cannot reach the portal.');
+        stream.close();
+        throw streamError(error);
       }
     },
   };
+}
+
+/**
+ * The portal's preview stream. Each open stream is a viewer the portal counts
+ * (at most 4; more are refused as `busy`), so close it when it is not shown.
+ */
+export function httpPreviewClient({
+  baseUrl = '',
+  fetch: fetcher = fetch,
+}: HttpClientOptions = {}): PreviewClient {
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/preview/stream`;
+  return {
+    preview: async (signal) => {
+      const stream = await openEvents(fetcher, url, signal, validPreview, 'preview');
+      return {
+        events: stream.events as AsyncIterable<PreviewEvent>,
+        close: stream.close,
+      };
+    },
+  };
+}
+
+function streamError(error: unknown) {
+  return error instanceof ApplicationError
+    ? error
+    : failure('unavailable', 'Cannot reach the portal.');
+}
+
+/** Open an SSE stream; closing it or aborting `signal` cancels the request. */
+async function openEvents(
+  fetcher: typeof fetch,
+  url: string,
+  signal: AbortSignal,
+  valid: (value: unknown) => boolean,
+  name: string,
+) {
+  const abort = new AbortController();
+  const stop = () => abort.abort();
+  signal.addEventListener('abort', stop, { once: true });
+  if (signal.aborted) stop();
+  let events: AsyncGenerator<unknown> | undefined;
+  const close = () => {
+    signal.removeEventListener('abort', stop);
+    stop();
+    void events?.return(undefined).catch(() => {});
+  };
+  try {
+    const response = await fetcher(url, {
+      signal: abort.signal,
+      cache: 'no-store',
+      redirect: 'error',
+    });
+    if (!response.ok) throw await responseError(response);
+    if (
+      !response.headers.get('content-type')?.startsWith('text/event-stream') ||
+      !response.body
+    )
+      throw failure('unavailable', `Invalid ${name} stream response.`);
+    events = decodeEvents(response.body, abort.signal, valid, name);
+    return { events, close };
+  } catch (error) {
+    close();
+    throw streamError(error);
+  }
 }
 
 const targets = ['off', 'processed', 'device_native'];
@@ -131,11 +183,44 @@ function validState(value: unknown): boolean {
   );
 }
 
+const isInt = (value: unknown) => Number.isInteger(value);
+const isColors = (value: unknown) =>
+  Array.isArray(value) &&
+  value.every(
+    (color) =>
+      Array.isArray(color) &&
+      color.length === 3 &&
+      color.every((byte) => isInt(byte) && byte >= 0 && byte <= 255),
+  );
+
+function validPreview(value: unknown): boolean {
+  const event = value as Record<string, unknown> | null;
+  if (!event || typeof event !== 'object') return false;
+  if (event.type === 'idle') return true;
+  if (event.type === 'unavailable') return typeof event.message === 'string';
+  if (event.type !== 'frame') return false;
+  const frame = value as Partial<Extract<PreviewEvent, { type: 'frame' }>>;
+  const viewport = frame.viewport;
+  const colors = frame.colors;
+  return (
+    [frame.sequence, frame.width, frame.height, frame.source_width, frame.source_height].every(
+      (size) => isInt(size) && (size as number) >= 0,
+    ) &&
+    typeof frame.jpeg === 'string' &&
+    !!viewport &&
+    [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt) &&
+    !!colors &&
+    [colors.top, colors.right, colors.bottom, colors.left].every(isColors)
+  );
+}
+
 /** Bounded SSE decoder; split UTF-8 chunks, CRLF and comment lines are handled. */
-async function* decodeStates<C, O>(
+async function* decodeEvents(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-): AsyncGenerator<ApplicationSnapshot<C, O>> {
+  valid: (value: unknown) => boolean,
+  name: string,
+): AsyncGenerator<unknown> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const cancel = () => {
@@ -149,7 +234,7 @@ async function* decodeStates<C, O>(
       if (chunk.done) return;
       text += decoder.decode(chunk.value, { stream: true });
       if (text.length > EVENT_LIMIT)
-        throw failure('unavailable', 'State event is too large.');
+        throw failure('unavailable', `The ${name} event is too large.`);
       let boundary: RegExpExecArray | null;
       while ((boundary = /\r?\n\r?\n/.exec(text))) {
         const event = text.slice(0, boundary.index);
@@ -160,10 +245,15 @@ async function* decodeStates<C, O>(
           .map((line) => line.slice(5).trimStart())
           .join('\n');
         if (!data) continue;
-        const state: unknown = JSON.parse(data);
-        if (!validState(state))
-          throw failure('unavailable', 'Invalid state event.');
-        yield state as ApplicationSnapshot<C, O>;
+        let value: unknown;
+        try {
+          value = JSON.parse(data);
+        } catch {
+          value = null;
+        }
+        if (!valid(value))
+          throw failure('unavailable', `Invalid ${name} event.`);
+        yield value;
       }
     }
   } finally {

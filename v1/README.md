@@ -26,8 +26,14 @@ Contracts: [ownership and generation](CONTRACTS.md), [portal HTTP](surfaces/web-
 
 | Host | Sources | Outputs | Surfaces |
 | --- | --- | --- | --- |
-| `prysm-headless` (production, Docker) | `device`, `remote` | `wled`, `null` | web portal |
-| `prysm-tui` (local testing) | `device`, `remote` | `wled`, `null` | web portal, terminal |
+| `prysm-headless` (production, Docker) | `device`, `file`, `remote` | `wled`, `null` | web portal |
+| `prysm-tui` (local testing) | `device`, `file`, `remote` | `wled`, `null` | web portal, terminal |
+
+A `file` source plays once (`"repeat": true` loops it); at its end lighting
+stops without a failure and the target becomes `off`. The `remote` source
+listens only while lighting runs; the TV's slim worker reconnects every second
+and reports that it is waiting meanwhile. While lighting runs, the state's
+`input` gives the measured frame rate and whether frames are arriving.
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-headless -- --help
@@ -60,7 +66,8 @@ impl SourceFactory for Camera {
     fn validate(&self, s: &CameraSettings) -> Result<(), ValidationError> { s.validate() }
     fn open(&self, s: &CameraSettings) -> Result<Box<dyn FrameSource>> { Ok(Box::new(Frames::open(s)?)) }
 }
-// Frames: next_frame(timeout) -> Ok(None) when idle; close(self: Box<Self>) releases.
+// Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Idle) on timeout,
+// Ok(Pull::Ended) when finished (lighting stops cleanly); close(self: Box<Self>) releases.
 // A push-style backend stores frames in a LatestSlot and takes them in next_frame.
 ```
 
@@ -106,6 +113,11 @@ members). Builds do not deploy.
 - TV: IPK packaging for the two packages, the TV UI on the new Luna API, and every
   check that needs the webOS SDK or a TV (the TV binaries build and are tested on
   the development host only).
-- Calibration, browser preview and metrics.
+- Calibration and metrics.
 - Verification against real capture hardware, WLED devices and TVs.
-- A Docker image for `prysm-headless`.
+
+## Packaging
+
+`prysm-headless` ships as a Docker image and a Debian package with a systemd
+service; see [packaging](packaging/README.md). Releases on `v1.*` tags:
+[v1-release.yml](../.github/workflows/v1-release.yml).

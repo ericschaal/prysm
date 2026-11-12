@@ -656,3 +656,89 @@ async fn capture_saved_while_processed_is_requested_starts_lighting() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn an_ended_source_stops_cleanly_turns_lighting_off_and_idles_the_output() {
+    within(async {
+        let log = CallLog::new();
+        let ending = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                end_after: Some(3),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, ending, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+
+        let snapshot = snapshot_until(&handle, |s| s.session == SessionState::Stopped).await;
+        assert!(snapshot.failure.is_none(), "{:?}", snapshot.failure);
+        assert_eq!(snapshot.target, LightingTarget::Off);
+        assert!(snapshot.input.is_none());
+        assert_eq!(log.count("output.write:a"), 3);
+        assert!(before(&log, "output.write:a", "source.close:a"));
+        assert!(before(&log, "source.close:a", "output.idle:a:Off"));
+
+        // Off: a settings change does not replay the source.
+        let current = revision(&handle);
+        let mut changed = handle.snapshot().borrow().settings.clone();
+        changed.processing.brightness_percent =
+            changed.processing.brightness_percent.saturating_sub(1);
+        handle.replace_settings(current, changed).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(log.count("source.open:a"), 1);
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+
+        // Asked again, it plays again.
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("source.open:a", 2).await);
+        snapshot_until(&handle, |s| s.target == LightingTarget::Off).await;
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
+    within(async {
+        let log = CallLog::new();
+        let quiet = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                quiet_after: Some(150),
+                ..Default::default()
+            },
+            FakeOutputSettings::default(),
+        );
+        let (handle, engine, _) = start(&log, quiet, DEADLINE).await;
+        assert!(handle.snapshot().borrow().input.is_none(), "no session");
+
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        let started = tokio::time::Instant::now();
+        let waiting = handle.snapshot().borrow().input.unwrap();
+        assert!(!waiting.receiving, "nothing measured yet");
+
+        // The fake delivers a frame about every 2 ms.
+        let receiving = snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        assert!(
+            started.elapsed() >= Duration::from_millis(900),
+            "sampled per second"
+        );
+        let fps = receiving.input.unwrap().fps;
+        assert!(fps > 20.0, "{fps}");
+
+        // After 150 frames it goes quiet.
+        let quiet = snapshot_until(&handle, |s| s.input.is_some_and(|i| !i.receiving)).await;
+        assert!(quiet.input.unwrap().fps.abs() < f32::EPSILON);
+        assert_eq!(quiet.session, SessionState::Running);
+
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert!(handle.snapshot().borrow().input.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}

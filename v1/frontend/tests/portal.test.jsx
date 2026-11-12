@@ -4,7 +4,14 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
-import { processingDelayMs, processingLimits, staleNotice } from '@prysm/web-portal';
+import {
+  correctionLimits,
+  hueLimits,
+  processingDelayMs,
+  processingLimits,
+  profileLimits,
+  staleNotice,
+} from '@prysm/web-portal';
 import { ledEdgeLimits, ledRuns, normalizeWledAddress, wledUrl } from '@prysm/output-wled-ui';
 import { deviceDefaults, deviceLimits } from '@prysm/capture-device-ui';
 import { fileDefaults, fileLimits } from '@prysm/capture-file-ui';
@@ -562,6 +569,8 @@ test('limits and defaults written in the panels match the generated schemas', as
   const edges = Object.fromEntries(['top', 'right', 'bottom', 'left'].map((edge) => [edge, ledEdgeLimits]));
   for (const [schema, limits, defaults] of [
     [application.Processing, processingLimits, {}],
+    [application.CorrectionControls, correctionLimits, {}],
+    [application.HueControls, hueLimits, {}],
     [desktop.DeviceSettings, deviceLimits, deviceDefaults],
     [desktop.FileSettings, fileLimits, fileDefaults],
     [webos.WebosSettings, webosLimits, webosDefaults],
@@ -577,4 +586,9 @@ test('limits and defaults written in the panels match the generated schemas', as
     for (const [name, value] of Object.entries(defaults))
       assert.equal(value, schema.properties[name].default, name);
   }
+  assert.equal(profileLimits.count, application.Processing.properties.profiles.maxItems);
+  assert.equal(profileLimits.name, application.ColorProfile.properties.name.maxLength);
+  for (const name of Object.keys(application.CorrectionControls.properties).filter((name) => name !== 'hue'))
+    assert(name in correctionLimits, `${name} has a control`);
+  for (const name of Object.keys(application.HueControls.properties)) assert(name in hueLimits, `${name} has a control`);
 });

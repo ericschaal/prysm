@@ -72,6 +72,20 @@ export interface components {
             /** Format: int32 */
             yellow: number;
         };
+        /** @description Whether frames are arriving, and how fast. */
+        Input: {
+            /**
+             * Format: float
+             * @description Frames per second over the last second, to one decimal.
+             * @example 29.9
+             */
+            fps: number;
+            /**
+             * @description At least one frame arrived in the last second. `false` right after
+             *     lighting starts and while the source is quiet (no signal, no sender).
+             */
+            receiving: boolean;
+        };
         /**
          * @description What the user wants the LEDs to do.
          * @enum {string}
@@ -214,6 +228,11 @@ export interface components {
         State: {
             failure: components["schemas"]["Failure"] | null;
             /**
+             * @description Frames arriving from the source, measured about once a second; absent
+             *     while no session runs.
+             */
+            input?: components["schemas"]["Input"];
+            /**
              * Format: int64
              * @description Pass back as `expected` when replacing settings.
              */
@@ -241,6 +260,7 @@ export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type HueControls = components['schemas']['HueControls'];
+export type Input = components['schemas']['Input'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Phase = components['schemas']['Phase'];

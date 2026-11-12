@@ -177,7 +177,7 @@
       },
       "FileSettings": {
         "additionalProperties": false,
-        "description": "`{ \"kind\": \"file\", \"path\": \"/home/me/clip.mkv\", \"width\": 640, \"height\": 360, \"fps\": 30 }`\n\nFFmpeg scales every frame to `width`×`height` and caps the rate at `fps`\n(a slower file keeps its own rate). Size and rate default to 640×360 at\n30 fps. Playback runs once.",
+        "description": "`{ \"kind\": \"file\", \"path\": \"/home/me/clip.mkv\", \"width\": 640, \"height\": 360, \"fps\": 30, \"repeat\": false }`\n\nFFmpeg scales every frame to `width`×`height` and caps the rate at `fps`\n(a slower file keeps its own rate). Size and rate default to 640×360 at\n30 fps. Playback runs once unless `repeat` is set.",
         "properties": {
           "fps": {
             "default": 30,
@@ -204,6 +204,11 @@
             "example": "/home/me/Videos/clip.mkv",
             "minLength": 1,
             "type": "string"
+          },
+          "repeat": {
+            "default": false,
+            "description": "Loop the file forever instead of ending lighting at its end.",
+            "type": "boolean"
           },
           "width": {
             "default": 640,
@@ -267,6 +272,27 @@
           "cyan",
           "blue",
           "magenta"
+        ],
+        "type": "object"
+      },
+      "Input": {
+        "description": "Whether frames are arriving, and how fast.",
+        "properties": {
+          "fps": {
+            "description": "Frames per second over the last second, to one decimal.",
+            "example": 29.9,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "receiving": {
+            "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fps",
+          "receiving"
         ],
         "type": "object"
       },
@@ -774,6 +800,10 @@
                 "type": "null"
               }
             ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input",
+            "description": "Frames arriving from the source, measured about once a second; absent\nwhile no session runs."
           },
           "revision": {
             "description": "Pass back as `expected` when replacing settings.",

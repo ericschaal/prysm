@@ -41,8 +41,10 @@ fn final_failure(output: &std::process::Output) -> String {
     event["failure"].as_str().unwrap().to_owned()
 }
 
+/// The receiver listens only while its host is lighting, so an unreachable
+/// one does not fail startup; off the TV the capture is what fails.
 #[test]
-fn an_unreachable_receiver_fails_before_capture() {
+fn an_unreachable_receiver_does_not_fail_startup() {
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -53,7 +55,9 @@ fn an_unreachable_receiver_fails_before_capture() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(final_failure(&output).contains("cannot connect to receiver"));
+    let failure = final_failure(&output);
+    assert!(failure.contains("webOS"), "{failure}");
+    assert!(!failure.contains("receiver"), "{failure}");
 }
 
 #[test]

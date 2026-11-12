@@ -26,7 +26,11 @@ fn frame(seed: u8, width: u32, height: u32) -> Frame {
 fn receive(source: &mut RemoteSource) -> Frame {
     let deadline = Instant::now() + BOUND;
     while Instant::now() < deadline {
-        if let Some(frame) = source.next_frame(Duration::from_millis(50)).unwrap() {
+        if let Some(frame) = source
+            .next_frame(Duration::from_millis(50))
+            .unwrap()
+            .into_frame()
+        {
             return frame;
         }
     }
@@ -76,14 +80,14 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
 }
 
 #[test]
-fn next_frame_times_out_with_none() {
+fn next_frame_times_out_idle() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
     let started = Instant::now();
     assert!(
         source
             .next_frame(Duration::from_millis(30))
             .unwrap()
-            .is_none()
+            .is_idle()
     );
     assert!(started.elapsed() >= Duration::from_millis(30));
     Box::new(source).close().unwrap();
@@ -108,7 +112,7 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
         source
             .next_frame(Duration::from_millis(100))
             .unwrap()
-            .is_none()
+            .is_idle()
     );
     Box::new(source).close().unwrap();
 }
@@ -126,7 +130,7 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
         source
             .next_frame(Duration::from_millis(200))
             .unwrap()
-            .is_none()
+            .is_idle()
     );
 
     let mut second = RemoteSender::connect(source.local_addr()).unwrap();
@@ -173,7 +177,7 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
         source
             .next_frame(Duration::from_millis(50))
             .unwrap()
-            .is_none()
+            .is_idle()
     );
 
     let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
@@ -243,7 +247,7 @@ fn factory_decodes_validates_and_opens() {
         source
             .next_frame(Duration::from_millis(10))
             .unwrap()
-            .is_none()
+            .is_idle()
     );
     source.close().unwrap();
 }

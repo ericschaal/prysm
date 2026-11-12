@@ -8,7 +8,7 @@ latest command. RTK Query is not used.
 | File | Responsibility |
 | --- | --- |
 | [Client port](packages/application-client/index.ts) | Generated wire types, `observe`/`setTarget`/`replaceSettings`, `ApplicationError` |
-| [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../surfaces/web-portal/HTTP-CONTRACT.md) |
+| [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../surfaces/web-portal/HTTP-CONTRACT.md); `httpPreviewClient` for the preview stream |
 | [Slice](packages/application-state/slice.ts) | Connection status, latest state, latest command |
 | [Commands](packages/application-state/commands.ts) | Typed thunks; section replacement against the observed revision |
 | [Observation listener](packages/application-state/observation.ts) | Stream lifetime and reconnect |
@@ -59,6 +59,6 @@ observation never commands lighting.
 
 ## Outside Redux
 
-Form drafts, field errors, focus, clients and abort signals stay out of the
-store; each form shows the result of its own commands. The HTTP
+Form drafts, field errors, focus, clients, abort signals and preview frames
+stay out of the store (the Preview panel holds its own `PreviewClient` stream); each form shows the result of its own commands. The HTTP
 client holds only the portal's base URL; the portal needs no credentials.

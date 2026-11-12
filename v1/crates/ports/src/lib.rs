@@ -11,7 +11,7 @@ mod settings;
 mod slot;
 mod snapshot;
 
-pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, SettingsStore};
+pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, Pull, SettingsStore};
 pub use error::{Error, Result, ValidationError};
 pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,
@@ -20,4 +20,4 @@ pub use profiles::{
 pub use registry::{OutputFactory, Registry, SourceFactory};
 pub use settings::{AdapterSettings, Processing, Revision, Settings};
 pub use slot::LatestSlot;
-pub use snapshot::{LightingTarget, SessionPhase, SessionState, Snapshot};
+pub use snapshot::{Input, LightingTarget, SessionPhase, SessionState, Snapshot};

@@ -1,7 +1,7 @@
 use super::*;
 use crate::source::{Deadlines, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Registry, Settings};
+use prysm_ports::{AdapterSettings, Pull, Registry, Settings};
 use std::error::Error as _;
 use std::process::Command;
 use std::sync::mpsc;
@@ -46,15 +46,21 @@ fn spawn(script: &str) -> FileFrames {
     FileFrames::spawn(fake(script), WIDTH, HEIGHT, "clip.mkv", TEST).unwrap()
 }
 
-/// The next frame, waiting past any `Ok(None)`.
-fn next(frames: &mut FileFrames) -> prysm_ports::Result<Frame> {
+/// The next frame, waiting past any `Idle`; `None` once playback ended.
+fn pull(frames: &mut FileFrames) -> prysm_ports::Result<Option<Frame>> {
     let deadline = Instant::now() + LIMIT;
     loop {
-        if let Some(frame) = frames.next_frame(SHORT)? {
-            return Ok(frame);
+        match frames.next_frame(SHORT)? {
+            Pull::Frame(frame) => return Ok(Some(frame)),
+            Pull::Ended => return Ok(None),
+            Pull::Idle => assert!(Instant::now() < deadline, "no frame"),
         }
-        assert!(Instant::now() < deadline, "no frame");
     }
+}
+
+/// The next frame, waiting past any `Idle`.
+fn next(frames: &mut FileFrames) -> prysm_ports::Result<Frame> {
+    Ok(pull(frames)?.expect("playback ended"))
 }
 
 fn chain(error: &Error) -> String {
@@ -99,14 +105,10 @@ fn frames_have_the_requested_size_and_format_then_playback_finishes() {
             assert_eq!(frame.format(), PixelFormat::RGB24);
             assert_eq!(frame.as_slice(), &[fill; 96]);
         }
-        let ended = next(&mut frames).unwrap_err();
-        assert_eq!(ended.to_string(), "video file `clip.mkv` finished playing");
-        assert!(ended.source().is_none());
+        // The end of the file is completion, not a failure.
+        assert!(pull(&mut frames).unwrap().is_none());
         // Terminal: repeated, not retried.
-        assert_eq!(
-            frames.next_frame(SHORT).unwrap_err().to_string(),
-            ended.to_string()
-        );
+        assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Ended)));
         Box::new(frames).close().unwrap();
     });
 }
@@ -133,7 +135,7 @@ fn frames_are_delivered_as_the_decoder_paces_them() {
         next(&mut frames).unwrap();
         let first_at = Instant::now();
         // Nothing buffered or invented between paced frames.
-        assert!(frames.next_frame(SHORT).unwrap().is_none());
+        assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Idle)));
         next(&mut frames).unwrap();
         assert!(first_at.elapsed() >= Duration::from_millis(200));
         Box::new(frames).close().unwrap();
@@ -141,11 +143,11 @@ fn frames_are_delivered_as_the_decoder_paces_them() {
 }
 
 #[test]
-fn timeout_returns_none() {
+fn timeout_returns_idle() {
     within(|| {
         let mut frames = spawn("exec sleep 30");
         let started = Instant::now();
-        assert!(frames.next_frame(SHORT).unwrap().is_none());
+        assert!(matches!(frames.next_frame(SHORT), Ok(Pull::Idle)));
         let waited = started.elapsed();
         assert!(
             waited >= SHORT && waited < Duration::from_secs(1),
@@ -163,6 +165,11 @@ fn failure_reports_exit_status_and_a_bounded_stderr_tail() {
         let mut frames = spawn(script);
         let error = next(&mut frames).unwrap_err();
         assert_eq!(error.to_string(), "cannot play video file `clip.mkv`");
+        // A failure is terminal too.
+        assert_eq!(
+            frames.next_frame(SHORT).unwrap_err().to_string(),
+            error.to_string()
+        );
         let exit = cause::<crate::source::DecoderExit>(&error).unwrap();
         assert!(exit.stderr.starts_with('…'));
         let cause = exit.to_string();
@@ -293,6 +300,24 @@ fn ffmpeg_command_matches_the_shipping_pipeline() {
             "pipe:1",
         ]
     );
+    settings.repeat = true;
+    let args: Vec<_> = ffmpeg(&settings)
+        .get_args()
+        .map(|arg| arg.to_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        args[..8],
+        [
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-stream_loop",
+            "-1",
+            "-i",
+            "file:/videos/clip.mkv"
+        ]
+    );
 }
 
 #[test]
@@ -308,6 +333,10 @@ fn settings_file_shape_and_defaults() {
             .unwrap();
     assert_eq!(decoded, FileSettings::new("/videos/clip.mkv"));
     assert_eq!((decoded.width, decoded.height, decoded.fps), (640, 360, 30));
+    assert!(!decoded.repeat, "plays once by default");
+    let repeating: FileSettings =
+        serde_json::from_str(r#"{ "path": "/a", "repeat": true }"#).unwrap();
+    assert!(repeating.repeat);
     let encoded = AdapterSettings::new(FileSource::KIND, &decoded);
     assert_eq!(encoded.kind, "file");
     assert!(
@@ -380,32 +409,50 @@ fn real_ffmpeg_plays_once_paced_and_reports_bad_files() {
         let mut count = 0;
         let mut first_at = None;
         let deadline = Instant::now() + LIMIT;
-        let ended = loop {
+        loop {
             assert!(Instant::now() < deadline);
-            match source.next_frame(SHORT) {
-                Ok(Some(frame)) => {
+            match source.next_frame(SHORT).unwrap() {
+                Pull::Frame(frame) => {
                     assert_eq!((frame.width(), frame.height()), (32, 18));
                     assert_eq!(frame.len(), 32 * 18 * 3);
                     first_at.get_or_insert_with(Instant::now);
                     count += 1;
                 }
-                Ok(None) => {}
-                Err(error) => break error,
+                Pull::Idle => {}
+                Pull::Ended => break,
             }
-        };
+        }
         source.close().unwrap();
-        (count, first_at.unwrap().elapsed(), ended.to_string())
+        (count, first_at.unwrap().elapsed())
     });
-    let (count, span, ended) = played;
+    let (count, span) = played;
     assert_eq!(count, 3);
     assert!(
         span >= Duration::from_millis(150),
         "frames came in a burst: {span:?}"
     );
-    assert!(
-        ended.ends_with("three-frames.mkv` finished playing"),
-        "{ended}"
-    );
+
+    // With `repeat` the three frames play again and the source does not end.
+    let mut settings = FileSettings::new(clip.to_str().unwrap());
+    settings.width = 32;
+    settings.height = 18;
+    settings.repeat = true;
+    let repeated = within(move || {
+        let mut source = FileSource.open(&settings).unwrap();
+        let mut count = 0;
+        let deadline = Instant::now() + LIMIT;
+        while count < 7 {
+            assert!(Instant::now() < deadline);
+            match source.next_frame(SHORT).unwrap() {
+                Pull::Frame(_) => count += 1,
+                Pull::Idle => {}
+                Pull::Ended => break,
+            }
+        }
+        source.close().unwrap();
+        count
+    });
+    assert_eq!(repeated, 7, "a repeating file keeps playing past its end");
 
     let invalid = dir.path().join("invalid.mkv");
     std::fs::write(&invalid, b"invalid video data").unwrap();

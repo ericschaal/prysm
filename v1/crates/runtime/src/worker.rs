@@ -1,7 +1,7 @@
 //! The dedicated thread shared by `Session` and `Forwarder`: a stop flag, a
 //! reported phase, and a completion the async side can await with a deadline.
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Result, SessionPhase};
+use prysm_ports::{Error, FrameSource, Pull, Result, SessionPhase};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,27 +23,47 @@ impl Flags {
         *self.phase.lock().unwrap_or_else(PoisonError::into_inner) = Some(phase);
     }
 
-    /// Pull frames until stopped or until the source or `each` fails; `each`
-    /// receives `None` when no frame arrived within a tick. A panic
-    /// becomes a failure so the caller still releases its adapters.
+    /// Pull frames until stopped, until the source ends, or until the source
+    /// or `each` fails; `each` receives `None` when no frame arrived within a
+    /// tick. A panic becomes a failure so the caller still releases its adapters.
     pub(crate) fn pump(
         &self,
         source: &mut dyn FrameSource,
         mut each: impl FnMut(Option<Frame>) -> Result<()>,
-    ) -> Option<Error> {
+    ) -> Pumped {
         self.set_phase(SessionPhase::Running);
         let pumped = catch_unwind(AssertUnwindSafe(|| {
             while !self.stop.load(Ordering::Acquire) {
-                match source.next_frame(TICK) {
-                    Ok(frame) => each(frame)?,
-                    Err(error) => return Err(error),
+                match source.next_frame(TICK)? {
+                    Pull::Frame(frame) => each(Some(frame))?,
+                    Pull::Idle => each(None)?,
+                    Pull::Ended => return Ok(Pumped::Ended),
                 }
             }
-            Ok(())
+            Ok(Pumped::Stopped)
         }));
         match pumped {
-            Ok(result) => result.err(),
-            Err(_) => Some(Error::Panicked("session loop")),
+            Ok(Ok(pumped)) => pumped,
+            Ok(Err(error)) => Pumped::Failed(error),
+            Err(_) => Pumped::Failed(Error::Panicked("session loop")),
+        }
+    }
+}
+
+/// Why a pump loop returned.
+pub(crate) enum Pumped {
+    /// The stop flag was set.
+    Stopped,
+    /// The source reported [`Pull::Ended`].
+    Ended,
+    Failed(Error),
+}
+
+impl Pumped {
+    pub(crate) fn failure(self) -> Option<Error> {
+        match self {
+            Self::Failed(error) => Some(error),
+            Self::Stopped | Self::Ended => None,
         }
     }
 }

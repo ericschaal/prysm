@@ -177,6 +177,27 @@
         ],
         "type": "object"
       },
+      "Input": {
+        "description": "Whether frames are arriving, and how fast.",
+        "properties": {
+          "fps": {
+            "description": "Frames per second over the last second, to one decimal.",
+            "example": 29.9,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "receiving": {
+            "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fps",
+          "receiving"
+        ],
+        "type": "object"
+      },
       "LedCounts": {
         "additionalProperties": false,
         "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has none.",
@@ -640,6 +661,10 @@
                 "type": "null"
               }
             ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input",
+            "description": "Frames arriving from the source, measured about once a second; absent\nwhile no session runs."
           },
           "revision": {
             "description": "Pass back as `expected` when replacing settings.",

@@ -1,4 +1,4 @@
-use crate::worker::Worker;
+use crate::worker::{Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame, Viewport};
 use prysm_ports::{Error, FrameSource, IdleMode, LatestSlot, LedOutput, Result, SessionPhase};
 use prysm_processor::PrysmProcessor;
@@ -102,8 +102,11 @@ impl Drop for PreviewWatch {
 /// How a session ended. Release and idle run on every exit path.
 #[derive(Debug)]
 pub struct SessionEnd {
-    /// Why the loop stopped; `None` when it was asked to.
+    /// Why the loop stopped; `None` when it was asked to or the source ended.
     pub failure: Option<Error>,
+    /// The source reported [`Pull::Ended`](prysm_ports::Pull::Ended): the
+    /// session finished on its own without a failure.
+    pub ended: bool,
     pub released: Result<()>,
     pub idled: Result<()>,
 }
@@ -124,13 +127,17 @@ impl SessionEnd {
 struct Control {
     config: LatestSlot<Config>,
     idle: Mutex<IdleMode>,
+    /// Frames taken from the source; read by the engine about once a second.
+    frames: AtomicU64,
 }
 
 /// One dedicated thread owning a source, the processor and an output.
 ///
 /// Loop: stop flag, pending config at the frame boundary, `next_frame`,
-/// process, write, preview (only while watched); a quiet tick rewrites the
-/// last colors. Then the preview is cleared, `source.close()` and `output.idle(mode)`.
+/// count, process, write, preview (only while watched); a quiet tick rewrites
+/// the last colors; [`Pull::Ended`](prysm_ports::Pull::Ended) leaves the
+/// loop like a stop. Then the preview is cleared, `source.close()` and
+/// `output.idle(mode)`.
 pub struct Session {
     control: Arc<Control>,
     worker: Worker<SessionEnd>,
@@ -148,12 +155,13 @@ impl Session {
         let control = Arc::new(Control {
             config: LatestSlot::new(),
             idle: Mutex::new(IdleMode::Off),
+            frames: AtomicU64::new(0),
         });
         let shared = control.clone();
         let worker = Worker::spawn("prysm-session", move |flags| {
             let mut processor = PrysmProcessor::new(&config);
             let mut last: Option<(EdgeColors, Instant)> = None;
-            let failure = flags.pump(&mut *source, |frame| {
+            let pumped = flags.pump(&mut *source, |frame| {
                 let Some(frame) = frame else {
                     if let Some((colors, written)) = &mut last
                         && written.elapsed() >= REFRESH
@@ -163,6 +171,7 @@ impl Session {
                     }
                     return Ok(());
                 };
+                shared.frames.fetch_add(1, Ordering::Relaxed);
                 if let Some(config) = shared.config.take() {
                     processor.configure(&config);
                 }
@@ -178,6 +187,8 @@ impl Session {
                 }
                 Ok(())
             });
+            let ended = matches!(pumped, Pumped::Ended);
+            let failure = pumped.failure();
             preview.clear();
             flags.set_phase(SessionPhase::ClosingSource);
             let released = source.close();
@@ -186,6 +197,7 @@ impl Session {
             let idled = output.idle(mode);
             SessionEnd {
                 failure,
+                ended,
                 released,
                 idled,
             }
@@ -198,7 +210,14 @@ impl Session {
         self.control.config.offer(config);
     }
 
-    /// Wait for the session to end on its own (a failure). Cancel-safe.
+    /// Frames taken from the source since the session started.
+    #[must_use]
+    pub fn frames(&self) -> u64 {
+        self.control.frames.load(Ordering::Relaxed)
+    }
+
+    /// Wait for the session to end on its own (a failure or the source
+    /// ending). Cancel-safe.
     ///
     /// # Errors
     /// The thread panicked while releasing its adapters.
@@ -230,17 +249,18 @@ impl Session {
 mod tests {
     use super::*;
     use prysm_core::PixelFormat;
+    use prysm_ports::Pull;
     use std::sync::atomic::AtomicBool;
 
     /// A uniform grey frame every millisecond; counts frames it handed out.
     struct Grey(Arc<AtomicUsize>);
 
     impl FrameSource for Grey {
-        fn next_frame(&mut self, _timeout: Duration) -> Result<Option<Frame>> {
+        fn next_frame(&mut self, _timeout: Duration) -> Result<Pull> {
             std::thread::sleep(Duration::from_millis(1));
             self.0.fetch_add(1, Ordering::SeqCst);
             Frame::fill(128, 32, 18, PixelFormat::RGB24)
-                .map(Some)
+                .map(Pull::Frame)
                 .map_err(|error| Error::adapter("grey frame", error))
         }
         fn close(self: Box<Self>) -> Result<()> {

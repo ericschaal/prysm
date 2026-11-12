@@ -651,6 +651,47 @@ async fn faulted_engine_is_unavailable() {
     .await;
 }
 
+/// A reply sent before the request body was read (here a 403) must reach the
+/// client: closing with unread bytes would reset the connection and discard it.
+#[tokio::test]
+async fn early_replies_survive_an_unread_request_body() {
+    use std::io::{Read, Write};
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let address = portal.address;
+        let reply = tokio::task::spawn_blocking(move || {
+            let body = vec![b' '; 256 * 1024];
+            let mut socket = std::net::TcpStream::connect(address).unwrap();
+            socket.set_read_timeout(Some(LIMIT)).unwrap();
+            let mut writer = socket.try_clone().unwrap();
+            let sender = std::thread::spawn(move || {
+                let head = format!(
+                    "PUT /api/v1/target HTTP/1.1\r\nHost: {address}\r\n\
+                     Origin: http://evil.example\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                // The portal may stop reading; the reply is what matters.
+                let _ = writer.write_all(head.as_bytes());
+                let _ = writer.write_all(&body);
+            });
+            // Let the reply and any reset arrive before reading.
+            std::thread::sleep(Duration::from_millis(200));
+            let mut reply = Vec::new();
+            let read = socket.read_to_end(&mut reply);
+            sender.join().unwrap();
+            read.map(|_| String::from_utf8_lossy(&reply).into_owned())
+        })
+        .await
+        .unwrap()
+        .expect("the portal reset the connection");
+        assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
+        assert!(reply.contains(r#""kind":"forbidden""#), "{reply}");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn shutdown_closes_the_listener_promptly() {
     bounded(async {

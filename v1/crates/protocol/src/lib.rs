@@ -4,6 +4,7 @@
 //! they do in the settings file. This crate adds only what ports cannot carry:
 //! a serializable session state and failure, and the request/response bodies.
 //! It has no HTTP or runtime dependencies.
+use prysm_ports::Input as InputRate;
 use prysm_ports::{
     Error, LightingTarget, Revision, SessionPhase, SessionState, Settings, Snapshot,
 };
@@ -23,6 +24,11 @@ pub struct State {
     #[cfg_attr(feature = "schema", schema(value_type = schema::LightingTargetSchema))]
     pub target: LightingTarget,
     pub session: Session,
+    /// Frames arriving from the source, measured about once a second; absent
+    /// while no session runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    pub input: Option<Input>,
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
     /// Pass back as `expected` when replacing settings.
@@ -40,6 +46,7 @@ impl From<&Snapshot> for State {
         Self {
             target: snapshot.target,
             session: snapshot.session.into(),
+            input: snapshot.input.map(Input::from),
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
             failure: snapshot.failure.as_ref().map(Failure::from),
@@ -48,6 +55,27 @@ impl From<&Snapshot> for State {
                 .iter()
                 .map(Failure::from)
                 .collect(),
+        }
+    }
+}
+
+/// Whether frames are arriving, and how fast.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct Input {
+    /// Frames per second over the last second, to one decimal.
+    #[cfg_attr(feature = "schema", schema(minimum = 0, example = 29.9))]
+    pub fps: f32,
+    /// At least one frame arrived in the last second. `false` right after
+    /// lighting starts and while the source is quiet (no signal, no sender).
+    pub receiving: bool,
+}
+
+impl From<InputRate> for Input {
+    fn from(input: InputRate) -> Self {
+        Self {
+            fps: input.fps,
+            receiving: input.receiving,
         }
     }
 }
@@ -247,8 +275,21 @@ mod tests {
             value["settings"],
             serde_json::to_value(&snapshot.settings).unwrap()
         );
+        assert!(value.get("input").is_none(), "absent while stopped");
         let back: State = serde_json::from_value(value).unwrap();
         assert_eq!(back.session, snapshot.session.into());
+
+        let running = Snapshot {
+            session: SessionState::Running,
+            input: Some(InputRate {
+                fps: 29.9,
+                receiving: true,
+            }),
+            ..Snapshot::default()
+        };
+        let value = serde_json::to_value(State::from(&running)).unwrap();
+        assert_eq!(value["input"]["receiving"], true);
+        assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
     }
 
     #[test]

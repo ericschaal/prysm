@@ -19,15 +19,16 @@ export function mountDom(html = '<div id="root"></div>') {
 
 /**
  * Render `Host` over a fixture application; `change` edits the fixture's
- * settings before the first render (e.g. fields this UI does not show).
+ * settings before the first render (e.g. fields this UI does not show);
+ * `props` go to `Host` as well (e.g. a preview client).
  */
-export async function renderPortal(Host, initial, change) {
+export async function renderPortal(Host, initial, change, props = {}) {
   const dom = mountDom();
   const fixture = fakeApplicationPort(initial);
   if (change) fixture.publish(change(fixture.snapshot()));
   const application = createApplicationRuntime(fixture.client);
   const root = createRoot(document.getElementById('root'));
-  await act(async () => root.render(<Host application={application} />));
+  await act(async () => root.render(<Host application={application} {...props} />));
   return {
     dom,
     fixture,

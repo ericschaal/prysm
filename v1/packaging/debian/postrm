@@ -1,0 +1,25 @@
+#!/bin/sh
+# remove: disable the unit. purge: also delete the settings in /var/lib/prysm.
+# The "prysm" system user is kept, as Debian does for system users.
+set -e
+unit=prysm-headless.service
+
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl --system daemon-reload >/dev/null || true
+fi
+
+if command -v deb-systemd-helper >/dev/null; then
+    case "$1" in
+    remove)
+        deb-systemd-helper mask "$unit" >/dev/null || true
+        ;;
+    purge)
+        deb-systemd-helper purge "$unit" >/dev/null || true
+        deb-systemd-helper unmask "$unit" >/dev/null || true
+        ;;
+    esac
+fi
+
+if [ "$1" = purge ]; then
+    rm -rf /var/lib/prysm
+fi

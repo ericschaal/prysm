@@ -1,0 +1,57 @@
+[Unit]
+Description=Prysm ambient lighting (v1 headless host)
+Documentation=https://github.com/ericschaal/prysm/tree/main/v1/packaging
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prysm
+Group=prysm
+SupplementaryGroups=video
+# A missing settings file means "unconfigured"; the portal creates it on the
+# first save. Extra options (--start, --allow-origin ...) go in a drop-in:
+# systemctl edit prysm-headless.
+ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json
+StateDirectory=prysm
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/prysm
+Environment=RUST_LOG=warn,prysm=info
+Restart=on-failure
+RestartSec=5
+# The host stops on SIGTERM: session deadline 10 s, portal grace 5 s.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+UMask=0077
+
+# Sandboxing. V4L2 capture devices stay reachable through DeviceAllow; the
+# portal, WLED (DDP/UDP, HTTP) and the remote source need IPv4/IPv6, and
+# AF_UNIX keeps mDNS (wled.local) lookups through nss-mdns/avahi working.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=char-video4linux rw
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

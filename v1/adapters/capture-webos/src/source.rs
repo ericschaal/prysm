@@ -7,7 +7,7 @@
 //! an error instead of a hang.
 use crate::{Video, VideoSignal, WebosSettings};
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Result};
+use prysm_ports::{Error, FrameSource, Pull, Result};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -374,7 +374,7 @@ impl WebosFrames {
 }
 
 impl FrameSource for WebosFrames {
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         let mut state = self.shared.wait(timeout, |state| {
             state.frame.is_some() || state.failure.is_some() || state.released.is_some()
         });
@@ -388,7 +388,7 @@ impl FrameSource for WebosFrames {
         if self.thread.as_ref().is_some_and(JoinHandle::is_finished) {
             return Err(Error::Panicked("webOS capture thread"));
         }
-        Ok(state.frame.take())
+        Ok(state.frame.take().into())
     }
 
     fn close(self: Box<Self>) -> Result<()> {

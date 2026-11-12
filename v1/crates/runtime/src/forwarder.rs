@@ -38,7 +38,7 @@ impl Forwarder {
         self
     }
 
-    /// Forward frames until `shutdown` resolves or forwarding fails, then close
+    /// Forward frames until `shutdown` resolves, the source ends or forwarding fails, then close
     /// the source and stop the surfaces. Surface failures do not stop forwarding.
     ///
     /// # Errors
@@ -52,9 +52,12 @@ impl Forwarder {
             stop_deadline,
         } = self;
         let mut worker = Worker::spawn("prysm-forwarder", move |flags| {
-            let failure = flags.pump(&mut *source, |frame| {
-                frame.map_or(Ok(()), |frame| sink.send(&frame))
-            });
+            // A source that ends finishes forwarding without a failure.
+            let failure = flags
+                .pump(&mut *source, |frame| {
+                    frame.map_or(Ok(()), |frame| sink.send(&frame))
+                })
+                .failure();
             flags.set_phase(SessionPhase::ClosingSource);
             let released = source.close();
             failure.map_or(released, Err)

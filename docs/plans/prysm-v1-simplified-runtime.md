@@ -54,9 +54,12 @@ There are exactly two long-lived owners:
 Blocking, object-safe, owned by the session thread.
 
 ```rust,ignore
+pub enum Pull { Frame(Frame), /* no frame within the timeout */ Idle, /* finished */ Ended }
+
 pub trait FrameSource: Send {
-    /// `Ok(None)`: no frame within `timeout`. The loop then checks its stop flag.
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>, AdapterError>;
+    /// `Idle`: the loop checks its stop flag. `Ended` (a file at its end) is
+    /// completion, not failure.
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull, AdapterError>;
     /// Release native resources. Returning `Ok` certifies release.
     fn close(self: Box<Self>) -> Result<(), AdapterError>;
 }
@@ -107,12 +110,14 @@ fn run(mut source, mut processor, mut output, shared: &Shared) -> SessionEnd {
         if shared.stop.load(Acquire) { break None; }
         if let Some(config) = shared.config.take() { processor.configure(&config); }
         match source.next_frame(TICK) {
-            Ok(Some(frame)) => {
+            Ok(Pull::Frame(frame)) => {
+                shared.frames.fetch_add(1, Relaxed); // sampled by the engine
                 let colors = processor.process_frame(frame);
                 shared.preview.offer(&colors);
                 if let Err(e) = output.write(&colors) { break Some(e); }
             }
-            Ok(None) => { /* output refresh if due */ }
+            Ok(Pull::Idle) => { /* output refresh if due */ }
+            Ok(Pull::Ended) => break None, // same release and idle path
             Err(e) => break Some(e),
         }
     };
@@ -148,7 +153,22 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
 - Commands are processed in order and return their result directly. There is no
   accepted/operation registry; HTTP idempotency, if needed, belongs to the portal.
 - State is one `watch<Snapshot>`: target, session state, settings revision,
-  last failure. Late or slow observers always see the latest value.
+  last failure, input. Late or slow observers always see the latest value.
+- Input: the session thread only counts frames (one relaxed atomic add); the
+  engine samples the count once a second while a session runs and publishes
+  `Snapshot::input` (frames per second to one decimal, and whether any frame
+  arrived in that second) only when it changed.
+- A session that ends because its source returned `Pull::Ended` is completion:
+  source released, output idled `Off`, `Stopped` with no failure, and the
+  target set to `Off`, so a later settings change does not replay a finished
+  file. A failure leaves the target as requested, so the next settings change
+  retries.
+- The `remote` receiver binds only while a session runs. Rather than keep a
+  listener alive across sessions (a background service in the factory, and a
+  TV streaming frames nobody uses), the slim TV worker's sink reconnects at
+  most every second and reports "waiting for the receiver" in its status
+  without exiting, so lighting resumes within about a second of being
+  switched on and the TV supervisor neither backs off nor records a failure.
 - Calibration keeps its private reply so credentials never enter the snapshot.
 
 ### Settings changes

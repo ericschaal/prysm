@@ -7,7 +7,7 @@ use crate::DeviceSettings;
 use futures::{FutureExt, executor::block_on, future::BoxFuture};
 use prysm_capture::{CaptureError, CaptureExit, DeviceCapture};
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Result};
+use prysm_ports::{Error, FrameSource, Pull, Result};
 use std::num::NonZeroU32;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
@@ -257,7 +257,7 @@ impl DeviceFrames {
 }
 
 impl FrameSource for DeviceFrames {
-    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+    fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         let mut state = self.shared.wait(timeout, |state| {
             state.frame.is_some() || state.exit.is_some()
         });
@@ -268,7 +268,7 @@ impl FrameSource for DeviceFrames {
                 .clone()
                 .unwrap_or_else(|| Error::other("video device capture ended unexpectedly")));
         }
-        Ok(state.frame.take())
+        Ok(state.frame.take().into())
     }
 
     fn close(self: Box<Self>) -> Result<()> {

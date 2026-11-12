@@ -54,8 +54,21 @@ pub struct Snapshot {
     pub session: SessionState,
     pub settings: Settings,
     pub revision: Revision,
+    /// Frames arriving from the source; `None` while no session runs.
+    pub input: Option<Input>,
     /// Last lighting failure; cleared when lighting next starts successfully.
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.
     pub surface_failures: Vec<Error>,
+}
+
+/// Frames arriving from the running session's source, measured over about one
+/// second and republished at most that often.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Input {
+    /// Frames per second over the last window, to one decimal.
+    pub fps: f32,
+    /// At least one frame arrived in the last window. `false` right after a
+    /// session starts and while a source is quiet (no signal, no sender).
+    pub receiving: bool,
 }

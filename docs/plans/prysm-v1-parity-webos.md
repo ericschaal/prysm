@@ -255,6 +255,9 @@ Wi-Fi, raw 640×360 RGB does not fit (Q2).
    Recommendation: send NV12 (W13) and default slim to 320×180. Reintroduce LZ4
    (cheap, lossless) before H.264. Keep hardware H.264 out of v1 unless a
    measurement shows Wi-Fi TVs need it.
+   **Decided 2026-11-12:** the hardware H.264 encoder becomes the default for
+   the slim stream, with a software fallback (`prysm-3jx.12.2`). The
+   recommendation above no longer applies.
 3. **Only capture when wanted.** Streaming continuously keeps the LG tap and
    ~40 Mbit/s busy while the lights are off. Recommendation: a one-byte
    "pause/resume" from receiver to sender on the existing TCP connection (W21),

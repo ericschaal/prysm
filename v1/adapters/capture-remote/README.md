@@ -4,7 +4,9 @@ Frames from a capture-only host (webOS slim) to a lighting host (headless) over
 the LAN. Both ends are blocking adapters on `std::net`:
 
 - `RemoteSender::connect(peer)` is a `FrameSink`; `send` writes one frame. Any
-  error is final: the forwarder ends and its supervisor reconnects.
+  error is final for that connection. The slim TV worker wraps it in an
+  uplink that reconnects at most every second and reports the wait, because
+  the receiver listens only while its host is lighting.
 - `RemoteReceiver` registers source kind `"remote"`:
 
   ```json
@@ -13,7 +15,7 @@ the LAN. Both ends are blocking adapters on `std::net`:
 
   `listen` must have a fixed, non-zero port. `open` binds and starts one receive
   thread. `next_frame(timeout)` returns the newest complete frame (older
-  untaken frames are replaced, never queued) or `None` on timeout. `close`
+  untaken frames are replaced, never queued) or `Pull::Idle` on timeout. `close`
   stops the thread and releases the socket within about `POLL_INTERVAL`
   (50 ms).
 

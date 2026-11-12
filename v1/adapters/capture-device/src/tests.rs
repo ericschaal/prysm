@@ -132,7 +132,7 @@ fn open_waits_for_readiness_not_frames() {
     assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
     worker.ready();
     let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
     let closed = close(frames);
     worker.wait_cancelled();
     worker.released();
@@ -207,10 +207,15 @@ fn newest_frame_wins() {
     worker.ready();
     let mut frames = within(move || DeviceFrames::start(native, TEST)).unwrap();
     assert_eq!(
-        frames.next_frame(LIMIT).unwrap().unwrap().as_slice(),
+        frames
+            .next_frame(LIMIT)
+            .unwrap()
+            .into_frame()
+            .unwrap()
+            .as_slice(),
         &[99; 96]
     );
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
 
     // An untaken frame is replaced, never queued.
     let pending = |frames: &DeviceFrames, value: u8| {
@@ -222,9 +227,9 @@ fn newest_frame_wins() {
     eventually(|| pending(&frames, 1));
     worker.frames.send_replace(Some(frame(2)));
     eventually(|| pending(&frames, 2));
-    let newest = frames.next_frame(LIMIT).unwrap().unwrap();
+    let newest = frames.next_frame(LIMIT).unwrap().into_frame().unwrap();
     assert_eq!(newest.as_slice(), &[2; 96]);
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
 
     let closed = close(frames);
     worker.wait_cancelled();
@@ -236,7 +241,7 @@ fn newest_frame_wins() {
 fn timeout_returns_none() {
     let (mut frames, worker) = opened();
     let started = Instant::now();
-    assert!(frames.next_frame(SHORT).unwrap().is_none());
+    assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert!(started.elapsed() >= SHORT);
     let closed = close(frames);
     worker.wait_cancelled();

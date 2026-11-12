@@ -1,11 +1,13 @@
 import type {
   Failure,
   LightingTarget,
+  PreviewEvent,
   Settings as GeneratedSettings,
   State,
 } from '@prysm/contracts/application';
 
-export type { Failure, LightingTarget };
+export type { Failure, LightingTarget, PreviewEvent };
+export type { PreviewFrame } from '@prysm/contracts/application';
 export type { Session } from '@prysm/contracts/application';
 
 /** An adapter settings section: `{ kind, ...fields }`, typed by the host. */
@@ -39,6 +41,21 @@ export interface ApplicationClient<C, O> {
   setTarget(target: LightingTarget): Promise<void>;
   /** Returns the new settings revision. */
   replaceSettings(expected: number, settings: Settings<C, O>): Promise<number>;
+}
+
+/** An open preview stream: events until closed or the portal goes away. */
+export interface PreviewStream {
+  events: AsyncIterable<PreviewEvent>;
+  close(): void;
+}
+
+/**
+ * The live preview. Each open stream counts as a viewer, and the session
+ * encodes previews only while one is open, so keep it open only while shown.
+ * Rejects with `busy` when the portal has too many viewers.
+ */
+export interface PreviewClient {
+  preview(signal: AbortSignal): Promise<PreviewStream>;
 }
 
 export class ApplicationError extends Error {

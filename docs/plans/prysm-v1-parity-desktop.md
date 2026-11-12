@@ -54,15 +54,15 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Device enumeration / listing | — | n/a | Neither has it; user types path or AVFoundation unique ID |
 | Stalled V4L2 stream restart, release watchdog | `linux.rs`, `device.rs` | present | Reused; adapter adds 10 s ready / 3 s release deadlines |
 | Disconnect / hot-plug retry | No automatic retry; pipeline `Failed` | present | Session ends with failure; no retry (same) |
-| Video file playback (FFmpeg 9+, HDR→sRGB, paced, once) | `apps/prysm/runtime/src/video.rs` | missing | Stated `prysm-tui` target (D3) |
+| Video file playback (FFmpeg 9+, HDR→sRGB, paced, once) | `apps/prysm/runtime/src/video.rs` | present | `adapters/capture-file`, kind `file`; `repeat` loops; the end of the file stops lighting without a failure and sets the target `off` |
 | Test patterns | `video_test.sh` (v4l2loopback) | n/a | v1 has runtime fakes (`testkit`) only |
 | TV receiver endpoint | `/api/capture` WebSocket on the portal port (`prysm-capture/src/receiver.rs`) | changed | Raw TCP on its own port, kind `remote` (`adapters/capture-remote`) |
-| TV receiver lifetime | Always listening; reports idle/busy to TVs | changed | Binds only while a session runs; TV cannot connect while lighting is off (D18) |
+| TV receiver lifetime | Always listening; reports idle/busy to TVs | changed | Binds only while a session runs; the slim worker reconnects every second and reports "waiting for the receiver" without exiting, so frames resume about a second after lighting starts (D18, [rationale](prysm-v1-simplified-runtime.md#engine)). The TV keeps capturing while it waits |
 | Capture-settings negotiation | Server sends resolution/fps to the TV | missing | TV decides; server has no say (D18) |
 | Codecs | Raw, LZ4, H.264 (openh264 decode) (`prysm-capture/src/webos.rs`) | partial | Raw RGB24/BGR24/YUYV only (prysm-3jx.12) |
 | Multiple TVs | FIFO queue, `busy` reply, 16 clients | changed | Newest connection replaces the current one |
 | Receiver access control | Host allowlist on the HTTP port | missing | None; any LAN host can inject frames |
-| "Waiting for frames" status | `input unavailable; waiting for frames` (`pipeline/worker.rs`) | missing | D17 |
+| "Waiting for frames" status | `input unavailable; waiting for frames` (`pipeline/worker.rs`) | present | `State.input`: fps and `receiving`, sampled once a second; TUI shows "waiting for frames" or the rate (D17) |
 
 ### Processing and LED geometry
 

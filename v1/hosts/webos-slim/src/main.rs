@@ -4,7 +4,7 @@ mod link;
 #[path = "../../webos/src/video.rs"]
 mod video;
 
-use link::{Counted, ForwarderLink};
+use link::{ForwarderLink, Uplink};
 use prysm_capture_remote::RemoteSender;
 use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
 use prysm_ports::Result;
@@ -29,15 +29,18 @@ fn main() -> ExitCode {
     worker::main("prysm-webos-slim", USAGE, SlimArgs::parse, run)
 }
 
+/// The receiver listens only while its host is lighting, so the uplink
+/// reconnects on its own and an unavailable receiver is reported in the
+/// status rather than ending the worker (which would back off and show a
+/// failure). Capture runs meanwhile; frames are dropped until it connects.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
-    // Connect before taking the capture device, so an unreachable receiver
-    // never holds the TV's tap.
-    let (sink, sent) = Counted::new(RemoteSender::connect(args.receiver)?);
+    let receiver = args.receiver;
+    let (sink, flow) = Uplink::new(move || RemoteSender::connect(receiver));
     let video = VideoSignal::default();
     let source = WebosCapture::new(video.clone()).start(&settings(args.capture))?;
     let stopped = link.stop.stopped();
     Forwarder::new(source, sink)
-        .surface(ForwarderLink::new(link, video, sent))
+        .surface(ForwarderLink::new(link, video, flow))
         .stop_deadline(STOP_DEADLINE)
         .run(stopped)
         .await

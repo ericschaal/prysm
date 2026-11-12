@@ -203,7 +203,7 @@ fn close(frames: WebosFrames) -> mpsc::Receiver<prysm_ports::Result<()>> {
 fn next(frames: &mut WebosFrames) -> Frame {
     let deadline = Instant::now() + LIMIT;
     loop {
-        if let Some(frame) = frames.next_frame(SHORT).unwrap() {
+        if let Some(frame) = frames.next_frame(SHORT).unwrap().into_frame() {
             return frame;
         }
         assert!(Instant::now() < deadline, "no frame");
@@ -236,7 +236,7 @@ fn waits_for_video_before_opening_the_tap() {
         let (driver, video) = (driver.clone(), video.clone());
         move || start(&driver, &video)
     });
-    assert!(frames.next_frame(SHORT * 2).unwrap().is_none());
+    assert!(frames.next_frame(SHORT * 2).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.opens), 0, "opened without video");
 
     driver.push([Step::Frame(7)]);
@@ -257,7 +257,7 @@ fn losing_video_releases_the_tap_and_frames_resume() {
 
     video.set(Video::Unavailable);
     eventually(|| driver.count(|s| s.releases) == 1);
-    assert!(frames.next_frame(SHORT).unwrap().is_none());
+    assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert_eq!(driver.count(|s| s.opens), 1);
 
     driver.push([Step::Frame(2)]);
@@ -284,7 +284,7 @@ fn newest_frame_wins() {
     eventually(|| driver.count(|s| s.acquires) > 3);
     assert_eq!(frames.pending_frame().unwrap().as_slice(), &[3; 96]);
     assert_eq!(next(&mut frames).as_slice(), &[3; 96]);
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
     closes_cleanly(frames);
 }
 
@@ -352,7 +352,7 @@ fn recoverable_failure_reopens_without_an_error() {
     video.reset();
     eventually(|| driver.count(|s| s.opens) >= 4);
     assert!(
-        frames.next_frame(SHORT).unwrap().is_none(),
+        frames.next_frame(SHORT).unwrap().is_idle(),
         "open retries quietly"
     );
     closes_cleanly(frames);

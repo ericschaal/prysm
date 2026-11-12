@@ -1,4 +1,7 @@
-import { httpApplicationClient } from '@prysm/application-client/http';
+import {
+  httpApplicationClient,
+  httpPreviewClient,
+} from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { createRoot } from 'react-dom/client';
 import { WebosWebPortal, type WebosCapture, type WebosOutput } from './app';
@@ -9,4 +12,4 @@ const application = createApplicationRuntime(
 );
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing frontend root.');
-createRoot(root).render(<WebosWebPortal application={application} />);
+createRoot(root).render(<WebosWebPortal application={application} preview={httpPreviewClient()} />);

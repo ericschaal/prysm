@@ -47,3 +47,22 @@ async fn source_failure_ends_forwarding_with_the_failure() {
     assert_eq!(log.count("sink.send"), 2);
     assert_eq!(log.count("source.close:"), 1);
 }
+
+#[tokio::test]
+async fn an_ended_source_finishes_forwarding_without_a_failure() {
+    let log = CallLog::new();
+    let source = FakeSource::new(
+        &log,
+        FakeSourceSettings {
+            end_after: Some(2),
+            ..Default::default()
+        },
+    );
+    let run = Forwarder::new(source, FakeSink(log.clone())).run(std::future::pending());
+    tokio::time::timeout(Duration::from_secs(10), run)
+        .await
+        .expect("forwarder ends with its source")
+        .unwrap();
+    assert_eq!(log.count("sink.send"), 2);
+    assert_eq!(log.count("source.close:"), 1);
+}

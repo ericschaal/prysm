@@ -62,8 +62,10 @@ feedback in one RTK store per frontend.
 
 The [shared portal](frontend/packages/web-portal/index.tsx) shows the lighting
 modes (Screen sync, the output's own effects such as "WLED effects", Off, and
-"Open WLED"), live picture controls and one Save form each for capture and
-output. A host registers each section's kinds as an `AdapterUis` map of
+"Open WLED"), an on-request preview, live picture controls with colour
+profiles and one Save form each for capture and output. Both browser hosts
+pass `httpPreviewClient()` (same `baseUrl` option as the application client)
+as `WebPortal`'s optional `preview`. A host registers each section's kinds as an `AdapterUis` map of
 `AdapterUi { label, create, Editor, normalize?, lighting? }`; the map is
 exhaustive over the host's generated union, the form shows a kind selector when
 there is more than one, and editors are controlled components built from the
@@ -86,5 +88,4 @@ The build creates `dist/headless/web-portal` (both desktop hosts), `dist/webos/w
 Rust `assets.rs` list for `WebPortal`. TV bundles are packaged with the app.
 
 Not implemented: the TV UI's Luna client, wiring the slim TV UI to the HTTP client, TV
-calibration (not in the runtime yet), preview, colour profiles and first-run
-setup in the portal, IPK packaging and validation on a real webOS browser.
+calibration (not in the runtime yet), first-run setup in the portal, IPK packaging and validation on a real webOS browser.
