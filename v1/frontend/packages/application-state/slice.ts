@@ -12,6 +12,7 @@ export type CommandKind =
   | 'configureCapture'
   | 'configureOutput'
   | 'configureProcessing'
+  | 'configureSetup'
   | 'setTarget';
 export interface CommandState {
   /** Local sequence number; only the latest command is shown. */

@@ -101,5 +101,4 @@ streamed `fetch` bodies (webOS 5+), and older TVs are told to use the portal on
 another device.
 
 Not implemented: TV calibration (not in the runtime yet; the TV shows the entry
-as not available), first-run setup in the portal, IPK packaging and validation
-on a real webOS browser.
+as not available).

@@ -41,7 +41,8 @@ to an earlier command cannot overwrite it. Observed state changes only when the
 stream delivers a new state.
 
 `configureCapture`/`configureOutput`/`configureProcessing` copy the observed
-settings, replace one section and send `expected`. If the observed revision is
+settings, replace one section and send `expected` (`configureSetup` replaces
+capture and output together, for the portal's guided setup). If the observed revision is
 not `expected`, the command fails locally with `stale_revision` and nothing is
 sent. The portal's forms pass the current revision after checking that their own
 section has not changed since the draft started, so saving one section never

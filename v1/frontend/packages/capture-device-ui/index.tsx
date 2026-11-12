@@ -1,5 +1,6 @@
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
 import {
+  describePicture,
   NumberField,
   TextField,
   type AdapterUi,
@@ -71,4 +72,6 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
   create: () => ({ kind: 'device', path: '' }),
   Editor: DeviceEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),
+  summary: ({ path, width, height, fps }) =>
+    `${path}, ${describePicture(width ?? deviceDefaults.width, height ?? deviceDefaults.height, fps ?? deviceDefaults.fps)}`,
 };

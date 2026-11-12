@@ -1,5 +1,6 @@
 import type { FileSettings } from '@prysm/contracts/host-desktop';
 import {
+  describePicture,
   NumberField,
   TextField,
   type AdapterUi,
@@ -66,4 +67,6 @@ export const fileCapture: AdapterUi<FileSettings> = {
   create: () => ({ kind: 'file', path: '' }),
   Editor: FileEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),
+  summary: ({ path, width, height, fps }) =>
+    `${path}, ${describePicture(width ?? fileDefaults.width, height ?? fileDefaults.height, fps ?? fileDefaults.fps)}`,
 };

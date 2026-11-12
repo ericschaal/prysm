@@ -17,14 +17,7 @@ import {
   tvStatus,
 } from './model';
 import { useRemoteNavigation } from './navigation';
-import {
-  LightingCard,
-  WledDialogBody,
-  describeWled,
-  usePortal,
-  wledOf,
-  type PortalOptions,
-} from './portal';
+import { LightingCard, usePortal, type PortalOptions } from './portal';
 import { useTvService } from './service';
 import './tv.css';
 
@@ -35,7 +28,6 @@ type DialogId =
   | 'instance'
   | 'receiver'
   | 'autostart'
-  | 'lights'
   | 'service'
   | 'diagnostics'
   | 'cleanup'
@@ -84,7 +76,16 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
   const mismatch = !!state && state.flavor !== flavor;
   const baseUrl = slim ? draft.instance : localPortal(state?.portal);
   const portal = usePortal(online ? baseUrl : null, portalOptions, visible);
-  const status = tvStatus(online, state, draft, tv.dirty);
+  // Capture, lights and the slim stream encoding are set up only in this
+  // portal, never in this UI.
+  const portalAddress = slim ? draft.instance : (state?.portal ?? null);
+  const status = tvStatus(
+    online,
+    state,
+    draft,
+    tv.dirty,
+    portal.snapshot ? { lights: !!portal.snapshot.settings.output, address: portalAddress } : null,
+  );
 
   // Slim: frames go to the Prysm's own receiver port, learned from its settings.
   const port = listenPort(portal.snapshot?.settings.capture);
@@ -115,35 +116,17 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
   }
 
   const disabled = !online || tv.changing;
-  const rows: { id: DialogId; label: string; value: string; disabled?: boolean }[] = [];
+  const rows: { id: DialogId; label: string; value: string }[] = [];
   if (slim) {
     rows.push(
       { id: 'instance', label: 'Prysm address', value: draft.instance ?? 'Add address' },
       { id: 'receiver', label: 'Frames go to', value: draft.receiver ?? 'Not set' },
     );
   }
-  rows.push({
-    id: 'autostart',
-    label: slim ? 'Enable with TV' : 'Start screen sync with TV',
-    value: draft.autostart ? 'On' : 'Off',
-  });
-  if (!slim)
-    rows.push({
-      id: 'lights',
-      label: 'Lights (WLED)',
-      value: portal.snapshot ? describeWled(wledOf(portal.snapshot)) : 'Portal not connected',
-      disabled: !portal.snapshot,
-    });
-  // The portal the TV points people to: capture size, rate, menus and the
-  // slim stream encoding are set only there, never in this UI.
-  const portalAddress = slim ? (state?.preferences.instance ?? null) : (state?.portal ?? null);
+  rows.push({ id: 'autostart', label: 'Start with TV', value: draft.autostart ? 'On' : 'Off' });
 
   let savedLabel = 'On this TV';
   if (state) savedLabel = tv.syncing ? 'Saving…' : tv.dirty ? 'Unsaved changes' : 'Saved';
-  const close = (message: string) => {
-    nav.dismiss();
-    tv.say(message);
-  };
 
   return (
     // The handlers only follow pointer and focus to support remote navigation.
@@ -158,7 +141,7 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
           <span className="brand">
             prysm<span className="brand-dot">.</span>
           </span>
-          <span className="brand-sub">{slim ? 'TV capture' : 'Ambient light'}</span>
+          <span className="brand-sub">Ambient light</span>
         </header>
         <div className="layout">
           <div className="column" data-column="status">
@@ -166,7 +149,7 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
               className={`card overview${status.attention || mismatch ? ' attention' : ''}`}
               aria-labelledby="status-title"
             >
-              <p className="section-label">{slim ? 'Capture' : 'Prysm on this TV'}</p>
+              <p className="section-label">Prysm on this TV</p>
               <div role="status" aria-live="polite">
                 <h1 id="status-title">
                   {mismatch ? 'This app does not match the installed service' : status.title}
@@ -205,8 +188,7 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
             <LightingCard
               flavor={flavor}
               portal={portal}
-              instance={draft.instance}
-              portalAddress={state?.portal ?? null}
+              address={portalAddress}
             />
           </div>
           <div className="column" data-column="settings">
@@ -242,7 +224,7 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                   <SettingRow
                     key={row.id}
                     {...row}
-                    disabled={disabled || !!row.disabled}
+                    disabled={disabled}
                     open={() => nav.openDialog(row.id)}
                   />
                 ))}
@@ -257,7 +239,7 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                 <p className="portal-address" id="portal-address">
                   <strong>Web portal</strong>
                   <code>{portalAddress}</code>
-                  Open it on your phone or computer for capture settings, colours, profiles and the preview.
+                  Open it on your phone or computer to set up capture and lights, and for colours, profiles and the preview.
                 </p>
               ) : null}
             </section>
@@ -290,11 +272,9 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
           modal={nav.modal}
           tv={tv}
           slim={slim}
-          portal={portal}
           closeDialog={nav.closeDialog}
           openDialog={nav.openDialog}
           dismiss={nav.dismiss}
-          done={close}
           onExit={onExit}
         />
       ) : null}
@@ -430,22 +410,18 @@ function Dialogs({
   modal,
   tv,
   slim,
-  portal,
   openDialog,
   closeDialog,
   dismiss,
-  done,
   onExit,
 }: {
   dialog: DialogId;
   modal: Ref<HTMLDivElement>;
   tv: ReturnType<typeof useTvService>;
   slim: boolean;
-  portal: ReturnType<typeof usePortal>;
   openDialog: (dialog: DialogId) => void;
   closeDialog: () => void;
   dismiss: () => void;
-  done: (message: string) => void;
   onExit: () => void;
 }) {
   const { draft } = tv;
@@ -500,21 +476,16 @@ function Dialogs({
       );
       break;
     case 'autostart':
-      title = slim ? 'Enable with TV' : 'Start screen sync with TV';
+      title = 'Start with TV';
       description = slim
-        ? 'Enable capture automatically when the TV turns on.'
-        : 'Start screen sync automatically when Prysm starts on this TV.';
+        ? 'Start capture automatically when the TV turns on.'
+        : 'Start screen sync automatically when the TV turns on.';
       content = (
         <>
           <Choice title="Off" detail="Start it yourself." selected={!draft.autostart} action={() => choose({ autostart: false })} />
           <Choice title="On" detail="Start when the TV turns on." selected={draft.autostart} action={() => choose({ autostart: true })} />
         </>
       );
-      break;
-    case 'lights':
-      title = 'Lights (WLED)';
-      description = 'Where your WLED controller is and how many LEDs each screen edge has. Saved to Prysm on this TV.';
-      content = <WledDialogBody portal={portal} done={done} />;
       break;
     case 'service':
       title = 'Service options';

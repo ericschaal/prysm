@@ -99,11 +99,6 @@ button:disabled { cursor: default; color: #757889; }
 .dialog label { display: block; color: var(--muted); font-size: var(--caption); margin-bottom: .3rem; }
 .dialog input { width: 100%; min-height: 2.8rem; background: #f7f7fb; border: 2px solid #a296cf; border-radius: .35rem; color: #292c38; padding: .45rem .65rem; font-size: var(--body); }
 .dialog input[aria-invalid='true'] { border-color: #934119; }
-.dialog .primary { margin-top: .8rem; }
-.field-help { color: var(--muted); font-size: var(--caption); margin: .7rem 0 .3rem; }
-.led-grid { display: flex; }
-.led-field { flex: 1; }
-.led-field + .led-field { margin-left: .6rem; }
 .diagnostics { white-space: pre-wrap; word-wrap: break-word; font: .9rem/1.4 monospace; color: #454857; margin: 0; }
 @media (max-width: 1000px) {
   :root { font-size: 20px; }

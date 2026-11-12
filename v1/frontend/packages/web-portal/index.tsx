@@ -3,7 +3,7 @@ import type {
   ApplicationSnapshot,
   PreviewClient,
 } from '@prysm/application-client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useApplication,
   useApplicationDispatch,
@@ -13,6 +13,7 @@ import { LightingControls } from './lighting';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel } from './processing';
 import { SectionForm } from './section-form';
+import { SetupWizard } from './setup';
 import './portal.css';
 
 export * from './adapters';
@@ -32,7 +33,8 @@ export {
   newProfileId,
 } from './profiles';
 export { drawPreview, PreviewPanel, previewLayout } from './preview';
-export { SectionForm, staleNotice } from './section-form';
+export { SectionFields, SectionForm, staleNotice } from './section-form';
+export { SetupWizard, type SetupWizardProps } from './setup';
 
 export interface WebPortalProps<C extends AdapterSection, O extends AdapterSection> {
   application: ApplicationRuntime<C, O>;
@@ -53,7 +55,8 @@ const sessionLabels = {
 
 /**
  * The browser portal: lighting modes, live picture controls and one form per
- * adapter section. The host chooses which capture and output kinds exist.
+ * adapter section, or the guided setup while capture or lights are missing.
+ * The host chooses which capture and output kinds exist.
  */
 export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   application,
@@ -69,6 +72,16 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     setLast(connection.snapshot);
   const snapshot = connection.snapshot ?? last;
   const online = connection.status === 'connected' && !!connection.snapshot;
+  // Setup opens by itself when the first state lacks capture or lights.
+  const [setup, setSetup] = useState<'pending' | 'open' | 'closed'>('pending');
+  if (setup === 'pending' && snapshot)
+    setSetup(snapshot.settings.capture && snapshot.settings.output ? 'closed' : 'open');
+  /** How setup ended; focused when shown. */
+  const [setupNotice, setSetupNotice] = useState('');
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (setupNotice) noticeRef.current?.focus();
+  }, [setupNotice]);
 
   const header = (
     <header className="portal-header">
@@ -106,15 +119,47 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   const outputLighting = output
     ? (adapterFor(outputs, output.kind)?.lighting?.(output) ?? {})
     : null;
+  const offline = !online ? (
+    <p className="notice warning" role="alert">
+      Connection lost{connection.error ? `: ${connection.error}` : ''}.
+      Reconnecting; unsaved changes are kept.
+    </p>
+  ) : null;
+  if (setup === 'open')
+    return (
+      <div className="portal">
+        {header}
+        <main id="content">
+          <h1 className="visually-hidden">Prysm setup</h1>
+          {offline}
+          <SetupWizard
+            captures={captures}
+            outputs={outputs}
+            capture={settings.capture ?? null}
+            output={output}
+            revision={revision}
+            disabled={!online}
+            save={(expected, capture, value) =>
+              dispatch(application.commands.configureSetup(expected, capture, value))
+            }
+            start={() => dispatch(application.commands.setTarget('processed'))}
+            close={(notice) => {
+              setSetup('closed');
+              setSetupNotice(notice);
+            }}
+          />
+        </main>
+      </div>
+    );
   return (
     <div className="portal">
       {header}
       <main id="content">
         <h1 className="visually-hidden">Prysm</h1>
-        {!online ? (
-          <p className="notice warning" role="alert">
-            Connection lost{connection.error ? `: ${connection.error}` : ''}.
-            Reconnecting; unsaved changes are kept.
+        {offline}
+        {setupNotice ? (
+          <p className="notice" role="status" tabIndex={-1} ref={noticeRef}>
+            {setupNotice}
           </p>
         ) : null}
         <LightingControls
@@ -146,6 +191,22 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             dispatch(application.commands.configureProcessing(expected, processing))
           }
         />
+        <div className="setup-entry">
+          <p>
+            {settings.capture && output
+              ? 'Change capture and lights step by step.'
+              : 'Prysm needs a video source and lights before screen sync can run.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setSetupNotice('');
+              setSetup('open');
+            }}
+          >
+            {settings.capture && output ? 'Run setup again' : 'Run setup'}
+          </button>
+        </div>
         <SectionForm
           section="capture"
           title="Capture"

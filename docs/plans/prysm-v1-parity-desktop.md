@@ -37,7 +37,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Logging | `tracing` to stderr, `RUST_LOG` filter | missing | v1 installs no subscriber: `tracing` events from `prysm-capture`/`prysm-processor` are dropped (D11). Hosts print state changes with `eprintln!` |
 | Exit codes | 0 / 1 (anyhow) | present | 0 clean, 1 failure, 2 bad arguments |
 | Settings format | `{calibration, source, input:{type,…}, output:{type,url,leds}, processing}` (`crates/common/prysm-contract/src/settings.rs`) | changed | `{capture:{kind,…}, output:{kind,…}, processing}` (`crates/ports/src/settings.rs`); no converter (D1) |
-| Missing file | Defaults; portal opens setup | present | Defaults; no setup flow (D6) |
+| Missing file | Defaults; portal opens setup | present | Defaults; portal opens setup |
 | Malformed file | Fails at start | present | Fails at start |
 | Parsable but invalid values | Fails at start | changed | Kept and reported in `Snapshot.failure` |
 | Atomic save | `atomic-write-file` | present | Temp file, fsync, rename, dir fsync; keeps permissions, new file `0600` (`adapters/settings-file`) |
@@ -118,7 +118,7 @@ and `frontend/hosts/headless/web-portal`.
 | --- | --- | --- |
 | Lights on/off | present | Two buttons |
 | Screen sync vs WLED effects selector, Open WLED link | missing | D5 |
-| Setup wizard (video source, lights, review) | missing | D6 |
+| Setup wizard (video source, lights, review) | present | Opens while capture or output is missing, "Run setup again" later; one save of both sections, optional start ([setup](../../v1/frontend/packages/web-portal/setup.tsx)). No device listing or WLED discovery (neither had shipping) |
 | Capture kind select, device path | present | |
 | Device resolution and fps, file path | missing | D4, D3 |
 | Remote listen address | added | |
@@ -221,7 +221,7 @@ Sizes: S < 200 lines, M < 800, L more. P1 must land before root code is deleted.
 | D3 | Add an FFmpeg video-file source | Kind `file` `{path,width,height,fps}`: FFmpeg 9+ subprocess, HDR→sRGB filter, PTS pacing, play once, kill and reap on close | new `adapters/capture-file`, registered in both hosts | M | — | P1: stated `prysm-tui` target |
 | D4 | Expose processing, LED layout and capture mode in portal | Six processing controls, edge counts with wiring diagram, device width/height/fps, output kind `null`/`wled` selector | `frontend/packages/*-ui`, `web-portal` | M | — | P1: otherwise only JSON editing configures production |
 | D5 | Add WLED effects mode and Open WLED to portal | Engine has `DeviceNative`; portal lacks the button and the link to WLED's UI | `frontend/packages/web-portal` | S | — | P1: daily control in shipping |
-| D6 | Add guided first-run setup to portal | Shipping shows Setup when input/output are missing (source → lights → review) | `frontend/hosts/headless` | M | D4 | P2: setup possible via panels once D4 exists |
+| D6 | Add guided first-run setup to portal | Shipping shows Setup when input/output are missing (source → lights → review) | `frontend/hosts/headless` | M | D4 | Done (prysm-3jx.37) |
 | D7 | Persist and apply colour-correction profiles | Profiles (≤32, id, name, correction) and active id in settings; `Processing::config` passes correction; portal picker, rename, delete. Refines prysm-3jx.11 | `crates/ports` settings, frontend | M | — | P1 if calibration is kept (Q1): migrated users' colours change silently |
 | D8 | Port the calibration session (desktop side) | `/api/calibration`, TV/phone capabilities, leases, pattern relay page, phone UI. Tracked prysm-3jx.11 | `surfaces/web-portal`, `crates/runtime` | L | D7, TV UI | P2: needs the v1 TV UI anyway |
 | D9 | Serve browser preview with crop and edge strips | Demand-driven JPEG frames, viewport from the processor, sRGB strips, 8 fps, 4 viewers. `Preview` slot lacks the viewport. Tracked prysm-3jx.16 | `crates/runtime` session, `surfaces/web-portal`, frontend | M | — | P1: the user tuning guide depends on it |

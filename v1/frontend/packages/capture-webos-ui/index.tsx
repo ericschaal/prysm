@@ -1,6 +1,7 @@
 import type { WebosSettings } from '@prysm/contracts/host-webos';
 import {
   CheckboxField,
+  describePicture,
   NumberField,
   type AdapterUi,
   type EditorProps,
@@ -23,6 +24,16 @@ export interface TvPicture {
   height?: number;
   fps?: number;
   include_ui?: boolean;
+}
+
+/** `640 × 360 at 30 fps, with menus` for a TV picture. */
+export function describeTvPicture(value: TvPicture, defaults: Required<TvPicture>) {
+  const picture = describePicture(
+    value.width ?? defaults.width,
+    value.height ?? defaults.height,
+    value.fps ?? defaults.fps,
+  );
+  return `${picture}, ${(value.include_ui ?? defaults.include_ui) ? 'with' : 'without'} menus`;
 }
 
 export const includeMenusHelp =
@@ -101,4 +112,5 @@ export const webosCapture: AdapterUi<WebosSettings> = {
   label: 'This TV',
   create: () => ({ kind: 'webos' }),
   Editor: WebosEditor,
+  summary: (value) => describeTvPicture(value, webosDefaults),
 };

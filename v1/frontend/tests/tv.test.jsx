@@ -342,9 +342,10 @@ test('status card covers the supervisor states for both packages', () => {
   assert.equal(title(true, slim({ worker: 'stopping' })), 'Stopping capture…');
   const notSet = tvStatus(true, slim({ enabled: false }, {}), completePreferences({}), false);
   assert.deepEqual([notSet.title, notSet.label, notSet.action], ['Not set up', 'Set Prysm address', 'address']);
-  assert.equal(tvStatus(true, slim({ enabled: false }), draft({ autostart: true }), true).label, 'Save and enable');
-  assert.equal(tvStatus(true, slim({ enabled: false }), draft(), false).label, 'Enable');
-  assert.equal(tvStatus(true, slim(), draft(), false).label, 'Disable');
+  assert.equal(tvStatus(true, slim({ enabled: false }), draft({ autostart: true }), true).label, 'Save and start capture');
+  assert.equal(tvStatus(true, slim({ enabled: false }), draft(), false).label, 'Start capture');
+  assert.equal(tvStatus(true, slim(), draft(), false).label, 'Stop capture');
+  assert.equal(title(true, slim({ enabled: false })), 'Capture off');
   const full = (change) => ({ ...state(), flavor: 'full', worker: 'running', power: 'active', video: 'available', failure: null, ...change });
   assert.deepEqual(
     [tvStatus(true, full({ enabled: false, lighting: 'off' }), draft(), false)].map((s) => [s.title, s.label]),
@@ -457,7 +458,7 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
   const tv = await mountTv(t, { supervisor: { preferences: { instance: 'http://192.168.1.20:8787', receiver: '192.168.1.20:7380' } } });
   tv.el('autostart').focus();
   await tv.click('autostart');
-  assert.equal(tv.text('dialog-title'), 'Enable with TV');
+  assert.equal(tv.text('dialog-title'), 'Start with TV');
   assert.equal(document.activeElement.getAttribute('aria-pressed'), 'true', 'the current choice is focused');
   await tv.key(DOWN);
   await tv.key(BACK);
@@ -500,7 +501,7 @@ test('the Prysm address is explicit: invalid text is explained and Back keeps th
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
 });
 
-test('the receiver is derived from the remote capture port, then Save and enable sends it first', async (t) => {
+test('the receiver is derived from the remote capture port, then Save and start capture sends it first', async (t) => {
   const tv = await mountTv(t);
   await tv.click('primary');
   await tv.type('instance-input', '192.168.1.20');
@@ -509,7 +510,7 @@ test('the receiver is derived from the remote capture port, then Save and enable
   assert.deepEqual(tv.urls, ['http://192.168.1.20:8787']);
   assert.equal(tv.text('receiver-value'), '192.168.1.20:7380');
   assert.match(tv.text('notice'), /Frames will go to 192\.168\.1\.20:7380/);
-  assert.equal(tv.text('primary'), 'Save and enable');
+  assert.equal(tv.text('primary'), 'Save and start capture');
   await tv.click('primary');
   await settle();
   assert.deepEqual(tv.methods().filter((m) => m !== 'getState'), ['setPreferences', 'setEnabled']);
@@ -517,7 +518,7 @@ test('the receiver is derived from the remote capture port, then Save and enable
     [tv.supervisor.state().preferences.instance, tv.supervisor.state().preferences.receiver],
     ['http://192.168.1.20:8787', '192.168.1.20:7380'],
   );
-  assert.equal(tv.text('primary'), 'Disable');
+  assert.equal(tv.text('primary'), 'Stop capture');
 });
 
 test('a failed save keeps the draft and never enables', async (t) => {
@@ -621,7 +622,7 @@ test('a lost subscription recovers after 3 s without losing the draft', async (t
   assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
-  assert.equal(tv.text('status-title'), 'Disabled');
+  assert.equal(tv.text('status-title'), 'Capture off');
   assert.equal(tv.text('notice'), 'Service connected.');
   assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
@@ -636,7 +637,7 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
   });
   assert.equal(tv.text('status-title'), 'Waiting for Prysm');
   assert.match(tv.text('status-description'), /192\.168\.1\.20:7380/);
-  assert.equal(tv.text('primary'), 'Disable');
+  assert.equal(tv.text('primary'), 'Stop capture');
 });
 
 test('slim lighting buttons drive the remote Prysm; leaving never turns it off', async (t) => {
@@ -703,7 +704,6 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.match(tv.text('portal-address'), /http:\/\/192\.168\.1\.5:8787\//);
   assert.equal(tv.text('status-title'), 'Lights off');
   assert.equal(tv.el('instance'), null, 'no slim rows');
-  assert.equal(tv.text('lights-value'), '192.168.1.50 · 300 LEDs');
   assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
   await tv.click('primary');
   assert.deepEqual(tv.methods().filter((m) => m !== 'getState'), ['setEnabled']);
@@ -711,69 +711,64 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.equal(tv.text('primary'), 'Turn lights off');
 });
 
-test('full: lights are saved explicitly, keep unknown fields and reload when changed elsewhere', async (t) => {
-  const tv = await mountTv(t, { flavor: 'full' });
-  await tv.click('lights');
-  assert.equal(tv.focus(), 'wled-address');
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'wled-top');
-  await tv.type('wled-top', '100');
-  await tv.type('wled-address', ' http://192.168.1.60/ ');
-  // Someone saves the output in the portal meanwhile.
-  await act(async () =>
-    tv.application.publish({
-      revision: 7,
-      settings: { ...tv.application.snapshot().settings, output: { ...wled, address: '192.168.1.70' } },
-    }),
-  );
-  await settle();
-  assert.equal(tv.el('wled-address').value, ' http://192.168.1.60/ ', 'the open dialog keeps its draft');
-  await tv.submit('wled-address');
-  assert.match(tv.text('wled-error'), /changed elsewhere/);
-  assert.equal(tv.el('wled-address').value, '192.168.1.70', 'the dialog reloaded');
-  assert(!tv.application.calls.includes('replaceSettings'));
-  await tv.type('wled-top', '100');
-  await tv.submit('wled-top');
-  assert.equal(tv.el('modal'), null);
-  assert.equal(tv.text('notice'), 'Lights saved.');
-  const output = tv.application.snapshot().settings.output;
-  assert.deepEqual(output, { ...wled, address: '192.168.1.70', leds: { ...wled.leds, top: 100 } });
-  assert.equal(tv.text('lights-value'), '192.168.1.70 · 304 LEDs');
-});
-
-test('full: invalid lights are explained before and after sending', async (t) => {
-  const tv = await mountTv(t, { flavor: 'full' });
-  await tv.click('lights');
-  for (const edge of ['top', 'right', 'bottom', 'left']) await tv.type(`wled-${edge}`, '0');
-  await tv.submit('wled-top');
-  assert.match(tv.text('wled-error'), /At least one LED/);
-  assert.equal(tv.focus(), 'wled-top');
-  await tv.type('wled-top', '10');
-  tv.application.failNext({ kind: 'invalid', field: 'output.address', message: 'a unicast device address is required' });
-  await tv.submit('wled-top');
-  assert.equal(tv.text('wled-error'), 'a unicast device address is required');
-  assert.equal(tv.focus(), 'wled-address');
-  assert.equal(tv.el('wled-address').getAttribute('aria-invalid'), 'true');
-});
-
-test('neither package edits capture or the stream on the TV; both show the portal for it', async (t) => {
+test('neither package sets up capture, lights or the stream on the TV; both show the portal and the same labels', async (t) => {
   for (const flavor of ['full', 'slim']) {
     const tv = await mountTv(t, { flavor, supervisor: flavor === 'slim' ? { preferences: linked } : {} });
     const rows = [...document.querySelectorAll('.setting-list .setting')].map((row) => row.id);
     assert.deepEqual(
       rows,
       flavor === 'full'
-        ? ['autostart', 'lights', 'calibrate']
+        ? ['autostart', 'calibrate']
         : ['instance', 'receiver', 'autostart', 'calibrate'],
     );
-    assert.doesNotMatch(document.body.textContent, /fps|× 360|Video only/);
-    assert.match(tv.text('portal-address'), /capture settings/);
+    assert.doesNotMatch(document.body.textContent, /fps|× 360|Video only|WLED address|LEDs/);
+    assert.match(tv.text('portal-address'), /set up capture and lights/);
+    assert.equal(tv.el('autostart').querySelector('.setting-label').textContent, 'Start with TV');
+    assert.equal(document.querySelector('.brand-sub').textContent, 'Ambient light');
+    assert.equal(document.querySelector('.section-label').textContent, 'Prysm on this TV');
+    assert.equal(tv.text('lighting-title'), 'Lights');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
       flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance,
     );
     await tv.unmount();
   }
+});
+
+test('lights without a setup are named plainly with the portal address, in both packages', async (t) => {
+  for (const flavor of ['full', 'slim']) {
+    const tv = await mountTv(t, {
+      flavor,
+      supervisor: flavor === 'slim' ? { preferences: linked } : {},
+      portal: { capture: portals[flavor].capture },
+    });
+    const address = flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance;
+    assert.equal(tv.text('status-title'), 'Set up your lights');
+    assert.equal(tv.text('status-description'), `Open ${address} on your phone or computer to set up your lights.`);
+    assert.match(tv.el('status-title').closest('.overview').className, /attention/);
+    assert.match(document.querySelector('.card.lighting').textContent, /Set up your lights in the web portal first/);
+    // Once the portal has lights, the usual status returns.
+    await act(async () => tv.application.publish({ settings: { ...tv.application.snapshot().settings, output: wled } }));
+    await settle();
+    assert.notEqual(tv.text('status-title'), 'Set up your lights');
+    await tv.unmount();
+  }
+});
+
+test('the lights setup hint gives way to failures and to a missing receiver', () => {
+  const base = { ...state(), worker: 'running', power: 'active', video: 'available', capturing: false, failure: null };
+  const noLights = { lights: false, address: 'http://192.168.1.20:8787' };
+  const draft = completePreferences({});
+  const status = (value) => tvStatus(true, value, draft, false, noLights);
+  assert.equal(status({ ...base, flavor: 'full', enabled: false }).title, 'Set up your lights');
+  assert.equal(status({ ...base, flavor: 'full', enabled: false }).action, 'none', 'screen sync needs lights');
+  const slimOff = { ...base, flavor: 'slim', enabled: false, preferences: { receiver: '192.168.1.20:7380' } };
+  assert.equal(tvStatus(true, slimOff, completePreferences(slimOff.preferences), false, noLights).action, 'enable', 'capture does not');
+  assert.equal(status({ ...base, flavor: 'full', failure: 'worker exited 1', failure_kind: 'other' }).title, 'Capture needs attention');
+  assert.equal(status({ ...base, flavor: 'full', worker: 'retrying', failure: 'x', failure_kind: 'other' }).title, 'Capture needs attention');
+  assert.equal(status({ ...base, flavor: 'slim', preferences: {} }).title, 'Not set up');
+  assert.equal(status({ ...base, flavor: 'slim', preferences: { receiver: '192.168.1.20:7380' } }).title, 'Set up your lights');
+  assert.equal(tvStatus(true, { ...base, flavor: 'full', enabled: false }, draft, false, { lights: true, address: null }).title, 'Lights off');
 });
 
 test('TV bundles are classic deferred scripts with relative URLs and no demo code', () => {

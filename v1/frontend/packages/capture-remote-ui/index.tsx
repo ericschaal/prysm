@@ -2,7 +2,7 @@ import type {
   RemoteReceiverSettings,
   StreamEncoding,
 } from '@prysm/contracts/host-desktop';
-import { TvPictureFields } from '@prysm/capture-webos-ui';
+import { describeTvPicture, TvPictureFields } from '@prysm/capture-webos-ui';
 import {
   SelectField,
   TextField,
@@ -90,4 +90,6 @@ export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   create: () => ({ kind: 'remote', listen: '' }),
   Editor: RemoteEditor,
   normalize: (value) => ({ ...value, listen: value.listen.trim() }),
+  summary: (value) =>
+    `Listens on ${value.listen}, ${describeTvPicture(value, remoteDefaults)}`,
 };

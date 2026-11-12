@@ -89,6 +89,13 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
         ...settings,
         output,
       })),
+    /** Capture and output together, as one save (the portal's guided setup). */
+    configureSetup: (expected: number, capture: C, output: O) =>
+      replaceSection('configureSetup', expected, (settings) => ({
+        ...settings,
+        capture,
+        output,
+      })),
     configureProcessing: (
       expected: number,
       processing: Settings<C, O>['processing'],

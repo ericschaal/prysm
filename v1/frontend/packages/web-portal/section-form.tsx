@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   adapterFor,
+  createSection,
   failureOf,
   kindsOf,
   type AdapterSection,
@@ -12,6 +13,7 @@ import {
   SelectField,
   useFieldErrors,
   useFieldScope,
+  useFieldScopeContext,
 } from './fields';
 
 export const staleNotice =
@@ -28,6 +30,64 @@ export function focusField(form: HTMLElement | null, field: string | undefined) 
         form.querySelector<HTMLElement>(`[data-field="${path}"]`))) ||
     form.querySelector<HTMLElement>('[data-form-alert]');
   target?.focus();
+}
+
+/**
+ * The kind selector (when the host registers more than one kind) and the
+ * kind's editor. Switching kinds keeps what was typed for the other kinds and
+ * drops the server's errors for the section. Used inside a field scope.
+ */
+export function SectionFields<S extends AdapterSection>({
+  section,
+  adapters,
+  value,
+  base,
+  onChange,
+}: {
+  section: 'capture' | 'output';
+  adapters: AdapterUis<S>;
+  value: S;
+  /** The saved section, offered again when its kind is chosen. */
+  base: S | null;
+  onChange: (next: S) => void;
+}) {
+  const scope = useFieldScopeContext();
+  /** Drafts of other kinds, so switching back keeps what was typed. */
+  const [others, setOthers] = useState<Record<string, S>>({});
+  const kinds = kindsOf(adapters);
+  function switchKind(kind: S['kind']) {
+    if (kind === value.kind) return;
+    setOthers({ ...others, [value.kind]: value });
+    scope.edited(section);
+    onChange(
+      others[kind] ??
+        (base?.kind === kind ? base : createSection(adapters, kind)),
+    );
+  }
+  const Editor = adapterFor(adapters, value.kind)?.Editor;
+  return (
+    <>
+      {kinds.length > 1 ? (
+        <SelectField
+          path={`${section}.kind`}
+          label={section === 'capture' ? 'Capture from' : 'Send colours to'}
+          value={value.kind as S['kind']}
+          options={kinds.map((kind) => ({
+            value: kind,
+            label: adapterFor(adapters, kind)?.label ?? kind,
+          }))}
+          onChange={switchKind}
+        />
+      ) : null}
+      {Editor ? (
+        <Editor key={value.kind} value={value} onChange={onChange} />
+      ) : (
+        <p className="notice warning">
+          This host has no editor for {section} kind “{value.kind}”.
+        </p>
+      )}
+    </>
+  );
 }
 
 export interface SectionFormProps<S extends AdapterSection> {
@@ -58,25 +118,16 @@ export function SectionForm<S extends AdapterSection>({
   disabled,
   save,
 }: SectionFormProps<S>) {
-  const kinds = kindsOf(adapters);
-  const [first] = kinds;
-  const create = (kind: string) => {
-    const adapter = adapterFor(adapters, kind);
-    if (!adapter) throw new Error(`No ${section} panel for kind ${kind}`);
-    return adapter.create();
-  };
   const draft = useDraft<S>({
     saved,
     revision,
-    fresh: () => create(first ?? ''),
+    fresh: () => createSection(adapters, kindsOf(adapters)[0] ?? ''),
   });
   const errors = useFieldErrors();
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [failure, setFailure] = useState('');
   const [notice, setNotice] = useState('');
-  /** Drafts of other kinds, so switching back keeps what was typed. */
-  const [others, setOthers] = useState<Record<string, S>>({});
   const formRef = useRef<HTMLFormElement>(null);
   /** After a refused save, focus this field (or the alert) once it renders. */
   const [focus, setFocus] = useState<{ field?: string } | null>(null);
@@ -97,18 +148,9 @@ export function SectionForm<S extends AdapterSection>({
     setFailure('');
     setNotice('');
   }
-  function switchKind(kind: S['kind']) {
-    if (kind === draft.draft.kind) return;
-    setOthers({ ...others, [draft.draft.kind]: draft.draft });
-    errors.clearServer();
-    change(
-      others[kind] ?? (draft.base?.kind === kind ? draft.base : create(kind)),
-    );
-  }
   function reset() {
     draft.reload();
     setAttempted(false);
-    setOthers({});
     errors.clearServer();
     setFailure('');
     setNotice('');
@@ -135,7 +177,6 @@ export function SectionForm<S extends AdapterSection>({
       const next = await save(revision, value);
       draft.setDraft(value);
       draft.saved(value, next);
-      setOthers({});
       setAttempted(false);
       setNotice('Saved.');
     } catch (error) {
@@ -158,7 +199,6 @@ export function SectionForm<S extends AdapterSection>({
   if (busy || draft.syncing) status = 'Saving…';
   else if (draft.unconfigured) status = 'Not configured';
   else if (draft.dirty) status = 'Unsaved changes';
-  const Editor = adapter?.Editor;
   return (
     <form
       ref={formRef}
@@ -180,29 +220,14 @@ export function SectionForm<S extends AdapterSection>({
       </div>
       <p className="intro">{description}</p>
       <FieldScopeProvider value={scope}>
-        {kinds.length > 1 ? (
-          <SelectField
-            path={`${section}.kind`}
-            label={section === 'capture' ? 'Capture from' : 'Send colours to'}
-            value={draft.draft.kind as S['kind']}
-            options={kinds.map((kind) => ({
-              value: kind,
-              label: adapterFor(adapters, kind)?.label ?? kind,
-            }))}
-            onChange={switchKind}
-          />
-        ) : null}
-        {Editor ? (
-          <Editor
-            key={`${draft.draft.kind}/${draft.generation}`}
-            value={draft.draft}
-            onChange={change}
-          />
-        ) : (
-          <p className="notice warning">
-            This host has no editor for {section} kind “{draft.draft.kind}”.
-          </p>
-        )}
+        <SectionFields
+          key={draft.generation}
+          section={section}
+          adapters={adapters}
+          value={draft.draft}
+          base={draft.base}
+          onChange={change}
+        />
       </FieldScopeProvider>
       {draft.conflicted && draft.dirty ? (
         <p className="notice warning" role="status">

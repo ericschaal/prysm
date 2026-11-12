@@ -32,6 +32,8 @@ export interface AdapterUi<S extends AdapterSection> {
   Editor: ComponentType<EditorProps<S>>;
   /** Tidy what the user typed just before saving, e.g. trim an address. */
   normalize?: (value: S) => S;
+  /** One line for the setup review, e.g. the device path and picture size. */
+  summary?: (value: S) => string;
   /** Outputs only: lighting actions for the saved section. */
   lighting?: (saved: S) => OutputLighting;
 }
@@ -50,6 +52,21 @@ export function adapterFor<S extends AdapterSection>(
 ): AdapterUi<S> | undefined {
   // Indexing a mapped type by a runtime kind loses the per-kind narrowing.
   return (adapters as unknown as Record<string, AdapterUi<S> | undefined>)[kind];
+}
+
+/** A picture size and rate for summaries: `640 × 360 at 30 fps`. */
+export function describePicture(width: number, height: number, fps: number) {
+  return `${width}\u00a0×\u00a0${height} at ${fps}\u00a0fps`;
+}
+
+/** A new section of `kind`, as its panel creates it. */
+export function createSection<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  kind: string,
+): S {
+  const adapter = adapterFor(adapters, kind);
+  if (!adapter) throw new Error(`No panel for kind ${kind}`);
+  return adapter.create();
 }
 
 export function kindsOf<S extends AdapterSection>(adapters: AdapterUis<S>) {

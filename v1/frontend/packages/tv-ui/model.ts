@@ -139,15 +139,25 @@ export interface TvStatus {
   ready: boolean;
 }
 
+/** What the TV UI knows from the portal that drives the lights. */
+export interface PortalFacts {
+  /** The portal's settings have an output. */
+  lights: boolean;
+  /** Where people open the portal, if known. */
+  address: string | null;
+}
+
 /**
  * The status card and primary button from the supervisor's state. `online`
- * is `null` until the first reply; `draft` is the preferences being edited.
+ * is `null` until the first reply; `draft` is the preferences being edited;
+ * `portal` is `null` until the portal's state is known.
  */
 export function tvStatus(
   online: boolean | null,
   state: State | null,
   draft: SavedPreferences,
   dirty: boolean,
+  portal: PortalFacts | null = null,
 ): TvStatus {
   if (online === null || (online && !state))
     return {
@@ -220,8 +230,8 @@ export function tvStatus(
       ? `Save to send this TV’s picture to ${draft.receiver}.`
       : 'Add the address of the Prysm on your computer.';
   } else if (!enabled) {
-    title = 'Disabled';
-    description = 'Enable capture to send this TV’s picture to Prysm.';
+    title = 'Capture off';
+    description = 'Start capture to send this TV’s picture to Prysm.';
   } else if (waiting) {
     title = 'Waiting for Prysm';
     description = `This TV connects to ${state.preferences.receiver} again every second. Check that Prysm is running with Remote capture.`;
@@ -232,6 +242,14 @@ export function tvStatus(
     title = 'Starting capture…';
     description = 'Waiting for the first picture.';
   }
+  // Lights are set up in the portal (its first-run setup), never here.
+  const linked = full || !!state.preferences.receiver;
+  const noLights = !!portal && !portal.lights && linked;
+  if (noLights && (!failure || waiting) && state.worker !== 'stopping' && state.worker !== 'retrying') {
+    title = 'Set up your lights';
+    description = `Open ${portal.address ?? 'Prysm’s web portal'} on your phone or computer to set up your lights.`;
+    attention = true;
+  }
   if (failure && !waiting && state.worker !== 'retrying') {
     title = 'Capture needs attention';
     description = `${failureText(failure)}.${encodingHint} Open Service options for diagnostics.`;
@@ -241,19 +259,20 @@ export function tvStatus(
   let label: string;
   let action: PrimaryAction;
   if (enabled) {
-    label = full ? 'Turn lights off' : 'Disable';
+    label = full ? 'Turn lights off' : 'Stop capture';
     action = 'disable';
   } else if (full) {
     label = 'Start screen sync';
-    action = 'enable';
+    // Screen sync cannot start without lights.
+    action = noLights ? 'none' : 'enable';
   } else if (!draft.receiver) {
     label = 'Set Prysm address';
     action = 'address';
   } else if (dirty) {
-    label = 'Save and enable';
+    label = 'Save and start capture';
     action = 'save_enable';
   } else {
-    label = 'Enable';
+    label = 'Start capture';
     action = 'enable';
   }
   return {

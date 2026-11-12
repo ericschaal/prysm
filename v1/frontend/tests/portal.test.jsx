@@ -122,6 +122,8 @@ test('modes that cannot work are disabled and say why', async () => {
   ]) {
     const portal = await renderPortal(HeadlessWebPortal, initial);
     try {
+      // Setup opens while capture or lights are missing; leave it to see the page.
+      if (!initial.capture || !initial.output) await click(button('Leave setup'));
       assert.equal(mode('processed').disabled, processed !== null);
       if (processed) assert.equal(hint(mode('processed')), processed);
       assert.equal(mode('device_native').disabled, native !== null);
@@ -419,6 +421,7 @@ test('an unconfigured section starts from its first kind and saves only when val
   const portal = await renderPortal(HeadlessWebPortal, {});
   const { fixture } = portal;
   try {
+    await click(button('Leave setup'));
     assert.equal(badge('Capture'), 'Not configured');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
