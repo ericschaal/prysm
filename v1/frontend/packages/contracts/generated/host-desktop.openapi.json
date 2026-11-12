@@ -1,0 +1,470 @@
+{
+  "components": {
+    "schemas": {
+      "CaptureSettings": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DeviceSettings"
+          },
+          {
+            "$ref": "#/components/schemas/RemoteReceiverSettings"
+          }
+        ]
+      },
+      "DeviceSettings": {
+        "additionalProperties": false,
+        "description": "`{ \"kind\": \"device\", \"path\": \"/dev/video0\", \"width\": 640, \"height\": 360, \"fps\": 30 }`\n\n`path` is a V4L2 device node on Linux and an AVFoundation device unique ID\non macOS. Size and rate default to 640×360 at 30 fps.",
+        "properties": {
+          "fps": {
+            "default": 30,
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 360,
+            "format": "int32",
+            "maximum": 2160,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "device"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "V4L2 device node on Linux, AVFoundation device unique ID on macOS.",
+            "example": "/dev/video0",
+            "minLength": 1,
+            "type": "string"
+          },
+          "width": {
+            "default": 640,
+            "format": "int32",
+            "maximum": 3840,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
+      "Failure": {
+        "description": "A stable failure body. Local source chains stay in the process; only the\nmessage a user can act on is sent.",
+        "properties": {
+          "current": {
+            "description": "The revision to retry against after `stale_revision`.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "description": "The rejected setting as a dotted path, such as `output.address`.",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FailureKind"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "FailureKind": {
+        "enum": [
+          "invalid",
+          "stale_revision",
+          "faulted",
+          "adapter",
+          "unavailable",
+          "timeout",
+          "internal",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "bad_request",
+          "payload_too_large",
+          "unsupported_media_type",
+          "busy"
+        ],
+        "type": "string"
+      },
+      "LedCounts": {
+        "additionalProperties": false,
+        "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has none.",
+        "properties": {
+          "bottom": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "left": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "right": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "top": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "LightingTarget": {
+        "description": "What the user wants the LEDs to do.",
+        "enum": [
+          "off",
+          "processed",
+          "device_native"
+        ],
+        "type": "string"
+      },
+      "NullSettings": {
+        "additionalProperties": false,
+        "description": "The null output takes no settings.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "null"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "OutputSettings": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/WledSettings"
+          },
+          {
+            "$ref": "#/components/schemas/NullSettings"
+          }
+        ]
+      },
+      "Phase": {
+        "description": "Where a faulted session stopped making progress.",
+        "enum": [
+          "running",
+          "closing_source",
+          "idling_output",
+          "finishing"
+        ],
+        "type": "string"
+      },
+      "Processing": {
+        "additionalProperties": false,
+        "description": "Processing controls in plain units.",
+        "properties": {
+          "brightness_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remove_black_bars": {
+            "type": "boolean"
+          },
+          "sample_density": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "shadow_lift_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "smoothing_seconds": {
+            "description": "Seconds; 0 disables smoothing.",
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "spatial_reach_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "brightness_percent",
+          "shadow_lift_percent",
+          "smoothing_seconds",
+          "sample_density",
+          "spatial_reach_percent",
+          "remove_black_bars"
+        ],
+        "type": "object"
+      },
+      "RemoteReceiverSettings": {
+        "additionalProperties": false,
+        "description": "Settings for kind `\"remote\"`: `{ \"kind\": \"remote\", \"listen\": \"0.0.0.0:7380\" }`.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "remote"
+            ],
+            "type": "string"
+          },
+          "listen": {
+            "description": "Address and fixed port the capture host connects to.",
+            "example": "0.0.0.0:7380",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "listen"
+        ],
+        "type": "object"
+      },
+      "Session": {
+        "description": "What the runtime is actually doing.",
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The output shows its own effect.",
+            "properties": {
+              "state": {
+                "enum": [
+                  "native"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A session did not stop in time; only a restart recovers.",
+            "properties": {
+              "phase": {
+                "$ref": "#/components/schemas/Phase"
+              },
+              "state": {
+                "enum": [
+                  "faulted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Settings": {
+        "additionalProperties": false,
+        "description": "Everything a user can change at runtime; adapter sections are tagged by `kind`.",
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/CaptureSettings"
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputSettings"
+          },
+          "processing": {
+            "$ref": "#/components/schemas/Processing"
+          }
+        },
+        "required": [
+          "processing"
+        ],
+        "type": "object"
+      },
+      "SettingsReplaced": {
+        "description": "Reply to a successful settings replacement. Applying them may still fail;\nthat failure appears in the state's `failure`.",
+        "properties": {
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "SettingsRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/settings`: replace all settings if `expected` is current.",
+        "properties": {
+          "expected": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          }
+        },
+        "required": [
+          "expected",
+          "settings"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "description": "The observable runtime state, sent whole on every change.",
+        "properties": {
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Failure",
+                "description": "Last lighting failure; cleared when lighting next starts."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "description": "Pass back as `expected` when replacing settings.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "surface_failures": {
+            "description": "Surfaces that stopped. Lighting continues without them.",
+            "items": {
+              "$ref": "#/components/schemas/Failure"
+            },
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "target",
+          "session",
+          "settings",
+          "revision",
+          "failure",
+          "surface_failures"
+        ],
+        "type": "object"
+      },
+      "TargetRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/target`.",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "WledSettings": {
+        "additionalProperties": false,
+        "description": "Where the device is and how many LEDs each screen edge has:\n\n```json\n{ \"kind\": \"wled\", \"address\": \"192.168.1.50\",\n  \"leds\": { \"top\": 96, \"right\": 54, \"bottom\": 96, \"left\": 54 } }\n```",
+        "properties": {
+          "address": {
+            "description": "Unicast IPv4 or IPv6 address of the device.",
+            "example": "192.168.1.50",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "wled"
+            ],
+            "type": "string"
+          },
+          "leds": {
+            "$ref": "#/components/schemas/LedCounts"
+          }
+        },
+        "required": [
+          "kind",
+          "address",
+          "leds"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "JSON wire values and OpenAPI roots for Prysm surfaces",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "Prysm desktop host",
+    "version": "1.0.0-alpha.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

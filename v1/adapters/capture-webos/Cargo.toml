@@ -4,16 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-
-[features]
-wire = ["dep:serde", "dep:prysm-protocol"]
-schema = ["wire", "dep:utoipa", "prysm-protocol/schema"]
+description = "LG webOS TV video capture as a blocking Prysm frame source"
 
 [dependencies]
-prysm-protocol = { workspace = true, optional = true }
 prysm-core.workspace = true
-serde = { workspace = true, optional = true }
-utoipa = { workspace = true, optional = true }
+prysm-ports.workspace = true
+serde.workspace = true
+yuv = { version = "0.8", default-features = false }
+nix = { version = "0.31", features = ["fs", "signal", "user"] }
+# FFI lives in its own crate so this one stays under the workspace's `unsafe_code = "forbid"`.
+prysm-capture-webos-sys = { path = "../capture-webos-sys" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -1,24 +1,23 @@
+import type { WledSettings } from '@prysm/contracts/host-desktop';
 import type { SettingsPanelProps } from '@prysm/web-portal';
 
-import type { WledSettings as WledOutputConfig } from '@prysm/contracts/wled';
-
-/** Minimal composition panel; LED layout controls remain deferred. */
+/** Minimal panel: edits the address and keeps the LED layout. */
 export function WledOutputSettings({
   settings,
   disabled,
   onSubmit,
-}: SettingsPanelProps<WledOutputConfig>) {
+}: SettingsPanelProps<WledSettings>) {
   return (
     <form
       key={JSON.stringify(settings)}
       onSubmit={(event) => {
         event.preventDefault();
-        const data = new FormData(event.currentTarget);
-        const address = data.get('address');
+        const address = new FormData(event.currentTarget).get('address');
         if (typeof address !== 'string') return;
         void onSubmit({
+          kind: 'wled',
           address,
-          leds: settings?.leds ?? [0, 0, 0, 0],
+          leds: settings?.leds ?? {},
         });
       }}
     >

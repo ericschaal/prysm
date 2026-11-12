@@ -12,7 +12,7 @@ const mime = {
 };
 
 const assemblies = [
-  { host: 'server', surface: 'web-portal' },
+  { host: 'headless', surface: 'web-portal' },
   { host: 'webos', surface: 'web-portal' },
   { host: 'webos', surface: 'tv-ui' },
   { host: 'webos-slim', surface: 'tv-ui' },

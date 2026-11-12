@@ -1,19 +1,25 @@
 # Prysm v1 architecture proposal
 
+> Superseded by the [simplified runtime](prysm-v1-simplified-runtime.md); kept for history.
+
 Status: design draft, 2026-11-05. Names and Rust signatures below are proposed,
 not implemented APIs. The assembly examples omit imports and error plumbing.
 This is a greenfield v1: no compatibility layer or data migration is required.
 
+The runtime model here (per-component owners, mailboxes and session/epoch
+identities) is under revision; see the
+[simplified runtime draft](prysm-v1-simplified-runtime.md).
+
 A [compilable architecture workspace](../../v1/README.md) now lives in isolated
 `v1/`. It supplies typed assemblies, a running passive processing flow, application
 lighting-session sequencing, video device capture, WLED and
-[terminal output](../../v1/adapters/output-terminal/README.md) adapters and explicit unavailable
+terminal output adapters and explicit unavailable
 shells for the remaining runtime behavior. The WLED
-[transition table](../../v1/adapters/output-wled/TRANSITIONS.md) documents write
+transition table documents write
 ownership, admission and the boundary between local ordering and physical UDP
 delivery. Consult its source for
 the current signatures; the sketches here explain the architecture.
-The device [transition table](../../v1/adapters/capture-device/TRANSITIONS.md)
+The device transition table
 defines native readiness, Stop/open races, availability and verified release.
 Device capture's old stream/completion-token API has been replaced; backward
 compatibility is not an implementation constraint.
@@ -287,7 +293,7 @@ host's application instance identity for observations and session fences. It wai
 for its first configuration before processing and retains only the newest frame
 while waiting. Session sequences increase within that instance, allowing barriers
 to reject sealed and earlier sessions with constant memory. The demand-aware preview
-tap is implemented; see the [flow protocol](../../v1/crates/flow/README.md).
+tap is implemented; see the flow protocol.
 
 A flow barrier seals the old session after capture cleanup; late frames from a
 sealed session are rejected. A new capture session/discontinuity resets temporal
@@ -338,8 +344,11 @@ owner. This generates data contracts, not forms or adapter selection. See the
 [buildable frontend assemblies](../../v1/frontend/README.md) for both hosts and
 the typed panel boundary. The frontend packages build against an in-memory
 application fixture, with type and DOM interaction tests. Rust hosts embed their
-generated bundles. Full panels, asset serving and application transport contract
-generation remain deferred; adapter settings generation is implemented.
+generated bundles. The local server now serves its bundle and authenticated
+loopback HTTP control, with complete settings replacement and atomic observation
+streams; see the [HTTP contract](../../v1/surfaces/web-portal/HTTP-CONTRACT.md).
+Application and adapter wire contracts are generated. Full editors, browser
+preview, LAN access and Luna serving remain separate milestones.
 
 Saved revision, worker-configured revision and last-frame-applied revision remain
 distinct. A persisted setting can be valid yet fail to apply to unavailable
@@ -347,12 +356,12 @@ hardware. The snapshot reports that outcome rather than pretending storage and
 hardware updates were atomic. Processing changes apply at frame boundaries;
 capture/output changes use the session cleanup protocol.
 
-The [settings replacement transition table](../../v1/crates/application/SETTINGS-TRANSITIONS.md)
+The settings replacement transition table
 specifies acceptance, save/apply failures, Off/shutdown races and the concrete
 repository ownership required for file persistence. The application workflow is
 implemented against the typed repository port. The [file adapter](../../v1/adapters/settings-file/README.md)
 implements atomic replacement with a host-owned I/O worker. The
-[terminal command adapter](../../v1/adapters/control-terminal/README.md) prepares typed
+terminal command adapter prepares typed
 replacements from candidate JSON files; the host owns request IDs and submission.
 The `prysm-headless` and `prysm-tui` binaries select WLED and terminal output
 respectively. Their explicit `assemblies::headless` and `assemblies::tui` compositions
@@ -387,7 +396,7 @@ application/
 ```
 
 The current implementation documents its phase/event rules in the
-[lighting transition table](../../v1/crates/application/TRANSITIONS.md).
+lighting transition table.
 `session::Lifecycle` exclusively owns the phase model, resource obligations and
 outstanding calls. The coordinator requests domain transitions and consumes
 readiness/cleanup outcomes; it cannot inspect or mutate steps, futures or phase
@@ -508,8 +517,8 @@ generic application builder or a new framework.
 ### prysm-server host
 
 The following lifecycle sketches describe the intended runtime, not implemented
-APIs. The compilable [server assembly](../../v1/assemblies/examples/server.rs)
-and [receiver ports](../../v1/adapters/remote-capture/src/receiver.rs) are the current
+APIs. The compilable server assembly
+and receiver ports are the current
 review surface. Transport establishment (including listener versus peer dialing),
 remote source configuration and runtime source selection remain deferred.
 The host retains every owner and its shutdown control before launching it. The
@@ -678,7 +687,7 @@ owners clean up independently; output Off need not wait for capture release once
 reopening is impossible, but the host still joins every owner and preserves any
 unconfirmed cleanup. Only the resource-free coordinator may be cancelled during
 this takeover; device/flow owners remain retained. See the concrete
-[host ownership and failure transitions](../../v1/assemblies/HOST-LIFECYCLE.md).
+host ownership and failure transitions.
 
 Session faults are distinct from owner-task death. A dead owner cannot
 accept a new Start; the host must explicitly reconstruct that composition or

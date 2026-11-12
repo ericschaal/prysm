@@ -3,113 +3,111 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        Accepted: {
-            operation: components["schemas"]["OperationId"];
+        CaptureSettings: {
+            kind: string;
+        } & {
+            [key: string]: unknown;
         };
-        /** @description These private presentation messages never appear in ClientSnapshot. */
-        CalibrationPresentation: {
-            pairing: string;
-            pattern: components["schemas"]["PatternRequest"];
-            session: string;
-        };
-        CaptureCapabilities: {
-            /** @description Whether this source supports calibration using presented test patterns. */
-            supports_patterns: boolean;
-        };
-        ClientFailure: {
-            /** @enum {string} */
-            kind: "unavailable";
-            message: string;
-        } | {
-            /** @enum {string} */
-            kind: "rejected";
-            message: string;
-        } | {
-            /** @enum {string} */
-            kind: "outcome_unknown";
-            operation: components["schemas"]["OperationId"];
-        } | {
-            /** @enum {string} */
-            kind: "unknown_operation";
-        };
-        ClientSnapshot_Value_Value: {
-            capture: unknown;
-            cursor: components["schemas"]["Cursor"];
-            output: unknown;
-            revision: components["schemas"]["SettingsRevision"];
-            target: components["schemas"]["LightingTarget"];
-        };
-        ClientUpdate_Value_Value: {
-            /** @enum {string} */
-            kind: "snapshot";
-            snapshot: components["schemas"]["ClientSnapshot_Value_Value"];
-        } | {
-            /** @enum {string} */
-            kind: "resync_required";
-        };
-        ConfigureRequest_Value: {
-            expected: components["schemas"]["SettingsRevision"];
-            id: components["schemas"]["OperationId"];
-            settings: unknown;
-        };
-        Cursor: {
-            instance: components["schemas"]["InstanceId"];
-            sequence: string;
-        };
-        EndPresentationRequest: {
-            id: components["schemas"]["OperationId"];
-            session: string;
-        };
-        /** @description Local source errors and their implementation types never enter the wire format. */
+        /**
+         * @description A stable failure body. Local source chains stay in the process; only the
+         *     message a user can act on is sent.
+         */
         Failure: {
+            /**
+             * Format: int64
+             * @description The revision to retry against after `stale_revision`.
+             */
+            current?: number;
+            /** @description The rejected setting as a dotted path, such as `output.address`. */
+            field?: string;
             kind: components["schemas"]["FailureKind"];
             message: string;
         };
         /** @enum {string} */
-        FailureKind: "unavailable" | "invalid" | "conflict" | "outcome_unknown" | "cleanup_pending" | "unknown_operation" | "adapter" | "recovery_required" | "interrupted";
-        InstanceId: string;
-        /** @enum {string} */
+        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        /**
+         * @description What the user wants the LEDs to do.
+         * @enum {string}
+         */
         LightingTarget: "off" | "processed" | "device_native";
-        OperationId: {
-            instance: components["schemas"]["InstanceId"];
-            request: string;
+        OutputSettings: {
+            kind: string;
+        } & {
+            [key: string]: unknown;
         };
-        OperationStatus: {
+        /**
+         * @description Where a faulted session stopped making progress.
+         * @enum {string}
+         */
+        Phase: "running" | "closing_source" | "idling_output" | "finishing";
+        /** @description Processing controls in plain units. */
+        Processing: {
+            /** Format: int32 */
+            brightness_percent: number;
+            remove_black_bars: boolean;
+            /** Format: int32 */
+            sample_density: number;
+            /** Format: int32 */
+            shadow_lift_percent: number;
+            /**
+             * Format: float
+             * @description Seconds; 0 disables smoothing.
+             */
+            smoothing_seconds: number;
+            /** Format: int32 */
+            spatial_reach_percent: number;
+        };
+        /** @description What the runtime is actually doing. */
+        Session: {
             /** @enum {string} */
-            kind: "pending";
+            state: "stopped";
         } | {
             /** @enum {string} */
-            kind: "succeeded";
-        } | {
-            failure: components["schemas"]["Failure"];
-            /** @enum {string} */
-            kind: "failed";
-        };
-        OutputCapabilities: {
-            native_mode: boolean;
-        };
-        PatternRequest: {
-            id: string;
-        };
-        PlaybackFeedback: {
-            /** @enum {string} */
-            kind: "ready";
+            state: "running";
         } | {
             /** @enum {string} */
-            kind: "failed";
-            message: string;
+            state: "native";
         } | {
+            phase: components["schemas"]["Phase"];
             /** @enum {string} */
-            kind: "released";
+            state: "faulted";
         };
-        PresentationFeedback: {
-            id: components["schemas"]["OperationId"];
-            playback: components["schemas"]["PlaybackFeedback"];
-            session: string;
+        /** @description Everything a user can change at runtime; adapter sections are tagged by `kind`. */
+        Settings: {
+            capture?: components["schemas"]["CaptureSettings"];
+            output?: components["schemas"]["OutputSettings"];
+            processing: components["schemas"]["Processing"];
         };
-        SettingsRevision: string;
+        /**
+         * @description Reply to a successful settings replacement. Applying them may still fail;
+         *     that failure appears in the state's `failure`.
+         */
+        SettingsReplaced: {
+            /** Format: int64 */
+            revision: number;
+        };
+        /** @description `PUT /api/v1/settings`: replace all settings if `expected` is current. */
+        SettingsRequest: {
+            /** Format: int64 */
+            expected: number;
+            settings: components["schemas"]["Settings"];
+        };
+        /** @description The observable runtime state, sent whole on every change. */
+        State: {
+            failure: components["schemas"]["Failure"] | null;
+            /**
+             * Format: int64
+             * @description Pass back as `expected` when replacing settings.
+             */
+            revision: number;
+            session: components["schemas"]["Session"];
+            settings: components["schemas"]["Settings"];
+            /** @description Surfaces that stopped. Lighting continues without them. */
+            surface_failures: components["schemas"]["Failure"][];
+            target: components["schemas"]["LightingTarget"];
+        };
+        /** @description `PUT /api/v1/target`. */
         TargetRequest: {
-            id: components["schemas"]["OperationId"];
             target: components["schemas"]["LightingTarget"];
         };
     };
@@ -119,26 +117,18 @@ export interface components {
     headers: never;
     pathItems: never;
 }
-export type Accepted = components['schemas']['Accepted'];
-export type CalibrationPresentation = components['schemas']['CalibrationPresentation'];
-export type CaptureCapabilities = components['schemas']['CaptureCapabilities'];
-export type ClientFailure = components['schemas']['ClientFailure'];
-export type ClientSnapshot_Value_Value = components['schemas']['ClientSnapshot_Value_Value'];
-export type ClientUpdate_Value_Value = components['schemas']['ClientUpdate_Value_Value'];
-export type ConfigureRequest_Value = components['schemas']['ConfigureRequest_Value'];
-export type Cursor = components['schemas']['Cursor'];
-export type EndPresentationRequest = components['schemas']['EndPresentationRequest'];
+export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
-export type InstanceId = components['schemas']['InstanceId'];
 export type LightingTarget = components['schemas']['LightingTarget'];
-export type OperationId = components['schemas']['OperationId'];
-export type OperationStatus = components['schemas']['OperationStatus'];
-export type OutputCapabilities = components['schemas']['OutputCapabilities'];
-export type PatternRequest = components['schemas']['PatternRequest'];
-export type PlaybackFeedback = components['schemas']['PlaybackFeedback'];
-export type PresentationFeedback = components['schemas']['PresentationFeedback'];
-export type SettingsRevision = components['schemas']['SettingsRevision'];
+export type OutputSettings = components['schemas']['OutputSettings'];
+export type Phase = components['schemas']['Phase'];
+export type Processing = components['schemas']['Processing'];
+export type Session = components['schemas']['Session'];
+export type Settings = components['schemas']['Settings'];
+export type SettingsReplaced = components['schemas']['SettingsReplaced'];
+export type SettingsRequest = components['schemas']['SettingsRequest'];
+export type State = components['schemas']['State'];
 export type TargetRequest = components['schemas']['TargetRequest'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

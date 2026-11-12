@@ -4,27 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Local video device capture (V4L2 / AVFoundation) as a blocking Prysm frame source"
 
 [features]
-wire = ["dep:serde", "dep:prysm-protocol"]
-schema = ["wire", "dep:utoipa", "prysm-protocol/schema"]
+# `utoipa::ToSchema` for the settings, for the contract exporter.
+schema = ["dep:utoipa"]
 
 [dependencies]
-prysm-contract.workspace = true
 prysm-capture = { path = "../../../crates/capture/prysm-capture", default-features = false }
-prysm-protocol = { workspace = true, optional = true }
 prysm-core.workspace = true
-tokio = { workspace = true, features = ["time"] }
-tokio-util = "0.7"
+prysm-ports.workspace = true
 futures.workspace = true
-serde = { workspace = true, optional = true }
+serde.workspace = true
+tokio.workspace = true
+tokio-util = "0.7"
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
-prysm-application.workspace = true
-prysm-flow.workspace = true
-prysm-processor.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+anyhow = "1"
+serde_json.workspace = true
 
 [lints]
 workspace = true

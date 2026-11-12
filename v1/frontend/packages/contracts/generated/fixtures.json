@@ -1,94 +1,215 @@
 {
-  "DeviceCaptureSettings": [
+  "DeviceSettings": [
     {
+      "fps": 30,
+      "height": 360,
+      "kind": "device",
       "path": "/dev/video0",
-      "rate": 30,
-      "resolution": [
-        320,
-        180
-      ],
-      "source": "device"
-    },
-    {
-      "path": "fixture.mp4",
-      "rate": 30,
-      "resolution": [
-        320,
-        180
-      ],
-      "source": "file"
+      "width": 640
     }
   ],
-  "OperationStatus": [
+  "Failure": [
     {
-      "kind": "pending"
+      "field": "output.address",
+      "kind": "invalid",
+      "message": "a unicast device address is required"
     },
     {
-      "kind": "succeeded"
+      "current": 2,
+      "kind": "stale_revision",
+      "message": "settings revision 1 is stale; current is 2"
+    },
+    {
+      "kind": "adapter",
+      "message": "device unplugged"
+    },
+    {
+      "kind": "unavailable",
+      "message": "runtime has stopped"
+    }
+  ],
+  "NullSettings": [
+    {
+      "kind": "null"
+    }
+  ],
+  "RemoteReceiverSettings": [
+    {
+      "kind": "remote",
+      "listen": "0.0.0.0:7380"
+    }
+  ],
+  "Settings": [
+    {
+      "processing": {
+        "brightness_percent": 100,
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "shadow_lift_percent": 0,
+        "smoothing_seconds": 0.10000000149011612,
+        "spatial_reach_percent": 10
+      }
+    }
+  ],
+  "SettingsReplaced": [
+    {
+      "revision": 8
+    }
+  ],
+  "SettingsRequest": [
+    {
+      "expected": 0,
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    },
+    {
+      "expected": 7,
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    }
+  ],
+  "State": [
+    {
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "stopped"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "off"
+    },
+    {
+      "failure": null,
+      "revision": 7,
+      "session": {
+        "state": "running"
+      },
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [
+        {
+          "kind": "adapter",
+          "message": "portal listener failed"
+        }
+      ],
+      "target": "processed"
+    },
+    {
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "native"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "device_native"
     },
     {
       "failure": {
-        "kind": "recovery_required",
-        "message": "owner recovery required"
+        "kind": "faulted",
+        "message": "runtime is faulted: session did not finish idling the output"
       },
-      "kind": "failed"
+      "revision": 0,
+      "session": {
+        "phase": "idling_output",
+        "state": "faulted"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "off"
     }
   ],
-  "RemoteCaptureSettings": [
+  "TargetRequest": [
     {
-      "peer": "127.0.0.1:9000"
-    }
-  ],
-  "ServerCaptureSettings": [
-    {
-      "adapter": "device",
-      "settings": {
-        "path": "/dev/video0",
-        "rate": 30,
-        "resolution": [
-          320,
-          180
-        ],
-        "source": "device"
-      }
-    },
-    {
-      "adapter": "device",
-      "settings": {
-        "path": "fixture.mp4",
-        "rate": 30,
-        "resolution": [
-          320,
-          180
-        ],
-        "source": "file"
-      }
-    },
-    {
-      "adapter": "remote",
-      "settings": {
-        "peer": "127.0.0.1:9000"
-      }
-    }
-  ],
-  "TvCaptureSettings": [
-    {
-      "rate": 30,
-      "resolution": [
-        320,
-        180
-      ]
+      "target": "processed"
     }
   ],
   "WledSettings": [
     {
       "address": "192.0.2.1",
-      "leds": [
-        10,
-        20,
-        30,
-        40
-      ]
+      "kind": "wled",
+      "leds": {
+        "bottom": 0,
+        "left": 4,
+        "right": 0,
+        "top": 10
+      }
     }
   ]
 }

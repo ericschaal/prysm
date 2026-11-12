@@ -1,18 +1,16 @@
+import type { WledSettings } from '@prysm/contracts/host-desktop';
 import { ApplicationProvider } from '@prysm/application-react/provider';
 import { createApplicationRuntime } from '@prysm/application-state';
 import { useMemo } from 'react';
-import { type ApplicationClient } from '@prysm/application-client';
+import type { ApplicationClient } from '@prysm/application-client';
 import { TvUi, type TvUiProps } from '@prysm/tv-ui';
-import type {
-  TvCaptureSettings as Capture,
-  WledSettings as Output,
-} from '@prysm/contracts/host-webos';
+import type { WebosCaptureConfig } from '@prysm/capture-webos-ui';
 
 export function WebosApp({
   localApplication,
   ...tv
-}: Omit<TvUiProps<Capture, Output>, 'application'> & {
-  localApplication: ApplicationClient<Capture, Output>;
+}: Omit<TvUiProps<WebosCaptureConfig, WledSettings>, 'application'> & {
+  localApplication: ApplicationClient<WebosCaptureConfig, WledSettings>;
   portalUrl: string;
 }) {
   const application = useMemo(

@@ -4,11 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Prints the OpenAPI documents and serialization fixtures the frontend generates from"
 
 [dependencies]
-prysm-assemblies = { path = "../../assemblies", features = ["schema"] }
-prysm-core.workspace = true
-prysm-protocol.workspace = true
+prysm-capture-device = { workspace = true, features = ["schema"] }
+prysm-output-wled = { workspace = true, features = ["schema"] }
+prysm-ports.workspace = true
+prysm-protocol = { workspace = true, features = ["schema"] }
+prysm-capture-remote = { workspace = true, features = ["schema"] }
+prysm-runtime = { workspace = true, features = ["schema"] }
 serde_json.workspace = true
 
 [lints]

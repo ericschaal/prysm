@@ -1,231 +1,31 @@
 {
   "components": {
     "schemas": {
-      "Accepted": {
+      "CaptureSettings": {
+        "additionalProperties": true,
         "properties": {
-          "operation": {
-            "$ref": "#/components/schemas/OperationId"
-          }
-        },
-        "required": [
-          "operation"
-        ],
-        "type": "object"
-      },
-      "CalibrationPresentation": {
-        "description": "These private presentation messages never appear in ClientSnapshot.",
-        "properties": {
-          "pairing": {
-            "type": "string"
-          },
-          "pattern": {
-            "$ref": "#/components/schemas/PatternRequest"
-          },
-          "session": {
+          "kind": {
             "type": "string"
           }
         },
         "required": [
-          "session",
-          "pairing",
-          "pattern"
-        ],
-        "type": "object"
-      },
-      "CaptureCapabilities": {
-        "properties": {
-          "supports_patterns": {
-            "description": "Whether this source supports calibration using presented test patterns.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "supports_patterns"
-        ],
-        "type": "object"
-      },
-      "ClientFailure": {
-        "oneOf": [
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "unavailable"
-                ],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message",
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "rejected"
-                ],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message",
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "outcome_unknown"
-                ],
-                "type": "string"
-              },
-              "operation": {
-                "$ref": "#/components/schemas/OperationId"
-              }
-            },
-            "required": [
-              "operation",
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "unknown_operation"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ClientSnapshot_Value_Value": {
-        "properties": {
-          "capture": {},
-          "cursor": {
-            "$ref": "#/components/schemas/Cursor"
-          },
-          "output": {},
-          "revision": {
-            "$ref": "#/components/schemas/SettingsRevision"
-          },
-          "target": {
-            "$ref": "#/components/schemas/LightingTarget"
-          }
-        },
-        "required": [
-          "cursor",
-          "revision",
-          "capture",
-          "output",
-          "target"
-        ],
-        "type": "object"
-      },
-      "ClientUpdate_Value_Value": {
-        "oneOf": [
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "snapshot"
-                ],
-                "type": "string"
-              },
-              "snapshot": {
-                "$ref": "#/components/schemas/ClientSnapshot_Value_Value"
-              }
-            },
-            "required": [
-              "snapshot",
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "resync_required"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ConfigureRequest_Value": {
-        "properties": {
-          "expected": {
-            "$ref": "#/components/schemas/SettingsRevision"
-          },
-          "id": {
-            "$ref": "#/components/schemas/OperationId"
-          },
-          "settings": {}
-        },
-        "required": [
-          "id",
-          "expected",
-          "settings"
-        ],
-        "type": "object"
-      },
-      "Cursor": {
-        "properties": {
-          "instance": {
-            "$ref": "#/components/schemas/InstanceId"
-          },
-          "sequence": {
-            "pattern": "^(0|[1-9][0-9]*)$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "instance",
-          "sequence"
-        ],
-        "type": "object"
-      },
-      "EndPresentationRequest": {
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/OperationId"
-          },
-          "session": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "session"
+          "kind"
         ],
         "type": "object"
       },
       "Failure": {
-        "description": "Local source errors and their implementation types never enter the wire format.",
+        "description": "A stable failure body. Local source chains stay in the process; only the\nmessage a user can act on is sent.",
         "properties": {
+          "current": {
+            "description": "The revision to retry against after `stale_revision`.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "description": "The rejected setting as a dotted path, such as `output.address`.",
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/FailureKind"
           },
@@ -241,23 +41,26 @@
       },
       "FailureKind": {
         "enum": [
-          "unavailable",
           "invalid",
-          "conflict",
-          "outcome_unknown",
-          "cleanup_pending",
-          "unknown_operation",
+          "stale_revision",
+          "faulted",
           "adapter",
-          "recovery_required",
-          "interrupted"
+          "unavailable",
+          "timeout",
+          "internal",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "bad_request",
+          "payload_too_large",
+          "unsupported_media_type",
+          "busy"
         ],
         "type": "string"
       },
-      "InstanceId": {
-        "pattern": "^[1-9][0-9]*$",
-        "type": "string"
-      },
       "LightingTarget": {
+        "description": "What the user wants the LEDs to do.",
         "enum": [
           "off",
           "processed",
@@ -265,178 +68,250 @@
         ],
         "type": "string"
       },
-      "OperationId": {
+      "OutputSettings": {
+        "additionalProperties": true,
         "properties": {
-          "instance": {
-            "$ref": "#/components/schemas/InstanceId"
-          },
-          "request": {
-            "pattern": "^[1-9][0-9]*$",
+          "kind": {
             "type": "string"
           }
         },
         "required": [
-          "instance",
-          "request"
+          "kind"
         ],
         "type": "object"
       },
-      "OperationStatus": {
-        "oneOf": [
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "pending"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "succeeded"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "failure": {
-                "$ref": "#/components/schemas/Failure"
-              },
-              "kind": {
-                "enum": [
-                  "failed"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "failure",
-              "kind"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "OutputCapabilities": {
-        "properties": {
-          "native_mode": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "native_mode"
+      "Phase": {
+        "description": "Where a faulted session stopped making progress.",
+        "enum": [
+          "running",
+          "closing_source",
+          "idling_output",
+          "finishing"
         ],
-        "type": "object"
-      },
-      "PatternRequest": {
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "type": "object"
-      },
-      "PlaybackFeedback": {
-        "oneOf": [
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "ready"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "failed"
-                ],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message",
-              "kind"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "enum": [
-                  "released"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "PresentationFeedback": {
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/OperationId"
-          },
-          "playback": {
-            "$ref": "#/components/schemas/PlaybackFeedback"
-          },
-          "session": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "session",
-          "playback"
-        ],
-        "type": "object"
-      },
-      "SettingsRevision": {
-        "pattern": "^(0|[1-9][0-9]*)$",
         "type": "string"
       },
-      "TargetRequest": {
+      "Processing": {
+        "additionalProperties": false,
+        "description": "Processing controls in plain units.",
         "properties": {
-          "id": {
-            "$ref": "#/components/schemas/OperationId"
+          "brightness_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remove_black_bars": {
+            "type": "boolean"
+          },
+          "sample_density": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "shadow_lift_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "smoothing_seconds": {
+            "description": "Seconds; 0 disables smoothing.",
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "spatial_reach_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "brightness_percent",
+          "shadow_lift_percent",
+          "smoothing_seconds",
+          "sample_density",
+          "spatial_reach_percent",
+          "remove_black_bars"
+        ],
+        "type": "object"
+      },
+      "Session": {
+        "description": "What the runtime is actually doing.",
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The output shows its own effect.",
+            "properties": {
+              "state": {
+                "enum": [
+                  "native"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A session did not stop in time; only a restart recovers.",
+            "properties": {
+              "phase": {
+                "$ref": "#/components/schemas/Phase"
+              },
+              "state": {
+                "enum": [
+                  "faulted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Settings": {
+        "additionalProperties": false,
+        "description": "Everything a user can change at runtime; adapter sections are tagged by `kind`.",
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/CaptureSettings"
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputSettings"
+          },
+          "processing": {
+            "$ref": "#/components/schemas/Processing"
+          }
+        },
+        "required": [
+          "processing"
+        ],
+        "type": "object"
+      },
+      "SettingsReplaced": {
+        "description": "Reply to a successful settings replacement. Applying them may still fail;\nthat failure appears in the state's `failure`.",
+        "properties": {
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "SettingsRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/settings`: replace all settings if `expected` is current.",
+        "properties": {
+          "expected": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          }
+        },
+        "required": [
+          "expected",
+          "settings"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "description": "The observable runtime state, sent whole on every change.",
+        "properties": {
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Failure",
+                "description": "Last lighting failure; cleared when lighting next starts."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "description": "Pass back as `expected` when replacing settings.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "surface_failures": {
+            "description": "Surfaces that stopped. Lighting continues without them.",
+            "items": {
+              "$ref": "#/components/schemas/Failure"
+            },
+            "type": "array"
           },
           "target": {
             "$ref": "#/components/schemas/LightingTarget"
           }
         },
         "required": [
-          "id",
+          "target",
+          "session",
+          "settings",
+          "revision",
+          "failure",
+          "surface_failures"
+        ],
+        "type": "object"
+      },
+      "TargetRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/target`.",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
           "target"
         ],
         "type": "object"
@@ -444,12 +319,12 @@
     }
   },
   "info": {
-    "description": "",
+    "description": "JSON wire values and OpenAPI roots for Prysm surfaces",
     "license": {
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
     },
-    "title": "prysm-protocol",
+    "title": "Prysm application",
     "version": "1.0.0-alpha.0"
   },
   "openapi": "3.1.0",

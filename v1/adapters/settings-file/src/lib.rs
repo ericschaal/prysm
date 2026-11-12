@@ -1,149 +1,104 @@
-//! Typed JSON persistence with one owned I/O thread. See README.md for guarantees.
-mod admission;
-mod disk;
-mod format;
-mod worker;
-
-use admission::Admission;
-use prysm_contract::{
-    ControlError, Failure, OwnerStopped, application::Settings, storage::SettingsRepository,
+//! Settings persisted as one pretty-printed JSON file. See README.md for guarantees.
+use prysm_ports::{Error, Result, Settings, SettingsStore};
+use std::{
+    fs, io,
+    io::Write,
+    path::{Path, PathBuf},
 };
-use serde::{Serialize, de::DeserializeOwned};
-use std::{future::Future, path::PathBuf, sync::Arc, thread::JoinHandle};
-use tokio::sync::oneshot;
-use worker::Request;
 
-pub struct FileSettings<C, O> {
-    pub repository: FileSettingsHandle<Settings<C, O>>,
-    pub owner: FileSettingsOwner,
-    pub shutdown: FileSettingsShutdown,
+/// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
+#[derive(Debug, Clone)]
+pub struct FileSettings {
+    path: PathBuf,
 }
 
-impl<C, O> FileSettings<C, O>
-where
-    C: Serialize + DeserializeOwned + Send + 'static,
-    O: Serialize + DeserializeOwned + Send + 'static,
-{
-    /// Starts an owned worker; the host must retain and run `owner` through shutdown.
-    pub fn new(path: PathBuf) -> Result<Self, ControlError> {
-        Self::open(disk::Store::new(path)?)
+impl FileSettings {
+    /// Nothing is touched until the first `load` or `save`. A relative path
+    /// resolves against the working directory at each call.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 
-    fn open(store: disk::Store) -> Result<Self, ControlError> {
-        let (admission, receiver) = Admission::channel();
-        let shutdown_admission = admission.clone();
-        let shutdown = FileSettingsShutdown {
-            close: Arc::new(move || shutdown_admission.close()),
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn directory(&self) -> &Path {
+        match self.path.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent,
+            _ => Path::new("."),
+        }
+    }
+
+    fn failed(
+        &self,
+        action: &str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Error {
+        Error::adapter(
+            format!("cannot {action} settings file {}", self.path.display()),
+            source,
+        )
+    }
+}
+
+impl SettingsStore for FileSettings {
+    fn load(&mut self) -> Result<Option<Settings>> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(self.failed("read", error)),
         };
-        let (done, finished) = oneshot::channel();
-        let shared = Arc::downgrade(&admission);
-        let join = std::thread::Builder::new()
-            .name("prysm-settings".into())
-            .spawn(move || {
-                let result = worker::run(store, receiver, shared);
-                let _ = done.send(());
-                result
-            })
-            .map_err(|error| ControlError::Adapter(Box::new(error)))?;
-        Ok(Self {
-            repository: FileSettingsHandle { admission },
-            owner: FileSettingsOwner {
-                join: Some(join),
-                finished,
-                shutdown: shutdown.clone(),
-            },
-            shutdown,
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|error| self.failed("parse", error))
+    }
+
+    fn save(&mut self, settings: &Settings) -> Result<()> {
+        let mut bytes =
+            serde_json::to_vec_pretty(settings).map_err(|error| self.failed("encode", error))?;
+        bytes.push(b'\n');
+
+        // Everything before the rename only touches the temporary file, which
+        // is removed on drop; the existing file stays intact.
+        let mut temporary = tempfile::NamedTempFile::new_in(self.directory())
+            .map_err(|error| self.failed("create a temporary file for", error))?;
+        match fs::metadata(&self.path) {
+            Ok(existing) => temporary
+                .as_file()
+                .set_permissions(existing.permissions())
+                .map_err(|error| self.failed("copy permissions of", error))?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(self.failed("inspect", error)),
+        }
+        temporary
+            .write_all(&bytes)
+            .and_then(|()| temporary.as_file().sync_all())
+            .map_err(|error| self.failed("write a temporary file for", error))?;
+
+        // The rename is the commit point.
+        temporary
+            .persist(&self.path)
+            .map_err(|error| self.failed("replace", error.error))?;
+        sync_directory(self.directory()).map_err(|error| {
+            self.failed(
+                "make durable (the new contents were written, but may not survive a crash)",
+                error,
+            )
         })
     }
 }
 
-pub struct FileSettingsHandle<S> {
-    admission: Arc<Admission<S>>,
-}
-impl<S> Clone for FileSettingsHandle<S> {
-    fn clone(&self) -> Self {
-        Self {
-            admission: self.admission.clone(),
-        }
-    }
-}
-impl<S: Send + 'static> FileSettingsHandle<S> {
-    async fn request<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<Result<T, Failure>>) -> Request<S>,
-    ) -> Result<T, ControlError> {
-        let (reply, result) = oneshot::channel();
-        self.admission.send(build(reply))?;
-        result
-            .await
-            .map_err(|_| {
-                ControlError::RecoveryRequired(Box::new(std::io::Error::other(
-                    "settings worker stopped before replying; commit outcome unknown",
-                )))
-            })?
-            .map_err(Into::into)
-    }
-}
-impl<C: Send + 'static, O: Send + 'static> SettingsRepository<Settings<C, O>>
-    for FileSettingsHandle<Settings<C, O>>
-{
-    async fn load(&self) -> Result<Option<Settings<C, O>>, ControlError> {
-        self.request(Request::Load).await
-    }
-    async fn save(&self, settings: Settings<C, O>) -> Result<(), ControlError> {
-        self.request(|reply| Request::Save(settings, reply)).await
-    }
+#[cfg(unix)]
+fn sync_directory(directory: &Path) -> io::Result<()> {
+    fs::File::open(directory)?.sync_all()
 }
 
-/// Synchronously fences admission. Already accepted requests remain owned and drain.
-#[derive(Clone)]
-pub struct FileSettingsShutdown {
-    close: Arc<dyn Fn() + Send + Sync>,
-}
-impl FileSettingsShutdown {
-    pub fn request(&self) {
-        (self.close)();
-    }
-}
-
-pub struct FileSettingsOwner {
-    join: Option<JoinHandle<Result<OwnerStopped, ControlError>>>,
-    finished: oneshot::Receiver<()>,
-    shutdown: FileSettingsShutdown,
-}
-impl FileSettingsOwner {
-    /// Await worker completion before joining. Cancellation falls back to a blocking join.
-    pub async fn run(
-        mut self,
-        shutdown: impl Future<Output = ()> + Send,
-    ) -> Result<OwnerStopped, ControlError> {
-        tokio::pin!(shutdown);
-        tokio::select! {
-            _ = &mut shutdown => {
-                self.shutdown.request();
-                let _ = (&mut self.finished).await;
-            }
-            _ = &mut self.finished => {}
-        }
-        self.shutdown.request();
-        self.join
-            .take()
-            .expect("settings worker joined once")
-            .join()
-            .map_err(|_| {
-                ControlError::RecoveryRequired(Box::new(std::io::Error::other(
-                    "settings worker panicked; commit outcome unknown",
-                )))
-            })?
-    }
-}
-impl Drop for FileSettingsOwner {
-    fn drop(&mut self) {
-        self.shutdown.request();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
+/// Other platforms cannot open a directory for syncing; the rename is still atomic.
+#[cfg(not(unix))]
+fn sync_directory(_: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

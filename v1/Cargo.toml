@@ -1,7 +1,28 @@
 [workspace]
 resolver = "3"
-members = ["crates/contract", "crates/protocol", "crates/flow", "crates/application", "crates/web-portal", "crates/output", "testkit", "assemblies", "tools/export-contracts", "adapters/capture-device", "adapters/capture-webos", "adapters/output-wled", "adapters/output-terminal", "adapters/remote-capture", "adapters/settings-file", "adapters/control-terminal"]
-default-members = ["assemblies"]
+members = [
+    "crates/ports",
+    "crates/runtime",
+    "crates/protocol",
+    "crates/webos-link",
+    "adapters/capture-device",
+    "adapters/capture-remote",
+    "adapters/capture-webos",
+    "adapters/capture-webos-sys",
+    "adapters/output-wled",
+    "adapters/settings-file",
+    "adapters/webos-luna-sys",
+    "surfaces/tui",
+    "surfaces/web-portal",
+    "hosts/common",
+    "hosts/headless",
+    "hosts/tui",
+    "hosts/webos",
+    "hosts/webos-slim",
+    "hosts/webos-service",
+    "tools/export-contracts",
+]
+default-members = ["hosts/headless", "hosts/tui"]
 
 [workspace.package]
 version = "1.0.0-alpha.0"
@@ -10,28 +31,35 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+# Shared with the shipping workspace at the repository root.
 prysm-core = { path = "../crates/common/prysm-core" }
 prysm-processor = { path = "../crates/processing/prysm-processor" }
-prysm-contract = { path = "crates/contract" }
+# Runtime
+prysm-ports = { path = "crates/ports" }
+prysm-runtime = { path = "crates/runtime" }
 prysm-protocol = { path = "crates/protocol" }
-prysm-flow = { path = "crates/flow" }
-prysm-application = { path = "crates/application" }
-prysm-web-portal = { path = "crates/web-portal" }
-prysm-testkit = { path = "testkit" }
+prysm-webos-link = { path = "crates/webos-link" }
+# Adapters
 prysm-capture-device = { path = "adapters/capture-device" }
+prysm-capture-remote = { path = "adapters/capture-remote" }
 prysm-capture-webos = { path = "adapters/capture-webos" }
+prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }
 prysm-output-wled = { path = "adapters/output-wled" }
-prysm-output = { path = "crates/output" }
-prysm-output-terminal = { path = "adapters/output-terminal" }
-prysm-remote-capture = { path = "adapters/remote-capture" }
 prysm-settings-file = { path = "adapters/settings-file" }
-prysm-control-terminal = { path = "adapters/control-terminal" }
-tempfile = "3.27"
+# Surfaces and hosts
+prysm-surface-tui = { path = "surfaces/tui" }
+prysm-web-portal = { path = "surfaces/web-portal" }
+prysm-host = { path = "hosts/common" }
+# External
 futures = "0.3"
-thiserror = "2"
-tokio = { version = "1", features = ["rt", "macros", "sync"] }
+libloading = "0.9"
+nix = "0.31"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+signal-hook = "0.3"
+tempfile = "3.27"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
 utoipa = "6"
 
 [workspace.lints.rust]

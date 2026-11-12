@@ -1,62 +1,62 @@
-import { createApplicationRuntime } from '@prysm/application-state';
 /* eslint-disable @typescript-eslint/require-await -- Fixtures implement async ports without I/O; thrown errors must reject promises. */
+import { createApplicationRuntime } from '@prysm/application-state';
 import {
   ApplicationError,
   type ApplicationClient,
   type ApplicationSnapshot,
-  type ApplicationUpdate,
-  type OperationId,
-  type OperationStatus,
+  type Failure,
 } from '@prysm/application-client';
 
-export function fakeApplicationPort<C, O>(
-  initial: Pick<ApplicationSnapshot<C, O>, 'capture' | 'output' | 'revision'>,
-  instance = '1',
-) {
+export const defaultProcessing = {
+  brightness_percent: 100,
+  shadow_lift_percent: 0,
+  smoothing_seconds: 0,
+  sample_density: 1,
+  spatial_reach_percent: 10,
+  remove_black_bars: false,
+};
+
+/**
+ * In-memory application: revision checks, immediate state updates and
+ * scriptable failures. No hardware, persistence, network or engine timing.
+ */
+export function fakeApplicationPort<C, O>(initial: {
+  capture?: C;
+  output?: O;
+  revision?: number;
+}) {
   let snapshot: ApplicationSnapshot<C, O> = {
-    ...initial,
-    cursor: { instance, sequence: '0' },
     target: 'off',
+    session: { state: 'stopped' },
+    settings: {
+      ...(initial.capture === undefined ? {} : { capture: initial.capture }),
+      ...(initial.output === undefined ? {} : { output: initial.output }),
+      processing: defaultProcessing,
+    },
+    revision: initial.revision ?? 0,
+    failure: null,
+    surface_failures: [],
   };
-  const operations = new Map<string, OperationStatus>();
-  const subscribers = new Set<(value: ApplicationUpdate<C, O>) => void>();
+  const subscribers = new Set<(value: ApplicationSnapshot<C, O>) => void>();
   const calls: string[] = [];
-  const key = (id: OperationId) => `${id.instance}/${id.request}`;
-  function accept(
-    id: OperationId,
-    change: Partial<ApplicationSnapshot<C, O>>,
-    expected?: string,
-  ) {
-    if (id.instance === instance && operations.has(key(id)))
-      return { operation: id };
-    if (
-      id.instance !== instance ||
-      (expected !== undefined && expected !== snapshot.revision)
-    ) {
-      throw new ApplicationError({
-        kind: 'rejected',
-        message: 'Settings revision or application instance conflict.',
-      });
-    }
-    snapshot = {
-      ...snapshot,
-      ...change,
-      cursor: {
-        instance,
-        sequence: (BigInt(snapshot.cursor.sequence) + 1n).toString(),
-      },
-    };
-    operations.set(key(id), { kind: 'succeeded' });
-    for (const changed of subscribers) changed({ kind: 'snapshot', snapshot });
-    return { operation: id };
+  /** The next command fails with this instead of running. */
+  let nextFailure: Failure | null = null;
+  function publish(change: Partial<ApplicationSnapshot<C, O>>) {
+    snapshot = { ...snapshot, ...change };
+    for (const changed of subscribers) changed(snapshot);
+  }
+  function failIfScripted() {
+    const failure = nextFailure;
+    nextFailure = null;
+    if (failure) throw new ApplicationError(failure);
   }
   const client: ApplicationClient<C, O> = {
     observe: async (signal) => {
       calls.push('observe');
-      const queue: ApplicationUpdate<C, O>[] = [];
+      const queue: ApplicationSnapshot<C, O>[] = [];
       let wake: (() => void) | undefined;
       let closed = false;
-      const push = (value: ApplicationUpdate<C, O>) => {
+      const push = (value: ApplicationSnapshot<C, O>) => {
         queue.push(value);
         wake?.();
       };
@@ -86,61 +86,43 @@ export function fakeApplicationPort<C, O>(
         })(),
       };
     },
-    configureCapture: async ({ id, expected, settings }) => {
-      calls.push('configureCapture');
-      return accept(
-        id,
-        { capture: settings, revision: (BigInt(expected) + 1n).toString() },
-        expected,
-      );
+    replaceSettings: async (expected, settings) => {
+      calls.push('replaceSettings');
+      failIfScripted();
+      if (expected !== snapshot.revision)
+        throw new ApplicationError({
+          kind: 'stale_revision',
+          message: `settings revision ${expected} is stale; current is ${snapshot.revision}`,
+          current: snapshot.revision,
+        });
+      publish({ settings, revision: snapshot.revision + 1 });
+      return snapshot.revision;
     },
-    configureOutput: async ({ id, expected, settings }) => {
-      calls.push('configureOutput');
-      return accept(
-        id,
-        { output: settings, revision: (BigInt(expected) + 1n).toString() },
-        expected,
-      );
-    },
-    setTarget: async ({ id, target }) => {
+    setTarget: async (target) => {
       calls.push(`target:${target}`);
-      return accept(id, { target });
-    },
-    operation: async (id) => {
-      const result = operations.get(key(id));
-      if (!result) throw new ApplicationError({ kind: 'unknown_operation' });
-      return result;
-    },
-    calibration: {
-      open: async () => {
-        calls.push('calibration:open');
-        return {
-          session: 'fixture-private-session',
-          pairing: 'fixture-private-pairing',
-          pattern: { id: 'fixture-gray' },
-        };
-      },
-      feedback: async ({ playback }) => {
-        calls.push(`calibration:${playback.kind}`);
-      },
-      close: async () => {
-        calls.push('calibration:close');
-      },
+      failIfScripted();
+      publish({
+        target,
+        session: { state: target === 'processed' ? 'running' : 'stopped' },
+      });
     },
   };
   return {
     client,
     calls,
     snapshot: () => snapshot,
-    resync: () => {
-      for (const changed of subscribers) changed({ kind: 'resync_required' });
+    /** Simulate another client or the engine changing state. */
+    publish,
+    failNext: (failure: Failure) => {
+      nextFailure = failure;
     },
   };
 }
 
-/** In-memory fixture; no hardware validation, persistence, network or coordinator scheduler. */
-export function fakeApplication<C, O>(
-  initial: Pick<ApplicationSnapshot<C, O>, 'capture' | 'output' | 'revision'>,
-) {
+export function fakeApplication<C, O>(initial: {
+  capture?: C;
+  output?: O;
+  revision?: number;
+}) {
   return createApplicationRuntime(fakeApplicationPort(initial).client);
 }

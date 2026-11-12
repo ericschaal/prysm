@@ -1,0 +1,19 @@
+[package]
+name = "prysm-webos-luna-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "LG webOS Luna service bus (LS2) and GLib main loop FFI behind a safe service API"
+
+[dependencies]
+libloading.workspace = true
+thiserror.workspace = true
+
+# One of the two v1 crates allowed to use `unsafe`. Every block carries a SAFETY note.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

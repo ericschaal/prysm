@@ -50,6 +50,32 @@
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/protocol/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/tools/export-contracts/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/webos-luna-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/ports/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/webos-link/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/common/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/headless/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/headless/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/tui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/tui/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-service/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-service/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-slim/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-slim/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/tui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/v1/target" />
     </content>

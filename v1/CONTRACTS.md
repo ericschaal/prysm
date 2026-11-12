@@ -1,109 +1,88 @@
 # Contract ownership and generation
 
-This is the contract architecture for review. Library-owned schemas, host selection,
-generic TypeScript generation and drift checks are implemented. Complete HTTP
-commands and observations are not yet defined.
+Rust owns every value the frontend exchanges with Prysm. The frontend's types
+are generated from OpenAPI documents the Rust exporter prints.
 
-## Start here
-
-| Owner | Public schema declaration | Frontend import |
+| Owner | Declares | Frontend import |
 | --- | --- | --- |
-| Application wire contracts (`prysm-protocol`) | [Shared roots](crates/protocol/src/schema.rs) | `@prysm/contracts/application` |
-| Video device capture | [Device roots](adapters/capture-device/src/schema.rs) | `@prysm/contracts/device` |
-| Remote capture | [Remote roots](adapters/remote-capture/src/schema.rs) | `@prysm/contracts/remote-capture` |
-| webOS capture | [webOS roots](adapters/capture-webos/src/schema.rs) | `@prysm/contracts/webos` |
-| WLED output | [WLED roots](adapters/output-wled/src/schema.rs) | `@prysm/contracts/wled` |
-| Host composition | [Server/webOS assembly and export manifest](assemblies/src/contracts.rs) | `@prysm/contracts/host-server`, `/host-webos` |
+| `prysm-ports` | `Settings`, `Processing`, `AdapterSettings`, `LightingTarget`, `Revision` and their serde shape (the settings file format). No OpenAPI dependency. | — |
+| [`prysm-protocol`](crates/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](crates/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
+| Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null) |
+| [`prysm-export-contracts`](tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures | Module names |
 
-`prysm-contract` owns domain ports and models, with no Serde, JSON or OpenAPI
-dependency. `prysm-protocol` owns application wire values, UI projections, shared
-serialization helpers and optional OpenAPI roots. Explicit conversions connect
-those values to domain types; local error sources never enter the wire format.
+Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
+`prysm-protocol` describes them with schema-only mirrors, and its tests keep each
+mirror's serde shape equal to the ports type, so ports stays free of OpenAPI.
 
-The adapter crates own their actual settings types, not copies for codegen.
-Their `wire` feature enables Serde; `schema` adds utoipa. Capture adapters reuse
-protocol helpers for core resolution values. Ordinary application traits acquire
-no serialization bounds.
+## Adapter settings schemas
 
-Each library exposes the same plain function, under its optional schema feature:
+Settings sections are `{ "kind": "...", ...fields }` and are decoded by the
+engine's registry. In the `application` document `CaptureSettings` and
+`OutputSettings` are open objects with a string `kind`; a host document types
+them.
+
+An adapter that wants a typed panel provides, behind its own optional `schema`
+feature (`utoipa = { workspace = true, optional = true }`), a
+`utoipa::ToSchema` for its factory's `Settings` that describes exactly the
+serde shape:
+
+- the adapter's fields only; the hook adds `kind` from the factory's `KIND`;
+- fields serde defaults are not `required` (give their `default`);
+- `deny_unknown_fields` as `additionalProperties: false`;
+- non-JSON types as their serialized form (`IpAddr`, `SocketAddr` as strings,
+  via `schema(value_type = String)`);
+- the per-field ranges `validate` enforces (`minimum`, `maximum`,
+  `min_length`); cross-field rules stay in `validate`.
+
+Each adapter tests, with the feature on, that the schema's properties and
+`required` set match what serde writes and accepts for a representative value
+(see `schema_tests` in
+[`output-wled`](adapters/output-wled/src/settings.rs)). `NullSettings`
+(`prysm-runtime`, feature `schema`) is an object with no fields.
+
+### Host documents
+
+[`export-contracts`](tools/export-contracts/src/main.rs) depends on the
+adapters with `schema` enabled and adds one document per set of hosts that
+register the same kinds, listing the same factories the hosts register:
 
 ```rust,ignore
-pub fn document() -> utoipa::openapi::OpenApi
+("host-desktop", Contract::new("Prysm desktop host")   // headless and tui
+    .source::<DeviceSource>()
+    .source::<RemoteReceiver>()
+    .output::<Wled>()
+    .output::<NullOutput>()
+    .document()?)
 ```
 
-Its local `#[derive(OpenApi)]` declaration lists its public root types. Adding
-settings, commands, errors or observations means registering roots in their
-owning library. Referenced types follow the schema graph. Internal traits,
-task handles, frame buffers and private credentials are not automatically exported.
+`CaptureSettings` becomes a `oneOf` of the registered, kind-tagged schemas, each
+under the settings type's own name (`DeviceSettings`, `WledSettings`, ...).
+Two different schemas with one name are rejected (`SchemaConflict`). The TV
+hosts will get a second entry, `host-webos`, registering the `webos` source once
+that adapter provides a schema; until then its panel declares its section type
+by hand. The exporter also writes a fixture of each registered section, so the
+frontend tests validate a real Rust serialization against every variant.
 
-## Hosts own composition
+Panels import their section type from the host document
+(`import type { WledSettings } from '@prysm/contracts/host-desktop'`).
 
-The server host combines shared, video device capture, remote capture and WLED documents,
-plus its own [source selection](assemblies/src/server_capture.rs). The webOS
-host combines shared, webOS capture and WLED documents. Each library document is
-also exported independently, allowing adapter UI packages to import their own
-types without depending on a host. Host frontend entry points consume the combined
-host document, so their panel composition is checked against that selected surface.
-
-`documents()` in the host assembly assigns stable package subpaths to documents.
-It names libraries and hosts, never individual Rust types. This is intentional
-host wiring, not a runtime registry or automatic plugin discovery.
-
-Composition accepts identical repeated schema definitions and rejects conflicting
-definitions with the same name. Public schema names must therefore be unique or
-identical within a host. Current documents contain only schemas; the composer
-rejects HTTP routes instead of pretending to assemble a complete HTTP API.
-
-## The generator knows no adapters
+## Generation
 
 ```mermaid
 flowchart LR
-    Libraries[Library schema functions] --> Hosts[Host selection and document manifest]
-    Hosts --> Exporter[Standalone Rust exporter]
-    Exporter --> Generator[Generic openapi-typescript generation]
-    Generator --> Types[Generated package subpaths]
-    Types --> Frontends[Host frontend bundles]
-    Frontends --> Binaries[Rust host asset embedding]
+    Protocol[prysm-protocol roots and hook] --> Exporter[export-contracts]
+    Adapters[Adapter ToSchema impls] -.-> Exporter
+    Exporter --> Generator[codegen.mjs: openapi-typescript]
+    Generator --> Types[packages/contracts/generated]
+    Types --> Bundles[Frontend bundles] --> Hosts[Rust hosts embed assets]
 ```
 
-The [exporter](tools/export-contracts/src/main.rs) serializes the manifest. The
-[generator](frontend/scripts/codegen.mjs) translates each named document, using
-`openapi-typescript`'s root-type exports. It contains no type-name mapping and no
-adapter-specific branches. The npm package uses a wildcard export; introducing
-a module does not require another package export entry.
+The [generator](frontend/scripts/codegen.mjs) translates each named document
+mechanically; it has no type mappings or adapter branches. Generated files are
+checked in; `codegen:check` fails on missing, changed or obsolete files without
+writing. `fixtures.json` holds actual Rust serializations of every root, which
+the [contract tests](frontend/tests/contracts.test.mjs) validate against the
+generated schemas.
 
-Generated files are grouped per document, rather than all pointing into one
-global schema file. Check them into source control. Drift checking compares
-fresh generation without writing and detects missing, changed and obsolete files.
-CI runs it before the build, which regenerates intentionally.
-
-Serialization samples in the exporter's `fixtures.rs` are regression-test input,
-not the list of exported contracts. Adding a type to a library's public roots is
-sufficient for generation; add samples/tests when its wire behavior needs proof.
-
-## Extending the surface
-
-- **New type in an existing library:** define its Rust wire representation, add it
-  to that library's public roots, run codegen, and import its generated type. No
-  generator or package-export edit is required.
-- **New library:** give it a schema document, select it in the appropriate host,
-  and register its module in the host export manifest. The generator is unchanged.
-- **Generic application API:** define its wire contract in its owning library and
-  register concrete instantiations in the host. A test demonstrates generic schema
-  specialization without changes to the composer or generator. Actual command and
-  snapshot specialization will follow once those wire representations are reviewed.
-
-## Guarantees and current limits
-
-Tests prove independent library exports, host selection, conflict rejection,
-generic specialization, automatic exports for an unfamiliar multi-type library,
-schema/serialization agreement and non-writing drift checks. TypeScript checks
-the host panels against generated types; Rust keeps semantic input validation.
-
-Adapter settings, shared capabilities, UI snapshot/configuration projections,
-instance-scoped IDs, operation outcomes and private presentation messages are now
-registered. The TV platform surface has its own document. See the
-[UI assembly guide](UI-ASSEMBLIES.md) for their use. Full processing/profile state,
-event coverage, calibration workflow and preview transport remain to be defined. No HTTP paths or runnable network client are implied by
-these documents. Adding them should extend library/host declarations, not the
-mechanical generator.
+The documents contain schemas only. Routes, status codes and limits are in the
+[portal HTTP contract](surfaces/web-portal/HTTP-CONTRACT.md).

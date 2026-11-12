@@ -1,0 +1,17 @@
+[package]
+name = "prysm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Process concerns shared by the desktop hosts: arguments, portal, signals, status"
+
+[dependencies]
+prysm-ports.workspace = true
+prysm-runtime.workspace = true
+prysm-web-portal.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["rt", "signal"] }
+
+[lints]
+workspace = true

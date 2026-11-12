@@ -1,8 +1,14 @@
 import type { SettingsPanelProps } from '@prysm/web-portal';
 
-import type { TvCaptureSettings as WebosCaptureConfig } from '@prysm/contracts/webos';
+/**
+ * Provisional webOS capture settings under kind `webos`, written by hand: the
+ * adapter is unfinished; use `host-webos`'s generated type once it has a schema.
+ */
+export interface WebosCaptureConfig {
+  kind: 'webos';
+  fps: number;
+}
 
-/** Minimal composition panel; native resolution controls remain deferred. */
 export function WebosCaptureSettings({
   settings,
   disabled,
@@ -13,11 +19,8 @@ export function WebosCaptureSettings({
       key={JSON.stringify(settings)}
       onSubmit={(event) => {
         event.preventDefault();
-        const data = new FormData(event.currentTarget);
-        void onSubmit({
-          resolution: settings?.resolution ?? [320, 180],
-          rate: Number(data.get('rate')),
-        });
+        const fps = Number(new FormData(event.currentTarget).get('fps'));
+        void onSubmit({ ...settings, kind: 'webos', fps });
       }}
     >
       <h2>webOS capture</h2>
@@ -26,13 +29,13 @@ export function WebosCaptureSettings({
         <label>
           Frames per second{' '}
           <input
-            name="rate"
+            name="fps"
             type="number"
             min="1"
             max="120"
             step="1"
             required
-            defaultValue={settings?.rate ?? 30}
+            defaultValue={settings?.fps ?? 30}
           />
         </label>
         <button type="submit">Save capture settings</button>

@@ -57,6 +57,8 @@ export async function renderDocuments(documents) {
           rootTypes: true,
           rootTypesNoSchemaPrefix: true,
           rootTypesKeepCasing: true,
+          // Settings are request bodies: a field serde defaults may be omitted.
+          defaultNonNullable: false,
         }),
       );
   }

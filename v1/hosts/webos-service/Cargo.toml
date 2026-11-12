@@ -1,0 +1,32 @@
+[package]
+name = "prysm-webos-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The TV supervisor: Luna service, power and video gating, worker lifecycle, setup"
+
+# One library, two thin binaries: each package ships the one whose names and
+# worker match it.
+[[bin]]
+name = "prysm-webos-service"
+path = "src/bin/prysm-webos-service.rs"
+
+[[bin]]
+name = "prysm-webos-slim-service"
+path = "src/bin/prysm-webos-slim-service.rs"
+
+[dependencies]
+prysm-webos-link.workspace = true
+prysm-webos-luna-sys.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+signal-hook.workspace = true
+tempfile.workspace = true
+nix = { workspace = true, features = ["fs", "signal", "user"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -33,51 +33,37 @@ const validate = (name) => {
   return ajv.compile({ ...document, $ref: `#/components/schemas/${name}` });
 };
 
-test('generated schemas accept actual Rust serialization for every adapter variant', () => {
+test('generated schemas accept actual Rust serialization of every wire root', () => {
+  assert(Object.keys(fixtures).length >= 5);
   for (const [name, examples] of Object.entries(fixtures)) {
     const check = validate(name);
     for (const example of examples)
-      assert(check(example), JSON.stringify(check.errors));
+      assert(check(example), `${name}: ${JSON.stringify(check.errors)}`);
   }
 });
 
-test('schemas reject wrong variants, invalid resolution/rate and wrong LED tuple length', () => {
-  const device = fixtures.DeviceCaptureSettings[0];
-  const tv = fixtures.TvCaptureSettings[0];
-  const output = fixtures.WledSettings[0];
+test('schemas reject unknown targets, untagged sections and incomplete failures', () => {
+  const state = fixtures.State[1];
+  assert.equal(validate('State')({ ...state, target: 'on' }), false);
+  assert.equal(validate('State')({ ...state, revision: '7' }), false);
   assert.equal(
-    validate('DeviceCaptureSettings')({ ...device, source: 'remote' }),
+    validate('State')({ ...state, session: { state: 'faulted' } }),
     false,
   );
   assert.equal(
-    validate('DeviceCaptureSettings')({
-      ...device,
-      path: undefined,
-      peer: '127.0.0.1:9000',
+    validate('Settings')({ ...state.settings, capture: { path: '/dev/video0' } }),
+    false,
+  );
+  assert.equal(validate('Settings')({ ...state.settings, profiles: [] }), false);
+  assert.equal(
+    validate('Settings')({
+      ...state.settings,
+      processing: { ...state.settings.processing, brightness_percent: 101 },
     }),
     false,
   );
-  assert.equal(
-    validate('RemoteCaptureSettings')({ peer: '127.0.0.1:9000', rate: 30 }),
-    false,
-  );
-  assert.equal(
-    validate('ServerCaptureSettings')({ adapter: 'remote', settings: device }),
-    false,
-  );
-  for (const resolution of [[0, 180], [3841, 180], [320, 2161], [320]]) {
-    assert.equal(validate('TvCaptureSettings')({ ...tv, resolution }), false);
-  }
-  assert.equal(validate('TvCaptureSettings')({ ...tv, rate: 0 }), false);
-  assert.equal(
-    validate('TvCaptureSettings')({ ...tv, rate: 4294967296 }),
-    false,
-  );
-  assert.equal(validate('WledSettings')({ ...output, leds: [1, 2, 3] }), false);
-  assert.equal(
-    validate('WledSettings')({ ...output, leds: [1, 2, 3, 4294967296] }),
-    false,
-  );
+  assert.equal(validate('Failure')({ kind: 'invalid' }), false);
+  assert.equal(validate('TargetRequest')({ target: 'off', id: 1 }), false);
 });
 
 test('drift checks fail without writing; generation repairs missing, changed and obsolete artifacts', async () => {

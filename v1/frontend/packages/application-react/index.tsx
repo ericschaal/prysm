@@ -8,3 +8,7 @@ export function useApplication<C, O>(application: ApplicationRuntime<C, O>) {
 export function useApplicationDispatch<C, O>() {
   return useDispatch<ApplicationRuntime<C, O>['store']['dispatch']>();
 }
+
+export function useLastCommand<C, O>(application: ApplicationRuntime<C, O>) {
+  return useSelector(application.selectors.selectLastCommand);
+}

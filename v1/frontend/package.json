@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run codegen && npm run typecheck && node scripts/build.mjs",
     "test": "npm run build && node --test tests/contracts.test.mjs && vite build --ssr tests/composition.test.jsx --outDir .test && node --test .test/composition.test.js",
-    "dev:server": "npm run codegen && vite hosts/server/web-portal --host 127.0.0.1",
+    "dev:headless": "npm run codegen && vite hosts/headless/web-portal --host 127.0.0.1",
     "dev:webos": "npm run codegen && vite hosts/webos/tv-ui --host 127.0.0.1",
     "codegen": "node scripts/codegen.mjs",
     "codegen:check": "node scripts/codegen.mjs --check",

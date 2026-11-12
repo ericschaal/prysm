@@ -1,630 +1,389 @@
 use super::*;
-use backend::{Completion, Run};
-use futures::{FutureExt, StreamExt};
-use prysm_contract::{Failure, FailureKind, identity::StreamEpoch, observation::Update};
+use crate::source::{Deadlines, DeviceFrames, Native};
+use futures::FutureExt;
+use prysm_capture::{CaptureError, CaptureExit};
 use prysm_core::{Frame, PixelFormat};
-use std::{num::NonZeroU64, time::Duration};
-use tokio::{sync::watch, task::JoinHandle};
+use prysm_ports::{AdapterSettings, Error, Registry, Settings};
+use std::error::Error as _;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-mod integration;
+const LIMIT: Duration = Duration::from_secs(5);
+const SHORT: Duration = Duration::from_millis(50);
+const TEST: Deadlines = Deadlines {
+    ready: LIMIT,
+    release: LIMIT,
+};
 
-const INSTANCE: InstanceId = InstanceId(NonZeroU64::MIN);
-fn session(sequence: u64) -> SessionId {
-    SessionId {
-        instance: INSTANCE,
-        sequence: NonZeroU64::new(sequence).unwrap(),
-    }
-}
-fn settings() -> DeviceCaptureSettings {
-    DeviceCaptureSettings::Device {
-        path: "fixture-device".into(),
-        resolution: CaptureResolution::new(8, 4).unwrap(),
-        rate: NonZeroU32::new(30).unwrap(),
-    }
-}
 fn frame(value: u8) -> Frame {
     Frame::fill(value, 8, 4, PixelFormat::RGB24).unwrap()
 }
-async fn within<T>(future: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(5), future)
-        .await
+
+/// Run `work` on its own thread; fail the test instead of hanging.
+fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (done, result) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(work());
+    });
+    result
+        .recv_timeout(LIMIT)
         .expect("capture made no progress")
 }
-struct Native {
+
+fn eventually(condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + LIMIT;
+    while !condition() {
+        assert!(Instant::now() < deadline, "condition not reached");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The native worker's side of the seam.
+struct Worker {
     ready: Option<oneshot::Sender<()>>,
     frames: watch::Sender<Option<Frame>>,
-    stop: CancellationToken,
-    finished: oneshot::Sender<Completion>,
+    cancel: CancellationToken,
+    exit: oneshot::Sender<Result<CaptureExit, CaptureError>>,
 }
-impl Native {
+
+impl Worker {
     fn ready(&mut self) {
         self.ready.take().unwrap().send(()).unwrap();
     }
-    fn finish(self) {
-        self.finished
-            .send(Completion {
-                failure: None,
-                cleanup_complete: true,
-            })
-            .ok()
-            .unwrap();
+
+    /// The worker returns: frames and readiness close, then the join resolves.
+    fn exit(self, joined: Result<CaptureExit, CaptureError>) {
+        let Self { exit, .. } = self;
+        let _ = exit.send(joined);
     }
-    fn fail(self, cleanup_complete: bool) {
-        self.finished
-            .send(Completion {
-                failure: Some(Failure::new(
-                    if cleanup_complete {
-                        FailureKind::Adapter
-                    } else {
-                        FailureKind::RecoveryRequired
-                    },
-                    "native failure",
-                )),
-                cleanup_complete,
-            })
-            .ok()
-            .unwrap();
+
+    fn released(self) {
+        self.exit(Ok(CaptureExit { failure: None }));
     }
-}
-fn factory() -> (
-    impl FnMut(&DeviceCaptureSettings) -> Result<Run, ControlError> + Send,
-    mpsc::UnboundedReceiver<Native>,
-) {
-    let (opened, receiver) = mpsc::unbounded_channel();
-    (
-        move |_: &DeviceCaptureSettings| {
-            let (ready, readiness) = oneshot::channel();
-            let (frames, receiver) = watch::channel(None);
-            let (finished, completion) = oneshot::channel();
-            let stop = CancellationToken::new();
-            opened
-                .send(Native {
-                    ready: Some(ready),
-                    frames,
-                    stop: stop.clone(),
-                    finished,
-                })
-                .ok()
-                .unwrap();
-            Ok(Run {
-                ready: readiness,
-                frames: receiver,
-                stop,
-                finished: async move { completion.await.unwrap() }.boxed(),
-            })
-        },
-        receiver,
-    )
-}
-struct Running {
-    control: DeviceHandle,
-    frames: DeviceFrames,
-    opened: mpsc::UnboundedReceiver<Native>,
-    shutdown: oneshot::Sender<()>,
-    owner: JoinHandle<Result<OwnerStopped, ControlError>>,
-}
-impl Running {
-    fn new() -> Self {
-        let capture = DeviceCapture::new(INSTANCE);
-        let (open, opened) = factory();
-        let (shutdown, stopped) = oneshot::channel();
-        let owner = tokio::spawn(owner::run(
-            capture.owner,
-            async {
-                let _ = stopped.await;
-            },
-            open,
-        ));
-        Self {
-            control: capture.control,
-            frames: capture.frames,
-            opened,
-            shutdown,
-            owner,
-        }
+
+    fn wait_cancelled(&self) {
+        eventually(|| self.cancel.is_cancelled());
     }
-    fn start(&self, sequence: u64) -> JoinHandle<Result<CaptureStarted, ControlError>> {
-        let control = self.control.clone();
-        tokio::spawn(async move {
-            control
-                .start(CaptureStart {
-                    session: session(sequence),
-                    settings: settings(),
-                })
-                .await
-        })
-    }
-    fn stop(&self, sequence: u64) -> JoinHandle<Result<CaptureStopped, ControlError>> {
-        let control = self.control.clone();
-        tokio::spawn(async move { control.stop(session(sequence)).await })
-    }
-    async fn open(&mut self, sequence: u64) -> Native {
-        let started = self.start(sequence);
-        let mut native = within(self.opened.recv()).await.unwrap();
-        native.ready();
-        assert_eq!(
-            within(started).await.unwrap().unwrap().session,
-            session(sequence)
-        );
-        native
-    }
-    async fn stop_native(&self, native: Native, sequence: u64) {
-        let stopped = self.stop(sequence);
-        within(native.stop.cancelled()).await;
-        native.finish();
-        assert_eq!(
-            within(stopped).await.unwrap().unwrap().session,
-            session(sequence)
-        );
-    }
-    async fn close(self) {
-        self.shutdown.send(()).unwrap();
-        assert_eq!(within(self.owner).await.unwrap().unwrap(), OwnerStopped);
-    }
-}
-async fn state(control: &DeviceHandle, predicate: impl Fn(&CaptureState) -> bool) -> CaptureState {
-    within(async {
-        let mut observation = control.observe().await.unwrap();
-        if predicate(&observation.initial.state) {
-            return observation.initial.state;
-        }
-        while let Some(update) = observation.updates.next().await {
-            if let Update::Snapshot(snapshot) = update.unwrap()
-                && predicate(&snapshot.state)
-            {
-                return snapshot.state;
-            }
-        }
-        panic!("observation ended")
-    })
-    .await
 }
 
-#[tokio::test]
-async fn validation_and_foreign_commands_never_open_a_device() {
-    let mut capture = Running::new();
-    let bad = DeviceCaptureSettings::File {
-        path: "file.mp4".into(),
-        resolution: CaptureResolution::new(8, 4).unwrap(),
-        rate: NonZeroU32::MIN,
+fn native() -> (Native, Worker) {
+    let (ready, ready_rx) = oneshot::channel();
+    let (frames, frames_rx) = watch::channel(None);
+    let (exit, exit_rx) = oneshot::channel();
+    let cancel = CancellationToken::new();
+    let native = Native {
+        ready: ready_rx,
+        frames: frames_rx,
+        cancel: cancel.clone(),
+        join: async move { exit_rx.await.expect("worker exit was reported") }.boxed(),
     };
-    assert!(capture.control.validate(&bad).is_err());
-    assert!(
-        capture
-            .control
-            .start(CaptureStart {
-                session: session(1),
-                settings: bad
-            })
-            .await
-            .is_err()
-    );
-    let mut foreign = session(1);
-    foreign.instance = InstanceId(NonZeroU64::new(2).unwrap());
-    assert!(
-        capture
-            .control
-            .start(CaptureStart {
-                session: foreign,
-                settings: settings()
-            })
-            .await
-            .is_err()
-    );
-    assert!(capture.control.stop(foreign).await.is_err());
-    assert!(capture.opened.try_recv().is_err());
-    assert!(
-        tokio::time::timeout(Duration::from_millis(5), capture.frames.next_frame())
-            .await
-            .is_err()
-    );
-    capture.close().await;
+    let worker = Worker {
+        ready: Some(ready),
+        frames,
+        cancel,
+        exit,
+    };
+    (native, worker)
 }
 
-#[tokio::test]
-async fn readiness_is_separate_from_frames_and_delivery_is_latest_only() {
-    let mut capture = Running::new();
-    let native = capture.open(1).await;
-    assert!(matches!(
-        capture.control.observe().await.unwrap().initial.state,
-        CaptureState::Waiting {
-            epoch: StreamEpoch { generation: 0, .. },
-            ..
-        }
-    ));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(5), capture.frames.next_frame())
-            .await
-            .is_err()
-    );
-    for value in 0..100 {
-        native.frames.send(Some(frame(value))).unwrap();
-    }
-    let latest = within(capture.frames.next_frame()).await.unwrap().unwrap();
-    assert_eq!(latest.frame.as_slice(), &[99; 96]);
-    assert_eq!(
-        latest.stamp.epoch,
-        StreamEpoch {
-            session: session(1),
-            generation: 1
-        }
-    );
-    capture.stop_native(native, 1).await;
-    assert!(
-        tokio::time::timeout(Duration::from_millis(5), capture.frames.next_frame())
-            .await
-            .is_err()
-    );
-    capture.close().await;
-}
-
-#[tokio::test]
-async fn stop_during_open_retains_cleanup_and_fences_late_readiness_and_frames() {
-    let mut capture = Running::new();
-    let started = capture.start(1);
-    let mut native = within(capture.opened.recv()).await.unwrap();
-    let stopped = capture.stop(1);
-    within(native.stop.cancelled()).await;
-    assert_eq!(
-        within(started).await.unwrap().unwrap_err().kind(),
-        FailureKind::Interrupted
-    );
-    assert!(!stopped.is_finished());
-    assert!(matches!(
-        capture.control.stop(session(1)).await,
-        Err(ControlError::CleanupPending(_))
-    ));
-    assert!(within(capture.start(2)).await.unwrap().is_err());
-    native.ready();
-    native.frames.send(Some(frame(255))).unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(5), capture.frames.next_frame())
-            .await
-            .is_err()
-    );
-    assert!(matches!(
-        capture.control.observe().await.unwrap().initial.state,
-        CaptureState::Stopping(_)
-    ));
-    native.finish();
-    within(stopped).await.unwrap().unwrap();
-    assert!(within(capture.start(1)).await.unwrap().is_err());
-    let native = capture.open(2).await;
-    capture.stop_native(native, 2).await;
-    capture.close().await;
-}
-
-#[tokio::test(start_paused = true)]
-async fn silence_and_resumption_advance_epochs_and_clear_pending_frames() {
-    let mut capture = Running::new();
-    let native = capture.open(1).await;
-    native.frames.send(Some(frame(1))).unwrap();
-    state(&capture.control, |s| {
-        matches!(s, CaptureState::Available(_))
-    })
-    .await;
-    tokio::time::advance(Duration::from_secs(2)).await;
-    state(&capture.control, |s| {
-        matches!(
-            s,
-            CaptureState::Waiting {
-                epoch: StreamEpoch { generation: 2, .. },
-                ..
-            }
-        )
-    })
-    .await;
-    assert!(futures::poll!(Box::pin(capture.frames.next_frame())).is_pending());
-    native.frames.send(Some(frame(0))).unwrap();
-    let resumed = within(capture.frames.next_frame()).await.unwrap().unwrap();
-    assert_eq!(resumed.stamp.epoch.generation, 3);
-    assert_eq!(resumed.frame.as_slice(), &[0; 96]); // Black is valid capture content.
-    capture.stop_native(native, 1).await;
-    capture.close().await;
-}
-
-#[tokio::test]
-async fn failed_open_with_proven_release_allows_a_fresh_session() {
-    let mut capture = Running::new();
-    let started = capture.start(1);
-    let native = within(capture.opened.recv()).await.unwrap();
-    native.fail(true);
-    assert_eq!(
-        within(started).await.unwrap().unwrap_err().kind(),
-        FailureKind::Adapter
-    );
-    assert!(matches!(
-        capture.control.observe().await.unwrap().initial.state,
-        CaptureState::Failed {
-            cleanup_complete: true,
-            ..
-        }
-    ));
-    capture.control.stop(session(1)).await.unwrap();
-    let native = capture.open(2).await;
-    capture.stop_native(native, 2).await;
-    capture.close().await;
-}
-
-#[tokio::test(start_paused = true)]
-async fn overdue_silence_precedes_a_frame_queued_while_owner_was_not_polled() {
-    let (mut open, mut opened) = factory();
-    let run = open(&settings()).unwrap();
-    let mut native = opened.recv().await.unwrap();
-    let mailbox = Arc::new(Mailbox::new(INSTANCE));
-    let (reply, started) = oneshot::channel();
-    let mut active = crate::session::Session::new(
-        session(1),
-        NonZeroU32::new(30).unwrap(),
-        run,
-        mailbox.clone(),
-        reply,
-    );
-    native.ready();
-    assert!(active.progress().await.is_none());
-    started.await.unwrap().unwrap();
-    native.frames.send(Some(frame(1))).unwrap();
-    assert!(active.progress().await.is_none());
-    assert!(matches!(
-        mailbox.observe().unwrap().initial.state,
-        CaptureState::Available(StreamEpoch { generation: 1, .. })
-    ));
-    tokio::time::advance(Duration::from_secs(3)).await;
-    native.frames.send(Some(frame(2))).unwrap();
-    assert!(active.progress().await.is_none());
-    assert!(matches!(
-        mailbox.observe().unwrap().initial.state,
-        CaptureState::Waiting {
-            epoch: StreamEpoch { generation: 2, .. },
-            ..
-        }
-    ));
-    assert!(active.progress().await.is_none());
-    assert_eq!(mailbox.next().await.unwrap().stamp.epoch.generation, 3);
-    active.stop(None);
-    native.finish();
-    let completion = active.progress().await.unwrap();
-    assert!(active.completed(completion).is_none());
-}
-
-#[tokio::test]
-async fn closed_readiness_waits_for_the_worker_cause_and_still_accepts_stop() {
-    for stop_before_completion in [false, true] {
-        let (mut open, mut opened) = factory();
-        let run = open(&settings()).unwrap();
-        let mut native = opened.recv().await.unwrap();
-        let mailbox = Arc::new(Mailbox::new(INSTANCE));
-        let (reply, mut started) = oneshot::channel();
-        let mut active = crate::session::Session::new(
-            session(1),
-            NonZeroU32::new(30).unwrap(),
-            run,
-            mailbox.clone(),
-            reply,
-        );
-        drop(native.ready.take());
-        native.frames.send(Some(frame(1))).unwrap();
-        assert!(active.progress().await.is_none());
-        assert_eq!(
-            mailbox.observe().unwrap().initial.state,
-            CaptureState::Starting(session(1))
-        );
-        assert!(futures::poll!(&mut started).is_pending());
-        // Repeated cancelled polls must neither repoll the closed oneshot nor deliver frames.
-        for _ in 0..2 {
-            assert!(futures::poll!(Box::pin(active.progress())).is_pending());
-        }
-        assert!(futures::poll!(Box::pin(mailbox.next())).is_pending());
-
-        let stopped = if stop_before_completion {
-            let (reply, stopped) = oneshot::channel();
-            active.stop(Some(reply));
-            assert!(native.stop.is_cancelled());
-            Some(stopped)
-        } else {
-            None
-        };
-        native.fail(true);
-        let completion = active.progress().await.unwrap();
-        assert!(active.completed(completion).is_none());
-        assert_eq!(
-            started.await.unwrap().unwrap_err().kind(),
-            if stop_before_completion {
-                FailureKind::Interrupted
-            } else {
-                FailureKind::Adapter
-            }
-        );
-        if let Some(stopped) = stopped {
-            assert_eq!(stopped.await.unwrap().unwrap().session, session(1));
-        }
-        let CaptureState::Failed {
-            failure,
-            cleanup_complete,
-            ..
-        } = mailbox.observe().unwrap().initial.state
-        else {
-            panic!("native failure must be preserved");
-        };
-        assert!(cleanup_complete);
-        assert_eq!(failure.kind, FailureKind::Adapter);
+fn disconnected() -> CaptureError {
+    CaptureError::Disconnected {
+        details: "cable unplugged".into(),
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn completion_precedes_queued_readiness_silence_and_frames() {
-    for already_available in [false, true] {
-        let (mut open, mut opened) = factory();
-        let run = open(&settings()).unwrap();
-        let mut native = opened.recv().await.unwrap();
-        let mailbox = Arc::new(Mailbox::new(INSTANCE));
-        let (reply, mut started) = oneshot::channel();
-        let mut active = crate::session::Session::new(
-            session(1),
-            NonZeroU32::new(30).unwrap(),
-            run,
-            mailbox.clone(),
-            reply,
-        );
-        native.ready();
-        if already_available {
-            assert!(active.progress().await.is_none());
-            (&mut started).await.unwrap().unwrap();
-            native.frames.send(Some(frame(1))).unwrap();
-            assert!(active.progress().await.is_none());
-            tokio::time::advance(Duration::from_secs(3)).await;
-        }
-        native.frames.send(Some(frame(2))).unwrap();
-        let before = mailbox.observe().unwrap().initial;
-        native.fail(true);
-        let completion = active.progress().await.unwrap();
-        let after = mailbox.observe().unwrap().initial;
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.state, before.state);
-        assert!(active.completed(completion).is_none());
-        if !already_available {
-            assert_eq!(
-                started.await.unwrap().unwrap_err().kind(),
-                FailureKind::Adapter
-            );
-        }
-        assert!(futures::poll!(Box::pin(mailbox.next())).is_pending());
+fn chain(error: &Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
     }
+    text
 }
 
-#[tokio::test]
-async fn unproven_release_blocks_restart_and_never_acknowledges_stop() {
-    let mut capture = Running::new();
-    let native = capture.open(1).await;
-    let stopped = capture.stop(1);
-    within(native.stop.cancelled()).await;
-    native.fail(false);
-    assert_eq!(
-        within(stopped).await.unwrap().unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        within(capture.start(2)).await.unwrap().unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        capture.control.stop(session(1)).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert!(matches!(
-        capture.control.observe().await.unwrap().initial.state,
-        CaptureState::Failed {
-            cleanup_complete: false,
-            ..
-        }
-    ));
-    capture.shutdown.send(()).unwrap();
-    assert_eq!(
-        within(capture.owner).await.unwrap().unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert!(capture.frames.next_frame().await.unwrap().is_none());
+/// An opened source plus the worker driving it.
+fn opened() -> (DeviceFrames, Worker) {
+    let (native, mut worker) = native();
+    worker.ready();
+    let frames = within(move || DeviceFrames::start(native, TEST)).unwrap();
+    (frames, worker)
 }
 
-#[tokio::test]
-async fn caller_cancellation_does_not_abandon_open_or_cleanup() {
-    let mut capture = Running::new();
-    let started = capture.start(1);
-    let mut native = within(capture.opened.recv()).await.unwrap();
-    started.abort();
-    native.ready();
-    state(&capture.control, |s| {
-        matches!(s, CaptureState::Waiting { .. })
-    })
-    .await;
-    let stopped = capture.stop(1);
-    within(native.stop.cancelled()).await;
-    stopped.abort();
-    native.finish();
-    state(&capture.control, |s| matches!(s, CaptureState::Idle)).await;
-    let native = capture.open(2).await;
-    capture.stop_native(native, 2).await;
-    capture.close().await;
+fn close(frames: DeviceFrames) -> mpsc::Receiver<Result<()>> {
+    let (done, closed) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(Box::new(frames).close());
+    });
+    closed
 }
 
-#[tokio::test]
-async fn shutdown_waits_for_open_cleanup_and_closes_ports_afterward() {
-    let mut capture = Running::new();
-    let started = capture.start(1);
-    let native = within(capture.opened.recv()).await.unwrap();
-    capture.shutdown.send(()).unwrap();
-    within(native.stop.cancelled()).await;
-    assert!(!capture.owner.is_finished());
-    assert!(capture.control.observe().await.is_ok());
-    within(started).await.unwrap().unwrap_err();
-    native.finish();
-    within(capture.owner).await.unwrap().unwrap();
-    assert!(capture.frames.next_frame().await.unwrap().is_none());
-    assert!(capture.control.observe().await.is_err());
+#[test]
+fn open_waits_for_readiness_not_frames() {
+    let (native, mut worker) = native();
+    let (done, opened) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(DeviceFrames::start(native, TEST));
+    });
+    assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
+    worker.ready();
+    let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+    let closed = close(frames);
+    worker.wait_cancelled();
+    worker.released();
+    closed.recv_timeout(LIMIT).unwrap().unwrap();
 }
 
-#[tokio::test]
-async fn observation_lag_requires_resync_and_owner_closure_ends_subscription() {
-    let mut capture = Running::new();
-    let mut observation = capture.control.observe().await.unwrap();
-    for id in 1..=9 {
-        let native = capture.open(id).await;
-        capture.stop_native(native, id).await;
-    }
-    assert!(matches!(
-        observation.updates.next().await.unwrap().unwrap(),
-        Update::ResyncRequired
-    ));
-    assert!(observation.updates.next().await.is_none());
-    let mut fresh = capture.control.observe().await.unwrap();
-    assert_eq!(fresh.initial.state, CaptureState::Idle);
-    capture.close().await;
-    assert!(within(fresh.updates.next()).await.is_none());
-}
-
-#[tokio::test]
-async fn idle_stop_seals_a_late_start_without_opening_anything() {
-    let mut capture = Running::new();
-    capture.control.stop(session(1)).await.unwrap();
-    assert!(within(capture.start(1)).await.unwrap().is_err());
-    assert!(capture.opened.try_recv().is_err());
-    let native = capture.open(2).await;
-    assert!(capture.control.stop(session(1)).await.is_err());
-    capture.stop_native(native, 2).await;
-    capture.close().await;
-}
-
-#[tokio::test]
-async fn real_backend_missing_device_reports_failure_and_releases_before_retry() {
-    let capture = DeviceCapture::new(INSTANCE);
-    let (shutdown, stop) = oneshot::channel();
-    let owner = tokio::spawn(capture.owner.run(async {
-        let _ = stop.await;
+#[test]
+fn open_failure_reports_the_native_cause_after_release() {
+    let (native, worker) = native();
+    let opening = within(move || {
+        let (done, result) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = done.send(DeviceFrames::start(native, TEST));
+        });
+        result
+    });
+    worker.exit(Ok(CaptureExit {
+        failure: Some(disconnected()),
     }));
-    let mut settings = settings();
-    if let DeviceCaptureSettings::Device { path, .. } = &mut settings {
-        *path = "/dev/prysm-test-missing-device".into();
-    }
-    assert!(
-        within(capture.control.start(CaptureStart {
-            session: session(1),
-            settings
-        }))
-        .await
-        .is_err()
+    let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must fail");
+    };
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: capture device disconnected: cable unplugged"
     );
-    state(&capture.control, |s| {
-        matches!(
-            s,
-            CaptureState::Failed {
-                cleanup_complete: true,
-                ..
-            }
-        )
-    })
-    .await;
-    capture.control.stop(session(1)).await.unwrap();
-    shutdown.send(()).unwrap();
-    within(owner).await.unwrap().unwrap();
+}
+
+#[test]
+fn open_timeout_cancels_and_releases() {
+    let (native, worker) = native();
+    let deadlines = Deadlines {
+        ready: SHORT,
+        release: LIMIT,
+    };
+    let (done, opening) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(DeviceFrames::start(native, deadlines));
+    });
+    worker.wait_cancelled();
+    worker.released();
+    let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
+        panic!("open must time out");
+    };
+    assert!(error.to_string().contains("not ready within"), "{error}");
+    assert!(error.source().is_none(), "release was certified");
+}
+
+#[test]
+fn open_timeout_reports_unconfirmed_release() {
+    let (native, worker) = native();
+    let deadlines = Deadlines {
+        ready: SHORT,
+        release: SHORT,
+    };
+    let Err(error) = within(move || DeviceFrames::start(native, deadlines)) else {
+        panic!("open must time out");
+    };
+    assert!(worker.cancel.is_cancelled());
+    let text = chain(&error);
+    assert!(text.contains("not ready within"), "{text}");
+    assert!(text.contains("release is unconfirmed"), "{text}");
+}
+
+#[test]
+fn newest_frame_wins() {
+    // Frames before readiness are already replaced natively.
+    let (native, mut worker) = native();
+    for value in 0..100 {
+        worker.frames.send_replace(Some(frame(value)));
+    }
+    worker.ready();
+    let mut frames = within(move || DeviceFrames::start(native, TEST)).unwrap();
+    assert_eq!(
+        frames.next_frame(LIMIT).unwrap().unwrap().as_slice(),
+        &[99; 96]
+    );
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+
+    // An untaken frame is replaced, never queued.
+    let pending = |frames: &DeviceFrames, value: u8| {
+        frames
+            .pending_frame()
+            .is_some_and(|frame| frame.as_slice() == [value; 96])
+    };
+    worker.frames.send_replace(Some(frame(1)));
+    eventually(|| pending(&frames, 1));
+    worker.frames.send_replace(Some(frame(2)));
+    eventually(|| pending(&frames, 2));
+    let newest = frames.next_frame(LIMIT).unwrap().unwrap();
+    assert_eq!(newest.as_slice(), &[2; 96]);
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_none());
+
+    let closed = close(frames);
+    worker.wait_cancelled();
+    worker.released();
+    closed.recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+#[test]
+fn timeout_returns_none() {
+    let (mut frames, worker) = opened();
+    let started = Instant::now();
+    assert!(frames.next_frame(SHORT).unwrap().is_none());
+    assert!(started.elapsed() >= SHORT);
+    let closed = close(frames);
+    worker.wait_cancelled();
+    worker.released();
+    closed.recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+#[test]
+fn native_failure_propagates_and_release_is_still_certified() {
+    let (mut frames, worker) = opened();
+    worker.frames.send_replace(Some(frame(1)));
+    eventually(|| frames.pending_frame().is_some());
+    worker.exit(Ok(CaptureExit {
+        failure: Some(disconnected()),
+    }));
+    eventually(|| frames.exited());
+    // The exit fences the frame that was never taken.
+    let error = frames.next_frame(Duration::ZERO).unwrap_err();
+    assert_eq!(
+        chain(&error),
+        "video device capture failed: capture device disconnected: cable unplugged"
+    );
+    assert!(
+        frames.next_frame(Duration::ZERO).is_err(),
+        "failure is sticky"
+    );
+    close(frames).recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+#[test]
+fn unexpected_clean_exit_is_a_failure() {
+    let (mut frames, worker) = opened();
+    worker.released();
+    let error = frames.next_frame(LIMIT).unwrap_err();
+    assert!(error.to_string().contains("ended unexpectedly"), "{error}");
+    close(frames).recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+#[test]
+fn close_waits_for_and_certifies_release() {
+    let (frames, worker) = opened();
+    let closed = close(frames);
+    worker.wait_cancelled();
+    assert!(
+        closed.recv_timeout(SHORT).is_err(),
+        "close returned before release"
+    );
+    worker.released();
+    closed.recv_timeout(LIMIT).unwrap().unwrap();
+}
+
+#[test]
+fn close_reports_failed_release() {
+    let (frames, worker) = opened();
+    let closed = close(frames);
+    worker.wait_cancelled();
+    worker.exit(Err(CaptureError::Cleanup(anyhow::anyhow!(
+        "buffer release failed"
+    ))));
+    let error = closed.recv_timeout(LIMIT).unwrap().unwrap_err();
+    assert_eq!(
+        chain(&error),
+        "video device release is unconfirmed: native capture cleanup failed: buffer release failed: buffer release failed"
+    );
+}
+
+#[test]
+fn close_reports_a_worker_that_does_not_stop() {
+    let (native, mut worker) = native();
+    worker.ready();
+    let deadlines = Deadlines {
+        ready: LIMIT,
+        release: SHORT,
+    };
+    let frames = within(move || DeviceFrames::start(native, deadlines)).unwrap();
+    let error = close(frames).recv_timeout(LIMIT).unwrap().unwrap_err();
+    assert!(worker.cancel.is_cancelled());
+    assert!(
+        error
+            .to_string()
+            .contains("native capture worker did not stop"),
+        "{error}"
+    );
+}
+
+#[test]
+fn drop_without_close_cancels() {
+    let (frames, worker) = opened();
+    drop(frames);
+    assert!(worker.cancel.is_cancelled());
+    worker.released();
+}
+
+#[test]
+fn settings_file_shape_and_defaults() {
+    let settings: Settings =
+        serde_json::from_str(r#"{ "capture": { "kind": "device", "path": "/dev/video0" } }"#)
+            .unwrap();
+    let mut registry = Registry::default();
+    registry.add_source(DeviceSource);
+    registry.validate(&settings).unwrap();
+
+    let typed: DeviceSettings =
+        serde_json::from_value(serde_json::to_value(settings.capture.unwrap().fields).unwrap())
+            .unwrap();
+    assert_eq!(typed, DeviceSettings::new("/dev/video0"));
+    assert_eq!((typed.width, typed.height, typed.fps), (640, 360, 30));
+
+    let encoded = AdapterSettings::new(DeviceSource::KIND, &typed);
+    assert_eq!(
+        serde_json::to_value(&encoded).unwrap(),
+        serde_json::json!({ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 })
+    );
+}
+
+#[test]
+fn settings_validation_names_the_field() {
+    let field = |change: fn(&mut DeviceSettings)| {
+        let mut settings = DeviceSettings::new("/dev/video0");
+        change(&mut settings);
+        DeviceSource.validate(&settings).unwrap_err().field
+    };
+    assert_eq!(field(|s| s.path = " ".into()), "capture.path");
+    assert_eq!(field(|s| s.path = "a\0b".into()), "capture.path");
+    assert_eq!(field(|s| s.width = 0), "capture.width");
+    assert_eq!(field(|s| s.width = 3841), "capture.width");
+    assert_eq!(field(|s| s.height = 0), "capture.height");
+    assert_eq!(field(|s| s.height = 2161), "capture.height");
+    assert_eq!(field(|s| s.fps = 0), "capture.fps");
+
+    let mut registry = Registry::default();
+    registry.add_source(DeviceSource);
+    let unknown: Settings = serde_json::from_str(
+        r#"{ "capture": { "kind": "device", "path": "/dev/video0", "rate": 30 } }"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        registry.validate(&unknown),
+        Err(Error::Decode { .. })
+    ));
+}
+
+#[test]
+fn real_backend_missing_device_fails_without_hanging() {
+    let settings = DeviceSettings::new("/dev/prysm-test-missing-device");
+    let Err(error) = within(move || DeviceSource.open(&settings)) else {
+        panic!("a missing device must not open");
+    };
+    assert!(!chain(&error).is_empty());
 }

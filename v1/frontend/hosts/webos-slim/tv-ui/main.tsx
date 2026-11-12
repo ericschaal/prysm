@@ -1,39 +1,29 @@
-import { createRoot } from 'react-dom/client';
 import type {
-  ServerCaptureSettings as Capture,
-  WledSettings as Output,
-} from '@prysm/contracts/host-server';
+  RemoteReceiverSettings,
+  WledSettings,
+} from '@prysm/contracts/host-desktop';
+import { createRoot } from 'react-dom/client';
 import { fakeApplicationPort } from '../../../testkit/application';
-import { fakeTvHost, fakePatternPresenter } from '../../../testkit/tv';
+import { fakeTvHost } from '../../../testkit/tv';
 import { WebosSlimApp } from './app';
 
-const application = fakeApplicationPort<Capture, Output>(
+// The remote application client is not implemented; this runs on a fixture.
+const application = fakeApplicationPort<RemoteReceiverSettings, WledSettings>(
   {
-    revision: '0',
-    capture: {
-      adapter: 'remote',
-      settings: { peer: '192.0.2.10:9000' },
-    },
-    output: { address: '192.0.2.1', leds: [10, 10, 10, 10] },
+    capture: { kind: 'remote', listen: '0.0.0.0:9000' },
+    output: { kind: 'wled', address: '192.0.2.1', leds: { top: 10, left: 10 } },
   },
-  '2',
 );
 const platform = fakeTvHost(true);
-const patterns = fakePatternPresenter();
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing TV root.');
 createRoot(root).render(
   <WebosSlimApp
     remoteApplication={application.client}
     platform={platform.client}
-    presenter={patterns.presenter}
-
     onExit={() => {
       document.getElementById('demo-notice')!.textContent =
         'Fixture exit requested; lighting is unchanged.';
-    }}
-    onCleanupFailure={(error) => {
-      console.error('Presentation cleanup unconfirmed', error);
     }}
   />,
 );

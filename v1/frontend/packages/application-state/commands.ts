@@ -1,13 +1,10 @@
 import type { ThunkAction, UnknownAction } from '@reduxjs/toolkit';
 import {
   ApplicationError,
-  newRequestId,
-  type Accepted,
   type ApplicationClient,
-  type ClientFailure,
-  type OperationId,
-  type OperationStatus,
-  type TargetRequest,
+  type Failure,
+  type LightingTarget,
+  type Settings,
 } from '@prysm/application-client';
 import type {
   ApplicationActions,
@@ -22,59 +19,74 @@ export type ApplicationThunk<C, O, Result> = ThunkAction<
   UnknownAction
 >;
 
-export function requestId<C, O>(state: ApplicationState<C, O>) {
-  const { connection } = state;
-  if (connection.status !== 'connected' || !connection.snapshot) {
-    throw new ApplicationError({
-      kind: 'unavailable',
-      message: 'Application is not synchronized.',
-    });
-  }
-  return newRequestId(connection.snapshot.cursor.instance);
-}
-
+/** Typed command thunks. Each resolves with the runtime's own result. */
 export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
-  function submit(
+  let sequence = 0;
+  function submit<T>(
     kind: CommandKind,
     send: (
       client: ApplicationClient<C, O>,
-      id: OperationId,
-    ) => Promise<Accepted>,
-  ): ApplicationThunk<C, O, Promise<Accepted>> {
+      state: ApplicationState<C, O>,
+    ) => Promise<T>,
+  ): ApplicationThunk<C, O, Promise<T>> {
     return async (dispatch, getState, client) => {
-      const id = requestId(getState());
+      const id = ++sequence;
       dispatch(actions.commandSubmitted({ id, kind }));
       try {
-        const accepted = await send(client, id);
-        dispatch(actions.commandAccepted(accepted.operation));
-        return accepted;
+        const result = await send(client, getState());
+        dispatch(actions.commandSucceeded(id));
+        return result;
       } catch (error) {
-        const failure: ClientFailure =
+        const failure: Failure =
           error instanceof ApplicationError
-            ? error.detail
-            : { kind: 'unavailable', message: String(error) };
+            ? error.failure
+            : {
+                kind: 'internal',
+                message: error instanceof Error ? error.message : String(error),
+              };
         dispatch(actions.commandFailed({ id, failure }));
         throw error;
       }
     };
   }
+  /**
+   * Replace one adapter section of the observed settings, keeping the rest.
+   * `expected` is the revision the edit started from; a newer observed
+   * revision is a conflict the user resolves, never a silent overwrite.
+   */
+  function replaceSection(
+    kind: CommandKind,
+    expected: number,
+    change: (settings: Settings<C, O>) => Settings<C, O>,
+  ): ApplicationThunk<C, O, Promise<number>> {
+    return submit(kind, (client, state) => {
+      const snapshot = state.connection.snapshot;
+      if (!snapshot || snapshot.revision !== expected)
+        return Promise.reject(
+          new ApplicationError({
+            kind: 'stale_revision',
+            message: 'Settings changed; review them before saving again.',
+            ...(snapshot ? { current: snapshot.revision } : {}),
+          }),
+        );
+      return client.replaceSettings(
+        expected,
+        change(structuredClone(snapshot.settings)),
+      );
+    });
+  }
   return {
-    configureCapture: (expected: string, settings: C) =>
-      submit('configureCapture', (client, id) =>
-        client.configureCapture({ id, expected, settings }),
-      ),
-    configureOutput: (expected: string, settings: O) =>
-      submit('configureOutput', (client, id) =>
-        client.configureOutput({ id, expected, settings }),
-      ),
-    setTarget: (target: TargetRequest['target']) =>
-      submit('setTarget', (client, id) => client.setTarget({ id, target })),
-    checkOperation:
-      (id: OperationId): ApplicationThunk<C, O, Promise<OperationStatus>> =>
-      async (dispatch, _getState, client) => {
-        const status = await client.operation(id);
-        dispatch(actions.operationReceived({ id, status }));
-        return status;
-      },
+    setTarget: (target: LightingTarget) =>
+      submit('setTarget', (client) => client.setTarget(target)),
+    configureCapture: (expected: number, capture: C) =>
+      replaceSection('configureCapture', expected, (settings) => ({
+        ...settings,
+        capture,
+      })),
+    configureOutput: (expected: number, output: O) =>
+      replaceSection('configureOutput', expected, (settings) => ({
+        ...settings,
+        output,
+      })),
   };
 }

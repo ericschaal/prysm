@@ -1,328 +1,227 @@
-use super::*;
-use crate::disk::{Stage, Store};
-use prysm_contract::{
-    FailureKind,
-    calibration::{CalibrationProfile, ProfileId},
-};
-use prysm_core::{ColorCorrection, SmoothingSeconds};
-use std::{fs, future::pending, num::NonZeroU64, sync::mpsc, time::Duration};
+use super::FileSettings;
+use prysm_ports::{AdapterSettings, Error, Processing, Settings, SettingsStore};
+use serde_json::json;
+use std::{error::Error as _, fs, path::Path};
 
-type Value = Settings<u32, u32>;
-fn value(capture: u32) -> Value {
-    Value {
-        capture: Some(capture),
-        output: Some(2),
-        processing: Default::default(),
-        profiles: vec![],
-        active_profile: None,
+fn sample() -> Settings {
+    Settings {
+        capture: Some(AdapterSettings::new(
+            "device",
+            &json!({ "path": "/dev/video0" }),
+        )),
+        output: Some(AdapterSettings::new(
+            "wled",
+            &json!({ "host": "10.0.0.5", "port": 21324 }),
+        )),
+        processing: Processing {
+            brightness_percent: 80,
+            smoothing_seconds: 0.3,
+            ..Processing::default()
+        },
     }
 }
-async fn within<T>(future: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(2), future)
-        .await
-        .expect("file worker stalled")
-}
-async fn close(file: FileSettings<u32, u32>) -> Result<OwnerStopped, ControlError> {
-    file.shutdown.request();
-    within(file.owner.run(pending())).await
-}
-fn gated(
-    path: PathBuf,
-    stage: Stage,
-    fail: bool,
-) -> (
-    FileSettings<u32, u32>,
-    oneshot::Receiver<()>,
-    mpsc::SyncSender<()>,
-) {
-    let (entered, started) = oneshot::channel();
-    let (release, released) = mpsc::sync_channel(1);
-    let mut entered = Some(entered);
-    let mut store = Store::new(path).unwrap();
-    store.checkpoint = Some(Box::new(move |at| {
-        if at == stage
-            && let Some(entered) = entered.take()
-        {
-            entered.send(()).unwrap();
-            released.recv().unwrap();
-            if fail {
-                return Err(std::io::Error::other("injected commit failure"));
-            }
-        }
-        Ok(())
-    }));
-    (FileSettings::open(store).unwrap(), started, release)
+
+/// The context plus every source in the chain.
+fn full_message(error: &Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
-#[tokio::test]
-async fn missing_file_round_trip_and_restart_preserve_complete_settings() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let file = FileSettings::<u32, u32>::new(path.clone()).unwrap();
-    assert!(file.repository.load().await.unwrap().is_none());
-    assert!(!path.exists());
-    let mut saved = value(7);
-    saved.processing.smoothing_seconds = SmoothingSeconds(0.31415927);
-    saved.processing.correction = ColorCorrection::new(37, -81, 59)
+/// The adapter error's preserved cause, downcast.
+fn cause<E: std::error::Error + 'static>(error: &Error) -> Option<&E> {
+    match error {
+        Error::Adapter {
+            source: Some(source),
+            ..
+        } => source.downcast_ref(),
+        _ => None,
+    }
+}
+
+fn entries(directory: &Path) -> Vec<String> {
+    let mut names: Vec<_> = fs::read_dir(directory)
         .unwrap()
-        .with_chroma(-32, [1, 2, 3, -4, -5, -6])
-        .unwrap();
-    saved.profiles.push(CalibrationProfile {
-        id: ProfileId(NonZeroU64::MAX),
-        name: "Calibrated".into(),
-        correction: saved.processing.correction,
-    });
-    saved.active_profile = Some(ProfileId(NonZeroU64::MAX));
-    file.repository.save(saved.clone()).await.unwrap();
-    assert_eq!(file.repository.load().await.unwrap(), Some(saved.clone()));
-    close(file).await.unwrap();
-    let restarted = FileSettings::new(path).unwrap();
-    assert_eq!(restarted.repository.load().await.unwrap(), Some(saved));
-    close(restarted).await.unwrap();
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
 }
 
-#[tokio::test]
-async fn malformed_or_invalid_file_is_never_replaced_with_defaults() {
-    for bytes in [
-        "{broken",
-        r#"{"processing":{"smoothing_seconds":1e400}}"#,
-        r#"{"active_profile":1}"#,
-        r#"{"unknown":true}"#,
-        r#"{"profiles":[{"id":1,"name":"bad","correction":{"gains":[0,1,1],"tone":1,"intensity":0,"hue":[0,0,0,0,0,0]}}]}"#,
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        fs::write(&path, bytes).unwrap();
-        let file = FileSettings::<u32, u32>::new(path.clone()).unwrap();
-        assert_eq!(
-            file.repository.load().await.unwrap_err().kind(),
-            FailureKind::Invalid
-        );
-        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
-        assert_eq!(close(file).await.unwrap_err().kind(), FailureKind::Invalid);
-    }
+#[test]
+fn missing_file_loads_as_none_without_creating_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    assert_eq!(FileSettings::new(&path).load().unwrap(), None);
+    assert!(!path.exists());
 }
 
-#[tokio::test]
-async fn invalid_save_preserves_old_file_and_allows_a_valid_retry() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let file = FileSettings::<u32, u32>::new(path.clone()).unwrap();
-    file.repository.save(value(1)).await.unwrap();
-    let old = fs::read(&path).unwrap();
-    let mut invalid = value(9);
-    invalid.processing.smoothing_seconds = SmoothingSeconds(f32::NAN);
-    assert_eq!(
-        file.repository.save(invalid).await.unwrap_err().kind(),
-        FailureKind::Invalid
-    );
-    assert_eq!(fs::read(&path).unwrap(), old);
-    file.repository.save(value(3)).await.unwrap();
-    assert_eq!(file.repository.load().await.unwrap(), Some(value(3)));
-    // A successful retry cannot hide a prior failure from the host.
-    assert_eq!(close(file).await.unwrap_err().kind(), FailureKind::Invalid);
+#[test]
+fn save_then_load_round_trips_as_pretty_json() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = FileSettings::new(&path);
+    store.save(&sample()).unwrap();
+    assert_eq!(store.load().unwrap(), Some(sample()));
+
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.ends_with("}\n"), "{text}");
+    assert!(text.contains("\n  \"capture\": {\n"), "{text}");
+    assert!(text.contains("\"smoothing_seconds\": 0.3,"), "{text}");
+    // Saving the loaded value again is byte-for-byte stable.
+    let loaded = store.load().unwrap().unwrap();
+    store.save(&loaded).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    assert_eq!(entries(directory.path()), ["settings.json"]);
 }
 
-#[tokio::test]
-async fn precommit_failure_preserves_destination_and_removes_temporary_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let original = format::encode(value(1)).unwrap();
-    fs::write(&path, &original).unwrap();
-    let (file, entered, release) = gated(path.clone(), Stage::BeforeRename, true);
-    let repository = file.repository.clone();
-    let saving = tokio::spawn(async move { repository.save(value(2)).await });
-    within(entered).await.unwrap();
-    release.send(()).unwrap();
-    assert_eq!(
-        within(saving).await.unwrap().unwrap_err().kind(),
-        FailureKind::Adapter
-    );
-    assert_eq!(fs::read(&path).unwrap(), original);
-    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    close(file).await.unwrap_err();
+#[test]
+fn hand_written_minimal_file_loads_with_defaults() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(
+        &path,
+        r#"{ "output": { "kind": "wled", "host": "led.local" } }"#,
+    )
+    .unwrap();
+    let settings = FileSettings::new(&path).load().unwrap().unwrap();
+    assert_eq!(settings.capture, None);
+    assert_eq!(settings.output.unwrap().fields["host"], "led.local");
+    assert_eq!(settings.processing, Processing::default());
 }
 
-#[tokio::test]
-async fn post_rename_failure_is_uncertain_fences_writes_and_survives_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    fs::write(&path, format::encode(value(1)).unwrap()).unwrap();
-    let (file, entered, release) = gated(path.clone(), Stage::AfterRename, true);
-    let repository = file.repository.clone();
-    let saving = tokio::spawn(async move { repository.save(value(2)).await });
-    within(entered).await.unwrap();
-    assert_eq!(
-        format::decode::<u32, u32>(&fs::read(&path).unwrap()).unwrap(),
-        value(2)
+#[test]
+fn unknown_field_is_rejected_with_its_name_and_the_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, r#"{ "processing": { "brightnes_percent": 80 } }"#).unwrap();
+    let error = FileSettings::new(&path).load().unwrap_err();
+    let message = full_message(&error);
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(
+        message.contains("unknown field `brightnes_percent`"),
+        "{message}"
     );
-    release.send(()).unwrap();
-    assert_eq!(
-        within(saving).await.unwrap().unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        file.repository.save(value(3)).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        close(file).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    let restarted = FileSettings::new(path).unwrap();
-    assert_eq!(restarted.repository.load().await.unwrap(), Some(value(2)));
-    close(restarted).await.unwrap();
+    assert!(message.contains("line 1"), "{message}");
+    assert!(cause::<serde_json::Error>(&error).is_some());
 }
 
-#[tokio::test]
-async fn cancelled_waiter_and_shutdown_retain_commit_and_its_failure() {
-    for fail in [false, true] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        fs::write(&path, format::encode(value(1)).unwrap()).unwrap();
-        let (file, entered, release) = gated(path.clone(), Stage::AfterRename, fail);
-        let repository = file.repository.clone();
-        let saving = tokio::spawn(async move { repository.save(value(2)).await });
-        within(entered).await.unwrap();
-        saving.abort();
-        assert!(within(saving).await.unwrap_err().is_cancelled());
-        file.shutdown.request();
-        assert_eq!(
-            file.repository.save(value(3)).await.unwrap_err().kind(),
-            FailureKind::Unavailable
-        );
-        let owner = tokio::spawn(file.owner.run(pending()));
-        tokio::task::yield_now().await;
-        assert!(!owner.is_finished());
-        release.send(()).unwrap();
-        let result = within(owner).await.unwrap();
-        if fail {
-            assert_eq!(result.unwrap_err().kind(), FailureKind::RecoveryRequired);
-        } else {
-            result.unwrap();
-        }
-        assert_eq!(
-            format::decode::<u32, u32>(&fs::read(path).unwrap()).unwrap(),
-            value(2)
-        );
-    }
+#[test]
+fn corrupt_json_error_names_the_path_and_keeps_the_serde_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    fs::write(&path, "{ \"processing\": ").unwrap();
+    let error = FileSettings::new(&path).load().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!("cannot parse settings file {}", path.display())
+    );
+    assert!(cause::<serde_json::Error>(&error).is_some());
 }
 
-#[tokio::test]
-async fn rename_failure_and_missing_parent_do_not_destroy_existing_data() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("directory.json");
+#[test]
+fn unreadable_path_reports_io_source() {
+    let directory = tempfile::tempdir().unwrap();
+    // A directory exists at the path, so reading it fails with something other than NotFound.
+    let error = FileSettings::new(directory.path()).load().unwrap_err();
+    assert!(
+        error.to_string().starts_with("cannot read settings file"),
+        "{error}"
+    );
+    assert!(cause::<std::io::Error>(&error).is_some());
+}
+
+#[test]
+fn save_into_missing_directory_errors_clearly() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("absent").join("settings.json");
+    let error = FileSettings::new(&path).save(&sample()).unwrap_err();
+    let message = full_message(&error);
+    assert!(
+        message.starts_with(&format!(
+            "cannot create a temporary file for settings file {}",
+            path.display()
+        )),
+        "{message}"
+    );
+    let io = cause::<std::io::Error>(&error).unwrap();
+    assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+    assert!(!path.exists());
+}
+
+#[test]
+fn failed_replace_leaves_target_and_directory_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    // A non-empty directory at the target path: the temporary file is fully
+    // written but the rename fails.
+    let path = directory.path().join("settings.json");
     fs::create_dir(&path).unwrap();
-    fs::write(path.join("keep"), "important").unwrap();
-    let file = FileSettings::<u32, u32>::new(path.clone()).unwrap();
-    assert_eq!(
-        file.repository.save(value(2)).await.unwrap_err().kind(),
-        FailureKind::Adapter
+    fs::write(path.join("keep"), "x").unwrap();
+    let error = FileSettings::new(&path).save(&sample()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with("cannot replace settings file"),
+        "{error}"
     );
-    assert_eq!(fs::read_to_string(path.join("keep")).unwrap(), "important");
-    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    close(file).await.unwrap_err();
-    let file = FileSettings::<u32, u32>::new(dir.path().join("missing/settings.json")).unwrap();
-    assert_eq!(
-        file.repository.save(value(2)).await.unwrap_err().kind(),
-        FailureKind::Adapter
-    );
-    close(file).await.unwrap_err();
+    assert_eq!(entries(directory.path()), ["settings.json"]);
+    assert_eq!(fs::read_to_string(path.join("keep")).unwrap(), "x");
 }
 
-#[tokio::test]
-async fn shutdown_drains_the_bounded_accepted_queue_without_admitting_more() {
-    use std::task::{Context, Poll, Waker};
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let (file, entered, release) = gated(path.clone(), Stage::BeforeRename, false);
-    let repository = file.repository.clone();
-    let first = tokio::spawn(async move { repository.save(value(1)).await });
-    within(entered).await.unwrap();
-    let mut second = Box::pin(file.repository.save(value(2)));
-    assert!(matches!(
-        second
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop())),
-        Poll::Pending
-    ));
-    assert_eq!(
-        file.repository.save(value(3)).await.unwrap_err().kind(),
-        FailureKind::Conflict
-    );
-    file.shutdown.request();
-    assert_eq!(
-        file.repository.save(value(4)).await.unwrap_err().kind(),
-        FailureKind::Unavailable
-    );
-    release.send(()).unwrap();
-    within(first).await.unwrap().unwrap();
-    within(second).await.unwrap();
-    assert_eq!(
-        format::decode::<u32, u32>(&fs::read(path).unwrap()).unwrap(),
-        value(2)
-    );
-    close(file).await.unwrap();
+#[cfg(unix)]
+#[test]
+fn failed_save_never_truncates_the_existing_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = FileSettings::new(&path);
+    store.save(&sample()).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    // A read-only directory refuses the temporary file.
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
+    if tempfile::tempfile_in(directory.path()).is_ok() {
+        // Running as root: permissions do not apply, nothing to test.
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let result = store.save(&Settings::default());
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert!(result.is_err());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(store.load().unwrap(), Some(sample()));
+    assert_eq!(entries(directory.path()), ["settings.json"]);
 }
 
-#[tokio::test]
-async fn uncertainty_rejects_a_save_already_queued_without_writing_it() {
-    use std::task::{Context, Poll, Waker};
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let (file, entered, release) = gated(path.clone(), Stage::AfterRename, true);
-    let repository = file.repository.clone();
-    let first = tokio::spawn(async move { repository.save(value(1)).await });
-    within(entered).await.unwrap();
-    let mut queued = Box::pin(file.repository.save(value(2)));
-    assert!(matches!(
-        queued
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop())),
-        Poll::Pending
-    ));
-    release.send(()).unwrap();
-    assert_eq!(
-        within(first).await.unwrap().unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        within(queued).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        format::decode::<u32, u32>(&fs::read(path).unwrap()).unwrap(),
-        value(1)
-    );
-    assert_eq!(
-        close(file).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
+#[cfg(unix)]
+#[test]
+fn save_preserves_existing_permissions_and_creates_new_files_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let mut store = FileSettings::new(&path);
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    store.save(&sample()).unwrap();
+    assert_eq!(mode(&path), 0o600);
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    store.save(&Settings::default()).unwrap();
+    assert_eq!(mode(&path), 0o644);
+    assert_eq!(store.load().unwrap(), Some(Settings::default()));
 }
 
-#[tokio::test]
-async fn worker_panic_after_rename_reports_uncertainty_to_caller_and_host() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    let mut store = Store::new(path.clone()).unwrap();
-    store.checkpoint = Some(Box::new(|stage| {
-        assert!(stage != Stage::AfterRename, "worker panic after commit");
-        Ok(())
-    }));
-    let file = FileSettings::<u32, u32>::open(store).unwrap();
-    assert_eq!(
-        within(file.repository.save(value(2)))
-            .await
-            .unwrap_err()
-            .kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        close(file).await.unwrap_err().kind(),
-        FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        format::decode::<u32, u32>(&fs::read(path).unwrap()).unwrap(),
-        value(2)
-    );
+#[test]
+fn relative_path_saves_in_the_working_directory() {
+    let store = FileSettings::new("settings.json");
+    assert_eq!(store.directory(), Path::new("."));
+    assert_eq!(store.path(), Path::new("settings.json"));
 }

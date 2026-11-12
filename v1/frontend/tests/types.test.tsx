@@ -1,32 +1,27 @@
-import type { WledSettings as WledOutputConfig } from '@prysm/contracts/wled';
-import type { TvCaptureSettings as WebosCaptureConfig } from '@prysm/contracts/webos';
-import type { RemoteCaptureSettings as RemoteCaptureConfig } from '@prysm/contracts/remote-capture';
-import type { DeviceCaptureSettings as DeviceCaptureConfig } from '@prysm/contracts/device';
-import { WebPortal } from '@prysm/web-portal';
+import type {
+  DeviceSettings,
+  WledSettings,
+} from '@prysm/contracts/host-desktop';
 import type { ApplicationRuntime } from '@prysm/application-state';
+import type { State } from '@prysm/contracts/application';
+import { WebPortal } from '@prysm/web-portal';
 import { DeviceCaptureSettings } from '@prysm/capture-device-ui';
-import { WebosCaptureSettings } from '@prysm/capture-webos-ui';
+import {
+  WebosCaptureSettings,
+  type WebosCaptureConfig,
+} from '@prysm/capture-webos-ui';
 import { WledOutputSettings } from '@prysm/output-wled-ui';
 
-declare const device: ApplicationRuntime<
-  DeviceCaptureConfig,
-  WledOutputConfig
->;
-declare const webos: ApplicationRuntime<WebosCaptureConfig, WledOutputConfig>;
+declare const device: ApplicationRuntime<DeviceSettings, WledSettings>;
+declare const webos: ApplicationRuntime<WebosCaptureConfig, WledSettings>;
 
-// @ts-expect-error Resolution is a fixed pair generated from the Rust wire contract.
-const shortResolution: WebosCaptureConfig['resolution'] = [320];
-// @ts-expect-error WLED requires exactly four edge counts.
-const shortLeds: WledOutputConfig['leds'] = [1, 2, 3];
-const remote: RemoteCaptureConfig = {
-  peer: '127.0.0.1:9000',
-  // @ts-expect-error The transport does not own the producing source's resolution.
-  resolution: [320, 180],
-};
-// @ts-expect-error Video device capture only selects local device/file sources.
-const remoteDevice: DeviceCaptureConfig['source'] = 'remote';
-void remoteDevice;
-void [shortResolution, shortLeds, remote];
+// @ts-expect-error The generated state carries revisions as numbers.
+const revision: State['revision'] = '1';
+// @ts-expect-error Faulted sessions name the phase that did not finish.
+const faulted: State['session'] = { state: 'faulted' };
+// @ts-expect-error Adapter sections are tagged by kind.
+const untagged: WledSettings = { address: '192.0.2.1', leds: {} };
+void [revision, faulted, untagged];
 
 <WebPortal
   application={device}
@@ -41,21 +36,28 @@ void [shortResolution, shortLeds, remote];
 
 WebPortal({
   application: webos,
-  // @ts-expect-error A webOS client cannot supply the device panel's source/path settings.
+  // @ts-expect-error A webOS host cannot mount the device capture panel.
   captureSettings: DeviceCaptureSettings,
   outputSettings: WledOutputSettings,
 });
 WebPortal({
   application: device,
   captureSettings: DeviceCaptureSettings,
-  // @ts-expect-error Capture settings cannot be used as WLED output settings.
+  // @ts-expect-error A capture panel cannot edit output settings.
   outputSettings: DeviceCaptureSettings,
 });
 
-// @ts-expect-error The host's typed thunk rejects a different adapter's settings.
-device.commands.configureCapture('0', { rate: 30, resolution: [320, 180] });
-webos.commands.configureCapture('0', {
-  // @ts-expect-error Output settings cannot be submitted to the capture command.
+// @ts-expect-error The host's typed thunk rejects another adapter's settings.
+device.commands.configureCapture(0, { kind: 'webos', fps: 30 });
+webos.commands.configureCapture(0, {
+  // @ts-expect-error Output settings cannot be submitted as capture settings.
+  kind: 'wled',
   address: '192.0.2.1',
-  leds: [1, 2, 3, 4],
+  leds: {},
+});
+// @ts-expect-error Revisions are numbers, not decimal strings.
+device.commands.configureOutput('0', {
+  kind: 'wled',
+  address: '192.0.2.1',
+  leds: {},
 });

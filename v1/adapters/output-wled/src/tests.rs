@@ -1,601 +1,386 @@
-use super::*;
-use crate::transport::{Mode, Wire, WriteError};
-use futures::StreamExt;
-use prysm_contract::{
-    identity::{FrameStamp, SettingsRevision},
-    observation::Update,
-};
-use prysm_core::{ColorStrip, LinearColor};
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    time::Duration,
-};
-use tokio::task::JoinHandle;
+//! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
+use crate::{LedCounts, Wled, WledSettings, http::RequestError};
+use prysm_core::{ColorStrip, EdgeColors, LinearColor};
+use prysm_ports::{AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, Registry};
+use serde_json::{Value, json};
+use std::error::Error as _;
+use std::io::{ErrorKind, Read, Write};
+use std::net::{TcpListener, UdpSocket};
+use std::num::NonZeroUsize;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
-mod network;
+const WAIT: Duration = Duration::from_secs(5);
+const OK: &str = r#"{"success":true}"#;
 
-const INSTANCE: InstanceId = InstanceId(NonZeroU64::MIN);
-fn session(sequence: u64) -> SessionId {
-    SessionId {
-        instance: INSTANCE,
-        sequence: NonZeroU64::new(sequence).unwrap(),
-    }
-}
-fn epoch(generation: u64) -> StreamEpoch {
-    StreamEpoch {
-        session: session(1),
-        generation,
-    }
-}
-fn settings() -> WledSettings {
-    WledSettings {
-        address: "127.0.0.1".parse().unwrap(),
-        leds: [1, 0, 0, 0],
-    }
-}
-fn red() -> EdgeColors {
-    EdgeColors {
-        top: ColorStrip::fill(LinearColor::new(1.0, 0.0, 0.0), NonZeroUsize::MIN),
-        ..Default::default()
-    }
-}
-fn frame(generation: u64, sequence: u64) -> ColorFrame {
-    ColorFrame {
-        stamp: FrameStamp {
-            epoch: epoch(generation),
-            sequence,
-        },
-        revision: SettingsRevision(0),
-        colors: red(),
-    }
-}
-async fn within<T>(future: impl Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(5), future)
-        .await
-        .expect("output made no progress")
+#[derive(Clone)]
+enum Reply {
+    /// 200 with this JSON body and a Content-Length.
+    Json(&'static str),
+    /// These exact bytes, then close.
+    Raw(String),
 }
 
-#[derive(Debug, PartialEq)]
-enum Kind {
-    Configure,
-    Mode(Mode),
-    Colors(EdgeColors),
+struct Device {
+    wled: Wled,
+    udp: UdpSocket,
+    calls: mpsc::Receiver<(String, Value)>,
 }
-struct Call {
-    kind: Kind,
-    reply: Option<oneshot::Sender<Result<(), WriteError>>>,
-}
-impl Call {
-    fn ok(self) {
-        self.reply
-            .expect("async call")
-            .send(Ok(()))
-            .ok()
-            .expect("write remained owned");
-    }
-    fn fail(self, uncertain: bool) {
-        self.reply
-            .expect("async call")
-            .send(Err(WriteError {
-                error: ControlError::Unavailable("test write failed"),
-                uncertain,
-            }))
-            .ok()
-            .expect("write remained owned");
-    }
-}
-struct GatedWire(mpsc::UnboundedSender<Call>);
-impl Wire for GatedWire {
-    fn configure(&mut self, _: &WledSettings) -> Result<(), ControlError> {
-        self.0
-            .send(Call {
-                kind: Kind::Configure,
-                reply: None,
-            })
-            .unwrap();
-        Ok(())
-    }
-    async fn mode(&mut self, mode: Mode) -> Result<(), WriteError> {
-        if mode == Mode::Release {
-            return Ok(());
-        }
-        let (reply, result) = oneshot::channel();
-        self.0
-            .send(Call {
-                kind: Kind::Mode(mode),
-                reply: Some(reply),
-            })
-            .unwrap();
-        result.await.unwrap()
-    }
-    async fn colors(&mut self, colors: &EdgeColors) -> Result<(), ControlError> {
-        let (reply, result) = oneshot::channel();
-        self.0
-            .send(Call {
-                kind: Kind::Colors(colors.clone()),
-                reply: Some(reply),
-            })
-            .unwrap();
-        result.await.unwrap().map_err(|error| error.error)
-    }
-}
-struct Running {
-    control: WledHandle,
-    colors: WledColors,
-    terminal: WledShutdown,
-    calls: mpsc::UnboundedReceiver<Call>,
-    shutdown: Option<oneshot::Sender<()>>,
-    task: JoinHandle<Result<OwnerStopped, ControlError>>,
-}
-impl Running {
-    async fn new() -> Self {
-        let output = WledOutput::new(INSTANCE);
-        let (sender, calls) = mpsc::unbounded_channel();
-        let (shutdown, stopped) = oneshot::channel();
-        let task = tokio::spawn(owner::run(output.owner, GatedWire(sender), async {
-            let _ = stopped.await;
-        }));
-        let mut running = Self {
-            control: output.control,
-            colors: output.colors,
-            terminal: output.shutdown,
-            calls,
-            shutdown: Some(shutdown),
-            task,
-        };
-        assert_eq!(
-            within(running.control.configure(settings())).await.unwrap(),
-            OutputApplied::Sent
+
+impl Device {
+    /// Answers one connection per reply, in order.
+    fn new(replies: Vec<Reply>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        udp.set_read_timeout(Some(WAIT)).unwrap();
+        let wled = Wled::local(
+            listener.local_addr().unwrap().port(),
+            udp.local_addr().unwrap().port(),
         );
-        running.call(Kind::Configure).await;
-        running
+        let (sender, calls) = mpsc::channel();
+        thread::spawn(move || {
+            for reply in replies {
+                let deadline = Instant::now() + WAIT;
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "no connection");
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("{error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket.set_read_timeout(Some(WAIT)).unwrap();
+                let (head, json) = read_request(&mut socket);
+                if sender.send((head, json)).is_err() {
+                    return;
+                }
+                let response = match reply {
+                    Reply::Json(body) => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    ),
+                    Reply::Raw(bytes) => bytes,
+                };
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+        Self { wled, udp, calls }
     }
-    async fn call(&mut self, expected: Kind) -> Call {
-        let call = within(self.calls.recv()).await.unwrap();
-        assert_eq!(call.kind, expected);
-        call
+
+    fn call(&self) -> Value {
+        let (head, json) = self.calls.recv_timeout(WAIT).expect("no HTTP request");
+        assert!(head.starts_with("POST /json/state HTTP/1.1\r\n"), "{head}");
+        json
     }
-    fn hold_request(&self, generation: u64) -> JoinHandle<Result<OutputApplied, ControlError>> {
-        let control = self.control.clone();
-        tokio::spawn(async move { control.hold(epoch(generation), EdgeColors::default()).await })
-    }
-    fn finish_request(
-        &self,
-        mode: IdleOutputMode,
-    ) -> JoinHandle<Result<OutputApplied, ControlError>> {
-        let control = self.control.clone();
-        tokio::spawn(async move { control.finish(session(1), mode).await })
-    }
-    async fn hold(&mut self) {
-        let request = self.hold_request(0);
-        self.call(Kind::Mode(Mode::Realtime)).await.ok();
-        self.call(Kind::Colors(EdgeColors::default())).await.ok();
-        assert_eq!(within(request).await.unwrap().unwrap(), OutputApplied::Sent);
-    }
-    async fn admit(&mut self, generation: u64, colors: EdgeColors) {
-        let control = self.control.clone();
-        let request = tokio::spawn(async move { control.admit(epoch(generation)).await });
-        self.call(Kind::Colors(colors)).await.ok();
-        assert_eq!(within(request).await.unwrap().unwrap(), OutputApplied::Sent);
-    }
-    async fn off(&mut self) {
-        let request = self.finish_request(IdleOutputMode::Off);
-        self.call(Kind::Mode(Mode::Off)).await.ok();
-        within(request).await.unwrap().unwrap();
-    }
-    async fn close(mut self) {
-        if let Some(shutdown) = self.shutdown.take() {
-            shutdown.send(()).unwrap();
+
+    fn expect(&self, states: &[Value]) {
+        for state in states {
+            assert_eq!(&self.call(), state);
         }
-        assert_eq!(within(self.task).await.unwrap().unwrap(), OwnerStopped);
+        assert!(
+            self.calls.recv_timeout(Duration::from_millis(50)).is_err(),
+            "unexpected request"
+        );
+    }
+
+    fn open(&self, leds: LedCounts) -> Result<Box<dyn LedOutput>, Error> {
+        let settings = WledSettings {
+            address: "127.0.0.1".parse().unwrap(),
+            leds,
+        };
+        self.wled.open(&settings)
+    }
+
+    /// The RGB payload of one single-packet DDP frame.
+    fn rgb(&self) -> Vec<u8> {
+        let mut bytes = [0; 1500];
+        let count = self.udp.recv(&mut bytes).expect("no DDP packet");
+        assert_eq!(bytes[0], 0x41, "DDP v1 with push");
+        assert_eq!(&bytes[2..4], &[0x0b, 1], "RGB8 to the default output");
+        assert_eq!(&bytes[4..8], &[0, 0, 0, 0], "offset");
+        assert_eq!(
+            usize::from(u16::from_be_bytes([bytes[8], bytes[9]])),
+            count - 10
+        );
+        bytes[10..count].to_vec()
+    }
+}
+
+fn read_request(socket: &mut impl Read) -> (String, Value) {
+    let mut bytes = Vec::new();
+    let mut chunk = [0; 1024];
+    let end = loop {
+        let count = socket.read(&mut chunk).unwrap();
+        assert_ne!(count, 0, "request ended early");
+        bytes.extend_from_slice(&chunk[..count]);
+        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+            break end + 4;
+        }
+    };
+    let head = String::from_utf8(bytes[..end].to_vec()).unwrap();
+    let length: usize = head
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().unwrap())
+        })
+        .expect("Content-Length");
+    while bytes.len() < end + length {
+        let count = socket.read(&mut chunk).unwrap();
+        assert_ne!(count, 0, "body ended early");
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    (
+        head,
+        serde_json::from_slice(&bytes[end..end + length]).unwrap(),
+    )
+}
+
+fn release() -> Value {
+    json!({"live": false})
+}
+fn live() -> Value {
+    json!({"on": true, "lor": 0, "live": true, "tt": 0})
+}
+fn off() -> Value {
+    json!({"on": false, "lor": 2, "tt": 0})
+}
+fn one_each() -> LedCounts {
+    LedCounts {
+        top: 1,
+        right: 1,
+        bottom: 1,
+        left: 1,
+    }
+}
+fn fill(r: f32, g: f32, b: f32) -> ColorStrip {
+    ColorStrip::fill(LinearColor::new(r, g, b), NonZeroUsize::MIN)
+}
+
+fn request_error(error: &Error) -> &RequestError {
+    let Error::Adapter {
+        source: Some(source),
+        ..
+    } = error
+    else {
+        panic!("expected an adapter error with a source: {error:?}");
+    };
+    source.downcast_ref().expect("HTTP request error")
+}
+
+#[test]
+fn open_through_the_registry_releases_then_enters_live_mode() {
+    let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK)]);
+    let mut registry = Registry::default();
+    registry.add_output(device.wled);
+    let settings = AdapterSettings::new(
+        Wled::KIND,
+        &WledSettings {
+            address: "127.0.0.1".parse().unwrap(),
+            leds: one_each(),
+        },
+    );
+    let _output = registry.open_output(&settings).unwrap();
+    device.expect(&[release(), live()]);
+}
+
+#[test]
+fn write_sends_ddp_clockwise_from_bottom_left() {
+    let device = Device::new(vec![Reply::Json(OK); 2]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let edges = EdgeColors::new(
+        fill(1.0, 0.0, 0.0),
+        fill(0.0, 1.0, 0.0),
+        fill(0.0, 0.0, 1.0),
+        fill(1.0, 1.0, 1.0),
+    );
+    output.write(&edges).unwrap();
+    assert_eq!(
+        device.rgb(),
+        [255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255],
+        "left, top, right, bottom"
+    );
+    output.write(&EdgeColors::default()).unwrap();
+    assert_eq!(device.rgb(), [0; 12]);
+}
+
+#[test]
+fn idle_off_and_native_release_then_set_the_idle_state() {
+    for (mode, state) in [
+        (IdleMode::Off, off()),
+        (IdleMode::Native, json!({"on": true, "lor": 2, "tt": 0})),
+    ] {
+        let device = Device::new(vec![Reply::Json(OK); 4]);
+        let output = device.open(one_each()).unwrap();
+        output.idle(mode).unwrap();
+        device.expect(&[release(), live(), release(), state]);
     }
 }
 
 #[test]
-fn validation_rejects_invalid_addresses_and_led_totals() {
-    let mut config = settings();
-    for leds in [[0; 4], [u32::MAX; 4], [65536, 0, 0, 0]] {
-        config.leds = leds;
-        assert!(matches!(
-            config.validate(),
-            Err(ControlError::Invalid { field: "leds", .. })
-        ));
+fn unreachable_device_fails_open_with_its_cause() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let settings = WledSettings {
+        address: "127.0.0.1".parse().unwrap(),
+        leds: one_each(),
+    };
+    let error = Wled::local(port, 4048).open(&settings).err().unwrap();
+    assert!(error.to_string().contains("live mode"), "{error}");
+    let cause = request_error(&error);
+    assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
+    assert!(cause.source().is_some(), "io::Error retained");
+}
+
+#[test]
+fn failed_live_request_reports_its_cause_and_turns_the_device_off() {
+    let failures = [
+        Reply::Raw("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into()),
+        Reply::Json(r#"{"success":false}"#),
+        Reply::Json(r#"{"error":9}"#),
+        Reply::Json(r#"{"on":true}"#),
+        Reply::Json("not JSON"),
+        Reply::Raw(String::new()),
+        Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}".into()),
+        Reply::Raw(format!("HTTP/1.1 200 OK\r\n\r\n{}", "x".repeat(4097))),
+    ];
+    for failure in failures {
+        let device = Device::new(vec![
+            Reply::Json(OK),
+            failure,
+            Reply::Json(OK),
+            Reply::Json(OK),
+        ]);
+        let error = device.open(one_each()).err().unwrap();
+        let cause = request_error(&error);
+        assert!(!matches!(cause, RequestError::Connect(_)), "{cause:?}");
+        assert!(!error.to_string().contains("also failed"), "{error}");
+        device.expect(&[release(), live(), release(), off()]);
     }
-    config.leds = [65535, 0, 0, 0];
-    config.validate().unwrap();
+}
+
+#[test]
+fn failed_compensation_is_reported_alongside_the_original_cause() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(r#"{"success":false}"#),
+        Reply::Json(OK),
+        Reply::Raw("HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n".into()),
+    ]);
+    let error = device.open(one_each()).err().unwrap();
+    assert!(matches!(request_error(&error), RequestError::Rejected(_)));
+    assert!(error.to_string().contains("off also failed"), "{error}");
+}
+
+#[test]
+fn idle_failure_keeps_its_cause() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(OK),
+        Reply::Raw("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".into()),
+    ]);
+    let output = device.open(one_each()).unwrap();
+    let error = output.idle(IdleMode::Off).unwrap_err();
+    assert!(error.to_string().contains("off mode"), "{error}");
+    assert!(matches!(request_error(&error), RequestError::Status(404)));
+    device.expect(&[release(), live(), release()]);
+}
+
+#[test]
+fn chunked_and_close_delimited_replies_are_accepted() {
+    let device = Device::new(vec![
+        Reply::Raw(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n{\"succes\r\n8\r\ns\":true}\r\n0\r\n\r\n"
+                .into(),
+        ),
+        Reply::Raw(format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{OK}")),
+    ]);
+    device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+}
+
+#[test]
+fn validation_rejects_non_unicast_addresses_and_led_totals() {
+    let valid = WledSettings {
+        address: "192.168.1.50".parse().unwrap(),
+        leds: one_each(),
+    };
+    assert_eq!(Wled::default().validate(&valid), Ok(()));
     for address in [
         "0.0.0.0",
         "255.255.255.255",
-        "239.1.2.3",
+        "224.0.0.1",
         "::",
         "ff02::1",
-        "::ffff:239.1.2.3",
+        "::ffff:224.0.0.1",
+        "::ffff:255.255.255.255",
     ] {
-        config.address = address.parse().unwrap();
-        assert!(matches!(
-            config.validate(),
-            Err(ControlError::Invalid {
-                field: "address",
-                ..
-            })
-        ));
+        let settings = WledSettings {
+            address: address.parse().unwrap(),
+            ..valid.clone()
+        };
+        assert_eq!(
+            settings.validate().unwrap_err().field,
+            "output.address",
+            "{address}"
+        );
     }
+    for leds in [
+        LedCounts::default(),
+        LedCounts {
+            top: u16::MAX,
+            left: 1,
+            ..LedCounts::default()
+        },
+    ] {
+        let settings = WledSettings {
+            leds,
+            ..valid.clone()
+        };
+        assert_eq!(settings.validate().unwrap_err().field, "output.leds");
+    }
+    let most = WledSettings {
+        leds: LedCounts {
+            top: u16::MAX,
+            ..LedCounts::default()
+        },
+        ..valid
+    };
+    assert_eq!(most.validate(), Ok(()));
 }
 
 #[test]
-fn admission_retains_one_newest_future_candidate_and_keeps_its_watermark() {
-    let mut gate = prysm_output::Admission::new(INSTANCE);
-    gate.hold(epoch(0)).unwrap();
-    assert_eq!(gate.offer(frame(2, 2)), OfferResult::Queued);
-    assert_eq!(gate.offer(frame(1, 100)), OfferResult::DiscardedStale);
-    assert_eq!(gate.offer(frame(2, 1)), OfferResult::DiscardedStale);
-    gate.admit(epoch(1)).unwrap();
-    assert!(gate.take().is_none());
-    gate.admit(epoch(2)).unwrap();
-    assert_eq!(gate.take().unwrap().stamp, frame(2, 2).stamp);
-    assert!(gate.take().is_none());
-    assert_eq!(gate.offer(frame(2, 2)), OfferResult::DiscardedStale);
-    gate.hold(epoch(2)).unwrap();
-    assert!(gate.admit(epoch(2)).is_err());
-    assert_eq!(gate.offer(frame(2, 99)), OfferResult::DiscardedStale);
-    assert_eq!(gate.offer(frame(3, 1)), OfferResult::Queued);
-    assert!(gate.take().is_none());
-    gate.finish(session(1)).unwrap();
-    assert_eq!(gate.offer(frame(3, 2)), OfferResult::DiscardedStale);
-    assert!(gate.hold(epoch(3)).is_err());
-    assert!(gate.can_configure().is_err());
-    gate.finished(session(1));
-    let next = StreamEpoch {
-        session: session(2),
-        generation: 0,
-    };
-    gate.hold(next).unwrap();
-    assert!(gate.finish(session(1)).is_err());
-    assert!(gate.can_configure().is_err());
-    let mut wrong = frame(1, 1);
-    wrong.stamp.epoch.session = session(3);
-    assert_eq!(gate.offer(wrong), OfferResult::DiscardedStale);
-    let foreign = SessionId {
-        instance: InstanceId(NonZeroU64::new(2).unwrap()),
-        ..session(2)
-    };
-    assert!(gate.finish(foreign).is_err());
-    gate.finish(session(2)).unwrap();
-    gate.finished(session(2));
-    gate.can_configure().unwrap();
-}
-
-#[tokio::test]
-async fn future_epoch_waits_for_exact_admission_and_old_frames_stay_fenced() {
-    let mut output = Running::new().await;
-    output.hold().await;
+fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
+    let settings: WledSettings =
+        serde_json::from_value(json!({"address": "10.0.0.5", "leds": {"top": 96, "left": 54}}))
+            .unwrap();
     assert_eq!(
-        output.colors.offer(frame(3, 2)).unwrap(),
-        OfferResult::Queued
-    );
-    output.admit(1, EdgeColors::default()).await;
-    assert!(output.calls.try_recv().is_err());
-    output.admit(3, red()).await;
-    assert_eq!(
-        output.colors.offer(frame(3, 1)).unwrap(),
-        OfferResult::DiscardedStale
-    );
-    assert_eq!(
-        output.colors.offer(frame(3, 2)).unwrap(),
-        OfferResult::DiscardedStale
-    );
-    let hold = output.hold_request(3);
-    output.call(Kind::Colors(EdgeColors::default())).await.ok();
-    within(hold).await.unwrap().unwrap();
-    assert_eq!(
-        output.colors.offer(frame(3, 9)).unwrap(),
-        OfferResult::DiscardedStale
-    );
-    assert_eq!(
-        output.colors.offer(frame(4, 1)).unwrap(),
-        OfferResult::Queued
-    );
-    output.off().await;
-    assert_eq!(
-        output.colors.offer(frame(4, 2)).unwrap(),
-        OfferResult::DiscardedStale
-    );
-    output.close().await;
-}
-
-#[tokio::test]
-async fn finish_waits_for_a_delayed_color_write_and_discards_queued_colors() {
-    let mut output = Running::new().await;
-    output.hold().await;
-    output.admit(1, EdgeColors::default()).await;
-    output.colors.offer(frame(1, 1)).unwrap();
-    let delayed = output.call(Kind::Colors(red())).await;
-    let finish = output.finish_request(IdleOutputMode::Off);
-    for sequence in 2..100 {
-        assert_eq!(
-            output.colors.offer(frame(1, sequence)).unwrap(),
-            OfferResult::Queued
-        );
-    }
-    assert_eq!(
-        within(output.control.observe())
-            .await
-            .unwrap()
-            .initial
-            .state
-            .admitted,
-        Some(epoch(1))
-    );
-    assert!(!finish.is_finished());
-    delayed.ok();
-    output.call(Kind::Mode(Mode::Off)).await.ok();
-    within(finish).await.unwrap().unwrap();
-    assert!(output.calls.try_recv().is_err());
-    output.close().await;
-}
-
-#[tokio::test]
-async fn caller_timeout_does_not_cancel_a_mode_write_or_let_off_overtake_it() {
-    let mut output = Running::new().await;
-    let control = output.control.clone();
-    let timed_out = tokio::spawn(async move {
-        tokio::time::timeout(
-            Duration::from_millis(10),
-            control.hold(epoch(0), EdgeColors::default()),
-        )
-        .await
-    });
-    let delayed = output.call(Kind::Mode(Mode::Realtime)).await;
-    assert!(within(timed_out).await.unwrap().is_err());
-    let finish = output.finish_request(IdleOutputMode::Off);
-    let state = within(output.control.observe())
-        .await
-        .unwrap()
-        .initial
-        .state;
-    assert_eq!(state.confirmation, None);
-    assert!(!finish.is_finished());
-    delayed.ok();
-    output.call(Kind::Colors(EdgeColors::default())).await.ok();
-    output.call(Kind::Mode(Mode::Off)).await.ok();
-    within(finish).await.unwrap().unwrap();
-    output.close().await;
-}
-
-#[tokio::test]
-async fn ambiguous_http_failure_poison_cannot_be_cleared_by_configure_or_finish() {
-    let mut output = Running::new().await;
-    let request = output.hold_request(0);
-    output.call(Kind::Mode(Mode::Realtime)).await.fail(true);
-    assert_eq!(
-        within(request).await.unwrap().unwrap_err().kind(),
-        prysm_contract::FailureKind::RecoveryRequired
-    );
-    let state = output.control.observe().await.unwrap().initial.state;
-    assert_eq!(
-        state.failure.unwrap().kind,
-        prysm_contract::FailureKind::RecoveryRequired
-    );
-    assert_eq!(state.confirmation, None);
-    assert_eq!(
-        output
-            .control
-            .configure(settings())
-            .await
-            .unwrap_err()
-            .kind(),
-        prysm_contract::FailureKind::RecoveryRequired
-    );
-    assert_eq!(
-        output
-            .control
-            .finish(session(1), IdleOutputMode::Off)
-            .await
-            .unwrap_err()
-            .kind(),
-        prysm_contract::FailureKind::RecoveryRequired
-    );
-    assert!(output.calls.try_recv().is_err());
-    output.shutdown.take().unwrap().send(()).unwrap();
-    assert!(within(output.task).await.unwrap().is_err());
-}
-
-#[tokio::test]
-async fn completed_mode_rejection_and_udp_failure_still_allow_cleanup() {
-    for mode_failure in [true, false] {
-        let mut output = Running::new().await;
-        let request = output.hold_request(0);
-        let realtime = output.call(Kind::Mode(Mode::Realtime)).await;
-        if mode_failure {
-            realtime.fail(false);
-        } else {
-            realtime.ok();
-            output
-                .call(Kind::Colors(EdgeColors::default()))
-                .await
-                .fail(false);
+        settings.leds,
+        LedCounts {
+            top: 96,
+            left: 54,
+            ..LedCounts::default()
         }
-        assert!(within(request).await.unwrap().is_err());
-        assert!(
-            output
-                .control
-                .observe()
-                .await
-                .unwrap()
-                .initial
-                .state
-                .failure
-                .is_some()
-        );
-        output.off().await;
-        let state = output.control.observe().await.unwrap().initial.state;
-        assert_eq!(state.idle_mode, Some(IdleOutputMode::Off));
-        assert_eq!(state.confirmation, Some(OutputApplied::Sent));
-        assert!(state.failure.is_none());
-        output.close().await;
+    );
+    assert_eq!(
+        serde_json::to_value(&settings).unwrap(),
+        json!({"address": "10.0.0.5", "leds": {"top": 96, "right": 0, "bottom": 0, "left": 54}})
+    );
+    for invalid in [
+        json!({"address": "10.0.0.5", "leds": {"top": 1}, "port": 80}),
+        json!({"address": "10.0.0.5", "leds": {"up": 1}}),
+        json!({"address": "wled.local", "leds": {"top": 1}}),
+        json!({"address": "10.0.0.5", "leds": {"top": 65536}}),
+    ] {
+        assert!(serde_json::from_value::<WledSettings>(invalid).is_err());
     }
-}
-
-#[tokio::test(start_paused = true)]
-async fn refresh_is_owned_and_finishes_before_final_mode_without_resuming_afterward() {
-    let mut output = Running::new().await;
-    output.hold().await;
-    tokio::time::advance(Duration::from_millis(500)).await;
-    let refresh = output.call(Kind::Colors(EdgeColors::default())).await;
-    let finish = output.finish_request(IdleOutputMode::Off);
-    assert!(!finish.is_finished());
-    refresh.ok();
-    output.call(Kind::Mode(Mode::Off)).await.ok();
-    within(finish).await.unwrap().unwrap();
-    tokio::time::advance(Duration::from_secs(5)).await;
-    assert!(output.calls.try_recv().is_err());
-    output.close().await;
-}
-
-#[tokio::test]
-async fn shutdown_settles_the_current_write_and_then_turns_off() {
-    let mut output = Running::new().await;
-    let request = output.hold_request(0);
-    let delayed = output.call(Kind::Mode(Mode::Realtime)).await;
-    output.shutdown.take().unwrap().send(()).unwrap();
-    let control = output.control.clone();
-    let queued = tokio::spawn(async move { control.admit(epoch(1)).await });
-    assert!(!output.task.is_finished());
-    assert!(within(output.control.observe()).await.is_ok());
-    delayed.ok();
-    assert!(within(request).await.unwrap().is_err());
-    output.call(Kind::Mode(Mode::Off)).await.ok();
-    assert!(within(queued).await.unwrap().is_err());
-    output.close().await;
-}
-
-#[tokio::test]
-async fn terminal_fence_is_immediate_irreversible_and_keeps_failed_writes_visible() {
-    for failed in [false, true] {
-        let mut output = Running::new().await;
-        output.hold().await;
-        output.admit(1, EdgeColors::default()).await;
-        output.colors.offer(frame(1, 1)).unwrap();
-        let write = output.call(Kind::Colors(red())).await;
-        let control = output.control.clone();
-        let queued = tokio::spawn(async move { control.admit(epoch(2)).await });
-        tokio::task::yield_now().await;
-        output.terminal.request();
-        output.terminal.request();
-        assert!(output.colors.offer(frame(2, 2)).is_err());
-        assert!(within(output.control.admit(epoch(3))).await.is_err());
-        assert!(within(output.control.configure(settings())).await.is_err());
-        assert!(within(output.control.hold(epoch(4), red())).await.is_err());
-        assert!(
-            within(output.control.finish(session(1), IdleOutputMode::Native))
-                .await
-                .is_err()
-        );
-        assert_eq!(
-            output
-                .control
-                .observe()
-                .await
-                .unwrap()
-                .initial
-                .state
-                .admitted,
-            None
-        );
-        assert!(!output.task.is_finished());
-        assert!(output.calls.try_recv().is_err());
-        if failed {
-            write.fail(false);
-        } else {
-            write.ok();
-        }
-        output.call(Kind::Mode(Mode::Off)).await.ok();
-        assert!(within(queued).await.unwrap().is_err());
-        let result = within(output.task).await.unwrap();
-        assert_eq!(result.is_err(), failed);
-        if let Err(error) = result {
-            assert!(error.to_string().contains("test write failed"));
-        }
-        assert!(output.calls.try_recv().is_err());
-    }
-}
-
-#[tokio::test]
-async fn terminal_request_before_run_rejects_work_without_configuring_transport() {
-    let output = WledOutput::new(INSTANCE);
-    output.shutdown.request();
-    assert!(output.control.configure(settings()).await.is_err());
-    let (wire, mut calls) = mpsc::unbounded_channel();
-    owner::run(output.owner, GatedWire(wire), std::future::pending())
-        .await
-        .unwrap();
-    assert!(calls.try_recv().is_err());
-}
-
-#[tokio::test]
-async fn shutdown_preserves_both_write_failures_and_the_recovery_category() {
-    let mut output = Running::new().await;
-    let request = output.hold_request(0);
-    let write = output.call(Kind::Mode(Mode::Realtime)).await;
-    output.terminal.request();
-    write.fail(false);
-    assert!(within(request).await.unwrap().is_err());
-    output.call(Kind::Mode(Mode::Off)).await.fail(true);
-    let error = within(output.task).await.unwrap().unwrap_err();
-    assert_eq!(error.kind(), prysm_contract::FailureKind::RecoveryRequired);
-    assert!(error.to_string().contains("cleanup also failed"));
-}
-
-#[tokio::test]
-async fn snapshots_are_atomic_gaps_are_explicit_and_owner_closure_ends_observation() {
-    let mut output = Running::new().await;
-    output.hold().await;
-    let mut observation = output.control.observe().await.unwrap();
-    for _ in 0..20 {
-        let request = output.hold_request(0);
-        output.call(Kind::Colors(EdgeColors::default())).await.ok();
-        within(request).await.unwrap().unwrap();
-    }
-    assert!(matches!(
-        observation.updates.next().await.unwrap().unwrap(),
-        Update::ResyncRequired
-    ));
-    assert!(observation.updates.next().await.is_none());
-    let mut fresh = output.control.observe().await.unwrap();
-    assert!(fresh.initial.state.held);
-    output.off().await;
-    let control = output.control.clone();
-    output.close().await;
-    within(async { while fresh.updates.next().await.is_some() {} }).await;
-    assert!(matches!(
-        control.observe().await,
-        Err(ControlError::Unavailable(_))
-    ));
-}
-
-#[tokio::test]
-async fn rejected_finish_retains_device_and_session_until_cleanup_succeeds() {
-    let mut output = Running::new().await;
-    output.hold().await;
-    let finish = output.finish_request(IdleOutputMode::Off);
-    output.call(Kind::Mode(Mode::Off)).await.fail(false);
-    assert!(within(finish).await.unwrap().is_err());
-    let mut next_device = settings();
-    next_device.address = "127.0.0.2".parse().unwrap();
-    assert!(output.control.configure(next_device.clone()).await.is_err());
-    let next_epoch = StreamEpoch {
-        session: session(2),
-        generation: 0,
-    };
-    assert!(matches!(
-        output.control.hold(next_epoch, EdgeColors::default()).await,
-        Err(ControlError::CleanupPending(_))
-    ));
-    assert!(output.calls.try_recv().is_err());
-    output.off().await;
-    output.control.configure(next_device).await.unwrap();
-    output.call(Kind::Configure).await;
-    output.shutdown.take().unwrap().send(()).unwrap();
-    output.call(Kind::Mode(Mode::Off)).await.ok();
-    output.close().await;
 }

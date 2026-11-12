@@ -1,0 +1,292 @@
+//! Scripted adapters for tests and examples. Every call is recorded in a
+//! shared [`CallLog`] as `"<adapter>.<call>:<name>"`.
+use crate::{EngineHandle, Shutdown};
+use prysm_core::{EdgeColors, Frame};
+use prysm_ports::{
+    AdapterSettings, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
+    OutputFactory, Result, Settings, SettingsStore, SourceFactory, ValidationError,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, Default)]
+pub struct CallLog(Arc<Mutex<Vec<String>>>);
+
+impl CallLog {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&self, event: impl Into<String>) {
+        let event = event.into();
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+    }
+
+    #[must_use]
+    pub fn events(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    #[must_use]
+    pub fn count(&self, event: &str) -> usize {
+        self.events().iter().filter(|e| *e == event).count()
+    }
+
+    #[must_use]
+    pub fn position(&self, event: &str) -> Option<usize> {
+        self.events().iter().position(|e| e == event)
+    }
+
+    #[must_use]
+    pub fn last_position(&self, event: &str) -> Option<usize> {
+        self.events().iter().rposition(|e| e == event)
+    }
+
+    /// Wait up to five seconds for `event` to have happened `times` times.
+    pub async fn wait_for(&self, event: &str, times: usize) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if self.count(event) >= times {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        false
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FakeSourceSettings {
+    pub name: String,
+    /// Fail `next_frame` after this many frames.
+    pub fail_after: Option<u32>,
+    /// Produce no more frames after this many.
+    pub quiet_after: Option<u32>,
+    pub fail_open: bool,
+    /// Rejected by `validate`.
+    pub invalid: bool,
+    /// Block in `close` this long, to exceed a stop deadline.
+    pub close_delay_ms: u64,
+    /// `close` reports an unconfirmed release.
+    pub fail_close: bool,
+}
+
+/// Registers kind `"fake"`.
+pub struct FakeSources(pub CallLog);
+
+impl SourceFactory for FakeSources {
+    const KIND: &'static str = "fake";
+    type Settings = FakeSourceSettings;
+
+    fn validate(&self, settings: &FakeSourceSettings) -> Result<(), ValidationError> {
+        if settings.invalid {
+            return Err(ValidationError::new("capture.invalid", "fake rejects it"));
+        }
+        Ok(())
+    }
+
+    fn open(&self, settings: &FakeSourceSettings) -> Result<Box<dyn FrameSource>> {
+        if settings.fail_open {
+            return Err(Error::other("fake source cannot open"));
+        }
+        Ok(Box::new(FakeSource::new(&self.0, settings.clone())))
+    }
+}
+
+/// Produces a small black frame every two milliseconds.
+pub struct FakeSource {
+    log: CallLog,
+    settings: FakeSourceSettings,
+    frames: u32,
+}
+
+impl FakeSource {
+    #[must_use]
+    pub fn new(log: &CallLog, settings: FakeSourceSettings) -> Self {
+        log.record(format!("source.open:{}", settings.name));
+        Self {
+            log: log.clone(),
+            settings,
+            frames: 0,
+        }
+    }
+}
+
+impl FrameSource for FakeSource {
+    fn next_frame(&mut self, timeout: Duration) -> Result<Option<Frame>> {
+        if self.settings.fail_after.is_some_and(|n| self.frames >= n) {
+            return Err(Error::other("fake source failed"));
+        }
+        if self.settings.quiet_after.is_some_and(|n| self.frames >= n) {
+            thread::sleep(timeout);
+            return Ok(None);
+        }
+        thread::sleep(timeout.min(Duration::from_millis(2)));
+        self.frames += 1;
+        Frame::dummy(16, 9)
+            .map(Some)
+            .map_err(|error| Error::adapter("fake frame", error))
+    }
+
+    fn close(self: Box<Self>) -> Result<()> {
+        thread::sleep(Duration::from_millis(self.settings.close_delay_ms));
+        self.log
+            .record(format!("source.close:{}", self.settings.name));
+        if self.settings.fail_close {
+            return Err(Error::other("fake source release is unconfirmed"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FakeOutputSettings {
+    pub name: String,
+    /// Fail `write` after this many writes.
+    pub fail_after: Option<u32>,
+    pub fail_open: bool,
+    /// Rejected by `validate`.
+    pub invalid: bool,
+}
+
+/// Registers kind `"fake"`.
+pub struct FakeOutputs(pub CallLog);
+
+impl OutputFactory for FakeOutputs {
+    const KIND: &'static str = "fake";
+    type Settings = FakeOutputSettings;
+
+    fn validate(&self, settings: &FakeOutputSettings) -> Result<(), ValidationError> {
+        if settings.invalid {
+            return Err(ValidationError::new("output.invalid", "fake rejects it"));
+        }
+        Ok(())
+    }
+
+    fn open(&self, settings: &FakeOutputSettings) -> Result<Box<dyn LedOutput>> {
+        if settings.fail_open {
+            return Err(Error::other("fake output cannot open"));
+        }
+        self.0.record(format!("output.open:{}", settings.name));
+        Ok(Box::new(FakeOutput {
+            log: self.0.clone(),
+            settings: settings.clone(),
+            writes: 0,
+        }))
+    }
+}
+
+pub struct FakeOutput {
+    log: CallLog,
+    settings: FakeOutputSettings,
+    writes: u32,
+}
+
+impl LedOutput for FakeOutput {
+    fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
+        if self.settings.fail_after.is_some_and(|n| self.writes >= n) {
+            return Err(Error::other("fake output failed"));
+        }
+        self.writes += 1;
+        self.log
+            .record(format!("output.write:{}", self.settings.name));
+        Ok(())
+    }
+
+    fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
+        self.log
+            .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+        Ok(())
+    }
+}
+
+/// Records `"sink.send"` per frame.
+pub struct FakeSink(pub CallLog);
+
+impl FrameSink for FakeSink {
+    fn send(&mut self, _frame: &Frame) -> Result<()> {
+        self.0.record("sink.send");
+        Ok(())
+    }
+}
+
+/// In-memory settings; clones share the stored value.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryStore(Arc<Mutex<Option<Settings>>>);
+
+impl MemoryStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with(settings: Settings) -> Self {
+        Self(Arc::new(Mutex::new(Some(settings))))
+    }
+
+    #[must_use]
+    pub fn saved(&self) -> Option<Settings> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl SettingsStore for MemoryStore {
+    fn load(&mut self) -> Result<Option<Settings>> {
+        Ok(self.saved())
+    }
+
+    fn save(&mut self, settings: &Settings) -> Result<()> {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings.clone());
+        Ok(())
+    }
+}
+
+/// Settings selecting the fake source and output with default behaviour.
+#[must_use]
+pub fn settings() -> Settings {
+    Settings {
+        capture: Some(AdapterSettings::new(
+            FakeSources::KIND,
+            &FakeSourceSettings::default(),
+        )),
+        output: Some(AdapterSettings::new(
+            FakeOutputs::KIND,
+            &FakeOutputSettings::default(),
+        )),
+        ..Settings::default()
+    }
+}
+
+/// A surface that turns lighting on and waits for shutdown.
+///
+/// # Errors
+/// Lighting could not start.
+pub async fn light_until_shutdown(engine: EngineHandle, shutdown: Shutdown) -> Result<()> {
+    engine.set_target(LightingTarget::Processed).await?;
+    shutdown.requested().await;
+    Ok(())
+}
+
+/// A surface that only waits for shutdown, under an engine or a forwarder.
+///
+/// # Errors
+/// Never.
+pub async fn until_shutdown<H>(_handle: H, shutdown: Shutdown) -> Result<()> {
+    shutdown.requested().await;
+    Ok(())
+}
