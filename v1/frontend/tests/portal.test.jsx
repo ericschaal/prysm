@@ -15,8 +15,8 @@ import {
 import { ledEdgeLimits, ledRuns, normalizeWledAddress, wledUrl } from '@prysm/output-wled-ui';
 import { deviceDefaults, deviceLimits } from '@prysm/capture-device-ui';
 import { fileDefaults, fileLimits } from '@prysm/capture-file-ui';
-import { includeMenusHelp, tvPictureLimits, webosDefaults } from '@prysm/capture-webos-ui';
-import { encodingChoices, remoteDefaults } from '@prysm/capture-remote-ui';
+import { includeMenusHelp, largeSizeHint, tvPictureLimits, webosDefaults } from '@prysm/capture-webos-ui';
+import { encodingChoices, largeStreamHint, remoteDefaults } from '@prysm/capture-remote-ui';
 import { defaultProcessing } from '../testkit/application';
 import {
   $,
@@ -526,6 +526,51 @@ test('fields the forms do not show are preserved on every save', async () => {
     });
   } finally {
     await portal.unmount();
+  }
+});
+
+test('a size above 640 × 360 shows a quiet hint in both TV forms; it never blocks saving', async () => {
+  const forms = [
+    [WebosWebPortal, { kind: 'webos' }, largeSizeHint, /processor without/],
+    [HeadlessWebPortal, { kind: 'remote', listen: '0.0.0.0:7380' }, largeStreamHint, /processor and more network without/],
+  ];
+  for (const [Host, start, hint, wording] of forms) {
+    const portal = await renderPortal(Host, { capture: start, output });
+    const { fixture } = portal;
+    const input = (name) => field(`capture.${name}`);
+    const shown = () => $('[data-size-hint]', form('Capture'));
+    try {
+      assert.equal(shown(), null, 'not at the default size');
+      assert.match(hint, wording);
+      assert.match(hint, /^640 × 360 is enough for the lights\./);
+      for (const [width, height, expected] of [
+        [640, 360, false],
+        [320, 180, false],
+        [1280, 720, true],
+        [960, 540, true],
+        [1280, 180, false],
+      ]) {
+        await edit(input('width'), width);
+        await edit(input('height'), height);
+        assert.equal(shown()?.textContent ?? null, expected ? hint : null, `${width}×${height}`);
+      }
+      await edit(input('width'), 1280);
+      await edit(input('height'), 720);
+      const element = shown();
+      assert.equal(element.className, 'help');
+      assert.equal(element.getAttribute('role'), null, 'help, not an alert');
+      assert.equal(errorOf(input('width')), undefined);
+      assert.equal(errorOf(input('height')), undefined);
+      await submit(form('Capture'));
+      assert.deepEqual(
+        [fixture.snapshot().settings.capture.width, fixture.snapshot().settings.capture.height],
+        [1280, 720],
+      );
+      assert.equal(badge('Capture'), 'Saved');
+      assert.equal(shown().textContent, hint, 'still shown after saving');
+    } finally {
+      await portal.unmount();
+    }
   }
 });
 

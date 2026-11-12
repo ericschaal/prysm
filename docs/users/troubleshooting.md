@@ -36,7 +36,7 @@ Moving picture but wrong LEDs: check WLED and wiring.
 | No LEDs | Check WLED address, DDP input, and LED counts. Allow HTTP/WebSocket and UDP 4048 to WLED. |
 | Wrong edge | From the front: bottom-left → up left → across top → down right → along bottom. Check edge counts. |
 | Dark/washed-out colors | Check [gamma](configuration.md#color-calibration), brightness, and WLED power limits. |
-| Black bars still sampled | Wait about 1.5 s. Detection needs at least 5 incoming fps. |
+| Black bars still sampled | Wait about 1.5 s, up to 3 s in dark scenes; a picture too dark to tell keeps the last crop. Detection needs at least 5 incoming fps. |
 | File will not play | Install FFmpeg 9+ and check file access. Docker needs FFmpeg in the image and a file mount. |
 | File finished | Restart Screen sync to replay. |
 

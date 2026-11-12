@@ -11,6 +11,10 @@ import {
   type EditorProps,
 } from '@prysm/web-portal';
 
+/** The size hint of the stream form: a larger stream also costs network. */
+export const largeStreamHint =
+  '640\u00a0×\u00a0360 is enough for the lights. Larger sizes use more of the TV’s processor and more network without a visible difference.';
+
 /** What Rust uses for an omitted field. */
 export const remoteDefaults = {
   width: 320,
@@ -67,7 +71,12 @@ function RemoteEditor({ value, onChange }: EditorProps<RemoteReceiverSettings>) 
         onChange={(listen) => onChange({ ...value, listen })}
         help="Address and fixed port this computer listens on for frames from a capture-only TV, such as 0.0.0.0:7380."
       />
-      <TvPictureFields value={value} defaults={remoteDefaults} onChange={onChange} />
+      <TvPictureFields
+        value={value}
+        defaults={remoteDefaults}
+        sizeHint={largeStreamHint}
+        onChange={onChange}
+      />
       <SelectField
         path="capture.encoding"
         label="Stream encoding"

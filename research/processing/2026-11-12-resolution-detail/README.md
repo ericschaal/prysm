@@ -205,3 +205,53 @@ four Sintel excerpts (about 170 MB) and runs every source at every size. It prin
 tables that are saved as [`results.md`](results.md). A full run takes about 15 minutes on
 an Apple-silicon Mac. Set `HEAD_REV` to compare a different baseline. Intermediate files
 (LED records and the excerpts) stay in `$WORK`.
+
+## After the fix (2026-11-12)
+
+Cause: the black-bar detector counted depths, run gaps and its 2-pixel agreement
+tolerance in source pixels, and read single pixels. A soft or noisy dark boundary
+therefore passed or failed its tests differently at each capture size. On top, every
+scan that found nothing restarted the 1.5 s confirmation. In dark scenes, where
+picture rows sit within a few levels of the black threshold, the moment of the
+first uninterrupted 1.5 s was chance: `sintel-s3`'s top bar was confirmed after
+10.8 s at 640×360 and 19.3 s at 1280×720 and 1920×1080. Once confirmed, crops did
+not flicker at any size: 1–3 crop changes per 30 s, although single scans flipped
+between "bar" and "nothing" 37–68 times per edge.
+
+Fix (`crates/processing/prysm-processor/src/nodes/black_bar_detector.rs`): above
+640×360, the detector reads the sampler's lattice (every 2nd row and column at
+1280×720, every 3rd at 1920×1080). Each sample averages its block like a
+downscaler, and all depths and tolerances count lattice steps. A boundary is
+confirmed when sightings within the last 3 s add up to 1.5 s (0.4 s within 0.8 s
+outward). Scans that see nothing pause the evidence instead of restarting it.
+
+Same excerpts, `HEAD` (`536fcab`) vs. the fixed working tree, run through `ledrun`
+with the `run.sh` commands, plus 960×540. Frames whose crop differs by more than
+0.3 %, and the largest LED difference in those frames:
+
+| Source | Sizes | Before | After |
+| --- | --- | --- | --- |
+| `sintel-s3` | 640×360 vs 1280×720 | 204 frames, 90 steps | 14 frames, 20 steps |
+| `sintel-s3` | 640×360 vs 1920×1080 | 204, 90 | 22, 21 |
+| `sintel-s3` | 960×540 vs 1280×720 | 202, 92 | 26, 20 |
+| `sintel-s3` | 1280×720 vs 1920×1080 | 0 | 8, 22 |
+| `sintel-s2` | 640×360 vs 1280×720 | 38, 114 | 0 |
+| `sintel-s2` | 640×360 vs 1920×1080 | 38, 114 | 4, 114 |
+| `sintel-s2` | 960×540 vs 1280×720 | 30, 117 | 14, 110 |
+| `sintel-s2` | 1280×720 vs 1920×1080 | 0 | 4, 116 |
+
+The remaining frames differ only in when a crop starts. `sintel-s3`'s top bar is now
+confirmed after 9.5–10.9 s at all four sizes. `sintel-s2`'s bottom bar is confirmed
+within 2 frames of 5.1 s, but those frames show a bright fire, so a crop starting two
+frames apart still differs by up to 116 steps. `sintel-s2` also has a dark vignette
+about 0.5 % wide at the right picture border. Before the fix, only 640×360 and
+960×540 cropped it in the last 1.5 s. Now every size crops it, 1.6–2 s before the
+end. Crop changes per 30 s at one size are unchanged: 1 for `sintel-s3` and 2–3 for
+`sintel-s2`. `sintel-s1` and `sintel-s4` give the same crops as before at every size.
+`sintel-s3`'s bottom bar stays too dark to confirm at any size.
+
+Bars in a lit picture are confirmed after 1.5 s at every size, as before. A dark
+letterboxed scene is confirmed between 1.5 and 3 s once at least half of its scans
+see the bars. Detector cost on this Mac, with a scan on every frame of `sintel-s3`:
+0.73 → 0.73 ms at 640×360, 1.57 → 1.21 ms at 1280×720 and 2.44 → 1.34 ms at
+1920×1080. Nothing was run on the TV.

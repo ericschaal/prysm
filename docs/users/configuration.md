@@ -48,7 +48,7 @@ Picture changes apply live. Capture and WLED changes restart active capture.
 | Smoothing duration | 0.1 s | Softens transitions. Use 0 for immediate changes. |
 | Sample density | 128 | More samples use more CPU and memory. Leave at 128 to start. |
 | Spatial reach | 10% | How far into the picture colors influence each edge. |
-| Remove black bars | On | Ignores letterbox/pillarbox bars. Needs at least 5 fps and about 1.5 s to settle. |
+| Remove black bars | On | Ignores letterbox/pillarbox bars. Needs at least 5 fps and about 1.5 s to settle (up to 3 s in dark scenes). |
 
 Use [Preview](preview.md) to check changes.
 

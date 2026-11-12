@@ -233,3 +233,17 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
     await portal.unmount();
   }
 });
+
+test('setup shows the same quiet size hint above 640 × 360', async () => {
+  const portal = await renderPortal(WebosWebPortal, {});
+  try {
+    assert.equal($('[data-size-hint]', wizard()), null);
+    await edit(field('capture.width'), 1280);
+    await edit(field('capture.height'), 720);
+    assert.match($('[data-size-hint]', wizard()).textContent, /is enough for the lights/);
+    await next();
+    assert.equal(field('output.kind'), null, 'the hint does not stop the next step');
+  } finally {
+    await portal.unmount();
+  }
+});

@@ -488,3 +488,171 @@ fn nv12_frames_detect_the_same_bars_as_yuyv_and_see_their_chroma() {
         viewport([0; 4])
     );
 }
+
+const SIZES: [(u32, u32); 4] = [(640, 360), (960, 540), (1280, 720), (1920, 1080)];
+
+fn noise(x: u32, y: u32, frame: u32) -> u32 {
+    let mut h =
+        x.wrapping_mul(0x9E37_79B1) ^ y.wrapping_mul(0x85EB_CA77) ^ frame.wrapping_mul(0xC2B2_AE3D);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^ (h >> 13)
+}
+
+/// One limited-range NV12 frame of a 320x180 grid of cells, shown at
+/// `width` x `height` so that every size shows the same cells, plus up to 3
+/// levels of noise per pixel. `cell(cx, cy)` is the luma of a cell.
+fn cells(width: u32, height: u32, frame: u32, cell: impl Fn(u32, u32) -> u8) -> Frame {
+    let mut bytes = Vec::with_capacity((width * height * 3 / 2) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let level = cell(x * 320 / width, y * 180 / height);
+            let grain = u8::try_from(noise(x, y, frame + 1000) % 4).unwrap();
+            bytes.push(if level <= 16 { 16 } else { level + grain });
+        }
+    }
+    bytes.resize((width * height * 3 / 2) as usize, 128);
+    Frame::new(
+        bytes,
+        width,
+        height,
+        PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap()
+}
+
+/// A dark, noisy picture, 10 levels above black on average, with a few small
+/// highlights. Letterboxed, it has 2.39:1 bars (23 of 180 cells, 138 rows at
+/// 1080p) at the top and bottom, and thin near-black lines across the picture.
+/// Otherwise it has no bars but darkens gradually toward every border.
+fn dark_scene(width: u32, height: u32, frame: u32, letterboxed: bool) -> Frame {
+    cells(width, height, frame, |cx, cy| {
+        if letterboxed && !(23..157).contains(&cy) {
+            return 16;
+        }
+        if noise(cx, cy, 0).is_multiple_of(16) {
+            return 90;
+        }
+        // Thin near-black lines, one cell high, as in shadows or blinds.
+        if letterboxed && cy % 6 == 3 {
+            return 17;
+        }
+        let border = cx.min(319 - cx).min(cy.min(179 - cy) * 16 / 9);
+        let vignette = if letterboxed { 2 } else { border.min(24) / 3 };
+        18 + u8::try_from(vignette + noise(cx, cy, frame) % 9).unwrap()
+    })
+}
+
+/// The crop (top, right, bottom, left) of every scan from 0 to `seconds` at 20
+/// scans/s, cycling through `frames`.
+fn crops(frames: &[Frame], seconds: usize) -> Vec<[u32; 4]> {
+    let start = Instant::now();
+    let mut detector = BlackBarDetector::new();
+    (0..seconds * 20)
+        .map(|scan| {
+            let frame = &frames[scan % frames.len()];
+            let crop = at(&mut detector, frame, start, scan as u64 * 50);
+            [
+                crop.y,
+                frame.width() - crop.x - crop.width,
+                frame.height() - crop.y - crop.height,
+                crop.x,
+            ]
+        })
+        .collect()
+}
+
+fn changes(crops: &[[u32; 4]]) -> usize {
+    crops.windows(2).filter(|pair| pair[0] != pair[1]).count()
+}
+
+/// The 23-cell bars of [`dark_scene`] within one lattice step (3 rows at 1080p).
+fn is_bar(rows: u32, height: u32) -> bool {
+    rows.abs_diff(23 * height / 180) <= (height / 360).max(1)
+}
+
+#[test]
+fn a_dark_letterboxed_scene_is_cropped_alike_and_once_at_every_capture_size() {
+    for (width, height) in SIZES {
+        let frames: Vec<_> = (0..8).map(|i| dark_scene(width, height, i, true)).collect();
+        let crops = crops(&frames, 6);
+        let first = crops.iter().position(|crop| crop[0] > 0).unwrap();
+        assert!(
+            (30..=40).contains(&first),
+            "{width}x{height}: cropped after scan {first}"
+        );
+        assert_eq!(changes(&crops), 1, "{width}x{height}: the crop flickered");
+        let [top, right, bottom, left] = *crops.last().unwrap();
+        assert!(
+            is_bar(top, height) && is_bar(bottom, height) && right == 0 && left == 0,
+            "{width}x{height}: {:?}",
+            crops.last()
+        );
+    }
+}
+
+#[test]
+fn a_dark_scene_without_bars_is_never_cropped_at_any_capture_size() {
+    for (width, height) in SIZES {
+        let frames: Vec<_> = (0..8)
+            .map(|i| dark_scene(width, height, i, false))
+            .collect();
+        assert!(
+            crops(&frames, 6).iter().all(|crop| *crop == [0; 4]),
+            "{width}x{height}: dark borders were cropped"
+        );
+    }
+}
+
+#[test]
+fn intermittent_sightings_in_a_dark_scene_crop_after_enough_evidence_without_flicker() {
+    // Every third scan cannot tell (a black frame): evidence pauses, it does not restart.
+    for (width, height) in SIZES {
+        let black = cells(width, height, 0, |_, _| 16);
+        let mut frames: Vec<_> = (0..8).map(|i| dark_scene(width, height, i, true)).collect();
+        frames.insert(2, black.clone());
+        frames.insert(5, black.clone());
+        frames.insert(8, black);
+        let crops = crops(&frames, 8);
+        let first = crops.iter().position(|crop| crop[0] > 0).unwrap();
+        assert!(
+            (40..=60).contains(&first),
+            "{width}x{height}: cropped after scan {first}"
+        );
+        assert_eq!(changes(&crops), 1, "{width}x{height}: the crop flickered");
+    }
+    // Sightings in under half of the scans never confirm.
+    let lit = picture([48, 0, 48, 0], |_, _| 128);
+    let dark = yuyv_frame_from_luma(WIDTH, HEIGHT, |_, _| 0);
+    let start = Instant::now();
+    let mut detector = BlackBarDetector::new();
+    for scan in 0..400 {
+        let frame = if scan % 3 == 0 { &lit } else { &dark };
+        assert_eq!(at(&mut detector, frame, start, scan * 50), viewport([0; 4]));
+    }
+}
+
+#[test]
+fn lit_letterbox_bars_are_found_in_1_5_seconds_at_every_capture_size() {
+    for (width, height) in SIZES {
+        let frames = [cells(width, height, 0, |cx, cy| {
+            if (23..157).contains(&cy) {
+                60 + u8::try_from(noise(cx, cy, 0) % 120).unwrap()
+            } else {
+                16
+            }
+        })];
+        let crops = crops(&frames, 3);
+        let first = crops.iter().position(|crop| crop[0] > 0).unwrap();
+        assert_eq!(first, 30, "{width}x{height}: found after scan {first}");
+        let [top, _, bottom, _] = *crops.last().unwrap();
+        assert!(
+            is_bar(top, height) && is_bar(bottom, height),
+            "{width}x{height}: {:?}",
+            crops.last()
+        );
+    }
+}

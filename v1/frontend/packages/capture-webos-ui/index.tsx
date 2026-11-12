@@ -36,6 +36,12 @@ export function describeTvPicture(value: TvPicture, defaults: Required<TvPicture
   return `${picture}, ${(value.include_ui ?? defaults.include_ui) ? 'with' : 'without'} menus`;
 }
 
+/** Above this many pixels the lights gain nothing visible. */
+export const enoughPixels = 640 * 360;
+const size = '640\u00a0×\u00a0360';
+/** The quiet hint shown for a size above 640 × 360. */
+export const largeSizeHint = `${size} is enough for the lights. Larger sizes use more of the TV’s processor without a visible difference.`;
+
 export const includeMenusHelp =
   'Menus are captured over the video, and when nothing is playing (such as the Home screen) the TV’s own screens are captured. Off: video only.';
 
@@ -48,7 +54,14 @@ export function TvPictureFields<V extends TvPicture>({
   value,
   defaults,
   onChange,
-}: EditorProps<V> & { defaults: Required<TvPicture> }) {
+  sizeHint = largeSizeHint,
+}: EditorProps<V> & {
+  defaults: Required<TvPicture>;
+  /** Help shown while the size is above 640 × 360. */
+  sizeHint?: string;
+}) {
+  const large =
+    (value.width ?? defaults.width) * (value.height ?? defaults.height) > enoughPixels;
   return (
     <>
       <div className="grid three">
@@ -77,6 +90,11 @@ export function TvPictureFields<V extends TvPicture>({
           {...tvPictureLimits.fps}
         />
       </div>
+      {large ? (
+        <p className="help" data-size-hint>
+          {sizeHint}
+        </p>
+      ) : null}
       <CheckboxField
         path="capture.include_ui"
         label="Include TV menus"
