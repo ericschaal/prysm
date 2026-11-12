@@ -1,0 +1,300 @@
+{
+  "components": {
+    "schemas": {
+      "DoneReply": {
+        "description": "The `uninstall` reply.",
+        "properties": {
+          "returnValue": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "returnValue"
+        ],
+        "type": "object"
+      },
+      "ErrorReply": {
+        "description": "Any failed call.",
+        "properties": {
+          "errorText": {
+            "type": "string"
+          },
+          "returnValue": {
+            "enum": [
+              false
+            ],
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "returnValue",
+          "errorText"
+        ],
+        "type": "object"
+      },
+      "Flavor": {
+        "description": "Which package this supervisor belongs to.",
+        "enum": [
+          "full",
+          "slim"
+        ],
+        "type": "string"
+      },
+      "GetStateRequest": {
+        "additionalProperties": false,
+        "description": "`getState` request.",
+        "properties": {
+          "subscribe": {
+            "description": "Keep sending the state on every change.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "LightingTarget": {
+        "description": "What the user wants the LEDs to do.",
+        "enum": [
+          "off",
+          "processed",
+          "device_native"
+        ],
+        "type": "string"
+      },
+      "Phase": {
+        "enum": [
+          "stopped",
+          "running",
+          "stopping",
+          "retrying"
+        ],
+        "type": "string"
+      },
+      "Power": {
+        "description": "TV power as `com.webos.service.tvpower` reports it.",
+        "enum": [
+          "unknown",
+          "active",
+          "screen_saver",
+          "asleep"
+        ],
+        "type": "string"
+      },
+      "Preferences": {
+        "additionalProperties": false,
+        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional). Fields marked \"Slim only\" must stay unset (default) in the\nfull package.",
+        "properties": {
+          "autostart": {
+            "default": false,
+            "description": "Start enabled (full: processed lighting) when the service starts.",
+            "type": "boolean"
+          },
+          "capture": {
+            "$ref": "#/components/schemas/SlimCapture",
+            "default": {
+              "fps": 30,
+              "height": 180,
+              "include_ui": true,
+              "width": 320
+            },
+            "description": "Slim only: capture size, rate and menu blending."
+          },
+          "instance": {
+            "default": null,
+            "description": "Slim only: the headless Prysm's portal origin, such as\n`http://192.168.1.20:8787`. Only the TV app uses it.",
+            "example": "http://192.168.1.20:8787",
+            "maxLength": 256,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "receiver": {
+            "default": null,
+            "description": "Slim only: where frames go, such as `192.168.1.20:7380`.",
+            "example": "192.168.1.20:7380",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SetEnabledRequest": {
+        "additionalProperties": false,
+        "description": "`setEnabled` request.",
+        "properties": {
+          "enabled": {
+            "description": "Slim: frames should flow. Full: processed lighting (or off).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "SlimCapture": {
+        "additionalProperties": false,
+        "description": "Capture size, rate and menu blending of the slim package; the same rules\nas the `webos` capture settings.",
+        "properties": {
+          "fps": {
+            "default": 30,
+            "format": "int32",
+            "maximum": 60,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 180,
+            "description": "Even, 2 to 1080.",
+            "format": "int32",
+            "maximum": 1080,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
+          },
+          "include_ui": {
+            "default": true,
+            "description": "Blend TV menus into the capture.",
+            "type": "boolean"
+          },
+          "width": {
+            "default": 320,
+            "description": "Even, 2 to 1920.",
+            "format": "int32",
+            "maximum": 1920,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "State": {
+        "description": "The `getState` reply and subscription payload (plus LS2's `returnValue`).\nFields marked \"Full only\" are `null` in the slim package.",
+        "properties": {
+          "capturing": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Slim: frames should flow. Full: lighting is not off.",
+            "type": "boolean"
+          },
+          "failure": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "flavor": {
+            "$ref": "#/components/schemas/Flavor",
+            "description": "The installed package; both install as `io.prysm.tv`."
+          },
+          "lighting": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LightingTarget",
+                "description": "Full only: the engine's target, including changes made in the portal."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "log": {
+            "description": "The latest worker stderr lines, oldest first (at most 20).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "portal": {
+            "description": "Full only: the portal's LAN address once the worker reported it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "power": {
+            "$ref": "#/components/schemas/Power"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/Preferences"
+          },
+          "video": {
+            "$ref": "#/components/schemas/Video"
+          },
+          "worker": {
+            "$ref": "#/components/schemas/Phase"
+          }
+        },
+        "required": [
+          "flavor",
+          "preferences",
+          "enabled",
+          "power",
+          "video",
+          "worker",
+          "capturing",
+          "log"
+        ],
+        "type": "object"
+      },
+      "StateReply": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/State"
+          },
+          {
+            "properties": {
+              "returnValue": {
+                "enum": [
+                  true
+                ],
+                "type": "boolean"
+              },
+              "subscribed": {
+                "description": "On `getState` and subscription updates: whether the caller is subscribed.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "returnValue"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "A successful state reply: [`State`] with LS2's `returnValue`."
+      },
+      "UninstallRequest": {
+        "additionalProperties": false,
+        "description": "`uninstall` request: an empty object.",
+        "type": "object"
+      },
+      "Video": {
+        "description": "The TV's main video output.",
+        "enum": [
+          "unknown",
+          "unavailable",
+          "available"
+        ],
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "description": "The TV supervisor: Luna service, power and video gating, worker lifecycle, setup",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "Prysm TV service (luna://io.prysm.tv.service)",
+    "version": "1.0.0-alpha.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

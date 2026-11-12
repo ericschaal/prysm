@@ -60,9 +60,9 @@ test('both browser hosts mount their panels and replace one section at a time', 
       assert.deepEqual(saved.settings.output, output);
       assert(document.body.textContent.includes('Settings revision: 1'));
 
-      document.querySelector('[name="address"]').value = '192.0.2.2';
+      document.querySelector('[name="address"]').value = ' http://wled.local:8080/ ';
       await submit(dom, document.querySelectorAll('form')[1]);
-      assert.equal(fixture.snapshot().settings.output.address, '192.0.2.2');
+      assert.equal(fixture.snapshot().settings.output.address, 'wled.local:8080');
       assert.deepEqual(fixture.snapshot().settings.output.leds, output.leds);
       assert.equal(fixture.snapshot().settings.capture[field], saved.settings.capture[field]);
 
@@ -74,6 +74,37 @@ test('both browser hosts mount their panels and replace one section at a time', 
       await act(async () => root.unmount());
       dom.window.close();
     }
+  }
+});
+
+test('the webOS panel edits size, rate and menu blending within the adapter limits', async () => {
+  const dom = mountDom();
+  const fixture = fakeApplicationPort({ capture: { kind: 'webos' }, output });
+  const application = createApplicationRuntime(fixture.client);
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await act(async () => root.render(<WebosWebPortal application={application} />));
+    const input = (name) => document.querySelector(`[name="${name}"]`);
+    assert.deepEqual(
+      ['width', 'height', 'fps'].map((name) => [input(name).value, input(name).min, input(name).max, input(name).step]),
+      [['640', '2', '1920', '2'], ['360', '2', '1080', '2'], ['30', '1', '60', '1']],
+    );
+    assert.equal(input('include_ui').checked, true);
+    input('width').value = '1280';
+    input('height').value = '720';
+    input('fps').value = '60';
+    input('include_ui').checked = false;
+    await submit(dom, document.querySelector('form'));
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'webos',
+      width: 1280,
+      height: 720,
+      fps: 60,
+      include_ui: false,
+    });
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
   }
 });
 

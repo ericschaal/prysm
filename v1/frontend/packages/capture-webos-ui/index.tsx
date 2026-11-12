@@ -1,42 +1,60 @@
+import type { WebosSettings } from '@prysm/contracts/host-webos';
 import type { SettingsPanelProps } from '@prysm/web-portal';
 
-/**
- * Provisional webOS capture settings under kind `webos`, written by hand: the
- * adapter is unfinished; use `host-webos`'s generated type once it has a schema.
- */
-export interface WebosCaptureConfig {
-  kind: 'webos';
-  fps: number;
-}
+/** Defaults and limits of the `webos` source; Rust validates again. */
+const fields = [
+  { name: 'width', label: 'Width', min: 2, max: 1920, step: 2, fallback: 640 },
+  { name: 'height', label: 'Height', min: 2, max: 1080, step: 2, fallback: 360 },
+  { name: 'fps', label: 'Frames per second', min: 1, max: 60, step: 1, fallback: 30 },
+] as const;
 
+/** Edits the TV capture size, rate and menu blending. */
 export function WebosCaptureSettings({
   settings,
   disabled,
   onSubmit,
-}: SettingsPanelProps<WebosCaptureConfig>) {
+}: SettingsPanelProps<WebosSettings>) {
   return (
     <form
       key={JSON.stringify(settings)}
       onSubmit={(event) => {
         event.preventDefault();
-        const fps = Number(new FormData(event.currentTarget).get('fps'));
-        void onSubmit({ ...settings, kind: 'webos', fps });
+        const form = new FormData(event.currentTarget);
+        const number = (name: string) => Number(form.get(name));
+        void onSubmit({
+          ...settings,
+          kind: 'webos',
+          width: number('width'),
+          height: number('height'),
+          fps: number('fps'),
+          include_ui: form.get('include_ui') === 'on',
+        });
       }}
     >
       <h2>webOS capture</h2>
       <fieldset disabled={disabled}>
         <legend>Capture</legend>
+        {fields.map(({ name, label, min, max, step, fallback }) => (
+          <label key={name}>
+            {label}{' '}
+            <input
+              name={name}
+              type="number"
+              min={min}
+              max={max}
+              step={step}
+              required
+              defaultValue={settings?.[name] ?? fallback}
+            />
+          </label>
+        ))}
         <label>
-          Frames per second{' '}
           <input
-            name="fps"
-            type="number"
-            min="1"
-            max="120"
-            step="1"
-            required
-            defaultValue={settings?.fps ?? 30}
-          />
+            name="include_ui"
+            type="checkbox"
+            defaultChecked={settings?.include_ui ?? true}
+          />{' '}
+          Include TV menus
         </label>
         <button type="submit">Save capture settings</button>
       </fieldset>

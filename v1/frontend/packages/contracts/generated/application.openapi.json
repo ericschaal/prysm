@@ -48,7 +48,6 @@
           "unavailable",
           "timeout",
           "internal",
-          "unauthorized",
           "forbidden",
           "not_found",
           "method_not_allowed",

@@ -9,7 +9,7 @@ description = "TV worker (full): webOS capture into WLED with the web portal, ru
 [dependencies]
 prysm-webos-link = { workspace = true, features = ["worker"] }
 prysm-ports.workspace = true
-prysm-runtime.workspace = true
+prysm-runtime = { workspace = true, features = ["logging"] }
 prysm-capture-webos.workspace = true
 prysm-output-wled.workspace = true
 prysm-settings-file.workspace = true

@@ -25,7 +25,7 @@ npm --prefix v1/frontend run dev:webos-slim
 The browser portals connect at once to the same-origin
 [portal API](../surfaces/web-portal/HTTP-CONTRACT.md), which needs no
 credentials. The TV entry points run on
-in-memory fixtures until the Luna bridge exists. See the
+in-memory fixtures until the Luna client for the TV supervisor exists. See the
 [UI/host assembly guide](../UI-ASSEMBLIES.md) and [state wiring](STATE.md).
 
 ## Read the composition
@@ -35,7 +35,7 @@ in-memory fixtures until the Luna bridge exists. See the
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless` and `prysm-tui`) and
   [webOS browser host](hosts/webos/web-portal/app.tsx) choose the panels.
 - Panels: [video device](packages/capture-device-ui/index.tsx),
-  [remote capture](packages/remote-capture-ui/index.tsx),
+  [remote capture](packages/capture-remote-ui/index.tsx),
   [webOS capture](packages/capture-webos-ui/index.tsx),
   [WLED](packages/output-wled-ui/index.tsx). Each receives its section
   (`{ kind, ... }` or `null`), a disabled flag and `onSubmit`.
@@ -52,8 +52,9 @@ in-memory fixtures until the Luna bridge exists. See the
 
 [Contract ownership](../CONTRACTS.md) is the review guide. The exporter prints
 the `application` document (state, session, failures, requests, settings), one
-`host-*` document per set of hosts with their adapter sections typed (now
-`host-desktop`), and Rust serialization fixtures; [codegen](scripts/codegen.mjs)
+`host-*` document per set of hosts with their adapter sections typed
+(`host-desktop`, `host-webos`), the TV supervisor's `luna` document, and Rust
+serialization fixtures; [codegen](scripts/codegen.mjs)
 turns each document into `packages/contracts/generated/<name>.generated.ts`.
 Generated files are checked in; never edit them.
 
@@ -64,8 +65,8 @@ npm --prefix v1/frontend run codegen:check  # fail on drift without writing
 
 Panels use their adapter's generated section type from
 `@prysm/contracts/host-desktop` (`DeviceSettings`, `RemoteReceiverSettings`,
-`WledSettings`). The webOS panel still declares a provisional type by hand
-until that adapter provides a schema. Rust remains the validator.
+`WledSettings`) or `@prysm/contracts/host-webos` (`WebosSettings`). Rust
+remains the validator.
 
 ## Limits
 

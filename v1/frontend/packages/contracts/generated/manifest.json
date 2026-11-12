@@ -1,4 +1,6 @@
 [
   "application",
-  "host-desktop"
+  "host-desktop",
+  "host-webos",
+  "luna"
 ]

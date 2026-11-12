@@ -23,15 +23,23 @@ pub(crate) fn bytes(
         // Asset content types are validated when the portal is constructed.
         header::HeaderValue::from_static(content_type),
     );
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        header::HeaderValue::from_static("nosniff"),
-    );
     response
+}
+
+/// The bundle loads only its own scripts and API, and must not be framed by
+/// other sites (clickjacking). Applied to every response, assets and API alike.
+pub(crate) const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; frame-ancestors 'none'";
+
+pub(crate) fn secure(response: &mut Response) {
+    let headers = response.headers_mut();
+    for (name, value) in [
+        (header::CACHE_CONTROL, "no-store"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+        (header::REFERRER_POLICY, "no-referrer"),
+    ] {
+        headers.insert(name, header::HeaderValue::from_static(value));
+    }
 }
 
 pub(crate) fn json(status: StatusCode, value: &impl Serialize) -> Response {

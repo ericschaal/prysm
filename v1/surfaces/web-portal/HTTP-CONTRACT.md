@@ -61,6 +61,10 @@ Settings replacement is whole-document and optimistic: send the `revision` you
 edited from as `expected`. The engine validates, persists, then applies. A
 successful reply means saved; an apply failure afterwards appears in
 `State.failure`. A conflict is never retried automatically.
+Revisions start from a random value each time the process starts (below
+2^52, so they stay exact JSON numbers) and count up by one per replacement, so a
+page holding a revision from before a restart gets `409` instead of
+overwriting newer settings.
 
 The stream sends whole states, not deltas, so there are no cursors, gaps or
 resynchronization: a slow reader skips intermediate states, and a reconnecting
@@ -155,7 +159,15 @@ What it does not protect against:
 
 ## Limits
 
-- Responses are `no-store` and `nosniff`.
+- Every response (assets, API, failures, preflights, the stream) carries
+  `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` and
+  `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`: pages
+  load only the bundle's own scripts, styles, images and API (no inline code,
+  `data:` or `blob:` URLs, so a bundle that needs them must change the policy
+  here first), and no other site may frame the portal (clickjacking). A
+  cross-origin TV UI is unaffected: CSP applies to the documents the portal
+  serves, not to pages that call its API.
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
   streams, 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
   write (slow or vanished readers are disconnected), 15 s per engine command.
@@ -178,7 +190,7 @@ returns; nothing is detached.
 [`tests/http.rs`](tests/http.rs) runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
-origin-less requests, CORS for listed and any origins, asset serving, state read, set target, adapter failure (502),
+origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable,
 media type and size limits, stream delivery, the stream limit, a faulted engine
 (503) and prompt listener shutdown.

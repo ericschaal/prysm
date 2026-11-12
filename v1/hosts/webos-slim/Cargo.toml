@@ -10,7 +10,7 @@ description = "TV worker (slim): webOS capture forwarded to a headless Prysm, ru
 prysm-webos-link = { workspace = true, features = ["worker"] }
 prysm-core.workspace = true
 prysm-ports.workspace = true
-prysm-runtime.workspace = true
+prysm-runtime = { workspace = true, features = ["logging"] }
 prysm-capture-webos.workspace = true
 prysm-capture-remote.workspace = true
 futures.workspace = true

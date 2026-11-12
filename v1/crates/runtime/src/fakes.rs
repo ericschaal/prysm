@@ -156,6 +156,8 @@ pub struct FakeOutputSettings {
     /// Fail `write` after this many writes.
     pub fail_after: Option<u32>,
     pub fail_open: bool,
+    /// `idle` fails after recording the call, like an unreachable device.
+    pub fail_idle: bool,
     /// Rejected by `validate`.
     pub invalid: bool,
 }
@@ -207,6 +209,9 @@ impl LedOutput for FakeOutput {
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {
         self.log
             .record(format!("output.idle:{}:{mode:?}", self.settings.name));
+        if self.settings.fail_idle {
+            return Err(Error::other("fake output cannot idle"));
+        }
         Ok(())
     }
 }

@@ -89,7 +89,6 @@
           "unavailable",
           "timeout",
           "internal",
-          "unauthorized",
           "forbidden",
           "not_found",
           "method_not_allowed",
@@ -430,11 +429,17 @@
       },
       "WledSettings": {
         "additionalProperties": false,
-        "description": "Where the device is and how many LEDs each screen edge has:\n\n```json\n{ \"kind\": \"wled\", \"address\": \"192.168.1.50\",\n  \"leds\": { \"top\": 96, \"right\": 54, \"bottom\": 96, \"left\": 54 } }\n```",
+        "description": "Where the device is and how many LEDs each screen edge has:\n\n```json\n{ \"kind\": \"wled\", \"address\": \"wled.local\",\n  \"leds\": { \"top\": 96, \"right\": 54, \"bottom\": 96, \"left\": 54 } }\n```",
         "properties": {
           "address": {
-            "description": "Unicast IPv4 or IPv6 address of the device.",
-            "example": "192.168.1.50",
+            "description": "Host name or unicast IP address of the device, with an optional HTTP\nport (default 80): `wled.local`, `192.168.1.50`, `wled.local:8080` or\n`[fe80::1]:8080`. No scheme or path; WLED serves plain HTTP. Names are\nresolved each time the output opens. Colours always go to UDP port 4048.",
+            "examples": [
+              "wled.local",
+              "192.168.1.50",
+              "wled.local:8080",
+              "[fe80::1]:8080"
+            ],
+            "minLength": 1,
             "type": "string"
           },
           "kind": {

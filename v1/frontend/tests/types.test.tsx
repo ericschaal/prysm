@@ -4,16 +4,18 @@ import type {
 } from '@prysm/contracts/host-desktop';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import type { State } from '@prysm/contracts/application';
+import type {
+  Preferences as TvPreferences,
+  State as TvState,
+} from '@prysm/contracts/luna';
 import { WebPortal } from '@prysm/web-portal';
 import { DeviceCaptureSettings } from '@prysm/capture-device-ui';
-import {
-  WebosCaptureSettings,
-  type WebosCaptureConfig,
-} from '@prysm/capture-webos-ui';
+import type { WebosSettings } from '@prysm/contracts/host-webos';
+import { WebosCaptureSettings } from '@prysm/capture-webos-ui';
 import { WledOutputSettings } from '@prysm/output-wled-ui';
 
 declare const device: ApplicationRuntime<DeviceSettings, WledSettings>;
-declare const webos: ApplicationRuntime<WebosCaptureConfig, WledSettings>;
+declare const webos: ApplicationRuntime<WebosSettings, WledSettings>;
 
 // @ts-expect-error The generated state carries revisions as numbers.
 const revision: State['revision'] = '1';
@@ -21,7 +23,11 @@ const revision: State['revision'] = '1';
 const faulted: State['session'] = { state: 'faulted' };
 // @ts-expect-error Adapter sections are tagged by kind.
 const untagged: WledSettings = { address: '192.0.2.1', leds: {} };
-void [revision, faulted, untagged];
+// Every webOS capture field is optional; Rust fills the defaults.
+const defaults: WebosSettings = { kind: 'webos' };
+// @ts-expect-error The webOS source has no device path.
+const pathed: WebosSettings = { kind: 'webos', path: '/dev/video0' };
+void [revision, faulted, untagged, defaults, pathed];
 
 <WebPortal
   application={device}
@@ -61,3 +67,23 @@ device.commands.configureOutput('0', {
   address: '192.0.2.1',
   leds: {},
 });
+
+// The supervisor's state is one type for both packages.
+const tvState: TvState = {
+  flavor: 'slim',
+  preferences: { receiver: '192.168.1.20:7380', capture: { fps: 25 } },
+  enabled: true,
+  lighting: null,
+  power: 'active',
+  video: 'available',
+  worker: 'running',
+  capturing: true,
+  portal: null,
+  failure: null,
+  log: [],
+};
+// @ts-expect-error Only full and slim packages exist.
+const otherFlavor: TvState['flavor'] = 'lite';
+// @ts-expect-error Preferences are strict.
+const extra: TvPreferences = { mode: 'slim' };
+void [tvState, otherFlavor, extra];

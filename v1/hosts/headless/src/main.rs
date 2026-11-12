@@ -1,6 +1,7 @@
 //! prysm-headless: local or remote capture into WLED, driven by the web portal.
 use prysm_capture_device::DeviceSource;
 use prysm_capture_remote::RemoteReceiver;
+use prysm_host::Program;
 use prysm_output_wled::Wled;
 use prysm_runtime::{NullOutput, Prysm};
 use prysm_settings_file::FileSettings;
@@ -13,8 +14,14 @@ Output kind \"null\" runs the pipeline without LEDs.";
 
 const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/headless/web-portal/assets.rs");
 
+const PROGRAM: Program = Program {
+    name: "prysm-headless",
+    about: ABOUT,
+    full_screen: false,
+};
+
 fn main() -> ExitCode {
-    prysm_host::main("prysm-headless", ABOUT, |host| async move {
+    prysm_host::main(PROGRAM, |host| async move {
         Prysm::builder(FileSettings::new(host.settings()))
             .source(DeviceSource)
             .source(RemoteReceiver)

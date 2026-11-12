@@ -6,8 +6,9 @@ license.workspace = true
 publish.workspace = true
 description = "The TV supervisor: Luna service, power and video gating, worker lifecycle, setup"
 
-# One library, two thin binaries: each package ships the one whose names and
-# worker match it.
+# One library, two thin binaries, one per flavor. Both packages install the
+# supervisor as `prysm-webos-service` and the worker as `prysm-webos-worker`
+# under `io.prysm.tv` (see `identity`), so installing one replaces the other.
 [[bin]]
 name = "prysm-webos-service"
 path = "src/bin/prysm-webos-service.rs"
@@ -15,6 +16,11 @@ path = "src/bin/prysm-webos-service.rs"
 [[bin]]
 name = "prysm-webos-slim-service"
 path = "src/bin/prysm-webos-slim-service.rs"
+
+[features]
+# `utoipa::ToSchema` for the Luna API values and the `luna` document, for the
+# contract exporter.
+schema = ["dep:utoipa"]
 
 [dependencies]
 prysm-webos-link.workspace = true
@@ -24,6 +30,7 @@ serde_json.workspace = true
 signal-hook.workspace = true
 tempfile.workspace = true
 nix = { workspace = true, features = ["fs", "signal", "user"] }
+utoipa = { workspace = true, optional = true }
 
 [lints]
 workspace = true

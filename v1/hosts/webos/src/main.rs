@@ -8,6 +8,7 @@ use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
 use prysm_output_wled::Wled;
 use prysm_ports::{AdapterSettings, Error, Result, Settings, SettingsStore, SourceFactory};
 use prysm_runtime::Prysm;
+use prysm_runtime::logging::{self, Logs};
 use prysm_settings_file::FileSettings;
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
 use prysm_webos_link::FullArgs;
@@ -28,6 +29,8 @@ const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/webos/web-port
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
 
 fn main() -> ExitCode {
+    // stdout carries the supervisor protocol; log lines go to stderr only.
+    logging::init("prysm-webos", Logs::Stderr);
     worker::main("prysm-webos", USAGE, FullArgs::parse, run)
 }
 

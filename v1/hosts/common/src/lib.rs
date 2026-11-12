@@ -1,10 +1,12 @@
 //! Process concerns shared by the desktop hosts, so each host `main` is only
-//! its builder list: arguments, the portal listener, signals and a
+//! its builder list: arguments, logging, the portal listener, signals and a
 //! status surface that reports to stderr.
 //!
 //! ```ignore
+//! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
+//!
 //! fn main() -> ExitCode {
-//!     prysm_host::main("prysm-headless", ABOUT, |host| async move {
+//!     prysm_host::main(PROGRAM, |host| async move {
 //!         Prysm::builder(FileSettings::new(host.settings()))
 //!             .output(Wled)
 //!             .surface(host.status())
@@ -19,21 +21,40 @@ mod args;
 pub use args::{Options, Parsed, PortalOptions, parse};
 
 use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
+use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::{self, IsTerminal};
 use std::net::{IpAddr, SocketAddr, TcpListener, UdpSocket};
 use std::path::Path;
 use std::process::ExitCode;
 
-/// Parse arguments, run `host` on a current-thread runtime and map its result
-/// to an exit code: 0 after a clean stop, 1 if it failed, 2 for bad arguments.
-pub fn main<F, Fut>(name: &'static str, about: &str, host: F) -> ExitCode
+/// What a host executable is.
+#[derive(Debug, Clone, Copy)]
+pub struct Program {
+    /// Prefixes every status and log line.
+    pub name: &'static str,
+    pub about: &'static str,
+    /// A surface draws the whole terminal: while stderr is that terminal,
+    /// status lines are not printed and log lines go only to `--log-file`.
+    pub full_screen: bool,
+}
+
+/// Parse arguments, install logging, run `host` on a current-thread runtime
+/// and map its result to an exit code: 0 after a clean stop, 1 if it failed,
+/// 2 for bad arguments.
+pub fn main<F, Fut>(program: Program, host: F) -> ExitCode
 where
     F: FnOnce(Host) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
+    let Program {
+        name,
+        about,
+        full_screen,
+    } = program;
     let options = match parse(std::env::args_os().skip(1)) {
         Ok(Parsed::Help) => {
             println!("{}", args::usage(name, about));
@@ -45,6 +66,21 @@ where
             return ExitCode::from(2);
         }
     };
+    let quiet = full_screen && io::stderr().is_terminal();
+    let logs = match &options.log_file {
+        Some(path) => match OpenOptions::new().create(true).append(true).open(path) {
+            Ok(file) => Some(Logs::File(file)),
+            Err(error) => {
+                eprintln!("{name}: cannot open log file {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None if quiet => None,
+        None => Some(Logs::Stderr),
+    };
+    if let Some(logs) = logs {
+        logging::init(name, logs);
+    }
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -56,7 +92,11 @@ where
         }
     };
     eprintln!("{name}: settings {}", options.settings.display());
-    match runtime.block_on(host(Host { name, options })) {
+    match runtime.block_on(host(Host {
+        name,
+        options,
+        quiet,
+    })) {
         Ok(()) => {
             eprintln!("{name}: stopped");
             ExitCode::SUCCESS
@@ -73,6 +113,8 @@ where
 pub struct Host {
     name: &'static str,
     options: Options,
+    /// A full-screen surface owns stderr; see [`Program::full_screen`].
+    quiet: bool,
 }
 
 impl Host {
@@ -116,14 +158,15 @@ impl Host {
         })
     }
 
-    /// Reports state changes and surface failures to stderr, and requests
-    /// processed lighting once if `--start` was given.
+    /// Reports state changes and surface failures to stderr, unless a
+    /// full-screen surface owns it, and requests processed lighting once if
+    /// `--start` was given.
     #[must_use]
     pub fn status(&self) -> Status {
         Status {
             name: self.name,
             start: self.options.start,
-            print: true,
+            print: !self.quiet,
         }
     }
 
@@ -219,14 +262,6 @@ pub struct Status {
 }
 
 impl Status {
-    /// Stay silent while stderr is a terminal, where a full-screen surface
-    /// already shows the same state. `--start` still applies.
-    #[must_use]
-    pub fn quiet_on_terminal(mut self) -> Self {
-        self.print = !io::stderr().is_terminal();
-        self
-    }
-
     fn say(&self, line: &str) {
         if self.print {
             eprintln!("{}: {line}", self.name);

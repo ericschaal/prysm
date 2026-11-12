@@ -8,7 +8,7 @@
   },
   "output": {
     "kind": "wled",
-    "address": "192.168.1.50",
+    "address": "wled.local",
     "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 }
   },
   "processing": {

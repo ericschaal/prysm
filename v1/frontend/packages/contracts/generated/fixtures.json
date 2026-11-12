@@ -200,6 +200,15 @@
       "target": "processed"
     }
   ],
+  "WebosSettings": [
+    {
+      "fps": 60,
+      "height": 360,
+      "include_ui": false,
+      "kind": "webos",
+      "width": 640
+    }
+  ],
   "WledSettings": [
     {
       "address": "192.0.2.1",
@@ -211,5 +220,145 @@
         "top": 10
       }
     }
+  ],
+  "luna/GetStateRequest": [
+    {
+      "subscribe": true
+    }
+  ],
+  "luna/Preferences": [
+    {
+      "autostart": false,
+      "capture": {
+        "fps": 30,
+        "height": 180,
+        "include_ui": true,
+        "width": 320
+      },
+      "instance": null,
+      "receiver": null
+    },
+    {
+      "autostart": true,
+      "capture": {
+        "fps": 25,
+        "height": 180,
+        "include_ui": false,
+        "width": 320
+      },
+      "instance": "http://192.168.1.20:8787",
+      "receiver": "192.168.1.20:7380"
+    }
+  ],
+  "luna/SetEnabledRequest": [
+    {
+      "enabled": false
+    }
+  ],
+  "luna/State": [
+    {
+      "capturing": true,
+      "enabled": true,
+      "failure": null,
+      "flavor": "full",
+      "lighting": "processed",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "portal": "http://192.168.1.5:8787/",
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "capture": {
+          "fps": 30,
+          "height": 180,
+          "include_ui": true,
+          "width": 320
+        },
+        "instance": null,
+        "receiver": null
+      },
+      "video": "available",
+      "worker": "running"
+    },
+    {
+      "capturing": false,
+      "enabled": true,
+      "failure": "connect 192.168.1.20:7380: connection refused",
+      "flavor": "slim",
+      "lighting": null,
+      "log": [],
+      "portal": null,
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "capture": {
+          "fps": 25,
+          "height": 180,
+          "include_ui": false,
+          "width": 320
+        },
+        "instance": "http://192.168.1.20:8787",
+        "receiver": "192.168.1.20:7380"
+      },
+      "video": "unknown",
+      "worker": "retrying"
+    }
+  ],
+  "luna/StateReply": [
+    {
+      "capturing": true,
+      "enabled": true,
+      "failure": null,
+      "flavor": "full",
+      "lighting": "processed",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "portal": "http://192.168.1.5:8787/",
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "capture": {
+          "fps": 30,
+          "height": 180,
+          "include_ui": true,
+          "width": 320
+        },
+        "instance": null,
+        "receiver": null
+      },
+      "returnValue": true,
+      "subscribed": true,
+      "video": "available",
+      "worker": "running"
+    },
+    {
+      "capturing": false,
+      "enabled": true,
+      "failure": "connect 192.168.1.20:7380: connection refused",
+      "flavor": "slim",
+      "lighting": null,
+      "log": [],
+      "portal": null,
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "capture": {
+          "fps": 25,
+          "height": 180,
+          "include_ui": false,
+          "width": 320
+        },
+        "instance": "http://192.168.1.20:8787",
+        "receiver": "192.168.1.20:7380"
+      },
+      "returnValue": true,
+      "video": "unknown",
+      "worker": "retrying"
+    }
+  ],
+  "luna/UninstallRequest": [
+    {}
   ]
 }

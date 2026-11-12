@@ -7,6 +7,7 @@
 //!   [`launcher::Launcher`], [`preferences::PreferencesStore`] and
 //!   [`install::Installer`] seams.
 //! - [`main`]: the process: arguments, signals, the real Luna bus.
+//! - `schema` (feature `schema`): the `luna` OpenAPI document of the TV app's API.
 mod cli;
 pub mod identity;
 pub mod install;
@@ -15,6 +16,8 @@ mod luna;
 pub mod machine;
 pub mod observe;
 pub mod preferences;
+#[cfg(feature = "schema")]
+pub mod schema;
 pub mod service;
 pub mod state;
 

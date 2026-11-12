@@ -37,7 +37,12 @@ cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.ex
 Both take a JSON settings file (examples: [headless](hosts/headless/settings.example.json),
 [tui](hosts/tui/settings.example.json)) and process options on the command line:
 `--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable, `'*'`
-for any), `--no-portal` and `--start`. The portal is reachable on the LAN
+for any), `--no-portal`, `--start` and `--log-file PATH`. Log lines (`tracing`
+events, including those of the shared capture and processing crates) go to
+stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
+`RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the
+terminal they go only to `--log-file`. The TV workers log the same way to
+stderr. The portal is reachable on the LAN
 without a password and refuses browser pages from other sites unless allowed;
 see [portal access](surfaces/web-portal/HTTP-CONTRACT.md#access). Hosts print
 the portal URL, start idle, report state changes on stderr, stop on

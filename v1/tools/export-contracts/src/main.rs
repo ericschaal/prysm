@@ -4,6 +4,7 @@
 mod fixtures;
 use prysm_capture_device::DeviceSource;
 use prysm_capture_remote::RemoteReceiver;
+use prysm_capture_webos::WebosCapture;
 use prysm_output_wled::Wled;
 use prysm_protocol::schema::{Contract, OpenApi};
 use prysm_runtime::NullOutput;
@@ -12,11 +13,9 @@ use std::error::Error;
 use std::io::{self, Write};
 
 /// One document per module under `@prysm/contracts/`: `application` (wire
-/// roots, adapter sections open) and one `host-*` document per set of hosts
-/// that register the same adapter kinds, with those sections typed.
-///
-/// The TV hosts get a second entry, `host-webos`, registering the `webos`
-/// source once that adapter provides a schema.
+/// roots, adapter sections open), one `host-*` document per set of hosts
+/// that register the same adapter kinds, with those sections typed, and
+/// `luna`, the TV supervisor's Luna API.
 fn documents() -> Result<BTreeMap<&'static str, OpenApi>, Box<dyn Error>> {
     Ok(BTreeMap::from([
         (
@@ -24,6 +23,8 @@ fn documents() -> Result<BTreeMap<&'static str, OpenApi>, Box<dyn Error>> {
             Contract::new("Prysm application").document()?,
         ),
         ("host-desktop", desktop().document()?),
+        ("host-webos", webos().document()?),
+        ("luna", prysm_webos_service::schema::document()),
     ]))
 }
 
@@ -34,6 +35,13 @@ fn desktop() -> Contract {
         .source::<RemoteReceiver>()
         .output::<Wled>()
         .output::<NullOutput>()
+}
+
+/// The full TV worker (`prysm-webos`); the slim worker has no portal.
+fn webos() -> Contract {
+    Contract::new("Prysm webOS host")
+        .source::<WebosCapture>()
+        .output::<Wled>()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -89,5 +97,23 @@ mod tests {
             assert_eq!(schemas[name]["required"][0], json!("kind"));
         }
         assert!(schemas["LedCounts"].is_object());
+    }
+
+    #[test]
+    fn webos_document_types_what_the_tv_host_registers() {
+        let document = serde_json::to_value(webos().document().unwrap()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        assert_eq!(
+            schemas["CaptureSettings"]["oneOf"],
+            json!([{ "$ref": "#/components/schemas/WebosSettings" }])
+        );
+        assert_eq!(
+            schemas["OutputSettings"]["oneOf"],
+            json!([{ "$ref": "#/components/schemas/WledSettings" }])
+        );
+        let webos = &schemas["WebosSettings"];
+        assert_eq!(webos["properties"]["kind"]["enum"], json!(["webos"]));
+        assert_eq!(webos["required"], json!(["kind"]));
+        assert_eq!(webos["properties"]["fps"]["maximum"], json!(60));
     }
 }

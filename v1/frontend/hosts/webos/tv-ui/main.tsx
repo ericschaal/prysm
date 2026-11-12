@@ -1,12 +1,14 @@
-import type { WledSettings } from '@prysm/contracts/host-desktop';
+import type {
+  WebosSettings,
+  WledSettings,
+} from '@prysm/contracts/host-webos';
 import { createRoot } from 'react-dom/client';
-import type { WebosCaptureConfig } from '@prysm/capture-webos-ui';
 import { fakeApplicationPort } from '../../../testkit/application';
 import { fakeTvHost } from '../../../testkit/tv';
 import { WebosApp } from './app';
 
 // The Luna bridge is not implemented; the TV entry point runs on a fixture.
-const application = fakeApplicationPort<WebosCaptureConfig, WledSettings>({
+const application = fakeApplicationPort<WebosSettings, WledSettings>({
   capture: { kind: 'webos', fps: 30 },
   output: { kind: 'wled', address: '192.0.2.1', leds: { top: 10, left: 10 } },
 });

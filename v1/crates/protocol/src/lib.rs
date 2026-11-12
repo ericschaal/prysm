@@ -146,7 +146,6 @@ pub enum FailureKind {
     Timeout,
     /// An unexpected internal failure.
     Internal,
-    Unauthorized,
     Forbidden,
     NotFound,
     MethodNotAllowed,

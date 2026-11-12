@@ -15,12 +15,15 @@ const OPTIONS: &str = "Options:
                             [default: only the portal's own pages]
   --no-portal               Serve no web portal
   --start                   Request processed lighting at launch (else idle)
+  --log-file PATH           Append log lines to PATH instead of stderr
+                            [default: stderr; none while a full-screen
+                            terminal surface uses the terminal]
   -h, --help                Print this help
 
 The portal has no password: anyone who can reach ADDR can control the
 lights. Browser pages from other sites are refused unless allowed above.
 SIGINT or SIGTERM stops lighting, idles the output and exits. Status goes to
-stderr.";
+stderr. RUST_LOG filters log lines by target [default: warn,prysm=info].";
 
 pub(crate) fn usage(name: &str, about: &str) -> String {
     format!("usage: {name} [options] <settings.json>\n{about}\n\n{OPTIONS}")
@@ -39,6 +42,7 @@ pub struct Options {
     /// `None` under `--no-portal`.
     pub portal: Option<PortalOptions>,
     pub start: bool,
+    pub log_file: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -60,6 +64,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
     let mut any_origin = false;
     let mut no_portal = false;
     let mut start = false;
+    let mut log_file = None;
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str().filter(|arg| arg.starts_with('-')) else {
             if arg.as_encoded_bytes().starts_with(b"-") {
@@ -95,6 +100,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
             }
             "--no-portal" => switch(&mut no_portal, flag)?,
             "--start" => switch(&mut start, flag)?,
+            "--log-file" => once(&mut log_file, PathBuf::from(value()?), flag)?,
             _ => return Err(format!("unknown option {flag}")),
         }
     }
@@ -122,6 +128,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
         settings,
         portal,
         start,
+        log_file,
     }))
 }
 
@@ -154,6 +161,7 @@ mod tests {
         };
         assert_eq!(options.settings, PathBuf::from("settings.json"));
         assert!(!options.start);
+        assert_eq!(options.log_file, None);
         assert_eq!(
             options.portal,
             Some(PortalOptions {
@@ -174,6 +182,8 @@ mod tests {
             "http://192.168.1.30:3000",
             "--allow-origin",
             "app://tv",
+            "--log-file",
+            "prysm.log",
         ])
         .unwrap();
         assert_eq!(
@@ -181,6 +191,7 @@ mod tests {
             Parsed::Run(Options {
                 settings: "s.json".into(),
                 start: true,
+                log_file: Some("prysm.log".into()),
                 portal: Some(PortalOptions {
                     listen: "[::1]:0".parse().unwrap(),
                     access: Access::Origins(vec![
@@ -227,6 +238,8 @@ mod tests {
             &["s.json", "--no-portal", "--listen", "127.0.0.1:1"],
             &["s.json", "--no-portal", "--allow-origin", "*"],
             &["s.json", "--allow-origin"],
+            &["s.json", "--log-file"],
+            &["s.json", "--log-file", "a.log", "--log-file", "b.log"],
             &["s.json", "--allow-origin", "*", "--allow-origin", "*"],
             &[
                 "s.json",

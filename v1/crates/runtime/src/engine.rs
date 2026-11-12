@@ -3,6 +3,7 @@ use prysm_ports::{
     AdapterSettings, Error, IdleMode, LatestSlot, LightingTarget, Registry, Result, Revision,
     SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
+use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -107,6 +108,7 @@ impl Engine {
         let failure = registry.validate(&loaded).err();
         let (state, snapshot) = watch::channel(Snapshot {
             settings: loaded,
+            revision: first_revision(),
             failure,
             ..Snapshot::default()
         });
@@ -143,6 +145,13 @@ impl Engine {
         let _ = self.task.await;
         result
     }
+}
+
+/// A random start per process, so a revision a client kept from before a
+/// restart is stale rather than matching. Below 2^52: browsers read revisions
+/// as exact JSON numbers, and `Revision::next` has 2^52 steps before either limit.
+fn first_revision() -> Revision {
+    Revision(RandomState::new().hash_one(0_u8) >> 12)
 }
 
 /// A source whose release is unconfirmed may still hold its device, so no new
@@ -271,17 +280,25 @@ impl Core {
         blocking(move || lock(&store).save(&saved)).await??;
 
         let revision = current.next();
-        let (previous, session) = {
+        let (previous, target, session) = {
             let mut previous = None;
             self.state.send_modify(|s| {
                 previous = Some(std::mem::replace(&mut s.settings, settings.clone()));
                 s.revision = revision;
             });
-            (previous.unwrap_or_default(), self.state.borrow().session)
+            let snapshot = self.state.borrow();
+            (
+                previous.unwrap_or_default(),
+                snapshot.target,
+                snapshot.session,
+            )
         };
         let output_changed = previous.output != settings.output;
         let adapters_changed = output_changed || previous.capture != settings.capture;
         let applied = match session {
+            // Processed was requested but failed to start or ended in a
+            // failure: the new settings get the next attempt.
+            SessionState::Stopped if target == LightingTarget::Processed => self.start().await,
             SessionState::Running if adapters_changed => {
                 // Same path as Off followed by Processed.
                 match self.stop(IdleMode::Off).await {

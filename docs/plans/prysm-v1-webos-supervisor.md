@@ -5,7 +5,9 @@ hosts half of `prysm-3jx.9`); steps 1–6 of §11 are implemented and tested on
 the development host. Replaces the root
 [Luna supervisor](../../apps/prysm-webos-service/README.md) with v1 hosts. No
 backward compatibility: settings, Luna names, paths and the worker protocol are
-new. Builds on the [simplified runtime](prysm-v1-simplified-runtime.md).
+new. **Clean slate:** the old `io.prysm.capture` app, its settings and any
+earlier install are assumed removed before a v1 package is installed; nothing
+detects, migrates or converges from them. Builds on the [simplified runtime](prysm-v1-simplified-runtime.md).
 
 **Constraint.** A hung LG capture call is recovered only by killing the process
 that made it. Capture therefore runs in a worker process; the process that owns
@@ -16,6 +18,9 @@ the Luna registration observes, restarts and kills it.
 1. **Two packages, two workers.** `prysm-webos` (TV UI, native capture,
    embedded processing, WLED, web portal) and `prysm-webos-slim` (TV UI, native
    capture, frames to a headless Prysm). No in-app switching; there is no `mode`.
+   Both install as the same app (`io.prysm.tv`) with the same file names, so
+   installing one replaces the other; the flavor is a build-time fact of the
+   binaries and is reported in `State.flavor`.
 2. **Portal on the LAN without a token** (`WebPortal::from_listener(listener,
    assets, Access)`). The full worker serves `0.0.0.0:8787`; the TV shows the URL.
 3. **Slim streams continuously** while the TV is awake and capture is enabled.
@@ -63,10 +68,10 @@ Sources: [supervisor.rs](../../apps/prysm-webos-service/src/supervisor.rs),
 
 ## 3. Processes and crates
 
-| Process (root) | Full IPK | Slim IPK | Owns |
-| --- | --- | --- | --- |
-| supervisor (Luna-activated) | `prysm-webos-service` | `prysm-webos-slim-service` | Luna name, power/video, `tv.json`, intent, worker lifecycle, setup/uninstall |
-| worker (child) | `prysm-webos` | `prysm-webos-slim` | Full: engine, `WebosCapture`, WLED, portal. Slim: `Forwarder` into `RemoteSender` |
+| Process (root) | Installed as (both IPKs) | Full IPK builds | Slim IPK builds | Owns |
+| --- | --- | --- | --- | --- |
+| supervisor (Luna-activated) | `prysm-webos-service` | `prysm-webos-service` | `prysm-webos-slim-service` | Luna name, power/video, `tv.json`, intent, worker lifecycle, setup/uninstall |
+| worker (child) | `prysm-webos-worker` | `prysm-webos` | `prysm-webos-slim` | Full: engine, `WebosCapture`, WLED, portal. Slim: `Forwarder` into `RemoteSender` |
 
 | Crate | Location | Contents | `unsafe` |
 | --- | --- | --- | --- |
@@ -77,9 +82,11 @@ Sources: [supervisor.rs](../../apps/prysm-webos-service/src/supervisor.rs),
 | `prysm-webos-slim` | [hosts/webos-slim](../../v1/hosts/webos-slim/src/main.rs) | Slim worker, `ForwarderLink` surface, `Counted` sink | forbidden |
 
 **One supervisor library, two thin binaries** (`src/bin/*.rs`, each one line
-calling `prysm_webos_service::main(Flavor)`). Names, paths and the worker are
-packaging facts; baking them into the binary means a supervisor can never run
-the other package's worker, and no runtime flag can be set wrong. A single
+calling `prysm_webos_service::main(Flavor)`). The flavor is baked into the
+binary, and each package ships only its own supervisor and worker under the
+shared installed names, so a supervisor can never run the other package's
+worker and no runtime flag can be set wrong. Names and paths are one set for
+both flavors ([identity.rs](../../v1/hosts/webos-service/src/identity.rs)). A single
 binary with a `--flavor` in the `.service` file would save one link step and
 add a way to mismatch. The supervisor stays separate from the worker so Luna
 FFI and the engine never share a process and the worker cannot claim the name.
@@ -197,9 +204,12 @@ until the handler returns, so LS2 is never re-entered while it is borrowed.
 
 ## 6. Luna API
 
-Full: service `io.prysm.tv.service`, app `io.prysm.tv`. Slim:
-`io.prysm.tv.slim.service`, `io.prysm.tv.slim`. Replies carry LS2
-`returnValue`/`errorText`; payloads are objects of at most 4 KiB.
+Both packages: service `io.prysm.tv.service`, app `io.prysm.tv`. Replies carry LS2
+`returnValue`/`errorText`; payloads are objects of at most 4 KiB. The values
+are exported as the `luna` OpenAPI document
+([schema.rs](../../v1/hosts/webos-service/src/schema.rs), generated
+`@prysm/contracts/luna`): one document for both flavors, with flavor-specific
+fields marked "Full only" or "Slim only".
 
 | Method | Request | Reply | Caller |
 | --- | --- | --- | --- |
@@ -267,22 +277,25 @@ From [crates/web/prysm-webos](../../crates/web/prysm-webos/src/App.tsx).
 
 ## 8. Settings on the TV
 
-Root-owned 0700 state directory per package; one writer per file.
+Root-owned 0700 state directory `/var/lib/io.prysm.tv` (both packages); one writer per file.
 
 | File | Contents | Writer |
 | --- | --- | --- |
-| `/var/lib/io.prysm.tv/tv.json`, `/var/lib/io.prysm.tv.slim/tv.json` | `Preferences` | supervisor |
+| `/var/lib/io.prysm.tv/tv.json` | `Preferences` | supervisor |
 | `/var/lib/io.prysm.tv/settings.json` | v1 `Settings` (`capture.kind = "webos"`, WLED, processing) | full worker's engine, via the portal; seeded by the worker |
 
 Saved preferences that no longer validate are ignored (defaults, logged).
-Old `/var/lib/prysm-capture` files are left alone; uninstall keeps settings.
+Uninstall keeps settings.
 
 ## 9. Packaging and install (not implemented here)
 
-| IPK | App | Service directory `…/services/<app>.service/` |
+Both IPKs are the app `io.prysm.tv` with identical installed file names;
+installing one replaces the other.
+
+| IPK | App | Service directory `…/services/io.prysm.tv.service/` |
 | --- | --- | --- |
-| `io.prysm.tv` | `dist/webos/tv-ui` | `prysm-webos-service`, `prysm-webos`, `setup.sh`, role/service/permission files, licences |
-| `io.prysm.tv.slim` | `dist/webos-slim/tv-ui` | `prysm-webos-slim-service`, `prysm-webos-slim`, same file names |
+| full | `dist/webos/tv-ui` | `prysm-webos-service` (from bin `prysm-webos-service`), `prysm-webos-worker` (from `prysm-webos`), `setup.sh`, role/service/permission files, licences |
+| slim | `dist/webos-slim/tv-ui` | `prysm-webos-service` (from bin `prysm-webos-slim-service`), `prysm-webos-worker` (from `prysm-webos-slim`), same file names |
 
 - Manifests written by `setup`: `<app>.supervisor.json` (roleFiles
   `supervisor.role.json`, serviceFiles `supervisor.service`, client and api
@@ -292,13 +305,14 @@ Old `/var/lib/prysm-capture` files are left alone; uninstall keeps settings.
   [capture.role.json](../../packaging/webos/service/capture.role.json).
   Supervisor role: its service name; outbound `com.webos.service.tvpower`,
   `com.webos.service.videooutput`. `supervisor.service` execs the supervisor without arguments.
-- `setup.sh`: `exec "$(dirname "$0")/<supervisor>" setup`. Setup writes both
-  manifests and `/var/lib/webosbrew/init.d/<app>` (refusing unrelated
-  content), rescans (10 s bound) and activates with `luna-send … getState`
+- `setup.sh`: `exec "$(dirname "$0")/prysm-webos-service" setup`. Setup writes both
+  manifests and `/var/lib/webosbrew/init.d/io.prysm.tv` (refusing unrelated
+  content; re-running it on the same install succeeds), rescans (10 s bound) and activates with `luna-send … getState`
   (10 s bound, `returnValue` checked). The boot hook runs the same `setup`.
 - To change: [build-ipk.sh](../../packaging/webos/build-ipk.sh) builds
   `-p prysm-webos -p prysm-webos-service` or the slim pair from `v1/Cargo.toml`
-  after the v1 frontend, one IPK each, and drops `--hardware-h264`,
+  after the v1 frontend, one IPK each, renaming the binaries to the shared
+  installed names above, and drops `--hardware-h264`,
   `--embedded-prysm`, the generated embedded role and GStreamer/OpenH264
   licences; `secure-ipk.py` and `packaging/webos/tests` get the two payload
   allowlists; [xtask](../../xtask/src/main.rs) `package webos` gets a
@@ -343,15 +357,12 @@ manifest, `finally` cleanup, never an unbounded production service as a probe.
    Default: as is. Recommended: an `Access` option for exactly `null`, or route
    all remote calls through a portal-served relay page (as calibration does)
    and keep `SameOrigin`.
-2. **Both packages on one TV.** Allowed; the capture lock makes the second
-   worker fail and retry up to every 30 s. Default: document "uninstall one";
-   later `setup` could refuse when the other package's manifests exist.
-3. **Slim `instance` and `receiver`.** Both stored; the TV UI fills `receiver`
+2. **Slim `instance` and `receiver`.** Both stored; the TV UI fills `receiver`
    from the remote `capture.listen` port. Default: keep both.
-4. **Unconfirmed release in slim.** `Forwarder` returns it as a plain error, so
+3. **Unconfirmed release in slim.** `Forwarder` returns it as a plain error, so
    the worker exits `FAILED`, not `FAULTED`; both restart the process. Default: accept.
-5. **A worker that survives SIGKILL** (uninterruptible kernel wait) keeps the
+4. **A worker that survives SIGKILL** (uninterruptible kernel wait) keeps the
    supervisor in Stopping; no second worker starts. Default: accept (TV reboot).
-6. **Role `inbound` narrowing** from `*` to the app, and whether
+5. **Role `inbound` narrowing** from `*` to the app, and whether
    `/var/luna-service2/manifests.d` survives reboot. Default: keep the runtime
    sender check and the boot hook until a TV test says otherwise.

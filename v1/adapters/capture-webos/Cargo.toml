@@ -6,6 +6,10 @@ license.workspace = true
 publish.workspace = true
 description = "LG webOS TV video capture as a blocking Prysm frame source"
 
+[features]
+# `utoipa::ToSchema` for the settings, for the contract exporter.
+schema = ["dep:utoipa"]
+
 [dependencies]
 prysm-core.workspace = true
 prysm-ports.workspace = true
@@ -14,6 +18,7 @@ yuv = { version = "0.8", default-features = false }
 nix = { version = "0.31", features = ["fs", "signal", "user"] }
 # FFI lives in its own crate so this one stays under the workspace's `unsafe_code = "forbid"`.
 prysm-capture-webos-sys = { path = "../capture-webos-sys" }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

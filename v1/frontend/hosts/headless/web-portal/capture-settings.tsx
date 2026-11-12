@@ -2,7 +2,7 @@ import type { CaptureSettings } from '@prysm/contracts/host-desktop';
 import { useState } from 'react';
 import type { SettingsPanelProps } from '@prysm/web-portal';
 import { DeviceCaptureSettings } from '@prysm/capture-device-ui';
-import { RemoteCaptureSettings } from '@prysm/remote-capture-ui';
+import { RemoteCaptureSettings } from '@prysm/capture-remote-ui';
 
 /** The capture sources the desktop hosts register, by kind. */
 export type HeadlessCaptureConfig = CaptureSettings;

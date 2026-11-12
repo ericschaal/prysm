@@ -1,3 +1,4 @@
+use crate::address::Host;
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
 use prysm_ports::{Error, IdleMode, LedOutput, OutputFactory, Result, ValidationError};
@@ -8,26 +9,19 @@ use std::net::SocketAddr;
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
 #[derive(Debug, Clone, Copy)]
 pub struct Wled {
-    http_port: u16,
     ddp_port: u16,
 }
 
 impl Default for Wled {
     fn default() -> Self {
-        Self {
-            http_port: 80,
-            ddp_port: 4048,
-        }
+        Self { ddp_port: 4048 }
     }
 }
 
 impl Wled {
     #[cfg(test)]
-    pub(crate) fn local(http_port: u16, ddp_port: u16) -> Self {
-        Self {
-            http_port,
-            ddp_port,
-        }
+    pub(crate) fn local(ddp_port: u16) -> Self {
+        Self { ddp_port }
     }
 }
 
@@ -39,15 +33,24 @@ impl OutputFactory for Wled {
         settings.validate()
     }
 
-    /// Takes the device over for live colours. On failure the device is turned
-    /// off again unless it could not be reached at all.
+    /// Resolves the host, then takes the device over for live colours. On
+    /// failure the device is turned off again unless it could not be reached
+    /// at all.
     fn open(&self, settings: &WledSettings) -> Result<Box<dyn LedOutput>> {
         settings.validate()?;
-        let ddp = SocketAddr::new(settings.address, self.ddp_port);
+        let address = settings.device()?;
+        let ip = address.resolve(http::TIMEOUT)?;
+        let ddp = SocketAddr::new(ip, self.ddp_port);
         let renderer = WledRenderer::new(ddp)
             .map_err(|source| Error::adapter(format!("cannot open DDP socket to {ddp}"), source))?;
+        let label = match address.host {
+            Host::Ip(_) => address.to_string(),
+            Host::Name(_) => format!("{address} ({ip})"),
+        };
         let output = WledOutput {
-            device: SocketAddr::new(settings.address, self.http_port),
+            device: SocketAddr::new(ip, address.port),
+            host: address.to_string(),
+            label,
             renderer,
             leds: settings.leds.edges(),
         };
@@ -84,7 +87,12 @@ impl Mode {
 }
 
 struct WledOutput {
+    /// Resolved at open; HTTP port from the address.
     device: SocketAddr,
+    /// `Host` header: the configured `host[:port]`.
+    host: String,
+    /// The device in messages: the configured address, plus the IP for a name.
+    label: String,
     renderer: WledRenderer,
     leds: [usize; 4],
 }
@@ -92,8 +100,8 @@ struct WledOutput {
 impl WledOutput {
     /// A previous realtime session can ignore `lor` until it is released.
     fn enter(&self, mode: Mode) -> Result<(), http::RequestError> {
-        http::post_state(self.device, &json!({"live": false}))?;
-        http::post_state(self.device, &mode.state())
+        http::post_state(self.device, &self.host, &json!({"live": false}))?;
+        http::post_state(self.device, &self.host, &mode.state())
     }
 
     fn context(&self, mode: Mode) -> String {
@@ -102,7 +110,7 @@ impl WledOutput {
             Mode::Off => "off",
             Mode::Native => "native",
         };
-        format!("WLED at {} did not switch to {mode} mode", self.device.ip())
+        format!("WLED at {} did not switch to {mode} mode", self.label)
     }
 }
 
@@ -112,7 +120,7 @@ impl LedOutput for WledOutput {
             .render_edges(colors, self.leds)
             .map_err(|source| {
                 Error::adapter(
-                    format!("cannot send colours to WLED at {}", self.device.ip()),
+                    format!("cannot send colours to WLED at {}", self.label),
                     source,
                 )
             })

@@ -61,6 +61,10 @@ async fn snapshot_until(handle: &EngineHandle, done: impl FnMut(&Snapshot) -> bo
     handle.snapshot().wait_for(done).await.unwrap().clone()
 }
 
+fn revision(handle: &EngineHandle) -> Revision {
+    handle.snapshot().borrow().revision
+}
+
 fn before(log: &CallLog, earlier: &str, later: &str) -> bool {
     match (log.last_position(earlier), log.position(later)) {
         (Some(earlier), Some(later)) => earlier < later,
@@ -156,11 +160,13 @@ async fn processing_change_keeps_source_and_output_open() {
 
         let mut changed = named("a", "a");
         changed.processing.brightness_percent = 40;
-        let revision = handle
-            .replace_settings(Revision(0), changed.clone())
+        let initial = revision(&handle);
+        let replaced = handle
+            .replace_settings(initial, changed.clone())
             .await
             .unwrap();
-        assert_eq!(revision, Revision(1));
+        assert_eq!(replaced, initial.next());
+        assert_eq!(revision(&handle), replaced);
         let writes = log.count("output.write:a");
         assert!(log.wait_for("output.write:a", writes + 3).await);
 
@@ -182,8 +188,8 @@ async fn adapter_change_restarts_a_running_session() {
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert!(log.wait_for("output.write:a", 2).await);
 
-        handle
-            .replace_settings(Revision(0), named("b", "a"))
+        let replaced = handle
+            .replace_settings(revision(&handle), named("b", "a"))
             .await
             .unwrap();
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
@@ -192,7 +198,7 @@ async fn adapter_change_restarts_a_running_session() {
         assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
 
         handle
-            .replace_settings(Revision(1), named("b", "c"))
+            .replace_settings(replaced, named("b", "c"))
             .await
             .unwrap();
         assert!(log.wait_for("output.write:c", 1).await);
@@ -210,7 +216,7 @@ async fn adapter_change_while_off_opens_nothing() {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
         handle
-            .replace_settings(Revision(0), named("b", "b"))
+            .replace_settings(revision(&handle), named("b", "b"))
             .await
             .unwrap();
         assert!(log.events().is_empty());
@@ -226,6 +232,7 @@ async fn invalid_or_stale_settings_are_rejected_before_persistence() {
         let log = CallLog::new();
         let initial = named("a", "a");
         let (handle, engine, store) = start(&log, initial.clone(), DEADLINE).await;
+        let current = revision(&handle);
 
         let invalid = settings(
             FakeSourceSettings {
@@ -234,50 +241,42 @@ async fn invalid_or_stale_settings_are_rejected_before_persistence() {
             },
             FakeOutputSettings::default(),
         );
-        let error = handle
-            .replace_settings(Revision(0), invalid)
-            .await
-            .unwrap_err();
+        let error = handle.replace_settings(current, invalid).await.unwrap_err();
         assert!(matches!(error, Error::Invalid(ref e) if e.field == "capture.invalid"));
 
         let mut unknown = named("a", "a");
         unknown.output = Some(AdapterSettings::new("nope", &FakeOutputSettings::default()));
-        let error = handle
-            .replace_settings(Revision(0), unknown)
-            .await
-            .unwrap_err();
+        let error = handle.replace_settings(current, unknown).await.unwrap_err();
         assert!(matches!(error, Error::Invalid(ref e) if e.field == "output.kind"));
 
         let mut out_of_range = named("a", "a");
         out_of_range.processing.brightness_percent = 101;
         assert!(
             handle
-                .replace_settings(Revision(0), out_of_range)
+                .replace_settings(current, out_of_range)
                 .await
                 .is_err()
         );
 
+        let stale = Revision(current.0.wrapping_sub(1));
         let error = handle
-            .replace_settings(Revision(7), named("b", "b"))
+            .replace_settings(stale, named("b", "b"))
             .await
             .unwrap_err();
         assert!(matches!(
             error,
-            Error::StaleRevision {
-                expected: Revision(7),
-                current: Revision(0)
-            }
+            Error::StaleRevision { expected, current: now } if expected == stale && now == current
         ));
 
         assert_eq!(store.saved(), Some(initial));
-        assert_eq!(handle.snapshot().borrow().revision, Revision(0));
+        assert_eq!(revision(&handle), current);
         engine.shutdown().await.unwrap();
     })
     .await;
 }
 
 #[tokio::test]
-async fn apply_failure_keeps_settings_saved_and_reports_it() {
+async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
     within(async {
         let log = CallLog::new();
         let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
@@ -295,21 +294,40 @@ async fn apply_failure_keeps_settings_saved_and_reports_it() {
                 ..Default::default()
             },
         );
-        let revision = handle
-            .replace_settings(Revision(0), broken.clone())
+        let initial = revision(&handle);
+        let replaced = handle
+            .replace_settings(initial, broken.clone())
             .await
             .unwrap();
-        assert_eq!(revision, Revision(1));
+        assert_eq!(replaced, initial.next());
         assert_eq!(store.saved(), Some(broken));
 
         let snapshot = handle.snapshot().borrow().clone();
-        assert!(snapshot.failure.is_some());
+        assert_eq!(
+            snapshot
+                .failure
+                .map(|failure| failure.to_string())
+                .as_deref(),
+            Some("fake output cannot open")
+        );
         assert_eq!(snapshot.session, SessionState::Stopped);
-        assert_eq!(snapshot.revision, Revision(1));
+        assert_eq!(snapshot.target, LightingTarget::Processed);
+        assert_eq!(snapshot.revision, replaced);
         // The open failure released the newly opened source.
         assert_eq!(log.count("source.close:a"), 2);
         assert_eq!(log.count("output.idle:a:Off"), 1);
+
+        // A later valid change gets the next attempt at the requested target.
+        handle
+            .replace_settings(replaced, named("a", "c"))
+            .await
+            .unwrap();
+        assert!(log.wait_for("output.write:c", 1).await);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Running);
+        assert!(snapshot.failure.is_none());
         engine.shutdown().await.unwrap();
+        assert_eq!(log.count("output.idle:c:Off"), 1);
     })
     .await;
 }
@@ -344,7 +362,9 @@ async fn missed_stop_deadline_faults_and_only_shutdown_is_accepted() {
             Err(Error::Faulted(_))
         ));
         assert!(matches!(
-            handle.replace_settings(Revision(0), named("b", "b")).await,
+            handle
+                .replace_settings(revision(&handle), named("b", "b"))
+                .await,
             Err(Error::Faulted(_))
         ));
 
@@ -479,6 +499,159 @@ async fn unconfirmed_source_release_faults_the_engine() {
             Err(Error::Faulted(SessionPhase::ClosingSource))
         ));
         assert!(engine.shutdown().await.is_err());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn each_engine_starts_at_its_own_revision_so_old_revisions_are_stale() {
+    within(async {
+        let log = CallLog::new();
+        let store = MemoryStore::with(named("a", "a"));
+        let (first, engine) = Engine::start(registry(&log), Box::new(store.clone()), DEADLINE)
+            .await
+            .unwrap();
+        let before_restart = revision(&first);
+        engine.shutdown().await.unwrap();
+
+        let (second, engine) = Engine::start(registry(&log), Box::new(store.clone()), DEADLINE)
+            .await
+            .unwrap();
+        let current = revision(&second);
+        assert_ne!(before_restart, current);
+        assert!(current.0 < 1 << 52, "{current} must stay an exact JSON number");
+        let error = second
+            .replace_settings(before_restart, named("b", "b"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::StaleRevision { expected, current: now } if expected == before_restart && now == current
+        ));
+        assert_eq!(store.saved(), Some(named("a", "a")));
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+// Scenarios ported from the shipping controller (`apps/prysm/tests/controller.rs`).
+
+#[tokio::test]
+async fn output_change_while_off_neither_opens_nor_powers_the_new_output() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        let events = log.events();
+
+        handle
+            .replace_settings(revision(&handle), named("a", "b"))
+            .await
+            .unwrap();
+        assert_eq!(store.saved(), Some(named("a", "b")));
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Stopped);
+        engine.shutdown().await.unwrap();
+        // Nothing was opened, written or idled after lighting went off.
+        assert_eq!(log.events(), events);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn stop_with_a_failing_idle_still_closes_the_source_and_reports_it() {
+    within(async {
+        let log = CallLog::new();
+        let unreachable = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                fail_idle: true,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, unreachable, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+
+        let error = handle.set_target(LightingTarget::Off).await.unwrap_err();
+        assert_eq!(error.to_string(), "fake output cannot idle");
+        assert!(before(&log, "source.close:a", "output.idle:a:Off"));
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.target, LightingTarget::Off);
+        assert_eq!(snapshot.session, SessionState::Stopped);
+        assert_eq!(
+            snapshot
+                .failure
+                .map(|failure| failure.to_string())
+                .as_deref(),
+            Some("fake output cannot idle")
+        );
+
+        // Not faulted: lighting can start again, and shutdown reports the idle failure.
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert_eq!(log.count("source.open:a"), 2);
+        let shutdown = engine.shutdown().await.unwrap_err();
+        assert_eq!(shutdown.to_string(), "fake output cannot idle");
+        assert_eq!(log.count("source.close:a"), 2);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn concurrent_replacements_of_one_revision_admit_exactly_one() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, store) = start(&log, named("a", "a"), DEADLINE).await;
+        let current = revision(&handle);
+        let (b, c) = tokio::join!(
+            handle.replace_settings(current, named("b", "b")),
+            handle.replace_settings(current, named("c", "c")),
+        );
+
+        let (winner, loser) = match (b, c) {
+            (Ok(revision), Err(error)) => ((revision, named("b", "b")), error),
+            (Err(error), Ok(revision)) => ((revision, named("c", "c")), error),
+            other => panic!("expected exactly one winner, got {other:?}"),
+        };
+        assert_eq!(winner.0, current.next());
+        assert!(matches!(
+            loser,
+            Error::StaleRevision { expected, current: now } if expected == current && now == winner.0
+        ));
+        assert_eq!(store.saved(), Some(winner.1.clone()));
+        assert_eq!(handle.snapshot().borrow().settings, winner.1);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn capture_saved_while_processed_is_requested_starts_lighting() {
+    within(async {
+        let log = CallLog::new();
+        let mut output_only = named("a", "a");
+        output_only.capture = None;
+        let (handle, engine, _) = start(&log, output_only, DEADLINE).await;
+        let error = handle
+            .set_target(LightingTarget::Processed)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Invalid(ref e) if e.field == "capture"));
+        assert_eq!(handle.snapshot().borrow().target, LightingTarget::Processed);
+        assert!(log.events().is_empty());
+
+        handle
+            .replace_settings(revision(&handle), named("a", "a"))
+            .await
+            .unwrap();
+        assert!(log.wait_for("output.write:a", 1).await);
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
+        engine.shutdown().await.unwrap();
     })
     .await;
 }

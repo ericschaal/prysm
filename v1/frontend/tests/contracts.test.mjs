@@ -25,11 +25,14 @@ const fixtures = JSON.parse(
 );
 // OpenAPI metadata/format annotations are not JSON Schema validation keywords.
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
-const validate = (name) => {
-  const document = Object.values(documents).find(
-    (doc) => doc.components?.schemas?.[name],
-  );
-  assert(document, `Missing schema: ${name}`);
+// `module/Name` names a schema of one document; a plain `Name` is the first
+// document that has it (the application roots are repeated in host documents).
+const validate = (key) => {
+  const [module, name] = key.includes('/') ? key.split('/') : [null, key];
+  const document = module
+    ? documents[module]
+    : Object.values(documents).find((doc) => doc.components?.schemas?.[name]);
+  assert(document?.components?.schemas?.[name], `Missing schema: ${key}`);
   return ajv.compile({ ...document, $ref: `#/components/schemas/${name}` });
 };
 
@@ -64,6 +67,46 @@ test('schemas reject unknown targets, untagged sections and incomplete failures'
   );
   assert.equal(validate('Failure')({ kind: 'invalid' }), false);
   assert.equal(validate('TargetRequest')({ target: 'off', id: 1 }), false);
+});
+
+test('webOS capture settings keep the ranges the adapter validates', () => {
+  const check = validate('host-webos/WebosSettings');
+  const [section] = fixtures.WebosSettings;
+  assert(check({ kind: 'webos' }));
+  for (const bad of [
+    { fps: 61 },
+    { fps: 0 },
+    { width: 641 },
+    { width: 1922 },
+    { height: 1082 },
+    { include_ui: 'yes' },
+    { path: '/dev/video0' },
+  ])
+    assert.equal(check({ ...section, ...bad }), false, JSON.stringify(bad));
+  assert.equal(validate('host-webos/CaptureSettings')({ kind: 'device', path: '/dev/video0' }), false);
+});
+
+test('the Luna document covers both flavors with one State', () => {
+  const states = fixtures['luna/State'];
+  assert.deepEqual(
+    states.map((state) => state.flavor),
+    ['full', 'slim'],
+  );
+  const state = validate('luna/State');
+  assert.equal(state({ ...states[0], flavor: 'other' }), false);
+  assert.equal(state({ ...states[0], power: 'on' }), false);
+  const preferences = validate('luna/Preferences');
+  assert(preferences({}));
+  assert.equal(preferences({ mode: 'slim' }), false);
+  assert.equal(
+    preferences({ capture: { ...states[1].preferences.capture, fps: 61 } }),
+    false,
+  );
+  const reply = validate('luna/StateReply');
+  assert.equal(reply({ ...states[0], returnValue: false }), false);
+  assert(validate('luna/ErrorReply')({ returnValue: false, errorText: 'denied' }));
+  assert.equal(validate('luna/SetEnabledRequest')({}), false);
+  assert.equal(validate('luna/UninstallRequest')({ force: true }), false);
 });
 
 test('drift checks fail without writing; generation repairs missing, changed and obsolete artifacts', async () => {

@@ -32,8 +32,8 @@ the adapter's factory, not here.
   },
   "output": {
     "kind": "wled",
-    "host": "10.0.0.5",
-    "port": 21324
+    "address": "wled.local",
+    "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 }
   },
   "processing": {
     "brightness_percent": 80,

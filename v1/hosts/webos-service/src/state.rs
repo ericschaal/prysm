@@ -6,6 +6,7 @@ use serde::Serialize;
 /// Which package this supervisor belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Flavor {
     /// `prysm-webos`: capture, processing, WLED and the portal on the TV.
     Full,
@@ -16,6 +17,7 @@ pub enum Flavor {
 /// TV power as `com.webos.service.tvpower` reports it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Power {
     /// No valid report (yet). Fails closed: not awake.
     #[default]
@@ -36,6 +38,7 @@ impl Power {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Phase {
     Stopped,
     Running,
@@ -45,21 +48,29 @@ pub enum Phase {
 }
 
 /// The `getState` reply and subscription payload (plus LS2's `returnValue`).
+/// Fields marked "Full only" are `null` in the slim package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct State {
+    /// The installed package; both install as `io.prysm.tv`.
     pub flavor: Flavor,
     pub preferences: Preferences,
     /// Slim: frames should flow. Full: lighting is not off.
     pub enabled: bool,
     /// Full only: the engine's target, including changes made in the portal.
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<crate::schema::LightingTargetSchema>)
+    )]
     pub lighting: Option<LightingTarget>,
     pub power: Power,
+    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::VideoSchema))]
     pub video: Video,
     pub worker: Phase,
     pub capturing: bool,
     /// Full only: the portal's LAN address once the worker reported it.
     pub portal: Option<String>,
     pub failure: Option<String>,
-    /// The latest worker stderr lines, oldest first.
+    /// The latest worker stderr lines, oldest first (at most 20).
     pub log: Vec<String>,
 }

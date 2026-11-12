@@ -99,7 +99,7 @@ pub(crate) fn config() -> Config {
     Config {
         flavor: Flavor::Full,
         app_id: "io.prysm.tv".into(),
-        program: "/svc/prysm-webos".into(),
+        program: "/svc/prysm-webos-worker".into(),
         spec: Spec::Full {
             settings: "/state/settings.json".into(),
             listen: "0.0.0.0:8787".parse().unwrap(),
@@ -110,8 +110,8 @@ pub(crate) fn config() -> Config {
 fn slim_config() -> Config {
     Config {
         flavor: Flavor::Slim,
-        app_id: "io.prysm.tv.slim".into(),
-        program: "/svc/prysm-webos-slim".into(),
+        app_id: "io.prysm.tv".into(),
+        program: "/svc/prysm-webos-worker".into(),
         spec: Spec::Slim,
     }
 }
@@ -271,7 +271,7 @@ fn power_and_video_drive_the_worker_and_its_commands() {
     assert_eq!(
         h.log(),
         [
-            "spawn /svc/prysm-webos --settings /state/settings.json --listen 0.0.0.0:8787 --lighting off",
+            "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting off",
             r#"send {"type":"video","video":"unknown"}"#,
         ]
     );

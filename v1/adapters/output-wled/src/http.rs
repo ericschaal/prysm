@@ -4,10 +4,9 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-/// Bounds connecting and each read or write.
-/// Applies to connect, write and read separately. Two requests at worst case
+/// Bounds name resolution, connecting and each read or write, separately. Two requests at worst case
 /// must fit inside the runtime stop deadline (10 s by default).
-const TIMEOUT: Duration = Duration::from_millis(1500);
+pub const TIMEOUT: Duration = Duration::from_millis(1500);
 const MAX_BODY: usize = 4096;
 const MAX_RESPONSE: usize = 8192;
 
@@ -30,14 +29,15 @@ pub enum RequestError {
     Unacknowledged,
 }
 
-/// Send `state` and require WLED's `{"success":true}` reply.
-pub fn post_state(device: SocketAddr, state: &Value) -> Result<(), RequestError> {
+/// Send `state` to `device`, naming `host` (the configured `host[:port]`) in
+/// the `Host` header, and require WLED's `{"success":true}` reply.
+pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), RequestError> {
     let mut stream = TcpStream::connect_timeout(&device, TIMEOUT).map_err(RequestError::Connect)?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
     let body = state.to_string();
     let request = format!(
-        "POST /json/state HTTP/1.1\r\nHost: {device}\r\nAccept: application/json\r\n\
+        "POST /json/state HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );

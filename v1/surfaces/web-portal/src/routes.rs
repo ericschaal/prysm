@@ -52,9 +52,15 @@ impl Context {
 }
 
 pub(crate) async fn handle(context: Arc<Context>, request: Request<Incoming>) -> Response {
+    let mut response = route(&context, request).await;
+    response::secure(&mut response);
+    response
+}
+
+async fn route(context: &Context, request: Request<Incoming>) -> Response {
     let path = request.uri().path().to_owned();
     if !path.starts_with("/api/") {
-        return asset(&context, &path, request.method());
+        return asset(context, &path, request.method());
     }
     let mut response = match access::check(&context.access, request.headers()) {
         Err(denied) => *denied,
@@ -62,7 +68,7 @@ pub(crate) async fn handle(context: Arc<Context>, request: Request<Incoming>) ->
             access::preflight(origin, request.headers())
         }
         Ok(cors) => {
-            let mut response = api(&context, &path, request).await;
+            let mut response = api(context, &path, request).await;
             if let Some(origin) = cors {
                 access::allow(&mut response, origin);
             }
@@ -217,10 +223,6 @@ fn stream_state(context: &Context) -> Response {
     headers.insert(
         header::CONTENT_TYPE,
         header::HeaderValue::from_static("text/event-stream"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
     );
     response
 }

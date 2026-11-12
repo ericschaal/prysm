@@ -7,7 +7,8 @@ are generated from OpenAPI documents the Rust exporter prints.
 | --- | --- | --- |
 | `prysm-ports` | `Settings`, `Processing`, `AdapterSettings`, `LightingTarget`, `Revision` and their serde shape (the settings file format). No OpenAPI dependency. | — |
 | [`prysm-protocol`](crates/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](crates/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
-| Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null) |
+| Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
+| [`prysm-webos-service`](hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences`, request and reply bodies; schema mirrors of `Video`, `SlimCapture`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |
 | [`prysm-export-contracts`](tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures | Module names |
 
 Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
@@ -57,14 +58,24 @@ register the same kinds, listing the same factories the hosts register:
 
 `CaptureSettings` becomes a `oneOf` of the registered, kind-tagged schemas, each
 under the settings type's own name (`DeviceSettings`, `WledSettings`, ...).
-Two different schemas with one name are rejected (`SchemaConflict`). The TV
-hosts will get a second entry, `host-webos`, registering the `webos` source once
-that adapter provides a schema; until then its panel declares its section type
-by hand. The exporter also writes a fixture of each registered section, so the
-frontend tests validate a real Rust serialization against every variant.
+Two different schemas with one name are rejected (`SchemaConflict`). The full
+TV worker (`prysm-webos`) has its own document, `host-webos`, registering the
+`webos` source and the `wled` output, exactly what that host registers. The
+exporter also writes a fixture of each registered section, so the frontend
+tests validate a real Rust serialization against every variant.
 
 Panels import their section type from the host document
-(`import type { WledSettings } from '@prysm/contracts/host-desktop'`).
+(`import type { WledSettings } from '@prysm/contracts/host-desktop'`); the
+webOS hosts import from `host-webos`.
+
+### Luna document
+
+`luna` describes `luna://io.prysm.tv.service`, the TV supervisor both
+packages install under one name. It is one document for both flavors: `State`
+carries `flavor`, and fields only one flavor uses say so in their description
+("Full only", "Slim only"). Request bodies and `Preferences` reject unknown
+fields. The fixtures hold a full and a slim `State` serialized by Rust, under
+`luna/<Name>` keys because `State` also names an `application` root.
 
 ## Generation
 

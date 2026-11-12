@@ -165,6 +165,18 @@ async fn construction_accepts_any_address_and_rejects_bad_assets_and_origins() {
     }
 }
 
+/// Every response, asset or API, success or failure.
+fn assert_secure(response: &reqwest::Response) {
+    let headers = response.headers();
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert_eq!(
+        headers[header::CONTENT_SECURITY_POLICY],
+        "default-src 'self'; frame-ancestors 'none'"
+    );
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+}
+
 #[tokio::test]
 async fn asset_serving_and_unauthenticated_api() {
     bounded(async {
@@ -178,14 +190,14 @@ async fn asset_serving_and_unauthenticated_api() {
             page.headers()[header::CONTENT_TYPE],
             "text/html; charset=utf-8"
         );
-        assert_eq!(page.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_secure(&page);
         assert!(page.text().await.unwrap().contains("Prysm"));
         let script = client.get(url("/assets/app.js")).send().await.unwrap();
         assert_eq!(script.headers()[header::CONTENT_TYPE], "text/javascript");
-        assert_eq!(
-            client.get(url("/missing")).send().await.unwrap().status(),
-            StatusCode::NOT_FOUND
-        );
+        assert_secure(&script);
+        let missing = client.get(url("/missing")).send().await.unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_secure(&missing);
         // Any Host is served: the portal is reached by IP or LAN name.
         let named = client
             .get(url("/api/v1/state"))
@@ -195,6 +207,7 @@ async fn asset_serving_and_unauthenticated_api() {
             .unwrap();
         assert_eq!(named.status(), StatusCode::OK);
         assert_eq!(named.headers()[header::VARY], "origin");
+        assert_secure(&named);
 
         let unknown = portal
             .request(Method::GET, "/api/v1/nothing")
@@ -311,6 +324,7 @@ async fn allowed_origins_get_cors() {
         );
         assert_eq!(headers["access-control-allow-private-network"], "true");
         assert_eq!(headers[header::VARY], "origin");
+        assert_secure(&preflight);
 
         let put = portal
             .request(Method::PUT, "/api/v1/target")
@@ -321,6 +335,7 @@ async fn allowed_origins_get_cors() {
             .unwrap();
         assert_eq!(put.status(), StatusCode::NO_CONTENT);
         assert_eq!(put.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
+        assert_secure(&put);
         let stream = portal
             .request(Method::GET, "/api/v1/state/stream")
             .header(header::ORIGIN, tv)
@@ -329,6 +344,8 @@ async fn allowed_origins_get_cors() {
             .unwrap();
         assert_eq!(stream.status(), StatusCode::OK);
         assert_eq!(stream.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
+        assert_eq!(stream.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_secure(&stream);
         drop(stream);
 
         let other = portal
@@ -338,6 +355,7 @@ async fn allowed_origins_get_cors() {
             .await
             .unwrap();
         assert_eq!(other.status(), StatusCode::FORBIDDEN);
+        assert_secure(&other);
         portal.shutdown().await.unwrap();
 
         let portal = start_with(fakes::settings(), Duration::from_secs(5), Access::AnyOrigin).await;
@@ -363,7 +381,7 @@ async fn state_read_and_set_target() {
         let state = portal.state().await;
         assert_eq!(state["target"], "off");
         assert_eq!(state["session"], json!({ "state": "stopped" }));
-        assert_eq!(state["revision"], 0);
+        assert!(state["revision"].is_u64());
         assert_eq!(state["settings"]["capture"]["kind"], "fake");
         assert_eq!(state["failure"], Value::Null);
 
@@ -417,7 +435,10 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
 async fn settings_replace_succeeds_conflicts_and_validates() {
     bounded(async {
         let portal = start(fakes::settings(), Duration::from_secs(5)).await;
-        let mut settings = portal.state().await["settings"].clone();
+        let state = portal.state().await;
+        let initial = state["revision"].as_u64().unwrap();
+        let next = initial + 1;
+        let mut settings = state["settings"].clone();
         settings["processing"]["brightness_percent"] = json!(40);
         let replace = |expected: u64, settings: Value| {
             portal.json(
@@ -427,21 +448,21 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
             )
         };
 
-        let (status, body) = replace(0, settings.clone()).await;
+        let (status, body) = replace(initial, settings.clone()).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, json!({ "revision": 1 }));
+        assert_eq!(body, json!({ "revision": next }));
         assert_eq!(
             portal.store.saved().unwrap().processing.brightness_percent,
             40
         );
         let state = portal.state().await;
-        assert_eq!(state["revision"], 1);
+        assert_eq!(state["revision"], next);
         assert_eq!(state["settings"]["processing"]["brightness_percent"], 40);
 
-        let (status, body) = replace(0, settings.clone()).await;
+        let (status, body) = replace(initial, settings.clone()).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["kind"], "stale_revision");
-        assert_eq!(body["current"], 1);
+        assert_eq!(body["current"], next);
 
         let mut invalid = settings.clone();
         invalid["capture"] = serde_json::to_value(AdapterSettings::new(
@@ -452,7 +473,7 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
             },
         ))
         .unwrap();
-        let (status, body) = replace(1, invalid).await;
+        let (status, body) = replace(next, invalid).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             body,
@@ -461,19 +482,19 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
 
         let mut range = settings.clone();
         range["processing"]["spatial_reach_percent"] = json!(0);
-        let (status, body) = replace(1, range).await;
+        let (status, body) = replace(next, range).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "processing.spatial_reach_percent");
 
         let mut unknown = settings.clone();
         unknown["output"] = json!({ "kind": "laser" });
-        let (status, body) = replace(1, unknown).await;
+        let (status, body) = replace(next, unknown).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["field"], "output.kind");
 
         let mut undecodable = settings.clone();
         undecodable["output"] = json!({ "kind": "fake", "fail_after": "soon" });
-        let (status, body) = replace(1, undecodable).await;
+        let (status, body) = replace(next, undecodable).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(
             body["message"]
@@ -481,7 +502,7 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
                 .unwrap()
                 .starts_with("cannot decode `fake` settings:")
         );
-        assert_eq!(portal.state().await["revision"], 1);
+        assert_eq!(portal.state().await["revision"], next);
 
         let plain = portal
             .request(Method::PUT, "/api/v1/settings")

@@ -24,7 +24,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
         /**
          * @description What the user wants the LEDs to do.
          * @enum {string}

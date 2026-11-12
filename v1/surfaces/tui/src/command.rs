@@ -80,7 +80,7 @@ pub(crate) fn describe(error: &dyn std::error::Error) -> String {
 mod tests {
     use super::*;
     use crate::input::Severity;
-    use prysm_ports::{Revision, SessionState};
+    use prysm_ports::SessionState;
     use prysm_runtime::Engine;
     use prysm_runtime::fakes::{self, CallLog, FakeOutputs, FakeSources, MemoryStore};
     use std::time::Duration;
@@ -141,10 +141,15 @@ mod tests {
                 r#"{ "capture": { "kind": "fake" }, "output": { "kind": "fake" } }"#,
             )
             .unwrap();
+            let next = handle.snapshot().borrow().revision.next();
             let loaded = execute(handle.clone(), Command::Load(path.clone())).await;
             assert_eq!(loaded.severity, Severity::Info, "{}", loaded.text);
-            assert!(loaded.text.starts_with("Settings revision 1"));
-            assert_eq!(handle.snapshot().borrow().revision, Revision(1));
+            assert!(
+                loaded
+                    .text
+                    .starts_with(&format!("Settings revision {next}"))
+            );
+            assert_eq!(handle.snapshot().borrow().revision, next);
             assert_eq!(store.saved().unwrap().output.unwrap().kind, "fake");
 
             std::fs::write(&path, r#"{ "output": { "kind": "laser" } }"#).unwrap();
@@ -170,7 +175,7 @@ mod tests {
                 "{}",
                 missing.text
             );
-            assert_eq!(handle.snapshot().borrow().revision, Revision(1));
+            assert_eq!(handle.snapshot().borrow().revision, next);
             engine.shutdown().await.unwrap();
         })
         .await;

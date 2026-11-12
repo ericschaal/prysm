@@ -11,17 +11,30 @@ use std::path::{Path, PathBuf};
 /// Largest preferences file read back.
 pub const MAX_BYTES: usize = 65_536;
 
+/// `tv.json` and the `setPreferences` request (complete, every field
+/// optional). Fields marked "Slim only" must stay unset (default) in the
+/// full package.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Preferences {
     /// Start enabled (full: processed lighting) when the service starts.
     pub autostart: bool,
-    /// Slim: the headless Prysm's portal origin, such as
+    /// Slim only: the headless Prysm's portal origin, such as
     /// `http://192.168.1.20:8787`. Only the TV app uses it.
+    #[cfg_attr(
+        feature = "schema",
+        schema(max_length = 256, example = "http://192.168.1.20:8787")
+    )]
     pub instance: Option<String>,
-    /// Slim: where frames go, such as `192.168.1.20:7380`.
+    /// Slim only: where frames go, such as `192.168.1.20:7380`.
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<String>, example = "192.168.1.20:7380")
+    )]
     pub receiver: Option<SocketAddr>,
-    /// Slim: capture size, rate and menu blending.
+    /// Slim only: capture size, rate and menu blending.
+    #[cfg_attr(feature = "schema", schema(value_type = crate::schema::SlimCaptureSchema))]
     pub capture: SlimCapture,
 }
 

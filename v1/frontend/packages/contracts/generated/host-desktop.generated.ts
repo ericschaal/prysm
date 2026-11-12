@@ -50,7 +50,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
         /** @description LEDs per edge, as seen from the front of the screen. An omitted edge has none. */
         LedCounts: {
             /**
@@ -174,14 +174,20 @@ export interface components {
          * @description Where the device is and how many LEDs each screen edge has:
          *
          *     ```json
-         *     { "kind": "wled", "address": "192.168.1.50",
+         *     { "kind": "wled", "address": "wled.local",
          *       "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 } }
          *     ```
          */
         WledSettings: {
             /**
-             * @description Unicast IPv4 or IPv6 address of the device.
+             * @description Host name or unicast IP address of the device, with an optional HTTP
+             *     port (default 80): `wled.local`, `192.168.1.50`, `wled.local:8080` or
+             *     `[fe80::1]:8080`. No scheme or path; WLED serves plain HTTP. Names are
+             *     resolved each time the output opens. Colours always go to UDP port 4048.
+             * @example wled.local
              * @example 192.168.1.50
+             * @example wled.local:8080
+             * @example [fe80::1]:8080
              */
             address: string;
             /** @enum {string} */

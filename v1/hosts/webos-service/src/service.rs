@@ -7,9 +7,9 @@ use crate::launcher::{Launcher, Output, Worker};
 use crate::machine::{Effect, Input, Machine, Spec};
 use crate::observe;
 use crate::preferences::{Preferences, PreferencesStore};
-use crate::state::{Flavor, Power};
+use crate::state::{Flavor, Power, State};
 use prysm_webos_link::Video;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -183,7 +183,8 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         };
         match method {
             "getState" => {
-                let request: GetState = serde_json::from_value(payload).map_err(parse_error)?;
+                let request: GetStateRequest =
+                    serde_json::from_value(payload).map_err(parse_error)?;
                 Ok(Reply {
                     payload: self.state_json(Some(request.subscribe)),
                     subscribe: request.subscribe,
@@ -198,12 +199,13 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 Ok(self.state_reply())
             }
             "setEnabled" => {
-                let request: SetEnabled = serde_json::from_value(payload).map_err(parse_error)?;
+                let request: SetEnabledRequest =
+                    serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
                 Ok(self.state_reply())
             }
             _ => {
-                let Empty {} = serde_json::from_value(payload).map_err(parse_error)?;
+                let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
                 self.uninstall = Uninstall::Requested;
                 self.input(bus, Input::Shutdown, now);
                 Ok(Reply {
@@ -366,34 +368,49 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     }
 
     fn state_json(&self, subscribed: Option<bool>) -> String {
-        let mut value = match serde_json::to_value(self.machine.state()) {
-            Ok(Value::Object(map)) => map,
-            _ => Map::new(),
-        };
-        value.insert("returnValue".into(), true.into());
-        if let Some(subscribed) = subscribed {
-            value.insert("subscribed".into(), subscribed.into());
-        }
-        Value::Object(value).to_string()
+        state_reply(&self.machine.state(), subscribed).to_string()
     }
 }
 
-#[derive(Deserialize)]
+/// The `getState` reply and subscription payload: [`State`] plus LS2's
+/// `returnValue` and, on `getState` and subscription updates, `subscribed`.
+#[must_use]
+pub fn state_reply(state: &State, subscribed: Option<bool>) -> Value {
+    let mut value = match serde_json::to_value(state) {
+        Ok(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    value.insert("returnValue".into(), true.into());
+    if let Some(subscribed) = subscribed {
+        value.insert("subscribed".into(), subscribed.into());
+    }
+    Value::Object(value)
+}
+
+/// `getState` request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct GetState {
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct GetStateRequest {
+    /// Keep sending the state on every change.
     #[serde(default)]
-    subscribe: bool,
+    pub subscribe: bool,
 }
 
-#[derive(Deserialize)]
+/// `setEnabled` request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SetEnabled {
-    enabled: bool,
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct SetEnabledRequest {
+    /// Slim: frames should flow. Full: processed lighting (or off).
+    pub enabled: bool,
 }
 
-#[derive(Deserialize)]
+/// `uninstall` request: an empty object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub struct UninstallRequest {}
 
 #[cfg(test)]
 pub(crate) mod tests;

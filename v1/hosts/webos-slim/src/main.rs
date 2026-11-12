@@ -9,6 +9,7 @@ use prysm_capture_remote::RemoteSender;
 use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
 use prysm_ports::Result;
 use prysm_runtime::Forwarder;
+use prysm_runtime::logging::{self, Logs};
 use prysm_webos_link::worker::{self, Link};
 use prysm_webos_link::{SlimArgs, SlimCapture};
 use std::process::ExitCode;
@@ -23,6 +24,8 @@ Started by prysm-webos-slim-service: commands on stdin, events on stdout, logs o
 const STOP_DEADLINE: Duration = Duration::from_secs(6);
 
 fn main() -> ExitCode {
+    // stdout carries the supervisor protocol; log lines go to stderr only.
+    logging::init("prysm-webos-slim", Logs::Stderr);
     worker::main("prysm-webos-slim", USAGE, SlimArgs::parse, run)
 }
 

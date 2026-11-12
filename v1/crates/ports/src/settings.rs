@@ -12,7 +12,7 @@ use std::fmt;
 /// ```json
 /// {
 ///   "capture": { "kind": "device", "path": "/dev/video0" },
-///   "output": { "kind": "wled", "host": "10.0.0.5" },
+///   "output": { "kind": "wled", "address": "wled.local", "leds": { "top": 96 } },
 ///   "processing": { "brightness_percent": 80 }
 /// }
 /// ```
@@ -119,8 +119,9 @@ impl Processing {
     }
 }
 
-/// Settings version for optimistic replacement. Counts accepted replacements
-/// since the process started; it is not persisted.
+/// Optimistic-concurrency token for settings. It starts at a random value in
+/// each process and increases by one per accepted replacement, so a revision
+/// read before a restart is stale afterwards. It is not persisted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Revision(pub u64);
 

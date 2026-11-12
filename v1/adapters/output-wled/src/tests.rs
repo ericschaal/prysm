@@ -1,11 +1,12 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
+use crate::address::{DeviceAddress, Host, prefer_ipv4, resolve_within};
 use crate::{LedCounts, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, Registry};
 use serde_json::{Value, json};
 use std::error::Error as _;
-use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, UdpSocket};
+use std::io::{self, ErrorKind, Read, Write};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
 use std::thread;
@@ -24,6 +25,7 @@ enum Reply {
 
 struct Device {
     wled: Wled,
+    http_port: u16,
     udp: UdpSocket,
     calls: mpsc::Receiver<(String, Value)>,
 }
@@ -35,10 +37,8 @@ impl Device {
         listener.set_nonblocking(true).unwrap();
         let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
         udp.set_read_timeout(Some(WAIT)).unwrap();
-        let wled = Wled::local(
-            listener.local_addr().unwrap().port(),
-            udp.local_addr().unwrap().port(),
-        );
+        let http_port = listener.local_addr().unwrap().port();
+        let wled = Wled::local(udp.local_addr().unwrap().port());
         let (sender, calls) = mpsc::channel();
         thread::spawn(move || {
             for reply in replies {
@@ -70,13 +70,27 @@ impl Device {
                 let _ = socket.write_all(response.as_bytes());
             }
         });
-        Self { wled, udp, calls }
+        Self {
+            wled,
+            http_port,
+            udp,
+            calls,
+        }
+    }
+
+    /// `host:port` of the HTTP fixture.
+    fn address(&self, host: &str) -> String {
+        format!("{host}:{}", self.http_port)
     }
 
     fn call(&self) -> Value {
+        self.call_with_head().1
+    }
+
+    fn call_with_head(&self) -> (String, Value) {
         let (head, json) = self.calls.recv_timeout(WAIT).expect("no HTTP request");
         assert!(head.starts_with("POST /json/state HTTP/1.1\r\n"), "{head}");
-        json
+        (head, json)
     }
 
     fn expect(&self, states: &[Value]) {
@@ -91,7 +105,7 @@ impl Device {
 
     fn open(&self, leds: LedCounts) -> Result<Box<dyn LedOutput>, Error> {
         let settings = WledSettings {
-            address: "127.0.0.1".parse().unwrap(),
+            address: self.address("127.0.0.1"),
             leds,
         };
         self.wled.open(&settings)
@@ -183,7 +197,7 @@ fn open_through_the_registry_releases_then_enters_live_mode() {
     let settings = AdapterSettings::new(
         Wled::KIND,
         &WledSettings {
-            address: "127.0.0.1".parse().unwrap(),
+            address: device.address("127.0.0.1"),
             leds: one_each(),
         },
     );
@@ -231,10 +245,10 @@ fn unreachable_device_fails_open_with_its_cause() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let settings = WledSettings {
-        address: "127.0.0.1".parse().unwrap(),
+        address: format!("127.0.0.1:{port}"),
         leds: one_each(),
     };
-    let error = Wled::local(port, 4048).open(&settings).err().unwrap();
+    let error = Wled::local(4048).open(&settings).err().unwrap();
     assert!(error.to_string().contains("live mode"), "{error}");
     let cause = request_error(&error);
     assert!(matches!(cause, RequestError::Connect(_)), "{cause:?}");
@@ -309,30 +323,97 @@ fn chunked_and_close_delimited_replies_are_accepted() {
 }
 
 #[test]
-fn validation_rejects_non_unicast_addresses_and_led_totals() {
+fn addresses_parse_to_host_and_http_port() {
+    let ip = |text: &str| Host::Ip(text.parse().unwrap());
+    let name = |text: &str| Host::Name(text.into());
+    for (text, host, port, display) in [
+        ("192.168.1.50", ip("192.168.1.50"), 80, "192.168.1.50"),
+        (
+            "192.168.1.50:8080",
+            ip("192.168.1.50"),
+            8080,
+            "192.168.1.50:8080",
+        ),
+        ("wled.local", name("wled.local"), 80, "wled.local"),
+        (
+            "WLED-Desk.local:8080",
+            name("WLED-Desk.local"),
+            8080,
+            "WLED-Desk.local:8080",
+        ),
+        ("wled", name("wled"), 80, "wled"),
+        ("wled.local:80", name("wled.local"), 80, "wled.local"),
+        (
+            "wled.local:65535",
+            name("wled.local"),
+            65535,
+            "wled.local:65535",
+        ),
+        ("fe80::1", ip("fe80::1"), 80, "[fe80::1]"),
+        ("[fe80::1]", ip("fe80::1"), 80, "[fe80::1]"),
+        ("[fe80::1]:8080", ip("fe80::1"), 8080, "[fe80::1]:8080"),
+        (
+            "[::ffff:10.0.0.5]:81",
+            ip("::ffff:10.0.0.5"),
+            81,
+            "[::ffff:10.0.0.5]:81",
+        ),
+    ] {
+        let address = DeviceAddress::parse(text).unwrap();
+        assert_eq!(address, DeviceAddress { host, port }, "{text}");
+        assert_eq!(address.to_string(), display, "{text}");
+    }
+}
+
+#[test]
+fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
     let valid = WledSettings {
-        address: "192.168.1.50".parse().unwrap(),
+        address: "192.168.1.50".into(),
         leds: one_each(),
     };
     assert_eq!(Wled::default().validate(&valid), Ok(()));
-    for address in [
-        "0.0.0.0",
-        "255.255.255.255",
-        "224.0.0.1",
-        "::",
-        "ff02::1",
-        "::ffff:224.0.0.1",
-        "::ffff:255.255.255.255",
+    for (address, reason) in [
+        ("", "required"),
+        (" wled.local", "spaces"),
+        ("wled local", "spaces"),
+        ("https://wled.local", "plain HTTP"),
+        ("HTTPS://wled.local:8080/", "plain HTTP"),
+        ("http://wled.local:8080/", "scheme"),
+        ("ws://wled.local", "scheme"),
+        ("wled.local/json", "path"),
+        ("wled.local?x", "path"),
+        ("user@wled.local", "user information"),
+        ("wled.local:", "port"),
+        ("wled.local:0", "port"),
+        ("wled.local:65536", "port"),
+        ("wled.local:+80", "port"),
+        ("wled.local:http", "port"),
+        (":8080", "host name"),
+        ("wled..local", "host name"),
+        ("-wled.local", "host name"),
+        ("wled_desk.local", "host name"),
+        (&format!("{}.local", "a".repeat(64)), "host name"),
+        ("256.1.1.1", "host name"),
+        ("192.168.1", "host name"),
+        ("fe80::1::8080", "brackets"),
+        ("[fe80::1", "IPv6"),
+        ("[fe80::1]8080", "IPv6"),
+        ("[wled.local]:80", "IPv6"),
+        ("0.0.0.0", "unicast"),
+        ("255.255.255.255:80", "unicast"),
+        ("224.0.0.1", "unicast"),
+        ("::", "unicast"),
+        ("[ff02::1]:80", "unicast"),
+        ("::ffff:224.0.0.1", "unicast"),
+        ("::ffff:255.255.255.255", "unicast"),
     ] {
         let settings = WledSettings {
-            address: address.parse().unwrap(),
+            address: address.into(),
             ..valid.clone()
         };
-        assert_eq!(
-            settings.validate().unwrap_err().field,
-            "output.address",
-            "{address}"
-        );
+        let error = settings.validate().unwrap_err();
+        assert_eq!(error.field, "output.address", "{address}");
+        assert!(error.reason.contains(reason), "{address}: {}", error.reason);
     }
     for leds in [
         LedCounts::default(),
@@ -359,6 +440,84 @@ fn validation_rejects_non_unicast_addresses_and_led_totals() {
 }
 
 #[test]
+fn custom_port_reaches_the_device_and_names_it_in_the_host_header() {
+    let device = Device::new(vec![Reply::Json(OK); 2]);
+    let _output = device.open(one_each()).unwrap();
+    let (head, _) = device.call_with_head();
+    let host = format!("\r\nHost: {}\r\n", device.address("127.0.0.1"));
+    assert!(head.contains(&host), "{head}");
+    device.expect(&[live()]);
+}
+
+#[test]
+fn host_name_is_resolved_at_open_for_http_and_ddp() {
+    let device = Device::new(vec![Reply::Json(OK); 2]);
+    let settings = WledSettings {
+        address: device.address("localhost"),
+        leds: one_each(),
+    };
+    let mut output = device.wled.open(&settings).unwrap();
+    let (head, state) = device.call_with_head();
+    assert_eq!(state, release());
+    let host = format!("\r\nHost: {}\r\n", device.address("localhost"));
+    assert!(head.contains(&host), "{head}");
+    device.expect(&[live()]);
+    output.write(&EdgeColors::default()).unwrap();
+    assert_eq!(device.rgb(), [0; 12], "DDP to the resolved IPv4 address");
+}
+
+#[test]
+fn unresolvable_host_fails_open_naming_the_host() {
+    let settings = WledSettings {
+        address: "prysm-test.invalid:8080".into(),
+        leds: one_each(),
+    };
+    let started = Instant::now();
+    let error = Wled::default().open(&settings).err().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3), "bounded");
+    assert!(
+        error
+            .to_string()
+            .contains("resolve WLED host prysm-test.invalid"),
+        "{error}"
+    );
+    let Error::Adapter {
+        source: Some(source),
+        ..
+    } = &error
+    else {
+        panic!("expected an adapter error with a source: {error:?}");
+    };
+    assert!(source.downcast_ref::<io::Error>().is_some(), "{source:?}");
+}
+
+#[test]
+fn resolution_gives_up_at_its_deadline() {
+    let started = Instant::now();
+    let error = resolve_within(
+        || {
+            thread::sleep(Duration::from_secs(2));
+            Ok(Vec::new())
+        },
+        Duration::from_millis(50),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let found = resolve_within(|| Ok(vec![SocketAddr::from(([10, 0, 0, 5], 80))]), WAIT);
+    assert_eq!(found.unwrap(), [SocketAddr::from(([10, 0, 0, 5], 80))]);
+}
+
+#[test]
+fn resolution_prefers_ipv4() {
+    let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 80));
+    let v4 = SocketAddr::from(([10, 0, 0, 5], 80));
+    assert_eq!(prefer_ipv4(&[v6, v4]), Some(v4.ip()));
+    assert_eq!(prefer_ipv4(&[v6]), Some(v6.ip()));
+    assert_eq!(prefer_ipv4(&[]), None);
+}
+
+#[test]
 fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
     let settings: WledSettings =
         serde_json::from_value(json!({"address": "10.0.0.5", "leds": {"top": 96, "left": 54}}))
@@ -378,7 +537,7 @@ fn settings_file_shape_omits_nothing_but_defaults_missing_edges() {
     for invalid in [
         json!({"address": "10.0.0.5", "leds": {"top": 1}, "port": 80}),
         json!({"address": "10.0.0.5", "leds": {"up": 1}}),
-        json!({"address": "wled.local", "leds": {"top": 1}}),
+        json!({"address": 3232235826_u32, "leds": {"top": 1}}),
         json!({"address": "10.0.0.5", "leds": {"top": 65536}}),
     ] {
         assert!(serde_json::from_value::<WledSettings>(invalid).is_err());

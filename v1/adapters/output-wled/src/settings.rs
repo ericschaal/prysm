@@ -1,20 +1,29 @@
+use crate::address::DeviceAddress;
 use prysm_ports::ValidationError;
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
 
 /// Where the device is and how many LEDs each screen edge has:
 ///
 /// ```json
-/// { "kind": "wled", "address": "192.168.1.50",
+/// { "kind": "wled", "address": "wled.local",
 ///   "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 } }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct WledSettings {
-    /// Unicast IPv4 or IPv6 address of the device.
-    #[cfg_attr(feature = "schema", schema(value_type = String, example = "192.168.1.50"))]
-    pub address: IpAddr,
+    /// Host name or unicast IP address of the device, with an optional HTTP
+    /// port (default 80): `wled.local`, `192.168.1.50`, `wled.local:8080` or
+    /// `[fe80::1]:8080`. No scheme or path; WLED serves plain HTTP. Names are
+    /// resolved each time the output opens. Colours always go to UDP port 4048.
+    #[cfg_attr(
+        feature = "schema",
+        schema(
+            min_length = 1,
+            examples("wled.local", "192.168.1.50", "wled.local:8080", "[fe80::1]:8080")
+        )
+    )]
+    pub address: String,
     pub leds: LedCounts,
 }
 
@@ -50,19 +59,10 @@ impl LedCounts {
 
 impl WledSettings {
     /// # Errors
-    /// A non-unicast address, or a total LED count outside 1..=65535.
+    /// An address that is not `host[:port]` with a unicast IP literal or a valid
+    /// host name, or a total LED count outside 1..=65535.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        let ip = match self.address {
-            IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(self.address, IpAddr::V4),
-            v4 @ IpAddr::V4(_) => v4,
-        };
-        let broadcast = matches!(ip, IpAddr::V4(ip) if ip.is_broadcast());
-        if ip.is_unspecified() || ip.is_multicast() || broadcast {
-            return Err(ValidationError::new(
-                "output.address",
-                "a unicast device address is required",
-            ));
-        }
+        self.device()?;
         if !(1..=u32::from(u16::MAX)).contains(&self.leds.total()) {
             return Err(ValidationError::new(
                 "output.leds",
@@ -70,6 +70,11 @@ impl WledSettings {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn device(&self) -> Result<DeviceAddress, ValidationError> {
+        DeviceAddress::parse(&self.address)
+            .map_err(|reason| ValidationError::new("output.address", reason))
     }
 }
 
@@ -123,12 +128,21 @@ mod schema_tests {
             left: 54,
         };
         let settings = WledSettings {
-            address: "192.168.1.50".parse().unwrap(),
+            address: "wled.local:8080".into(),
             leds,
         };
         let schema = same_shape(&settings);
         assert_eq!(schema["required"], json!(["address", "leds"]));
-        assert_eq!(schema["properties"]["address"]["type"], json!("string"));
+        let address = &schema["properties"]["address"];
+        assert_eq!(address["type"], json!("string"));
+        assert_eq!(address["minLength"], json!(1));
+        for example in address["examples"].as_array().unwrap() {
+            let settings = WledSettings {
+                address: example.as_str().unwrap().into(),
+                leds,
+            };
+            assert_eq!(settings.validate(), Ok(()), "{example}");
+        }
         let schema = same_shape(&leds);
         assert_eq!(schema.get("required"), None);
         assert_eq!(schema["properties"]["top"]["maximum"], json!(65535));

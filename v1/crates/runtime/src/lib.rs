@@ -4,6 +4,7 @@
 //! - [`Session`]: one thread owning source, processor and output.
 //! - [`Forwarder`]: the session loop for capture-only hosts.
 //! - [`Prysm`]: the builder hosts list their adapters and surfaces on.
+//! - `logging` (feature `logging`): the hosts' `tracing` subscriber.
 mod builder;
 mod engine;
 mod forwarder;
@@ -14,6 +15,8 @@ mod worker;
 
 #[cfg(feature = "testkit")]
 pub mod fakes;
+#[cfg(feature = "logging")]
+pub mod logging;
 
 pub use builder::{Builder, Prysm};
 pub use engine::{Engine, EngineHandle};

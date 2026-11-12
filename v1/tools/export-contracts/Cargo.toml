@@ -8,6 +8,9 @@ description = "Prints the OpenAPI documents and serialization fixtures the front
 
 [dependencies]
 prysm-capture-device = { workspace = true, features = ["schema"] }
+prysm-capture-webos = { workspace = true, features = ["schema"] }
+prysm-webos-link.workspace = true
+prysm-webos-service = { path = "../../hosts/webos-service", features = ["schema"] }
 prysm-output-wled = { workspace = true, features = ["schema"] }
 prysm-ports.workspace = true
 prysm-protocol = { workspace = true, features = ["schema"] }

@@ -1,6 +1,8 @@
 /**
- * Television platform port, implemented by the Luna bridge. Its Rust
- * counterpart is not ported to the runtime yet, so these shapes are local.
+ * Television platform port, to be implemented by a Luna client of the TV
+ * supervisor. These shapes are provisional and local: the supervisor's
+ * values are generated in `@prysm/contracts/luna` (`State`, `Preferences`),
+ * which the Luna client will adopt together with the TV UI.
  */
 export interface TvHostStatus {
   service_ready: boolean;
