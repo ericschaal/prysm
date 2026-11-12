@@ -3,7 +3,9 @@ use crate::request::{StreamEncoding, StreamRequest};
 use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::{Frame, FramePool};
 use prysm_h264::Decoder;
-use prysm_ports::{Error, FrameSource, LatestSlot, Pull, Result, SourceFactory, ValidationError};
+use prysm_ports::{
+    Error, FrameSource, LatestSlot, Pull, Result, Section, SourceFactory, ValidationError, chain,
+};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::io::{ErrorKind, Read, Write};
@@ -46,7 +48,8 @@ pub struct RemoteReceiverSettings {
     #[serde(default = "defaults::fps")]
     #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 60, default = 30))]
     pub fps: u32,
-    /// Blend the sender's on-screen menus (the TV's) into the picture.
+    /// Capture on-screen menus over the video and, when nothing is playing
+    /// (such as the Home screen), the TV's own screens; false: video only.
     #[serde(default = "defaults::include_ui")]
     #[cfg_attr(feature = "schema", schema(default = true))]
     pub include_ui: bool,
@@ -146,13 +149,14 @@ impl SourceFactory for RemoteReceiver {
 /// Every sender is asked for the same [`StreamRequest`]; a new request needs
 /// a new source (the engine reopens it when the settings change, and the
 /// sender reconnects). A sender that cannot produce the request refuses it:
-/// `next_frame` then fails with its reason.
+/// `next_frame` then fails once with its reason, as an invalid
+/// `capture.encoding` when the requested encoder is what failed.
 #[derive(Debug)]
 pub struct RemoteSource {
     local_addr: SocketAddr,
     request: StreamRequest,
     frames: Arc<LatestSlot<Frame>>,
-    refused: Arc<Mutex<Option<String>>>,
+    refused: Arc<Mutex<Option<Refusal>>>,
     stop: Arc<AtomicBool>,
     wanted: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -235,6 +239,13 @@ impl RemoteSource {
     }
 }
 
+/// A sender's refusal: its reason, and whether the encoding was the cause.
+#[derive(Debug)]
+struct Refusal {
+    reason: String,
+    encoding: bool,
+}
+
 impl FrameSource for RemoteSource {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
         let refused = self
@@ -242,11 +253,16 @@ impl FrameSource for RemoteSource {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(reason) = refused {
-            return Err(Error::adapter(
-                format!("the sender cannot stream {}", self.request),
-                WireError::Refused(reason),
-            ));
+        if let Some(Refusal { reason, encoding }) = refused {
+            let context = format!("the sender cannot stream {}", self.request);
+            return Err(if encoding {
+                Error::Invalid(ValidationError::new(
+                    format!("{}.encoding", Section::Capture.as_str()),
+                    format!("{context}: {reason}"),
+                ))
+            } else {
+                Error::adapter(context, WireError::Refused(reason))
+            });
         }
         if let Some(frame) = self.frames.take_timeout(timeout) {
             return Ok(Pull::Frame(frame));
@@ -370,8 +386,8 @@ struct Receiver {
     wake: Wake,
     request: StreamRequest,
     frames: Arc<LatestSlot<Frame>>,
-    /// The sender's reason for refusing the request, until `next_frame` reports it.
-    refused: Arc<Mutex<Option<String>>>,
+    /// The sender's refusal of the request, until `next_frame` reports it.
+    refused: Arc<Mutex<Option<Refusal>>>,
     pool: FramePool,
     /// The last refused hello, so a sender retrying every second is logged once.
     rejected: Option<WireError>,
@@ -458,13 +474,16 @@ impl Receiver {
             if let Err(next) = self.wake.read_full(stream, &mut header) {
                 break next;
             }
-            if let Some(len) = wire::refusal_len(&header) {
-                if let Ok(len) = len {
+            if let Some(refusal) = wire::refusal_len(&header) {
+                if let Ok((len, flags)) = refusal {
                     self.payload.resize(len, 0);
                     let mut reason = std::mem::take(&mut self.payload);
                     let read = self.wake.read_full(stream, &mut reason);
                     if read.is_ok() {
-                        self.refuse(&String::from_utf8_lossy(&reason));
+                        self.refuse(Refusal {
+                            reason: String::from_utf8_lossy(&reason).into_owned(),
+                            encoding: flags & wire::REFUSED_ENCODING != 0,
+                        });
                     }
                     self.payload = reason;
                 }
@@ -512,9 +531,14 @@ impl Receiver {
 
 impl Receiver {
     /// The sender cannot produce the request: keep its reason for `next_frame`.
-    fn refuse(&self, reason: &str) {
-        tracing::warn!(request = %self.request, reason, "the remote sender refused the stream");
-        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(reason.to_owned());
+    fn refuse(&self, refusal: Refusal) {
+        tracing::warn!(
+            request = %self.request,
+            reason = refusal.reason,
+            encoding = refusal.encoding,
+            "the remote sender refused the stream"
+        );
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(refusal);
     }
 }
 
@@ -561,17 +585,6 @@ impl H264 {
             }
         }
     }
-}
-
-fn chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 #[cfg(all(test, feature = "schema"))]

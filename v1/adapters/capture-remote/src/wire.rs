@@ -204,15 +204,21 @@ pub(crate) fn request(bytes: &[u8; HELLO_LEN]) -> Result<StreamRequest, WireErro
     Ok(request)
 }
 
-/// A refusal: a header with format `0`, zeros, and the reason's length,
-/// followed by the reason (UTF-8, cut to [`MAX_REASON_BYTES`]).
-pub(crate) fn refusal(reason: &str) -> Vec<u8> {
+/// Refusal flag: the requested encoding is what cannot be produced (its
+/// encoder cannot start or failed); without it, the request as a whole.
+pub(crate) const REFUSED_ENCODING: u8 = 1;
+
+/// A refusal: a header with format `0`, flags (`REFUSED_ENCODING` or 0),
+/// zeros, and the reason's length, followed by the reason (UTF-8, cut to
+/// [`MAX_REASON_BYTES`]).
+pub(crate) fn refusal(reason: &str, flags: u8) -> Vec<u8> {
     let mut end = reason.len().min(MAX_REASON_BYTES);
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
     let reason = if end == 0 { "refused" } else { &reason[..end] };
     let mut bytes = vec![0; HEADER_LEN];
+    bytes[3] = flags;
     // At most MAX_REASON_BYTES.
     let len = u32::try_from(reason.len()).unwrap_or(0);
     bytes[12..16].copy_from_slice(&len.to_be_bytes());
@@ -220,12 +226,19 @@ pub(crate) fn refusal(reason: &str) -> Vec<u8> {
     bytes
 }
 
-/// `Some` for a refusal header (format `0`): the reason's length.
-pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<usize, WireError>> {
+/// `Some` for a refusal header (format `0`): the reason's length and flags.
+pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<(usize, u8), WireError>> {
     if bytes[0] != 0 {
         return None;
     }
-    if bytes[1..12].iter().any(|&byte| byte != 0) {
+    if bytes[3] & !REFUSED_ENCODING != 0 {
+        return Some(Err(WireError::Flags(bytes[3])));
+    }
+    if bytes[1..3]
+        .iter()
+        .chain(&bytes[4..12])
+        .any(|&byte| byte != 0)
+    {
         return Some(Err(WireError::FormatCode {
             format: 0,
             range: bytes[1],
@@ -235,7 +248,7 @@ pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<usize, Wire
     let len = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
     let len = usize::try_from(len).unwrap_or(usize::MAX);
     Some(if (1..=MAX_REASON_BYTES).contains(&len) {
-        Ok(len)
+        Ok((len, bytes[3]))
     } else {
         Err(WireError::ReasonLength(len))
     })
@@ -632,17 +645,20 @@ mod tests {
 
     #[test]
     fn refusals_carry_a_bounded_reason() {
-        let bytes = refusal("hardware H.264 encoder cannot start");
+        let bytes = refusal("hardware H.264 encoder cannot start", REFUSED_ENCODING);
         let mut header = [0; HEADER_LEN];
         header.copy_from_slice(&bytes[..HEADER_LEN]);
-        assert_eq!(refusal_len(&header), Some(Ok(35)));
+        assert_eq!(refusal_len(&header), Some(Ok((35, REFUSED_ENCODING))));
+        let mut whole = [0; HEADER_LEN];
+        whole.copy_from_slice(&refusal("busy", 0)[..HEADER_LEN]);
+        assert_eq!(refusal_len(&whole), Some(Ok((4, 0))));
         assert_eq!(&bytes[HEADER_LEN..], b"hardware H.264 encoder cannot start");
         // Long reasons are cut on a character boundary.
         let long = "é".repeat(MAX_REASON_BYTES);
-        let bytes = refusal(&long);
+        let bytes = refusal(&long, 0);
         assert_eq!(bytes.len(), HEADER_LEN + MAX_REASON_BYTES);
         assert!(std::str::from_utf8(&bytes[HEADER_LEN..]).is_ok());
-        assert_eq!(refusal("").len(), HEADER_LEN + "refused".len());
+        assert_eq!(refusal("", 0).len(), HEADER_LEN + "refused".len());
         // Frames are not refusals; bad refusal headers are errors.
         let frame = header_bytes();
         assert_eq!(refusal_len(&frame), None);
@@ -654,9 +670,12 @@ mod tests {
             Some(Err(WireError::ReasonLength(_)))
         ));
         let mut flagged = header;
-        flagged[3] = 1;
+        flagged[3] = 2;
+        assert_eq!(refusal_len(&flagged), Some(Err(WireError::Flags(2))));
+        let mut ranged = header;
+        ranged[1] = 1;
         assert!(matches!(
-            refusal_len(&flagged),
+            refusal_len(&ranged),
             Some(Err(WireError::FormatCode { .. }))
         ));
     }

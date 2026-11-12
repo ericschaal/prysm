@@ -6,11 +6,10 @@ use futures::future::BoxFuture;
 use prysm_capture_remote::{RemoteSender, StreamEncoding, StreamRequest};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
-use prysm_ports::{Error, FrameSink, Result};
+use prysm_ports::{Error, FrameSink, Result, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{Command, Event, FailureKind, HEARTBEAT, SlimEncoding, WorkerStatus};
-use std::error::Error as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -90,8 +89,9 @@ pub trait Upstream: FrameSink {
     fn request(&self) -> StreamRequest;
     /// The receiver does not want frames; `send` drops them.
     fn paused(&self) -> bool;
-    /// Tell the receiver its request cannot be produced, and end the stream.
-    fn refuse(&mut self, reason: &str);
+    /// Tell the receiver its requested encoding cannot be produced (the
+    /// encoder failed), and end the stream.
+    fn refuse_encoding(&mut self, reason: &str);
 }
 
 impl Upstream for RemoteSender {
@@ -101,8 +101,8 @@ impl Upstream for RemoteSender {
     fn paused(&self) -> bool {
         RemoteSender::paused(self)
     }
-    fn refuse(&mut self, reason: &str) {
-        RemoteSender::refuse(self, reason);
+    fn refuse_encoding(&mut self, reason: &str) {
+        RemoteSender::refuse_encoding(self, reason);
     }
 }
 
@@ -168,7 +168,7 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         let request = sink.request();
         if let Some((failed, reason)) = &self.failed {
             if *failed == request {
-                sink.refuse(reason);
+                sink.refuse_encoding(reason);
                 return;
             }
             self.failed = None;
@@ -246,18 +246,6 @@ fn encoder_failure(error: &Error) -> bool {
             None => return false,
         }
     }
-}
-
-/// `error: cause: cause`, as the supervisor shows failures.
-fn chain(error: &Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:

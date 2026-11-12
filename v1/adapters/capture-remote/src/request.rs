@@ -87,7 +87,8 @@ pub struct StreamRequest {
     pub height: u32,
     /// 1 to 60.
     pub fps: u32,
-    /// Blend the sender's on-screen menus into the picture.
+    /// Capture on-screen menus over the video and, when nothing is playing
+    /// (such as the Home screen), the TV's own screens; false: video only.
     pub include_ui: bool,
     pub encoding: StreamEncoding,
 }

@@ -30,8 +30,9 @@ ends are blocking adapters on `std::net`:
   requested encoder from [`prysm-h264`](../h264/src/lib.rs), opened at the
   first frame. Any error is final for that connection; one whose cause is a
   `prysm_h264::H264Error` is the encoder's (it cannot start or failed), and
-  the sender then refuses the stream to the receiver before closing.
-  `refuse(reason)` does the same for any other reason. Nothing switches
+  the sender then refuses the encoding to the receiver before closing
+  (`refuse_encoding`). `refuse(reason)` refuses the request for any other
+  reason. Nothing switches
   encoder or encoding on its own.
 
 A new request needs a new connection: the engine reopens the source when the
@@ -95,12 +96,17 @@ a version-2 receiver answers a version-3 hello with an 8-byte reply naming
 version 2. The slim TV worker shows the cause as its waiting reason.
 
 **Refusal** (sender → receiver, instead of a frame, then the sender closes):
-a 16-byte header with format `0` and every other byte zero except the length
-(offset 12, `u32`, 1 to 1024), followed by that many bytes of UTF-8: why the
-sender cannot produce the requested stream, such as `cannot encode frame:
-hardware H.264 encoder cannot start: …`. The receiver's next `next_frame`
-fails with `the sender cannot stream 320x180 at 30 fps with menus as
-h264_hardware`, caused by `WireError::Refused(reason)`.
+a 16-byte header with format `0`, flags (offset 3: `1` when the requested
+encoding is the cause, its encoder cannot start or failed; else `0`), every
+other byte zero except the length (offset 12, `u32`, 1 to 1024), followed by
+that many bytes of UTF-8: why the sender cannot produce the requested stream,
+such as `cannot encode frame: hardware H.264 encoder cannot start: …`. The
+receiver's next `next_frame` fails once. An encoding refusal is
+`Error::Invalid` for field `capture.encoding` with the reason `the sender
+cannot stream 320x180 at 30 fps with menus as h264_hardware: <reason>`, so
+the portal can show it on that setting; any other refusal is an adapter
+failure with that context, caused by `WireError::Refused(reason)`.
+`RemoteSender::refuse_encoding` and `refuse` send the two.
 
 **Frame header:**
 

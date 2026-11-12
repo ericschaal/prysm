@@ -4,6 +4,19 @@ use std::sync::Arc;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// An error and its sources, joined with `: `, as users see failures.
+#[must_use]
+pub fn chain(error: &dyn StdError) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 /// The one runtime error. Sources are shared (`Arc`) so a failure can be both
 /// returned to the caller and kept in the snapshot without losing its chain.
 #[derive(Debug, Clone, thiserror::Error)]

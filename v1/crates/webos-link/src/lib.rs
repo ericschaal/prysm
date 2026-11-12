@@ -123,18 +123,7 @@ pub mod exit {
     }
 }
 
-/// An error and its sources, joined with `: `.
-#[must_use]
-pub fn chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
-}
+pub use prysm_ports::chain;
 
 #[cfg(test)]
 mod tests;

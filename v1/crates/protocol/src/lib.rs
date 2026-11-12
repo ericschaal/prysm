@@ -130,8 +130,9 @@ impl From<SessionPhase> for Phase {
     }
 }
 
-/// A stable failure body. Local source chains stay in the process; only the
-/// message a user can act on is sent.
+/// A stable failure body: the message a user can act on. An adapter failure
+/// carries its cause chain (`context: cause: cause`), since the cause is what
+/// names the problem (a device's error, a remote sender's reason).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct Failure {
@@ -200,6 +201,7 @@ impl From<&Error> for Failure {
         };
         let mut failure = Self::new(kind, error.to_string());
         match error {
+            Error::Adapter { .. } => failure.message = prysm_ports::chain(error),
             Error::Invalid(invalid) => {
                 failure.field = Some(invalid.field.clone());
                 failure.message.clone_from(&invalid.reason);
@@ -319,6 +321,41 @@ mod tests {
                 .message
                 .starts_with("cannot decode `wled` settings: invalid type")
         );
+    }
+
+    /// The portal shows what went wrong, not only where: an adapter failure
+    /// keeps its causes (here a remote sender's reason).
+    #[test]
+    fn adapter_failures_carry_their_cause_chain() {
+        #[derive(Debug)]
+        struct Cause;
+        impl std::fmt::Display for Cause {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("hardware H.264 encoder cannot start")
+            }
+        }
+        impl std::error::Error for Cause {}
+        #[derive(Debug)]
+        struct Outer(Cause);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("cannot encode frame")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let failure = Failure::from(&Error::adapter("the sender cannot stream", Outer(Cause)));
+        assert_eq!(failure.kind, FailureKind::Adapter);
+        assert_eq!(
+            failure.message,
+            "the sender cannot stream: cannot encode frame: hardware H.264 encoder cannot start"
+        );
+        assert_eq!(failure.field, None);
+        let bare = Failure::from(&Error::other("no frames"));
+        assert_eq!(bare.message, "no frames");
     }
 
     #[test]

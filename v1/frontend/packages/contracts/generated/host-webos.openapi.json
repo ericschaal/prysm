@@ -82,7 +82,7 @@
         "type": "object"
       },
       "Failure": {
-        "description": "A stable failure body. Local source chains stay in the process; only the\nmessage a user can act on is sent.",
+        "description": "A stable failure body: the message a user can act on. An adapter failure\ncarries its cause chain (`context: cause: cause`), since the cause is what\nnames the problem (a device's error, a remote sender's reason).",
         "properties": {
           "current": {
             "description": "The revision to retry against after `stale_revision`.",
@@ -734,7 +734,7 @@
           },
           "include_ui": {
             "default": true,
-            "description": "Blend on-screen menus into the capture instead of video only.",
+            "description": "Capture on-screen menus over the video and, when nothing is playing\n(such as the Home screen), the TV's own screens; false: video only.",
             "type": "boolean"
           },
           "kind": {

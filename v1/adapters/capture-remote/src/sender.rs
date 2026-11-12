@@ -4,7 +4,7 @@ use crate::request::StreamRequest;
 use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::Frame;
 use prysm_h264::Encoder;
-use prysm_ports::{Error, FrameSink, Result};
+use prysm_ports::{Error, FrameSink, Result, chain};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// [`StreamRequest`] says. Any failure is final: the caller drops the sender
 /// and connects a new one. A failure whose cause is a
 /// [`prysm_h264::H264Error`] is the encoder's (the receiver was told, see
-/// [`RemoteSender::refuse`]); anything else is the connection's.
+/// [`RemoteSender::refuse_encoding`]); anything else is the connection's.
 ///
 /// The receiver can pause the stream (frames are dropped unencoded until it
 /// resumes) and ask for a keyframe; each `send` reads those requests
@@ -109,7 +109,18 @@ impl RemoteSender {
     /// (`reason`, shown to its user), and end the connection. Best effort:
     /// a receiver that is gone learns nothing.
     pub fn refuse(&mut self, reason: &str) {
-        let _ = self.stream.write_all(&wire::refusal(reason));
+        self.refuse_with(reason, 0);
+    }
+
+    /// Like [`Self::refuse`], naming the requested encoding as the cause:
+    /// its encoder cannot start or failed. `send` does this on an encoder
+    /// failure.
+    pub fn refuse_encoding(&mut self, reason: &str) {
+        self.refuse_with(reason, wire::REFUSED_ENCODING);
+    }
+
+    fn refuse_with(&mut self, reason: &str, flags: u8) {
+        let _ = self.stream.write_all(&wire::refusal(reason, flags));
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 
@@ -223,24 +234,11 @@ impl FrameSink for RemoteSender {
             Ok(None) => return Ok(()),
             Err(error) => {
                 let error = Error::adapter("cannot encode frame", error);
-                self.refuse(&chain(&error));
+                self.refuse_encoding(&chain(&error));
                 return Err(error);
             }
         };
         let len = self.buffer.len() - HEADER_LEN;
         self.write(&Header { keyframe, ..header }, len)
     }
-}
-
-/// `error: cause: cause`, as the receiver shows a refusal.
-fn chain(error: &Error) -> String {
-    use std::error::Error as _;
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }

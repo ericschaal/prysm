@@ -42,7 +42,12 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
     try {
       await act(async () => root.render(<Host {...tvProps(flavor, fixture, supervisor)} />));
       await act(async () => sleep(5));
-      assert.equal(!!document.getElementById('portal-address'), flavor === 'full');
+      // Both packages point to the portal that holds capture settings.
+      assert.equal(
+        document.getElementById('portal-address').querySelector('code').textContent,
+        flavor === 'full' ? 'http://192.168.1.5:8787/' : slimPreferences.instance,
+      );
+      assert.equal(document.getElementById('capture'), null, 'capture is set in the portal only');
       assert.equal(!!document.getElementById('instance'), flavor === 'slim');
       await act(async () => document.getElementById('mode-processed').click());
       assert.equal(fixture.snapshot().target, 'processed');

@@ -15,7 +15,8 @@ import {
 import { ledEdgeLimits, ledRuns, normalizeWledAddress, wledUrl } from '@prysm/output-wled-ui';
 import { deviceDefaults, deviceLimits } from '@prysm/capture-device-ui';
 import { fileDefaults, fileLimits } from '@prysm/capture-file-ui';
-import { webosDefaults, webosLimits } from '@prysm/capture-webos-ui';
+import { includeMenusHelp, tvPictureLimits, webosDefaults } from '@prysm/capture-webos-ui';
+import { encodingChoices, remoteDefaults } from '@prysm/capture-remote-ui';
 import { defaultProcessing } from '../testkit/application';
 import {
   $,
@@ -558,6 +559,99 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
   }
 });
 
+test('the remote capture form asks the TV for a stream with the same picture fields as the webOS form', async () => {
+  const listen = '0.0.0.0:7380';
+  const portal = await renderPortal(HeadlessWebPortal, { capture: { kind: 'remote', listen }, output });
+  const { fixture } = portal;
+  const input = (name) => field(`capture.${name}`);
+  const help = (element) => element.closest('.field').querySelector('.help')?.textContent;
+  try {
+    // Defaults shown for omitted fields; the shared fields' limits and labels.
+    assert.deepEqual(
+      ['width', 'height', 'fps'].map((name) => [input(name).value, input(name).min, input(name).max, input(name).step]),
+      [['320', '2', '1920', '2'], ['180', '2', '1080', '2'], ['30', '1', '60', '1']],
+    );
+    assert.deepEqual(
+      ['width', 'height', 'fps', 'include_ui', 'encoding'].map((name) => input(name).labels[0].textContent),
+      ['Width (pixels)', 'Height (pixels)', 'Frame rate (fps)', 'Include TV menus', 'Stream encoding'],
+    );
+    assert.equal(input('include_ui').checked, true);
+    assert.equal(help(input('include_ui')), includeMenusHelp);
+    assert.match(includeMenusHelp, /over the video/);
+    assert.match(includeMenusHelp, /nothing is playing/);
+    assert.deepEqual(
+      $$('option', input('encoding')).map((item) => [item.value, item.textContent]),
+      [
+        ['h264_hardware', 'Hardware H.264 (recommended)'],
+        ['h264_software', 'Software H.264'],
+        ['raw', 'Uncompressed'],
+      ],
+    );
+    assert.match(help(input('encoding')), /Least work for the TV, little network \(about 2\sMbit\/s\)/);
+    await edit(input('encoding'), 'h264_software');
+    assert.match(help(input('encoding')), /More work for the TV.*same little network/);
+    await edit(input('encoding'), 'raw');
+    assert.match(help(input('encoding')), /ten times the network/);
+    assert.equal(badge('Capture'), 'Unsaved changes');
+
+    // Same validation as the webOS form.
+    await edit(input('height'), 181);
+    assert.equal(errorOf(input('height')), 'Enter an even number from 2 to 1080.');
+    await edit(input('fps'), 61);
+    assert.equal(errorOf(input('fps')), 'Enter a whole number from 1 to 60.');
+    await edit(input('fps'), 25);
+    // H.264 needs 16 × 16; raw does not.
+    await edit(input('height'), 8);
+    assert.equal(errorOf(input('encoding')), undefined);
+    await edit(input('encoding'), 'h264_hardware');
+    await submit(form('Capture'));
+    assert.equal(saves(fixture), 0);
+    assert.match(errorOf(input('encoding')), /H\.264 needs at least 16 × 16 pixels; choose Uncompressed/);
+    await edit(input('height'), 144);
+    await edit(input('width'), 256);
+    await click(input('include_ui'));
+    await edit(input('encoding'), 'h264_software');
+    await submit(form('Capture'));
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'remote',
+      listen,
+      width: 256,
+      height: 144,
+      fps: 25,
+      include_ui: false,
+      encoding: 'h264_software',
+    });
+    assert.equal(badge('Capture'), 'Saved');
+
+    // The server's own check on the encoding lands on the selector.
+    fixture.failNext({ kind: 'invalid', field: 'capture.encoding', message: 'H.264 needs at least 16x16; use raw for smaller pictures' });
+    await edit(input('encoding'), 'h264_hardware');
+    await submit(form('Capture'));
+    assert.equal(errorOf(input('encoding')), 'H.264 needs at least 16x16; use raw for smaller pictures');
+    assert.equal(document.activeElement, input('encoding'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the sender refusing the requested stream is shown in full with the lighting state', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture: { kind: 'remote', listen: '0.0.0.0:7380' }, output });
+  const { fixture } = portal;
+  const refusal =
+    'the sender cannot stream 320x180 at 30 fps with menus as h264_hardware: cannot encode frame: hardware H.264 encoder cannot start: the TV video encoder is in use by another application (code -12)';
+  try {
+    await act(async () =>
+      fixture.publish({ target: 'processed', session: { state: 'stopped' }, failure: { kind: 'adapter', message: refusal } }),
+    );
+    assert.equal($('.lighting-status').textContent, 'Screen sync stopped.');
+    assert.equal($('.lighting [role="alert"]').textContent, refusal, 'not shortened');
+    // The capture form says where the fix is.
+    assert.match(form('Capture').textContent, /If the TV cannot send it, lighting stops and says why; change the encoding or size here/);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('limits and defaults written in the panels match the generated schemas', async () => {
   const schemas = async (name) =>
     JSON.parse(
@@ -573,7 +667,8 @@ test('limits and defaults written in the panels match the generated schemas', as
     [application.HueControls, hueLimits, {}],
     [desktop.DeviceSettings, deviceLimits, deviceDefaults],
     [desktop.FileSettings, fileLimits, fileDefaults],
-    [webos.WebosSettings, webosLimits, webosDefaults],
+    [webos.WebosSettings, tvPictureLimits, webosDefaults],
+    [desktop.RemoteReceiverSettings, tvPictureLimits, remoteDefaults],
     [desktop.LedCounts, edges, {}],
     [webos.LedCounts, edges, {}],
   ]) {
@@ -591,4 +686,7 @@ test('limits and defaults written in the panels match the generated schemas', as
   for (const name of Object.keys(application.CorrectionControls.properties).filter((name) => name !== 'hue'))
     assert(name in correctionLimits, `${name} has a control`);
   for (const name of Object.keys(application.HueControls.properties)) assert(name in hueLimits, `${name} has a control`);
+  for (const schema of [webos.WebosSettings, desktop.RemoteReceiverSettings])
+    for (const name of ['width', 'height']) assert.equal(schema.properties[name].multipleOf, tvPictureLimits[name].step, name);
+  assert.deepEqual(encodingChoices.map((choice) => choice.value), desktop.StreamEncoding.enum);
 });

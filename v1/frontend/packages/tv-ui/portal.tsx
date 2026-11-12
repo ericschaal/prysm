@@ -117,8 +117,6 @@ export function usePortal(
     reach: error && reach?.error === error ? reach.reach : ('unknown' as Reach),
     setTarget: (target: LightingTarget) =>
       runtime!.store.dispatch(runtime!.commands.setTarget(target)),
-    configureCapture: (expected: number, capture: unknown) =>
-      runtime!.store.dispatch(runtime!.commands.configureCapture(expected, capture)),
     configureOutput: (expected: number, output: unknown) =>
       runtime!.store.dispatch(runtime!.commands.configureOutput(expected, output)),
     /** The latest observed state, read at the moment of a save. */
@@ -289,21 +287,13 @@ export function LightingCard({
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/* ---- Full package: lights and capture of the TV's own Prysm ---- */
+/* ---- Full package: the lights of the TV's own Prysm ---- */
 
 export interface WledSection {
   kind: 'wled';
   address: string;
   leds: { top?: number; right?: number; bottom?: number; left?: number };
 }
-export interface WebosSection {
-  kind: 'webos';
-  width?: number;
-  height?: number;
-  fps?: number;
-  include_ui?: boolean;
-}
-export const webosDefaults = { width: 640, height: 360, fps: 30, include_ui: true };
 const edges = ['top', 'right', 'bottom', 'left'] as const;
 const edgeNames = { top: 'Top', right: 'Right', bottom: 'Bottom', left: 'Left' };
 
@@ -311,19 +301,11 @@ export function wledOf(snapshot: Snapshot | null): WledSection | null {
   const output = snapshot?.settings.output as WledSection | undefined;
   return output?.kind === 'wled' ? output : null;
 }
-export function webosOf(snapshot: Snapshot | null): WebosSection | null {
-  const capture = snapshot?.settings.capture as WebosSection | undefined;
-  return capture?.kind === 'webos' ? capture : null;
-}
 export const ledTotal = (leds: WledSection['leds']) =>
   edges.reduce((sum, edge) => sum + (leds[edge] ?? 0), 0);
 
 export function describeWled(output: WledSection | null): string {
   return output ? `${output.address} · ${ledTotal(output.leds)} LEDs` : 'Add your lights';
-}
-export function describeCapture(capture: WebosSection | null): string {
-  const value = { ...webosDefaults, ...capture };
-  return `${value.width} × ${value.height}, ${value.fps} fps${value.include_ui ? ', with menus' : ''}`;
 }
 
 const STALE = 'These settings were changed elsewhere. Review them and save again.';
@@ -488,126 +470,5 @@ function WledForm({
         {saving ? 'Saving…' : 'Save lights'}
       </button>
     </form>
-  );
-}
-
-const sizes = [
-  [320, 180],
-  [480, 270],
-  [640, 360],
-  [960, 540],
-  [1280, 720],
-];
-const rates = [15, 24, 25, 30, 50, 60];
-
-/** Size, rate and menus choices; used by the full portal capture and slim preferences. */
-export function captureChoices(value: { width: number; height: number; fps: number }) {
-  const sizeList = sizes.some(([w, h]) => w === value.width && h === value.height)
-    ? sizes
-    : [...sizes, [value.width, value.height]].sort((a, b) => a[0]! - b[0]!);
-  const rateList = rates.indexOf(value.fps) >= 0 ? rates : [...rates, value.fps].sort((a, b) => a - b);
-  return { sizes: sizeList, rates: rateList };
-}
-
-export function CaptureDialogBody({
-  portal,
-  done,
-}: {
-  portal: PortalView;
-  done: (message: string) => void;
-}) {
-  const section = useSectionSave(portal, webosOf, (expected, value: WebosSection) =>
-    portal.configureCapture(expected, value),
-  );
-  return (
-    <CaptureForm
-      key={section.generation}
-      base={section.base}
-      error={section.error}
-      saving={section.saving}
-      save={async (value) => {
-        if (await section.save(value)) done('Capture settings saved.');
-      }}
-    />
-  );
-}
-
-function CaptureForm({
-  base,
-  error,
-  saving,
-  save,
-}: {
-  base: WebosSection | null;
-  error: { message: string } | null;
-  saving: boolean;
-  save: (value: WebosSection) => Promise<void>;
-}) {
-  const [value, setValue] = useState({ ...webosDefaults, ...base });
-  const choices = captureChoices(value);
-  return (
-    <div>
-      <p className="field-help">Picture size</p>
-      <div className="choice-row" data-row="size">
-        {choices.sizes.map(([width, height]) => (
-          <button
-            key={`${width}x${height}`}
-            type="button"
-            className="pill"
-            aria-pressed={value.width === width && value.height === height}
-            onClick={() => setValue({ ...value, width: width!, height: height! })}
-          >
-            {width} × {height}
-          </button>
-        ))}
-      </div>
-      <p className="field-help">Frame rate</p>
-      <div className="choice-row" data-row="rate">
-        {choices.rates.map((fps) => (
-          <button
-            key={fps}
-            type="button"
-            className="pill"
-            aria-pressed={value.fps === fps}
-            onClick={() => setValue({ ...value, fps })}
-          >
-            {fps} fps
-          </button>
-        ))}
-      </div>
-      <p className="field-help">What to capture</p>
-      <div className="choice-row" data-row="menus">
-        <button
-          type="button"
-          className="pill"
-          aria-pressed={value.include_ui}
-          onClick={() => setValue({ ...value, include_ui: true })}
-        >
-          Video + TV menus
-        </button>
-        <button
-          type="button"
-          className="pill"
-          aria-pressed={!value.include_ui}
-          onClick={() => setValue({ ...value, include_ui: false })}
-        >
-          Video only
-        </button>
-      </div>
-      {error ? (
-        <p className="notice error" role="alert">
-          {error.message}
-        </p>
-      ) : null}
-      <button
-        id="capture-save"
-        type="button"
-        className="primary"
-        disabled={saving}
-        onClick={() => void save({ ...(base ?? {}), ...value, kind: 'webos' })}
-      >
-        {saving ? 'Saving…' : 'Save capture'}
-      </button>
-    </div>
   );
 }

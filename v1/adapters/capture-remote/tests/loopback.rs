@@ -360,6 +360,25 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
     let mut again = RemoteSender::connect(source.local_addr()).unwrap();
     again.send(&frame(8, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 8);
+
+    // A refused encoding names the setting, with the sender's reason.
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    sender.refuse_encoding("no encoder here");
+    let deadline = Instant::now() + BOUND;
+    let error = loop {
+        assert!(Instant::now() < deadline, "the refusal never arrived");
+        if let Err(error) = source.next_frame(Duration::from_millis(50)) {
+            break error;
+        }
+    };
+    let prysm_ports::Error::Invalid(invalid) = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(invalid.field, "capture.encoding");
+    assert_eq!(
+        invalid.reason,
+        "the sender cannot stream 320x180 at 30 fps with menus as raw: no encoder here"
+    );
     Box::new(source).close().unwrap();
 }
 

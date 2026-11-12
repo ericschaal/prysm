@@ -5,37 +5,16 @@ export type { SlimEncoding };
 
 export const PORTAL_PORT = 8787;
 
-/** The slim stream encodings in the order offered, with their trade-off. */
-export const encodingChoices: {
-  value: SlimEncoding;
-  name: string;
-  title: string;
-  detail: string;
-}[] = [
-  {
-    value: 'h264_hardware',
-    name: 'Hardware H.264',
-    title: 'Hardware H.264 (recommended)',
-    detail: 'The TV’s video chip compresses the picture: little work for the TV, little network (about 2 Mbit/s).',
-  },
-  {
-    value: 'h264_software',
-    name: 'Software H.264',
-    title: 'Software H.264',
-    detail: 'The TV’s processor compresses the picture: more work for the TV, same little network. Try it if hardware fails.',
-  },
-  {
-    value: 'raw',
-    name: 'Uncompressed',
-    title: 'Uncompressed',
-    detail: 'No compression: least work for the TV, but about ten times the network (about 21 Mbit/s at 320 × 180, 30 fps).',
-  },
-];
+/** The short names of the slim stream encodings (chosen in Prysm's portal). */
+const encodingNames: Record<SlimEncoding, string> = {
+  h264_hardware: 'Hardware H.264',
+  h264_software: 'Software H.264',
+  raw: 'Uncompressed',
+};
 
-/** The short name of an encoding, as the settings row and status card show it. */
+/** The short name of an encoding, as the status card shows it. */
 export function encodingName(encoding: SlimEncoding): string {
-  const choice = encodingChoices.filter((item) => item.value === encoding)[0];
-  return choice ? choice.name : encoding;
+  return encodingNames[encoding] || encoding;
 }
 
 /** Structural equality ignoring key order and `undefined` fields. */
@@ -158,11 +137,6 @@ export interface TvStatus {
   attention: boolean;
   /** Frames flow from an awake TV with video. */
   ready: boolean;
-  /**
-   * Slim: the configured encoder failed (`failure_kind: encoder`); offer a
-   * direct switch of the encoding.
-   */
-  changeEncoding: boolean;
 }
 
 /**
@@ -183,7 +157,6 @@ export function tvStatus(
       action: 'none',
       attention: false,
       ready: false,
-      changeEncoding: false,
     };
   if (!online || !state)
     return {
@@ -193,7 +166,6 @@ export function tvStatus(
       action: 'setup',
       attention: true,
       ready: false,
-      changeEncoding: false,
     };
   const full = state.flavor === 'full';
   const { enabled } = state;
@@ -203,8 +175,12 @@ export function tvStatus(
   let title: string;
   let description: string;
   let attention = false;
-  const encoderFailed = !full && !!failure && state.failure_kind === 'encoder';
-  const encodingHint = encoderFailed ? ' If it keeps failing, choose another stream encoding.' : '';
+  // Slim: the TV cannot produce the stream Prysm asked for. The encoding is
+  // Prysm's setting, so the fix is in its portal, not here.
+  const encodingHint =
+    !full && !!failure && state.failure_kind === 'encoder'
+      ? ' Choose another stream encoding under Capture in Prysm’s web portal.'
+      : '';
   if (state.worker === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'Finishing the current capture session.';
@@ -287,7 +263,6 @@ export function tvStatus(
     action,
     attention,
     ready: state.capturing && state.power === 'active' && state.video !== 'unavailable',
-    changeEncoding: encoderFailed,
   };
 }
 

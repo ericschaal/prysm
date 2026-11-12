@@ -12,7 +12,7 @@ mod slot;
 mod snapshot;
 
 pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, Pull, SettingsStore};
-pub use error::{Error, Result, ValidationError};
+pub use error::{Error, Result, ValidationError, chain};
 pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,
     MAX_PROFILES,

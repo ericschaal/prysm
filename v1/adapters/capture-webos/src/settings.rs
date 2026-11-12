@@ -24,7 +24,8 @@ pub struct WebosSettings {
     pub height: u32,
     #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 60, default = 30))]
     pub fps: u32,
-    /// Blend on-screen menus into the capture instead of video only.
+    /// Capture on-screen menus over the video and, when nothing is playing
+    /// (such as the Home screen), the TV's own screens; false: video only.
     #[cfg_attr(feature = "schema", schema(default = true))]
     pub include_ui: bool,
 }

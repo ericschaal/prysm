@@ -411,6 +411,7 @@ fieldset {
   padding: 10px 14px;
   border-radius: 10px;
   background: #eef3ef;
+  overflow-wrap: anywhere;
 }
 .notice.warning {
   background: var(--warn-soft);

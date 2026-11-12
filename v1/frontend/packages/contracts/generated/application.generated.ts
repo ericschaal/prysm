@@ -41,8 +41,9 @@ export interface components {
             warmth: number;
         };
         /**
-         * @description A stable failure body. Local source chains stay in the process; only the
-         *     message a user can act on is sent.
+         * @description A stable failure body: the message a user can act on. An adapter failure
+         *     carries its cause chain (`context: cause: cause`), since the cause is what
+         *     names the problem (a device's error, a remote sender's reason).
          */
         Failure: {
             /**

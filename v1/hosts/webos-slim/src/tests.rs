@@ -1,7 +1,7 @@
 use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::video::VideoFeed;
-use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError};
+use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest};
 use prysm_capture_webos::WebosSettings;
 use prysm_core::Frame;
 use prysm_h264::H264Error;
@@ -183,7 +183,7 @@ impl Upstream for Fake {
     fn paused(&self) -> bool {
         false
     }
-    fn refuse(&mut self, reason: &str) {
+    fn refuse_encoding(&mut self, reason: &str) {
         self.log.record(format!("sink.refuse:{reason}"));
     }
 }
@@ -531,23 +531,19 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
     })
     .await
     .unwrap();
-    let text = prysm_webos_link::chain(&error);
-    assert!(
-        text.starts_with("the sender cannot stream 64x32 at 30 fps with menus as h264_hardware: ")
-            && text.contains("hardware H.264"),
-        "{text}"
-    );
-    let Error::Adapter {
-        source: Some(cause),
-        ..
-    } = &error
-    else {
+    // The desktop sees an invalid `capture.encoding` with the TV's reason.
+    let Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
     };
-    assert!(matches!(
-        cause.downcast_ref::<WireError>(),
-        Some(WireError::Refused(_))
-    ));
+    assert_eq!(invalid.field, "capture.encoding");
+    assert!(
+        invalid
+            .reason
+            .starts_with("the sender cannot stream 64x32 at 30 fps with menus as h264_hardware: ")
+            && invalid.reason.contains("hardware H.264"),
+        "{}",
+        invalid.reason
+    );
 
     // Still the encoder failure while the receiver is away.
     peer.wait_for(|e| encoder_failure(e).is_some())

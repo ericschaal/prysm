@@ -20,7 +20,7 @@ mod args;
 
 pub use args::{Options, Parsed, PortalOptions, parse};
 
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
+use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
@@ -325,7 +325,7 @@ impl Seen {
             lines.push(state.clone());
             self.state = Some(state);
         }
-        let failure = snapshot.failure.as_ref().map(chain);
+        let failure = snapshot.failure.as_ref().map(|failure| chain(failure));
         if failure != self.failure {
             if let Some(failure) = &failure {
                 lines.push(format!("lighting failed: {failure}"));
@@ -358,18 +358,6 @@ fn session(state: SessionState) -> String {
         SessionState::Native => "native".into(),
         SessionState::Faulted(phase) => format!("faulted while {phase}"),
     }
-}
-
-/// An error and its sources, joined with `: `.
-fn chain(error: &Error) -> String {
-    let mut text = error.to_string();
-    let mut source = std::error::Error::source(error);
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 #[cfg(test)]

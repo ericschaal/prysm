@@ -361,7 +361,7 @@ test('status card covers the supervisor states for both packages', () => {
   assert.equal(tvStatus(true, full({ enabled: true }), draft(), false).label, 'Turn lights off');
 });
 
-test('slim encoding failures offer a switch of encoding; waits and the full package do not', () => {
+test('slim encoder failures point to the portal; waits, other failures and the full package do not', () => {
   const slim = (change = {}) => ({
     ...state(),
     flavor: 'slim',
@@ -379,30 +379,29 @@ test('slim encoding failures offer a switch of encoding; waits and the full pack
   });
   const draft = completePreferences({ receiver: '192.168.1.20:7380' });
   const status = (value) => tvStatus(true, value, draft, false);
+  const hint = 'Choose another stream encoding under Capture in Prysm’s web portal.';
   assert.deepEqual(
     ['h264_hardware', 'h264_software', 'raw'].map(encodingName),
     ['Hardware H.264', 'Software H.264', 'Uncompressed'],
   );
-  assert.equal(status(slim({ capturing: true, encoding: 'h264_hardware' })).changeEncoding, false);
+  assert.equal('changeEncoding' in status(slim()), false, 'the TV offers no encoding switch');
   const retrying = status(slim({ worker: 'retrying', failure: 'worker failed: hardware H.264 encoder cannot start', failure_kind: 'encoder' }));
-  assert(retrying.changeEncoding);
-  assert.match(retrying.description, /^worker failed: hardware H\.264 encoder cannot start\. Prysm tries again automatically\. If it keeps failing, choose another stream encoding\.$/);
+  assert.equal(retrying.title, 'Capture needs attention');
+  assert.equal(retrying.description, `worker failed: hardware H.264 encoder cannot start. Prysm tries again automatically. ${hint}`);
   const failed = status(slim({ failure: 'worker failed: encoder lost', failure_kind: 'encoder' }));
-  assert(failed.changeEncoding);
-  assert.match(failed.description, /choose another stream encoding\. Open Service options/);
+  assert.equal(failed.description, `worker failed: encoder lost. ${hint} Open Service options for diagnostics.`);
+  assert(failed.attention);
   const other = status(slim({ failure: 'worker failed: the encoder of capture lost', failure_kind: 'other' }));
-  assert.equal(other.changeEncoding, false, 'only the structured kind counts, not the text');
   assert.equal(other.title, 'Capture needs attention');
-  assert.equal(other.description, 'worker failed: the encoder of capture lost. Open Service options for diagnostics.');
+  assert.equal(other.description, 'worker failed: the encoder of capture lost. Open Service options for diagnostics.', 'only the structured kind counts, not the text');
   const otherRetrying = status(slim({ worker: 'retrying', failure: 'worker exited 1', failure_kind: 'other' }));
-  assert.equal(otherRetrying.changeEncoding, false);
   assert.doesNotMatch(otherRetrying.description, /encoding/);
   const wait = status(slim({ failure: 'waiting for the receiver: refused', failure_kind: 'receiver' }));
-  assert.deepEqual([wait.title, wait.changeEncoding, wait.attention], ['Waiting for Prysm', false, false]);
+  assert.deepEqual([wait.title, wait.attention], ['Waiting for Prysm', false]);
+  assert.doesNotMatch(wait.description, /encoding/);
   const unknownWait = status(slim({ failure: 'waiting for the receiver: refused', failure_kind: 'other' }));
   assert.equal(unknownWait.title, 'Capture needs attention', 'the text prefix no longer decides');
   const full = { ...state(), flavor: 'full', worker: 'retrying', power: 'active', video: 'available', failure: 'worker exited 1', failure_kind: 'encoder' };
-  assert.equal(status(full).changeEncoding, false);
   assert.doesNotMatch(status(full).description, /encoding/);
   assert.match(diagnostics(slim({ encoding: 'raw' })), /Stream encoding: Uncompressed in use/);
   assert.match(diagnostics(slim()), /Stream encoding: none in use/);
@@ -705,7 +704,7 @@ test('full: the TV portal is used over loopback and its address is shown', async
   assert.equal(tv.text('status-title'), 'Lights off');
   assert.equal(tv.el('instance'), null, 'no slim rows');
   assert.equal(tv.text('lights-value'), '192.168.1.50 · 300 LEDs');
-  assert.equal(tv.text('capture-value'), '640 × 360, 30 fps, with menus');
+  assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
   await tv.click('primary');
   assert.deepEqual(tv.methods().filter((m) => m !== 'getState'), ['setEnabled']);
   assert.equal(tv.text('status-title'), 'Screen sync is on');
@@ -757,31 +756,24 @@ test('full: invalid lights are explained before and after sending', async (t) =>
   assert.equal(tv.el('wled-address').getAttribute('aria-invalid'), 'true');
 });
 
-test('full: capture size, rate and menus are chosen with the remote and saved together', async (t) => {
-  const tv = await mountTv(t, { flavor: 'full' });
-  await tv.click('capture');
-  assert.equal(document.activeElement.textContent, '640 × 360');
-  await tv.key(RIGHT);
-  assert.equal(document.activeElement.textContent, '960 × 540');
-  await act(async () => document.activeElement.click());
-  await tv.key(DOWN);
-  assert.equal(document.activeElement.textContent, '30 fps', 'down enters the next row at its choice');
-  await tv.key(LEFT);
-  await act(async () => document.activeElement.click());
-  await tv.key(DOWN);
-  await tv.key(RIGHT);
-  await act(async () => document.activeElement.click());
-  await tv.key(DOWN);
-  assert.equal(tv.focus(), 'capture-save');
-  await tv.click('capture-save');
-  assert.deepEqual(tv.application.snapshot().settings.capture, {
-    kind: 'webos',
-    width: 960,
-    height: 540,
-    fps: 25,
-    include_ui: false,
-  });
-  assert.equal(tv.text('capture-value'), '960 × 540, 25 fps');
+test('neither package edits capture or the stream on the TV; both show the portal for it', async (t) => {
+  for (const flavor of ['full', 'slim']) {
+    const tv = await mountTv(t, { flavor, supervisor: flavor === 'slim' ? { preferences: linked } : {} });
+    const rows = [...document.querySelectorAll('.setting-list .setting')].map((row) => row.id);
+    assert.deepEqual(
+      rows,
+      flavor === 'full'
+        ? ['autostart', 'lights', 'calibrate']
+        : ['instance', 'receiver', 'autostart', 'calibrate'],
+    );
+    assert.doesNotMatch(document.body.textContent, /fps|× 360|Video only/);
+    assert.match(tv.text('portal-address'), /capture settings/);
+    assert.equal(
+      tv.el('portal-address').querySelector('code').textContent,
+      flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance,
+    );
+    await tv.unmount();
+  }
 });
 
 test('TV bundles are classic deferred scripts with relative URLs and no demo code', () => {
@@ -810,7 +802,6 @@ test('slim: the status card shows the encoding in use while streaming', async (t
   await settle();
   assert.equal(tv.text('status-title'), 'Sending the picture');
   assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Hardware H.264');
-  assert.equal(tv.el('change-encoding'), null, 'no switch without a failure');
   await act(async () => tv.supervisor.publish({ encoding: 'raw' }));
   await settle();
   assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Uncompressed');
@@ -819,21 +810,33 @@ test('slim: the status card shows the encoding in use while streaming', async (t
   assert.equal(tv.el('encoding-in-use'), null);
 });
 
-test('slim: a receiver wait is not offered an encoding switch', async (t) => {
+test('slim: an encoder failure shows the error and sends the user to the portal shown below', async (t) => {
+  const failure = 'worker failed: cannot encode frame: hardware H.264 encoder cannot start: no device';
   const tv = await mountTv(t, {
-    supervisor: { preferences: linked, state: { enabled: true, worker: 'running', failure: 'waiting for the receiver: refused', failure_kind: 'receiver' } },
+    supervisor: { preferences: linked, state: { enabled: true, worker: 'running', failure, failure_kind: 'encoder', encoding: 'h264_hardware' } },
   });
-  assert.equal(tv.text('status-title'), 'Waiting for Prysm');
-  assert.equal(tv.el('change-encoding'), null);
+  assert.equal(tv.text('status-title'), 'Capture needs attention');
+  assert.equal(
+    tv.text('status-description'),
+    `${failure}. Choose another stream encoding under Capture in Prysm’s web portal. Open Service options for diagnostics.`,
+  );
+  assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Hardware H.264');
+  assert.equal(tv.el('portal-address').querySelector('code').textContent, linked.instance);
+  assert.equal(tv.el('encoding'), null, 'no encoding setting on the TV');
 });
 
-test('slim: a failure that is not the encoder shows the error without the encoding switch', async (t) => {
+test('slim: a receiver wait or another failure does not mention the encoding', async (t) => {
+  const wait = await mountTv(t, {
+    supervisor: { preferences: linked, state: { enabled: true, worker: 'running', failure: 'waiting for the receiver: refused', failure_kind: 'receiver' } },
+  });
+  assert.equal(wait.text('status-title'), 'Waiting for Prysm');
+  assert.doesNotMatch(wait.text('status-description'), /encoding/);
+  await wait.unmount();
   const tv = await mountTv(t, {
     supervisor: { preferences: linked, state: { enabled: true, worker: 'retrying', failure: 'worker exited 1: capture failed', failure_kind: 'other' } },
   });
   assert.equal(tv.text('status-title'), 'Capture needs attention');
   assert.equal(tv.text('status-description'), 'worker exited 1: capture failed. Prysm tries again automatically.');
-  assert.equal(tv.el('change-encoding'), null);
   await tv.key(DOWN);
   assert.equal(tv.focus(), 'service-options');
 });
@@ -846,6 +849,5 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
   assert.equal(tv.text('status-title'), 'Capture needs attention');
   assert.equal(tv.el('encoding'), null);
   assert.equal(tv.el('encoding-in-use'), null);
-  assert.equal(tv.el('change-encoding'), null);
   assert.doesNotMatch(document.body.textContent, /encoding/i);
 });

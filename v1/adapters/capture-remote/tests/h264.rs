@@ -419,17 +419,18 @@ fn an_unavailable_hardware_encoder_is_refused_without_switching() {
             Ok(pull) => assert!(pull.is_idle(), "a frame was sent"),
         }
     };
-    let reason = match cause::<WireError>(&refused) {
-        Some(WireError::Refused(reason)) => reason.clone(),
-        other => panic!("{other:?}"),
+    // The encoding is named as the setting the sender cannot produce.
+    let prysm_ports::Error::Invalid(invalid) = &refused else {
+        panic!("{refused:?}");
     };
+    assert_eq!(invalid.field, "capture.encoding");
     assert!(
-        reason.starts_with("cannot encode frame: ") && reason.contains("hardware"),
-        "{reason}"
-    );
-    assert!(
-        refused.to_string().contains("as h264_hardware"),
-        "{refused}"
+        invalid
+            .reason
+            .starts_with("the sender cannot stream 640x280 at 30 fps with menus as h264_hardware: cannot encode frame: ")
+            && invalid.reason.contains("hardware"),
+        "{}",
+        invalid.reason
     );
     Box::new(source).close().unwrap();
 }

@@ -18,13 +18,10 @@ import {
 } from './model';
 import { useRemoteNavigation } from './navigation';
 import {
-  CaptureDialogBody,
   LightingCard,
   WledDialogBody,
-  describeCapture,
   describeWled,
   usePortal,
-  webosOf,
   wledOf,
   type PortalOptions,
 } from './portal';
@@ -39,7 +36,6 @@ type DialogId =
   | 'receiver'
   | 'autostart'
   | 'lights'
-  | 'capture'
   | 'service'
   | 'diagnostics'
   | 'cleanup'
@@ -131,22 +127,16 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
     label: slim ? 'Enable with TV' : 'Start screen sync with TV',
     value: draft.autostart ? 'On' : 'Off',
   });
-  const portalRows: typeof rows = slim
-    ? []
-    : [
-        {
-          id: 'lights',
-          label: 'Lights (WLED)',
-          value: portal.snapshot ? describeWled(wledOf(portal.snapshot)) : 'Portal not connected',
-          disabled: !portal.snapshot,
-        },
-        {
-          id: 'capture',
-          label: 'Capture',
-          value: portal.snapshot ? describeCapture(webosOf(portal.snapshot)) : 'Portal not connected',
-          disabled: !portal.snapshot,
-        },
-      ];
+  if (!slim)
+    rows.push({
+      id: 'lights',
+      label: 'Lights (WLED)',
+      value: portal.snapshot ? describeWled(wledOf(portal.snapshot)) : 'Portal not connected',
+      disabled: !portal.snapshot,
+    });
+  // The portal the TV points people to: capture size, rate, menus and the
+  // slim stream encoding are set only there, never in this UI.
+  const portalAddress = slim ? (state?.preferences.instance ?? null) : (state?.portal ?? null);
 
   let savedLabel = 'On this TV';
   if (state) savedLabel = tv.syncing ? 'Saving…' : tv.dirty ? 'Unsaved changes' : 'Saved';
@@ -252,37 +242,22 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                   <SettingRow
                     key={row.id}
                     {...row}
-                    disabled={disabled}
+                    disabled={disabled || !!row.disabled}
                     open={() => nav.openDialog(row.id)}
                   />
                 ))}
               </div>
-              {portalRows.length ? (
-                <>
-                  <h3 className="subheading">Lights and capture</h3>
-                  <div className="setting-list">
-                    {portalRows.map((row) => (
-                      <SettingRow
-                        key={row.id}
-                        {...row}
-                        disabled={!!row.disabled}
-                        open={() => nav.openDialog(row.id)}
-                      />
-                    ))}
-                  </div>
-                </>
-              ) : null}
               <div className="setting-list">
                 <button id="calibrate" type="button" className="setting" disabled>
                   <span className="setting-label">Calibrate colours</span>
                   <span className="setting-value">Not available in this version yet</span>
                 </button>
               </div>
-              {!slim && state?.portal ? (
+              {portalAddress ? (
                 <p className="portal-address" id="portal-address">
                   <strong>Web portal</strong>
-                  <code>{state.portal}</code>
-                  Open it on your phone or computer for colours, profiles and the preview.
+                  <code>{portalAddress}</code>
+                  Open it on your phone or computer for capture settings, colours, profiles and the preview.
                 </p>
               ) : null}
             </section>
@@ -540,11 +515,6 @@ function Dialogs({
       title = 'Lights (WLED)';
       description = 'Where your WLED controller is and how many LEDs each screen edge has. Saved to Prysm on this TV.';
       content = <WledDialogBody portal={portal} done={done} />;
-      break;
-    case 'capture':
-      title = 'Capture';
-      description = 'Size and rate of the picture Prysm samples. Saved to Prysm on this TV.';
-      content = <CaptureDialogBody portal={portal} done={done} />;
       break;
     case 'service':
       title = 'Service options';

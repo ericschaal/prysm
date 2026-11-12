@@ -69,8 +69,10 @@ their `demo.html` pages run the same UI on an
 - [TV UI](packages/tv-ui/index.tsx) (both packages): status card and primary
   action from the supervisor's state ([rules](packages/tv-ui/model.ts)),
   settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
-  lighting modes and, for the full package, Lights (WLED) and Capture dialogs
-  on its portal ([portal](packages/tv-ui/portal.tsx)), service options
+  lighting modes and, for the full package, a Lights (WLED) dialog on its
+  portal ([portal](packages/tv-ui/portal.tsx)); capture size, rate, menus and
+  the slim stream encoding are set only in the web portal, whose address the
+  TV shows. Service options
   (set up or repair, diagnostics, remove setup) and remote control
   ([navigation](packages/tv-ui/navigation.ts): arrows move focus between two
   columns and within rows, OK chooses, Back closes one dialog level and then
