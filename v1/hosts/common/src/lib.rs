@@ -202,12 +202,18 @@ impl Host {
         let address = listener
             .local_addr()
             .map_err(|error| Error::adapter("cannot read the portal address", error))?;
-        let portal = WebPortal::from_listener(listener, assets, options.access.clone())?;
+        let portal = WebPortal::from_listener(listener, assets, options.access.clone())?
+            .metrics(options.metrics);
         eprintln!(
-            "{}: {} ({})",
+            "{}: {} ({}{})",
             self.name,
             reachable(address),
-            access(&options.access)
+            access(&options.access),
+            if options.metrics {
+                "; metrics at /metrics"
+            } else {
+                ""
+            }
         );
         Ok(portal)
     }

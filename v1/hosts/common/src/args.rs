@@ -15,6 +15,8 @@ const OPTIONS: &str = "Options:
                             Prysm TV app (and sandboxed frames on any site);
                             '*' allows every origin
                             [default: only the portal's own pages]
+  --metrics                 Also serve Prometheus metrics at /metrics on
+                            the portal [default: off]
   --no-portal               Serve no web portal
   --start                   Request processed lighting at launch (else idle)
   --log-file PATH           Append log lines to PATH instead of stderr
@@ -52,6 +54,8 @@ pub struct PortalOptions {
     pub listen: SocketAddr,
     /// Validated by `WebPortal`.
     pub access: Access,
+    /// Serve `GET /metrics`.
+    pub metrics: bool,
 }
 
 /// Parse arguments after the program name.
@@ -65,6 +69,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
     let mut origins = Vec::new();
     let mut any_origin = false;
     let mut no_portal = false;
+    let mut metrics = false;
     let mut start = false;
     let mut log_file = None;
     while let Some(arg) = args.next() {
@@ -100,6 +105,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
                     origins.push(origin);
                 }
             }
+            "--metrics" => switch(&mut metrics, flag)?,
             "--no-portal" => switch(&mut no_portal, flag)?,
             "--start" => switch(&mut start, flag)?,
             "--log-file" => once(&mut log_file, PathBuf::from(value()?), flag)?,
@@ -108,7 +114,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
     }
     let settings = settings.ok_or("expected a settings file path")?;
     let portal = if no_portal {
-        if listen.is_some() || !origins.is_empty() || any_origin {
+        if listen.is_some() || !origins.is_empty() || any_origin || metrics {
             return Err("--no-portal cannot be combined with portal options".into());
         }
         None
@@ -124,6 +130,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
         Some(PortalOptions {
             listen: listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().expect("valid default")),
             access,
+            metrics,
         })
     };
     Ok(Parsed::Run(Options {
@@ -169,6 +176,7 @@ mod tests {
             Some(PortalOptions {
                 listen: "0.0.0.0:8787".parse().unwrap(),
                 access: Access::SameOrigin,
+                metrics: false,
             })
         );
     }
@@ -188,6 +196,7 @@ mod tests {
             "null",
             "--log-file",
             "prysm.log",
+            "--metrics",
         ])
         .unwrap();
         assert_eq!(
@@ -203,6 +212,7 @@ mod tests {
                         "app://tv".into(),
                         "null".into()
                     ]),
+                    metrics: true,
                 }),
             })
         );
@@ -242,6 +252,8 @@ mod tests {
             ],
             &["s.json", "--no-portal", "--listen", "127.0.0.1:1"],
             &["s.json", "--no-portal", "--allow-origin", "*"],
+            &["s.json", "--no-portal", "--metrics"],
+            &["s.json", "--metrics", "--metrics"],
             &["s.json", "--allow-origin"],
             &["s.json", "--log-file"],
             &["s.json", "--log-file", "a.log", "--log-file", "b.log"],

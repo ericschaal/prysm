@@ -1,4 +1,4 @@
-use crate::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd};
+use crate::{Counters, OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd, Stats};
 use prysm_core::Config;
 use prysm_ports::{
     AdapterSettings, Calibration, Error, IdleMode, Input, LightingTarget, Registry, Result,
@@ -36,6 +36,7 @@ pub struct EngineHandle {
     commands: mpsc::Sender<Command>,
     snapshot: watch::Receiver<Snapshot>,
     preview: Arc<PreviewSlot>,
+    stats: Arc<Stats>,
 }
 
 impl EngineHandle {
@@ -86,6 +87,13 @@ impl EngineHandle {
     #[must_use]
     pub fn preview(&self) -> PreviewWatch {
         self.preview.watch()
+    }
+
+    /// Totals of frames, timings and opens since the process started; a few
+    /// atomic loads, without waking the engine.
+    #[must_use]
+    pub fn stats(&self) -> Counters {
+        self.stats.read()
     }
 
     /// How many preview watches exist.
@@ -141,6 +149,7 @@ impl Engine {
             ..Snapshot::default()
         });
         let preview = Arc::new(PreviewSlot::default());
+        let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
         let core = Core {
             registry,
@@ -149,6 +158,7 @@ impl Engine {
             meter: None,
             calibration_expires: None,
             preview: preview.clone(),
+            stats: stats.clone(),
             stop_deadline,
             state,
         };
@@ -157,6 +167,7 @@ impl Engine {
             commands: commands.clone(),
             snapshot,
             preview,
+            stats,
         };
         Ok((handle, Self { commands, task }))
     }
@@ -205,7 +216,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
 const MEASURE: Duration = Duration::from_secs(1);
 
 /// Frame-rate measurement of the running session: the session thread only
-/// counts; the engine samples the count every [`MEASURE`].
+/// counts ([`Stats`]); the engine samples the count every [`MEASURE`].
 struct Meter {
     interval: Interval,
     frames: u64,
@@ -213,12 +224,13 @@ struct Meter {
 }
 
 impl Meter {
-    fn new() -> Self {
+    /// Measure from `frames`, the received total when the session starts.
+    fn new(frames: u64) -> Self {
         let mut interval = tokio::time::interval_at(Instant::now() + MEASURE, MEASURE);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         Self {
             interval,
-            frames: 0,
+            frames,
             at: Instant::now(),
         }
     }
@@ -256,6 +268,7 @@ struct Core {
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
     preview: Arc<PreviewSlot>,
+    stats: Arc<Stats>,
     stop_deadline: Duration,
     state: watch::Sender<Snapshot>,
 }
@@ -330,7 +343,7 @@ impl Core {
         let (Some(session), Some(meter)) = (&self.session, &mut self.meter) else {
             return;
         };
-        let input = Some(meter.sample(session.frames()));
+        let input = Some(meter.sample(self.stats.read().frames_received));
         let issue = session.output_issue();
         self.state.send_if_modified(|s| {
             let changed = s.input != input || s.output_issue != issue;
@@ -458,6 +471,7 @@ impl Core {
         };
         let registry = self.registry.clone();
         let source = blocking(move || registry.open_source(&capture)).await??;
+        self.stats.source_opened();
         let registry = self.registry.clone();
         let open_output: OpenOutput = Box::new(move || registry.open_output(&output));
         self.session = Some(Session::start(
@@ -465,8 +479,9 @@ impl Core {
             open_output,
             config,
             self.preview.clone(),
+            self.stats.clone(),
         )?);
-        self.meter = Some(Meter::new());
+        self.meter = Some(Meter::new(self.stats.read().frames_received));
         self.state.send_modify(|s| {
             s.session = SessionState::Running;
             s.input = Some(Input::default());

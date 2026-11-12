@@ -1,6 +1,7 @@
 //! Routing, request decoding and the state stream.
 use crate::FrontendAsset;
 use crate::access::{self, Access};
+use crate::metrics;
 use crate::preview::Previews;
 use crate::response::{self, Body, Response, failure};
 use bytes::Bytes;
@@ -26,11 +27,15 @@ const STREAMS: usize = 8;
 /// Idle streams send a comment this often so a vanished reader is noticed by
 /// the write deadline and releases its stream slot.
 const KEEPALIVE: Duration = Duration::from_secs(15);
+/// The Prometheus scrape path, served only when the host enables it.
+const METRICS: &str = "/metrics";
 
 pub(crate) struct Context {
     pub engine: EngineHandle,
     pub assets: &'static [FrontendAsset],
     pub access: Access,
+    /// `GET /metrics` is served.
+    pub metrics: bool,
     pub shutdown: Shutdown,
     streams: Arc<Semaphore>,
     previews: Previews,
@@ -41,12 +46,14 @@ impl Context {
         engine: EngineHandle,
         assets: &'static [FrontendAsset],
         access: Access,
+        metrics: bool,
         shutdown: Shutdown,
     ) -> Self {
         Self {
             engine,
             assets,
             access,
+            metrics,
             shutdown,
             streams: Arc::new(Semaphore::new(STREAMS)),
             previews: Previews::new(),
@@ -62,7 +69,8 @@ pub(crate) async fn handle(context: Arc<Context>, request: Request<Incoming>) ->
 
 async fn route(context: &Context, request: Request<Incoming>) -> Response {
     let path = request.uri().path().to_owned();
-    if !path.starts_with("/api/") {
+    // An enabled `/metrics` follows the API's origin policy.
+    if !path.starts_with("/api/") && !(context.metrics && path == METRICS) {
         return asset(context, &path, request.method());
     }
     let mut response = match access::check(&context.access, request.headers()) {
@@ -103,6 +111,11 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             &State::from(&*context.engine.snapshot().borrow()),
         ),
         ("/api/v1/state/stream", Method::GET) => stream_state(context),
+        (METRICS, Method::GET) => {
+            let text =
+                metrics::render(&context.engine.stats(), &context.engine.snapshot().borrow());
+            response::bytes(StatusCode::OK, metrics::CONTENT_TYPE, text)
+        }
         ("/api/v1/preview/stream", Method::GET) => {
             context.previews.stream(&context.engine, &context.shutdown)
         }
@@ -138,7 +151,8 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             | "/api/v1/preview/stream"
             | "/api/v1/target"
             | "/api/v1/calibration"
-            | "/api/v1/settings",
+            | "/api/v1/settings"
+            | METRICS,
             _,
         ) => failure(
             StatusCode::METHOD_NOT_ALLOWED,

@@ -31,7 +31,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Settings path | `--config`, env `PRYSM_CONFIG`, default `settings.json` (`apps/prysm/src/main.rs`) | changed | Required positional argument (`hosts/common/src/args.rs`); no default, no env |
 | Listen address | `--listen`/`PRYSM_LISTEN`, default `0.0.0.0:8787` | present | Same default; CLI only |
 | Host allowlist | `--allowed-host`/`PRYSM_ALLOWED_HOSTS`, default `localhost:8787,127.0.0.1:8787` (`apps/prysm/runtime/src/config.rs`) | changed | Replaced by `--allow-origin` (Origin/CORS policy); `Host` not checked |
-| Metrics listener | `--metrics-listen`/`PRYSM_METRICS_LISTEN` | missing | See D10 |
+| Metrics listener | `--metrics-listen`/`PRYSM_METRICS_LISTEN` | changed | `--metrics` serves `/metrics` on the portal, off by default; no second listener (D10) |
 | Validate-only command | `prysm check` | missing | D15 |
 | Disable portal, autostart | — | added | `--no-portal`, `--start` are new in v1 |
 | Logging | `tracing` to stderr, `RUST_LOG` filter | missing | v1 installs no subscriber: `tracing` events from `prysm-capture`/`prysm-processor` are dropped (D11). Hosts print state changes with `eprintln!` |
@@ -148,8 +148,8 @@ Profile *application* (D7) is separable and should not wait for the session.
 
 | Capability | Shipping (where) | v1 status | Note |
 | --- | --- | --- | --- |
-| Prometheus exporter, role `Prysm` | `crates/common/prysm-metrics`, `--metrics-listen` | missing | Capture and renderer still call `prysm_metrics`, but nothing starts the exporter (D10) |
-| Pipeline/preview/receiver metrics | `pipeline/worker.rs`, `preview.rs`, `receiver.rs` | missing | Would need session instrumentation |
+| Prometheus exporter, role `Prysm` | `crates/common/prysm-metrics`, `--metrics-listen` | changed | Opt-in `GET /metrics` on the portal (`--metrics`, headless and TUI), hand-rendered text format from engine totals; no metrics library ([metrics](../../v1/surfaces/web-portal/HTTP-CONTRACT.md#metrics)). Not on the TV. Capture and renderer still call `prysm_metrics`, which nothing exports |
+| Pipeline/preview/receiver metrics | `pipeline/worker.rs`, `preview.rs`, `receiver.rs` | partial | Session totals only: frames received/sent, processing and write time, write failures, source/output opens. No per-adapter metrics (drops inside a source, receiver bytes, preview encodes); system metrics are node_exporter's job |
 | Grafana/Prometheus stack, dashboard self-check | [observability](../../observability/README.md) | missing | Dashboard queries assume shipping metric names |
 | Trace stats (`TraceStats`) | `prysm-metrics/src/trace_stats.rs` | partial | Logged through `tracing`, which v1 drops |
 
@@ -225,7 +225,7 @@ Sizes: S < 200 lines, M < 800, L more. P1 must land before root code is deleted.
 | D7 | Persist and apply colour-correction profiles | Profiles (≤32, id, name, correction) and active id in settings; `Processing::config` passes correction; portal picker, rename, delete. Refines prysm-3jx.11 | `crates/ports` settings, frontend | M | — | P1 if calibration is kept (Q1): migrated users' colours change silently |
 | D8 | Port the calibration session (desktop side) | `/api/calibration`, TV/phone capabilities, leases, pattern relay page, phone UI. Tracked prysm-3jx.11 | `surfaces/web-portal`, `crates/runtime` | L | D7, TV UI | P2: needs the v1 TV UI anyway |
 | D9 | Serve browser preview with crop and edge strips | Demand-driven JPEG frames, viewport from the processor, sRGB strips, 8 fps, 4 viewers. `Preview` slot lacks the viewport. Tracked prysm-3jx.16 | `crates/runtime` session, `surfaces/web-portal`, frontend | M | — | P1: the user tuning guide depends on it |
-| D10 | Restore opt-in Prometheus metrics | `--metrics-listen`, start `prysm_metrics`, session/frame metrics, update dashboard and catalog | `hosts/common`, `crates/runtime` | M | Q6 | P2: diagnostics only |
+| D10 | Restore opt-in Prometheus metrics | Done for desktop hosts (prysm-3jx.38): `--metrics`, `/metrics` on the portal from session totals. Dashboard and catalog not updated (names differ from shipping) | `hosts/common`, `crates/runtime`, `surfaces/web-portal` | M | Q6 | P2: diagnostics only |
 | D11 | Install a logging subscriber with RUST_LOG | Capture/processor `tracing` events are dropped; add stderr subscriber in hosts (TUI: to a file or off while full-screen) | `hosts/common` | S | — | P1: production failures otherwise lose their cause |
 | D12 | Build the prysm-headless Docker image | Image from `v1/frontend` + v1 workspace, `CMD ["/config/settings.json"]`, user 10001, `/config`, 8787 and remote port, compose and TrueNAS compose without `PRYSM_ALLOWED_HOSTS`, smoke test on `/api/v1/state`. Tracked prysm-3jx.18 | repo root `Dockerfile`, `packaging/docker` | M | D11, D14 | P1 |
 | D13 | Package prysm-headless as a Debian service | cargo-deb metadata, unit with positional settings and `video` group, sysusers, purge, upgrade from `prysm-led` (binary rename, settings via D1), upgrade test | `v1/hosts/headless`, `packaging/debian` | M | D1 | P1: Raspberry Pi is the documented primary install |

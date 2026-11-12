@@ -29,6 +29,7 @@ pub(crate) async fn serve(
         engine,
         portal.assets,
         portal.access,
+        portal.metrics,
         shutdown.clone(),
     ));
     let mut connections = JoinSet::new();

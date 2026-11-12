@@ -1,3 +1,4 @@
+use crate::Stats;
 use crate::worker::{Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame, Viewport};
 use prysm_ports::{
@@ -153,12 +154,13 @@ enum Leds {
 }
 
 impl Leds {
-    fn write(&mut self, colors: &EdgeColors, open: &mut OpenOutput) -> Result<()> {
+    fn write(&mut self, colors: &EdgeColors, open: &mut OpenOutput, stats: &Stats) -> Result<()> {
         if !matches!(self, Self::Held(_)) {
             *self = Self::Held(open()?);
+            stats.output_opened();
         }
         match self {
-            Self::Held(output) => output.write(colors),
+            Self::Held(output) => stats.write(output.as_mut(), colors),
             Self::Untouched | Self::Left(_) | Self::Unknown => Ok(()),
         }
     }
@@ -201,9 +203,8 @@ impl Leds {
 struct Control {
     config: LatestSlot<Config>,
     idle: Mutex<IdleMode>,
-    /// Frames taken from the source; read by the engine about once a second.
-    frames: AtomicU64,
-    /// The held output's latest [`LedOutput::observe`]; read with `frames`.
+    /// The held output's latest [`LedOutput::observe`]; read by the engine
+    /// about once a second.
     issue: Mutex<Option<OutputIssue>>,
 }
 
@@ -236,11 +237,11 @@ impl Session {
         mut open_output: OpenOutput,
         config: Config,
         preview: Arc<PreviewSlot>,
+        stats: Arc<Stats>,
     ) -> Result<Self> {
         let control = Arc::new(Control {
             config: LatestSlot::new(),
             idle: Mutex::new(IdleMode::Off),
-            frames: AtomicU64::new(0),
             issue: Mutex::new(None),
         });
         let shared = control.clone();
@@ -262,20 +263,21 @@ impl Session {
                     if let Some((colors, written)) = &mut last
                         && written.elapsed() >= REFRESH
                     {
-                        output.write(colors)?;
+                        stats.write(output, colors)?;
                         *written = Instant::now();
                         shared.report(output.observe());
                     }
                     return Ok(());
                 };
                 last_frame = Instant::now();
-                shared.frames.fetch_add(1, Ordering::Relaxed);
+                stats.frame_received();
                 if let Some(config) = shared.config.take() {
                     processor.configure(&config);
                 }
                 let shown = (preview.viewers() > 0).then(|| frame.clone());
-                let colors = processor.process_frame(frame);
-                leds.write(&colors, &mut open_output)?;
+                let colors = stats.process(|| processor.process_frame(frame));
+                leds.write(&colors, &mut open_output, &stats)?;
+                stats.frame_sent();
                 shared.report(leds.observe());
                 last = Some((colors.clone(), Instant::now()));
                 if let Some(shown) = shown {
@@ -308,12 +310,6 @@ impl Session {
     /// Apply processing settings at the next frame boundary.
     pub fn configure(&self, config: Config) {
         self.control.config.offer(config);
-    }
-
-    /// Frames taken from the source since the session started.
-    #[must_use]
-    pub fn frames(&self) -> u64 {
-        self.control.frames.load(Ordering::Relaxed)
     }
 
     /// Why the held output's LEDs are not showing the session's colours.
@@ -397,6 +393,7 @@ mod tests {
             Box::new(|| Ok(Box::new(Sink(Arc::new(AtomicBool::new(false)))) as Box<dyn LedOutput>)),
             Config::default(),
             slot.clone(),
+            Arc::new(Stats::default()),
         )
         .unwrap();
         (session, frames)

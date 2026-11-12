@@ -51,7 +51,9 @@ cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.ex
 Both take a JSON settings file (examples: [headless](hosts/headless/settings.example.json),
 [tui](hosts/tui/settings.example.json)) and process options on the command line:
 `--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable;
-`null` for the slim TV app, `'*'` for any), `--no-portal`, `--start` and `--log-file PATH`. Log lines (`tracing`
+`null` for the slim TV app, `'*'` for any), `--no-portal`, `--start`, `--log-file PATH` and
+`--metrics` (also serve [Prometheus metrics](surfaces/web-portal/HTTP-CONTRACT.md#metrics)
+at `/metrics` on the portal; off by default). Log lines (`tracing`
 events, including those of the shared capture and processing crates) go to
 stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
 `RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the
@@ -130,8 +132,10 @@ members). Builds do not deploy.
 - TV: IPK packaging for the two packages, the TV UI on the new Luna API, and every
   check that needs the webOS SDK or a TV (the TV binaries build and are tested on
   the development host only).
-- Metrics, and the calibration screens (portal wizard, TV pattern player); the
+- The calibration screens (portal wizard, TV pattern player); the
   engine state and [route](surfaces/web-portal/HTTP-CONTRACT.md#calibration) exist.
+- Metrics on the TV: `/metrics` is opt-in on the desktop hosts only; the full
+  TV worker is started by the service without a way to enable it.
 - Verification against real capture hardware, WLED devices and TVs.
 
 ## Packaging

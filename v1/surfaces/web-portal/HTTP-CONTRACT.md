@@ -29,6 +29,8 @@ Prysm::builder(store).source(..).output(..).surface(portal).run(shutdown).await
 - `Access` says which browser pages besides the portal's own may use the API:
   `SameOrigin` (the default), `Origins(vec!["http://192.168.1.30:3000".into()])`
   or `AnyOrigin`. See [Access](#access).
+- `.metrics(true)` also serves [`GET /metrics`](#metrics); hosts set it
+  from `--metrics`. Off by default.
 - Both validate at construction and return `Error::Invalid` with field
   `portal.access` (an entry that is neither `scheme://host[:port]` nor exactly
   `null`; `*` needs `AnyOrigin`) or `portal.assets` (not absolute, under
@@ -53,6 +55,7 @@ into `@prysm/contracts/application`.
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
 | `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
 | `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
+| `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
 
 `State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
@@ -155,6 +158,44 @@ The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes
 `jpeg` to bytes and draws it with `createImageBitmap(new Blob([bytes], { type:
 'image/jpeg' }))` on a canvas.
 
+## Metrics
+
+`GET /metrics` is opt-in: the host enables it with `--metrics` (headless and
+TUI; the TV worker has no switch). Disabled, the path is an unknown asset:
+`404` for every method. Enabled, it follows the API's [origin policy](#access)
+(no credentials; a foreign `Origin` is `403`), other methods are `405`, and it
+answers `200` with `Content-Type: text/plain; version=0.0.4; charset=utf-8`,
+the Prometheus text format, rendered by hand with `# HELP` and `# TYPE` lines.
+Prometheus, or an OpenTelemetry collector with a Prometheus receiver, can
+scrape it directly.
+
+The values are a read-only view of what the engine already knows: totals
+the session thread adds to (atomics, no locks or allocation per frame) and a
+few fields of the state. Totals start at 0 when the process starts and only
+grow, across sessions, so `rate()` and `_sum / _count` averages work. They
+are not in `State`, so the state stream is not woken per frame. There are no
+system metrics (CPU, memory, network: node_exporter's job), no per-adapter
+metrics and no histograms.
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `prysm_build_info{version}` | gauge | Always 1; `version` is the crate version |
+| `prysm_target{target}` | gauge | 1 for the current target (`off`, `processed`, `device_native`), 0 for the others |
+| `prysm_session_state{state}` | gauge | 1 for the current session state (`stopped`, `running`, `native`, `faulted`), 0 for the others |
+| `prysm_settings_revision` | gauge | `State.revision` (random start per process) |
+| `prysm_input_fps` | gauge | `State.input.fps`; 0 while no session runs |
+| `prysm_frames_received_total` | counter | Frames taken from the capture source (frames from a remote TV included) |
+| `prysm_frames_sent_total` | counter | Frames whose colors were written to the output |
+| `prysm_processing_seconds_sum`, `_count` | summary | Time turning frames into colors, and how many frames |
+| `prysm_output_write_seconds_sum`, `_count` | summary | Time in output writes, and how many: frames and keep-alive rewrites, failed ones included |
+| `prysm_output_write_failures_total` | counter | Output writes that failed; each ends lighting with a failure |
+| `prysm_source_opens_total` | counter | Capture sources opened by starting lighting (also each restart after a capture or output change) |
+| `prysm_output_opens_total` | counter | Outputs opened to show colors: at a session's first frame and at the first frame after a release |
+
+Frames dropped inside a source (a newer frame replacing an untaken one) are
+not counted: adapters keep no metrics. Received minus sent is what the session
+did not deliver.
+
 ## Failures
 
 Every non-2xx API response has a `Failure` body: `{ kind, message, field?, current? }`.
@@ -164,8 +205,8 @@ Source chains stay in the process; `message` is what the user can act on.
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, unknown fields or wrong value types |
 | 403 | `forbidden` | An `Origin` that is neither the portal's own nor allowed (`origin denied`) |
-| 404 | `not_found` | Unknown route or asset |
-| 405 | `method_not_allowed` | Known API path, wrong method |
+| 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled) |
+| 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |
 | 408 | `bad_request` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 413 | `payload_too_large` | Body over 1 MiB |
@@ -189,8 +230,8 @@ lights, like the TV's current embedded portal. There is no token, password or
 TLS. What the portal does refuse is a *web page from another site* using the
 visitor's browser to reach it.
 
-The policy applies to every `/api/` request (commands, state and the stream);
-assets are served to anyone. `Host` is not checked and forwarded headers are
+The policy applies to every `/api/` request (commands, state and the stream)
+and to an enabled `/metrics`; assets are served to anyone. `Host` is not checked and forwarded headers are
 ignored.
 
 | Request | `Access` | Result |
@@ -278,5 +319,7 @@ media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the
 session ends, frames while running, no viewer registered without a stream, the
 viewer limit, the 8 per second cap, the origin policy and streams ending at
-shutdown. Unit tests in `src/preview.rs` decode the JPEG and check its size,
+shutdown, and `/metrics`: `404` when disabled; content type, counted frames,
+`405` and the origin policy when enabled. Unit tests in `src/metrics.rs` check
+the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,
 the sRGB colors and the strip bound.

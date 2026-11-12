@@ -2,6 +2,7 @@
 //!
 //! - [`Engine`]: one Tokio task and the only mailbox; settings, target, session.
 //! - [`Session`]: one thread owning source, processor and output.
+//! - [`Counters`]: totals the sessions keep for an opt-in `/metrics`.
 //! - [`Forwarder`]: the session loop for capture-only hosts.
 //! - [`Prysm`]: the builder hosts list their adapters and surfaces on.
 //! - `logging` (feature `logging`): the hosts' `tracing` subscriber.
@@ -11,6 +12,7 @@ mod forwarder;
 mod null;
 mod sample;
 mod session;
+mod stats;
 mod surface;
 mod worker;
 
@@ -27,4 +29,5 @@ pub use sample::sample_rgb;
 pub use session::{
     OpenOutput, Preview, PreviewSlot, PreviewWatch, RELEASE, Session, SessionEnd, VIDEO_GRACE,
 };
+pub use stats::{Counters, Stats, Timing};
 pub use surface::{Shutdown, Surface};

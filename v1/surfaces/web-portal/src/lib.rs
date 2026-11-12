@@ -12,6 +12,7 @@
 //!     .await
 //! ```
 mod access;
+mod metrics;
 mod preview;
 mod response;
 mod routes;
@@ -40,6 +41,7 @@ pub struct WebPortal {
     pub(crate) listen: Listen,
     pub(crate) assets: &'static [FrontendAsset],
     pub(crate) access: Access,
+    pub(crate) metrics: bool,
 }
 
 #[derive(Debug)]
@@ -81,7 +83,16 @@ impl WebPortal {
             listen,
             assets,
             access: access.validated()?,
+            metrics: false,
         })
+    }
+
+    /// Also serve `GET /metrics` in the Prometheus text format (off by
+    /// default: the path is then `404` like any unknown one).
+    #[must_use]
+    pub fn metrics(mut self, enabled: bool) -> Self {
+        self.metrics = enabled;
+        self
     }
 }
 
