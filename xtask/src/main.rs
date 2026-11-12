@@ -42,9 +42,6 @@ enum Task {
     Package {
         #[arg(value_enum)]
         target: Package,
-        /// Include the experimental TV hardware encoder.
-        #[arg(long)]
-        hardware_h264: bool,
         /// Allow the webOS app to run Prysm on the TV.
         #[arg(long)]
         embedded_prysm: bool,
@@ -250,12 +247,11 @@ fn main() -> Result<()> {
         Task::Codegen { contract, check } => codegen(contract, check),
         Task::Package {
             target,
-            hardware_h264,
             embedded_prysm,
         } => {
             ensure!(
-                !(hardware_h264 || embedded_prysm) || matches!(target, Package::Webos),
-                "TV feature flags are only supported for webos packages"
+                !embedded_prysm || matches!(target, Package::Webos),
+                "--embedded-prysm is only supported for webos packages"
             );
             match target {
                 Package::Deb => {
@@ -278,9 +274,6 @@ fn main() -> Result<()> {
                     codegen(Some(Contract::Webos), true)?;
                     let mut command = Command::new("bash");
                     command.arg("packaging/webos/build-ipk.sh");
-                    if hardware_h264 {
-                        command.arg("--hardware-h264");
-                    }
                     if embedded_prysm {
                         command.arg("--embedded-prysm");
                     }

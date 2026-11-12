@@ -1,5 +1,16 @@
 # Contribution guidelines
 
+## Commits and pull requests
+
+Use Conventional Commits for commit messages and PR titles:
+`feat:`, `fix:`, `perf:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`,
+`chore:`, `style:`, or `revert:`. Add a scope when useful, such as
+`fix(webos): resume capture after calibration`. Mark breaking changes with `!`.
+Squash-merge PRs using their title as the commit title.
+
+Release Please collects user-facing commits into a release PR; merge it to
+[publish the next version](releasing.md).
+
 ## Code
 
 - Reuse existing boundaries and types; keep application/runtime/serialization
@@ -32,4 +43,6 @@ python3 -m unittest discover -s scripts/tests
 python3 scripts/check-doc-links.py
 ```
 
-[CI](../../.github/workflows/documentation.yml) also checks public URLs.
+[CI](../../.github/workflows/documentation.yml) checks repository links on every PR.
+Public URLs are checked weekly and on manual workflow runs; external availability
+does not block merging a PR.

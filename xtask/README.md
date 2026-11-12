@@ -9,7 +9,7 @@ Run `cargo xtask --help`. Requires Node.js 24+/npm except Docker packaging.
 | `cargo xtask codegen [api\|webos]` | Generate contracts; omit group for both. Add `--check` for freshness only. |
 | `cargo xtask package deb` | Build Debian arm64 package. |
 | `cargo xtask package docker` | Build `prysm:local`. |
-| `cargo xtask package webos` | Build IPK using `WEBOS_SDK`; optional `--hardware-h264` and `--embedded-prysm`. |
+| `cargo xtask package webos` | Build IPK using `WEBOS_SDK`, including hardware H.264 support; optional `--embedded-prysm`. |
 
 Run setup after lockfile changes. TV codegen also needs host UI tooling.
 `cargo build` embeds the panel but never installs npm dependencies. Generation is

@@ -26,7 +26,8 @@ class BuildTests(unittest.TestCase):
             packager.chmod(0o755)
             env = dict(os.environ, PATH=f'{root}{os.pathsep}{os.environ["PATH"]}',
                        WEBOS_SDK=str(sdk), BUILD_OUTPUT=str(output))
-            for flags in ([], ['--embedded-prysm'], ['--hardware-h264'], ['--hardware-h264', '--embedded-prysm']):
+            hardware = 'prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264'
+            for flags in ([], ['--embedded-prysm']):
                 with self.subTest(flags=flags):
                     result = subprocess.run(['bash', str(script), *flags], env=env,
                                             capture_output=True, text=True)
@@ -34,27 +35,23 @@ class BuildTests(unittest.TestCase):
                     args, actual_env = json.loads(output.read_text())
                     self.assertIn('--no-default-features', args)
                     features = [args[i + 1] for i, arg in enumerate(args) if arg == '--features']
-                    expected = []
-                    if '--hardware-h264' in flags:
-                        expected.append('prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264')
-                    if '--embedded-prysm' in flags:
+                    expected = [hardware]
+                    if flags:
                         expected.append('prysm-webos-service/embedded-prysm')
                     self.assertEqual(features, expected)
                     target_dir = Path(args[args.index('--target-dir') + 1])
-                    if flags:
-                        self.assertEqual(target_dir.name, 'embedded-%d-hardware-%d' % (
-                            '--embedded-prysm' in flags, '--hardware-h264' in flags))
-                    else:
-                        self.assertEqual(target_dir.name, 'target')
+                    self.assertEqual(target_dir.name, 'embedded' if flags else 'target')
                     suffix = '_armv7_unknown_linux_gnueabi'
                     self.assertEqual(actual_env['PKG_CONFIG' + suffix], str(sdk / 'bin/pkg-config'))
                     self.assertEqual(actual_env['PKG_CONFIG_PATH' + suffix], '')
                     self.assertEqual(actual_env['PKG_CONFIG_SYSROOT_DIR' + suffix],
                                      str(sdk / 'arm-webos-linux-gnueabi/sysroot'))
-            result = subprocess.run(['bash', str(script), '--unknown'], env=env,
-                                    capture_output=True, text=True)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn('Usage:', result.stderr)
+            for flag in ('--hardware-h264', '--unknown'):
+                with self.subTest(flag=flag):
+                    result = subprocess.run(['bash', str(script), flag], env=env,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn('Usage:', result.stderr)
 
 
 if __name__ == '__main__':

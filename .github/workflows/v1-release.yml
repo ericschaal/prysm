@@ -1,7 +1,7 @@
 # Release of the v1 prysm-headless host: a multi-arch image on GHCR
 # (ghcr.io/<owner>/prysm-headless) and Debian packages attached to a GitHub
 # release, together with the two webOS TV packages (IPKs). Separate from the
-# shipping product's release in check.yml, which publishes ghcr.io/<owner>/prysm
+# shipping product's release in release.yml, which publishes ghcr.io/<owner>/prysm
 # on its own tags and ignores v1.* tags.
 #
 # A `v1.*` tag must equal "v" + the [workspace.package] version in

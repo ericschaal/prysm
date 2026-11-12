@@ -23,10 +23,9 @@ In [browser setup](configuration.md), choose **webOS capturer**, 640 × 360,
 
 ## 2. Install on the TV
 
-Download **prysm-webos-armv7** from a successful
-[Check and package run](https://github.com/ericschaal/prysm/actions/workflows/check.yml).
-Use the same revision as the host. GitHub sign-in is required; artifacts expire
-after three days. Or [build the IPK](../developers/packaging.md#webos).
+Download `io.prysm.capture_*_all.ipk` from the
+[same release as the host](https://github.com/ericschaal/prysm/releases).
+The IPK includes hardware H.264 support. Or [build it](../developers/packaging.md#webos).
 
 With Node.js 24/npm installed:
 
@@ -35,8 +34,7 @@ npm install --global @webos-tools/cli@3.2.6
 ares-setup-device
 ```
 
-Add your rooted TV's SSH connection as `TV`. Unzip the artifact into an empty
-folder, then install from there:
+Add your rooted TV's SSH connection as `TV`, then install from the download directory:
 
 ```sh
 ares-install --device TV ./io.prysm.capture_*_all.ipk

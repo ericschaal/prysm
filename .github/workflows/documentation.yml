@@ -9,12 +9,8 @@ on:
       - 'scripts/tests/test_doc_links.py'
       - '.github/workflows/documentation.yml'
   pull_request:
-    paths:
-      - '**/*.md'
-      - 'docs/users/examples/*.toml'
-      - 'scripts/check-doc-links.py'
-      - 'scripts/tests/test_doc_links.py'
-      - '.github/workflows/documentation.yml'
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -27,11 +23,14 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Link checker regression tests
         run: python3 -m unittest discover -s scripts/tests
-      - name: Repository paths, images, anchors and public URLs
+      - name: Repository paths, images and anchors
+        run: python3 scripts/check-doc-links.py
+      - name: Public URLs
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: python3 scripts/check-doc-links.py --external

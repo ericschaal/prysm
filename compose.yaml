@@ -1,6 +1,6 @@
 services:
   prysm:
-    image: prysm:local
+    image: ghcr.io/ericschaal/prysm:0.2.0 # x-release-please-version
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]

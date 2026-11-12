@@ -2,20 +2,11 @@
 
 Requires Docker-based TrueNAS Apps.
 
-## 1. Load the image
+## 1. Choose the image
 
-[Build `prysm:local`](docker.md#1-build-the-image) on the NAS, or on a computer
-with the same CPU architecture. To transfer a build:
-
-```sh
-docker save -o prysm-image.tar prysm:local
-```
-
-Copy the file to the NAS, then run in the NAS shell:
-
-```sh
-docker load -i /path/to/prysm-image.tar
-```
+Use the published `ghcr.io/ericschaal/prysm` image. The
+[Compose example](../../packaging/docker/compose.truenas.yaml) pins a release and
+selects amd64 or arm64 automatically. TrueNAS pulls it during installation.
 
 ## 2. Create storage
 
@@ -42,7 +33,8 @@ Then [set up WLED and Screen sync](configuration.md).
 ## Maintenance
 
 Settings are in the dataset's `settings.json`. Snapshot the dataset before
-replacing the image. Load the new build and recreate the app; Screen sync starts off.
+replacing the image. Update the image version in the app YAML and redeploy;
+Screen sync starts off.
 
 If settings will not save, check the dataset permissions for the app's numeric
 user/group. Change ports and device mappings in the app YAML, then redeploy.

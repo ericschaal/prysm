@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 022
-features=(--no-default-features)
+features=(--no-default-features
+  --features "prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264")
 embedded=0
-hardware=0
 for option in "$@"; do
   case "$option" in
-    --hardware-h264)
-      hardware=1
-      features+=(--features "prysm-webos-capture/hardware-h264,prysm-webos-service/hardware-h264")
-      ;;
     --embedded-prysm)
       embedded=1
       features+=(--features "prysm-webos-service/embedded-prysm")
       ;;
-    *) echo 'Usage: build-ipk.sh [--hardware-h264] [--embedded-prysm]' >&2; exit 1 ;;
+    *) echo 'Usage: build-ipk.sh [--embedded-prysm]' >&2; exit 1 ;;
   esac
 done
 if ! command -v ares-package >/dev/null; then
@@ -40,11 +36,12 @@ export PKG_CONFIG_PATH_armv7_unknown_linux_gnueabi=
 cd "$root"
 # Cargo's top-level executable names are shared across feature combinations.
 cargo_target="$root/target"
-if ((embedded || hardware)); then
-  cargo_target="$root/target/webos-build/embedded-$embedded-hardware-$hardware"
+if ((embedded)); then
+  cargo_target="$root/target/webos-build/embedded"
 fi
 cargo build --locked "${features[@]}" -p prysm-webos-capture -p prysm-webos-service \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$cargo_target"
+# Build the isolated smoke fixture beside the worker; only the worker ships in the IPK.
 cargo build --locked -p prysm-webos-capture --example loopback-receiver \
   --target armv7-unknown-linux-gnueabi --profile webos --target-dir "$cargo_target"
 if ((embedded)); then

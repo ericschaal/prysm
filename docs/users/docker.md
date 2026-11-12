@@ -3,19 +3,19 @@
 Requires Docker on amd64 or arm64. The webOS capturer works with Docker Desktop;
 USB capture needs a Linux host. For TrueNAS, use [this guide](truenas.md).
 
-## 1. Build the image
+## 1. Download Compose
 
 ```sh
-git clone https://github.com/ericschaal/prysm.git
-cd prysm
-docker build -t prysm:local .
+mkdir prysm && cd prysm
+curl -fsSLO https://github.com/ericschaal/prysm/releases/latest/download/compose.yaml
 ```
 
 ## 2. Start Prysm
 
-Use the repository's [Compose file](../../compose.yaml):
+The [Compose file](../../compose.yaml) pins the released multi-platform image:
 
 ```sh
+docker compose pull
 docker compose up -d
 ```
 
@@ -66,11 +66,11 @@ Mount the whole directory at `/config`, not just `settings.json`.
 
 - Logs: `docker compose logs -f prysm`.
 - Stop: `docker compose down`. Adding `-v` deletes settings.
-- Rebuild: back up settings, then run:
+- Upgrade: back up settings, update the image version in `compose.yaml`, then run:
 
 ```sh
-docker build -t prysm:local .
-docker compose up -d --force-recreate
+docker compose pull
+docker compose up -d
 ```
 
 Screen sync starts off after recreation. Turn lights off in the panel before
