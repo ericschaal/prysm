@@ -195,7 +195,7 @@ async fn adapter_change_restarts_a_running_session() {
             .unwrap();
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
         assert!(before(&log, "output.idle:a:Off", "source.open:b"));
-        assert_eq!(log.count("output.open:a"), 2);
+        assert!(log.wait_for("output.open:a", 2).await);
         assert_eq!(handle.snapshot().borrow().session, SessionState::Running);
 
         handle
@@ -303,7 +303,8 @@ async fn restart_failure_keeps_settings_saved_and_a_later_change_recovers() {
         assert_eq!(replaced, initial.next());
         assert_eq!(store.saved(), Some(broken));
 
-        let snapshot = handle.snapshot().borrow().clone();
+        // The output opens at the first frame; its failure ends the session.
+        let snapshot = snapshot_until(&handle, |s| s.failure.is_some()).await;
         assert_eq!(
             snapshot
                 .failure
@@ -594,8 +595,10 @@ async fn stop_with_a_failing_idle_still_closes_the_source_and_reports_it() {
         );
 
         // Not faulted: lighting can start again, and shutdown reports the idle failure.
+        let opened = log.count("output.open:a");
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert_eq!(log.count("source.open:a"), 2);
+        assert!(log.wait_for("output.open:a", opened + 1).await);
         let shutdown = engine.shutdown().await.unwrap_err();
         assert_eq!(shutdown.to_string(), "fake output cannot idle");
         assert_eq!(log.count("source.close:a"), 2);
@@ -738,6 +741,101 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert!(handle.snapshot().borrow().input.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+fn quiet(after: u32, for_ms: u64) -> Settings {
+    settings(
+        FakeSourceSettings {
+            name: "s".into(),
+            quiet_after: Some(after),
+            quiet_for_ms: for_ms,
+            ..Default::default()
+        },
+        FakeOutputSettings {
+            name: "o".into(),
+            ..Default::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_source_without_frames_never_takes_the_output() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, quiet(0, 0), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        let waiting = snapshot_until(&handle, |s| {
+            s.input.is_some_and(|i| !i.receiving && i.fps == 0.0)
+        })
+        .await;
+        assert_eq!(waiting.session, SessionState::Running);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(log.count("output.open:o"), 0, "{:?}", log.events());
+
+        // Off leaves an untouched output untouched.
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(log.events(), ["source.open:s", "source.close:s"]);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_quiet_source_releases_the_output_until_frames_return() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, quiet(3, 3_600), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.write:o", 3).await);
+        assert_eq!(log.count("output.open:o"), 1);
+
+        // After the grace period the device returns to its own state.
+        assert!(log.wait_for("output.idle:o:Native", 1).await);
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Running);
+        assert!(snapshot.input.is_some_and(|i| !i.receiving));
+        assert!(snapshot.failure.is_none());
+
+        // The next frame takes it again.
+        assert!(log.wait_for("output.open:o", 2).await);
+        assert!(log.position("output.idle:o:Native") < log.last_position("output.open:o"));
+        let writes = log.count("output.write:o");
+        assert!(log.wait_for("output.write:o", writes + 1).await);
+
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(log.count("output.idle:o:Off"), 1);
+        assert_eq!(log.count("output.open:o"), 2);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn stopping_while_released_leaves_the_output_in_the_stop_mode() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, quiet(2, 0), DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Native", 1).await);
+
+        // Already native: nothing to reopen.
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert_eq!(log.count("output.open:o"), 1);
+        assert_eq!(handle.snapshot().borrow().session, SessionState::Native);
+
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(log.wait_for("output.idle:o:Native", 2).await);
+        // Released to native, stopped Off: reopened only to turn it off.
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert_eq!(log.count("output.open:o"), 3);
+        assert!(before(&log, "source.close:s", "output.idle:o:Off"));
+        assert_eq!(log.count("output.idle:o:Off"), 1);
         engine.shutdown().await.unwrap();
     })
     .await;

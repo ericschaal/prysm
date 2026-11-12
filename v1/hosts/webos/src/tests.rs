@@ -92,6 +92,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             target: Some(LightingTarget::Off),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
+            failure_kind: None,
             encoding: None,
         }
     );
@@ -211,10 +212,17 @@ async fn an_unconfirmed_release_faults_the_worker() {
         ..FakeSourceSettings::default()
     });
     let (mut peer, _feed, _log, task) = start(settings, LightingTarget::Processed);
-    let fault = peer
-        .wait_for(|e| matches!(e, Event::Faulted { .. }))
-        .await
-        .unwrap();
+    // The status just before the fault says lighting no longer runs.
+    let mut previous = None;
+    let fault = loop {
+        let event = peer.event().await.unwrap();
+        if matches!(event, Event::Faulted { .. }) {
+            break event;
+        }
+        previous = Some(event);
+    };
+    let last = previous.as_ref().and_then(status).unwrap();
+    assert!(!last.capturing && last.failure.is_some(), "{last:?}");
     let Event::Faulted { cause } = fault else {
         unreachable!()
     };
@@ -253,4 +261,35 @@ fn seed_writes_webos_capture_once() {
     std::fs::write(&path, "{}").unwrap();
     crate::seed(&path).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+}
+
+#[tokio::test]
+async fn a_session_waiting_for_video_is_not_capturing() {
+    let settings = source(&FakeSourceSettings {
+        quiet_after: Some(0),
+        ..FakeSourceSettings::default()
+    });
+    let (mut peer, _feed, log, task) = start(settings, LightingTarget::Processed);
+    peer.send(Command::Video {
+        video: Video::Unavailable,
+    });
+    // Lighting is on but no frame arrives: not capturing, output untouched.
+    let waiting = peer
+        .wait_for(|e| {
+            status(e).is_some_and(|s| s.target == Some(LightingTarget::Processed) && !s.capturing)
+        })
+        .await
+        .unwrap();
+    assert!(status(&waiting).unwrap().failure.is_none());
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    assert_eq!(log.count("output.open:"), 0, "{:?}", log.events());
+
+    peer.send(Command::Lighting {
+        target: LightingTarget::Off,
+    });
+    peer.wait_for(|e| status(e).is_some_and(|s| s.target == Some(LightingTarget::Off)))
+        .await
+        .unwrap();
+    peer.close();
+    task.await.unwrap().0.unwrap();
 }

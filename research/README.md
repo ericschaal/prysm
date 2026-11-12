@@ -34,6 +34,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | [Encoder latency](webos-capture/2026-11-02-encoder-latency/README.md) | Static hypotheses followed by live tests and integration; read follow-ups in order |
 | [Hardware qualification](webos-capture/hardware-h264-qualification.md) | Measurements from multiple historical implementations, with workload limits |
 | [Single-tap cleanup](webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md) | Current reduction to Combined/Video-only capture; older UI fallback paths removed |
+| [TV UI capture revisited](webos-capture/2026-11-12-ui-capture/README.md) | HAL graphics capture at 320×180 costs about 4.3 ms per frame; recommended only as a tap used while there is no video; probe-measured, not in v1 |
 | [Open encoder driver](webos-capture/2026-11-02-open-encoder-driver/report.md) | Public-source analysis and native V4L2 experiments; distinguish static evidence from live results |
 
 ## Reading and adding evidence

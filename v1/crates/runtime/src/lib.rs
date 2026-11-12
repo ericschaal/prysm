@@ -24,5 +24,7 @@ pub use engine::{Engine, EngineHandle};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
 pub use sample::sample_rgb;
-pub use session::{Preview, PreviewSlot, PreviewWatch, Session, SessionEnd};
+pub use session::{
+    OpenOutput, Preview, PreviewSlot, PreviewWatch, RELEASE, Session, SessionEnd, VIDEO_GRACE,
+};
 pub use surface::{Shutdown, Surface};

@@ -1,6 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{LightingTarget, SlimEncoding, Video};
+use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to.
@@ -67,10 +67,20 @@ pub struct State {
     #[cfg_attr(feature = "schema", schema(value_type = crate::schema::VideoSchema))]
     pub video: Video,
     pub worker: Phase,
+    /// Frames are flowing. Full: lighting runs and frames arrive (false
+    /// while it waits for video). Slim: frames were sent in the last second.
+    /// Always false unless `worker` is `running`.
     pub capturing: bool,
     /// Full only: the portal's LAN address once the worker reported it.
     pub portal: Option<String>,
+    /// The current failure (or, slim, the receiver wait) with its causes.
     pub failure: Option<String>,
+    /// What `failure` is; set exactly when `failure` is.
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<crate::schema::FailureKindSchema>)
+    )]
+    pub failure_kind: Option<FailureKind>,
     /// Slim only: the encoding of the frames being sent while connected to
     /// the receiver; always the configured `capture.encoding`.
     #[cfg_attr(

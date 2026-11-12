@@ -15,7 +15,7 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{SlimCapture, Video};
+use prysm_webos_link::{FailureKind, SlimCapture, Video};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
@@ -41,11 +41,11 @@ fn luna() -> Value {
         autostart: true,
         instance: Some("http://192.168.1.20:8787".into()),
         receiver: Some(SocketAddr::from(([192, 168, 1, 20], 7380))),
-        capture: SlimCapture {
+        capture: Some(SlimCapture {
             fps: 25,
             include_ui: false,
             ..SlimCapture::default()
-        },
+        }),
     };
     let full = TvState {
         flavor: Flavor::Full,
@@ -58,6 +58,7 @@ fn luna() -> Value {
         capturing: true,
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: None,
+        failure_kind: None,
         encoding: None,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
     };
@@ -71,7 +72,10 @@ fn luna() -> Value {
         worker: Phase::Retrying,
         capturing: false,
         portal: None,
-        failure: Some("connect 192.168.1.20:7380: connection refused".into()),
+        failure: Some(
+            "worker failed: hardware H.264 encoder cannot start: rvenc unavailable".into(),
+        ),
+        failure_kind: Some(FailureKind::Encoder),
         encoding: None,
         log: Vec::new(),
     };

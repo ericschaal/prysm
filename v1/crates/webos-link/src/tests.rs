@@ -35,10 +35,16 @@ fn events_round_trip() {
         capturing: true,
         target: Some(LightingTarget::Processed),
         portal: Some("http://192.168.1.5:8787/".into()),
-        failure: None,
+        failure: Some("waiting for the receiver: refused".into()),
+        failure_kind: Some(FailureKind::Receiver),
         encoding: None,
     });
     let text = encode(&status).unwrap();
+    assert!(
+        String::from_utf8_lossy(&text).contains(r#""failure_kind":"receiver""#),
+        "{}",
+        String::from_utf8_lossy(&text)
+    );
     assert!(text.starts_with(br#"{"type":"status","capturing":true"#));
     assert_eq!(decode::<Event>(&text).unwrap(), status);
     let fault = Event::Faulted {

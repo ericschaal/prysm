@@ -57,7 +57,12 @@ into `@prysm/contracts/application`.
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
 `settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., profiles?: [{ id, name, correction }], active_profile? } }`.
 Color profiles are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
-`failure` is the last lighting failure or `null`.
+`failure` is the last lighting failure or `null`. Setting the target to
+`processed` opens the capture (a failure is the reply); the output is opened
+at the first frame, so an output that cannot open ends the session and appears
+only in `failure`. While no frames arrive, `input.receiving` is `false`
+(waiting for video) and after a few seconds the output is returned to its own
+state until frames return.
 
 Settings replacement is whole-document and optimistic: send the `revision` you
 edited from as `expected`. The engine validates, persists, then applies. A

@@ -1,4 +1,6 @@
-use crate::{AdapterSettings, Error, FrameSource, LedOutput, Result, Settings, ValidationError};
+use crate::{
+    AdapterSettings, Error, FrameSource, LedOutput, Result, Section, Settings, ValidationError,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -71,10 +73,10 @@ impl Registry {
     pub fn validate(&self, settings: &Settings) -> Result<()> {
         settings.processing.validate()?;
         if let Some(capture) = &settings.capture {
-            find(&self.sources, "capture", capture)?.validate(capture)?;
+            find(&self.sources, Section::Capture, capture)?.validate(capture)?;
         }
         if let Some(output) = &settings.output {
-            find(&self.outputs, "output", output)?.validate(output)?;
+            find(&self.outputs, Section::Output, output)?.validate(output)?;
         }
         Ok(())
     }
@@ -82,19 +84,19 @@ impl Registry {
     /// # Errors
     /// Unknown kind, invalid settings or the factory's open failure.
     pub fn open_source(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
-        find(&self.sources, "capture", settings)?.open(settings)
+        find(&self.sources, Section::Capture, settings)?.open(settings)
     }
 
     /// # Errors
     /// Unknown kind, invalid settings or the factory's open failure.
     pub fn open_output(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>> {
-        find(&self.outputs, "output", settings)?.open(settings)
+        find(&self.outputs, Section::Output, settings)?.open(settings)
     }
 }
 
 fn find<'a, T: ?Sized>(
     map: &'a BTreeMap<&'static str, Arc<dyn Erased<T>>>,
-    section: &str,
+    section: Section,
     settings: &AdapterSettings,
 ) -> Result<&'a dyn Erased<T>> {
     map.get(settings.kind.as_str())

@@ -10,6 +10,21 @@ use std::time::{Duration, Instant};
 /// colors are rewritten at this interval.
 const REFRESH: Duration = Duration::from_millis(500);
 
+/// How long a source may deliver no frames before the session releases the
+/// output to [`RELEASE`] (no signal, screen saver, no sender). The output is
+/// opened only at the first frame and again at the first frame after a
+/// release.
+pub const VIDEO_GRACE: Duration = Duration::from_secs(3);
+
+/// What a released output shows while waiting for frames: the device's own
+/// state (WLED's preset or effect).
+pub const RELEASE: IdleMode = IdleMode::Native;
+
+/// Opens the session's output. Called on the session thread at the first
+/// frame and at the first frame after each release, and at the end when the
+/// final idle mode differs from the one the output was left in.
+pub type OpenOutput = Box<dyn FnMut() -> Result<Box<dyn LedOutput>> + Send>;
+
 /// The latest processed frame, for surfaces that render what the LEDs show.
 #[derive(Debug, Clone)]
 pub struct Preview {
@@ -124,6 +139,58 @@ impl SessionEnd {
     }
 }
 
+/// The session's hold on its output.
+enum Leds {
+    /// Never opened by this session.
+    Untouched,
+    Held(Box<dyn LedOutput>),
+    /// Idled in this mode and closed.
+    Left(IdleMode),
+    /// A release failed: the device may be in any mode.
+    Unknown,
+}
+
+impl Leds {
+    fn write(&mut self, colors: &EdgeColors, open: &mut OpenOutput) -> Result<()> {
+        if !matches!(self, Self::Held(_)) {
+            *self = Self::Held(open()?);
+        }
+        match self {
+            Self::Held(output) => output.write(colors),
+            Self::Untouched | Self::Left(_) | Self::Unknown => Ok(()),
+        }
+    }
+
+    fn held(&mut self) -> Option<&mut dyn LedOutput> {
+        match self {
+            Self::Held(output) => Some(output.as_mut()),
+            Self::Untouched | Self::Left(_) | Self::Unknown => None,
+        }
+    }
+
+    /// Idle a held output in `mode` and close it.
+    fn release(&mut self, mode: IdleMode) -> Result<()> {
+        let Self::Held(output) = std::mem::replace(self, Self::Unknown) else {
+            return Ok(());
+        };
+        output.idle(mode)?;
+        *self = Self::Left(mode);
+        Ok(())
+    }
+
+    /// Leave the output in `mode`: idle it if held; otherwise open it only
+    /// when it may be in another mode. An untouched output stays untouched
+    /// for `Off`, the state lighting started from.
+    fn finish(mut self, mode: IdleMode, open: &mut OpenOutput) -> Result<()> {
+        match self {
+            Self::Held(_) => self.release(mode),
+            Self::Left(left) if left == mode => Ok(()),
+            Self::Untouched if mode == IdleMode::Off => Ok(()),
+            Self::Untouched | Self::Left(_) | Self::Unknown => open()?.idle(mode),
+        }
+    }
+}
+
 struct Control {
     config: LatestSlot<Config>,
     idle: Mutex<IdleMode>,
@@ -134,10 +201,13 @@ struct Control {
 /// One dedicated thread owning a source, the processor and an output.
 ///
 /// Loop: stop flag, pending config at the frame boundary, `next_frame`,
-/// count, process, write, preview (only while watched); a quiet tick rewrites
-/// the last colors; [`Pull::Ended`](prysm_ports::Pull::Ended) leaves the
-/// loop like a stop. Then the preview is cleared, `source.close()` and
-/// `output.idle(mode)`.
+/// count, process, open the output if not held, write, preview (only while
+/// watched); a quiet tick rewrites the last colors, and after
+/// [`VIDEO_GRACE`] without frames idles the output in [`RELEASE`] and closes
+/// it until the next frame; [`Pull::Ended`](prysm_ports::Pull::Ended) leaves
+/// the loop like a stop. Then the preview is cleared, `source.close()`, and
+/// the output is left in the stop's idle mode (idled if held, reopened only
+/// if it was left in another mode; never opened for `Off` if no frame came).
 pub struct Session {
     control: Arc<Control>,
     worker: Worker<SessionEnd>,
@@ -145,10 +215,10 @@ pub struct Session {
 
 impl Session {
     /// # Errors
-    /// The thread could not be spawned; the adapters are dropped unreleased.
+    /// The thread could not be spawned; the source is dropped unreleased.
     pub fn start(
         mut source: Box<dyn FrameSource>,
-        mut output: Box<dyn LedOutput>,
+        mut open_output: OpenOutput,
         config: Config,
         preview: Arc<PreviewSlot>,
     ) -> Result<Self> {
@@ -160,9 +230,18 @@ impl Session {
         let shared = control.clone();
         let worker = Worker::spawn("prysm-session", move |flags| {
             let mut processor = PrysmProcessor::new(&config);
+            let mut leds = Leds::Untouched;
             let mut last: Option<(EdgeColors, Instant)> = None;
+            let mut last_frame = Instant::now();
             let pumped = flags.pump(&mut *source, |frame| {
                 let Some(frame) = frame else {
+                    let Some(output) = leds.held() else {
+                        return Ok(());
+                    };
+                    if last_frame.elapsed() >= VIDEO_GRACE {
+                        last = None;
+                        return leds.release(RELEASE);
+                    }
                     if let Some((colors, written)) = &mut last
                         && written.elapsed() >= REFRESH
                     {
@@ -171,13 +250,14 @@ impl Session {
                     }
                     return Ok(());
                 };
+                last_frame = Instant::now();
                 shared.frames.fetch_add(1, Ordering::Relaxed);
                 if let Some(config) = shared.config.take() {
                     processor.configure(&config);
                 }
                 let shown = (preview.viewers() > 0).then(|| frame.clone());
                 let colors = processor.process_frame(frame);
-                output.write(&colors)?;
+                leds.write(&colors, &mut open_output)?;
                 last = Some((colors.clone(), Instant::now()));
                 if let Some(shown) = shown {
                     let viewport = processor
@@ -194,7 +274,7 @@ impl Session {
             let released = source.close();
             flags.set_phase(SessionPhase::IdlingOutput);
             let mode = *shared.idle.lock().unwrap_or_else(PoisonError::into_inner);
-            let idled = output.idle(mode);
+            let idled = leds.finish(mode, &mut open_output);
             SessionEnd {
                 failure,
                 ended,
@@ -284,7 +364,7 @@ mod tests {
         let frames = Arc::new(AtomicUsize::new(0));
         let session = Session::start(
             Box::new(Grey(frames.clone())),
-            Box::new(Sink(Arc::new(AtomicBool::new(false)))),
+            Box::new(|| Ok(Box::new(Sink(Arc::new(AtomicBool::new(false)))) as Box<dyn LedOutput>)),
             Config::default(),
             slot.clone(),
         )

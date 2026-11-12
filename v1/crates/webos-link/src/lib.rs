@@ -65,7 +65,9 @@ pub enum Event {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerStatus {
-    /// Full: a lighting session is running. Slim: frames were sent in the last second.
+    /// Frames are flowing. Full: a lighting session is running and frames
+    /// arrived in the last second (false while it waits for video). Slim:
+    /// frames were sent in the last second.
     pub capturing: bool,
     /// Full only: the engine's target, including changes made in the portal.
     pub target: Option<LightingTarget>,
@@ -73,10 +75,27 @@ pub struct WorkerStatus {
     pub portal: Option<String>,
     /// The last failure with its cause chain.
     pub failure: Option<String>,
+    /// What `failure` is; set exactly when `failure` is.
+    #[serde(default)]
+    pub failure_kind: Option<FailureKind>,
     /// Slim only: the encoding of the frames being sent, while connected to
     /// the receiver (always the configured one).
     #[serde(default)]
     pub encoding: Option<SlimEncoding>,
+}
+
+/// What a reported failure is, so the TV app can offer the matching fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// Slim: the configured encoder could not start or failed. Another
+    /// encoding may work; the worker never switches on its own.
+    Encoder,
+    /// Slim: the receiver is unavailable (its host is not lighting or is
+    /// unreachable) or paused the stream. The worker keeps reconnecting.
+    Receiver,
+    /// Anything else.
+    Other,
 }
 
 /// Worker exit codes.

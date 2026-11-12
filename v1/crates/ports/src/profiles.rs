@@ -1,5 +1,5 @@
 //! Saved color-correction profiles, in the controls a user edits.
-use crate::ValidationError;
+use crate::{Section, ValidationError};
 use prysm_core::ColorCorrection;
 use serde::{Deserialize, Serialize};
 
@@ -157,7 +157,7 @@ fn control(value: f32) -> i16 {
 /// Check a profile list and its active reference. Fields are named under
 /// `section`, for example `processing.profiles[2].name`.
 pub(crate) fn validate(
-    section: &str,
+    section: Section,
     profiles: &[ColorProfile],
     active: Option<&str>,
 ) -> Result<(), ValidationError> {
@@ -230,7 +230,9 @@ mod tests {
     }
 
     fn field(profiles: &[ColorProfile], active: Option<&str>) -> String {
-        validate("processing", profiles, active).unwrap_err().field
+        validate(Section::Processing, profiles, active)
+            .unwrap_err()
+            .field
     }
 
     #[test]
@@ -293,11 +295,11 @@ mod tests {
 
     #[test]
     fn profile_lists_are_bounded_unique_named_and_referenced() {
-        validate("processing", &[], None).unwrap();
+        validate(Section::Processing, &[], None).unwrap();
         let two = [profile("ps5", "PS5"), profile("tv-apps", "TV apps")];
-        validate("processing", &two, Some("tv-apps")).unwrap();
+        validate(Section::Processing, &two, Some("tv-apps")).unwrap();
         let uuid = profile("0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f", "x");
-        validate("processing", &[uuid], None).unwrap();
+        validate(Section::Processing, &[uuid], None).unwrap();
 
         assert_eq!(
             field(&two, Some("gone")),
@@ -321,7 +323,7 @@ mod tests {
                 "{name:?}"
             );
         }
-        validate("processing", &[profile("a", &"é".repeat(64))], None).unwrap();
+        validate(Section::Processing, &[profile("a", &"é".repeat(64))], None).unwrap();
 
         let mut out_of_range = profile("a", "A");
         out_of_range.correction.hue.magenta = -101;
@@ -333,7 +335,7 @@ mod tests {
         let many: Vec<_> = (0..=MAX_PROFILES)
             .map(|i| profile(&i.to_string(), "P"))
             .collect();
-        validate("processing", &many[..MAX_PROFILES], None).unwrap();
+        validate(Section::Processing, &many[..MAX_PROFILES], None).unwrap();
         assert_eq!(field(&many, None), "processing.profiles");
     }
 }

@@ -8,7 +8,7 @@ use prysm_h264::H264Error;
 use prysm_ports::{Error, FrameSink, Result};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
-use prysm_webos_link::{Command, Event, HEARTBEAT, SlimEncoding, WorkerStatus};
+use prysm_webos_link::{Command, Event, FailureKind, HEARTBEAT, SlimEncoding, WorkerStatus};
 use std::error::Error as _;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -163,6 +163,16 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
     }
 }
 
+/// What ended the worker: the configured encoder, or something else (a
+/// receiver wait never ends it).
+pub fn failure_kind(error: &Error) -> FailureKind {
+    if encoder_failure(error) {
+        FailureKind::Encoder
+    } else {
+        FailureKind::Other
+    }
+}
+
 /// The configured encoder could not start or failed.
 fn encoder_failure(error: &Error) -> bool {
     let Error::Adapter {
@@ -254,6 +264,7 @@ impl<V: VideoFeed> ForwarderLink<V> {
                     let now = self.flow.sent();
                     let next = WorkerStatus {
                         capturing: now != counted,
+                        failure_kind: self.flow.waiting().map(|_| FailureKind::Receiver),
                         failure: self.flow.waiting(),
                         encoding: self.flow.encoding(),
                         ..WorkerStatus::default()

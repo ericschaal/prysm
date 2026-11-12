@@ -33,7 +33,9 @@ A `file` source plays once (`"repeat": true` loops it); at its end lighting
 stops without a failure and the target becomes `off`. The `remote` source
 listens only while lighting runs; the TV's slim worker reconnects every second
 and reports that it is waiting meanwhile. While lighting runs, the state's
-`input` gives the measured frame rate and whether frames are arriving.
+`input` gives the measured frame rate and whether frames are arriving; while
+none arrive lighting is waiting for video and the output is left to its own
+state.
 
 ```sh
 cargo run --manifest-path v1/Cargo.toml -p prysm-headless -- --help
@@ -73,7 +75,10 @@ impl SourceFactory for Camera {
 
 An **output** is the same shape with `OutputFactory` and `LedOutput`
 (`write(&EdgeColors)`, `idle(self: Box<Self>, IdleMode)`); `idle` runs on every
-session exit, so it is also the failure compensation. Register it with
+session exit, so it is also the failure compensation. The session opens the
+output at the source's first frame, not at start, and idles it `Native` (the
+device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
+at the next frame; a source that never delivers never takes the device over. Register it with
 `.output(MyLeds)` in each host that should offer it.
 
 A **surface** gets an `EngineHandle` (commands, snapshot watch, preview slot)

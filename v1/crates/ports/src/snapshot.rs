@@ -69,6 +69,10 @@ pub struct Input {
     /// Frames per second over the last window, to one decimal.
     pub fps: f32,
     /// At least one frame arrived in the last window. `false` right after a
-    /// session starts and while a source is quiet (no signal, no sender).
+    /// session starts and while a source is quiet (no signal, no sender):
+    /// lighting is waiting for video. The session takes the output only at a
+    /// frame, and releases it to the device's own state (`IdleMode::Native`)
+    /// after a few seconds without one, so a waiting session does not hold
+    /// the LEDs.
     pub receiving: bool,
 }

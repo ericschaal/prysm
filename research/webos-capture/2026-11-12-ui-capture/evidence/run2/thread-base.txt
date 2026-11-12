@@ -1,0 +1,5 @@
+# thread ui=320x180 ui_hz=0 ui_opened=0 ui_failed=0 ui_frames=0 ui_busy_mean_us=0 ui_cpu_ms=0
+# video_frames=300 wall_ms=9966 process_cpu_ms=56 cpu_share_of_one_core=0.6%
+# video_wake_late n=300 mean_us=80 p50=74 p95=84 p99=416 max=911
+# video_work n=300 mean_us=163 p50=156 p95=197 p99=214 max=628
+# video_interval n=299 mean_us=33333 p50=33333 p95=33350 p99=33374 max=34174

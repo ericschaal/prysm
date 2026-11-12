@@ -417,18 +417,42 @@ async fn state_read_and_set_target() {
 #[tokio::test]
 async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
     bounded(async {
-        let failing = with_output(FakeOutputSettings {
-            fail_open: true,
-            ..FakeOutputSettings::default()
-        });
+        let failing = Settings {
+            capture: Some(AdapterSettings::new(
+                "fake",
+                &FakeSourceSettings {
+                    fail_open: true,
+                    ..FakeSourceSettings::default()
+                },
+            )),
+            ..fakes::settings()
+        };
         let portal = start(failing, Duration::from_secs(5)).await;
         let (status, body) = portal.target("processed").await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(
             body,
-            json!({ "kind": "adapter", "message": "fake output cannot open" })
+            json!({ "kind": "adapter", "message": "fake source cannot open" })
         );
         assert_eq!(portal.state().await["failure"]["kind"], "adapter");
+        portal.shutdown().await.unwrap();
+
+        // The output opens at the first frame: its failure ends the session
+        // and is reported in the state, not in the reply.
+        let failing = with_output(FakeOutputSettings {
+            fail_open: true,
+            ..FakeOutputSettings::default()
+        });
+        let portal = start(failing, Duration::from_secs(5)).await;
+        let (status, _) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let mut state = portal.state().await;
+        while state["failure"].is_null() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            state = portal.state().await;
+        }
+        assert_eq!(state["failure"]["kind"], "adapter");
+        assert_eq!(state["failure"]["message"], "fake output cannot open");
         portal.shutdown().await.unwrap();
 
         let portal = start(Settings::default(), Duration::from_secs(5)).await;

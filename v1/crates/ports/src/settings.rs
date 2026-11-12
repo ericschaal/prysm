@@ -34,6 +34,32 @@ pub struct Settings {
     pub processing: Processing,
 }
 
+/// A top-level [`Settings`] section, named in validation field paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Capture,
+    Output,
+    Processing,
+}
+
+impl Section {
+    /// The [`Settings`] field name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Capture => "capture",
+            Self::Output => "output",
+            Self::Processing => "processing",
+        }
+    }
+}
+
+impl fmt::Display for Section {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One adapter's settings: `{ "kind": "...", ...fields }`. The fields stay
 /// untyped here; the factory registered for `kind` decodes and validates them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,27 +125,33 @@ impl Processing {
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        let path = |field: &str| format!("{}.{field}", Section::Processing);
         let percent = |field: &str, value: u8, min: u8| {
-            (min..=100).contains(&value).then_some(()).ok_or_else(|| {
-                ValidationError::new(format!("processing.{field}"), format!("must be {min}-100"))
-            })
+            (min..=100)
+                .contains(&value)
+                .then_some(())
+                .ok_or_else(|| ValidationError::new(path(field), format!("must be {min}-100")))
         };
         percent("brightness_percent", self.brightness_percent, 0)?;
         percent("shadow_lift_percent", self.shadow_lift_percent, 0)?;
         percent("spatial_reach_percent", self.spatial_reach_percent, 1)?;
         if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
             return Err(ValidationError::new(
-                "processing.smoothing_seconds",
+                path("smoothing_seconds"),
                 "must be a finite number of seconds, 0 to disable",
             ));
         }
         if self.sample_density == 0 {
             return Err(ValidationError::new(
-                "processing.sample_density",
+                path("sample_density"),
                 "must be at least 1",
             ));
         }
-        profiles::validate("processing", &self.profiles, self.active_profile.as_deref())
+        profiles::validate(
+            Section::Processing,
+            &self.profiles,
+            self.active_profile.as_deref(),
+        )
     }
 
     /// The active profile, if one is set and exists.
@@ -190,6 +222,20 @@ mod tests {
         let round = serde_json::to_value(&settings).unwrap();
         assert_eq!(round["capture"]["kind"], "device");
         assert!(round.get("output").is_none());
+    }
+
+    #[test]
+    fn section_names_are_settings_fields() {
+        let adapter = AdapterSettings::new("any", &serde_json::json!({}));
+        let settings = Settings {
+            capture: Some(adapter.clone()),
+            output: Some(adapter),
+            processing: Processing::default(),
+        };
+        let written = serde_json::to_value(&settings).unwrap();
+        for section in [Section::Capture, Section::Output, Section::Processing] {
+            assert!(written.get(section.as_str()).is_some(), "{section}");
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@ use futures::future::BoxFuture;
 use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop, chain};
-use prysm_webos_link::{Command, Event, HEARTBEAT, WorkerStatus};
+use prysm_webos_link::{Command, Event, FailureKind, HEARTBEAT, WorkerStatus};
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
@@ -16,7 +16,7 @@ const HEALTHY: Duration = Duration::from_secs(60);
 
 /// `Surface<EngineHandle>`: applies the initial target, then turns link
 /// commands into video signals and targets, reports every snapshot change
-/// (and a heartbeat) as status, re-applies a non-Off target after a session
+/// (and a heartbeat) as status (the last one before a fault too), re-applies a non-Off target after a session
 /// failure with backoff, and stops the worker on a faulted session.
 pub struct EngineLink<V> {
     link: Link,
@@ -63,6 +63,12 @@ impl<V: VideoFeed> EngineLink<V> {
         let mut retry = Retry::new(self.retry_min);
         loop {
             let snapshot = snapshots.borrow_and_update().clone();
+            let status = status(&snapshot, self.portal.as_ref());
+            if sent.as_ref() != Some(&status) {
+                events.send(&Event::Status(status.clone()));
+                sent = Some(status);
+                beat = Instant::now() + self.heartbeat;
+            }
             if let SessionState::Faulted(phase) = snapshot.session {
                 let cause = snapshot.failure.as_ref().map_or_else(
                     || Error::Faulted(phase).to_string(),
@@ -73,12 +79,6 @@ impl<V: VideoFeed> EngineLink<V> {
                 });
                 stop.request(Stop::Faulted(cause));
                 return Ok(());
-            }
-            let status = status(&snapshot, self.portal.as_ref());
-            if sent.as_ref() != Some(&status) {
-                events.send(&Event::Status(status.clone()));
-                sent = Some(status);
-                beat = Instant::now() + self.heartbeat;
             }
             retry.observe(&snapshot, Instant::now());
             let retry_at = retry.at;
@@ -128,15 +128,18 @@ async fn wait(at: Option<Instant>) {
 }
 
 fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
+    let failure = snapshot
+        .failure
+        .as_ref()
+        .or(snapshot.surface_failures.last());
     WorkerStatus {
-        capturing: snapshot.session == SessionState::Running,
+        // Running and frames arriving: false while waiting for video.
+        capturing: snapshot.session == SessionState::Running
+            && snapshot.input.is_some_and(|input| input.receiving),
         target: Some(snapshot.target),
         portal: portal.cloned(),
-        failure: snapshot
-            .failure
-            .as_ref()
-            .or(snapshot.surface_failures.last())
-            .map(|failure| chain(failure)),
+        failure: failure.map(|failure| chain(failure)),
+        failure_kind: failure.map(|_| FailureKind::Other),
         encoding: None,
     }
 }

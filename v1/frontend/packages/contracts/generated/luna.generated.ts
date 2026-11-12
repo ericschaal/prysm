@@ -15,6 +15,14 @@ export interface components {
             returnValue: false;
         };
         /**
+         * @description What a failure is, so the app can offer the matching fix. `encoder`
+         *     (slim): the configured encoder could not start or failed; another
+         *     encoding may work. `receiver` (slim): the receiver is unavailable or
+         *     paused the stream; the worker keeps reconnecting. `other`: anything else.
+         * @enum {string}
+         */
+        FailureKind: "encoder" | "receiver" | "other";
+        /**
          * @description Which package this supervisor belongs to.
          * @enum {string}
          */
@@ -38,8 +46,8 @@ export interface components {
         Power: "unknown" | "active" | "screen_saver" | "asleep";
         /**
          * @description `tv.json` and the `setPreferences` request (complete, every field
-         *     optional). Fields marked "Slim only" must stay unset (default) in the
-         *     full package.
+         *     optional). Fields marked "Slim only" must stay unset (`null` or absent)
+         *     in the full package.
          */
         Preferences: {
             /**
@@ -47,17 +55,8 @@ export interface components {
              * @default false
              */
             autostart?: boolean;
-            /**
-             * @description Slim only: capture size, rate and menu blending.
-             * @default {
-             *       "encoding": "h264_hardware",
-             *       "fps": 30,
-             *       "height": 180,
-             *       "include_ui": true,
-             *       "width": 320
-             *     }
-             */
-            capture?: components["schemas"]["SlimCapture"];
+            /** @default null */
+            capture?: components["schemas"]["SlimCapture"] | null;
             /**
              * @description Slim only: the headless Prysm's portal origin, such as
              *     `http://192.168.1.20:8787`. Only the TV app uses it.
@@ -121,11 +120,18 @@ export interface components {
          *     Fields marked "Full only" are `null` in the slim package.
          */
         State: {
+            /**
+             * @description Frames are flowing. Full: lighting runs and frames arrive (false
+             *     while it waits for video). Slim: frames were sent in the last second.
+             *     Always false unless `worker` is `running`.
+             */
             capturing: boolean;
             /** @description Slim: frames should flow. Full: lighting is not off. */
             enabled: boolean;
             encoding?: components["schemas"]["SlimEncoding"] | null;
+            /** @description The current failure (or, slim, the receiver wait) with its causes. */
             failure?: string | null;
+            failure_kind?: components["schemas"]["FailureKind"] | null;
             /** @description The installed package; both install as `io.prysm.tv`. */
             flavor: components["schemas"]["Flavor"];
             lighting?: components["schemas"]["LightingTarget"] | null;
@@ -161,6 +167,7 @@ export interface components {
 }
 export type DoneReply = components['schemas']['DoneReply'];
 export type ErrorReply = components['schemas']['ErrorReply'];
+export type FailureKind = components['schemas']['FailureKind'];
 export type Flavor = components['schemas']['Flavor'];
 export type GetStateRequest = components['schemas']['GetStateRequest'];
 export type LightingTarget = components['schemas']['LightingTarget'];

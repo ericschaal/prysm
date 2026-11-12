@@ -1,6 +1,8 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
 import type { Preferences, SlimCapture, State } from '@prysm/webos-platform';
 
+export type SlimEncoding = Required<SlimCapture>['encoding'];
+
 /** What Rust uses for omitted slim capture fields. */
 export const slimCaptureDefaults: Required<SlimCapture> = {
   width: 320,
@@ -10,6 +12,39 @@ export const slimCaptureDefaults: Required<SlimCapture> = {
   encoding: 'h264_hardware',
 };
 export const PORTAL_PORT = 8787;
+
+/** The slim stream encodings in the order offered, with their trade-off. */
+export const encodingChoices: {
+  value: SlimEncoding;
+  name: string;
+  title: string;
+  detail: string;
+}[] = [
+  {
+    value: 'h264_hardware',
+    name: 'Hardware H.264',
+    title: 'Hardware H.264 (recommended)',
+    detail: 'The TV’s video chip compresses the picture: little work for the TV, little network (about 2 Mbit/s).',
+  },
+  {
+    value: 'h264_software',
+    name: 'Software H.264',
+    title: 'Software H.264',
+    detail: 'The TV’s processor compresses the picture: more work for the TV, same little network. Try it if hardware fails.',
+  },
+  {
+    value: 'raw',
+    name: 'Uncompressed',
+    title: 'Uncompressed',
+    detail: 'No compression: least work for the TV, but about ten times the network (about 21 Mbit/s at 320 × 180, 30 fps).',
+  },
+];
+
+/** The short name of an encoding, as the settings row and status card show it. */
+export function encodingName(encoding: SlimEncoding): string {
+  const choice = encodingChoices.filter((item) => item.value === encoding)[0];
+  return choice ? choice.name : encoding;
+}
 
 /** Structural equality ignoring key order and `undefined` fields. */
 export function equal(a: unknown, b: unknown): boolean {
@@ -24,17 +59,27 @@ export function equal(a: unknown, b: unknown): boolean {
   return keys.every((key) => equal(left[key], right[key]));
 }
 
-/** Preferences with every field present, as the supervisor stores them. */
+/**
+ * Preferences with every field present, as the supervisor stores them. The
+ * slim capture block is completed when present and left out when absent (the
+ * full package has none), so it is never sent where it does not belong.
+ */
 export type SavedPreferences = Required<Omit<Preferences, 'capture'>> & {
-  capture: Required<SlimCapture>;
+  capture?: Required<SlimCapture>;
 };
 export function completePreferences(value: Preferences): SavedPreferences {
-  return {
+  const saved: SavedPreferences = {
     autostart: value.autostart ?? false,
     instance: value.instance ?? null,
     receiver: value.receiver ?? null,
-    capture: { ...slimCaptureDefaults, ...value.capture },
   };
+  if (value.capture) saved.capture = captureOf(value);
+  return saved;
+}
+
+/** The slim capture settings, with Rust's defaults for anything absent. */
+export function captureOf(value: Preferences): Required<SlimCapture> {
+  return { ...slimCaptureDefaults, ...value.capture };
 }
 
 /**
@@ -112,8 +157,6 @@ export function localPortal(portal: string | null | undefined): string | null {
   return `http://127.0.0.1:${match[1] ?? '80'}`;
 }
 
-export const WAITING_PREFIX = 'waiting for the receiver';
-
 /** The first line of a failure, short enough for the status card. */
 export function failureText(failure: string): string {
   const line = failure.split('\n')[0]!.trim();
@@ -136,6 +179,11 @@ export interface TvStatus {
   attention: boolean;
   /** Frames flow from an awake TV with video. */
   ready: boolean;
+  /**
+   * Slim: the configured encoder failed (`failure_kind: encoder`); offer a
+   * direct switch of the encoding.
+   */
+  changeEncoding: boolean;
 }
 
 /**
@@ -156,6 +204,7 @@ export function tvStatus(
       action: 'none',
       attention: false,
       ready: false,
+      changeEncoding: false,
     };
   if (!online || !state)
     return {
@@ -165,20 +214,24 @@ export function tvStatus(
       action: 'setup',
       attention: true,
       ready: false,
+      changeEncoding: false,
     };
   const full = state.flavor === 'full';
   const { enabled } = state;
   const failure = state.failure ?? null;
-  const waiting = !!failure && failure.startsWith(WAITING_PREFIX);
+  // Slim: the receiver is unavailable; the worker keeps trying, not a failure.
+  const waiting = !!failure && state.failure_kind === 'receiver';
   let title: string;
   let description: string;
   let attention = false;
+  const encoderFailed = !full && !!failure && state.failure_kind === 'encoder';
+  const encodingHint = encoderFailed ? ' If it keeps failing, choose another stream encoding.' : '';
   if (state.worker === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'Finishing the current capture session.';
   } else if (state.worker === 'retrying') {
     title = 'Capture needs attention';
-    description = `${failure ? `${failureText(failure)}. ` : ''}Prysm tries again automatically.`;
+    description = `${failure ? `${failureText(failure)}. ` : ''}Prysm tries again automatically.${encodingHint}`;
     attention = true;
   } else if (enabled && state.power !== 'active') {
     title = 'Waiting for TV';
@@ -187,7 +240,7 @@ export function tvStatus(
       : 'Capture resumes when the TV wakes up.';
   } else if (enabled && state.video === 'unavailable') {
     title = 'Waiting for video';
-    description = 'Select an HDMI input or play a video on the TV.';
+    description = `Select an HDMI input or play a video on the TV.${full ? FULL_RELEASED : ''}`;
   } else if (full) {
     if (!enabled) {
       title = 'Lights off';
@@ -198,11 +251,13 @@ export function tvStatus(
     } else if (state.capturing) {
       title = 'Screen sync is on';
       description = 'This TV is processing the picture and sending colours to your lights.';
+    } else if (state.portal && state.worker === 'running') {
+      // Lighting is on but no frames arrive: the lights are released to WLED.
+      title = 'Waiting for video';
+      description = `Screen sync starts when a picture arrives.${FULL_RELEASED}`;
     } else {
-      title = state.portal ? 'Starting screen sync…' : 'Starting Prysm…';
-      description = state.portal
-        ? 'Waiting for the first picture.'
-        : 'Waiting for the web portal to open.';
+      title = 'Starting Prysm…';
+      description = 'Waiting for the web portal to open.';
     }
   } else if (!state.preferences.receiver) {
     title = 'Not set up';
@@ -224,7 +279,7 @@ export function tvStatus(
   }
   if (failure && !waiting && state.worker !== 'retrying') {
     title = 'Capture needs attention';
-    description = `${failureText(failure)}. Open Service options for diagnostics.`;
+    description = `${failureText(failure)}.${encodingHint} Open Service options for diagnostics.`;
     attention = true;
   }
 
@@ -253,8 +308,11 @@ export function tvStatus(
     action,
     attention,
     ready: state.capturing && state.power === 'active' && state.video !== 'unavailable',
+    changeEncoding: encoderFailed,
   };
 }
+
+const FULL_RELEASED = ' Meanwhile your lights show their own WLED effects.';
 
 const powerNames = {
   unknown: 'unknown',
@@ -281,7 +339,10 @@ export function diagnostics(state: State | null): string {
     `Capturing: ${state.capturing ? 'yes' : 'no'}`,
   ];
   if (state.flavor === 'slim')
-    lines.push(`Frames go to: ${state.preferences.receiver ?? 'not set'}`);
+    lines.push(
+      `Frames go to: ${state.preferences.receiver ?? 'not set'}`,
+      `Stream encoding: ${encodingName(captureOf(state.preferences).encoding)} chosen, ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
+    );
   else lines.push(`Web portal: ${state.portal ?? 'not open'}`);
   lines.push('', state.failure ?? 'No errors reported.');
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);

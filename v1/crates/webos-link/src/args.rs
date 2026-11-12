@@ -128,7 +128,7 @@ impl FullArgs {
             "--listen".into(),
             self.listen.to_string(),
             "--lighting".into(),
-            target_name(self.lighting).into(),
+            target_name(self.lighting),
         ]
     }
 
@@ -190,23 +190,17 @@ impl SlimArgs {
     }
 }
 
-fn target_name(target: LightingTarget) -> &'static str {
-    match target {
-        LightingTarget::Off => "off",
-        LightingTarget::Processed => "processed",
-        LightingTarget::DeviceNative => "device_native",
+/// `--lighting` values are the serde names of [`LightingTarget`].
+fn target_name(target: LightingTarget) -> String {
+    match serde_json::to_value(target) {
+        Ok(serde_json::Value::String(name)) => name,
+        other => unreachable!("LightingTarget serializes to a string, not {other:?}"),
     }
 }
 
 fn target(name: &str) -> Result<LightingTarget, String> {
-    [
-        LightingTarget::Off,
-        LightingTarget::Processed,
-        LightingTarget::DeviceNative,
-    ]
-    .into_iter()
-    .find(|target| target_name(*target) == name)
-    .ok_or_else(|| format!("--lighting: unknown target `{name}`"))
+    serde_json::from_value(serde_json::Value::String(name.into()))
+        .map_err(|_| format!("--lighting: unknown target `{name}`"))
 }
 
 /// `--key value` pairs; every key in `keys` exactly once.

@@ -407,13 +407,7 @@
   "luna/Preferences": [
     {
       "autostart": false,
-      "capture": {
-        "encoding": "h264_hardware",
-        "fps": 30,
-        "height": 180,
-        "include_ui": true,
-        "width": 320
-      },
+      "capture": null,
       "instance": null,
       "receiver": null
     },
@@ -441,6 +435,7 @@
       "enabled": true,
       "encoding": null,
       "failure": null,
+      "failure_kind": null,
       "flavor": "full",
       "lighting": "processed",
       "log": [
@@ -450,13 +445,7 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "capture": {
-          "encoding": "h264_hardware",
-          "fps": 30,
-          "height": 180,
-          "include_ui": true,
-          "width": 320
-        },
+        "capture": null,
         "instance": null,
         "receiver": null
       },
@@ -467,7 +456,8 @@
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "connect 192.168.1.20:7380: connection refused",
+      "failure": "worker failed: hardware H.264 encoder cannot start: rvenc unavailable",
+      "failure_kind": "encoder",
       "flavor": "slim",
       "lighting": null,
       "log": [],
@@ -495,6 +485,7 @@
       "enabled": true,
       "encoding": null,
       "failure": null,
+      "failure_kind": null,
       "flavor": "full",
       "lighting": "processed",
       "log": [
@@ -504,13 +495,7 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "capture": {
-          "encoding": "h264_hardware",
-          "fps": 30,
-          "height": 180,
-          "include_ui": true,
-          "width": 320
-        },
+        "capture": null,
         "instance": null,
         "receiver": null
       },
@@ -523,7 +508,8 @@
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "connect 192.168.1.20:7380: connection refused",
+      "failure": "worker failed: hardware H.264 encoder cannot start: rvenc unavailable",
+      "failure_kind": "encoder",
       "flavor": "slim",
       "lighting": null,
       "log": [],

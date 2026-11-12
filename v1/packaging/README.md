@@ -114,6 +114,13 @@ the old `io.prysm.capture` app: remove it (and its service setup) first.
 | `full` | captures, processes, drives WLED, serves the portal on 8787 | `prysm-webos-service` | `prysm-webos` | `frontend/dist/webos/tv-ui` |
 | `slim` | captures and forwards frames to a headless Prysm | `prysm-webos-slim-service` | `prysm-webos-slim` | `frontend/dist/webos-slim/tv-ui` |
 
+The TV capture (size, rate, menus) has one home per flavour: full, the
+`webos` capture section of the worker's `settings.json`, edited in the portal
+(default 640x360 at 30 fps); slim, the Luna preference `capture` (default
+320x180 at 30 fps, plus `encoding`), always present in the slim state and
+`tv.json` (a request without it gets the defaults). The full package rejects a
+`capture` preference; in its Luna state `capture` is `null`.
+
 Requirements: the relocated webOS SDK (buildroot-nc4,
 `arm-webos-linux-gnueabi_sdk-buildroot`), `rustup target add
 armv7-unknown-linux-gnueabi`, `ares-package` from `@webos-tools/cli`, Python 3.9+
@@ -168,13 +175,14 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 | `applications/io.prysm.tv/` | TV UI bundle, [`appinfo.json`](webos/app/appinfo.json), icon |
 | `services/io.prysm.tv.service/prysm-webos-service` | the flavour's supervisor (Luna-activated, root) |
 | `services/io.prysm.tv.service/prysm-webos-worker` | the flavour's worker |
-| `services/io.prysm.tv.service/setup.sh` | run once from the TV app via Homebrew Channel: `prysm-webos-service setup` |
+| `services/io.prysm.tv.service/setup.sh` | run after every install or update (TV app via Homebrew Channel, `install-ipk.sh`, or ssh): `prysm-webos-service setup` |
 | `services/io.prysm.tv.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.prysm.tv.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setEnabled uninstall`, client groups, D-Bus service |
 | `services/io.prysm.tv.service/licenses/` | Prysm, hyperion-webos and TV native API notices; slim also OpenH264, gstreamer-rs and gtk-rs |
 
 `setup` writes `/var/luna-service2/manifests.d/io.prysm.tv.{supervisor,worker}.json`
 and the boot hook `/var/lib/webosbrew/init.d/io.prysm.tv`; preferences and
-settings live in `/var/lib/io.prysm.tv`. The Luna method `uninstall` (from the
+settings live in `/var/lib/io.prysm.tv` (`tv.json`, `resume.json`, full:
+`settings.json`). The Luna method `uninstall` (from the
 TV app) removes the registration before the IPK is removed.
 
 Checks without a TV:
@@ -196,13 +204,38 @@ build directory under a probe identity (`io.prysm.tv.probe`, `run --sandbox`
 in a private `/tmp/prysm-supervisor.*`, bounded `--run-for`) and removes its
 probe manifest only if unchanged. It has not been run on a TV yet.
 
-Installing on the development TV (webOS 10.3): `ares-install` fails with
-"Unable to exec" even after a reboot. Copy the IPK to
-`/media/developer/temp/` and install it with
-`luna-send -i luna://com.webos.appInstallService/dev/install '{"id":"io.prysm.tv","ipkUrl":"/media/developer/temp/<file>.ipk","subscribe":true}'`
-(over ssh, keep stdin open, for example `ssh -t`, or luna-send exits before the
-reply). After installing an update the service is not running until
-`setup.sh` is run again.
+### Installing on a TV
+
+`ares-install` fails with "Unable to exec" on webOS 10 (even after a reboot).
+Install through the TV's install service instead;
+[`webos/install-ipk.sh`](webos/install-ipk.sh) does every step
+(`--dry-run` prints them):
+
+```sh
+v1/packaging/webos/install-ipk.sh root@TV v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+```
+
+By hand:
+
+```sh
+ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.prysm.tv.ipk' < io.prysm.tv_1.0.0_all.ipk
+(sleep 122) | ssh root@TV "timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install \
+  '{\"id\":\"io.prysm.tv\",\"ipkUrl\":\"/media/developer/temp/io.prysm.tv.ipk\",\"subscribe\":true}'"
+ssh root@TV /media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh
+```
+
+luna-send waits for replies only while its stdin is open, so hold it open with
+`(sleep N) | ssh …` and bound it with `timeout` (`ssh -t` also works
+interactively). Wait for the `installed` reply before the next step.
+
+**After an install or update, run `setup.sh` once** (the helper does; the TV
+app's set-up action and the boot hook run the same `prysm-webos-service
+setup`): the service is not running again until then, and nothing in the
+package can trigger it, since IPKs carry no install scripts. Setup rescans
+and activates the service, which then resumes what it was doing: the
+supervisor keeps the intent (full: lighting target; slim: enabled) with the
+boot id in `/var/lib/io.prysm.tv/resume.json`, so a restart in the same boot
+restores it, and a reboot starts from `autostart` as before.
 
 ### Checking the slim H.264 encoder on a TV
 

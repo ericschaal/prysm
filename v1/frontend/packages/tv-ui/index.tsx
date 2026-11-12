@@ -6,8 +6,11 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode, type Ref } from 'react';
 import type { Flavor, TvService } from '@prysm/webos-platform';
 import {
+  captureOf,
   derivedReceiver,
   diagnostics,
+  encodingChoices,
+  encodingName,
   hostOf,
   instanceAddress,
   listenPort,
@@ -40,6 +43,8 @@ type DialogId =
   | 'size'
   | 'rate'
   | 'source'
+  | 'encoding'
+  | 'switch-encoding'
   | 'autostart'
   | 'lights'
   | 'capture'
@@ -124,20 +129,22 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
   const disabled = !online || tv.changing;
   const rows: { id: DialogId; label: string; value: string; disabled?: boolean }[] = [];
   if (slim) {
+    const capture = captureOf(draft);
     rows.push(
       { id: 'instance', label: 'Prysm address', value: draft.instance ?? 'Add address' },
       { id: 'receiver', label: 'Frames go to', value: draft.receiver ?? 'Not set' },
       {
         id: 'size',
         label: 'Capture size',
-        value: `${draft.capture.width} × ${draft.capture.height}`,
+        value: `${capture.width} × ${capture.height}`,
       },
-      { id: 'rate', label: 'Frame rate', value: `${draft.capture.fps} fps` },
+      { id: 'rate', label: 'Frame rate', value: `${capture.fps} fps` },
       {
         id: 'source',
         label: 'What to capture',
-        value: draft.capture.include_ui ? 'Video + TV menus' : 'Video only',
+        value: capture.include_ui ? 'Video + TV menus' : 'Video only',
       },
+      { id: 'encoding', label: 'Stream encoding', value: encodingName(capture.encoding) },
     );
   }
   rows.push({
@@ -201,6 +208,11 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                   ? 'Install the Prysm package again so the app and its service come from the same package.'
                   : status.description}
               </p>
+              {slim && state?.encoding && !mismatch ? (
+                <p id="encoding-in-use" className="stream-info">
+                  Encoding in use: <strong>{encodingName(state.encoding)}</strong>
+                </p>
+              ) : null}
               <div className="main-actions">
                 <button
                   id="primary"
@@ -211,6 +223,18 @@ export function TvApp({ flavor, service, portal: portalOptions, onExit }: TvAppP
                 >
                   {tv.changing ? 'Please wait…' : status.label}
                 </button>
+                {status.changeEncoding && !mismatch ? (
+                  <button
+                    id="change-encoding"
+                    type="button"
+                    className="quiet"
+                    aria-haspopup="dialog"
+                    disabled={!online}
+                    onClick={() => nav.openDialog('switch-encoding')}
+                  >
+                    Change stream encoding
+                  </button>
+                ) : null}
                 <button
                   id="service-options"
                   type="button"
@@ -483,7 +507,7 @@ function Dialogs({
   onExit: () => void;
 }) {
   const { draft } = tv;
-  const capture = draft.capture;
+  const capture = captureOf(draft);
   const choices = useMemo(() => captureChoices(capture), [capture]);
   let title = '';
   let description = '';
@@ -579,6 +603,45 @@ function Dialogs({
         </>
       );
       break;
+    case 'encoding':
+      title = 'Stream encoding';
+      description =
+        'How this TV packs the picture it sends to Prysm. Hardware H.264 suits most TVs; if it fails, try Software H.264.';
+      content = encodingChoices.map((choice) => (
+        <Choice
+          key={choice.value}
+          id={`encoding-${choice.value}`}
+          title={choice.title}
+          detail={choice.detail}
+          selected={capture.encoding === choice.value}
+          action={() => choose({ capture: { ...capture, encoding: choice.value } })}
+        />
+      ));
+      break;
+    case 'switch-encoding': {
+      // Reached from an encoder failure: the choice is saved at once, and capture restarts with it.
+      const current = captureOf(tv.saved).encoding;
+      title = 'Change stream encoding';
+      description = `${encodingName(current)} failed on this TV. Choose another encoding; it is saved and used right away${tv.dirty ? ', together with your other unsaved changes' : ''}.`;
+      content = encodingChoices.map((choice) => (
+        <Choice
+          key={choice.value}
+          id={`switch-${choice.value}`}
+          title={choice.title}
+          detail={choice.value === current ? `Chosen now. ${choice.detail}` : choice.detail}
+          selected={current === choice.value}
+          action={() => {
+            if (choice.value === current) return closeDialog();
+            dismiss();
+            void tv.saveWith(
+              { capture: { ...capture, encoding: choice.value } },
+              `Stream encoding set to ${choice.name}. Capture starts again with it.`,
+            );
+          }}
+        />
+      ));
+      break;
+    }
     case 'autostart':
       title = slim ? 'Enable with TV' : 'Start screen sync with TV';
       description = slim

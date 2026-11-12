@@ -125,10 +125,11 @@ pub enum Event {
     Faulted { cause: String },           // exit FAULTED follows
 }
 pub struct WorkerStatus {
-    pub capturing: bool,                 // full: session Running; slim: frames in the last second
+    pub capturing: bool,                 // full: session Running and frames arriving; slim: frames in the last second
     pub target: Option<LightingTarget>,  // full: the engine target, portal changes included
     pub portal: Option<String>,          // full: "http://192.168.1.5:8787/"
     pub failure: Option<String>,         // cause chain; texts are cut to 1 KiB
+    pub failure_kind: Option<FailureKind>, // encoder | receiver | other, with `failure`
 }
 pub mod exit { STOPPED = 0 /* TERM, EOF */, FAILED = 1, USAGE = 2, FAULTED = 3 }
 ```
@@ -182,12 +183,19 @@ lighting ≠ Off`; `setEnabled(true)` keeps a non-Off target, else Processed.
 
 - Reap before restart is structural: `Spawn` only from Idle; only
   `WorkerExited` (after `waitpid`) leaves Running or Stopping.
-- Backoff 1 s doubling to 30 s; 60 s running resets it and clears the failure.
-  Requested restarts have no backoff and no failure.
+- Backoff 1 s doubling to 30 s; 60 s running resets it. The supervisor's
+  failure is cleared as soon as the worker is up again (full: a status without
+  a failure; slim: frames flowing). Requested restarts have no backoff and no
+  failure; a slim receiver or capture change restarts at once (also from
+  backoff, or after a failed worker is reaped) with the delay reset.
+- `capturing` is published only while the worker is Running.
 - `Publish` whenever the published `State` changed; the driver also drops
   identical payloads.
-- Persisted: `Preferences` only. Intent starts from `autostart`; the full
-  target follows the worker and is passed as `--lighting` to the next worker.
+- Persisted: `Preferences`, and the intent (`resume.json`: full target or slim
+  enabled, with the kernel boot id). A service restart in the same boot (an
+  update, a crash) resumes the intent; after a reboot it starts from
+  `autostart`. The full target follows the worker and is passed as
+  `--lighting` to the next worker.
 
 | Seam | Production | Tests |
 | --- | --- | --- |
@@ -223,7 +231,8 @@ pub struct Preferences {            // tv.json; unknown fields rejected
     pub autostart: bool,
     pub instance: Option<String>,   // slim: remote portal origin for the TV UI, http(s)://host[:port]
     pub receiver: Option<SocketAddr>, // slim: frame receiver; full rejects both
-    pub capture: SlimCapture,       // slim: 320x180 @ 30, include_ui (full: in the portal)
+    pub capture: Option<SlimCapture>, // slim: always set (absent in a request: 320x180 @ 30,
+                                    // include_ui, h264_hardware); full: null (capture is the portal's)
 }
 pub struct State {
     pub flavor: Flavor,             // full | slim
@@ -236,6 +245,7 @@ pub struct State {
     pub capturing: bool,
     pub portal: Option<String>,
     pub failure: Option<String>,
+    pub failure_kind: Option<FailureKind>, // encoder | receiver | other, set with `failure`
     pub log: Vec<String>,           // last 20 worker stderr lines
 }
 ```

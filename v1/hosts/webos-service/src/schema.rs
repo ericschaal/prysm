@@ -32,6 +32,20 @@ pub enum VideoSchema {
     Available,
 }
 
+// Mirrors `prysm_webos_link::FailureKind`.
+/// What a failure is, so the app can offer the matching fix. `encoder`
+/// (slim): the configured encoder could not start or failed; another
+/// encoding may work. `receiver` (slim): the receiver is unavailable or
+/// paused the stream; the worker keeps reconnecting. `other`: anything else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = FailureKind)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKindSchema {
+    Encoder,
+    Receiver,
+    Other,
+}
+
 // Mirrors `prysm_ports::LightingTarget`.
 /// What the user wants the LEDs to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -146,6 +160,7 @@ pub struct ErrorReply {
     Preferences,
     SlimCaptureSchema,
     SlimEncodingSchema,
+    FailureKindSchema,
     VideoSchema,
     LightingTargetSchema,
     GetStateRequest,
@@ -169,7 +184,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{LightingTarget, SlimCapture, SlimEncoding, Video};
+    use prysm_webos_link::{FailureKind, LightingTarget, SlimCapture, SlimEncoding, Video};
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::fmt;
@@ -207,6 +222,13 @@ mod tests {
             include_ui: false,
             encoding: SlimEncoding::Raw,
         });
+        for kind in [
+            FailureKind::Encoder,
+            FailureKind::Receiver,
+            FailureKind::Other,
+        ] {
+            same_shape::<FailureKind, FailureKindSchema>(&kind);
+        }
         for encoding in [
             SlimEncoding::H264Hardware,
             SlimEncoding::H264Software,
@@ -236,10 +258,15 @@ mod tests {
             let described = &preferences["properties"][field];
             let text = described["description"]
                 .as_str()
+                .or_else(|| described["oneOf"][0]["description"].as_str())
                 .or_else(|| described["oneOf"][1]["description"].as_str())
                 .unwrap_or_default();
             assert!(text.starts_with("Slim only"), "{field}: {described}");
         }
+        // Nullable: always set in slim, null in full.
+        let capture = &preferences["properties"]["capture"];
+        assert_eq!(capture["default"], Value::Null);
+        assert_eq!(capture["oneOf"][1], json!({"type": "null"}));
         assert_eq!(
             schemas["SlimCapture"]["properties"]["fps"]["maximum"],
             json!(60)

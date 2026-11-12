@@ -171,8 +171,8 @@ export function useTvService(service: TvService, active: boolean) {
     }
   }
 
-  async function sendPreferences() {
-    const sent = { ...draft };
+  async function sendPreferences(patch: Edits = {}) {
+    const sent = { ...draft, ...patch };
     await service.setPreferences(sent);
     if (mounted.current) dispatch({ type: 'saved', sent });
   }
@@ -186,7 +186,9 @@ export function useTvService(service: TvService, active: boolean) {
     edit: (patch: Edits) => dispatch({ type: 'edit', patch }),
     discard: () => dispatch({ type: 'discard' }),
     say,
-    save: () => run(sendPreferences, 'Settings saved.'),
+    save: () => run(() => sendPreferences(), 'Settings saved.'),
+    /** Save the draft with `patch` applied, without a separate Save. */
+    saveWith: (patch: Edits, done: string) => run(() => sendPreferences(patch), done),
     enable: (enabled: boolean) =>
       run(() => service.setEnabled(enabled), ''),
     saveAndEnable: () =>

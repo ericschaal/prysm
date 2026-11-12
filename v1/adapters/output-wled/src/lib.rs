@@ -10,8 +10,10 @@
 //! - `idle` powers the device off or returns it to its own effect; a failed open
 //!   turns it off before returning.
 //!
-//! No threads or timers beyond a bounded resolver thread at open: the runtime rewrites the last colours while the source
-//! is quiet, which keeps WLED in live mode.
+//! No threads or timers beyond a bounded resolver thread at open: the runtime
+//! rewrites the last colours while the source is briefly quiet, which keeps
+//! WLED in live mode, and after a few seconds without frames idles the output
+//! `Native` (WLED's own state) and opens it again at the next frame.
 mod address;
 mod http;
 mod output;

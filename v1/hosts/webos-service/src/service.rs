@@ -8,7 +8,7 @@ use crate::machine::{Effect, Input, Machine, Spec};
 use crate::observe;
 use crate::preferences::{Preferences, PreferencesStore};
 use crate::state::{Flavor, Power, State};
-use prysm_webos_link::Video;
+use prysm_webos_link::{LightingTarget, Video};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
@@ -19,8 +19,46 @@ pub const MAX_PAYLOAD: usize = 4096;
 /// A subscription without a good reply for this long is renewed.
 pub const RESUBSCRIBE: Duration = Duration::from_secs(5);
 
-/// The Luna methods this service registers.
-pub const METHODS: [&str; 4] = ["getState", "setPreferences", "setEnabled", "uninstall"];
+/// A Luna method this service registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    GetState,
+    SetPreferences,
+    SetEnabled,
+    Uninstall,
+}
+
+impl Method {
+    pub const ALL: [Self; 4] = [
+        Self::GetState,
+        Self::SetPreferences,
+        Self::SetEnabled,
+        Self::Uninstall,
+    ];
+
+    /// The method's Luna name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::GetState => "getState",
+            Self::SetPreferences => "setPreferences",
+            Self::SetEnabled => "setEnabled",
+            Self::Uninstall => "uninstall",
+        }
+    }
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|method| method.name() == name)
+    }
+}
+
+/// The Luna names of [`Method::ALL`], in registration order.
+pub const METHODS: [&str; 4] = [
+    Method::ALL[0].name(),
+    Method::ALL[1].name(),
+    Method::ALL[2].name(),
+    Method::ALL[3].name(),
+];
 /// Subscription key of `getState`.
 pub const STATE_KEY: &str = "/getState";
 
@@ -98,27 +136,35 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     retry: [Option<Instant>; 2],
     video_context: Option<Value>,
     published: Option<String>,
+    /// The intent last given to the store.
+    remembered: Option<LightingTarget>,
     uninstall: Uninstall,
 }
 
 impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     /// Load preferences (invalid ones are reported and replaced by defaults).
     pub fn new(config: Config, launcher: L, mut store: S, installer: I, now: Instant) -> Self {
+        let defaults = Preferences::defaults(config.flavor);
         let preferences = match store.load() {
             Ok(Some(preferences)) => match preferences.validate(config.flavor) {
-                Ok(()) => preferences,
+                Ok(()) => preferences.for_flavor(config.flavor),
                 Err(error) => {
                     eprintln!("prysm-webos-service: ignoring saved preferences: {error}");
-                    Preferences::default()
+                    defaults
                 }
             },
-            Ok(None) => Preferences::default(),
+            Ok(None) => defaults,
             Err(error) => {
                 eprintln!("prysm-webos-service: ignoring saved preferences: {error}");
-                Preferences::default()
+                defaults
             }
         };
-        let machine = Machine::new(config.spec.clone(), preferences);
+        // A restart within one boot (an update, a crash) resumes the intent.
+        let resumed = store.resume();
+        let machine = match resumed {
+            Some(intent) => Machine::resumed(config.spec.clone(), preferences, intent),
+            None => Machine::new(config.spec.clone(), preferences),
+        };
         Self {
             config,
             machine,
@@ -129,6 +175,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             retry: [Some(now + RESUBSCRIBE); 2],
             video_context: None,
             published: None,
+            remembered: resumed,
             uninstall: Uninstall::No,
         }
     }
@@ -165,24 +212,25 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if payload.len() > MAX_PAYLOAD {
             return Err(format!("payload exceeds {MAX_PAYLOAD} bytes"));
         }
-        if !METHODS.contains(&method) {
+        let Some(method) = Method::parse(method) else {
             return Err(format!("unknown method `{method}`"));
-        }
-        if method != "getState" && sender != self.config.app_id {
+        };
+        if method != Method::GetState && sender != self.config.app_id {
             // Checked before the payload is even parsed.
             return Err(format!("only {} may change Prysm", self.config.app_id));
         }
         if self.uninstall == Uninstall::Requested {
             return Err("the service is being removed".into());
         }
-        let parse_error = |error: serde_json::Error| format!("invalid {method} request: {error}");
+        let name = method.name();
+        let parse_error = |error: serde_json::Error| format!("invalid {name} request: {error}");
         // Only objects: serde would also accept a struct as an array.
         let payload = match serde_json::from_str::<Value>(payload).map_err(parse_error)? {
             Value::Object(object) => Value::Object(object),
-            _ => return Err(format!("invalid {method} request: expected an object")),
+            _ => return Err(format!("invalid {name} request: expected an object")),
         };
         match method {
-            "getState" => {
+            Method::GetState => {
                 let request: GetStateRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 Ok(Reply {
@@ -190,21 +238,22 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     subscribe: request.subscribe,
                 })
             }
-            "setPreferences" => {
+            Method::SetPreferences => {
                 let preferences: Preferences =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 preferences.validate(self.config.flavor)?;
+                let preferences = preferences.for_flavor(self.config.flavor);
                 self.store.save(&preferences)?;
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply())
             }
-            "setEnabled" => {
+            Method::SetEnabled => {
                 let request: SetEnabledRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
                 Ok(self.state_reply())
             }
-            _ => {
+            Method::Uninstall => {
                 let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
                 self.uninstall = Uninstall::Requested;
                 self.input(bus, Input::Shutdown, now);
@@ -317,6 +366,14 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     fn input(&mut self, bus: &mut impl Bus, input: Input, now: Instant) {
         let effects = self.machine.handle(input, now);
         self.execute(bus, effects, now);
+        let intent = self.machine.intent();
+        if self.remembered != Some(intent) {
+            // Best effort, reported once per change.
+            self.remembered = Some(intent);
+            if let Err(error) = self.store.remember(intent) {
+                eprintln!("prysm-webos-service: {error}");
+            }
+        }
     }
 
     fn execute(&mut self, bus: &mut impl Bus, effects: Vec<Effect>, now: Instant) {

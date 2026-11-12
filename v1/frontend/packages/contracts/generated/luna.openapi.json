@@ -35,6 +35,15 @@
         ],
         "type": "object"
       },
+      "FailureKind": {
+        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the configured encoder could not start or failed; another\nencoding may work. `receiver` (slim): the receiver is unavailable or\npaused the stream; the worker keeps reconnecting. `other`: anything else.",
+        "enum": [
+          "encoder",
+          "receiver",
+          "other"
+        ],
+        "type": "string"
+      },
       "Flavor": {
         "description": "Which package this supervisor belongs to.",
         "enum": [
@@ -84,7 +93,7 @@
       },
       "Preferences": {
         "additionalProperties": false,
-        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional). Fields marked \"Slim only\" must stay unset (default) in the\nfull package.",
+        "description": "`tv.json` and the `setPreferences` request (complete, every field\noptional). Fields marked \"Slim only\" must stay unset (`null` or absent)\nin the full package.",
         "properties": {
           "autostart": {
             "default": false,
@@ -92,15 +101,16 @@
             "type": "boolean"
           },
           "capture": {
-            "$ref": "#/components/schemas/SlimCapture",
-            "default": {
-              "encoding": "h264_hardware",
-              "fps": 30,
-              "height": 180,
-              "include_ui": true,
-              "width": 320
-            },
-            "description": "Slim only: capture size, rate and menu blending."
+            "default": null,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SlimCapture",
+                "description": "Slim only: capture size, rate, menu blending and encoding. Always set\nin the slim package (a request without it gets the defaults); `null`\nin the full package, whose capture is the portal's `settings.capture`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "instance": {
             "default": null,
@@ -192,6 +202,7 @@
         "description": "The `getState` reply and subscription payload (plus LS2's `returnValue`).\nFields marked \"Full only\" are `null` in the slim package.",
         "properties": {
           "capturing": {
+            "description": "Frames are flowing. Full: lighting runs and frames arrive (false\nwhile it waits for video). Slim: frames were sent in the last second.\nAlways false unless `worker` is `running`.",
             "type": "boolean"
           },
           "enabled": {
@@ -210,9 +221,21 @@
             ]
           },
           "failure": {
+            "description": "The current failure (or, slim, the receiver wait) with its causes.",
             "type": [
               "string",
               "null"
+            ]
+          },
+          "failure_kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FailureKind",
+                "description": "What `failure` is; set exactly when `failure` is."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "flavor": {

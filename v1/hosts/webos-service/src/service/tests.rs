@@ -132,7 +132,7 @@ impl Harness {
         Self {
             world: launcher.0.clone(),
             installer: installer.0.clone(),
-            service: Service::new(config, launcher, MemoryStore(saved), installer, t0),
+            service: Service::new(config, launcher, MemoryStore(saved, None), installer, t0),
             bus: FakeBus::default(),
             t0,
         }
@@ -418,4 +418,82 @@ fn shutdown_waits_for_the_worker() {
         h.installer.borrow().is_empty(),
         "a plain stop keeps registration"
     );
+}
+
+#[test]
+fn a_restart_within_one_boot_resumes_the_last_intent() {
+    // Lighting was turned on (autostart off), then the service restarted.
+    let mut h = Harness::new(config(), None);
+    h.power("Active", 0);
+    h.log();
+    h.app("setEnabled", r#"{"enabled":true}"#);
+    assert_eq!(h.service.store.1, Some(LightingTarget::Processed));
+    let store = h.service.store.clone();
+
+    let launcher = FakeLauncher::default();
+    let world = launcher.0.clone();
+    let t0 = Instant::now();
+    let mut service = Service::new(config(), launcher, store, FakeInstaller::default(), t0);
+    let mut bus = FakeBus::default();
+    service.power(&mut bus, r#"{"returnValue":true,"state":"Active"}"#, t0);
+    assert_eq!(
+        world.borrow().log[0],
+        "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting processed"
+    );
+    assert!(service.machine().state().enabled);
+
+    // Turning it off is remembered too.
+    service.request(
+        &mut bus,
+        "setEnabled",
+        "io.prysm.tv",
+        r#"{"enabled":false}"#,
+        t0,
+    );
+    assert_eq!(service.store.1, Some(LightingTarget::Off));
+}
+
+#[test]
+fn slim_always_has_a_capture_and_full_never_does() {
+    let mut slim = Harness::new(slim_config(), None);
+    assert_eq!(
+        slim.call("getState", "x", "{}")["preferences"]["capture"]["width"],
+        320
+    );
+    let reply = slim.app("setPreferences", r#"{"receiver":"192.168.1.20:7380"}"#);
+    assert_eq!(reply["preferences"]["capture"]["encoding"], "h264_hardware");
+    assert_eq!(
+        slim.service.store.0.as_ref().unwrap().capture,
+        Some(prysm_webos_link::SlimCapture::default())
+    );
+
+    let mut full = Harness::new(config(), None);
+    assert_eq!(
+        full.call("getState", "x", "{}")["preferences"]["capture"],
+        Value::Null
+    );
+    let refused = full.app("setPreferences", r#"{"capture":{"width":320}}"#);
+    assert!(
+        refused["errorText"]
+            .as_str()
+            .unwrap()
+            .starts_with("capture")
+    );
+}
+
+#[test]
+fn packaged_api_permissions_list_every_method() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packaging/webos/service/supervisor.api.json");
+    let api: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let service = format!("{}.service", crate::identity::APP_ID);
+    let expected: Vec<String> = Method::ALL
+        .iter()
+        .map(|method| format!("{service}/{}", method.name()))
+        .collect();
+    assert_eq!(api, serde_json::json!({ "public": expected }));
+    for method in Method::ALL {
+        assert_eq!(Method::parse(method.name()), Some(method));
+    }
+    assert_eq!(Method::parse("GetState"), None);
 }

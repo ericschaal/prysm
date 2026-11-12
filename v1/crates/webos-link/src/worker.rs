@@ -6,7 +6,7 @@
 //! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
 //! stdin EOF or a bad line stops the worker.
 pub use crate::chain;
-use crate::{Command, Event, LineReader, WorkerStatus, encode, exit};
+use crate::{Command, Event, FailureKind, LineReader, WorkerStatus, encode, exit};
 use prysm_ports::Error;
 use std::future::Future;
 use std::io::{self, Write};
@@ -289,11 +289,12 @@ pub fn guard_parent() -> Result<(), String> {
 
 /// Parse argv, take over stdio, run `body` on a current-thread runtime until
 /// it returns, and exit with the code for how it ended. On failure a final
-/// status carries the cause.
+/// status carries the cause and its kind, as `classify` names it.
 pub fn main<A, F, Fut>(
     name: &'static str,
     usage: &str,
     parse: impl FnOnce(&[String]) -> Result<A, String>,
+    classify: fn(&Error) -> FailureKind,
     body: F,
 ) -> ExitCode
 where
@@ -346,6 +347,7 @@ where
         eprintln!("{name}: {failure}");
         events.send(&Event::Status(WorkerStatus {
             failure: Some(failure),
+            failure_kind: Some(classify(error)),
             ..WorkerStatus::default()
         }));
     }

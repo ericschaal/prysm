@@ -18,6 +18,6 @@ pub use profiles::{
     MAX_PROFILES,
 };
 pub use registry::{OutputFactory, Registry, SourceFactory};
-pub use settings::{AdapterSettings, Processing, Revision, Settings};
+pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use slot::LatestSlot;
 pub use snapshot::{Input, LightingTarget, SessionPhase, SessionState, Snapshot};

@@ -38,7 +38,13 @@ fn main() -> ExitCode {
         }
         return check::main(&args[1..]);
     }
-    worker::main("prysm-webos-slim", USAGE, SlimArgs::parse, run)
+    worker::main(
+        "prysm-webos-slim",
+        USAGE,
+        SlimArgs::parse,
+        link::failure_kind,
+        run,
+    )
 }
 
 /// The receiver listens only while its host is lighting, so the uplink

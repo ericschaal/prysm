@@ -6,9 +6,9 @@ use prysm_h264::{Backend, EncoderSettings};
 use prysm_ports::{Error, FrameSink, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSink, FakeSource, FakeSourceSettings};
-use prysm_webos_link::SlimEncoding;
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, LightingTarget, SlimCapture, Video, WorkerStatus};
+use prysm_webos_link::{FailureKind, SlimEncoding};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -144,6 +144,10 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
         waiting(&event),
         Some("waiting for the receiver: cannot connect to receiver: refused")
     );
+    let Event::Status(status) = &event else {
+        unreachable!()
+    };
+    assert_eq!(status.failure_kind, Some(FailureKind::Receiver));
     // Connected: frames flow and no wait is reported.
     peer.wait_for(|e| matches!(e, Event::Status(s) if s.capturing && s.failure.is_none()))
         .await
@@ -376,8 +380,10 @@ async fn an_unavailable_hardware_encoder_fails_the_worker() {
         .await
         .expect("the worker stops")
         .unwrap();
-    let failure = prysm_webos_link::chain(&result.unwrap_err());
+    let error = result.unwrap_err();
+    let failure = prysm_webos_link::chain(&error);
     assert!(failure.contains("hardware H.264"), "{failure}");
+    assert_eq!(crate::link::failure_kind(&error), FailureKind::Encoder);
     Box::new(receiver).close().unwrap();
 }
 
@@ -393,8 +399,14 @@ async fn h264_of_other_pixels_fails_the_worker() {
         move || RemoteSender::connect(address, SOFTWARE),
     );
     let (result, _) = task.await.unwrap();
-    let failure = prysm_webos_link::chain(&result.unwrap_err());
+    let error = result.unwrap_err();
+    let failure = prysm_webos_link::chain(&error);
     assert!(failure.contains("NV12"), "{failure}");
+    assert_eq!(crate::link::failure_kind(&error), FailureKind::Encoder);
+    assert_eq!(
+        crate::link::failure_kind(&Error::other("capture failed")),
+        FailureKind::Other
+    );
     Box::new(receiver).close().unwrap();
 }
 

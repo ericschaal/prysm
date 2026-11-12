@@ -116,7 +116,9 @@ fn run(mut source, mut processor, mut output, shared: &Shared) -> SessionEnd {
                 shared.preview.offer(&colors);
                 if let Err(e) = output.write(&colors) { break Some(e); }
             }
-            Ok(Pull::Idle) => { /* output refresh if due */ }
+            Ok(Pull::Idle) => { /* output refresh if due; after VIDEO_GRACE
+                                   (3 s) without frames: output.idle(Native),
+                                   reopened at the next frame */ }
             Ok(Pull::Ended) => break None, // same release and idle path
             Err(e) => break Some(e),
         }
@@ -126,6 +128,12 @@ fn run(mut source, mut processor, mut output, shared: &Shared) -> SessionEnd {
     SessionEnd { failure, released, idled }
 }
 ```
+
+The output is opened by the session at the first frame, not when lighting
+starts, so a source without video (no signal, screen saver, no sender) never
+takes the device over; the snapshot's `input.receiving` is then `false`. At the
+end a held output is idled in the stop's mode; a released one is reopened only
+if that mode differs from `Native`, and an untouched one only for `Native`.
 
 Shutdown ordering is the structure of this function: stop flag, loop exit,
 capture release, output idle, thread join. After the join no frame is in flight,

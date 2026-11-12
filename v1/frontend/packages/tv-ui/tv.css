@@ -38,6 +38,8 @@ h1, h2, h3, p { margin: 0; }
 .attention .section-label::before { background: #f1c480; }
 .overview h1 { font-size: var(--title); line-height: 1.15; font-weight: 500; letter-spacing: -.025em; }
 .description { color: #d0d2e0; font-size: var(--body); line-height: 1.45; margin-top: .7rem; }
+.stream-info { color: #c2c4d6; font-size: var(--caption); margin-top: .5rem; }
+.stream-info strong { color: #faf9ff; font-weight: 500; }
 .portal-address { margin: .8rem 0 0; padding: .7rem .8rem; border-radius: .5rem; background: #f3f1fa; color: var(--muted); font-size: var(--caption); word-wrap: break-word; }
 .portal-address strong, .portal-address code { display: block; color: #292c38; }
 .portal-address code { margin: .2rem 0; font-size: var(--body); }

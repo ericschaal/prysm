@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -28,7 +29,7 @@ class MetadataTests(unittest.TestCase):
         app_id = re.search(r'pub const APP_ID: &str = "(.+?)";', identity).group(1)
         supervisor = re.search(r'pub const SUPERVISOR: &str = "(.+?)";', identity).group(1)
         worker = re.search(r'pub const WORKER: &str = "(.+?)";', identity).group(1)
-        methods = re.findall(r'"(\w+)"', re.search(r'pub const METHODS: [^=]*= \[(.*?)\];', service_rs, re.S).group(1))
+        methods = re.findall(r'Self::\w+ => "(\w+)"', re.search(r'pub const fn name\(self\).*?\n    \}', service_rs, re.S).group(0))
         self.assertEqual((app_id, supervisor, worker), (ipk.APP_ID, 'prysm-webos-service', 'prysm-webos-worker'))
 
         app = load('app/appinfo.json')
@@ -59,6 +60,27 @@ class MetadataTests(unittest.TestCase):
         self.assertIn(INSTALLED + supervisor + ' setup', (HERE / 'service/setup.sh').read_text())
         self.assertFalse((HERE / 'service/package.json').exists())
         self.assertEqual(list((HERE / 'service').glob('*.js')), [])
+
+    def test_install_helper_uses_the_install_service_then_setup(self):
+        script = HERE / 'install-ipk.sh'
+        text = script.read_text()
+        self.assertNotIn('ares-install ', text.split('set -eu', 1)[1])
+        self.assertIn('luna://com.webos.appInstallService/dev/install', text)
+        with tempfile.TemporaryDirectory() as directory:
+            ipk_file = Path(directory) / 'io.prysm.tv_1.0.0_all.ipk'
+            ipk_file.write_bytes(b'')
+            run = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(ipk_file)],
+                                 capture_output=True, text=True, check=True)
+            plan = run.stderr
+            self.assertIn('/media/developer/temp/io.prysm.tv_1.0.0_all.ipk', plan)
+            # luna-send keeps its stdin: every call is fed by a sleep.
+            self.assertEqual(plan.count('luna-send'), plan.count('(sleep '))
+            self.assertLess(plan.index('appInstallService'), plan.index(INSTALLED + 'setup.sh'))
+            other = Path(directory) / 'other.ipk'
+            other.write_bytes(b'')
+            refused = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(other)],
+                                     capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2)
 
     def test_appinfo_version_is_the_workspace_version(self):
         cargo = (V1 / 'Cargo.toml').read_text()

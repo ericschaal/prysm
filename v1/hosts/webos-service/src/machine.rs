@@ -3,7 +3,8 @@
 use crate::preferences::Preferences;
 use crate::state::{Flavor, Phase as PublishedPhase, Power, State};
 use prysm_webos_link::{
-    Command, Event, FullArgs, LightingTarget, SILENCE, SlimArgs, Video, WorkerStatus, exit,
+    Command, Event, FailureKind, FullArgs, LightingTarget, SILENCE, SlimArgs, Video, WorkerStatus,
+    exit,
 };
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -15,7 +16,8 @@ use std::time::{Duration, Instant};
 pub const KILL_AFTER: Duration = Duration::from_secs(8);
 pub const RETRY_MIN: Duration = Duration::from_secs(1);
 pub const RETRY_MAX: Duration = Duration::from_secs(30);
-/// A worker running this long resets the retry delay and clears old failures.
+/// A worker running this long resets the retry delay. (A failure is cleared
+/// earlier, as soon as the worker reports it is up again.)
 pub const HEALTHY: Duration = Duration::from_secs(60);
 /// How long a sent `Lighting` target wins over older worker reports.
 pub const ECHO: Duration = Duration::from_secs(2);
@@ -109,7 +111,8 @@ pub struct Machine {
     phase: Phase,
     delay: Duration,
     status: Option<WorkerStatus>,
-    failure: Option<String>,
+    /// The supervisor's own failure: why the last worker ended or could not start.
+    failure: Option<(String, FailureKind)>,
     log: VecDeque<String>,
     shutdown: bool,
 }
@@ -118,16 +121,26 @@ impl Machine {
     /// Intent starts from `autostart`: enabled (full: processed lighting) or not.
     #[must_use]
     pub fn new(spec: Spec, preferences: Preferences) -> Self {
-        let autostart = preferences.autostart;
+        let intent = if preferences.autostart {
+            LightingTarget::Processed
+        } else {
+            LightingTarget::Off
+        };
+        Self::resumed(spec, preferences, intent)
+    }
+
+    /// Intent starts from what was asked for before a restart (see
+    /// [`Machine::intent`]), whatever `autostart` says.
+    #[must_use]
+    pub fn resumed(spec: Spec, preferences: Preferences, intent: LightingTarget) -> Self {
         Self {
+            enabled: intent != LightingTarget::Off,
+            lighting: match spec {
+                Spec::Full { .. } => intent,
+                Spec::Slim => LightingTarget::Off,
+            },
             spec,
             preferences,
-            enabled: autostart,
-            lighting: if autostart {
-                LightingTarget::Processed
-            } else {
-                LightingTarget::Off
-            },
             echo_until: None,
             power: Power::Unknown,
             video: Video::Unknown,
@@ -143,6 +156,17 @@ impl Machine {
     #[must_use]
     pub fn preferences(&self) -> &Preferences {
         &self.preferences
+    }
+
+    /// What the user asked for: full, the lighting target (also when changed
+    /// in the portal); slim, `Processed` while enabled, else `Off`.
+    #[must_use]
+    pub fn intent(&self) -> LightingTarget {
+        match self.spec {
+            Spec::Full { .. } => self.lighting,
+            Spec::Slim if self.enabled => LightingTarget::Processed,
+            Spec::Slim => LightingTarget::Off,
+        }
     }
 
     /// Shut down and no worker left.
@@ -177,7 +201,10 @@ impl Machine {
             }
             Input::SpawnFailed(why) => {
                 if self.running() {
-                    self.failure = Some(format!("cannot start the worker: {why}"));
+                    self.failure = Some((
+                        format!("cannot start the worker: {why}"),
+                        FailureKind::Other,
+                    ));
                     self.retry(now);
                 }
             }
@@ -201,6 +228,16 @@ impl Machine {
     pub fn state(&self) -> State {
         let flavor = self.spec.flavor();
         let status = self.status.clone().unwrap_or_default();
+        let (failure, failure_kind) = match status.failure {
+            Some(failure) => (
+                Some(failure),
+                Some(status.failure_kind.unwrap_or(FailureKind::Other)),
+            ),
+            None => self
+                .failure
+                .clone()
+                .map_or((None, None), |(failure, kind)| (Some(failure), Some(kind))),
+        };
         State {
             flavor,
             preferences: self.preferences.clone(),
@@ -217,9 +254,12 @@ impl Machine {
                 Phase::Stopping { .. } => PublishedPhase::Stopping,
                 Phase::Retrying { .. } => PublishedPhase::Retrying,
             },
-            capturing: status.capturing,
+            // Only a running worker's report counts: one being stopped (or
+            // stuck exiting) is not capturing for the app.
+            capturing: self.running() && status.capturing,
             portal: status.portal,
-            failure: status.failure.or_else(|| self.failure.clone()),
+            failure,
+            failure_kind,
             encoding: status.encoding,
             log: self.log.iter().cloned().collect(),
         }
@@ -261,7 +301,7 @@ impl Machine {
             Spec::Slim => self.preferences.receiver.map(|receiver| {
                 SlimArgs {
                     receiver,
-                    capture: self.preferences.capture,
+                    capture: self.preferences.capture.unwrap_or_default(),
                 }
                 .to_args()
             }),
@@ -311,7 +351,7 @@ impl Machine {
 
     fn fail(&mut self, failure: String, now: Instant, effects: &mut Vec<Effect>) {
         if self.running() {
-            self.failure = Some(failure);
+            self.failure = Some((failure, FailureKind::Other));
             self.stop(now, true, effects);
         }
     }
@@ -330,12 +370,30 @@ impl Machine {
         now: Instant,
         effects: &mut Vec<Effect>,
     ) {
-        let relaunch = self.preferences.receiver != preferences.receiver
-            || self.preferences.capture != preferences.capture;
+        let relaunch = self.spec == Spec::Slim
+            && (self.preferences.receiver != preferences.receiver
+                || self.preferences.capture != preferences.capture);
         self.preferences = preferences;
-        if relaunch && self.running() && self.spec == Spec::Slim {
+        if !relaunch {
+            return;
+        }
+        // New worker settings get an immediate attempt with a fresh backoff.
+        self.delay = RETRY_MIN;
+        match self.phase {
             // A requested restart: no backoff, no failure.
-            self.stop(now, false, effects);
+            Phase::Running { .. } => self.stop(now, false, effects),
+            Phase::Stopping {
+                kill_at, killed, ..
+            } => {
+                self.phase = Phase::Stopping {
+                    kill_at,
+                    killed,
+                    failed: false,
+                };
+            }
+            // `reconcile` spawns with the new settings.
+            Phase::Retrying { .. } => self.phase = Phase::Idle,
+            Phase::Idle => {}
         }
     }
 
@@ -369,6 +427,12 @@ impl Machine {
         self.phase = Phase::Running { since, heard: now };
         match event {
             Event::Status(status) => {
+                // Up again (full: reporting without a failure; slim: frames
+                // flowing): the last worker's failure is no longer current.
+                let up = status.capturing || (self.spec != Spec::Slim && status.failure.is_none());
+                if up {
+                    self.failure = None;
+                }
                 if let Some(target) = status.target {
                     let echoed = self.echo_until.is_none_or(|until| now >= until);
                     if echoed || target == self.lighting {
@@ -387,13 +451,16 @@ impl Machine {
             Exit::Code(code) => exit::describe(code),
             Exit::Signal(signal) => format!("worker killed by signal {signal}"),
         };
-        let last = self.status.take().and_then(|status| status.failure);
+        let last = self.status.take().and_then(|status| {
+            let kind = status.failure_kind.unwrap_or(FailureKind::Other);
+            status.failure.map(|failure| (failure, kind))
+        });
         match self.phase {
             Phase::Running { .. } => {
                 // The worker stops on its own only when something failed.
                 self.failure = Some(match last {
-                    Some(last) => format!("{described}: {last}"),
-                    None => described,
+                    Some((last, kind)) => (format!("{described}: {last}"), kind),
+                    None => (described, FailureKind::Other),
                 });
                 self.retry(now);
             }

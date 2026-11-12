@@ -1,7 +1,8 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
 use crate::state::Phase as P;
-use prysm_webos_link::SlimCapture;
+use prysm_webos_link::{FailureKind, SlimCapture, SlimEncoding};
+use serde_json::Value;
 
 fn full() -> Machine {
     full_with(Preferences::default())
@@ -24,7 +25,7 @@ fn receiver() -> SocketAddr {
 fn slim_prefs() -> Preferences {
     Preferences {
         receiver: Some(receiver()),
-        ..Preferences::default()
+        ..Preferences::defaults(crate::state::Flavor::Slim)
     }
 }
 
@@ -270,7 +271,7 @@ fn slim_capture_change_restarts_without_backoff_after_reaping() {
             (
                 1,
                 Input::Preferences(Preferences {
-                    capture: fast,
+                    capture: Some(fast),
                     ..slim_prefs()
                 }),
                 vec![Effect::Terminate],
@@ -288,7 +289,7 @@ fn slim_capture_change_restarts_without_backoff_after_reaping() {
             (
                 6,
                 Input::Preferences(Preferences {
-                    capture: fast,
+                    capture: Some(fast),
                     autostart: false,
                     ..slim_prefs()
                 }),
@@ -593,6 +594,7 @@ fn published_state_reflects_the_worker() {
             target: Some(LightingTarget::Processed),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
+            failure_kind: None,
             encoding: None,
         })),
         t0,
@@ -605,9 +607,359 @@ fn published_state_reflects_the_worker() {
     assert_eq!(json["worker"], "running");
     assert_eq!(json["power"], "active");
     assert_eq!(json["lighting"], "processed");
-    assert_eq!(json["preferences"]["capture"]["include_ui"], true);
+    assert_eq!(json["failure_kind"], Value::Null);
+    // The full package's capture is the portal's; Luna shows none.
+    assert_eq!(json["preferences"]["capture"], Value::Null);
     m.handle(Exited(Exit::Code(1)), t0);
     let state = m.state();
     assert!(!state.capturing);
     assert_eq!(state.portal, None);
+}
+
+fn reported(status: WorkerStatus) -> Input {
+    Input::Worker(Event::Status(status))
+}
+
+#[test]
+fn only_a_running_worker_is_capturing() {
+    let (mut m, t0) = (
+        full_with(Preferences {
+            autostart: true,
+            ..Preferences::default()
+        }),
+        Instant::now(),
+    );
+    let capturing = WorkerStatus {
+        capturing: true,
+        target: Some(LightingTarget::Processed),
+        ..WorkerStatus::default()
+    };
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Processed), video(Video::Unknown)],
+            ),
+            (1, reported(capturing.clone()), vec![]),
+        ],
+    );
+    assert!(m.state().capturing);
+    script(
+        &mut m,
+        t0,
+        vec![
+            (2, Enabled(false), vec![lighting(LightingTarget::Off)]),
+            (
+                3,
+                reported(WorkerStatus {
+                    capturing: false,
+                    target: Some(LightingTarget::Off),
+                    ..WorkerStatus::default()
+                }),
+                vec![],
+            ),
+        ],
+    );
+    let state = m.state();
+    assert!(!state.capturing && !state.enabled);
+
+    // A worker being stopped, or a late line from it, never shows capturing.
+    script(
+        &mut m,
+        t0,
+        vec![(4, Enabled(true), vec![lighting(LightingTarget::Processed)])],
+    );
+    script(&mut m, t0, vec![(5, reported(capturing.clone()), vec![])]);
+    assert!(m.state().capturing);
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                6,
+                Pw(Asleep),
+                vec![video(Video::Unavailable), Effect::Terminate],
+            ),
+            (7, reported(capturing), vec![]),
+        ],
+    );
+    let state = m.state();
+    assert_eq!(state.worker, P::Stopping);
+    assert!(!state.capturing);
+}
+
+#[test]
+fn failures_carry_their_kind() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                reported(WorkerStatus {
+                    failure: Some("waiting for the receiver: refused".into()),
+                    failure_kind: Some(FailureKind::Receiver),
+                    ..WorkerStatus::default()
+                }),
+                vec![],
+            ),
+        ],
+    );
+    let state = m.state();
+    assert_eq!(state.failure_kind, Some(FailureKind::Receiver));
+    assert_eq!(
+        serde_json::to_value(&state).unwrap()["failure_kind"],
+        "receiver"
+    );
+
+    // The worker's final status names the encoder; the exit keeps the kind.
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                2,
+                reported(WorkerStatus {
+                    failure: Some("hardware H.264 cannot start".into()),
+                    failure_kind: Some(FailureKind::Encoder),
+                    ..WorkerStatus::default()
+                }),
+                vec![],
+            ),
+            (3, Exited(Exit::Code(1)), vec![]),
+        ],
+    );
+    let state = m.state();
+    assert_eq!(
+        state.failure.as_deref(),
+        Some("worker failed: hardware H.264 cannot start")
+    );
+    assert_eq!(state.failure_kind, Some(FailureKind::Encoder));
+
+    // The supervisor's own failures, and unkinded reports, are `other`.
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                1_003,
+                Tick,
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+            (1_004, Input::SpawnFailed("no such file".into()), vec![]),
+        ],
+    );
+    assert_eq!(m.state().failure_kind, Some(FailureKind::Other));
+    let mut full = full();
+    full.handle(Pw(Active), t0);
+    full.handle(
+        reported(WorkerStatus {
+            failure: Some("x".into()),
+            ..WorkerStatus::default()
+        }),
+        t0,
+    );
+    assert_eq!(full.state().failure_kind, Some(FailureKind::Other));
+}
+
+#[test]
+fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+            (
+                1_001,
+                Tick,
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+            // Started but not yet streaming: the failure stays.
+            (1_002, reported(WorkerStatus::default()), vec![]),
+        ],
+    );
+    assert_eq!(m.state().failure.as_deref(), Some("worker failed"));
+    script(
+        &mut m,
+        t0,
+        vec![(
+            2_000,
+            reported(WorkerStatus {
+                capturing: true,
+                encoding: Some(SlimEncoding::H264Hardware),
+                ..WorkerStatus::default()
+            }),
+            vec![],
+        )],
+    );
+    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state().failure_kind, None);
+    // Backoff accounting is unchanged: still doubled until a healthy minute.
+    script(
+        &mut m,
+        t0,
+        vec![
+            (3_000, Exited(Exit::Code(1)), vec![]),
+            (4_999, Tick, vec![]),
+            (
+                5_000,
+                Tick,
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+        ],
+    );
+
+    // Full: a worker reporting without a failure is up.
+    let mut full = full();
+    script(
+        &mut full,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+            (1, Exited(Exit::Code(1)), vec![]),
+            (
+                1_001,
+                Tick,
+                vec![spawn_full(LightingTarget::Off), video(Video::Unknown)],
+            ),
+        ],
+    );
+    assert!(full.state().failure.is_some());
+    script(
+        &mut full,
+        t0,
+        vec![(1_100, status(Some(LightingTarget::Off)), vec![])],
+    );
+    assert_eq!(full.state().failure, None);
+}
+
+#[test]
+fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    let raw = SlimCapture {
+        encoding: SlimEncoding::Raw,
+        ..SlimCapture::default()
+    };
+    let mut steps = vec![(
+        0,
+        Pw(Active),
+        vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+    )];
+    // Fail often enough that the next delay is long.
+    let mut now = 0;
+    for delay in [1_000, 2_000, 4_000, 8_000] {
+        steps.push((now + 1, Exited(Exit::Code(1)), vec![]));
+        steps.push((
+            now + 1 + delay,
+            Tick,
+            vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+        ));
+        now += 1 + delay;
+    }
+    steps.push((now + 1, Exited(Exit::Code(1)), vec![]));
+    script(&mut m, t0, steps);
+    assert_eq!(m.state().worker, P::Retrying);
+
+    // The new settings start now, not after the 16 s backoff.
+    script(
+        &mut m,
+        t0,
+        vec![(
+            now + 2,
+            Input::Preferences(Preferences {
+                autostart: true,
+                capture: Some(raw),
+                ..slim_prefs()
+            }),
+            vec![spawn_slim(raw), video(Video::Unknown)],
+        )],
+    );
+    // And a failure of the new attempt waits only the first delay.
+    script(
+        &mut m,
+        t0,
+        vec![
+            (now + 3, Exited(Exit::Code(1)), vec![]),
+            (now + 1_002, Tick, vec![]),
+            (
+                now + 1_003,
+                Tick,
+                vec![spawn_slim(raw), video(Video::Unknown)],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
+    let mut m = slim(Preferences {
+        autostart: true,
+        ..slim_prefs()
+    });
+    let t0 = Instant::now();
+    let raw = SlimCapture {
+        encoding: SlimEncoding::Raw,
+        ..SlimCapture::default()
+    };
+    script(
+        &mut m,
+        t0,
+        vec![
+            (
+                0,
+                Pw(Active),
+                vec![spawn_slim(SlimCapture::default()), video(Video::Unknown)],
+            ),
+            (
+                1,
+                Input::WorkerBroken("malformed".into()),
+                vec![Effect::Terminate],
+            ),
+            (
+                2,
+                Input::Preferences(Preferences {
+                    autostart: true,
+                    capture: Some(raw),
+                    ..slim_prefs()
+                }),
+                vec![],
+            ),
+            (
+                3,
+                Exited(Exit::Code(1)),
+                vec![spawn_slim(raw), video(Video::Unknown)],
+            ),
+        ],
+    );
 }

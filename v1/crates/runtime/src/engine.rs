@@ -1,6 +1,6 @@
-use crate::{PreviewSlot, PreviewWatch, Session, SessionEnd};
+use crate::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd};
 use prysm_ports::{
-    AdapterSettings, Error, IdleMode, Input, LightingTarget, Registry, Result, Revision,
+    AdapterSettings, Error, IdleMode, Input, LightingTarget, Registry, Result, Revision, Section,
     SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
@@ -401,32 +401,25 @@ impl Core {
         Ok(revision)
     }
 
+    /// Open the source and start a session. The output is validated here
+    /// but opened by the session at its first frame, so a source without
+    /// frames never takes the device over.
     async fn start(&mut self) -> Result<()> {
         let (capture, output, config) = {
             let snapshot = self.state.borrow();
             let settings = &snapshot.settings;
-            (
-                configured(settings.capture.as_ref(), "capture")?,
-                configured(settings.output.as_ref(), "output")?,
-                settings.processing.config(),
-            )
+            let capture = configured(settings.capture.as_ref(), Section::Capture)?;
+            let output = configured(settings.output.as_ref(), Section::Output)?;
+            self.registry.validate(settings)?;
+            (capture, output, settings.processing.config())
         };
         let registry = self.registry.clone();
-        let (source, output) = blocking(move || {
-            let source = registry.open_source(&capture)?;
-            match registry.open_output(&output) {
-                Ok(output) => Ok((source, output)),
-                Err(error) => {
-                    // Release what was opened; the open failure is the one reported.
-                    let _ = source.close();
-                    Err(error)
-                }
-            }
-        })
-        .await??;
+        let source = blocking(move || registry.open_source(&capture)).await??;
+        let registry = self.registry.clone();
+        let open_output: OpenOutput = Box::new(move || registry.open_output(&output));
         self.session = Some(Session::start(
             source,
-            output,
+            open_output,
             config,
             self.preview.clone(),
         )?);
@@ -459,7 +452,10 @@ impl Core {
 
     /// DeviceNative has no session: open the output only to put it in `mode`.
     async fn idle_output(&mut self, mode: IdleMode) -> Result<()> {
-        let output = configured(self.state.borrow().settings.output.as_ref(), "output");
+        let output = configured(
+            self.state.borrow().settings.output.as_ref(),
+            Section::Output,
+        );
         let registry = self.registry.clone();
         let result = match output {
             Ok(output) => blocking(move || registry.open_output(&output)?.idle(mode)).await?,
@@ -488,10 +484,10 @@ impl Core {
     }
 }
 
-fn configured(settings: Option<&AdapterSettings>, section: &str) -> Result<AdapterSettings> {
+fn configured(settings: Option<&AdapterSettings>, section: Section) -> Result<AdapterSettings> {
     settings
         .cloned()
-        .ok_or_else(|| ValidationError::new(section, "not configured").into())
+        .ok_or_else(|| ValidationError::new(section.as_str(), "not configured").into())
 }
 
 async fn finished(session: &mut Option<Session>) -> Result<SessionEnd> {

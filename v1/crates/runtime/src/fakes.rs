@@ -70,8 +70,11 @@ pub struct FakeSourceSettings {
     pub name: String,
     /// Fail `next_frame` after this many frames.
     pub fail_after: Option<u32>,
-    /// Produce no more frames after this many.
+    /// Produce no frames after this many (`Some(0)`: none at all), for
+    /// `quiet_for_ms` or, when that is 0, for good.
     pub quiet_after: Option<u32>,
+    /// How long the quiet spell lasts; 0: forever.
+    pub quiet_for_ms: u64,
     /// Report [`Pull::Ended`] after this many frames, like a file at its end.
     pub end_after: Option<u32>,
     pub fail_open: bool,
@@ -113,6 +116,9 @@ pub struct FakeSource {
     log: CallLog,
     settings: FakeSourceSettings,
     frames: u32,
+    /// When the quiet spell began; `None` before it, or after it ended.
+    quiet_since: Option<Instant>,
+    quiet_done: bool,
 }
 
 impl FakeSource {
@@ -123,6 +129,8 @@ impl FakeSource {
             log: log.clone(),
             settings,
             frames: 0,
+            quiet_since: None,
+            quiet_done: false,
         }
     }
 }
@@ -135,9 +143,14 @@ impl FrameSource for FakeSource {
         if self.settings.end_after.is_some_and(|n| self.frames >= n) {
             return Ok(Pull::Ended);
         }
-        if self.settings.quiet_after.is_some_and(|n| self.frames >= n) {
-            thread::sleep(timeout);
-            return Ok(Pull::Idle);
+        if !self.quiet_done && self.settings.quiet_after.is_some_and(|n| self.frames >= n) {
+            let since = *self.quiet_since.get_or_insert_with(Instant::now);
+            let length = Duration::from_millis(self.settings.quiet_for_ms);
+            if self.settings.quiet_for_ms == 0 || since.elapsed() < length {
+                thread::sleep(timeout);
+                return Ok(Pull::Idle);
+            }
+            self.quiet_done = true;
         }
         thread::sleep(timeout.min(Duration::from_millis(2)));
         self.frames += 1;
