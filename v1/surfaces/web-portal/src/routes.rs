@@ -1,6 +1,7 @@
 //! Routing, request decoding and the state stream.
 use crate::FrontendAsset;
 use crate::access::{self, Access};
+use crate::preview::Previews;
 use crate::response::{self, Body, Response, failure};
 use bytes::Bytes;
 use futures::{StreamExt, stream};
@@ -32,6 +33,7 @@ pub(crate) struct Context {
     pub access: Access,
     pub shutdown: Shutdown,
     streams: Arc<Semaphore>,
+    previews: Previews,
 }
 
 impl Context {
@@ -47,6 +49,7 @@ impl Context {
             access,
             shutdown,
             streams: Arc::new(Semaphore::new(STREAMS)),
+            previews: Previews::new(),
         }
     }
 }
@@ -100,6 +103,9 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             &State::from(&*context.engine.snapshot().borrow()),
         ),
         ("/api/v1/state/stream", Method::GET) => stream_state(context),
+        ("/api/v1/preview/stream", Method::GET) => {
+            context.previews.stream(&context.engine, &context.shutdown)
+        }
         ("/api/v1/target", Method::PUT) => match decode::<TargetRequest>(request).await {
             Ok(body) => match command(context.engine.set_target(body.target)).await {
                 Ok(()) => response::empty(StatusCode::NO_CONTENT),
@@ -122,13 +128,18 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             }
             Err(response) => *response,
         },
-        ("/api/v1/state" | "/api/v1/state/stream" | "/api/v1/target" | "/api/v1/settings", _) => {
-            failure(
-                StatusCode::METHOD_NOT_ALLOWED,
-                FailureKind::MethodNotAllowed,
-                "method not allowed",
-            )
-        }
+        (
+            "/api/v1/state"
+            | "/api/v1/state/stream"
+            | "/api/v1/preview/stream"
+            | "/api/v1/target"
+            | "/api/v1/settings",
+            _,
+        ) => failure(
+            StatusCode::METHOD_NOT_ALLOWED,
+            FailureKind::MethodNotAllowed,
+            "method not allowed",
+        ),
         _ => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
     }
 }

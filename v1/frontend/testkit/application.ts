@@ -101,9 +101,21 @@ export function fakeApplicationPort<C, O>(initial: {
     setTarget: async (target) => {
       calls.push(`target:${target}`);
       failIfScripted();
+      const { capture, output } = snapshot.settings;
+      const missing =
+        target === 'off' ? null : !output ? 'output' : target === 'processed' && !capture ? 'capture' : null;
+      if (missing) {
+        const failure: Failure = { kind: 'invalid', field: missing, message: 'not configured' };
+        publish({ target, session: { state: 'stopped' }, failure });
+        throw new ApplicationError(failure);
+      }
       publish({
         target,
-        session: { state: target === 'processed' ? 'running' : 'stopped' },
+        failure: null,
+        session: {
+          state: { off: 'stopped', processed: 'running', device_native: 'native' }[target] as
+            'stopped' | 'running' | 'native',
+        },
       });
     },
   };

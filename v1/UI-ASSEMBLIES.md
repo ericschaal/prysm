@@ -25,11 +25,11 @@ client does not exist yet, so the TV entry points run on in-memory fixtures.
 ## Frontend wiring
 
 - [Desktop browser host](frontend/hosts/headless/web-portal/app.tsx), shared by
-  `prysm-headless` and `prysm-tui`: shared portal,
-  a [capture selector](frontend/hosts/headless/web-portal/capture-settings.tsx) for
-  the `device` and `remote` kinds, and the WLED panel.
+  `prysm-headless` and `prysm-tui`: shared portal with capture kinds `device`,
+  `remote` and `file`, and output kinds `wled` and `null`.
 - [webOS browser host](frontend/hosts/webos/web-portal/app.tsx): shared portal,
-  webOS capture and WLED panels, typed by `@prysm/contracts/host-webos`.
+  capture kind `webos` and output kind `wled`, typed by
+  `@prysm/contracts/host-webos`.
 - [Embedded TV](frontend/hosts/webos/tv-ui/app.tsx) and
   [capture-only TV](frontend/hosts/webos-slim/tv-ui/app.tsx): the shared
   [TV UI](frontend/packages/tv-ui/index.tsx) with an injected application
@@ -60,11 +60,17 @@ no credentials.
 [application-state](frontend/STATE.md) holds the latest state and command
 feedback in one RTK store per frontend.
 
-Settings panels receive their section (or `null`), a disabled flag and an
-`onSubmit`. The command layer copies the observed settings, replaces only that
-section and sends the observed revision, so concurrent edits conflict instead of
-overwriting each other. UI teardown releases the state stream only; it never
-turns lighting off.
+The [shared portal](frontend/packages/web-portal/index.tsx) shows the lighting
+modes (Screen sync, the output's own effects such as "WLED effects", Off, and
+"Open WLED"), live picture controls and one Save form each for capture and
+output. A host registers each section's kinds as an `AdapterUis` map of
+`AdapterUi { label, create, Editor, normalize?, lighting? }`; the map is
+exhaustive over the host's generated union, the form shows a kind selector when
+there is more than one, and editors are controlled components built from the
+portal's fields. Saves copy the latest observed settings and replace one
+section, so unknown fields are kept; a section changed elsewhere is reloaded
+instead of overwritten ([saving settings](frontend/README.md#saving-settings)).
+UI teardown releases the state stream only; it never turns lighting off.
 
 ## Build and inspect
 
@@ -80,5 +86,5 @@ The build creates `dist/headless/web-portal` (both desktop hosts), `dist/webos/w
 Rust `assets.rs` list for `WebPortal`. TV bundles are packaged with the app.
 
 Not implemented: the TV UI's Luna client, wiring the slim TV UI to the HTTP client, TV
-calibration (not in the runtime yet), preview, IPK packaging and validation on
-a real webOS browser.
+calibration (not in the runtime yet), preview, colour profiles and first-run
+setup in the portal, IPK packaging and validation on a real webOS browser.

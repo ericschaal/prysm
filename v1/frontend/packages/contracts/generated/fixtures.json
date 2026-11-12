@@ -28,9 +28,84 @@
       "message": "runtime has stopped"
     }
   ],
+  "FileSettings": [
+    {
+      "fps": 30,
+      "height": 360,
+      "kind": "file",
+      "path": "/videos/clip.mkv",
+      "width": 640
+    },
+    {
+      "fps": 24,
+      "height": 180,
+      "kind": "file",
+      "path": "clip.mp4",
+      "width": 320
+    }
+  ],
   "NullSettings": [
     {
       "kind": "null"
+    }
+  ],
+  "PreviewEvent": [
+    {
+      "type": "idle"
+    },
+    {
+      "message": "MJPEG frames cannot be previewed",
+      "type": "unavailable"
+    },
+    {
+      "colors": {
+        "bottom": [
+          [
+            188,
+            188,
+            188
+          ]
+        ],
+        "left": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "right": [
+          [
+            0,
+            0,
+            255
+          ]
+        ],
+        "top": [
+          [
+            255,
+            0,
+            0
+          ],
+          [
+            0,
+            255,
+            0
+          ]
+        ]
+      },
+      "height": 270,
+      "jpeg": "/9j/2wBDAP/Z",
+      "sequence": 42,
+      "source_height": 1080,
+      "source_width": 1920,
+      "type": "frame",
+      "viewport": {
+        "height": 800,
+        "width": 1920,
+        "x": 0,
+        "y": 140
+      },
+      "width": 480
     }
   ],
   "RemoteReceiverSettings": [
@@ -43,6 +118,55 @@
     {
       "processing": {
         "brightness_percent": 100,
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "shadow_lift_percent": 0,
+        "smoothing_seconds": 0.10000000149011612,
+        "spatial_reach_percent": 10
+      }
+    },
+    {
+      "processing": {
+        "active_profile": "ps5",
+        "brightness_percent": 100,
+        "profiles": [
+          {
+            "correction": {
+              "hue": {
+                "blue": 0,
+                "cyan": 0,
+                "green": 0,
+                "magenta": 0,
+                "red": -5,
+                "yellow": 0
+              },
+              "intensity": 15,
+              "midtones": 6,
+              "tint": -4,
+              "warmth": 12
+            },
+            "id": "ps5",
+            "name": "PS5"
+          },
+          {
+            "correction": {
+              "hue": {
+                "blue": 0,
+                "cyan": 0,
+                "green": 0,
+                "magenta": 0,
+                "red": 0,
+                "yellow": 0
+              },
+              "intensity": 0,
+              "midtones": 0,
+              "tint": 0,
+              "warmth": 0
+            },
+            "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+            "name": "TV apps"
+          }
+        ],
         "remove_black_bars": true,
         "sample_density": 128,
         "shadow_lift_percent": 0,
@@ -87,6 +211,58 @@
         },
         "processing": {
           "brightness_percent": 100,
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    },
+    {
+      "expected": 8,
+      "settings": {
+        "processing": {
+          "active_profile": "ps5",
+          "brightness_percent": 100,
+          "profiles": [
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": -5,
+                  "yellow": 0
+                },
+                "intensity": 15,
+                "midtones": 6,
+                "tint": -4,
+                "warmth": 12
+              },
+              "id": "ps5",
+              "name": "PS5"
+            },
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": 0,
+                  "yellow": 0
+                },
+                "intensity": 0,
+                "midtones": 0,
+                "tint": 0,
+                "warmth": 0
+              },
+              "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+              "name": "TV apps"
+            }
+          ],
           "remove_black_bars": true,
           "sample_density": 128,
           "shadow_lift_percent": 0,

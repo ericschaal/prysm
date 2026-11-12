@@ -40,10 +40,12 @@ server's `Failure` (`invalid` with `field`, `stale_revision` with `current`,
 to an earlier command cannot overwrite it. Observed state changes only when the
 stream delivers a new state.
 
-`configureCapture`/`configureOutput` copy the observed settings, replace one
-section and send the revision the edit started from. If the observed revision
-has moved on, the command fails locally with `stale_revision` and nothing is
-sent; the user reviews and saves again.
+`configureCapture`/`configureOutput`/`configureProcessing` copy the observed
+settings, replace one section and send `expected`. If the observed revision is
+not `expected`, the command fails locally with `stale_revision` and nothing is
+sent. The portal's forms pass the current revision after checking that their own
+section has not changed since the draft started, so saving one section never
+conflicts with another; see [saving settings](README.md#saving-settings).
 
 ## Observation
 
@@ -57,5 +59,6 @@ observation never commands lighting.
 
 ## Outside Redux
 
-Form drafts, focus, clients and abort signals stay out of the store. The HTTP
+Form drafts, field errors, focus, clients and abort signals stay out of the
+store; each form shows the result of its own commands. The HTTP
 client holds only the portal's base URL; the portal needs no credentials.

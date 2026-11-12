@@ -1,6 +1,7 @@
 use crate::ValidationError;
+use crate::profiles::{self, ColorProfile};
 use prysm_core::{
-    BrightnessPercent, Config, SampleDensity, ShadowLiftPercent, SmoothingSeconds,
+    BrightnessPercent, ColorCorrection, Config, SampleDensity, ShadowLiftPercent, SmoothingSeconds,
     SpatialReachPercent,
 };
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,13 @@ use std::fmt;
 /// {
 ///   "capture": { "kind": "device", "path": "/dev/video0" },
 ///   "output": { "kind": "wled", "address": "wled.local", "leds": { "top": 96 } },
-///   "processing": { "brightness_percent": 80 }
+///   "processing": {
+///     "brightness_percent": 80,
+///     "profiles": [
+///       { "id": "ps5", "name": "PS5", "correction": { "warmth": 12, "tint": -4 } }
+///     ],
+///     "active_profile": "ps5"
+///   }
 /// }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -52,8 +59,10 @@ impl AdapterSettings {
     }
 }
 
-/// Processing controls in plain units; converted to [`Config`] for the processor.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Processing controls in plain units, plus the saved color profiles and the
+/// active one; converted to [`Config`] for the processor. Any change here,
+/// including to profiles, is applied to a running session at the next frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Processing {
     pub brightness_percent: u8,
@@ -62,6 +71,12 @@ pub struct Processing {
     pub sample_density: u16,
     pub spatial_reach_percent: u8,
     pub remove_black_bars: bool,
+    /// At most [`MAX_PROFILES`](crate::MAX_PROFILES), with unique ids.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<ColorProfile>,
+    /// The `id` of the profile whose correction is applied; none applies no correction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_profile: Option<String>,
 }
 
 impl Default for Processing {
@@ -74,6 +89,8 @@ impl Default for Processing {
             sample_density: u16::try_from(config.sample_density.0).unwrap_or(u16::MAX),
             spatial_reach_percent: config.spatial_reach_percent.0,
             remove_black_bars: config.remove_black_bars,
+            profiles: Vec::new(),
+            active_profile: None,
         }
     }
 }
@@ -102,19 +119,36 @@ impl Processing {
                 "must be at least 1",
             ));
         }
-        Ok(())
+        profiles::validate("processing", &self.profiles, self.active_profile.as_deref())
+    }
+
+    /// The active profile, if one is set and exists.
+    #[must_use]
+    pub fn active(&self) -> Option<&ColorProfile> {
+        let active = self.active_profile.as_deref()?;
+        self.profiles.iter().find(|profile| profile.id == active)
+    }
+
+    /// The active profile's correction. No correction when none is active, or
+    /// when loaded settings name a missing or out-of-range profile (which
+    /// [`Processing::validate`] reports).
+    #[must_use]
+    pub fn correction(&self) -> ColorCorrection {
+        self.active()
+            .and_then(|profile| profile.correction.to_core().ok())
+            .unwrap_or_default()
     }
 
     #[must_use]
     pub fn config(&self) -> Config {
         Config {
+            correction: self.correction(),
             brightness_percent: BrightnessPercent(self.brightness_percent),
             shadow_lift_percent: ShadowLiftPercent(self.shadow_lift_percent),
             smoothing_seconds: SmoothingSeconds(self.smoothing_seconds),
             sample_density: SampleDensity(usize::from(self.sample_density)),
             spatial_reach_percent: SpatialReachPercent(self.spatial_reach_percent),
             remove_black_bars: self.remove_black_bars,
-            ..Config::default()
         }
     }
 }
@@ -173,5 +207,51 @@ mod tests {
             ..Processing::default()
         };
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn active_profile_sets_the_processor_correction() {
+        let processing: Processing = serde_json::from_value(serde_json::json!({
+            "profiles": [
+                { "id": "ps5", "name": "PS5", "correction": { "warmth": 40, "hue": { "red": -5 } } },
+                { "id": "apps", "name": "TV apps" }
+            ],
+            "active_profile": "ps5"
+        }))
+        .unwrap();
+        processing.validate().unwrap();
+        let expected = ColorCorrection::new(40, 0, 0)
+            .and_then(|c| c.with_chroma(0, [-5, 0, 0, 0, 0, 0]))
+            .unwrap();
+        assert_eq!(processing.config().correction, expected);
+        assert_eq!(
+            Processing {
+                active_profile: Some("apps".into()),
+                ..processing.clone()
+            }
+            .config()
+            .correction,
+            ColorCorrection::default()
+        );
+        let missing = Processing {
+            active_profile: Some("gone".into()),
+            ..processing.clone()
+        };
+        assert_eq!(
+            missing.validate().unwrap_err().field,
+            "processing.active_profile"
+        );
+        assert_eq!(missing.config().correction, ColorCorrection::default());
+
+        // Every control is written, so the file shows what can be edited.
+        let written = serde_json::to_value(&processing).unwrap();
+        assert_eq!(written["profiles"][1]["correction"]["hue"]["magenta"], 0);
+        assert_eq!(
+            serde_json::from_value::<Processing>(written).unwrap(),
+            processing
+        );
+        // No profiles write nothing.
+        let empty = serde_json::to_value(Processing::default()).unwrap();
+        assert!(empty.get("profiles").is_none() && empty.get("active_profile").is_none());
     }
 }

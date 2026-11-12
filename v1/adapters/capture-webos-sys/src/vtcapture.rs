@@ -251,7 +251,8 @@ impl VtCapture {
             properties,
             released: false,
         };
-        this.client[..2].fill(b'0'.cast_signed());
+        // `c_char` is `u8` on ARM (the TV) and `i8` on x86: convert portably.
+        this.client[..2].fill(c_char::from_ne_bytes(*b"0"));
         this.prepare()?;
         Ok(this)
     }

@@ -3,7 +3,39 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        CaptureSettings: components["schemas"]["DeviceSettings"] | components["schemas"]["RemoteReceiverSettings"];
+        CaptureSettings: components["schemas"]["DeviceSettings"] | components["schemas"]["FileSettings"] | components["schemas"]["RemoteReceiverSettings"];
+        /** @description A named color correction, such as one per console. */
+        ColorProfile: {
+            correction: components["schemas"]["CorrectionControls"];
+            /** @description Stable reference for `active_profile`; a UUID fits. */
+            id: string;
+            /** @description Without surrounding whitespace or control characters. */
+            name: string;
+        };
+        /** @description Correction controls, each -100 to 100; all zero is no correction. */
+        CorrectionControls: {
+            hue: components["schemas"]["HueControls"];
+            /**
+             * Format: int32
+             * @description Positive saturates, negative desaturates.
+             */
+            intensity: number;
+            /**
+             * Format: int32
+             * @description Positive lightens midtones, negative darkens them.
+             */
+            midtones: number;
+            /**
+             * Format: int32
+             * @description Positive adds magenta, negative adds green.
+             */
+            tint: number;
+            /**
+             * Format: int32
+             * @description Positive warms, negative cools.
+             */
+            warmth: number;
+        };
         /**
          * @description `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
          *
@@ -51,6 +83,53 @@ export interface components {
         };
         /** @enum {string} */
         FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        /**
+         * @description `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30 }`
+         *
+         *     FFmpeg scales every frame to `width`×`height` and caps the rate at `fps`
+         *     (a slower file keeps its own rate). Size and rate default to 640×360 at
+         *     30 fps. Playback runs once.
+         */
+        FileSettings: {
+            /**
+             * Format: int32
+             * @description Upper bound on the delivered frame rate.
+             * @default 30
+             */
+            fps?: number;
+            /**
+             * Format: int32
+             * @default 360
+             */
+            height?: number;
+            /** @enum {string} */
+            kind: "file";
+            /**
+             * @description Video file to play; any container and codec FFmpeg can decode.
+             * @example /home/me/Videos/clip.mkv
+             */
+            path: string;
+            /**
+             * Format: int32
+             * @default 640
+             */
+            width?: number;
+        };
+        /** @description Hue shift per wheel anchor, each -100 to 100. */
+        HueControls: {
+            /** Format: int32 */
+            blue: number;
+            /** Format: int32 */
+            cyan: number;
+            /** Format: int32 */
+            green: number;
+            /** Format: int32 */
+            magenta: number;
+            /** Format: int32 */
+            red: number;
+            /** Format: int32 */
+            yellow: number;
+        };
         /** @description LEDs per edge, as seen from the front of the screen. An omitted edge has none. */
         LedCounts: {
             /**
@@ -90,10 +169,81 @@ export interface components {
          * @enum {string}
          */
         Phase: "running" | "closing_source" | "idling_output" | "finishing";
+        PreviewColor: [
+            number,
+            number,
+            number
+        ];
+        /**
+         * @description The colors written to the LEDs, in display (sRGB) space and screen
+         *     orientation: `top` and `bottom` left to right, `left` and `right` top to
+         *     bottom. Each edge has at most 256 entries spread evenly along it.
+         */
+        PreviewColors: {
+            bottom: components["schemas"]["PreviewColor"][];
+            left: components["schemas"]["PreviewColor"][];
+            right: components["schemas"]["PreviewColor"][];
+            top: components["schemas"]["PreviewColor"][];
+        };
+        /** @description One server-sent event of the preview stream. */
+        PreviewEvent: (components["schemas"]["PreviewFrame"] & {
+            /** @enum {string} */
+            type: "frame";
+        }) | {
+            /** @enum {string} */
+            type: "idle";
+        } | {
+            message: string;
+            /** @enum {string} */
+            type: "unavailable";
+        };
+        /** @description A downscaled JPEG of the captured frame, the sampled area and the colors. */
+        PreviewFrame: {
+            colors: components["schemas"]["PreviewColors"];
+            /** Format: int32 */
+            height: number;
+            /** @description Base64 (standard alphabet, padded) baseline JPEG. */
+            jpeg: string;
+            /**
+             * Format: int64
+             * @description Increases with every new frame, across sessions; equal means unchanged.
+             */
+            sequence: number;
+            /** Format: int32 */
+            source_height: number;
+            /**
+             * Format: int32
+             * @description The captured frame's size in pixels; `viewport` is in these pixels.
+             */
+            source_width: number;
+            /** @description The part of the frame that was sampled, after black-bar removal. */
+            viewport: components["schemas"]["PreviewViewport"];
+            /**
+             * Format: int32
+             * @description The JPEG's size in pixels: the source scaled to at most 480 on its
+             *     longer side, keeping its aspect ratio.
+             */
+            width: number;
+        };
+        /** @description A rectangle in source-frame pixels. */
+        PreviewViewport: {
+            /** Format: int32 */
+            height: number;
+            /** Format: int32 */
+            width: number;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
+        };
         /** @description Processing controls in plain units. */
         Processing: {
+            /** @description The `id` of the applied profile; absent applies no correction. */
+            active_profile?: string;
             /** Format: int32 */
             brightness_percent: number;
+            /** @description Saved color corrections; ids are unique. */
+            profiles?: components["schemas"]["ColorProfile"][];
             remove_black_bars: boolean;
             /** Format: int32 */
             sample_density: number;
@@ -202,14 +352,23 @@ export interface components {
     pathItems: never;
 }
 export type CaptureSettings = components['schemas']['CaptureSettings'];
+export type ColorProfile = components['schemas']['ColorProfile'];
+export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type DeviceSettings = components['schemas']['DeviceSettings'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
+export type FileSettings = components['schemas']['FileSettings'];
+export type HueControls = components['schemas']['HueControls'];
 export type LedCounts = components['schemas']['LedCounts'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type NullSettings = components['schemas']['NullSettings'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Phase = components['schemas']['Phase'];
+export type PreviewColor = components['schemas']['PreviewColor'];
+export type PreviewColors = components['schemas']['PreviewColors'];
+export type PreviewEvent = components['schemas']['PreviewEvent'];
+export type PreviewFrame = components['schemas']['PreviewFrame'];
+export type PreviewViewport = components['schemas']['PreviewViewport'];
 export type Processing = components['schemas']['Processing'];
 export type RemoteReceiverSettings = components['schemas']['RemoteReceiverSettings'];
 export type Session = components['schemas']['Session'];

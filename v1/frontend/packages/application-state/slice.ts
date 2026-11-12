@@ -8,7 +8,11 @@ export interface Connection<C, O> {
   error: string | null;
 }
 
-export type CommandKind = 'configureCapture' | 'configureOutput' | 'setTarget';
+export type CommandKind =
+  | 'configureCapture'
+  | 'configureOutput'
+  | 'configureProcessing'
+  | 'setTarget';
 export interface CommandState {
   /** Local sequence number; only the latest command is shown. */
   id: number;

@@ -1,7 +1,7 @@
-use crate::{Preview, Session, SessionEnd};
+use crate::{PreviewSlot, PreviewWatch, Session, SessionEnd};
 use prysm_ports::{
-    AdapterSettings, Error, IdleMode, LatestSlot, LightingTarget, Registry, Result, Revision,
-    SessionPhase, SessionState, Settings, SettingsStore, Snapshot, ValidationError,
+    AdapterSettings, Error, IdleMode, LightingTarget, Registry, Result, Revision, SessionPhase,
+    SessionState, Settings, SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -27,7 +27,7 @@ enum Command {
 pub struct EngineHandle {
     commands: mpsc::Sender<Command>,
     snapshot: watch::Receiver<Snapshot>,
-    preview: Arc<LatestSlot<Preview>>,
+    preview: Arc<PreviewSlot>,
 }
 
 impl EngineHandle {
@@ -60,10 +60,17 @@ impl EngineHandle {
         self.snapshot.clone()
     }
 
-    /// The latest frame and colors written by the running session.
+    /// Watch the latest frame and colors written by the running session. The
+    /// session publishes previews only while at least one watch exists.
     #[must_use]
-    pub fn preview(&self) -> Arc<LatestSlot<Preview>> {
-        self.preview.clone()
+    pub fn preview(&self) -> PreviewWatch {
+        self.preview.watch()
+    }
+
+    /// How many preview watches exist.
+    #[must_use]
+    pub fn preview_viewers(&self) -> usize {
+        self.preview.viewers()
     }
 
     pub(crate) async fn report_surface_failure(&self, error: Error) {
@@ -112,7 +119,7 @@ impl Engine {
             failure,
             ..Snapshot::default()
         });
-        let preview = Arc::new(LatestSlot::new());
+        let preview = Arc::new(PreviewSlot::default());
         let (commands, inbox) = mpsc::channel(16);
         let core = Core {
             registry,
@@ -175,7 +182,7 @@ struct Core {
     registry: Registry,
     store: Store,
     session: Option<Session>,
-    preview: Arc<LatestSlot<Preview>>,
+    preview: Arc<PreviewSlot>,
     stop_deadline: Duration,
     state: watch::Sender<Snapshot>,
 }

@@ -13,6 +13,9 @@ use std::error::Error as _;
 #[cfg(feature = "schema")]
 pub mod schema;
 
+mod preview;
+pub use preview::{PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport};
+
 /// The observable runtime state, sent whole on every change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

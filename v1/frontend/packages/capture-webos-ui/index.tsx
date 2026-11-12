@@ -1,63 +1,75 @@
 import type { WebosSettings } from '@prysm/contracts/host-webos';
-import type { SettingsPanelProps } from '@prysm/web-portal';
+import {
+  CheckboxField,
+  NumberField,
+  type AdapterUi,
+  type EditorProps,
+} from '@prysm/web-portal';
 
-/** Defaults and limits of the `webos` source; Rust validates again. */
-const fields = [
-  { name: 'width', label: 'Width', min: 2, max: 1920, step: 2, fallback: 640 },
-  { name: 'height', label: 'Height', min: 2, max: 1080, step: 2, fallback: 360 },
-  { name: 'fps', label: 'Frames per second', min: 1, max: 60, step: 1, fallback: 30 },
-] as const;
+/**
+ * Limits from the generated `WebosSettings` schema; NV12 needs even sizes
+ * (the schema says so in words, so the step of 2 is written here).
+ */
+export const webosLimits = {
+  width: { min: 2, max: 1920, step: 2 },
+  height: { min: 2, max: 1080, step: 2 },
+  fps: { min: 1, max: 60, step: 1 },
+} as const;
+/** What Rust uses for an omitted field. */
+export const webosDefaults = {
+  width: 640,
+  height: 360,
+  fps: 30,
+  include_ui: true,
+} as const;
 
 /** Edits the TV capture size, rate and menu blending. */
-export function WebosCaptureSettings({
-  settings,
-  disabled,
-  onSubmit,
-}: SettingsPanelProps<WebosSettings>) {
+function WebosEditor({ value, onChange }: EditorProps<WebosSettings>) {
   return (
-    <form
-      key={JSON.stringify(settings)}
-      onSubmit={(event) => {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        const number = (name: string) => Number(form.get(name));
-        void onSubmit({
-          ...settings,
-          kind: 'webos',
-          width: number('width'),
-          height: number('height'),
-          fps: number('fps'),
-          include_ui: form.get('include_ui') === 'on',
-        });
-      }}
-    >
-      <h2>webOS capture</h2>
-      <fieldset disabled={disabled}>
-        <legend>Capture</legend>
-        {fields.map(({ name, label, min, max, step, fallback }) => (
-          <label key={name}>
-            {label}{' '}
-            <input
-              name={name}
-              type="number"
-              min={min}
-              max={max}
-              step={step}
-              required
-              defaultValue={settings?.[name] ?? fallback}
-            />
-          </label>
-        ))}
-        <label>
-          <input
-            name="include_ui"
-            type="checkbox"
-            defaultChecked={settings?.include_ui ?? true}
-          />{' '}
-          Include TV menus
-        </label>
-        <button type="submit">Save capture settings</button>
-      </fieldset>
-    </form>
+    <>
+      <div className="grid three">
+        <NumberField
+          path="capture.width"
+          label="Width"
+          unit="pixels"
+          value={value.width ?? webosDefaults.width}
+          onChange={(width) => onChange({ ...value, width })}
+          {...webosLimits.width}
+        />
+        <NumberField
+          path="capture.height"
+          label="Height"
+          unit="pixels"
+          value={value.height ?? webosDefaults.height}
+          onChange={(height) => onChange({ ...value, height })}
+          {...webosLimits.height}
+        />
+        <NumberField
+          path="capture.fps"
+          label="Frame rate"
+          unit="fps"
+          value={value.fps ?? webosDefaults.fps}
+          onChange={(fps) => onChange({ ...value, fps })}
+          {...webosLimits.fps}
+        />
+      </div>
+      <CheckboxField
+        path="capture.include_ui"
+        label="Include TV menus"
+        help="Blend on-screen menus into the capture instead of video only."
+        checked={value.include_ui ?? webosDefaults.include_ui}
+        onChange={(include_ui) => onChange({ ...value, include_ui })}
+      />
+      <p className="help">
+        Video comes directly from this TV. Start with 640 × 360 at 30 fps; sizes
+        must be even and the rate at most 60 fps.
+      </p>
+    </>
   );
 }
+
+export const webosCapture: AdapterUi<WebosSettings> = {
+  label: 'This TV',
+  create: () => ({ kind: 'webos' }),
+  Editor: WebosEditor,
+};

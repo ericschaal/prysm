@@ -23,7 +23,8 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    Failure, FailureKind, Phase, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
+    Failure, FailureKind, Phase, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame,
+    PreviewViewport, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,75 @@ pub struct ProcessingSchema {
     #[schema(minimum = 1, maximum = 100)]
     spatial_reach_percent: u8,
     remove_black_bars: bool,
+    /// Saved color corrections; ids are unique.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(max_items = 32)]
+    profiles: Vec<ColorProfileSchema>,
+    /// The `id` of the applied profile; absent applies no correction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(
+        nullable = false,
+        min_length = 1,
+        max_length = 64,
+        pattern = "^[A-Za-z0-9_-]+$"
+    )]
+    active_profile: Option<String>,
+}
+
+// Mirrors `prysm_ports::ColorProfile`.
+/// A named color correction, such as one per console.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = ColorProfile)]
+#[serde(deny_unknown_fields)]
+pub struct ColorProfileSchema {
+    /// Stable reference for `active_profile`; a UUID fits.
+    #[schema(min_length = 1, max_length = 64, pattern = "^[A-Za-z0-9_-]+$")]
+    id: String,
+    /// Without surrounding whitespace or control characters.
+    #[schema(min_length = 1, max_length = 64)]
+    name: String,
+    correction: CorrectionControlsSchema,
+}
+
+// Mirrors `prysm_ports::CorrectionControls`.
+/// Correction controls, each -100 to 100; all zero is no correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = CorrectionControls)]
+#[serde(deny_unknown_fields)]
+pub struct CorrectionControlsSchema {
+    /// Positive warms, negative cools.
+    #[schema(minimum = -100, maximum = 100)]
+    warmth: i16,
+    /// Positive adds magenta, negative adds green.
+    #[schema(minimum = -100, maximum = 100)]
+    tint: i16,
+    /// Positive lightens midtones, negative darkens them.
+    #[schema(minimum = -100, maximum = 100)]
+    midtones: i16,
+    /// Positive saturates, negative desaturates.
+    #[schema(minimum = -100, maximum = 100)]
+    intensity: i16,
+    hue: HueControlsSchema,
+}
+
+// Mirrors `prysm_ports::HueControls`.
+/// Hue shift per wheel anchor, each -100 to 100.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = HueControls)]
+#[serde(deny_unknown_fields)]
+pub struct HueControlsSchema {
+    #[schema(minimum = -100, maximum = 100)]
+    red: i16,
+    #[schema(minimum = -100, maximum = 100)]
+    yellow: i16,
+    #[schema(minimum = -100, maximum = 100)]
+    green: i16,
+    #[schema(minimum = -100, maximum = 100)]
+    cyan: i16,
+    #[schema(minimum = -100, maximum = 100)]
+    blue: i16,
+    #[schema(minimum = -100, maximum = 100)]
+    magenta: i16,
 }
 
 // Mirrors `prysm_ports::LightingTarget`.
@@ -132,9 +202,17 @@ impl ToSchema for OutputSettings {}
     SettingsReplaced,
     SettingsSchema,
     ProcessingSchema,
+    ColorProfileSchema,
+    CorrectionControlsSchema,
+    HueControlsSchema,
     LightingTargetSchema,
     CaptureSettings,
     OutputSettings,
+    PreviewEvent,
+    PreviewFrame,
+    PreviewViewport,
+    PreviewColors,
+    PreviewColor,
 )))]
 struct Roots;
 
@@ -276,7 +354,8 @@ impl std::error::Error for SchemaConflict {}
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, FrameSource, LightingTarget, Processing, Result, Settings, ValidationError,
+        AdapterSettings, ColorProfile, CorrectionControls, FrameSource, HueControls,
+        LightingTarget, Processing, Result, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -306,6 +385,31 @@ mod tests {
                 &json!({ "address": "10.0.0.5" }),
             )),
             processing: Processing::default(),
+        });
+        same_shape::<Settings, SettingsSchema>(&Settings {
+            processing: Processing {
+                profiles: vec![
+                    ColorProfile {
+                        id: "ps5".into(),
+                        name: "PS5".into(),
+                        correction: CorrectionControls {
+                            warmth: 12,
+                            tint: -4,
+                            midtones: 3,
+                            intensity: 20,
+                            hue: HueControls::from_array([1, -2, 3, -4, 5, -6]),
+                        },
+                    },
+                    ColorProfile {
+                        id: "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f".into(),
+                        name: "TV apps".into(),
+                        correction: CorrectionControls::default(),
+                    },
+                ],
+                active_profile: Some("ps5".into()),
+                ..Processing::default()
+            },
+            ..Settings::default()
         });
         for target in [
             LightingTarget::Off,

@@ -5,6 +5,7 @@ mod launch;
 
 use launch::{Host, check_arguments, get, null_settings, put_target};
 use prysm_capture_device::DeviceSource;
+use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
 use prysm_output_wled::Wled;
 use prysm_ports::{Registry, SettingsStore};
@@ -48,6 +49,7 @@ fn without_a_terminal_lighting_and_portal_keep_running_until_sigterm() {
 fn example_settings_load_and_validate() {
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
+    registry.add_source(FileSource);
     registry.add_source(RemoteReceiver);
     registry.add_output(Wled::default());
     registry.add_output(NullOutput);
@@ -55,4 +57,9 @@ fn example_settings_load_and_validate() {
     let settings = FileSettings::new(path).load().unwrap().unwrap();
     registry.validate(&settings).unwrap();
     assert_eq!(settings.output.unwrap().kind, "null");
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.file.example.json");
+    let settings = FileSettings::new(path).load().unwrap().unwrap();
+    registry.validate(&settings).unwrap();
+    assert_eq!(settings.capture.unwrap().kind, "file");
 }

@@ -6,6 +6,7 @@ members = [
     "crates/protocol",
     "crates/webos-link",
     "adapters/capture-device",
+    "adapters/capture-file",
     "adapters/capture-remote",
     "adapters/capture-webos",
     "adapters/capture-webos-sys",
@@ -41,6 +42,7 @@ prysm-protocol = { path = "crates/protocol" }
 prysm-webos-link = { path = "crates/webos-link" }
 # Adapters
 prysm-capture-device = { path = "adapters/capture-device" }
+prysm-capture-file = { path = "adapters/capture-file" }
 prysm-capture-remote = { path = "adapters/capture-remote" }
 prysm-capture-webos = { path = "adapters/capture-webos" }
 prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }

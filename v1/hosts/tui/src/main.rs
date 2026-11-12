@@ -1,5 +1,6 @@
 //! prysm-tui: the terminal previews what the LEDs show, next to the web portal.
 use prysm_capture_device::DeviceSource;
+use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
 use prysm_host::Program;
 use prysm_output_wled::Wled;
@@ -10,7 +11,9 @@ use prysm_web_portal::FrontendAsset;
 use std::process::ExitCode;
 
 const ABOUT: &str = "Preview capture in the terminal, optionally driving WLED; use output kind
-\"null\" to test without LEDs. Quit with q, or :quit. Without an interactive
+\"null\" to test without LEDs. Capture kinds: \"device\", \"remote\" and \"file\" (a
+video played once through FFmpeg 9+ on PATH; see settings.file.example.json).
+Quit with q, or :quit. Without an interactive
 terminal the preview is unavailable and lighting and portal keep running.
 While the preview uses the terminal, status is not printed and log lines go
 only to --log-file.";
@@ -31,6 +34,7 @@ fn main() -> ExitCode {
         let signals = host.signals()?;
         Prysm::builder(FileSettings::new(host.settings()))
             .source(DeviceSource)
+            .source(FileSource)
             .source(RemoteReceiver)
             .output(Wled::default())
             .output(NullOutput)

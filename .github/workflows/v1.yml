@@ -1,42 +1,164 @@
-name: V1 contracts and composition
+# Gate for the v1 workspace (v1/Cargo.toml) and its npm workspace (v1/frontend).
+#
+# The hosts include! v1/frontend/dist, so `frontend` builds it once and the Rust
+# jobs download it before compiling. Codegen runs the Rust contract exporter,
+# which is why `frontend` also needs Rust and libclang.
+#
+# The armv7 job only type-checks the TV crates with a stock Debian/Ubuntu cross
+# compiler (the C++ shim in capture-webos-sys needs arm-linux-gnueabi-g++); the
+# Luna and VTCapture libraries are loaded at run time, so no webOS SDK is needed
+# to compile. It is advisory until the TV crates pass it. Not covered yet
+# (prysm-3jx.20): a webOS release profile and the SDK linker wrapper, linking and
+# qemu-user tests on armv7, Miri for webos-luna-sys, and the IPKs.
+name: V1 workspace
 on:
   push:
+    paths:
+      - 'v1/**'
+      # Path dependencies outside v1/ and the root workspace they inherit from.
+      - 'Cargo.toml'
+      - 'clippy.toml'
+      - 'crates/common/prysm-core/**'
+      - 'crates/common/prysm-metrics/**'
+      - 'crates/processing/prysm-processor/**'
+      - 'crates/capture/prysm-capture/**'
+      - 'crates/capture/prysm-webos-protocol/**'
+      - 'crates/rendering/prysm-renderer-wled/**'
+      - '.github/workflows/v1.yml'
   pull_request:
+    paths:
+      - 'v1/**'
+      # Path dependencies outside v1/ and the root workspace they inherit from.
+      - 'Cargo.toml'
+      - 'clippy.toml'
+      - 'crates/common/prysm-core/**'
+      - 'crates/common/prysm-metrics/**'
+      - 'crates/processing/prysm-processor/**'
+      - 'crates/capture/prysm-capture/**'
+      - 'crates/capture/prysm-webos-protocol/**'
+      - 'crates/rendering/prysm-renderer-wled/**'
+      - '.github/workflows/v1.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
 jobs:
-  v1:
+  frontend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
+          # v1/frontend/package.json engines: node >=24.
           node-version: '24'
           cache: npm
           cache-dependency-path: v1/frontend/package-lock.json
-      - name: Rust toolchain
+      - name: Rust and libclang for the contract exporter
+        # prysm-capture -> v4l2-sys-mit generates its bindings with bindgen.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v1 -> target
+          key: v1-frontend
+      - run: npm --prefix v1/frontend ci
+      # Check before building: the build regenerates the contracts.
+      - name: Generated contracts are current
+        run: npm --prefix v1/frontend run codegen:check
+      - name: Build bundles and run frontend tests
+        # `npm test` runs `npm run build` (codegen, typecheck, bundles, assets.rs) first.
+        run: npm --prefix v1/frontend test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v1-frontend-dist
+          path: v1/frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  rust:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Rust
         run: |
           rustup update stable --no-self-update
           rustup default stable
           rustup component add clippy rustfmt
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        # prysm-capture -> v4l2-sys-mit generates its bindings with bindgen.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: v1 -> target
-      - name: Headless libraries without codegen or frontend assets
-        run: cargo check --manifest-path v1/Cargo.toml --workspace --exclude prysm-export-contracts --lib --no-default-features --locked
-      - run: npm --prefix v1/frontend ci
-      # Check before the build, which intentionally regenerates contracts.
-      - run: npm --prefix v1/frontend run codegen:check
-      - run: npm --prefix v1/frontend test
-      - name: Rust checks
+          key: v1-rust
+      - name: Formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path v1/Cargo.toml --all -- --check
+      - name: Frontend bundle for the hosts' include!
+        uses: actions/download-artifact@v4
+        with:
+          name: v1-frontend-dist
+          path: v1/frontend/dist
+      # --all-features costs nothing extra: the exporter already enables every schema feature.
+      - name: Lint all targets
+        run: cargo clippy --manifest-path v1/Cargo.toml --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Test all targets
+        run: cargo test --manifest-path v1/Cargo.toml --locked --workspace --all-targets --all-features
+      # --all-targets skips doctests.
+      - name: Doctests
+        run: cargo test --manifest-path v1/Cargo.toml --locked --workspace --doc --all-features
+
+  webos-armv7:
+    needs: frontend
+    # Advisory: see the comment at the top.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CXX_armv7_unknown_linux_gnueabi: arm-linux-gnueabi-g++
+    steps:
+      - uses: actions/checkout@v4
+      - name: ARM soft-float C++ cross compiler
         run: |
-          cargo fmt --manifest-path v1/Cargo.toml -p prysm-contract -p prysm-flow -p prysm-application -p prysm-web-portal -p prysm-testkit -p prysm-assemblies -p prysm-export-contracts -p prysm-capture-device -p prysm-capture-webos -p prysm-output-wled -p prysm-remote-capture -- --check
-          cargo test --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked
-          cargo clippy --manifest-path v1/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
-          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-server --locked
-          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-webos --locked
-          cargo run --manifest-path v1/Cargo.toml -p prysm-assemblies --example prysm-webos-slim --locked
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabi
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add armv7-unknown-linux-gnueabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v1 -> target
+          key: v1-webos-armv7
+      - name: Frontend bundle for prysm-webos's include!
+        uses: actions/download-artifact@v4
+        with:
+          name: v1-frontend-dist
+          path: v1/frontend/dist
+      - name: Type-check the TV crates for armv7
+        run: >-
+          cargo check --manifest-path v1/Cargo.toml --locked --all-targets
+          --target armv7-unknown-linux-gnueabi
+          -p prysm-webos-link -p prysm-webos-service -p prysm-webos -p prysm-webos-slim
+          -p prysm-capture-webos -p prysm-capture-webos-sys -p prysm-webos-luna-sys

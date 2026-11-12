@@ -1,0 +1,12 @@
+{
+  "capture": {
+    "kind": "file",
+    "path": "/path/to/clip.mkv",
+    "width": 640,
+    "height": 360,
+    "fps": 30
+  },
+  "output": {
+    "kind": "null"
+  }
+}

@@ -3,6 +3,7 @@
 //! tests validate against them.
 mod fixtures;
 use prysm_capture_device::DeviceSource;
+use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
 use prysm_capture_webos::WebosCapture;
 use prysm_output_wled::Wled;
@@ -32,6 +33,7 @@ fn documents() -> Result<BTreeMap<&'static str, OpenApi>, Box<dyn Error>> {
 fn desktop() -> Contract {
     Contract::new("Prysm desktop host")
         .source::<DeviceSource>()
+        .source::<FileSource>()
         .source::<RemoteReceiver>()
         .output::<Wled>()
         .output::<NullOutput>()
@@ -77,6 +79,7 @@ mod tests {
             refs("CaptureSettings"),
             [
                 json!("#/components/schemas/DeviceSettings"),
+                json!("#/components/schemas/FileSettings"),
                 json!("#/components/schemas/RemoteReceiverSettings"),
             ]
         );
@@ -89,6 +92,7 @@ mod tests {
         );
         for (name, kind) in [
             ("DeviceSettings", "device"),
+            ("FileSettings", "file"),
             ("RemoteReceiverSettings", "remote"),
             ("WledSettings", "wled"),
             ("NullSettings", "null"),

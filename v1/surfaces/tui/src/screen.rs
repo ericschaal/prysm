@@ -13,8 +13,8 @@ use crossterm::{
         disable_raw_mode, enable_raw_mode,
     },
 };
-use prysm_ports::{Error, LatestSlot, Result, Snapshot};
-use prysm_runtime::Preview;
+use prysm_ports::{Error, Result, Snapshot};
+use prysm_runtime::PreviewWatch;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::{self, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,7 +39,8 @@ pub(crate) enum Exit {
 /// What the screen reads and where it sends commands.
 pub(crate) struct Feed {
     pub snapshot: watch::Receiver<Snapshot>,
-    pub preview: Arc<LatestSlot<Preview>>,
+    /// Registered for the screen's lifetime, so the session publishes previews.
+    pub preview: PreviewWatch,
     pub commands: mpsc::Sender<Command>,
     pub notices: std_mpsc::Receiver<Notice>,
 }
@@ -108,8 +109,8 @@ fn render_loop(screen: &mut Screen, feed: &mut Feed, stop: &AtomicBool) -> io::R
             ui.notify(notice);
         }
         let snapshot = feed.snapshot.borrow().clone();
-        // Peek: other surfaces may render the same preview.
-        let preview = feed.preview.peek();
+        // Not taken: other surfaces may render the same preview.
+        let preview = feed.preview.latest();
         screen.draw(&View {
             snapshot: &snapshot,
             preview: preview.as_ref(),

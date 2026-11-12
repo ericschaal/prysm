@@ -51,6 +51,7 @@
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/tools/export-contracts/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-file/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos-sys/src" isTestSource="false" />

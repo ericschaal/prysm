@@ -22,5 +22,5 @@ pub use builder::{Builder, Prysm};
 pub use engine::{Engine, EngineHandle};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
-pub use session::{Preview, Session, SessionEnd};
+pub use session::{Preview, PreviewSlot, PreviewWatch, Session, SessionEnd};
 pub use surface::{Shutdown, Surface};

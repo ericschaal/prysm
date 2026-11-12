@@ -382,7 +382,7 @@ fn paint(buffer: &mut Buffer, position: (u16, u16), strip: &ColorStrip, cell: u1
 mod tests {
     use super::*;
     use crate::input::Notice;
-    use prysm_core::{Frame, LinearColor, PixelFormat};
+    use prysm_core::{Frame, LinearColor, PixelFormat, Viewport};
     use prysm_ports::{Error, LightingTarget, Revision, SessionPhase};
     use ratatui::{Terminal, backend::TestBackend};
     use std::num::NonZeroUsize;
@@ -428,6 +428,8 @@ mod tests {
                 bottom: strip(&[(0.0, 0.0, 1.0); 2]),
                 left: strip(&[(0.0, 0.0, 1.0); 3]),
             },
+            viewport: Viewport::full_frame(32, 16),
+            sequence: 1,
         }
     }
 
@@ -594,6 +596,8 @@ mod tests {
         let preview = Preview {
             frame: Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap(),
             colors: EdgeColors::default(),
+            viewport: Viewport::full_frame(4, 2),
+            sequence: 1,
         };
         let ui = Ui::default();
         let view = View {

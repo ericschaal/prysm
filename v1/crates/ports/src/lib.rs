@@ -5,6 +5,7 @@
 //! consuming `close`/`idle` calls release exactly once.
 mod adapter;
 mod error;
+mod profiles;
 mod registry;
 mod settings;
 mod slot;
@@ -12,6 +13,10 @@ mod snapshot;
 
 pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, SettingsStore};
 pub use error::{Error, Result, ValidationError};
+pub use profiles::{
+    ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,
+    MAX_PROFILES,
+};
 pub use registry::{OutputFactory, Registry, SourceFactory};
 pub use settings::{AdapterSettings, Processing, Revision, Settings};
 pub use slot::LatestSlot;

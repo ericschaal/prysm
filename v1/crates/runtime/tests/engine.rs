@@ -77,9 +77,10 @@ async fn stop_writes_then_closes_source_then_idles_output_then_joins() {
     within(async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
+        let preview = handle.preview();
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert!(log.wait_for("output.write:a", 3).await);
-        assert!(handle.preview().peek().is_some());
+        assert!(preview.latest().is_some());
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         log.record("joined");

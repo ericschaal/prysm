@@ -8,6 +8,79 @@
           }
         ]
       },
+      "ColorProfile": {
+        "additionalProperties": false,
+        "description": "A named color correction, such as one per console.",
+        "properties": {
+          "correction": {
+            "$ref": "#/components/schemas/CorrectionControls"
+          },
+          "id": {
+            "description": "Stable reference for `active_profile`; a UUID fits.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Without surrounding whitespace or control characters.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "correction"
+        ],
+        "type": "object"
+      },
+      "CorrectionControls": {
+        "additionalProperties": false,
+        "description": "Correction controls, each -100 to 100; all zero is no correction.",
+        "properties": {
+          "hue": {
+            "$ref": "#/components/schemas/HueControls"
+          },
+          "intensity": {
+            "description": "Positive saturates, negative desaturates.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "midtones": {
+            "description": "Positive lightens midtones, negative darkens them.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "tint": {
+            "description": "Positive adds magenta, negative adds green.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "warmth": {
+            "description": "Positive warms, negative cools.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "warmth",
+          "tint",
+          "midtones",
+          "intensity",
+          "hue"
+        ],
+        "type": "object"
+      },
       "Failure": {
         "description": "A stable failure body. Local source chains stay in the process; only the\nmessage a user can act on is sent.",
         "properties": {
@@ -52,6 +125,57 @@
           "busy"
         ],
         "type": "string"
+      },
+      "HueControls": {
+        "additionalProperties": false,
+        "description": "Hue shift per wheel anchor, each -100 to 100.",
+        "properties": {
+          "blue": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "cyan": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "green": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "magenta": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "red": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "yellow": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "red",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "magenta"
+        ],
+        "type": "object"
       },
       "LedCounts": {
         "additionalProperties": false,
@@ -114,15 +238,238 @@
         ],
         "type": "string"
       },
+      "PreviewColor": {
+        "items": {},
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ],
+        "type": "array"
+      },
+      "PreviewColors": {
+        "description": "The colors written to the LEDs, in display (sRGB) space and screen\norientation: `top` and `bottom` left to right, `left` and `right` top to\nbottom. Each edge has at most 256 entries spread evenly along it.",
+        "properties": {
+          "bottom": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            },
+            "type": "array"
+          },
+          "left": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            },
+            "type": "array"
+          },
+          "right": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            },
+            "type": "array"
+          },
+          "top": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewColor"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "type": "object"
+      },
+      "PreviewEvent": {
+        "description": "One server-sent event of the preview stream.",
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PreviewFrame",
+                "description": "A new processed frame and the colors written for it."
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "frame"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "A new processed frame and the colors written for it."
+          },
+          {
+            "description": "Nothing to show: no session runs or it has not processed a frame yet.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "idle"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The latest frame cannot be shown, such as an undecoded MJPEG frame.",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PreviewFrame": {
+        "description": "A downscaled JPEG of the captured frame, the sampled area and the colors.",
+        "properties": {
+          "colors": {
+            "$ref": "#/components/schemas/PreviewColors"
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "jpeg": {
+            "description": "Base64 (standard alphabet, padded) baseline JPEG.",
+            "type": "string"
+          },
+          "sequence": {
+            "description": "Increases with every new frame, across sessions; equal means unchanged.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_width": {
+            "description": "The captured frame's size in pixels; `viewport` is in these pixels.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/PreviewViewport",
+            "description": "The part of the frame that was sampled, after black-bar removal."
+          },
+          "width": {
+            "description": "The JPEG's size in pixels: the source scaled to at most 480 on its\nlonger side, keeping its aspect ratio.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence",
+          "source_width",
+          "source_height",
+          "width",
+          "height",
+          "viewport",
+          "colors",
+          "jpeg"
+        ],
+        "type": "object"
+      },
+      "PreviewViewport": {
+        "description": "A rectangle in source-frame pixels.",
+        "properties": {
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "x": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "y": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
       "Processing": {
         "additionalProperties": false,
         "description": "Processing controls in plain units.",
         "properties": {
+          "active_profile": {
+            "description": "The `id` of the applied profile; absent applies no correction.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
           "brightness_percent": {
             "format": "int32",
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
+          },
+          "profiles": {
+            "description": "Saved color corrections; ids are unique.",
+            "items": {
+              "$ref": "#/components/schemas/ColorProfile"
+            },
+            "maxItems": 32,
+            "type": "array"
           },
           "remove_black_bars": {
             "type": "boolean"

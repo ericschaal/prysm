@@ -63,7 +63,8 @@ impl Registry {
         self.outputs.keys().copied()
     }
 
-    /// Validate processing and every configured adapter against its factory.
+    /// Validate processing (including color profiles and the active profile)
+    /// and every configured adapter against its factory.
     ///
     /// # Errors
     /// [`Error::Invalid`] or [`Error::Decode`].

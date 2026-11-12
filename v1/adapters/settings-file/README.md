@@ -41,10 +41,30 @@ the adapter's factory, not here.
     "smoothing_seconds": 0.3,
     "sample_density": 128,
     "spatial_reach_percent": 10,
-    "remove_black_bars": true
+    "remove_black_bars": true,
+    "profiles": [
+      {
+        "id": "ps5",
+        "name": "PS5",
+        "correction": {
+          "warmth": 12,
+          "tint": -4,
+          "midtones": 0,
+          "intensity": 10,
+          "hue": { "red": 0, "yellow": 0, "green": 0, "cyan": 0, "blue": 0, "magenta": 0 }
+        }
+      }
+    ],
+    "active_profile": "ps5"
   }
 }
 ```
+
+`processing.profiles` holds up to 32 saved color corrections with unique ids
+(1-64 ASCII letters, digits, `-` or `_`) and names (1-64 characters, no
+surrounding whitespace or control characters); every control is -100 to 100 and
+omitted ones are 0. `active_profile` names the applied profile; without it no
+correction is applied. Both are omitted when empty.
 
 `load` returns `None` only when the file does not exist; an empty or malformed
 file is an error, never silently treated as unconfigured.

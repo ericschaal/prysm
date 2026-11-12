@@ -1,5 +1,28 @@
 import type { WledSettings } from '@prysm/contracts/host-desktop';
-import type { SettingsPanelProps } from '@prysm/web-portal';
+import {
+  FieldMessage,
+  NumberField,
+  TextField,
+  useCheck,
+  type AdapterUi,
+  type EditorProps,
+} from '@prysm/web-portal';
+import {
+  LedLayout,
+  ledEdgeLimits,
+  ledTotal,
+  ledTotalLimits,
+  wiring,
+} from './layout';
+
+export {
+  LedLayout,
+  ledEdgeLimits,
+  ledRuns,
+  ledTotal,
+  ledTotalLimits,
+  wiring,
+} from './layout';
 
 /**
  * `host[:port]` from what a user typed or pasted: surrounding spaces, a leading
@@ -12,49 +35,104 @@ export function normalizeWledAddress(text: string): string {
   return bare.endsWith('/') ? bare.slice(0, -1) : bare;
 }
 
-/** Minimal panel: edits the address and keeps the LED layout. */
-export function WledOutputSettings({
-  settings,
-  disabled,
-  onSubmit,
-}: SettingsPanelProps<WledSettings>) {
+/**
+ * WLED's own web interface for a saved `address` (`host`, `host:port`,
+ * `[ipv6]:port` or a bare IPv6 address), or `null` when it is not one.
+ */
+export function wledUrl(address: string): string | null {
+  const text = normalizeWledAddress(address);
+  if (!text || /[\s/?#@\\]/.test(text)) return null;
+  // A bare IPv6 address has more than one colon and needs brackets in a URL.
+  const authority =
+    !text.startsWith('[') && text.indexOf(':') !== text.lastIndexOf(':')
+      ? `[${text}]`
+      : text;
+  try {
+    return new URL(`http://${authority}/`).href;
+  } catch {
+    return null;
+  }
+}
+
+const edgeLabels = {
+  top: 'Top',
+  right: 'Right',
+  bottom: 'Bottom',
+  left: 'Left',
+} as const;
+
+function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
+  const total = ledTotal(value.leds);
+  useCheck(
+    'output.leds',
+    total < ledTotalLimits.min || total > ledTotalLimits.max
+      ? `The total must be ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs. Use 0 for an edge without LEDs.`
+      : null,
+  );
   return (
-    <form
-      key={JSON.stringify(settings)}
-      onSubmit={(event) => {
-        event.preventDefault();
-        const address = new FormData(event.currentTarget).get('address');
-        if (typeof address !== 'string') return;
-        void onSubmit({
-          kind: 'wled',
-          address: normalizeWledAddress(address),
-          leds: settings?.leds ?? {},
-        });
-      }}
-    >
-      <h2>WLED output</h2>
-      <fieldset disabled={disabled}>
-        <legend>Device</legend>
-        <label>
-          Host or IP address{' '}
-          <input
-            name="address"
-            required
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            placeholder="wled.local"
-            aria-describedby="wled-address-help"
-            defaultValue={settings?.address ?? ''}
-          />
-        </label>
-        <p id="wled-address-help">
-          A name such as <code>wled.local</code> or an IP such as <code>192.168.1.50</code>, with an
-          optional HTTP port: <code>wled.local:8080</code>, <code>[fe80::1]:8080</code>. WLED uses
-          plain HTTP; colours always go to UDP port 4048.
+    <>
+      <TextField
+        path="output.address"
+        label="WLED address"
+        required
+        placeholder="wled.local"
+        value={value.address}
+        onChange={(address) => onChange({ ...value, address })}
+        help={
+          <>
+            A name such as <code>wled.local</code> or an IP such as{' '}
+            <code>192.168.1.50</code>, with an optional HTTP port:{' '}
+            <code>wled.local:8080</code>, <code>[fe80::1]:8080</code>. WLED uses
+            plain HTTP; colours always go to UDP port 4048.
+          </>
+        }
+      />
+      <fieldset className="leds" data-field="output.leds" tabIndex={-1}>
+        <legend>LEDs per edge</legend>
+        <p className="help">
+          Seen from the front of the screen, wiring starts at the bottom-left
+          corner and runs clockwise: up the left edge, across the top, down the
+          right and back along the bottom. Use 0 for an edge without LEDs.
         </p>
-        <button type="submit">Save output settings</button>
+        <div className="led-editor">
+          <LedLayout leds={value.leds} />
+          <div className="led-counts">
+            {wiring.map(({ edge }) => (
+              <NumberField
+                key={edge}
+                path={`output.leds.${edge}`}
+                label={`${edgeLabels[edge]} LEDs`}
+                value={value.leds[edge] ?? 0}
+                onChange={(count) =>
+                  onChange({ ...value, leds: { ...value.leds, [edge]: count } })
+                }
+                {...ledEdgeLimits}
+              />
+            ))}
+          </div>
+        </div>
+        <p className="total">
+          Total: <strong>{total}</strong> of at most {ledTotalLimits.max} LEDs
+        </p>
+        <FieldMessage path="output.leds" />
       </fieldset>
-    </form>
+    </>
   );
 }
+
+export const wledOutput: AdapterUi<WledSettings> = {
+  label: 'WLED',
+  create: () => ({ kind: 'wled', address: '', leds: {} }),
+  Editor: WledEditor,
+  normalize: (value) => ({
+    ...value,
+    address: normalizeWledAddress(value.address),
+  }),
+  lighting: (saved) => {
+    const href = wledUrl(saved.address);
+    return {
+      effects: 'WLED effects',
+      ...(href ? { link: { label: 'Open WLED', href } } : {}),
+    };
+  },
+};

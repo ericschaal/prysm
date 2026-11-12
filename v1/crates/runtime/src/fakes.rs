@@ -1,7 +1,7 @@
 //! Scripted adapters for tests and examples. Every call is recorded in a
 //! shared [`CallLog`] as `"<adapter>.<call>:<name>"`.
 use crate::{EngineHandle, Shutdown};
-use prysm_core::{EdgeColors, Frame};
+use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
     AdapterSettings, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
     OutputFactory, Result, Settings, SettingsStore, SourceFactory, ValidationError,
@@ -79,6 +79,9 @@ pub struct FakeSourceSettings {
     pub close_delay_ms: u64,
     /// `close` reports an unconfirmed release.
     pub fail_close: bool,
+    /// Byte every frame pixel channel is filled with; 0 (black) by default.
+    /// A gray frame lets tests observe the color correction in the preview.
+    pub fill: u8,
 }
 
 /// Registers kind `"fake"`.
@@ -133,7 +136,7 @@ impl FrameSource for FakeSource {
         }
         thread::sleep(timeout.min(Duration::from_millis(2)));
         self.frames += 1;
-        Frame::dummy(16, 9)
+        Frame::fill(self.settings.fill, 16, 9, PixelFormat::RGB24)
             .map(Some)
             .map_err(|error| Error::adapter("fake frame", error))
     }

@@ -1,132 +1,179 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
-import { useState, type ComponentType } from 'react';
-import type { Session } from '@prysm/application-client';
+import type { ApplicationSnapshot } from '@prysm/application-client';
+import { useState } from 'react';
 import {
   useApplication,
-  useLastCommand,
   useApplicationDispatch,
 } from '@prysm/application-react';
+import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
+import { LightingControls } from './lighting';
+import { ProcessingPanel } from './processing';
+import { SectionForm } from './section-form';
+import './portal.css';
 
-export interface SettingsPanelProps<S> {
-  /** `null` until this section is configured. */
-  settings: S | null;
-  disabled: boolean;
-  /** Resolves once the settings are saved; rejects with the server's reason. */
-  onSubmit: (settings: S) => Promise<void>;
-}
+export * from './adapters';
+export * from './fields';
+export { describeLighting, LightingControls } from './lighting';
+export {
+  ProcessingPanel,
+  processingControls,
+  processingLimits,
+  processingDelayMs,
+  type ProcessingControls,
+} from './processing';
+export { SectionForm, staleNotice } from './section-form';
 
-export interface WebPortalProps<C, O> {
+export interface WebPortalProps<C extends AdapterSection, O extends AdapterSection> {
   application: ApplicationRuntime<C, O>;
-  captureSettings: ComponentType<SettingsPanelProps<NoInfer<C>>>;
-  outputSettings: ComponentType<SettingsPanelProps<NoInfer<O>>>;
+  /** The capture kinds this host registers, in display order. */
+  captures: AdapterUis<NoInfer<C>>;
+  /** The output kinds this host registers, in display order. */
+  outputs: AdapterUis<NoInfer<O>>;
 }
 
-function describe(session: Session) {
-  return session.state === 'faulted'
-    ? `faulted while ${session.phase.replace('_', ' ')}; restart Prysm`
-    : session.state;
-}
+const sessionLabels = {
+  stopped: 'stopped',
+  running: 'running',
+  native: 'device effects',
+  faulted: 'faulted',
+} as const;
 
-export function WebPortal<C, O>({
+/**
+ * The browser portal: lighting modes, live picture controls and one form per
+ * adapter section. The host chooses which capture and output kinds exist.
+ */
+export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   application,
-  captureSettings: CaptureSettings,
-  outputSettings: OutputSettings,
+  captures,
+  outputs,
 }: WebPortalProps<C, O>) {
   const connection = useApplication(application);
   const dispatch = useApplicationDispatch<C, O>();
-  const snapshot = connection.snapshot;
-  const lastCommand = useLastCommand(application);
-  const [pending, setPending] = useState(0);
+  // Keep showing the last state (and every draft) while reconnecting.
+  const [last, setLast] = useState<ApplicationSnapshot<C, O> | null>(null);
+  if (connection.snapshot && connection.snapshot !== last)
+    setLast(connection.snapshot);
+  const snapshot = connection.snapshot ?? last;
+  const online = connection.status === 'connected' && !!connection.snapshot;
 
-  async function submit(command: () => Promise<unknown>) {
-    setPending((count) => count + 1);
-    try {
-      await command();
-    } catch {
-      // The failure is shown from the command state below.
-    } finally {
-      setPending((count) => count - 1);
-    }
-  }
-
+  const header = (
+    <header className="portal-header">
+      <span className="brand">
+        prysm<span aria-hidden="true">.</span>
+      </span>
+      <span
+        className={`connection ${online ? 'online' : 'offline'}`}
+        role="status"
+      >
+        {online
+          ? 'Connected'
+          : connection.status === 'connecting'
+            ? 'Connecting…'
+            : 'Offline'}
+      </span>
+    </header>
+  );
   if (!snapshot)
     return (
-      <main>
-        <h1>Prysm</h1>
-        <p role="status">{connection.error ?? connection.status}</p>
-      </main>
+      <div className="portal">
+        {header}
+        <main id="content">
+          <h1 className="visually-hidden">Prysm</h1>
+          <section className="card">
+            <h2>Connecting to Prysm</h2>
+            <p>{connection.error ?? 'Waiting for the current state…'}</p>
+          </section>
+        </main>
+      </div>
     );
 
-  const revision = snapshot.revision;
+  const { settings, revision, session } = snapshot;
+  const output = settings.output ?? null;
+  const outputLighting = output
+    ? (adapterFor(outputs, output.kind)?.lighting?.(output) ?? {})
+    : null;
   return (
-    <main>
-      <h1>Prysm</h1>
-      <section aria-label="Lighting">
-        <button
-          disabled={pending > 0}
-          onClick={() =>
-            void submit(() =>
-              dispatch(application.commands.setTarget('processed')),
-            )
-          }
-        >
-          Turn lighting on
-        </button>
-        <button
-          disabled={pending > 0}
-          onClick={() =>
-            void submit(() => dispatch(application.commands.setTarget('off')))
-          }
-        >
-          Turn lighting off
-        </button>
-        <p>
-          Target: {snapshot.target} · Session: {describe(snapshot.session)}
-        </p>
-        {snapshot.failure ? (
-          <p role="alert">Lighting failed: {snapshot.failure.message}</p>
+    <div className="portal">
+      {header}
+      <main id="content">
+        <h1 className="visually-hidden">Prysm</h1>
+        {!online ? (
+          <p className="notice warning" role="alert">
+            Connection lost{connection.error ? `: ${connection.error}` : ''}.
+            Reconnecting; unsaved changes are kept.
+          </p>
         ) : null}
-      </section>
-      <p>Settings revision: {revision}</p>
-      <section aria-label="Capture settings">
-        <CaptureSettings
-          settings={snapshot.settings.capture ?? null}
-          disabled={pending > 0}
-          onSubmit={(settings) =>
-            submit(() =>
-              dispatch(application.commands.configureCapture(revision, settings)),
-            )
+        <LightingControls
+          target={snapshot.target}
+          session={session}
+          failure={snapshot.failure}
+          hasCapture={!!settings.capture}
+          hasOutput={!!output}
+          output={outputLighting}
+          disabled={!online}
+          setTarget={(target) =>
+            dispatch(application.commands.setTarget(target))
           }
         />
-      </section>
-      <section aria-label="Output settings">
-        <OutputSettings
-          settings={snapshot.settings.output ?? null}
-          disabled={pending > 0}
-          onSubmit={(settings) =>
-            submit(() =>
-              dispatch(application.commands.configureOutput(revision, settings)),
-            )
+        <ProcessingPanel
+          processing={settings.processing}
+          revision={revision}
+          disabled={!online}
+          running={session.state === 'running'}
+          save={(expected, processing) =>
+            dispatch(application.commands.configureProcessing(expected, processing))
           }
         />
-      </section>
-      <p role="status">
-        {lastCommand?.phase === 'submitting'
-          ? 'Working…'
-          : lastCommand?.phase === 'succeeded'
-            ? 'Done.'
-            : ''}
-      </p>
-      {lastCommand?.failure ? (
-        <p role="alert">
-          {lastCommand.failure.field
-            ? `${lastCommand.failure.field}: ${lastCommand.failure.message}`
-            : lastCommand.failure.message}
-        </p>
-      ) : null}
-      {snapshot.surface_failures.map((failure, index) => (
-        <p key={index}>Surface stopped: {failure.message}</p>
-      ))}
-    </main>
+        <SectionForm
+          section="capture"
+          title="Capture"
+          description="Where the picture comes from. Saving restarts screen sync if it is running."
+          adapters={captures}
+          saved={settings.capture ?? null}
+          revision={revision}
+          disabled={!online}
+          save={(expected, capture) =>
+            dispatch(application.commands.configureCapture(expected, capture))
+          }
+        />
+        <SectionForm
+          section="output"
+          title="Lights"
+          description="Where the colours go. Saving restarts screen sync if it is running."
+          adapters={outputs}
+          saved={output}
+          revision={revision}
+          disabled={!online}
+          save={(expected, value) =>
+            dispatch(application.commands.configureOutput(expected, value))
+          }
+        />
+        {snapshot.surface_failures.map((failure, index) => (
+          <p key={index} className="notice warning">
+            A Prysm surface stopped: {failure.message}. Lighting continues.
+          </p>
+        ))}
+        <details className="card diagnostics">
+          <summary>Technical details</summary>
+          <dl>
+            <div>
+              <dt>Target</dt>
+              <dd>{snapshot.target}</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd>
+                {sessionLabels[session.state]}
+                {session.state === 'faulted' ? ` (${session.phase})` : ''}
+              </dd>
+            </div>
+            <div>
+              <dt>Settings revision</dt>
+              <dd>{revision}</dd>
+            </div>
+          </dl>
+        </details>
+      </main>
+    </div>
   );
 }

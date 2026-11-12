@@ -48,13 +48,15 @@ into `@prysm/contracts/application`.
 | `GET /` and exact asset paths | — | `200` asset; `/` serves `/index.html`. Unknown paths `404`; API paths never fall back to HTML. |
 | `GET /api/v1/state` | — | `200 State` |
 | `GET /api/v1/state/stream` | — | `200 text/event-stream`: `data: <State>` now, then after every change |
+| `GET /api/v1/preview/stream` | — | `200 text/event-stream`: `data: <PreviewEvent>` now, then at most 8 per second; see [Preview](#preview) |
 | `PUT /api/v1/target` | `TargetRequest { target }` | `204` once the engine has applied the target |
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
 
 `State` is `{ target, session, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
-`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ... } }`.
+`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., profiles?: [{ id, name, correction }], active_profile? } }`.
+Color profiles are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 `failure` is the last lighting failure or `null`.
 
 Settings replacement is whole-document and optimistic: send the `revision` you
@@ -71,8 +73,45 @@ resynchronization: a slow reader skips intermediate states, and a reconnecting
 client simply takes the first event. Idle streams carry a `:` comment every 15
 seconds. Streams end when the portal shuts down or the engine stops.
 
-Preview is not served: the engine's preview slot holds raw frames and colors,
-and encoding them for the browser is separate work.
+## Preview
+
+`GET /api/v1/preview/stream` shows what the LEDs show: server-sent events whose
+`data:` is a `PreviewEvent`, tagged by `type`:
+
+| `type` | Fields | When |
+| --- | --- | --- |
+| `frame` | `sequence, source_width, source_height, width, height, viewport, colors, jpeg` | A frame the stream has not sent yet |
+| `idle` | — | No session runs (lighting `off`, `device_native`, stopped after a failure, faulted) or it has not processed a frame yet |
+| `unavailable` | `message` | The latest frame cannot be shown (an MJPEG frame); its colors are not sent |
+
+- `jpeg` is a base64 baseline JPEG (quality 75) of the whole captured frame,
+  scaled (nearest pixel) to at most 480 pixels on its longer side, never
+  enlarged, keeping the aspect ratio: `width`×`height`.
+- `viewport` `{ x, y, width, height }` is the part of the frame that was sampled
+  after black-bar removal, in source pixels (`source_width`×`source_height`);
+  the whole frame when nothing was removed. Scale by `width / source_width` to
+  draw it on the image.
+- `colors` `{ top, right, bottom, left }` are the colors written to the LEDs as
+  `[r, g, b]` sRGB bytes in screen orientation: `top` and `bottom` left to
+  right, `left` and `right` top to bottom, each spread evenly along its edge and
+  resampled to at most 256 entries. The output's physical wiring order is not
+  exposed.
+- `sequence` increases with every new frame, across sessions.
+
+Cadence and demand: the stream checks every 125 ms (the first `idle` waits
+one check, so a stream opened while lighting runs starts with a frame) and sends only when there is something new (a new frame,
+or a change to or from `idle`), so a stream sends at most 8 events per second
+and a slow reader gets fewer frames rather than a queue. Each open stream
+registers a preview viewer with the engine; with none, the session publishes
+no preview and nothing is encoded. Encoding runs off the async runtime, once
+per frame for all viewers. Lighting turning off or failing mid-stream sends
+`idle` and keeps the stream open; it ends when the portal shuts down or the
+client leaves. `idle` only means there is no image: why (off, native, failed,
+waiting for frames) is in the state stream. Streams with nothing new carry a `:` comment every 15 seconds.
+
+The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes
+`jpeg` to bytes and draws it with `createImageBitmap(new Blob([bytes], { type:
+'image/jpeg' }))` on a canvas.
 
 ## Failures
 
@@ -89,8 +128,8 @@ Source chains stay in the process; `message` is what the user can act on.
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | Command without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, or `Processed` without capture/output configured |
-| 429 | `busy` | More than 8 open state streams |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, or `Processed` without capture/output configured |
+| 429 | `busy` | More than 8 open state streams, or more than 4 preview streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle |
 | 503 | `faulted` | The engine is faulted; only a restart recovers |
@@ -169,7 +208,7 @@ What it does not protect against:
   cross-origin TV UI is unaffected: CSP applies to the documents the portal
   serves, not to pages that call its API.
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
-  streams, 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
+  streams, 4 preview streams (8 events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
   write (slow or vanished readers are disconnected), 15 s per engine command.
 
 ## Lifetime
@@ -193,4 +232,8 @@ refused before the engine runs (commands, stream, preflight), same-origin and
 origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable,
 media type and size limits, stream delivery, the stream limit, a faulted engine
-(503) and prompt listener shutdown.
+(503), prompt listener shutdown, and the preview: `idle` while off and after the
+session ends, frames while running, no viewer registered without a stream, the
+viewer limit, the 8 per second cap, the origin policy and streams ending at
+shutdown. Unit tests in `src/preview.rs` decode the JPEG and check its size,
+the sRGB colors and the strip bound.

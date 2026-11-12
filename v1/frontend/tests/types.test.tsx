@@ -8,11 +8,13 @@ import type {
   Preferences as TvPreferences,
   State as TvState,
 } from '@prysm/contracts/luna';
-import { WebPortal } from '@prysm/web-portal';
-import { DeviceCaptureSettings } from '@prysm/capture-device-ui';
+import { WebPortal, type AdapterUis } from '@prysm/web-portal';
+import { deviceCapture } from '@prysm/capture-device-ui';
 import type { WebosSettings } from '@prysm/contracts/host-webos';
-import { WebosCaptureSettings } from '@prysm/capture-webos-ui';
-import { WledOutputSettings } from '@prysm/output-wled-ui';
+import { webosCapture } from '@prysm/capture-webos-ui';
+import { wledOutput } from '@prysm/output-wled-ui';
+import { nullOutput } from '@prysm/output-null-ui';
+import type { OutputSettings as DesktopOutput } from '@prysm/contracts/host-desktop';
 
 declare const device: ApplicationRuntime<DeviceSettings, WledSettings>;
 declare const webos: ApplicationRuntime<WebosSettings, WledSettings>;
@@ -31,27 +33,31 @@ void [revision, faulted, untagged, defaults, pathed];
 
 <WebPortal
   application={device}
-  captureSettings={DeviceCaptureSettings}
-  outputSettings={WledOutputSettings}
+  captures={{ device: deviceCapture }}
+  outputs={{ wled: wledOutput }}
 />;
 <WebPortal
   application={webos}
-  captureSettings={WebosCaptureSettings}
-  outputSettings={WledOutputSettings}
+  captures={{ webos: webosCapture }}
+  outputs={{ wled: wledOutput }}
 />;
 
 WebPortal({
   application: webos,
   // @ts-expect-error A webOS host cannot mount the device capture panel.
-  captureSettings: DeviceCaptureSettings,
-  outputSettings: WledOutputSettings,
+  captures: { device: deviceCapture },
+  outputs: { wled: wledOutput },
 });
 WebPortal({
   application: device,
-  captureSettings: DeviceCaptureSettings,
+  captures: { device: deviceCapture },
   // @ts-expect-error A capture panel cannot edit output settings.
-  outputSettings: DeviceCaptureSettings,
+  outputs: { wled: deviceCapture },
 });
+// @ts-expect-error A host must give every registered kind a panel.
+const missing: AdapterUis<DesktopOutput> = { wled: wledOutput };
+const outputs: AdapterUis<DesktopOutput> = { wled: wledOutput, null: nullOutput };
+void [missing, outputs];
 
 // @ts-expect-error The host's typed thunk rejects another adapter's settings.
 device.commands.configureCapture(0, { kind: 'webos', fps: 30 });
@@ -66,6 +72,15 @@ device.commands.configureOutput('0', {
   kind: 'wled',
   address: '192.0.2.1',
   leds: {},
+});
+device.commands.configureProcessing(0, {
+  brightness_percent: 80,
+  shadow_lift_percent: 0,
+  smoothing_seconds: 0.1,
+  sample_density: 128,
+  spatial_reach_percent: 10,
+  // @ts-expect-error Processing fields are typed.
+  remove_black_bars: 'yes',
 });
 
 // The supervisor's state is one type for both packages.

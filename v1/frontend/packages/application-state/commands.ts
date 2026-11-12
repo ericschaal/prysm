@@ -88,5 +88,13 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
         ...settings,
         output,
       })),
+    configureProcessing: (
+      expected: number,
+      processing: Settings<C, O>['processing'],
+    ) =>
+      replaceSection('configureProcessing', expected, (settings) => ({
+        ...settings,
+        processing,
+      })),
   };
 }

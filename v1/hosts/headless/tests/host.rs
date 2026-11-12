@@ -4,6 +4,7 @@ mod launch;
 
 use launch::{Host, check_arguments, get, null_settings, put_target, request};
 use prysm_capture_device::DeviceSource;
+use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
 use prysm_output_wled::Wled;
 use prysm_ports::{Registry, SettingsStore};
@@ -103,6 +104,7 @@ fn allowed_origins_get_cors() {
 fn example_settings_load_and_validate() {
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
+    registry.add_source(FileSource);
     registry.add_source(RemoteReceiver);
     registry.add_output(Wled::default());
     registry.add_output(NullOutput);

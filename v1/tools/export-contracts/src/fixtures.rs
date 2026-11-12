@@ -1,15 +1,19 @@
 //! Actual serializations of every wire root, validated against the generated
 //! schemas by the frontend contract tests.
 use prysm_capture_device::{DeviceSettings, DeviceSource};
+use prysm_capture_file::{FileSettings, FileSource};
 use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, Error, LightingTarget, Processing, Revision, SessionPhase, SessionState,
-    Settings, Snapshot, ValidationError,
+    AdapterSettings, ColorProfile, CorrectionControls, Error, HueControls, LightingTarget,
+    Processing, Revision, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
-use prysm_protocol::{Failure, SettingsReplaced, SettingsRequest, State, TargetRequest};
+use prysm_protocol::{
+    Failure, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
+    SettingsReplaced, SettingsRequest, State, TargetRequest,
+};
 use prysm_runtime::{NullOutput, NullSettings};
 use prysm_webos_link::{SlimCapture, Video};
 use prysm_webos_service::preferences::Preferences;
@@ -79,6 +83,38 @@ fn luna() -> Value {
     })
 }
 
+/// Two saved color profiles, the first active.
+fn with_profiles() -> Settings {
+    Settings {
+        processing: Processing {
+            profiles: vec![
+                ColorProfile {
+                    id: "ps5".into(),
+                    name: "PS5".into(),
+                    correction: CorrectionControls {
+                        warmth: 12,
+                        tint: -4,
+                        midtones: 6,
+                        intensity: 15,
+                        hue: HueControls {
+                            red: -5,
+                            ..HueControls::default()
+                        },
+                    },
+                },
+                ColorProfile {
+                    id: "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f".into(),
+                    name: "TV apps".into(),
+                    correction: CorrectionControls::default(),
+                },
+            ],
+            active_profile: Some("ps5".into()),
+            ..Processing::default()
+        },
+        ..Settings::default()
+    }
+}
+
 /// The portal's values and the host documents' adapter sections.
 fn application() -> Value {
     let configured = Settings {
@@ -128,19 +164,46 @@ fn application() -> Value {
     ];
     json!({
         "State": states.iter().map(State::from).collect::<Vec<_>>(),
+        "PreviewEvent": [
+            PreviewEvent::Idle,
+            PreviewEvent::Unavailable { message: "MJPEG frames cannot be previewed".into() },
+            PreviewEvent::Frame(PreviewFrame {
+                sequence: 42,
+                source_width: 1920,
+                source_height: 1080,
+                width: 480,
+                height: 270,
+                viewport: PreviewViewport { x: 0, y: 140, width: 1920, height: 800 },
+                colors: PreviewColors {
+                    top: vec![PreviewColor([255, 0, 0]), PreviewColor([0, 255, 0])],
+                    right: vec![PreviewColor([0, 0, 255])],
+                    bottom: vec![PreviewColor([188, 188, 188])],
+                    left: vec![PreviewColor([0, 0, 0])],
+                },
+                jpeg: "/9j/2wBDAP/Z".into(),
+            }),
+        ],
         "Failure": failures.iter().map(Failure::from).collect::<Vec<_>>(),
         "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
         "SettingsRequest": [
             SettingsRequest { expected: Revision(0), settings: Settings::default() },
             SettingsRequest { expected: Revision(7), settings: configured },
+            SettingsRequest { expected: Revision(8), settings: with_profiles() },
         ],
         "SettingsReplaced": [SettingsReplaced { revision: Revision(8) }],
-        "Settings": [Settings::default()],
+        "Settings": [Settings::default(), with_profiles()],
         // Host-document sections, as the registry stores them.
         "DeviceSettings": [AdapterSettings::new(
             DeviceSource::KIND,
             &DeviceSettings::new("/dev/video0"),
         )],
+        "FileSettings": [
+            AdapterSettings::new(FileSource::KIND, &FileSettings::new("/videos/clip.mkv")),
+            AdapterSettings::new(
+                FileSource::KIND,
+                &FileSettings { width: 320, height: 180, fps: 24, ..FileSettings::new("clip.mp4") },
+            ),
+        ],
         "RemoteReceiverSettings": [AdapterSettings::new(
             RemoteReceiver::KIND,
             &RemoteReceiverSettings { listen: SocketAddr::from(([0, 0, 0, 0], 7380)) },
