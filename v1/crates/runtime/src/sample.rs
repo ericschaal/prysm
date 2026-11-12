@@ -1,4 +1,5 @@
 //! Nearest-pixel sampling of a captured frame into RGB, for the surfaces' previews.
+use prysm_core::nv12::Nv12View;
 use prysm_core::{Frame, PixelFormat, Viewport};
 
 /// Sample `area` of `frame` into `width` x `height` RGB pixels, row-major, by
@@ -20,12 +21,14 @@ pub fn sample_rgb(
     if frame.format() == PixelFormat::MJPEG {
         return Err("MJPEG frames cannot be previewed");
     }
+    let nv12 = Nv12View::new(frame);
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for y in 0..height {
         let sy = area.y + scale(y, area.height, height);
         for x in 0..width {
             let sx = area.x + scale(x, area.width, width);
-            pixels.push(pixel(frame, sx, sy));
+            pixels
+                .push(nv12.map_or_else(|| pixel(frame, sx, sy), |nv12| nv12.pixel(sx, sy).into()));
         }
     }
     Ok(pixels)
@@ -56,7 +59,8 @@ fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
                 prysm_core::yuyv::yuyv_pixel_to_rgb(data, x, y, frame.width(), range, matrix);
             [r, g, b]
         }
-        PixelFormat::MJPEG => [0; 3],
+        // Sampled through `Nv12View` by the caller.
+        PixelFormat::NV12 { .. } | PixelFormat::MJPEG => [0; 3],
     }
 }
 
@@ -106,6 +110,54 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn nv12_matches_the_full_conversion_at_odd_offsets() {
+        for range in [YuvRange::Full, YuvRange::Limited] {
+            for matrix in [YuvStandardMatrix::Bt601, YuvStandardMatrix::Bt709] {
+                let format = PixelFormat::NV12 { range, matrix };
+                // 6x4 with legal codes: a distinct luma per pixel, chroma per 2x2 block.
+                let data: Vec<u8> = (0..24)
+                    .map(|i| 20 + i * 9)
+                    .chain([60, 200, 180, 90, 128, 128, 30, 220, 200, 40, 128, 70])
+                    .collect();
+                let frame = Frame::new(data, 6, 4, format).unwrap();
+                let converted = prysm_core::nv12::nv12_to_rgb(&frame).unwrap();
+                // Odd x and y, and a pair straddling two chroma blocks.
+                let area = Viewport {
+                    x: 1,
+                    y: 1,
+                    width: 5,
+                    height: 3,
+                };
+                let sampled = sample_rgb(&frame, area, 5, 3).unwrap();
+                for (i, actual) in sampled.iter().enumerate() {
+                    let (x, y) = (1 + i % 5, 1 + i / 5);
+                    let at = (y * 6 + x) * 3;
+                    for (a, e) in actual.iter().zip(&converted[at..at + 3]) {
+                        assert!(a.abs_diff(*e) <= 1, "{format:?} ({x}, {y})");
+                    }
+                }
+            }
+        }
+        let limited = PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        };
+        let frame = Frame::new(vec![16, 235, 235, 16, 128, 128], 2, 2, limited).unwrap();
+        assert_eq!(
+            sample_rgb(&frame, full(&frame), 2, 2).unwrap(),
+            [[0; 3], [255; 3], [255; 3], [0; 3]]
+        );
+        // Outside the frame is black, as for the other formats.
+        let outside = Viewport {
+            x: 2,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(sample_rgb(&frame, outside, 1, 1).unwrap(), [[0; 3]]);
     }
 
     #[test]

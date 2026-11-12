@@ -1,0 +1,8 @@
+{
+  "public": [
+    "io.prysm.tv.service/getState",
+    "io.prysm.tv.service/setPreferences",
+    "io.prysm.tv.service/setEnabled",
+    "io.prysm.tv.service/uninstall"
+  ]
+}

@@ -29,6 +29,13 @@ pub enum PixelFormat {
         range: YuvRange,
         matrix: YuvStandardMatrix,
     },
+    /// Planar 4:2:0: a full-size Y plane, then one interleaved UV plane at
+    /// half width and height. Width and height are even. The color encoding
+    /// is supplied by the source (LG's capture tap: limited BT.709).
+    NV12 {
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
     MJPEG, // Variable size (future support)
 }
 
@@ -38,6 +45,7 @@ impl Display for PixelFormat {
             PixelFormat::RGB24 => f.write_str("RGB24"),
             PixelFormat::BGR24 => f.write_str("BGR24"),
             PixelFormat::YUYV { .. } => f.write_str("YUYV"),
+            PixelFormat::NV12 { .. } => f.write_str("NV12"),
             PixelFormat::MJPEG => f.write_str("JPEG"),
         }
     }
@@ -47,6 +55,7 @@ impl Display for PixelFormat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameError {
     OddYuyvWidth(u32),
+    OddNv12Dimensions { width: u32, height: u32 },
     SizeOverflow,
     BufferLength { expected: usize, actual: usize },
     VariableSizeFormat,
@@ -56,6 +65,12 @@ impl Display for FrameError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OddYuyvWidth(width) => write!(f, "YUYV width must be even, got {width}"),
+            Self::OddNv12Dimensions { width, height } => {
+                write!(
+                    f,
+                    "NV12 width and height must be even, got {width}x{height}"
+                )
+            }
             Self::SizeOverflow => f.write_str("frame dimensions exceed the supported buffer size"),
             Self::BufferLength { expected, actual } => {
                 write!(f, "frame requires {expected} bytes, got {actual}")
@@ -68,29 +83,46 @@ impl Display for FrameError {
 impl std::error::Error for FrameError {}
 
 impl PixelFormat {
-    /// Returns the bytes per pixel for this format.
-    /// Returns None for variable-size formats like MJPEG.
+    /// Returns the bytes per pixel for packed formats.
+    /// Returns None for planar NV12 (1.5 bytes per pixel) and for
+    /// variable-size formats like MJPEG.
     #[must_use]
     pub fn bytes_per_pixel(&self) -> Option<usize> {
         match self {
             PixelFormat::RGB24 | PixelFormat::BGR24 => Some(3),
             PixelFormat::YUYV { .. } => Some(2),
-            PixelFormat::MJPEG => None,
+            PixelFormat::NV12 { .. } | PixelFormat::MJPEG => None,
+        }
+    }
+
+    /// Bytes per stored row and the number of stored rows, counting both NV12
+    /// planes (each NV12 row, luma or chroma, is `width` bytes).
+    /// `None` for variable-size formats.
+    fn rows(&self, width: u32, height: u32) -> Option<(usize, usize)> {
+        let (width, height) = (width as usize, height as usize);
+        match self {
+            Self::NV12 { .. } => Some((width, height + height / 2)),
+            _ => Some((width.checked_mul(self.bytes_per_pixel()?)?, height)),
         }
     }
 
     /// Returns the expected buffer size, or `Ok(None)` for variable-size formats like MJPEG.
-    /// Returns an error for odd YUYV widths or dimensions exceeding the supported buffer size.
+    /// Returns an error for odd YUYV widths, odd NV12 dimensions or dimensions
+    /// exceeding the supported buffer size.
     pub fn expected_size(&self, width: u32, height: u32) -> Result<Option<usize>, FrameError> {
-        if matches!(self, Self::YUYV { .. }) && !width.is_multiple_of(2) {
-            return Err(FrameError::OddYuyvWidth(width));
+        match self {
+            Self::YUYV { .. } if !width.is_multiple_of(2) => {
+                return Err(FrameError::OddYuyvWidth(width));
+            }
+            Self::NV12 { .. } if !width.is_multiple_of(2) || !height.is_multiple_of(2) => {
+                return Err(FrameError::OddNv12Dimensions { width, height });
+            }
+            Self::MJPEG => return Ok(None),
+            _ => {}
         }
-        let Some(bpp) = self.bytes_per_pixel() else {
-            return Ok(None);
-        };
-        let size = (width as usize)
-            .checked_mul(height as usize)
-            .and_then(|pixels| pixels.checked_mul(bpp))
+        let size = self
+            .rows(width, height)
+            .and_then(|(row, rows)| row.checked_mul(rows))
             .filter(|&bytes| isize::try_from(bytes).is_ok())
             .ok_or(FrameError::SizeOverflow)?;
         Ok(Some(size))
@@ -204,6 +236,17 @@ impl Frame {
         self.format
     }
 
+    /// The Y plane (`width` bytes per row) and the interleaved UV plane
+    /// (`width` bytes per row, half as many rows) of an NV12 frame.
+    /// `None` for every other format.
+    #[must_use]
+    pub fn nv12_planes(&self) -> Option<(&[u8], &[u8])> {
+        matches!(self.format, PixelFormat::NV12 { .. }).then(|| {
+            self.data
+                .split_at(self.width as usize * self.height as usize)
+        })
+    }
+
     /// Returns a slice view of the frame data.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
@@ -257,6 +300,35 @@ mod tests {
         }
         assert!(Frame::from_strided_buffer(&bytes, 1, 2, format, 6, false).is_none());
         assert!(Frame::from_strided_buffer(&bytes, 2, 0, format, 6, false).is_none());
+    }
+
+    #[test]
+    fn nv12_holds_a_luma_plane_then_half_height_chroma() {
+        let format = PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        };
+        assert_eq!(format.expected_size(4, 2), Ok(Some(12)));
+        assert_eq!(format.to_string(), "NV12");
+        for (width, height) in [(3, 2), (4, 3)] {
+            assert_eq!(
+                format.expected_size(width, height),
+                Err(FrameError::OddNv12Dimensions { width, height })
+            );
+        }
+        let frame = Frame::new((0..12).collect(), 4, 2, format).unwrap();
+        let (y, uv) = frame.nv12_planes().unwrap();
+        assert_eq!(
+            (y, uv),
+            (&[0, 1, 2, 3, 4, 5, 6, 7][..], &[8, 9, 10, 11][..])
+        );
+        assert!(Frame::dummy(2, 2).unwrap().nv12_planes().is_none());
+        // Stride padding is removed from both planes.
+        let padded = [1, 2, 9, 3, 4, 9, 5, 6];
+        let frame = Frame::from_strided_buffer(&padded, 2, 2, format, 3, false).unwrap();
+        assert_eq!(frame.as_slice(), [1, 2, 3, 4, 5, 6]);
+        assert!(Frame::from_strided_buffer(&padded[..7], 2, 2, format, 3, false).is_none());
+        assert!(Frame::fill(0, 2, 3, format).is_err());
     }
 
     #[test]

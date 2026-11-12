@@ -1,9 +1,9 @@
 //! The lighting-host end: a listener thread that keeps only the newest frame.
-use crate::wire::{HEADER_LEN, Header};
+use crate::wire::{self, Encoding, HEADER_LEN, HELLO_LEN, Header, WireError};
 use prysm_core::{Frame, FramePool};
 use prysm_ports::{Error, FrameSource, LatestSlot, Pull, Result, SourceFactory, ValidationError};
 use serde::{Deserialize, Serialize};
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,6 +81,7 @@ impl RemoteSource {
             },
             frames: frames.clone(),
             pool: FramePool::default(),
+            rejected: None,
         };
         let thread = thread::Builder::new()
             .name("prysm-remote-receiver".into())
@@ -213,6 +214,8 @@ struct Receiver {
     wake: Wake,
     frames: Arc<LatestSlot<Frame>>,
     pool: FramePool,
+    /// The last refused hello, so a sender retrying every second is logged once.
+    rejected: Option<WireError>,
 }
 
 impl Receiver {
@@ -227,13 +230,40 @@ impl Receiver {
                     None => return,
                 },
             };
-            next = self.serve(&stream);
+            next = match self.greet(&stream) {
+                Ok(encoding) => self.serve(&stream, encoding),
+                Err(next) => next,
+            };
+        }
+    }
+
+    /// Read the hello and answer it. A refused stream is answered with this
+    /// end's version and closed; the refusal is logged.
+    fn greet(&mut self, mut stream: &TcpStream) -> Result<Encoding, Next> {
+        let mut hello = [0; HELLO_LEN];
+        self.wake.read_full(stream, &mut hello)?;
+        let outcome = wire::accept(&hello);
+        // The sender learns the outcome from the reply; if it is gone, the
+        // next read ends the connection.
+        let _ = stream.write_all(&wire::reply(&outcome));
+        match outcome {
+            Ok(encoding) => {
+                self.rejected = None;
+                Ok(encoding)
+            }
+            Err(error) => {
+                if self.rejected.as_ref() != Some(&error) {
+                    tracing::warn!(%error, "refused a remote frame stream");
+                }
+                self.rejected = Some(error);
+                Err(Next::Wait)
+            }
         }
     }
 
     /// Receive frames until the connection ends. Malformed input drops the
     /// connection; the sender is expected to reconnect.
-    fn serve(&mut self, stream: &TcpStream) -> Next {
+    fn serve(&mut self, stream: &TcpStream, encoding: Encoding) -> Next {
         loop {
             if self.wake.stopped() {
                 return Next::Stop;
@@ -246,7 +276,7 @@ impl Receiver {
                 return next;
             }
             // Validated before allocating.
-            let Ok(header) = Header::decode(&header) else {
+            let Ok((header, _)) = Header::decode(&header, encoding) else {
                 return Next::Wait;
             };
             let Ok(mut writer) = self

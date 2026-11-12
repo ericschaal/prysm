@@ -236,6 +236,53 @@ mod tests {
     }
 
     #[test]
+    fn nv12_is_sampled_in_place_and_matches_its_rgb_conversion_with_an_offset_crop() {
+        use prysm_core::{YuvRange, YuvStandardMatrix};
+        let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
+        for range in [YuvRange::Full, YuvRange::Limited] {
+            for matrix in [YuvStandardMatrix::Bt601, YuvStandardMatrix::Bt709] {
+                // Legal codes, where the reference converter and ours agree within one step.
+                let data = (0..66 * 34 * 3 / 2)
+                    .map(|i: usize| 16 + u8::try_from(i * 7 % 220).unwrap())
+                    .collect();
+                let mut raw = FrameView::new(
+                    Frame::new(data, 66, 34, PixelFormat::NV12 { range, matrix }).unwrap(),
+                );
+                raw.viewport = Viewport {
+                    x: 3,
+                    y: 5,
+                    width: 45,
+                    height: 19,
+                };
+                let mut rgb = FrameView::new(
+                    Frame::new(
+                        prysm_core::nv12::nv12_to_rgb(&raw.frame).unwrap(),
+                        66,
+                        34,
+                        PixelFormat::RGB24,
+                    )
+                    .unwrap(),
+                );
+                rgb.viewport = raw.viewport;
+                let actual = sampler.process(&raw);
+                assert!(sampler.rgb.is_empty(), "NV12 must not be converted");
+                let expected = sampler.process(&rgb);
+                for (actual, expected) in strips(&actual).into_iter().zip(strips(&expected)) {
+                    for (a, e) in actual
+                        .resample(actual.len())
+                        .into_iter()
+                        .zip(expected.resample(expected.len()))
+                    {
+                        for (a, e) in [a.r, a.g, a.b].into_iter().zip([e.r, e.g, e.b]) {
+                            assert!((a - e).abs() < 0.01, "{range:?} {matrix:?}: {a} != {e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn projected_samples_match_serial_sums_in_strip_order() {
         let mut sampler = SpatialSampler::new(SampleDensity(700), 0.15);
         let mut view = picture(93, 55, |x, y| {

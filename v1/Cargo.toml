@@ -72,3 +72,11 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 
+# The TV packages (v1/packaging/webos/build-ipk.sh): smaller and faster ARMv7
+# binaries; no symbols or debug info on the TV.
+[profile.webos]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+debug = false
+strip = true

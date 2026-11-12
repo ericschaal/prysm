@@ -1,11 +1,12 @@
+use prysm_core::nv12::Nv12View;
 use prysm_core::{Color, Frame, LinearColor, PixelFormat};
 
 pub use prysm_core::Viewport;
 
 /// Brightness for black-bar detection, read directly from raw frame data.
 ///
-/// YUYV stores luma at every even byte, so black-bar detection
-/// never needs a color conversion. Out-of-bounds coordinates read as black.
+/// YUYV stores luma at every even byte and NV12 in its first plane, so
+/// black-bar detection never needs a color conversion. Out-of-bounds coordinates read as black.
 /// RGB uses the brightest channel so dark colored pixels are not treated as black.
 pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     if x >= frame.width() || y >= frame.height() {
@@ -14,6 +15,10 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
     match frame.format() {
         PixelFormat::YUYV { .. } => {
             let idx = ((y * frame.width() + x) * 2) as usize;
+            frame.as_slice().get(idx).copied().unwrap_or(0)
+        }
+        PixelFormat::NV12 { .. } => {
+            let idx = y as usize * frame.width() as usize + x as usize;
             frame.as_slice().get(idx).copied().unwrap_or(0)
         }
         PixelFormat::RGB24 | PixelFormat::BGR24 => {
@@ -29,7 +34,8 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
 
 /// A raw frame plus the viewport that downstream nodes should read from.
 ///
-/// Detection reads raw pixels; sampling can use a reusable RGB conversion.
+/// Detection reads raw pixels; sampling reads NV12 directly and can use a
+/// reusable RGB conversion for YUYV.
 #[derive(Debug, Clone)]
 pub struct FrameView {
     pub frame: Frame,
@@ -111,6 +117,17 @@ impl FrameView {
                     }
                 }
             }
+            PixelFormat::NV12 { .. } => {
+                let Some(nv12) = Nv12View::new(&self.frame) else {
+                    return LinearColor::black();
+                };
+                // Row by row: the unit a vector kernel would replace.
+                for y in y0..y1 {
+                    for (r, g, b) in nv12.row(y, x0..x1) {
+                        add(Color::new(r, g, b));
+                    }
+                }
+            }
             PixelFormat::MJPEG => return LinearColor::black(),
         }
         if count == 0 {
@@ -157,6 +174,34 @@ pub mod tests {
         // Out of bounds reads as black
         assert_eq!(luma_at(&frame, 4, 0), 0);
         assert_eq!(luma_at(&frame, 0, 2), 0);
+    }
+
+    #[test]
+    fn nv12_luma_and_averages_read_the_planes_directly() {
+        let format = PixelFormat::NV12 {
+            range: prysm_core::YuvRange::Full,
+            matrix: prysm_core::YuvStandardMatrix::Bt601,
+        };
+        // 4x2: left half black, right half white; neutral chroma.
+        let frame = Frame::new(
+            [0, 0, 255, 255, 0, 0, 255, 255, 128, 128, 128, 128].to_vec(),
+            4,
+            2,
+            format,
+        )
+        .unwrap();
+        assert_eq!(luma_at(&frame, 2, 1), 255);
+        assert_eq!(luma_at(&frame, 1, 1), 0);
+        assert_eq!(luma_at(&frame, 4, 0), 0);
+        let mut view = FrameView::new(frame);
+        assert_eq!(
+            view.average_linear(0, 0, 4, 2, None),
+            LinearColor::new(0.5, 0.5, 0.5)
+        );
+        view.viewport.x = 1;
+        // Columns 1..4 after the offset, clipped at the frame: one black, two white.
+        let avg = view.average_linear(0, 0, 4, 2, None);
+        assert!((avg.r - 2.0 / 3.0).abs() < 1e-6, "{avg:?}");
     }
 
     #[test]

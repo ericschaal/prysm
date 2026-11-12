@@ -1,16 +1,10 @@
-use crate::{Frame, PixelFormat};
+use crate::{Frame, PixelFormat, YuvToRgb};
 use yuv::{YuvPackedImage, YuvRange, YuvStandardMatrix, yuyv422_to_rgb};
 
 /// Decode one YUYV pixel using the frame's range and color matrix.
+/// Builds the coefficients per call; loops should use [`YuvToRgb`] directly.
 #[inline]
 #[must_use]
-#[allow(
-    clippy::similar_names,
-    clippy::many_single_char_names,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "standard YUV channel names; coefficients intentionally quantized to fixed point and RGB clamped to 8 bits"
-)]
 pub fn yuyv_pixel_to_rgb(
     data: &[u8],
     x: u32,
@@ -26,26 +20,7 @@ pub fn yuyv_pixel_to_rgb(
     let Some(pair) = data.get(offset..offset + 4) else {
         return (0, 0, 0);
     };
-    let (bias, y_scale, uv_scale) = match range {
-        YuvRange::Full => (0, 1.0, 1.0),
-        YuvRange::Limited => (16, 255.0 / 219.0, 255.0 / 224.0),
-    };
-    let coefficients = matrix.get_kr_kb();
-    let (kr, kb) = (coefficients.kr, coefficients.kb);
-    let kg = 1.0 - kr - kb;
-    // Match the yuv crate's 6-bit fixed-point coefficients and rounding.
-    let y_coef = (y_scale * 64.0_f32).round() as i32;
-    let cr_coef = (2.0 * (1.0 - kr) * uv_scale * 64.0).round() as i32;
-    let cb_coef = (2.0 * (1.0 - kb) * uv_scale * 64.0).round() as i32;
-    let g_cr = (2.0 * (1.0 - kr) * kr / kg * uv_scale * 64.0).round() as i32;
-    let g_cb = (2.0 * (1.0 - kb) * kb / kg * uv_scale * 64.0).round() as i32;
-    let y = (i32::from(pair[(x % 2) as usize * 2]) - bias) * y_coef;
-    let u = i32::from(pair[1]) - 128;
-    let v = i32::from(pair[3]) - 128;
-    let r = ((y + cr_coef * v + 32) >> 6).clamp(0, 255) as u8;
-    let g = ((y - g_cr * v - g_cb * u + 32) >> 6).clamp(0, 255) as u8;
-    let b = ((y + cb_coef * u + 32) >> 6).clamp(0, 255) as u8;
-    (r, g, b)
+    YuvToRgb::with_precision(range, matrix, 6).rgb(pair[(x % 2) as usize * 2], pair[1], pair[3])
 }
 
 /// Converts YUYV (YUV 4:2:2) format to RGB using the `yuv` crate
@@ -74,10 +49,11 @@ pub fn yuyv_to_rgb(frame: &Frame) -> Result<Vec<u8>, ConversionError> {
     Ok(rgb_data)
 }
 
-/// A frame cannot be converted to RGB using the YUYV decoder.
+/// A frame cannot be converted to RGB using the YUYV or NV12 decoder.
 #[derive(Debug)]
 pub enum ConversionError {
     NotYuyv,
+    NotNv12,
     SizeOverflow,
     Decode(yuv::YuvError),
 }
@@ -86,6 +62,7 @@ impl std::fmt::Display for ConversionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotYuyv => f.write_str("expected a YUYV frame"),
+            Self::NotNv12 => f.write_str("expected an NV12 frame"),
             Self::SizeOverflow => f.write_str("RGB dimensions exceed the supported buffer size"),
             Self::Decode(error) => error.fmt(f),
         }

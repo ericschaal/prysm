@@ -9,8 +9,9 @@ mod nodes;
 
 /// Stateful frame processor.
 ///
-/// Detection keeps the raw capture format; sampling converts YUYV into reusable
-/// RGB storage before reducing the picture to a grid and projecting onto the perimeter.
+/// Detection keeps the raw capture format; sampling reads RGB and NV12 in place
+/// (NV12 per row, without a full-frame conversion) and converts YUYV into reusable
+/// RGB storage, before reducing the picture to a grid and projecting onto the perimeter.
 #[derive(Debug)]
 pub struct PrysmProcessor {
     config: Config,

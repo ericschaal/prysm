@@ -6,10 +6,13 @@ mod correction;
 pub use correction::ColorCorrection;
 mod frame;
 mod linear;
+pub mod nv12;
+mod yuv_rgb;
 pub mod yuyv;
 
 pub use frame::{Frame, FrameError, FramePool, FramePoolStats, FrameWriter, PixelFormat};
 pub use yuv::{YuvRange, YuvStandardMatrix};
+pub use yuv_rgb::YuvToRgb;
 
 pub use capture_resolution::CaptureResolution;
 pub use color::Color;

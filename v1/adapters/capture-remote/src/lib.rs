@@ -13,4 +13,4 @@ mod wire;
 
 pub use receiver::{POLL_INTERVAL, RemoteReceiver, RemoteReceiverSettings, RemoteSource};
 pub use sender::{CONNECT_TIMEOUT, RemoteSender, WRITE_TIMEOUT};
-pub use wire::{MAX_DIMENSION, MAX_PAYLOAD_BYTES, WireError};
+pub use wire::{Encoding, MAX_DIMENSION, MAX_PAYLOAD_BYTES, VERSION, WireError};

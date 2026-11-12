@@ -14,7 +14,6 @@ schema = ["dep:utoipa"]
 prysm-core.workspace = true
 prysm-ports.workspace = true
 serde.workspace = true
-yuv = { version = "0.8", default-features = false }
 nix = { version = "0.31", features = ["fs", "signal", "user"] }
 # FFI lives in its own crate so this one stays under the workspace's `unsafe_code = "forbid"`.
 prysm-capture-webos-sys = { path = "../capture-webos-sys" }

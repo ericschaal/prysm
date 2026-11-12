@@ -420,3 +420,71 @@ fn noisy_bars_and_soft_boundary_pixels_stay_within_the_locked_geometry() {
         );
     }
 }
+
+/// The same picture as NV12: luma copied, chroma from the even rows.
+fn as_nv12(yuyv: &Frame) -> Frame {
+    let PixelFormat::YUYV { range, matrix } = yuyv.format() else {
+        panic!("expected YUYV");
+    };
+    let data = yuyv.as_slice();
+    let mut bytes: Vec<u8> = data.iter().step_by(2).copied().collect();
+    for row in data
+        .as_chunks::<{ WIDTH as usize * 2 }>()
+        .0
+        .iter()
+        .step_by(2)
+    {
+        for &[_, u, _, v] in row.as_chunks::<4>().0 {
+            bytes.extend_from_slice(&[u, v]);
+        }
+    }
+    Frame::new(bytes, WIDTH, HEIGHT, PixelFormat::NV12 { range, matrix }).unwrap()
+}
+
+#[test]
+fn nv12_frames_detect_the_same_bars_as_yuyv_and_see_their_chroma() {
+    for range in [YuvRange::Full, YuvRange::Limited] {
+        let bars = [30, 8, 46, 60];
+        let yuyv = with_range(&picture(bars, |_, _| 128), range);
+        let nv12 = as_nv12(&yuyv);
+        let start = Instant::now();
+        let expected = feed(&mut BlackBarDetector::new(), &yuyv, start, 0, 2000);
+        assert_eq!(expected, viewport(bars), "{range:?}");
+        assert_eq!(
+            feed(&mut BlackBarDetector::new(), &nv12, start, 0, 2000),
+            expected,
+            "{range:?}"
+        );
+    }
+    // Dark but strongly colored rows are picture, not bars.
+    let mut bytes = Vec::with_capacity((WIDTH * HEIGHT * 3 / 2) as usize);
+    let dark = |y: u32| !(40..320).contains(&y);
+    for y in 0..HEIGHT {
+        bytes.extend((0..WIDTH).map(|_| if dark(y) { 18 } else { 128 }));
+    }
+    for y in (0..HEIGHT).step_by(2) {
+        for _ in (0..WIDTH).step_by(2) {
+            bytes.extend_from_slice(if dark(y) { &[128, 190] } else { &[128, 128] });
+        }
+    }
+    let frame = Frame::new(
+        bytes,
+        WIDTH,
+        HEIGHT,
+        PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        feed(
+            &mut BlackBarDetector::new(),
+            &frame,
+            Instant::now(),
+            0,
+            2000
+        ),
+        viewport([0; 4])
+    );
+}

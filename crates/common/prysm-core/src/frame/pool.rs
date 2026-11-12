@@ -114,6 +114,8 @@ impl FramePool {
     }
 
     /// Validate a capture payload and remove row padding before constructing a frame.
+    /// `stride` applies to every row; an NV12 payload's UV plane starts right
+    /// after `height` luma rows.
     #[must_use]
     pub fn copy_from_strided(
         &mut self,
@@ -128,10 +130,9 @@ impl FramePool {
             return None;
         }
         format.expected_size(width, height).ok()??;
-        let row_size = (width as usize).checked_mul(format.bytes_per_pixel()?)?;
-        let required = stride
-            .checked_mul(height as usize - 1)?
-            .checked_add(row_size)?;
+        // NV12's chroma plane follows the luma rows at the same stride.
+        let (row_size, rows) = format.rows(width, height)?;
+        let required = stride.checked_mul(rows - 1)?.checked_add(row_size)?;
         if stride < row_size || data.len() < required {
             return None;
         }

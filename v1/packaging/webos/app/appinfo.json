@@ -1,0 +1,14 @@
+{
+  "id": "io.prysm.tv",
+  "version": "1.0.0",
+  "vendor": "Prysm",
+  "type": "web",
+  "main": "index.html",
+  "disableBackHistoryAPI": true,
+  "title": "Prysm",
+  "icon": "icon.png",
+  "largeIcon": "icon.png",
+  "requiredACG": [
+    "public"
+  ]
+}

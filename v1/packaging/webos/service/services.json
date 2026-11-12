@@ -1,0 +1,11 @@
+{
+  "id": "io.prysm.tv.service",
+  "description": "Prysm TV supervisor",
+  "engine": "native",
+  "executable": "prysm-webos-service",
+  "services": [
+    {
+      "name": "io.prysm.tv.service"
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 //! Both ends on loopback with ephemeral ports. Every wait is bounded.
-use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource};
+use prysm_capture_remote::{
+    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, VERSION, WireError,
+};
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, SourceFactory};
 use prysm_runtime::Forwarder;
@@ -38,20 +40,55 @@ fn receive(source: &mut RemoteSource) -> Frame {
 }
 
 /// Wait for the receiver to drop a raw client: EOF or reset, never a timeout.
-fn assert_dropped(mut client: TcpStream) {
+/// Returns what it answered first (at most the 8-byte hello reply).
+fn assert_dropped(mut client: TcpStream) -> Vec<u8> {
     client.set_read_timeout(Some(BOUND)).unwrap();
+    let mut answer = Vec::new();
     let mut buf = [0; 16];
-    match client.read(&mut buf) {
-        Ok(0) => {}
-        Ok(n) => panic!("receiver answered {n} bytes"),
-        Err(error) => assert!(
-            !matches!(
-                error.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ),
-            "connection was not dropped: {error}"
-        ),
+    loop {
+        match client.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => answer.extend_from_slice(&buf[..n]),
+            Err(error) => {
+                assert!(
+                    !matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ),
+                    "connection was not dropped: {error}"
+                );
+                break;
+            }
+        }
     }
+    assert!(answer.len() <= 8, "receiver answered {answer:?}");
+    answer
+}
+
+/// A raw client that has completed the version-2 hello for a raw stream.
+fn greeted(addr: SocketAddr) -> TcpStream {
+    let mut client = TcpStream::connect(addr).unwrap();
+    client.set_read_timeout(Some(BOUND)).unwrap();
+    client.write_all(b"PRSM\x02\x00\x00\x00").unwrap();
+    let mut reply = [0; 8];
+    client.read_exact(&mut reply).unwrap();
+    assert_eq!(&reply, b"PRSM\x02\x00\x00\x00");
+    client
+}
+
+/// The typed wire cause of a sender error.
+fn wire_cause(error: &prysm_ports::Error) -> WireError {
+    let prysm_ports::Error::Adapter {
+        source: Some(cause),
+        ..
+    } = error
+    else {
+        panic!("no cause: {error}");
+    };
+    cause
+        .downcast_ref::<WireError>()
+        .unwrap_or_else(|| panic!("no wire cause: {error}"))
+        .clone()
 }
 
 #[test]
@@ -75,6 +112,17 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
     let got = receive(&mut source);
     assert_eq!((got.width(), got.height(), got.format()), (4, 2, format));
     assert_eq!(got.as_slice(), yuyv.as_slice());
+
+    // NV12: 1.5 bytes per pixel, both planes intact.
+    let format = PixelFormat::NV12 {
+        range: YuvRange::Limited,
+        matrix: YuvStandardMatrix::Bt709,
+    };
+    let nv12 = Frame::new((0..36).collect(), 6, 4, format).unwrap();
+    sender.send(&nv12).unwrap();
+    let got = receive(&mut source);
+    assert_eq!((got.width(), got.height(), got.format()), (6, 4, format));
+    assert_eq!(got.as_slice(), nv12.as_slice());
 
     Box::new(source).close().unwrap();
 }
@@ -144,7 +192,7 @@ fn a_new_sender_replaces_a_stalled_one() {
     let mut source = RemoteSource::bind(any_port()).unwrap();
     // Half a header, then silence: a crashed TV whose socket never closed.
     let mut stalled = TcpStream::connect(source.local_addr()).unwrap();
-    stalled.write_all(b"PRSM\x01").unwrap();
+    stalled.write_all(b"PRSM\x02").unwrap();
     thread::sleep(Duration::from_millis(100));
 
     let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
@@ -164,15 +212,15 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
         .unwrap();
     assert_dropped(garbage);
 
-    // Valid magic and version, 4096x4096 RGB and a 4 GiB payload: rejected
-    // from the header alone, before anything is allocated.
-    let mut header = b"PRSM\x01\x01\x00\x00".to_vec();
+    // A valid hello, then 4096x4096 RGB and a 4 GiB payload: rejected from
+    // the header alone, before anything is allocated.
+    let mut header = vec![1, 0, 0, 0];
     header.extend_from_slice(&4096u32.to_be_bytes());
     header.extend_from_slice(&4096u32.to_be_bytes());
     header.extend_from_slice(&u32::MAX.to_be_bytes());
-    let mut oversized = TcpStream::connect(source.local_addr()).unwrap();
+    let mut oversized = greeted(source.local_addr());
     oversized.write_all(&header).unwrap();
-    assert_dropped(oversized);
+    assert_eq!(assert_dropped(oversized), b"");
     assert!(
         source
             .next_frame(Duration::from_millis(50))
@@ -184,6 +232,60 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
     sender.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
     Box::new(source).close().unwrap();
+}
+
+#[test]
+fn version_mismatches_are_typed_errors_on_both_ends() {
+    // A version-1 sender opens with a frame header: refused with this
+    // receiver's version, then dropped.
+    let mut source = RemoteSource::bind(any_port()).unwrap();
+    let mut old = TcpStream::connect(source.local_addr()).unwrap();
+    old.write_all(b"PRSM\x01\x01\x00\x00\x00\x00\x00\x04")
+        .unwrap();
+    assert_eq!(
+        assert_dropped(old),
+        [b'P', b'R', b'S', b'M', VERSION, 1, 0, 0]
+    );
+    // A reserved encoding (1: H.264) is refused the same way.
+    let mut h264 = TcpStream::connect(source.local_addr()).unwrap();
+    h264.write_all(b"PRSM\x02\x01\x00\x00").unwrap();
+    assert_eq!(
+        assert_dropped(h264),
+        [b'P', b'R', b'S', b'M', VERSION, 2, 0, 0]
+    );
+    // The receiver keeps serving current senders.
+    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    sender.send(&frame(9, 4, 4)).unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 9);
+    Box::new(source).close().unwrap();
+
+    // Receivers that answer with another version, or (version 1) not at all.
+    for (answer, expected) in [
+        (
+            Some(*b"PRSM\x03\x01\x00\x00"),
+            WireError::Version {
+                ours: VERSION,
+                theirs: 3,
+            },
+        ),
+        (None, WireError::NoReply),
+    ] {
+        let listener = TcpListener::bind(any_port()).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut hello = [0; 8];
+            stream.read_exact(&mut hello).unwrap();
+            match answer {
+                Some(answer) => stream.write_all(&answer).unwrap(),
+                None => drop(stream),
+            }
+        });
+        let error = RemoteSender::connect(addr).unwrap_err();
+        assert_eq!(wire_cause(&error), expected, "{error}");
+        assert!(error.to_string().contains(&addr.to_string()), "{error}");
+        peer.join().unwrap();
+    }
 }
 
 #[test]

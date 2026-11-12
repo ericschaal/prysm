@@ -295,6 +295,8 @@ fn encode(published: &PublishedSnapshot) -> Result<String> {
                     range,
                     matrix,
                 ),
+                PixelFormat::NV12 { .. } => prysm_core::nv12::Nv12View::new(frame)
+                    .map_or((0, 0, 0), |nv12| nv12.pixel(source_x, source_y)),
                 PixelFormat::MJPEG => bail!("MJPEG preview is unsupported"),
             };
             rgb.extend_from_slice(&[r, g, b]);

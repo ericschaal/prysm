@@ -100,3 +100,79 @@ restarts on failure and is sandboxed (read-only system, no capabilities,
 only V4L2 devices, IPv4/IPv6/Unix sockets). `apt remove` stops and disables
 the service; `apt purge` also deletes `/var/lib/prysm`. The `prysm` user is
 kept.
+
+## webOS TV packages
+
+Two IPKs for a rooted LG TV ([design](../../docs/plans/prysm-v1-webos-supervisor.md)),
+built by [`webos/build-ipk.sh`](webos/build-ipk.sh). Both are the app
+`io.prysm.tv` with the service `io.prysm.tv.service` and the same installed
+file names, so installing one replaces the other. Nothing detects or migrates
+the old `io.prysm.capture` app: remove it (and its service setup) first.
+
+| Flavour | The TV… | Supervisor (cargo bin) | Worker (cargo bin) | TV UI |
+| --- | --- | --- | --- | --- |
+| `full` | captures, processes, drives WLED, serves the portal on 8787 | `prysm-webos-service` | `prysm-webos` | `frontend/dist/webos/tv-ui` |
+| `slim` | captures and forwards frames to a headless Prysm | `prysm-webos-slim-service` | `prysm-webos-slim` | `frontend/dist/webos-slim/tv-ui` |
+
+Requirements: the relocated webOS SDK (buildroot-nc4,
+`arm-webos-linux-gnueabi_sdk-buildroot`), `rustup target add
+armv7-unknown-linux-gnueabi`, `ares-package` from `@webos-tools/cli`, Python 3.9+
+and Node.js 24+ for the frontend.
+
+```sh
+npm --prefix v1/frontend ci && npm --prefix v1/frontend run build   # or pass --frontend
+export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
+v1/packaging/webos/build-ipk.sh full    # v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+v1/packaging/webos/build-ipk.sh slim    # v1/target/webos-ipk/slim/io.prysm.tv_1.0.0_all.ipk
+```
+
+`--out DIR` changes the output folder; `CARGO_TARGET_DIR` is honoured. The
+script builds the flavour's two binaries with `--profile webos` (fat LTO, one
+codegen unit, stripped) for Cortex-A9, then refuses binaries that are not
+ARM EABI5 soft-float, are unstripped, need a library outside the TV's base
+set or a symbol newer than glibc 2.12 ([`ipk.py elf`](webos/ipk.py)). It
+packages with `ares-package` and then rewrites the archive: root ownership,
+0755 for directories, the two binaries and `setup.sh`, 0644 for everything
+else; no install scripts, links, absolute or `..` paths, files outside the
+app, service and package directories, or unknown service files. The version
+is the workspace version without its pre-release (`app/appinfo.json` must
+match). Despite `_all`, the binaries are ARMv7.
+
+Cross-building by hand: `. v1/packaging/webos/env.sh` (needs `WEBOS_SDK`) sets
+the [linker wrapper](webos/linker.sh) and the C/C++ cross tools, then
+`cargo build --manifest-path v1/Cargo.toml --target armv7-unknown-linux-gnueabi --profile webos -p prysm-webos-slim`.
+
+Installed layout (`/media/developer/apps/usr/palm/…`):
+
+| Path | Contents |
+| --- | --- |
+| `applications/io.prysm.tv/` | TV UI bundle, [`appinfo.json`](webos/app/appinfo.json), icon |
+| `services/io.prysm.tv.service/prysm-webos-service` | the flavour's supervisor (Luna-activated, root) |
+| `services/io.prysm.tv.service/prysm-webos-worker` | the flavour's worker |
+| `services/io.prysm.tv.service/setup.sh` | run once from the TV app via Homebrew Channel: `prysm-webos-service setup` |
+| `services/io.prysm.tv.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.prysm.tv.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setEnabled uninstall`, client groups, D-Bus service |
+| `services/io.prysm.tv.service/licenses/` | Prysm, hyperion-webos and TV native API notices |
+
+`setup` writes `/var/luna-service2/manifests.d/io.prysm.tv.{supervisor,worker}.json`
+and the boot hook `/var/lib/webosbrew/init.d/io.prysm.tv`; preferences and
+settings live in `/var/lib/io.prysm.tv`. The Luna method `uninstall` (from the
+TV app) removes the registration before the IPK is removed.
+
+Checks without a TV:
+
+```sh
+python3 -m unittest discover -s v1/packaging/webos/tests    # package files and ipk.py
+python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+WEBOS_SDK=… cargo run --manifest-path v1/Cargo.toml -p prysm-webos-luna-sys \
+  --features codegen --bin generate-luna-bindings -- --check   # Luna/GLib bindings vs SDK headers
+```
+
+The generator needs libclang; without `--check` it rewrites
+`adapters/webos-luna-sys/src/generated/` from the SDK headers.
+
+[`tests/native-smoke.py`](webos/tests/native-smoke.py) is the on-TV smoke test
+(`--host root@TV --flavour full|slim [--supervisor | --capture]`, `--dry-run`
+prints its files and touches nothing). It runs the cargo binaries from the
+build directory under a probe identity (`io.prysm.tv.probe`, `run --sandbox`
+in a private `/tmp/prysm-supervisor.*`, bounded `--run-for`) and removes its
+probe manifest only if unchanged. It has not been run on a TV yet.

@@ -1,9 +1,9 @@
-//! The real backend: LG VTCapture through `prysm-capture-webos-sys`, NV12 to
-//! RGB conversion, the cross-process device lock and signal isolation.
+//! The real backend: LG VTCapture through `prysm-capture-webos-sys`, native
+//! NV12 frames, the cross-process device lock and signal isolation.
 use crate::WebosSettings;
 use crate::source::{Acquired, Backend, Fault, Tap};
 use prysm_capture_webos_sys::{self as sys, VtCapture};
-use prysm_core::{Frame, FramePool, PixelFormat};
+use prysm_core::{Frame, FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{Error, Result};
 use std::fs::File;
 use std::path::Path;
@@ -96,7 +96,7 @@ impl Tap for LgTap {
     fn acquire(&mut self) -> Result<Acquired, Fault> {
         match self.capture.acquire(&mut self.nv12) {
             Ok(sys::Acquired::Frame { width, height }) => {
-                nv12_to_rgb(&mut self.pool, width, height, &self.nv12)
+                nv12_frame(&mut self.pool, width, height, &self.nv12)
                     .map(Acquired::Frame)
                     .map_err(|error| Fault {
                         error,
@@ -116,36 +116,29 @@ impl Tap for LgTap {
     }
 }
 
-/// Packed limited-range BT.709 NV12 to RGB24.
-pub(crate) fn nv12_to_rgb(
+/// What LG's capture tap produces, downstream of HDR tone mapping.
+pub(crate) const TAP_FORMAT: PixelFormat = PixelFormat::NV12 {
+    range: YuvRange::Limited,
+    matrix: YuvStandardMatrix::Bt709,
+};
+
+/// The driver's packed NV12 copy as a pooled frame, without colour
+/// conversion: one copy into reused storage, no per-frame allocation.
+pub(crate) fn nv12_frame(
     pool: &mut FramePool,
     width: u32,
     height: u32,
     nv12: &[u8],
 ) -> Result<Frame> {
-    let luma = width as usize * height as usize;
-    if nv12.len() != luma + luma / 2 {
+    let expected = TAP_FORMAT
+        .expected_size(width, height)
+        .map_err(|error| Error::adapter("invalid native NV12 geometry", error))?;
+    if expected != Some(nv12.len()) {
         return Err(Error::other("native NV12 frame has the wrong size"));
     }
-    let (y_plane, uv_plane) = nv12.split_at(luma);
     let mut frame = pool
-        .acquire(width, height, PixelFormat::RGB24)
-        .map_err(|error| Error::adapter("cannot allocate an RGB frame", error))?;
-    yuv::yuv_nv12_to_rgb(
-        &yuv::YuvBiPlanarImage {
-            y_plane,
-            y_stride: width,
-            uv_plane,
-            uv_stride: width,
-            width,
-            height,
-        },
-        frame.as_mut_slice(),
-        width * 3,
-        yuv::YuvRange::Limited,
-        yuv::YuvStandardMatrix::Bt709,
-        yuv::YuvConversionMode::Balanced,
-    )
-    .map_err(|error| Error::adapter("cannot convert NV12 to RGB", error))?;
+        .acquire(width, height, TAP_FORMAT)
+        .map_err(|error| Error::adapter("cannot allocate an NV12 frame", error))?;
+    frame.as_mut_slice().copy_from_slice(nv12);
     Ok(frame.finish())
 }

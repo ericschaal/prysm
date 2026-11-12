@@ -316,19 +316,28 @@ fn black_ceiling(frame: &Frame) -> u8 {
         PixelFormat::YUYV {
             range: YuvRange::Limited,
             ..
+        }
+        | PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            ..
         } => 23,
         _ => 8,
     }
 }
 
 fn pixel(frame: &Frame, x: u32, y: u32) -> (u8, u8) {
-    let chroma = if matches!(frame.format(), PixelFormat::YUYV { .. }) {
-        let index = (y as usize * frame.width() as usize + (x as usize & !1)) * 2;
-        frame.as_slice()[index + 1]
-            .abs_diff(128)
-            .max(frame.as_slice()[index + 3].abs_diff(128))
-    } else {
-        0
+    let chroma = match frame.format() {
+        PixelFormat::YUYV { .. } => {
+            let index = (y as usize * frame.width() as usize + (x as usize & !1)) * 2;
+            frame.as_slice()[index + 1]
+                .abs_diff(128)
+                .max(frame.as_slice()[index + 3].abs_diff(128))
+        }
+        PixelFormat::NV12 { .. } => frame.nv12_planes().map_or(0, |(_, uv)| {
+            let index = (y as usize / 2) * frame.width() as usize + (x as usize & !1);
+            uv[index].abs_diff(128).max(uv[index + 1].abs_diff(128))
+        }),
+        _ => 0,
     };
     (luma_at(frame, x, y), chroma)
 }

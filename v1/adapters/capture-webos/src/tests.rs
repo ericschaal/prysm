@@ -531,14 +531,19 @@ fn capture_lock_is_exclusive_until_dropped() {
 }
 
 #[test]
-fn nv12_limited_range_becomes_full_range_rgb() {
+fn native_nv12_is_forwarded_unconverted_into_reused_storage() {
     let mut pool = FramePool::default();
-    let frame = backend::nv12_to_rgb(&mut pool, 2, 2, &[16, 235, 235, 16, 128, 128]).unwrap();
-    assert_eq!(
-        frame.as_slice(),
-        [0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0]
-    );
-    assert!(backend::nv12_to_rgb(&mut pool, 2, 2, &[16; 5]).is_err());
+    let pixels = [16, 235, 235, 16, 128, 128];
+    let frame = backend::nv12_frame(&mut pool, 2, 2, &pixels).unwrap();
+    assert_eq!(frame.format(), backend::TAP_FORMAT);
+    assert_eq!((frame.width(), frame.height()), (2, 2));
+    assert_eq!(frame.as_slice(), pixels);
+    let storage = frame.as_slice().as_ptr();
+    drop(frame);
+    let again = backend::nv12_frame(&mut pool, 2, 2, &pixels).unwrap();
+    assert_eq!(again.as_slice().as_ptr(), storage);
+    assert!(backend::nv12_frame(&mut pool, 2, 2, &[16; 5]).is_err());
+    assert!(backend::nv12_frame(&mut pool, 3, 2, &[16; 9]).is_err());
 }
 
 // ---- Settings ------------------------------------------------------------

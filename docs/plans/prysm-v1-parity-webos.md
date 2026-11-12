@@ -19,8 +19,9 @@ or `appinfo.json`), the TV UI is a fixture-only skeleton, and calibration is
 missing. Two v1 changes look accidental and would regress the shipping product.
 The full worker lost the NEON NV12 kernel and the Rayon processing, which the
 research says are worth 25 → 30 FPS at 640×360 and 17 → 30 FPS at 720p. The slim
-worker converts NV12 to RGB on the TV and sends RGB24: twice the bytes of NV12,
-with no compression and no "capture only while wanted". Everything below the TV
+worker originally converted NV12 to RGB on the TV and sent RGB24; since W13 it
+forwards native NV12 (half the bytes), still with no compression and no
+"capture only while wanted". Everything below the TV
 UI is "built, unverified" until `prysm-3jx.22`.
 
 Status values: **present** (code exists and is tested on the host), **built,
@@ -33,10 +34,10 @@ intentional difference, see §3).
 
 | Capability | Shipping | v1 | Note |
 | --- | --- | --- | --- |
-| IPK `io.prysm.capture` (app + service dir) | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | missing | No `appinfo.json`, icon or service files for `io.prysm.tv[.slim]` (`prysm-3jx.20`) |
-| Payload hardening: root ownership, `go-w`, no control scripts, links or stray paths | [secure-ipk.py](../../packaging/webos/secure-ipk.py), [test_ipk.py](../../packaging/webos/tests/test_ipk.py) | missing | Needs two allowlists |
-| Homebrew Channel `exec setup.sh` from the app (root) | [useCaptureService.ts](../../crates/web/prysm-webos/src/hooks/useCaptureService.ts) `setup()` | partial | `setup` CLI exists in [cli.rs](../../v1/hosts/webos-service/src/cli.rs); no `setup.sh`, no UI call |
-| Role manifests (worker, supervisor), refuse unrelated files | [files.rs](../../apps/prysm-webos-service/src/files.rs) | built, unverified | [install.rs](../../v1/hosts/webos-service/src/install.rs); role/service/api JSON files do not exist yet |
+| IPK `io.prysm.capture` (app + service dir) | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | built, unverified | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) `full`/`slim`: both `io.prysm.tv`, built with the SDK; not installed on a TV (`prysm-3jx.20.2`) |
+| Payload hardening: root ownership, `go-w`, no control scripts, links or stray paths | [secure-ipk.py](../../packaging/webos/secure-ipk.py), [test_ipk.py](../../packaging/webos/tests/test_ipk.py) | present | [ipk.py](../../v1/packaging/webos/ipk.py): one allowlist (both flavours share paths), exact service file set, ELF checks; [tests](../../v1/packaging/webos/tests/test_ipk.py) |
+| Homebrew Channel `exec setup.sh` from the app (root) | [useCaptureService.ts](../../crates/web/prysm-webos/src/hooks/useCaptureService.ts) `setup()` | partial | `setup` CLI in [cli.rs](../../v1/hosts/webos-service/src/cli.rs), [setup.sh](../../v1/packaging/webos/service/setup.sh) packaged; no UI call |
+| Role manifests (worker, supervisor), refuse unrelated files | [files.rs](../../apps/prysm-webos-service/src/files.rs) | built, unverified | [install.rs](../../v1/hosts/webos-service/src/install.rs); role/service/permission files in [service/](../../v1/packaging/webos/service/) |
 | Absolute `ls-control`/`luna-send` paths (0.1.10 boot failure) | [setup.rs](../../apps/prysm-webos-service/src/setup.rs) | present | `Layout` paths are absolute |
 | Bounded rescan and activation, `returnValue` checked | setup.rs (10 s) | present | 10 s `run_bounded` |
 | Boot hook `/var/lib/webosbrew/init.d/…` | toggled with autostart | changed | Always installed; runs `setup` |
@@ -83,7 +84,7 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | `setConfig` (verifies the instance first, 12 s) | `setPreferences` (validates only) | changed |
 | `cleanup` | `uninstall` (also exits the service) | present |
 | App-id check before parsing; one change at a time | app-id check before parsing; no in-progress lock | present |
-| `inbound: ["*"]` role, public api permission file | same intent, files not written | missing (packaging) |
+| `inbound: ["*"]` role, public api permission file | [supervisor.role.json](../../v1/packaging/webos/service/supervisor.role.json), [supervisor.api.json](../../v1/packaging/webos/service/supervisor.api.json) | built, unverified |
 
 ### Capture
 
@@ -101,7 +102,7 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | `/tmp/prysm-capture.lock`, `O_NOFOLLOW` | [lock.rs](../../apps/prysm-webos-capture/src/lock.rs) | present | Same path, so old and new exclude each other |
 | SIGINT/SIGTERM blocked on the capture thread | [shutdown.rs](../../apps/prysm-webos-capture/src/shutdown.rs) | present | blocked in `Lg::open` |
 | `videooutput` MAIN readiness, muted counts, context reset | supervisor + `VideoCommand` bytes | present | [observe.rs](../../v1/hosts/webos-service/src/observe.rs) |
-| Limited BT.709 NV12 → RGB, portable | `yuv` | present | `yuv` without Rayon |
+| Limited BT.709 NV12 → RGB, portable | `yuv` | changed | No conversion: both workers keep native NV12 frames; the processor and previews sample NV12 in place ([nv12.rs](../../crates/common/prysm-core/src/nv12.rs)) |
 | NEON kernel (8 px), parallel row pairs, exact match test | [nv12.rs](../../apps/prysm-webos-capture/src/nv12.rs), [nv12.cpp](../../apps/prysm-webos-capture/local/nv12.cpp) | missing | W1 |
 | HDR, DRM, black frames | not handled; capture follows tone mapping ([research](../../research/webos-capture/2026-11-01-hdr-brightness/README.md)) | same | Home without video yields no frames in both |
 
@@ -111,12 +112,12 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | --- | --- | --- | --- |
 | Transport | WS/WSS on the server's HTTP port `/api/capture` ([transport.rs](../../apps/prysm-webos-capture/src/transport.rs)) | changed | Raw TCP to `receiver` (e.g. `:7380`), [sender.rs](../../v1/adapters/capture-remote/src/sender.rs) |
 | Instance by hostname, `https`, TLS verified against the TV trust store | `InstanceUrl` | missing | `receiver` is a `SocketAddr`: IP only, no TLS (W12) |
-| Versioned hello; `idle`/`busy`/`capture_settings` replies | [control.rs](../../crates/capture/prysm-webos-protocol/src/control.rs) | changed | No handshake; magic and version in each header |
+| Versioned hello; `idle`/`busy`/`capture_settings` replies | [control.rs](../../crates/capture/prysm-webos-protocol/src/control.rs) | partial | Wire version 2 hello (version, stream encoding) and accept/refuse reply; a mismatch is a typed `WireError` on both ends. No `idle`/`busy`/`capture_settings` |
 | Receiver chooses size and FPS (Screen sync) | `CaptureSettings` | changed | TV preferences; default 320×180@30 |
 | Capture only while the server wants frames (`Idle`) | `wait_for_capture` | changed | Streams while awake and enabled (`prysm-3jx.12`) |
 | Verify instance before saving (`--verify-instance`) | worker CLI | changed | Connect failure = worker failure |
 | Receiver busy detection | `Busy` → event, UI state | changed | New connection replaces the old one |
-| Frame format on the wire | NV12 (native) | changed | RGB24 after on-TV conversion (W13) |
+| Frame format on the wire | NV12 (native) | present | Native limited BT.709 NV12, sampled on the receiver without conversion (W13) |
 | Codecs: raw, LZ4, OpenH264, GStreamer `rvenc` HW with SW fallback | [encoder.rs](../../apps/prysm-webos-capture/src/encoder.rs), [gst.rs](../../apps/prysm-webos-capture/src/encoder/gst.rs) | changed | Raw only (`prysm-3jx.12`) |
 | Backpressure | 100 ms frame deadline, drop on overrun, `MissedTick` | partial | 2 s write timeout ends the worker |
 | Reconnect | worker exit, supervisor backoff 1–5 s | partial | worker exit, backoff 1–30 s |
@@ -156,12 +157,12 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 
 | Capability | Shipping | v1 | Note |
 | --- | --- | --- | --- |
-| `cargo xtask package webos [--hardware-h264] [--embedded-prysm]` | [xtask](../../xtask/src/main.rs) | missing | `--slim` choice planned (`prysm-3jx.20`) |
-| `profile.webos` (fat LTO, strip), `cortex-a9`, soft-float linker with `glibc_polyfills` | [Cargo.toml](../../Cargo.toml), [linker.sh](../../packaging/webos/linker.sh) | missing | v1 workspace has no `webos` profile |
-| Licences: Prysm, hyperion, tv-native-apis (+ OpenH264, gstreamer-rs, gtk-rs) | build-ipk.sh | partial | Two notice files sit in `capture-webos-sys`; nothing copies them |
-| Luna bindgen generator with `--check` | [codegen/main.rs](../../apps/prysm-webos-service/codegen/main.rs) | missing | v1 has the generated files only |
+| `cargo xtask package webos [--hardware-h264] [--embedded-prysm]` | [xtask](../../xtask/src/main.rs) | changed | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) `full\|slim`, outside xtask; TV feature flags dropped |
+| `profile.webos` (fat LTO, strip), `cortex-a9`, soft-float linker with `glibc_polyfills` | [Cargo.toml](../../Cargo.toml), [linker.sh](../../packaging/webos/linker.sh) | present | [v1/Cargo.toml](../../v1/Cargo.toml) `profile.webos`, [env.sh](../../v1/packaging/webos/env.sh), [linker.sh](../../v1/packaging/webos/linker.sh) (adds `-ldl`) |
+| Licences: Prysm, hyperion, tv-native-apis (+ OpenH264, gstreamer-rs, gtk-rs) | build-ipk.sh | present | Prysm, hyperion, tv-native-apis in `licenses/`; codec notices dropped with the codecs |
+| Luna bindgen generator with `--check` | [codegen/main.rs](../../apps/prysm-webos-service/codegen/main.rs) | present | [generate-luna-bindings](../../v1/adapters/webos-luna-sys/codegen/main.rs) (`--features codegen`); `--check` passes against the SDK |
 | CI: armv7 qemu tests, SDK IPK artifact, Miri armv7 + x86-64 | [check.yml](../../.github/workflows/check.yml) | missing | [v1.yml](../../.github/workflows/v1.yml) names crates that no longer exist |
-| Native smoke on the TV (read-only, `--supervisor`, `--capture`) | [native-smoke.py](../../packaging/webos/tests/native-smoke.py) | missing | |
+| Native smoke on the TV (read-only, `--supervisor`, `--capture`) | [native-smoke.py](../../packaging/webos/tests/native-smoke.py) | built, unverified | [native-smoke.py](../../v1/packaging/webos/tests/native-smoke.py): probe `io.prysm.tv.probe`, `run --sandbox`; dry-run only, never run on a TV |
 | Research harnesses: on-TV replay, packet observer, lifecycle probes | [on-TV pipeline](../../research/webos-capture/2026-11-04-on-tv-pipeline/README.md) | n/a | Keep in `research/`; reuse for W1 and W18 |
 
 ## 3. Intentionally changed or dropped in v1
@@ -172,7 +173,6 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | Portal on the LAN without a token | Plan §1.2 | Partly: `AnyOrigin` with no Host check also lets any website in a LAN browser drive the portal (W11) |
 | Slim streams continuously; only-capture-when-wanted is gone | Plan §1.3 | Yes: the TV now captures and sends while the server's lights are off, all evening |
 | Raw frames only; LZ4, OpenH264 and hardware H.264 dropped | Plan §2, §7 | Yes: 2.5 days of hardware-encoder qualification are lost, and LZ4 was the shipping default |
-| RGB24 on the wire instead of NV12 | not discussed | Yes: 2× bandwidth, plus TV CPU for conversion |
 | Receiver chooses size/FPS → TV preferences | Plan §6 | Partly: the server's capture settings and the TV's now drift apart |
 | WS/WSS on the server port → raw TCP on a second port, no TLS, IP only | [capture-remote README](../../v1/adapters/capture-remote/README.md) | Yes: hostnames (`prysm.local`), https instances and firewalls with one open port stop working |
 | Receiver busy and instance verification dropped | Plan §2 | Partly: two TVs now steal the receiver silently |
@@ -187,10 +187,10 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | ID | Title | What is missing | Where in v1 | Size | Needs | Depends on | Priority |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | W1 | Restore NEON conversion and parallel processing on TV | NEON `prysm_nv12_rows` kernel + Rayon row bands with the exhaustive Y/U/V equality test; `parallel-projection` on `prysm-processor` for the full worker; `+neon,-soft-float` Rust flags; `yuv` Rayon fallback | `capture-webos` backend (+`build.rs`), `hosts/webos` Cargo features, build script | M | SDK, TV | W2 | P1: without it the full package misses 30 FPS at 640×360 |
-| W2 | Add armv7 build profile and CI for v1 TV crates | `profile.webos`, linker wrapper, qemu `cargo test --target armv7`, fix stale `v1.yml` crate names, Miri for `webos-luna-sys` | `v1/Cargo.toml`, `.github/workflows/v1.yml` | S | dev host | — | P1: refines `prysm-3jx.20` |
-| W3 | Build and harden the two v1 IPKs | `appinfo.json` + icon per app, `supervisor.role.json`, `worker.role.json`, `.service`, client/api permission files, `setup.sh`, licences, two `secure-ipk.py` allowlists and tests, xtask `package webos --slim` | `packaging/webos`, `xtask` | M | SDK | W2 | P1: refines `prysm-3jx.20` |
-| W4 | Port bindgen generator and SDK check | `generate-luna-bindings --check` for `webos-luna-sys` from SDK headers | `v1/adapters/webos-luna-sys` (tool) | S | SDK | W2 | P2: refines `prysm-3jx.20` |
-| W5 | Port native smoke test to v1 names | `native-smoke.py` with `io.prysm.tv[.slim].probe`, `run --sandbox`, capture probe | `packaging/webos/tests` | S | TV | W3 | P1: refines `prysm-3jx.20` |
+| W2 | Add armv7 build profile and CI for v1 TV crates | `profile.webos`, linker wrapper, qemu `cargo test --target armv7`, fix stale `v1.yml` crate names, Miri for `webos-luna-sys` | `v1/Cargo.toml`, `.github/workflows/v1.yml` | S | dev host | — | P1: refines `prysm-3jx.20`. Profile and wrapper done (`prysm-3jx.20.2`); CI open. |
+| W3 | Build and harden the two v1 IPKs | `appinfo.json` + icon per app, `supervisor.role.json`, `worker.role.json`, `.service`, client/api permission files, `setup.sh`, licences, two `secure-ipk.py` allowlists and tests, xtask `package webos --slim` | `packaging/webos`, `xtask` | M | SDK | W2 | P1: refines `prysm-3jx.20`. Done on the SDK (`prysm-3jx.20.2`): one allowlist, `build-ipk.sh full\|slim`, no xtask. |
+| W4 | Port bindgen generator and SDK check | `generate-luna-bindings --check` for `webos-luna-sys` from SDK headers | `v1/adapters/webos-luna-sys` (tool) | S | SDK | W2 | P2: refines `prysm-3jx.20`. Done (`prysm-3jx.20.3`); `--check` passes. |
+| W5 | Port native smoke test to v1 names | `native-smoke.py` with `io.prysm.tv[.slim].probe`, `run --sandbox`, capture probe | `packaging/webos/tests` | S | TV | W3 | P1: refines `prysm-3jx.20`. Written, dry-run only (`prysm-3jx.20.4`); needs the TV. |
 | W6 | Implement the TV Luna client and setup call | PalmServiceBridge client for `getState`/`setPreferences`/`setEnabled`/`uninstall`, Homebrew `exec setup.sh`, 30 s timeout, resubscribe, visibility pause; replace `TvHostClient` | `frontend/packages/webos-platform` | M | dev host | W7 | P1: refines `prysm-3jx.21` |
 | W7 | Export Luna State and Preferences schemas | Schema derive and export for `State`, `Preferences`, `SlimCapture`; generated TS; add `pid`/`revision` or rely on LS2 ordering | `hosts/webos-service`, `tools/export-contracts` | S | dev host | — | P1: refines `prysm-3jx.21` |
 | W8 | Rebuild TV UI screens and status logic | Status card states, primary action, settings rows, dialogs, diagnostics, remove-setup confirm, exit confirm, portal address as text/QR, friendly failure text | `frontend/packages/tv-ui` | L | dev host | W6 | P1: refines `prysm-3jx.21` |
@@ -198,7 +198,7 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | W10 | Make the slim TV UI drive the remote portal | HTTP client for the headless portal from `Origin: null`; instance editor; derive `receiver` from remote `capture.listen`; slim capture size/FPS/menus rows; lights on/off | `frontend/hosts/webos-slim`, `web-portal` access | M | dev host | W6, W11 | P1: refines `prysm-3jx.21` |
 | W11 | Restrict portal access to the TV app origin | `Access` option for exactly `Origin: null` and a Host allowlist for the full TV and headless | `surfaces/web-portal`, `hosts/webos` | S | dev host | — | P2: closes the CSRF/DNS-rebinding hole; see Q1 |
 | W12 | Accept hostnames and verify the slim receiver | Resolve `host:port` on the TV per connect; a hello/ack so `setPreferences` can be checked like `--verify-instance` | `capture-remote`, `webos-link` args, `webos-service` preferences | M | dev host | — | P2: `prysm.local` setups work today |
-| W13 | Forward native NV12 from the slim TV | `PixelFormat::NV12` in `prysm-core`, wire code, receiver conversion; skip on-TV RGB | `prysm-core`, `capture-remote`, `capture-webos` | M | dev host, TV | — | P2: halves bandwidth; refines `prysm-3jx.12` |
+| W13 | Forward native NV12 from the slim TV | `PixelFormat::NV12` in `prysm-core`, wire code, receiver conversion; skip on-TV RGB | `prysm-core`, `capture-remote`, `capture-webos` | M | dev host, TV | — | P2: halves bandwidth; refines `prysm-3jx.12`. Done on the dev host (`prysm-3jx.12.1`): wire version 2 with a hello, per-stream encoding (H.264 reserved) and NV12 frames; NV12 sampled in place, no receiver conversion. TV run open (W18). |
 | W14 | Re-advertise portal URL after address change | Recompute LAN address on heartbeat; publish the new `portal` | `hosts/webos/src/link.rs` | S | dev host | — | P3: DHCP renewals leave a stale URL |
 | W15 | Complete the portal webOS capture panel | Width, height, FPS 1–60, include UI; generated type from the `webos` schema | `frontend/packages/capture-webos-ui`, `tools/export-contracts` | S | dev host | — | P1: full users cannot change resolution |
 | W16 | Expose capture rate in TV state | Frames/s and drops in `WorkerStatus` → `State`; optional Prometheus later | `webos-link`, both workers, supervisor | S | dev host | — | P3: replaces metrics for diagnosis |
@@ -206,7 +206,7 @@ fixtures, and its [platform port](../../v1/frontend/packages/webos-platform/inde
 | W18 | Run TV acceptance for both packages | Plan §10 TV list, plus full 640×360 and 720p FPS/CPU (90 s soak), slim bandwidth at 320×180 and 640×360, wake with Freebox/CEC, cold boot, hung-capture KILL, uninstall | `research/webos-capture` evidence | M | TV | W1, W3, W5 | P1: refines `prysm-3jx.22` |
 | W19 | Calibrate from the TV app | Portal calibration API, `calibration-tv.html` relay, pattern clips and MSE player, QR pairing, for both packages | portal + `tv-ui` | L | dev host, TV | W8 | P1: refines `prysm-3jx.11` |
 | W20 | Rewrite TV docs for v1 | `docs/users/webos.md`, `docs/developers/{webos,packaging}.md`; delete `hardware-h264.md` | `docs/` | S | dev host | W3 | P1: required at deletion |
-| W21 | Decide compression and wanted-frames for slim | LZ4 or H.264 under a new wire version; pause frames while the server's lights are off; reconnect without restarting the process | `capture-remote`, `hosts/webos-slim`, headless receiver | M | dev host, TV | W13 | P2: refines `prysm-3jx.12`; see Q2, Q3 |
+| W21 | Decide compression and wanted-frames for slim | LZ4 or H.264 as a new wire-v2 stream encoding; pause frames while the server's lights are off; reconnect without restarting the process | `capture-remote`, `hosts/webos-slim`, headless receiver | M | dev host, TV | W13 | P2: refines `prysm-3jx.12`; see Q2, Q3 |
 
 ## 5. Performance and bandwidth facts
 

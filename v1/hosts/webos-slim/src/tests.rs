@@ -171,6 +171,40 @@ async fn frames_reach_a_receiver_that_starts_listening_later() {
     result.unwrap();
 }
 
+/// A receiver of another wire version refuses the stream: the worker keeps
+/// running and its status names the mismatch.
+#[tokio::test]
+async fn a_receiver_of_another_wire_version_is_reported_as_the_wait() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut hello = [0; 8];
+            if stream.read_exact(&mut hello).is_ok() {
+                let _ = stream.write_all(b"PRSM\x03\x01\x00\x00");
+            }
+        }
+    });
+    let log = CallLog::new();
+    let (mut peer, _feed, task) = start_with(FakeSourceSettings::default(), &log, move || {
+        RemoteSender::connect(address)
+    });
+    let event = peer
+        .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("version 3")))
+        .await
+        .unwrap();
+    let reason = waiting(&event).unwrap();
+    assert!(
+        reason.contains("refused the stream") && reason.contains("this end version 2"),
+        "{reason}"
+    );
+    assert!(!task.is_finished(), "the worker keeps running");
+    peer.close();
+    let (result, _) = task.await.unwrap();
+    result.unwrap();
+}
+
 #[tokio::test]
 async fn reports_frame_flow_and_forwards_video_commands() {
     let (mut peer, feed, task) = start(FakeSourceSettings {

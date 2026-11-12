@@ -654,6 +654,7 @@ impl From<prysm_core::PixelFormat> for Format {
             prysm_core::PixelFormat::RGB24 => Self::Rgb24,
             prysm_core::PixelFormat::BGR24 => Self::Bgr24,
             prysm_core::PixelFormat::YUYV { .. } => Self::Yuyv,
+            prysm_core::PixelFormat::NV12 { .. } => Self::Nv12,
             prysm_core::PixelFormat::MJPEG => Self::Mjpeg,
         }
     }
