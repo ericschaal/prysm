@@ -10,7 +10,7 @@ own beyond connection limits.
 ```mermaid
 flowchart LR
     Browser[Browser portal] -->|HTTP| Portal[WebPortal surface]
-    Portal -->|set_target, replace_settings, set_calibration, candidates| Engine
+    Portal -->|set_target, replace_settings, try_processing, set_calibration, candidates| Engine
     Engine -->|watch: Snapshot| Portal
     Host[Host main] -->|listener, assets, access| Portal
 ```
@@ -55,6 +55,7 @@ into `@prysm/contracts/application`.
 | `GET /api/v1/colors/stream` | — | `200 text/event-stream`: `data: <ColorsEvent>` now, then at most 10 per second, only on change; see [Colors](#colors) |
 | `PUT /api/v1/target` | `TargetRequest { target }` | `204` once the engine has applied the target |
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
+| `PUT /api/v1/processing/trial` | `Processing` | `204` once the lights use it, unsaved; see [Trying processing](#trying-processing) |
 | `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
 | `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
 | `GET /api/v1/candidates/{section}/{kind}` | — | `200 Candidate[]`: what the adapter finds to choose from; see [Candidates](#candidates) |
@@ -109,6 +110,17 @@ The stream sends whole states, not deltas, so there are no cursors, gaps or
 resynchronization: a slow reader skips intermediate states, and a reconnecting
 client simply takes the first event. Idle streams carry a `:` comment every 15
 seconds. Streams end when the portal shuts down or the engine stops.
+
+## Trying processing
+
+`PUT /api/v1/processing/trial` lights with the given processing section
+(validated like `settings.processing`) while a control is dragged, without
+saving it: no revision change, no state event, nothing written. The portal's
+brightness slider sends it at most every 100 ms with one request in flight
+and saves the final value with `PUT /api/v1/settings` on release. Any settings
+save ends the trial (even one that leaves processing unchanged), and so does
+30 seconds without another trial; the lights then follow the saved settings.
+It applies whatever the target, so a session started meanwhile uses it.
 
 ## Calibration
 
@@ -406,7 +418,7 @@ returns; nothing is detached.
 [`tests/http.rs`](tests/http.rs) runs the portal on loopback against an engine
 with `prysm-runtime`'s fake adapters: construction validation, foreign origins
 refused before the engine runs (commands, stream, preflight), same-origin and
-origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless processed, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), adapter failure (502),
+origin-less requests, CORS for listed and any origins, asset serving, security headers on every kind of response, state read, set target, calibration (refused unless processed, set/switch/clear without a revision change, closed pattern set, origin policy, cleared by `off`), processing trial (applied without saving or a revision change, validated, exact fields, origin policy), adapter failure (502),
 missing settings (422), settings replace success/stale/invalid/undecodable,
 media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the

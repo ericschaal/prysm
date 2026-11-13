@@ -25,7 +25,7 @@ pub mod fakes;
 pub mod logging;
 
 pub use builder::{Builder, Prysm};
-pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
+pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle, TRIAL_TIMEOUT};
 pub use feeds::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};

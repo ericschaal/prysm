@@ -93,6 +93,9 @@ export function httpApplicationClient<C, O>({
         ? command('calibration', calibration)
         : command('calibration'));
     },
+    tryProcessing: async (processing) => {
+      await command('processing/trial', processing);
+    },
     replaceSettings: async (expected, settings) => {
       const reply: unknown = await (
         await command('settings', { expected, settings })

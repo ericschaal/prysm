@@ -41,6 +41,10 @@ export function fakeApplicationPort<C, O>(initial: {
   const calls: string[] = [];
   /** The next command fails with this instead of running. */
   let nextFailure: Failure | null = null;
+  /** Trials wait for this before answering; trials fail while `trialFailure`. */
+  let trialGate: Promise<void> | null = null;
+  let trialFailure: Failure | null = null;
+  const trials = { inFlight: 0, mostInFlight: 0 };
   function publish(change: Partial<ApplicationSnapshot<C, O>>) {
     snapshot = { ...snapshot, ...change };
     for (const changed of subscribers) changed(snapshot);
@@ -103,6 +107,17 @@ export function fakeApplicationPort<C, O>(initial: {
       publish({ settings, revision: snapshot.revision + 1 });
       return snapshot.revision;
     },
+    // As the engine: lights with it, changes no state and saves nothing.
+    tryProcessing: async (processing) => {
+      calls.push(`trial:${processing.brightness_percent}`);
+      trials.mostInFlight = Math.max(trials.mostInFlight, ++trials.inFlight);
+      try {
+        await trialGate;
+        if (trialFailure) throw new ApplicationError(trialFailure);
+      } finally {
+        trials.inFlight--;
+      }
+    },
     setTarget: async (target) => {
       calls.push(`target:${target}`);
       failIfScripted();
@@ -159,6 +174,22 @@ export function fakeApplicationPort<C, O>(initial: {
     publish,
     failNext: (failure: Failure) => {
       nextFailure = failure;
+    },
+    trials,
+    /** Trials fail with `failure` until called with `null`. */
+    failTrials: (failure: Failure | null) => {
+      trialFailure = failure;
+    },
+    /** Trials stay unanswered until the returned function is called. */
+    holdTrials: () => {
+      let release = () => {};
+      trialGate = new Promise<void>((resolve) => {
+        release = () => {
+          trialGate = null;
+          resolve();
+        };
+      });
+      return release;
     },
   };
 }

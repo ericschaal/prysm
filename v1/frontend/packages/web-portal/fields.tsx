@@ -246,6 +246,8 @@ export function RangeField({
   max,
   step,
   format = String,
+  onPress,
+  onRelease,
 }: FieldProps & {
   value: number;
   onChange: (value: number) => void;
@@ -253,6 +255,10 @@ export function RangeField({
   max: number;
   step: number;
   format?: (value: number) => string;
+  /** The pointer or a key went down on the slider: a change may follow. */
+  onPress?: () => void;
+  /** It came up, or the slider lost focus or the pointer. */
+  onRelease?: () => void;
 }) {
   const field = useField(path, help);
   // The filled part of the track. Set through the CSSOM, which the portal's
@@ -286,6 +292,28 @@ export function RangeField({
           field.scope.edited(path);
           onChange(Number(event.currentTarget.value));
         }}
+        {...(onPress && onRelease
+          ? {
+              onPointerDown: (event) => {
+                // The release then reaches the slider wherever the pointer is.
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                } catch {
+                  // Not capturable (a synthetic event): the rest still applies.
+                }
+                onPress();
+              },
+              onKeyDown: onPress,
+              onPointerUp: onRelease,
+              onPointerCancel: onRelease,
+              onLostPointerCapture: onRelease,
+              onKeyUp: onRelease,
+              onBlur: () => {
+                field.touch();
+                onRelease();
+              },
+            }
+          : {})}
       />
       {field.help}
       {field.message}

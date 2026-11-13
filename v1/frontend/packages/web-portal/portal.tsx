@@ -574,6 +574,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             disabled={!online}
             save={saveProcessing}
             calibrate={calibrate}
+            tryProcessing={(processing) =>
+              dispatch(application.commands.tryProcessing(processing))
+            }
           />
         </LightCard>
         {/* Before setup the light card's prompt says it all. */}

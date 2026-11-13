@@ -7,7 +7,7 @@ latest command. RTK Query is not used.
 
 | File | Responsibility |
 | --- | --- |
-| [Client port](packages/application-client/index.ts) | Generated wire types, `observe`/`setTarget`/`replaceSettings`, `ApplicationError` |
+| [Client port](packages/application-client/index.ts) | Generated wire types, `observe`/`setTarget`/`replaceSettings`/`tryProcessing`, `ApplicationError` |
 | [HTTP client](packages/application-client/http.ts) | Fetch transport and SSE decoding for the [portal API](../surfaces/web-portal/HTTP-CONTRACT.md); `httpPreviewClient` for the preview stream |
 | [Slice](packages/application-state/slice.ts) | Connection status, latest state, latest command |
 | [Commands](packages/application-state/commands.ts) | Typed thunks; section replacement against the observed revision |

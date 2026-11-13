@@ -83,14 +83,16 @@ test('commands use PUT with JSON bodies and return the runtime result', async ()
   const client = httpApplicationClient({
     fetch: async (url, init) => {
       requests.push([url, init.method, JSON.parse(init.body)]);
-      return url.endsWith('/target') ? json(204) : json(200, { revision: 8 });
+      return url.endsWith('/settings') ? json(200, { revision: 8 }) : json(204);
     },
   });
   await client.setTarget('device_native');
   const settings = state().settings;
+  assert.equal(await client.tryProcessing(settings.processing), undefined);
   assert.equal(await client.replaceSettings(7, settings), 8);
   assert.deepEqual(requests, [
     ['/api/v1/target', 'PUT', { target: 'device_native' }],
+    ['/api/v1/processing/trial', 'PUT', settings.processing],
     ['/api/v1/settings', 'PUT', { expected: 7, settings }],
   ]);
 });

@@ -41,8 +41,8 @@ function Problems({ notice, failure }: { notice: string; failure: string }) {
 
 /**
  * The everyday screen sync controls in the light card: brightness, and the
- * colour profiles as one-tap chips. Brightness applies after a short wait
- * like the Picture settings; a chip applies at once.
+ * colour profiles as one-tap chips. Dragging brightness changes the lights as
+ * it moves (unsaved) and saves where it is let go; a chip applies at once.
  */
 export function QuickPicture({
   processing,
@@ -50,11 +50,20 @@ export function QuickPicture({
   disabled,
   save,
   calibrate,
+  tryProcessing,
 }: PictureProps & {
   /** Opens the calibration, offered while there are no profiles. */
   calibrate: () => void;
+  /** Light with a processing section unsaved, while brightness is dragged. */
+  tryProcessing: (processing: Processing) => Promise<unknown>;
 }) {
-  const live = useLiveProcessing({ processing, revision, disabled, save });
+  const live = useLiveProcessing({
+    processing,
+    revision,
+    disabled,
+    save,
+    tryProcessing,
+  });
   const headingId = useId();
   const profilesId = useId();
   const value = live.value;
@@ -79,8 +88,10 @@ export function QuickPicture({
             className="brightness"
             value={value.brightness_percent}
             onChange={(brightness_percent) =>
-              live.replace({ ...live.value, brightness_percent })
+              live.slider.slide({ ...live.value, brightness_percent })
             }
+            onPress={live.slider.press}
+            onRelease={live.slider.release}
             format={percent}
             {...processingLimits.brightness_percent}
           />

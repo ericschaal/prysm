@@ -620,6 +620,57 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
 }
 
 #[tokio::test]
+async fn a_processing_trial_applies_without_saving() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let before = portal.state().await;
+        let mut processing = before["settings"]["processing"].clone();
+        processing["brightness_percent"] = json!(40);
+        let put = |body: Value| portal.json(Method::PUT, "/api/v1/processing/trial", body);
+
+        // Accepted with lighting off or on; nothing saved, no new revision.
+        assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
+        portal.target("processed").await;
+        assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
+        let state = portal.state().await;
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(state["settings"], before["settings"]);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
+
+        // Validated like settings, exact fields.
+        let mut out_of_range = processing.clone();
+        out_of_range["brightness_percent"] = json!(101);
+        let (status, body) = put(out_of_range).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["kind"], "invalid");
+        assert_eq!(body["field"], "processing.brightness_percent");
+        let mut unknown = processing.clone();
+        unknown["token"] = json!("x");
+        let (status, body) = put(unknown).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+
+        let get = portal
+            .request(Method::GET, "/api/v1/processing/trial")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let refused = portal
+            .request(Method::PUT, "/api/v1/processing/trial")
+            .header(header::ORIGIN, "http://evil.example")
+            .json(&processing)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
     bounded(async {
         let failing = Settings {

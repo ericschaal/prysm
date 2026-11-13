@@ -12,6 +12,7 @@ types live in `@prysm/contracts/application` ([contracts](../../v1/CONTRACTS.md)
 | `GET /api/v1/state`, `GET /api/v1/state/stream` | The whole state, once or as server-sent events after every change |
 | `PUT /api/v1/target` | `off`, `processed` (Screen sync) or `device_native` (the output's own effects) |
 | `PUT /api/v1/settings` | Replace the whole settings document from an expected revision |
+| `PUT /api/v1/processing/trial` | Light with a processing section without saving it, while a slider is dragged |
 | `GET /api/v1/preview/stream` | Picture, sampled area and edge colours, at most 8 per second |
 | `GET /api/v1/colors/stream` | A few LED colours per edge, for tinting Home |
 | `PUT`, `DELETE /api/v1/calibration` | Show or clear a calibration pattern on the TV |

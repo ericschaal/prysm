@@ -5,9 +5,9 @@ use crate::session::{Session, SessionEnd};
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, LightingTarget, Registry,
-    Result, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore, Snapshot,
-    ValidationError,
+    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, LightingTarget, Processing,
+    Registry, Result, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore,
+    Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -26,6 +26,7 @@ enum Command {
         reply: Reply<Revision>,
     },
     SetCalibration(Option<Calibration>, Reply<()>),
+    TryProcessing(Box<Processing>, Reply<()>),
     SurfaceFailed(Error),
     Shutdown(Reply<()>),
 }
@@ -33,6 +34,11 @@ enum Command {
 /// A calibration pattern nobody has set again for this long is cleared, so a
 /// client that vanished does not leave lighting unsmoothed for good.
 pub const CALIBRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Tried processing nobody tries again or saves for this long is dropped, so
+/// a client that vanished mid-drag does not leave the lights unlike the
+/// saved settings.
+pub const TRIAL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Cloneable access to a running engine.
 #[derive(Clone)]
@@ -80,6 +86,20 @@ impl EngineHandle {
     /// faulted or stopped engine.
     pub async fn set_calibration(&self, calibration: Option<Calibration>) -> Result<()> {
         self.call(|reply| Command::SetCalibration(calibration, reply))
+            .await
+    }
+
+    /// Light with `processing` instead of the saved processing, without
+    /// saving it or changing the revision: for a control being dragged, whose
+    /// final value is then saved with [`replace_settings`](Self::replace_settings).
+    /// A save ends the trial, and so does [`TRIAL_TIMEOUT`] without another
+    /// call; the lights then follow the saved settings again. It is not in the
+    /// snapshot and applies whatever the target (to a session started meanwhile).
+    ///
+    /// # Errors
+    /// Invalid processing, or a faulted or stopped engine.
+    pub async fn try_processing(&self, processing: Processing) -> Result<()> {
+        self.call(|reply| Command::TryProcessing(Box::new(processing), reply))
             .await
     }
 
@@ -191,6 +211,7 @@ impl Engine {
             store,
             running: None,
             calibration_expires: None,
+            trial: None,
             feeds: feeds.clone(),
             stats: stats.clone(),
             stop_deadline,
@@ -275,6 +296,8 @@ struct Core {
     running: Option<Running>,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
+    /// Processing being tried instead of the saved one, and when it ends.
+    trial: Option<(Processing, Instant)>,
     feeds: Feeds,
     stats: Arc<Stats>,
     stop_deadline: Duration,
@@ -297,6 +320,10 @@ impl Core {
                     self.calibrate(None);
                     continue;
                 }
+                () = expiry(self.trial.as_ref().map(|(_, at)| *at)) => {
+                    self.reconfigure(|core| core.trial = None);
+                    continue;
+                }
             };
             match command {
                 None => {
@@ -315,6 +342,9 @@ impl Core {
                 }
                 Some(Command::SetCalibration(calibration, reply)) => {
                     let _ = reply.send(self.set_calibration(calibration));
+                }
+                Some(Command::TryProcessing(processing, reply)) => {
+                    let _ = reply.send(self.try_processing(*processing));
                 }
                 Some(Command::ReplaceSettings {
                     expected,
@@ -418,6 +448,8 @@ impl Core {
         blocking(move || lock(&store).save(&saved)).await??;
 
         let revision = current.next();
+        // Saved settings end a trial; the session drops it below.
+        let tried = self.trial.take().is_some();
         let (previous, target, session) = {
             let mut previous = None;
             self.state.send_modify(|s| {
@@ -450,9 +482,9 @@ impl Core {
                     Err(error) => Err(error),
                 }
             }
-            SessionState::Running if previous.processing != settings.processing => {
+            SessionState::Running if tried || previous.processing != settings.processing => {
                 if let Some(running) = &self.running {
-                    running.session.configure(effective(&self.state.borrow()));
+                    running.session.configure(self.config());
                 }
                 Ok(())
             }
@@ -473,7 +505,7 @@ impl Core {
             let capture = configured(settings.capture.as_ref(), Section::Capture)?;
             let output = configured(settings.output.as_ref(), Section::Output)?;
             self.registry.validate(settings)?;
-            (capture, output, effective(&snapshot))
+            (capture, output, self.config())
         };
         let registry = self.registry.clone();
         let source = blocking(move || registry.open_source(&capture))
@@ -561,21 +593,50 @@ impl Core {
         Ok(())
     }
 
+    fn try_processing(&mut self, processing: Processing) -> Result<()> {
+        self.faulted()?;
+        processing.validate()?;
+        self.reconfigure(|core| core.trial = Some((processing, Instant::now() + TRIAL_TIMEOUT)));
+        Ok(())
+    }
+
     /// Publish `calibration`, restart its timeout and give a running session
     /// the processing config it implies.
     fn calibrate(&mut self, calibration: Option<Calibration>) {
         self.calibration_expires = calibration.map(|_| Instant::now() + CALIBRATION_TIMEOUT);
-        let before = effective(&self.state.borrow());
-        self.state.send_if_modified(|s| {
-            let changed = s.calibration != calibration;
-            s.calibration = calibration;
-            changed
+        self.reconfigure(|core| {
+            core.state.send_if_modified(|s| {
+                let changed = s.calibration != calibration;
+                s.calibration = calibration;
+                changed
+            });
         });
-        let after = effective(&self.state.borrow());
+    }
+
+    /// Apply `change`, then give a running session the config that follows
+    /// if it differs.
+    fn reconfigure(&mut self, change: impl FnOnce(&mut Self)) {
+        let before = self.config();
+        change(self);
+        let after = self.config();
         if let Some(running) = &self.running
             && after != before
         {
             running.session.configure(after);
+        }
+    }
+
+    /// The processor config: the saved processing or the one being tried,
+    /// adjusted while a calibration pattern shows.
+    fn config(&self) -> Config {
+        let snapshot = self.state.borrow();
+        let processing = self
+            .trial
+            .as_ref()
+            .map_or(&snapshot.settings.processing, |(processing, _)| processing);
+        match snapshot.calibration {
+            Some(calibration) => calibration.adjust(processing.config()),
+            None => processing.config(),
         }
     }
 
@@ -597,15 +658,6 @@ fn configured(settings: Option<&AdapterSettings>, section: Section) -> Result<Ad
     settings
         .cloned()
         .ok_or_else(|| ValidationError::new(section.as_str(), "not configured").into())
-}
-
-/// The processor config: the settings, adjusted while a calibration pattern shows.
-fn effective(snapshot: &Snapshot) -> Config {
-    let config = snapshot.settings.processing.config();
-    match snapshot.calibration {
-        Some(calibration) => calibration.adjust(config),
-        None => config,
-    }
 }
 
 async fn expiry(at: Option<Instant>) {

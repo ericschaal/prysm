@@ -129,6 +129,11 @@ export interface ApplicationClient<C, O> {
   setCalibration(calibration: Calibration | null): Promise<void>;
   /** Returns the new settings revision. */
   replaceSettings(expected: number, settings: Settings<C, O>): Promise<number>;
+  /**
+   * Light with `processing` without saving it, while a control is dragged.
+   * A settings save ends it, and so do 30 seconds without another call.
+   */
+  tryProcessing(processing: Settings<C, O>['processing']): Promise<void>;
 }
 
 /** An open preview stream: events until closed or the portal goes away. */

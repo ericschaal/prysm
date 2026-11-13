@@ -99,6 +99,16 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
         capture,
         output,
       })),
+    /**
+     * Light with `processing` unsaved, as a slider moves. Not a tracked
+     * command: it changes no state and its failures are the caller's.
+     */
+    tryProcessing:
+      (
+        processing: Settings<C, O>['processing'],
+      ): ApplicationThunk<C, O, Promise<void>> =>
+      (_dispatch, _getState, client) =>
+        client.tryProcessing(processing),
     configureProcessing: (
       expected: number,
       processing: Settings<C, O>['processing'],

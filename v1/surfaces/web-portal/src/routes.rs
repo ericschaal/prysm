@@ -9,7 +9,7 @@ use bytes::Bytes;
 use futures::{StreamExt, stream};
 use http_body_util::{BodyExt, Limited, StreamBody};
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{Calibration, Result, Section};
+use prysm_ports::{Calibration, Processing, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -138,6 +138,10 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
         ("/api/v1/calibration", Method::DELETE) => {
             applied(command(context.engine.set_calibration(None)).await)
         }
+        ("/api/v1/processing/trial", Method::PUT) => match decode::<Processing>(request).await {
+            Ok(body) => applied(command(context.engine.try_processing(body)).await),
+            Err(response) => *response,
+        },
         ("/api/v1/settings", Method::PUT) => match decode::<SettingsRequest>(request).await {
             Ok(body) => {
                 match command(
@@ -163,6 +167,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             | "/api/v1/colors/stream"
             | "/api/v1/target"
             | "/api/v1/calibration"
+            | "/api/v1/processing/trial"
             | "/api/v1/settings"
             | METRICS,
             _,

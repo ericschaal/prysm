@@ -12,6 +12,8 @@ import {
   processingDelayMs,
   processingLimits,
   profileLimits,
+  throttled,
+  trialIntervalMs,
   ringDelayMs,
   ringHoldMs,
   saveTheme,
@@ -1610,15 +1612,33 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     );
     assert.deepEqual(links(), [
       ['flowing', undefined],
-      ['flowing', '12 ms'],
+      ['flowing', '+12 ms'],
     ]);
+    // Unstamped source: no total on the Lights stop, only the link's part;
+    // the line keeps the LED count, which is the tooltip as well.
+    assert.equal($$('.path-stop')[2].querySelector('.path-figure'), null);
+    assert.equal(
+      $$('.path-stop')[2].querySelector('.path-fact').textContent,
+      $$('.path-stop')[2].querySelector('.path-text').title,
+    );
+    assert.match(
+      $$('.path-stop')[2].querySelector('.path-text').title,
+      /LEDs$/,
+    );
     assert.deepEqual(protocols(), ['Local', 'DDP'], 'unchanged while flowing');
     // Each delay on its own link, said for what it is; never "screen to lights".
     const [into, sent] = $$('.path-numbers');
     assert.equal(into.title, '', 'no capture time: no delay on the video link');
-    assert.match(sent.title, /^time inside Prysm from a frame received/);
+    assert.match(
+      sent.title,
+      /^adds the time inside Prysm from a frame received/,
+    );
     assert(!/screen/i.test(sent.title));
-    assert.match(sent.textContent, /time inside Prysm/, 'for screen readers');
+    assert.match(
+      sent.textContent,
+      /adds the time inside Prysm/,
+      'for screen readers',
+    );
     // A source that stamps capture: its part on the video link.
     await act(async () =>
       portal.fixture.publish({
@@ -1630,10 +1650,36 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
         },
       }),
     );
+    // The lag adds up: each link its part, the Lights stop the sum.
     assert.deepEqual(links(), [
-      ['flowing', '88 ms'],
-      ['flowing', '2 ms'],
+      ['flowing', '+88 ms'],
+      ['flowing', '+2 ms'],
     ]);
+    const lightsStop = $$('.path-stop')[2];
+    const total = lightsStop.querySelector('.path-figure');
+    assert.equal(total.textContent.split(':')[0], '91 ms behind');
+    assert.equal(
+      total.title,
+      'The lights show each frame about 91 ms after it was captured. The lights’ own delay is not included.',
+    );
+    assert.match(
+      total.textContent,
+      /about 91 ms after it was captured/,
+      'for screen readers',
+    );
+    // The total takes the LED count's place on the line, alone; the count
+    // stays in the stop's tooltip and its screen-reader text.
+    const lights = lightsStop.querySelector('.path-fact');
+    assert.deepEqual(
+      [...lights.children].map((part) => part.className),
+      ['path-figure'],
+    );
+    const leds = lightsStop.querySelector('.path-text').title;
+    assert.match(leds, /^\d+ LEDs$/);
+    assert(
+      lightsStop.querySelector('.path-text').textContent.includes(` ${leds},`),
+      'for screen readers',
+    );
     assert.equal(
       $('.path-figure').textContent.split(':')[0],
       '30 fps',
@@ -1641,7 +1687,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     );
     assert.match(
       $$('.path-numbers')[0].title,
-      /^time from the camera capturing a frame to Prysm receiving it/,
+      /^adds the time from the camera capturing a frame to Prysm receiving it/,
     );
     // Under a millisecond is said, not rounded away.
     await act(async () =>
@@ -1656,7 +1702,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     );
     assert.deepEqual(links(), [
       ['flowing', undefined],
-      ['flowing', '<1 ms'],
+      ['flowing', '+<1 ms'],
     ]);
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>
@@ -2017,5 +2063,185 @@ test('the theme choice sets data-theme, is kept in this browser and works withou
     assert.equal(storedTheme(), 'system');
   } finally {
     dom.window.close();
+  }
+});
+
+/** Let answered requests and renders run without moving the mocked clock. */
+const flush = () =>
+  act(async () => {
+    for (let i = 0; i < 5; i++)
+      await new Promise((resolve) => setImmediate(resolve));
+  });
+
+test('slider trials go at most every interval, one at a time, the latest winning', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  const sent = [];
+  const answers = [];
+  const send = (value) => {
+    sent.push([value, Date.now()]);
+    return new Promise((resolve, reject) => answers.push({ resolve, reject }));
+  };
+  const trials = throttled(trialIntervalMs);
+  assert(trialIntervalMs >= 80 && trialIntervalMs <= 120);
+
+  // The first goes at once; nothing more while it is unanswered, however long.
+  trials.push(1, send);
+  assert.deepEqual(sent, [[1, 0]]);
+  for (let at = 10; at <= 300; at += 10) {
+    t.mock.timers.tick(10);
+    trials.push(at, send);
+  }
+  assert.equal(sent.length, 1);
+  // Answered (even with a failure): only the latest goes, the interval long past.
+  answers[0].reject(new Error('lost'));
+  await flush();
+  assert.deepEqual(sent[1], [300, 300]);
+
+  // Answered at once: one per interval, the trailing value last.
+  answers[1].resolve();
+  await flush();
+  for (let at = 310; at <= 1300; at += 10) {
+    t.mock.timers.tick(10);
+    trials.push(at, send);
+    answers.at(-1).resolve();
+    await flush();
+  }
+  t.mock.timers.tick(trialIntervalMs);
+  answers.at(-1).resolve();
+  await flush();
+  const times = sent.map(([, at]) => at);
+  times
+    .slice(1)
+    .forEach((at, i) =>
+      assert(at - times[i] >= trialIntervalMs, `${at} after ${times[i]}`),
+    );
+  assert(sent.length <= 2 + 1000 / trialIntervalMs + 1, `${sent.length} sent`);
+  assert.equal(sent.at(-1)[0], 1300, 'the trailing value is sent');
+
+  // `settle` drops what waits and resolves once nothing is in flight.
+  t.mock.timers.tick(trialIntervalMs);
+  trials.push(1301, send);
+  trials.push(1302, send);
+  let settled = false;
+  const settling = trials.settle().then(() => (settled = true));
+  await flush();
+  assert.equal(sent.at(-1)[0], 1301);
+  assert(!settled, 'waits for the one in flight');
+  answers.at(-1).resolve();
+  await settling;
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(sent.at(-1)[0], 1301, 'the dropped value is never sent');
+});
+
+test('dragging Home brightness lights as it moves and saves once, where it is let go', async (t) => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture, dom } = portal;
+  const view = dom.window;
+  const slider = () => field('processing.brightness_percent');
+  const fire = (type, init = {}) =>
+    act(async () =>
+      slider().dispatchEvent(new view.Event(type, { bubbles: true, ...init })),
+    );
+  const trials = () =>
+    fixture.calls
+      .filter((call) => call.startsWith('trial:'))
+      .map((call) => Number(call.slice(6)));
+  try {
+    await press(mode('processed'));
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    const revision = fixture.snapshot().revision;
+    const card = () => ({
+      word: word(),
+      note: note(),
+      info: info(),
+      busy: power().getAttribute('aria-busy'),
+      mood: $('.light-card').dataset.mood,
+    });
+    const calm = card();
+
+    // Pointer: the first value goes at once, then one at a time.
+    const release = fixture.holdTrials();
+    await fire('pointerdown');
+    await edit(slider(), 60);
+    assert.deepEqual(trials(), [60]);
+    for (let value = 61; value <= 70; value++) {
+      t.mock.timers.tick(20);
+      await edit(slider(), value);
+      assert.equal(slider().value, String(value), 'the thumb never jumps back');
+    }
+    assert.deepEqual(trials(), [60], 'one in flight');
+    release();
+    await flush();
+    assert.deepEqual(trials(), [60, 70], 'then the latest value');
+    assert.equal(fixture.trials.mostInFlight, 1);
+
+    // Answered at once: at most one per interval. A failed step shows nothing.
+    fixture.failTrials({ kind: 'adapter', message: 'lights unreachable' });
+    for (let value = 71; value <= 90; value++) {
+      t.mock.timers.tick(25);
+      await edit(slider(), value);
+      await flush();
+    }
+    t.mock.timers.tick(trialIntervalMs);
+    await flush();
+    assert(
+      trials().length <= 2 + (20 * 25) / trialIntervalMs + 1,
+      `${trials()}`,
+    );
+    assert.equal(trials().at(-1), 90, 'the trailing value is tried');
+    fixture.failTrials(null);
+    // Held still for long: still nothing saved, nothing in the card moved.
+    t.mock.timers.tick(processingDelayMs * 5);
+    await flush();
+    assert.equal(saves(fixture), 0);
+    assert.equal(fixture.snapshot().revision, revision);
+    assert.deepEqual(card(), calm);
+    assert(!text().includes('Not applied'));
+    assert.equal(slider().value, '90');
+
+    // Let go: the final value is saved, once, after the trials.
+    const before = trials().length;
+    await fire('pointerup');
+    await flush();
+    assert.equal(saves(fixture), 1);
+    assert.equal(fixture.snapshot().settings.processing.brightness_percent, 90);
+    assert.equal(fixture.calls.at(-1), 'replaceSettings');
+    assert.equal(trials().length, before, 'no trial after the save');
+    assert.deepEqual(card(), calm);
+    assert.equal(slider().value, '90');
+
+    // Keys the same: tried as they repeat, saved when the key comes up.
+    await fire('keydown', { key: 'ArrowLeft' });
+    for (let value = 89; value >= 80; value--) {
+      t.mock.timers.tick(30);
+      await edit(slider(), value);
+      await flush();
+    }
+    t.mock.timers.tick(trialIntervalMs);
+    await flush();
+    assert.equal(trials().at(-1), 80);
+    assert(trials().length - before <= 1 + (10 * 30) / trialIntervalMs + 1);
+    assert.equal(saves(fixture), 1);
+    await fire('keyup', { key: 'ArrowLeft' });
+    await flush();
+    assert.equal(saves(fixture), 2);
+    assert.equal(fixture.snapshot().settings.processing.brightness_percent, 80);
+
+    // Only the final value's failure is reported, as before.
+    fixture.failNext({
+      kind: 'adapter',
+      message: 'settings file is read-only',
+    });
+    await fire('pointerdown');
+    await edit(slider(), 40);
+    assert(!text().includes('Not applied'));
+    await fire('pointerup');
+    await flush();
+    assert(text().includes('Not applied: settings file is read-only'));
+    assert.equal(slider().value, '40', 'the thumb stays where it was let go');
+  } finally {
+    t.mock.timers.reset();
+    await portal.unmount();
   }
 });

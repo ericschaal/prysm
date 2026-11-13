@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { failureOf, same } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
 import { useDraft } from './draft';
@@ -35,6 +35,59 @@ export const processingLimits = {
 
 /** Wait this long after the last change before applying it. */
 export const processingDelayMs = 400;
+
+/** While a slider is held, try its value on the lights at most this often. */
+export const trialIntervalMs = 100;
+
+/**
+ * Sends at most one value every `intervalMs`, one request at a time, the
+ * latest value winning: the first push goes at once, later ones wait for the
+ * interval and for the request before them, and only the newest of them is
+ * sent. Failures are ignored; the final value is saved separately.
+ */
+export function throttled<T>(intervalMs: number) {
+  let pending: { value: T; send: (value: T) => Promise<unknown> } | undefined;
+  let inFlight: Promise<void> | undefined;
+  let last = -Infinity;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  function pump() {
+    if (inFlight || !pending) return;
+    const wait = last + intervalMs - Date.now();
+    if (wait > 0) {
+      timer ??= setTimeout(() => {
+        timer = undefined;
+        pump();
+      }, wait);
+      return;
+    }
+    const { value, send } = pending;
+    pending = undefined;
+    last = Date.now();
+    inFlight = send(value).then(
+      () => {
+        inFlight = undefined;
+        pump();
+      },
+      () => {
+        inFlight = undefined;
+        pump();
+      },
+    );
+  }
+  return {
+    push(value: T, send: (value: T) => Promise<unknown>) {
+      pending = { value, send };
+      pump();
+    },
+    /** Drop what waits to be sent; resolves once nothing is in flight. */
+    async settle() {
+      pending = undefined;
+      clearTimeout(timer);
+      timer = undefined;
+      while (inFlight) await inFlight;
+    },
+  };
+}
 
 export function processingControls(processing: Processing): ProcessingControls {
   return withProfiles(
@@ -84,12 +137,15 @@ export function useLiveProcessing({
   revision,
   disabled,
   save,
+  tryProcessing,
 }: {
   processing: Processing;
   revision: number;
   disabled: boolean;
   /** Save the whole processing section against `expected`. */
   save: (expected: number, processing: Processing) => Promise<number>;
+  /** Light with a processing section unsaved, while a slider is held. */
+  tryProcessing?: (processing: Processing) => Promise<unknown>;
 }) {
   const saved = processingControls(processing);
   const draft = useDraft<ProcessingControls>({
@@ -104,6 +160,13 @@ export function useLiveProcessing({
   const [failed, setFailed] = useState<ProcessingControls | null>(null);
   const [notice, setNotice] = useState('');
   const scope = useFieldScope(disabled, errors, true);
+  /** A slider is held: its value is tried on the lights and saved on release. */
+  const [held, setHeld] = useState(false);
+  // Also as a ref: a key's change follows its keydown before a render.
+  const holding = useRef(false);
+  const [trials] = useState(() => throttled<Processing>(trialIntervalMs));
+  /** Values were tried since the last save, so the lights may not match it. */
+  const [tried, setTried] = useState(false);
   const blocked =
     disabled ||
     busy ||
@@ -111,6 +174,12 @@ export function useLiveProcessing({
     Object.keys(errors.local).length > 0 ||
     Object.keys(errors.server).length > 0 ||
     (failed !== null && same(failed, draft.draft));
+
+  // `value` decides the profiles: an absent one was removed.
+  const whole = (value: ProcessingControls): Processing => ({
+    ...withProfiles(processing, undefined, undefined),
+    ...value,
+  });
 
   /** Save `value`; resolves with whether it was saved. */
   async function apply(value: ProcessingControls): Promise<boolean> {
@@ -121,11 +190,10 @@ export function useLiveProcessing({
     }
     setBusy(true);
     try {
-      // `value` decides the profiles: an absent one was removed.
-      const next = await save(revision, {
-        ...withProfiles(processing, undefined, undefined),
-        ...value,
-      });
+      // A trial still on its way must not land after the save.
+      await trials.settle();
+      setTried(false);
+      const next = await save(revision, whole(value));
       draft.saved(value, next);
       setFailure('');
       setFailed(null);
@@ -151,11 +219,12 @@ export function useLiveProcessing({
   const applyLater = useEffectEvent((value: ProcessingControls) => {
     void apply(value);
   });
+  // A held slider saves on release instead.
   useEffect(() => {
-    if (!draft.dirty || blocked) return;
+    if (!draft.dirty || blocked || held) return;
     const timer = setTimeout(() => applyLater(draft.draft), processingDelayMs);
     return () => clearTimeout(timer);
-  }, [draft.draft, draft.dirty, blocked, revision]);
+  }, [draft.draft, draft.dirty, blocked, held, revision]);
 
   function replace(next: ProcessingControls) {
     draft.setDraft(next);
@@ -177,6 +246,31 @@ export function useLiveProcessing({
     commit: (next: ProcessingControls) => {
       replace(next);
       return apply(next);
+    },
+    /**
+     * A slider: `press` when the pointer or a key goes down on it, `slide`
+     * for each value (tried on the lights, throttled), `release` when it
+     * comes up, which saves the final value. Without `tryProcessing` it is
+     * an ordinary change, saved after the usual wait.
+     */
+    slider: {
+      press: () => {
+        if (!tryProcessing || disabled) return;
+        holding.current = true;
+        setHeld(true);
+      },
+      slide: (next: ProcessingControls) => {
+        replace(next);
+        if (!tryProcessing || !holding.current) return;
+        setTried(true);
+        trials.push(whole(next), tryProcessing);
+      },
+      release: () => {
+        if (!holding.current) return;
+        holding.current = false;
+        setHeld(false);
+        if (draft.dirty || tried) void apply(draft.draft);
+      },
     },
   };
 }

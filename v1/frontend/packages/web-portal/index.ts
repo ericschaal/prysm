@@ -20,6 +20,8 @@ export {
   processingControls,
   processingDelayMs,
   processingLimits,
+  throttled,
+  trialIntervalMs,
   useLiveProcessing,
   type ProcessingControls,
 } from './live-processing';

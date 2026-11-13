@@ -82,10 +82,13 @@ supervisor in each of its states and play the phone's calibration part). See the
     from the adapters' typed `facts`, joined by hairlines that light up while
     frames flow. Above each hairline its transport (the adapters' closed
     `Transport`: Local, File, Built in, H.264, Raw, DDP; said in full in a
-    tooltip), below it that link's own mean delay from `Input.latency`: on
-    the first, capture to Prysm receiving the frame (`capture_ms`, only when
-    the source stamps capture times); on the second, received to colours
-    sent (`output_ms`). The frame rate (`Input.fps`, the frames Prysm takes
+    tooltip), below it what that link adds to the lag, its mean delay from
+    `Input.latency` ("+88 ms", "+<1 ms"): on the first, capture to Prysm
+    receiving the frame (`capture_ms`, only when the source stamps capture
+    times); on the second, received to colours sent (`output_ms`). When both
+    are known the Lights stop's line says their sum instead of the LED count
+    ("90 ms behind", summed in the portal); the count stays in that stop's
+    tooltip and screen-reader text. The frame rate (`Input.fps`, the frames Prysm takes
     and sends) is said once, on the Prysm stop after the active profile;
     `sent_fps` stays in the API and `/metrics` but is not shown.
     When `Input.behind` names the step that keeps Prysm from keeping up
@@ -98,8 +101,12 @@ supervisor in each of its states and play the phone's calibration part). See the
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue
     shift), applied live (debounced 400 ms) because processing-only changes
-    reach a running session without restarting it. Home's brightness saves
-    the same way; a profile chip saves at once.
+    reach a running session without restarting it. Home's brightness changes
+    the lights while it is dragged (pointer or keys): each value is tried
+    unsaved (`PUT /api/v1/processing/trial`), throttled to one every 100 ms
+    with one request in flight and the latest value winning, and the value
+    where it is let go is saved once; a failed step shows nothing, only the
+    save's failure. A profile chip saves at once.
   - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
     a canvas with each edge's colours around it and the sampled area outlined
     when black bars are removed, on its own page (`#/preview`, from

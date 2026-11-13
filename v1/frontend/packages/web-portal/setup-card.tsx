@@ -263,6 +263,7 @@ function Stop({
   figure,
   failed,
   behind = false,
+  instead = false,
 }: {
   title: string;
   icon: ReactNode;
@@ -270,26 +271,36 @@ function Stop({
   fact?: string;
   /** A measured figure after the fact; the fact gives way to it, never the reverse. */
   figure?: { text: string; about: string };
+  /**
+   * The figure takes the fact's place on the line while it shows; the fact
+   * stays in the stop's tooltip and screen-reader text.
+   */
+  instead?: boolean;
   failed: boolean;
   /** Working, but this stop keeps Prysm from keeping up (shown in orange). */
   behind?: boolean;
 }) {
+  const tooltip = instead ? fact : undefined;
+  // The fact moved off the line, said once for screen readers.
+  const hidden = figure !== undefined ? tooltip : undefined;
+  const line = hidden ? undefined : fact;
   return (
     <li className="path-stop" data-failed={failed} data-behind={behind}>
       <span className="path-icon">{icon}</span>
-      <span className="path-text">
+      <span className="path-text" title={tooltip}>
         <span className="visually-hidden">{title}: </span>
         {/* Never broken at a hyphen ("WLED-Gledopto"). */}
         <strong className="path-name">{name.split('-').join('\u2011')}</strong>
+        {hidden ? <span className="visually-hidden"> {hidden},</span> : null}
         {/* Always a line, so the stops stay aligned when one has no fact. */}
         <span className="path-fact">
-          {fact || figure ? (
+          {line || figure ? (
             <>
-              {fact ? <span className="path-fact-text">{fact}</span> : null}
+              {line ? <span className="path-fact-text">{line}</span> : null}
               {figure ? (
                 <span className="path-figure" title={figure.about}>
                   {/* The separator rides with the figure (flex drops loose spaces). */}
-                  {fact ? '\u00a0·\u00a0' : null}
+                  {line ? '\u00a0·\u00a0' : null}
                   {figure.text}
                   <span className="visually-hidden">: {figure.about}</span>
                 </span>
@@ -304,9 +315,12 @@ function Stop({
   );
 }
 
-/** A link's mean delay: whole ms, "<1 ms" below one. */
+/** Whole milliseconds, "<1 ms" below one. */
+const millis = (ms: number) => `${ms < 1 ? '<1' : Math.round(ms)} ms`;
+
+/** What a link adds to the lag: "+88 ms", "+<1 ms". */
 const delay = (ms: number | undefined) =>
-  ms === undefined ? undefined : `${ms < 1 ? '<1' : Math.round(ms)} ms`;
+  ms === undefined ? undefined : `+${millis(ms)}`;
 
 /** A rate to whole frames, with the tenth only when it matters: `29.9 fps`. */
 function frameRate(fps: number) {
@@ -451,6 +465,20 @@ export function SetupCard({
   const total = edges
     ? edges.top + edges.right + edges.bottom + edges.left
     : undefined;
+  // How far behind the picture the lights are: the two links added, only
+  // when the source says when it captured (otherwise the start is unknown).
+  const parts = flowing?.latency;
+  const lagMs =
+    parts?.captureMs === undefined
+      ? undefined
+      : parts.captureMs + parts.outputMs;
+  const lag =
+    lagMs === undefined
+      ? undefined
+      : {
+          text: `${millis(lagMs)} behind`,
+          about: `The lights show each frame about ${millis(lagMs)} after it was captured. The lights’ own delay is not included.`,
+        };
   return (
     <section
       className="setup-card"
@@ -484,7 +512,7 @@ export function SetupCard({
           about={
             flowing?.latency?.captureMs === undefined
               ? undefined
-              : 'time from the camera capturing a frame to Prysm receiving it, mean over the last second'
+              : 'adds the time from the camera capturing a frame to Prysm receiving it, mean over the last second'
           }
         />
         <Stop
@@ -507,7 +535,7 @@ export function SetupCard({
                   behind === 'output'
                     ? 'Prysm can’t keep up: sending to the lights takes longer than the time between frames, so some are skipped. '
                     : ''
-                }time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included`
+                }adds the time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included`
               : undefined
           }
           behind={behind === 'output'}
@@ -521,6 +549,8 @@ export function SetupCard({
               fact={
                 total === undefined ? factLine(output.facts) : `${total} LEDs`
               }
+              figure={lag}
+              instead
               failed={failedAt === 'output'}
             />
           )}
