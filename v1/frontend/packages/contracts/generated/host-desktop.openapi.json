@@ -384,7 +384,7 @@
           },
           "latency": {
             "$ref": "#/components/schemas/Latency",
-            "description": "The mean time per frame to its colours being sent, over the last\nsecond. Absent when no frame reached the output."
+            "description": "The mean time per frame along the path, in two parts, over the last\nsecond. Absent when no frame reached the output."
           },
           "receiving": {
             "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
@@ -405,31 +405,27 @@
         "type": "object"
       },
       "Latency": {
-        "description": "Mean milliseconds from a frame's start to the output write for it\nreturning: measured inside Prysm, per frame (not from the screen).",
+        "description": "Mean milliseconds per frame along the path, measured by Prysm (not from\nthe screen, and not including the lights' own delay), in two parts.",
         "properties": {
-          "from": {
-            "$ref": "#/components/schemas/LatencyFrom"
+          "capture_ms": {
+            "description": "From the source capturing the frame to Prysm receiving it; present\nonly when every frame flushed in the window carried a capture time\n(video devices on macOS, and on Linux with monotonic stamps).",
+            "example": 88,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
           },
-          "ms": {
-            "example": 11.8,
+          "output_ms": {
+            "description": "From Prysm receiving the frame to the output write for its colours\nreturning.",
+            "example": 2.4,
             "format": "float",
             "minimum": 0,
             "type": "number"
           }
         },
         "required": [
-          "ms",
-          "from"
+          "output_ms"
         ],
         "type": "object"
-      },
-      "LatencyFrom": {
-        "description": "Where a latency starts.",
-        "enum": [
-          "received",
-          "capture"
-        ],
-        "type": "string"
       },
       "LedColor": {
         "items": {},

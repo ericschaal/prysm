@@ -186,7 +186,7 @@ export interface components {
              */
             fps: number;
             /**
-             * @description The mean time per frame to its colours being sent, over the last
+             * @description The mean time per frame along the path, in two parts, over the last
              *     second. Absent when no frame reached the output.
              */
             latency?: components["schemas"]["Latency"];
@@ -204,22 +204,26 @@ export interface components {
             sent_fps?: number;
         };
         /**
-         * @description Mean milliseconds from a frame's start to the output write for it
-         *     returning: measured inside Prysm, per frame (not from the screen).
+         * @description Mean milliseconds per frame along the path, measured by Prysm (not from
+         *     the screen, and not including the lights' own delay), in two parts.
          */
         Latency: {
-            from: components["schemas"]["LatencyFrom"];
             /**
              * Format: float
-             * @example 11.8
+             * @description From the source capturing the frame to Prysm receiving it; present
+             *     only when every frame flushed in the window carried a capture time
+             *     (video devices on macOS, and on Linux with monotonic stamps).
+             * @example 88
              */
-            ms: number;
+            capture_ms?: number;
+            /**
+             * Format: float
+             * @description From Prysm receiving the frame to the output write for its colours
+             *     returning.
+             * @example 2.4
+             */
+            output_ms: number;
         };
-        /**
-         * @description Where a latency starts.
-         * @enum {string}
-         */
-        LatencyFrom: "received" | "capture";
         LedColor: [
             number,
             number,
@@ -526,7 +530,6 @@ export type FileSettings = components['schemas']['FileSettings'];
 export type HueControls = components['schemas']['HueControls'];
 export type Input = components['schemas']['Input'];
 export type Latency = components['schemas']['Latency'];
-export type LatencyFrom = components['schemas']['LatencyFrom'];
 export type LedColor = components['schemas']['LedColor'];
 export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];

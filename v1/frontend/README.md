@@ -82,9 +82,12 @@ supervisor in each of its states and play the phone's calibration part). See the
     from the adapters' typed `facts`, joined by hairlines that light up while
     frames flow. Above each hairline its transport (the adapters' closed
     `Transport`: Local, File, Built in, H.264, Raw, DDP; said in full in a
-    tooltip), below it the live numbers: frames per second, and on the
-    second the mean time measured inside Prysm from a frame received to its
-    colours sent (`Input.latency_ms`). A failure marks its stop (by the
+    tooltip), below it that link's own mean delay from `Input.latency`: on
+    the first, capture to Prysm receiving the frame (`capture_ms`, only when
+    the source stamps capture times); on the second, received to colours
+    sent (`output_ms`). The frame rate (`Input.fps`, the frames Prysm takes
+    and sends) is said once, on the Prysm stop after the active profile;
+    `sent_fps` stays in the API and `/metrics` but is not shown. A failure marks its stop (by the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`

@@ -337,10 +337,12 @@ legend {
     border-color var(--duration) var(--ease-out),
     box-shadow var(--duration) var(--ease-out);
 }
-.field input:not([type='checkbox'], [type='range'], [type='radio'])::placeholder {
+.field
+  input:not([type='checkbox'], [type='range'], [type='radio'])::placeholder {
   color: var(--text-3);
 }
-.field input:not([type='checkbox'], [type='range'], [type='radio']):hover:enabled,
+.field
+  input:not([type='checkbox'], [type='range'], [type='radio']):hover:enabled,
 .field select:hover:enabled {
   border-color: var(--line-strong);
 }
@@ -722,9 +724,7 @@ fieldset > .help {
     radial-gradient(120% 70% at 50% -10%, var(--hero-sheen), transparent 70%),
     var(--hero-bg);
   /* All its colour stays inside: outside, the same neutral lift as the setup card. */
-  box-shadow:
-    var(--hero-shadow),
-    var(--shadow);
+  box-shadow: var(--hero-shadow), var(--shadow);
   color: var(--text);
 }
 @media (min-width: 900px) {
@@ -1058,8 +1058,8 @@ fieldset > .help {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  /* The overline sits above both; the button centres on the word's capitals. */
-  margin-top: calc(var(--space-1) * -1);
+  /* The overline sits above both, with air; the button centres on the word's capitals. */
+  margin-top: var(--space-2);
 }
 /* A pause worth naming, on the eyebrow's own line: it fades, nothing moves. */
 .overline-note {
@@ -1396,7 +1396,9 @@ fieldset > .help {
 .modes[data-mode='device_native'] [data-target='device_native'] {
   color: var(--text-2);
 }
-.light-card[data-lit='true'] .modes[data-mode='processed'] [data-target='processed'],
+.light-card[data-lit='true']
+  .modes[data-mode='processed']
+  [data-target='processed'],
 .light-card[data-lit='true']
   .modes[data-mode='device_native']
   [data-target='device_native'] {
@@ -1509,7 +1511,8 @@ fieldset > .help {
     linear-gradient(
       90deg,
       color-mix(in srgb, var(--light-a) var(--tint), rgb(255 255 255 / 0.75)),
-      color-mix(in srgb, var(--light-c) var(--tint), rgb(255 255 255 / 0.75)) 55%,
+      color-mix(in srgb, var(--light-c) var(--tint), rgb(255 255 255 / 0.75))
+        55%,
       color-mix(in srgb, var(--light-b) var(--tint), rgb(255 255 255 / 0.75))
     );
   transition: --tint var(--duration-light-off) var(--ease-in-out);
@@ -1799,6 +1802,25 @@ fieldset > .help {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A fact and a figure share the line: the fact's text gives way, the figure never. */
+.path-fact:has(.path-figure) {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+.path-fact-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.path-figure {
+  flex: none;
+}
+@container (max-width: 399px) {
+  .path-fact:has(.path-figure) {
+    justify-content: flex-start;
+  }
+}
 /* A link: the hairline between two icons, and what it carries beside it. */
 .path-link {
   position: relative;
@@ -1864,8 +1886,7 @@ fieldset > .help {
 /* Lit stops: what the light passes through. */
 .setup-card[data-path='flowing'] .path-icon {
   color: var(--accent-text);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent)
-    inset;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent) inset;
 }
 .setup-card[data-path='effects'] .path-stop:last-child .path-icon {
   color: var(--effects-1);
@@ -1874,8 +1895,7 @@ fieldset > .help {
 }
 .path-stop[data-failed='true'] .path-icon {
   color: var(--danger);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent)
-    inset;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent) inset;
 }
 @keyframes travel-down {
   to {
@@ -2026,21 +2046,24 @@ fieldset > .help {
  * colours stream it stays neutral until the first ones arrive (and again on
  * idle or a lost stream); the designed colours only for a host without one.
  */
-.home-grid[data-colors='none']:has(.light-frame[data-lit='true'][data-palette='sync'])
+.home-grid[data-colors='none']:has(
+    .light-frame[data-lit='true'][data-palette='sync']
+  )
   .led-map {
   --band-top: var(--aurora-3);
   --band-right: var(--aurora-2);
   --band-bottom: #9a8cff;
   --band-left: var(--aurora-1);
 }
-.home-grid:has(.light-frame[data-lit='true'][data-palette='effects'])
-  .led-map {
+.home-grid:has(.light-frame[data-lit='true'][data-palette='effects']) .led-map {
   --band-top: var(--effects-4);
   --band-right: var(--effects-2);
   --band-bottom: var(--effects-3);
   --band-left: var(--effects-1);
 }
-.home-grid[data-live='colors']:has(.light-frame[data-lit='true'][data-palette='sync'])
+.home-grid[data-live='colors']:has(
+    .light-frame[data-lit='true'][data-palette='sync']
+  )
   .led-map {
   --band-top: var(--led-t);
   --band-right: var(--led-r);

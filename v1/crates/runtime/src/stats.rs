@@ -112,8 +112,9 @@ impl Stats {
             self.frames_sent.fetch_add(1, Ordering::Relaxed);
             self.flushed.add(written - times.received);
             if let Some(captured) = times.captured {
+                // Capture to received: the part before Prysm.
                 self.captured
-                    .add(written.saturating_duration_since(captured));
+                    .add(times.received.saturating_duration_since(captured));
             }
         }
     }
@@ -134,9 +135,9 @@ impl Stats {
         self.output_opens.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// The `flushed` spans of frames with a capture time, from that time.
-    /// Not a metric: the engine reports it as the latency when every frame
-    /// of a window had one.
+    /// For flushed frames with a capture time, the span from that time to
+    /// Prysm receiving the frame. Not a metric: the engine reports it as the
+    /// capture part of the latency when every frame of a window had one.
     pub(crate) fn captured(&self) -> Timing {
         self.captured.read()
     }

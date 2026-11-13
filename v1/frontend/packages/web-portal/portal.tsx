@@ -150,8 +150,10 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
       ? {
           kind: 'flowing',
           fps: input.fps,
-          sentFps: input.sent_fps ?? 0,
-          latency: input.latency,
+          latency: input.latency && {
+            captureMs: input.latency.capture_ms,
+            outputMs: input.latency.output_ms,
+          },
         }
       : { kind: 'waiting' };
   if (target === 'device_native' && session.state === 'native')

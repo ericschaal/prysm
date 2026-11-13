@@ -1,6 +1,6 @@
 use prysm_ports::{
-    AdapterSettings, Error, Latency, LatencyFrom, LightingTarget, OutputIssue, Processing,
-    Registry, Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
+    AdapterSettings, Error, Latency, LightingTarget, OutputIssue, Processing, Registry, Revision,
+    Section, SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -779,9 +779,15 @@ async fn latency_starts_at_capture_when_every_frame_has_a_capture_time() {
         let measured =
             snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
         let input = measured.input.unwrap();
-        let Latency { ms: latency, from } = input.latency.unwrap();
-        assert_eq!(from, LatencyFrom::Capture);
-        assert!((300.0..600.0).contains(&latency), "{latency}");
+        let Latency {
+            capture_ms,
+            output_ms,
+        } = input.latency.unwrap();
+        // Captured 300 ms before the fake hands it over: that part is before
+        // Prysm; the rest is Prysm's own.
+        let capture_ms = capture_ms.expect("every frame had a capture time");
+        assert!((300.0..400.0).contains(&capture_ms), "{capture_ms}");
+        assert!(output_ms < 100.0, "{output_ms}");
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -812,12 +818,15 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
         let measured =
             snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
         let input = measured.input.unwrap();
-        let Latency { ms: latency, from } = input.latency.unwrap();
-        // At least the write itself; the rest is processing and the hand-over.
-        assert!(latency >= 20.0, "{latency}");
-        assert!(latency < 200.0, "{latency}");
-        // Frames without a capture time are timed from receipt.
-        assert_eq!(from, LatencyFrom::Received);
+        let Latency {
+            capture_ms,
+            output_ms,
+        } = input.latency.unwrap();
+        // At least the write itself; the rest is processing.
+        assert!(output_ms >= 20.0, "{output_ms}");
+        assert!(output_ms < 200.0, "{output_ms}");
+        // Frames without a capture time have no capture part.
+        assert_eq!(capture_ms, None);
         // One write at a time, about 50 a second.
         assert!(
             input.sent_fps > 0.0 && input.sent_fps <= 55.0,

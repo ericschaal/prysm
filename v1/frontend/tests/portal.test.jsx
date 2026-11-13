@@ -1592,61 +1592,86 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
         target: 'processed',
         session: { state: 'running' },
         input: {
-          fps: 29.97,
+          fps: 29.9,
           receiving: true,
           sent_fps: 29.97,
-          latency: { ms: 11.6, from: 'received' },
+          latency: { output_ms: 11.6 },
         },
       }),
     );
     assert.equal($('.setup-card').dataset.path, 'flowing');
+    // The rate once, Prysm's (the tenth only when it matters); each link only
+    // its own delay. The video line stays the picture.
+    assert.equal(stops()[0][1], '640\u00a0×\u00a0360');
+    assert.equal($('.path-figure').textContent.split(':')[0], '29.9 fps');
+    assert.match(
+      $('.path-figure').title,
+      /^frames per second Prysm processes and sends/,
+    );
     assert.deepEqual(links(), [
-      ['flowing', '30 fps'],
-      ['flowing', '30 fps · 12 ms'],
+      ['flowing', undefined],
+      ['flowing', '12 ms'],
     ]);
     assert.deepEqual(protocols(), ['Local', 'DDP'], 'unchanged while flowing');
-    // Said for what it is: measured inside Prysm, never "screen to lights".
-    const sent = $$('.path-numbers')[1];
-    assert.match(sent.title, /measured inside Prysm, from a frame received/);
+    // Each delay on its own link, said for what it is; never "screen to lights".
+    const [into, sent] = $$('.path-numbers');
+    assert.equal(into.title, '', 'no capture time: no delay on the video link');
+    assert.match(sent.title, /^time inside Prysm from a frame received/);
     assert(!/screen/i.test(sent.title));
-    assert.match(
-      sent.textContent,
-      /measured inside Prysm/,
-      'for screen readers',
-    );
-    // A source that stamps capture: the same number, said from capture.
+    assert.match(sent.textContent, /time inside Prysm/, 'for screen readers');
+    // A source that stamps capture: its part on the video link.
     await act(async () =>
       portal.fixture.publish({
         input: {
           fps: 29.97,
           receiving: true,
           sent_fps: 29.97,
-          latency: { ms: 31.4, from: 'capture' },
+          latency: { capture_ms: 88.4, output_ms: 2.4 },
         },
       }),
     );
-    assert.deepEqual(links()[1], ['flowing', '30 fps · 31 ms']);
-    assert.match(sent.title, /from capture to colours sent/);
-    assert(!/received/.test(sent.title));
-    assert.match(
-      sent.textContent,
-      /from capture to colours sent/,
-      'for screen readers',
+    assert.deepEqual(links(), [
+      ['flowing', '88 ms'],
+      ['flowing', '2 ms'],
+    ]);
+    assert.equal(
+      $('.path-figure').textContent.split(':')[0],
+      '30 fps',
+      '30.0 is 30',
     );
+    assert.match(
+      $$('.path-numbers')[0].title,
+      /^time from the camera capturing a frame to Prysm receiving it/,
+    );
+    // Under a millisecond is said, not rounded away.
+    await act(async () =>
+      portal.fixture.publish({
+        input: {
+          fps: 29.97,
+          receiving: true,
+          sent_fps: 29.97,
+          latency: { output_ms: 0.4 },
+        },
+      }),
+    );
+    assert.deepEqual(links(), [
+      ['flowing', undefined],
+      ['flowing', '<1 ms'],
+    ]);
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>
       portal.fixture.publish({
         input: { fps: 29.97, receiving: true, sent_fps: 0 },
       }),
     );
-    assert.deepEqual(links()[1], ['flowing', '0 fps']);
+    assert.deepEqual(links()[1], ['flowing', undefined], 'no delay made up');
     await act(async () =>
       portal.fixture.publish({
         input: {
           fps: 29.97,
           receiving: true,
           sent_fps: 29.97,
-          latency: { ms: 11.6, from: 'received' },
+          latency: { output_ms: 11.6 },
         },
       }),
     );

@@ -210,7 +210,7 @@ pub struct InputSchema {
     #[schema(minimum = 0, example = 29.9)]
     #[serde(default)]
     sent_fps: f32,
-    /// The mean time per frame to its colours being sent, over the last
+    /// The mean time per frame along the path, in two parts, over the last
     /// second. Absent when no frame reached the output.
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,27 +218,21 @@ pub struct InputSchema {
 }
 
 // Mirrors `prysm_ports::Latency`.
-/// Mean milliseconds from a frame's start to the output write for it
-/// returning: measured inside Prysm, per frame (not from the screen).
+/// Mean milliseconds per frame along the path, measured by Prysm (not from
+/// the screen, and not including the lights' own delay), in two parts.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
 #[schema(as = Latency)]
 pub struct LatencySchema {
-    #[schema(minimum = 0, example = 11.8)]
-    ms: f32,
-    from: LatencyFromSchema,
-}
-
-// Mirrors `prysm_ports::LatencyFrom`.
-/// Where a latency starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = LatencyFrom)]
-#[serde(rename_all = "snake_case")]
-pub enum LatencyFromSchema {
-    /// Prysm received the frame from its source.
-    Received,
-    /// The source captured the frame: every frame of the window carried a
-    /// capture time (video devices on macOS, and on Linux with monotonic stamps).
-    Capture,
+    /// From the source capturing the frame to Prysm receiving it; present
+    /// only when every frame flushed in the window carried a capture time
+    /// (video devices on macOS, and on Linux with monotonic stamps).
+    #[schema(minimum = 0, example = 88.0, nullable = false)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    capture_ms: Option<f32>,
+    /// From Prysm receiving the frame to the output write for its colours
+    /// returning.
+    #[schema(minimum = 0, example = 2.4)]
+    output_ms: f32,
 }
 
 // Mirrors `prysm_ports::OutputIssue`.
@@ -343,7 +337,6 @@ impl ToSchema for OutputSettings {}
     State,
     InputSchema,
     LatencySchema,
-    LatencyFromSchema,
     OutputIssueSchema,
     Session,
     PhaseSchema,
@@ -512,8 +505,8 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, FrameSource,
-        HueControls, Input, Latency, LatencyFrom, LightingTarget, OutputIssue, Pattern, Processing,
-        Result, SessionPhase, Settings, ValidationError,
+        HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Result,
+        SessionPhase, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -577,14 +570,14 @@ mod tests {
             receiving: true,
             sent_fps: 29.5,
             latency: Some(Latency {
-                ms: 11.8,
-                from: LatencyFrom::Capture,
+                capture_ms: Some(88.0),
+                output_ms: 2.4,
             }),
         });
         same_shape::<Input, InputSchema>(&Input {
             latency: Some(Latency {
-                ms: 4.0,
-                from: LatencyFrom::Received,
+                capture_ms: None,
+                output_ms: 4.0,
             }),
             ..Input::default()
         });

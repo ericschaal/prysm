@@ -442,8 +442,8 @@
       "input": {
         "fps": 29.899999618530273,
         "latency": {
-          "from": "capture",
-          "ms": 11.800000190734863
+          "capture_ms": 88,
+          "output_ms": 2.4000000953674316
         },
         "receiving": true,
         "sent_fps": 29.899999618530273

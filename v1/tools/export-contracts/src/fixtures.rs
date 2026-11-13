@@ -7,8 +7,8 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, Error, HueControls,
-    Input, Latency, LatencyFrom, LightingTarget, OutputIssue, Pattern, Processing, Revision,
-    Section, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
+    Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision, Section,
+    SessionPhase, SessionState, Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -152,8 +152,8 @@ fn states() -> Vec<State> {
                 receiving: true,
                 sent_fps: 29.9,
                 latency: Some(Latency {
-                    ms: 11.8,
-                    from: LatencyFrom::Capture,
+                    capture_ms: Some(88.0),
+                    output_ms: 2.4,
                 }),
             }),
             output_issue: Some(OutputIssue::Overridden),

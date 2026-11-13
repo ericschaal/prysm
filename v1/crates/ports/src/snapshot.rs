@@ -116,29 +116,24 @@ pub struct Input {
     /// last window, to one decimal.
     #[serde(default)]
     pub sent_fps: f32,
-    /// The mean time per frame to its colours being sent, over the last
+    /// The mean time per frame along the path, in two parts, over the last
     /// window. Absent when no frame reached the output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency: Option<Latency>,
 }
 
-/// Mean milliseconds from a frame's start to the output write for it
-/// returning: measured inside Prysm, per frame.
+/// Mean milliseconds per frame along the path, measured by Prysm, in two
+/// parts: from the source capturing it to Prysm receiving it, and from Prysm
+/// receiving it to the output write for its colours returning.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Latency {
-    pub ms: f32,
-    pub from: LatencyFrom,
-}
-
-/// Where a [`Latency`] starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LatencyFrom {
-    /// Prysm received the frame from its source.
-    Received,
-    /// The source captured the frame: every frame of the window carried a
-    /// capture time (video devices on macOS, and on Linux with monotonic stamps).
-    Capture,
+    /// Capture to received; present only when every frame flushed in the
+    /// window carried a capture time (video devices on macOS, and on Linux
+    /// with monotonic stamps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_ms: Option<f32>,
+    /// Received to written.
+    pub output_ms: f32,
 }
 
 #[cfg(test)]

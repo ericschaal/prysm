@@ -80,13 +80,14 @@ clears once the device shows the colours again.
 `input`, while a session runs, is measured about once a second: `fps`
 (frames from the source per second), `receiving`, `sent_fps` (frames whose
 colours were written to the output per second) and `latency`. `latency` is
-`{ "ms": …, "from": … }`: per frame, the time to the output write for it
-returning, as the mean over the window, from when the source captured the
-frame (`"from": "capture"`, when every frame in the window carried a capture
-time: video devices on macOS and on Linux with monotonic V4L2 timestamps) or
-else from Prysm receiving it from the source (`"received"`). It is measured
-inside Prysm (not from the screen, and not including the device's own delay);
-it is absent when no frame reached the output in the window. `/metrics` has
+`{ "capture_ms"?: …, "output_ms": … }`, each the mean per frame over the
+window: `output_ms` from Prysm receiving a frame from its source to the output
+write for its colours returning; `capture_ms` from the source capturing the
+frame to Prysm receiving it, present only when every frame in the window
+carried a capture time (video devices on macOS and on Linux with monotonic
+V4L2 timestamps). Both are measured by Prysm (not from the screen, and not
+including the lights' own delay); `latency` is absent when no frame reached
+the output in the window. `/metrics` has
 the received-to-flushed spans as the `prysm_frame_flush_seconds` summary.
 
 Settings replacement is whole-document and optimistic: send the `revision` you

@@ -213,11 +213,13 @@ export type PathState =
   | { kind: 'off' }
   | {
       kind: 'flowing';
-      /** Frames arriving, and leaving for the lights, per second. */
+      /** Frames arriving per second (each is sent on before the next). */
       fps: number;
-      sentFps: number;
-      /** Mean ms to a frame's colours sent (inside Prysm), from its capture or its receipt. */
-      latency?: { ms: number; from: 'capture' | 'received' };
+      /**
+       * Mean ms per frame on each link: capture to received (only when the
+       * source stamps capture times), received to colours sent.
+       */
+      latency?: { captureMs?: number; outputMs: number };
     }
   | { kind: 'waiting' }
   | { kind: 'effects' }
@@ -256,12 +258,15 @@ function Stop({
   icon,
   name,
   fact,
+  figure,
   failed,
 }: {
   title: string;
   icon: ReactNode;
   name: string;
   fact?: string;
+  /** A measured figure after the fact; the fact gives way to it, never the reverse. */
+  figure?: { text: string; about: string };
   failed: boolean;
 }) {
   return (
@@ -272,10 +277,36 @@ function Stop({
         {/* Never broken at a hyphen ("WLED-Gledopto"). */}
         <strong className="path-name">{name.split('-').join('\u2011')}</strong>
         {/* Always a line, so the stops stay aligned when one has no fact. */}
-        <span className="path-fact">{fact ?? '\u00a0'}</span>
+        <span className="path-fact">
+          {fact || figure ? (
+            <>
+              {fact ? <span className="path-fact-text">{fact}</span> : null}
+              {figure ? (
+                <span className="path-figure" title={figure.about}>
+                  {/* The separator rides with the figure (flex drops loose spaces). */}
+                  {fact ? '\u00a0·\u00a0' : null}
+                  {figure.text}
+                  <span className="visually-hidden">: {figure.about}</span>
+                </span>
+              ) : null}
+            </>
+          ) : (
+            '\u00a0'
+          )}
+        </span>
       </span>
     </li>
   );
+}
+
+/** A link's mean delay: whole ms, "<1 ms" below one. */
+const delay = (ms: number | undefined) =>
+  ms === undefined ? undefined : `${ms < 1 ? '<1' : Math.round(ms)} ms`;
+
+/** A rate to whole frames, with the tenth only when it matters: `29.9 fps`. */
+function frameRate(fps: number) {
+  const whole = Math.round(fps);
+  return `${Math.abs(fps - whole) < 0.05 ? whole : fps.toFixed(1)} fps`;
 }
 
 /** A link between two stops: a hairline, its light, and what it carries. */
@@ -393,13 +424,15 @@ export function SetupCard({
     into = failedAt === 'output' ? 'still' : 'failed';
     out = failedAt === 'capture' ? 'still' : 'failed';
   }
-  const rate =
-    path.kind === 'flowing' ? `${Math.round(path.fps)} fps` : undefined;
-  // What leaves for the lights: the rate, and the span inside Prysm.
+  // The rate once, on the video stop; each link only its own delay.
   const flowing = path.kind === 'flowing' ? path : null;
-  const sent = flowing ? `${Math.round(flowing.sentFps)} fps` : undefined;
-  const latency = flowing?.latency
-    ? `${Math.round(flowing.latency.ms)} ms`
+  // The rate counts the frames Prysm takes and sends: it is Prysm's figure.
+  const processed = flowing
+    ? {
+        text: frameRate(flowing.fps),
+        about:
+          'frames per second Prysm processes and sends, over the last second',
+      }
     : undefined;
   const total = edges
     ? edges.top + edges.right + edges.bottom + edges.left
@@ -430,24 +463,34 @@ export function SetupCard({
             />
           )}
         </Named>
-        <Link state={into} transport={transports.capture} numbers={rate} />
+        <Link
+          state={into}
+          transport={transports.capture}
+          numbers={delay(flowing?.latency?.captureMs)}
+          about={
+            flowing?.latency?.captureMs === undefined
+              ? undefined
+              : 'time from the camera capturing a frame to Prysm receiving it, mean over the last second'
+          }
+        />
         <Stop
           title="Processing"
           icon={<PrysmIcon />}
           name="Prysm"
           // Only a positive fact: the active profile. Nothing when none.
           fact={profile ? `${profile} profile` : undefined}
+          figure={processed}
           failed={path.kind === 'failed' && failedAt === null}
         />
         <Link
           state={out}
           transport={transports.output}
-          numbers={sent && (latency ? `${sent} · ${latency}` : sent)}
-          about={`rate of frames sent; time measured inside Prysm, ${
-            flowing?.latency?.from === 'capture'
-              ? 'from capture to colours sent'
-              : 'from a frame received to its colours sent'
-          }, mean over the last second`}
+          numbers={delay(flowing?.latency?.outputMs)}
+          about={
+            flowing?.latency
+              ? 'time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included'
+              : undefined
+          }
         />
         <Named part={output} discovery={discovery}>
           {(name) => (
