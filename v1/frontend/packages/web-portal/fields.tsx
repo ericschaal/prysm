@@ -1,6 +1,8 @@
 import {
   use,
+  useEffect,
   useId,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -261,6 +263,11 @@ export function RangeField({
   onRelease?: () => void;
 }) {
   const field = useField(path, help);
+  // The release is heard on the window after later renders: call the latest.
+  const releaseRef = useRef(onRelease);
+  useEffect(() => {
+    releaseRef.current = onRelease;
+  });
   // The filled part of the track. Set through the CSSOM, which the portal's
   // CSP (`default-src 'self'`) allows; style attributes in markup it refuses.
   const at = (number: number) =>
@@ -294,19 +301,20 @@ export function RangeField({
         }}
         {...(onPress && onRelease
           ? {
-              onPointerDown: (event) => {
-                // The release then reaches the slider wherever the pointer is.
-                try {
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                } catch {
-                  // Not capturable (a synthetic event): the rest still applies.
-                }
+              onPointerDown: () => {
+                // The browser drags the thumb itself (capturing the pointer
+                // here stops that in Safari), so the release is heard on the
+                // window: it may come up anywhere.
+                const release = () => {
+                  window.removeEventListener('pointerup', release, true);
+                  window.removeEventListener('pointercancel', release, true);
+                  releaseRef.current?.();
+                };
+                window.addEventListener('pointerup', release, true);
+                window.addEventListener('pointercancel', release, true);
                 onPress();
               },
               onKeyDown: onPress,
-              onPointerUp: onRelease,
-              onPointerCancel: onRelease,
-              onLostPointerCapture: onRelease,
               onKeyUp: onRelease,
               onBlur: () => {
                 field.touch();
