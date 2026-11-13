@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 
 /// How often WLED's state is checked while it answers.
 pub const EVERY: Duration = Duration::from_secs(1);
+/// After a check without a usable answer the next waits this many times
+/// [`EVERY`].
+const BACKOFF: u32 = 5;
 /// Longest the caller's thread waits, for the TCP connect (and the request
 /// write, which fits an empty send buffer).
 const CONNECT: Duration = Duration::from_millis(200);
@@ -64,23 +67,22 @@ impl Observer {
     /// Advance the check without waiting for WLED; the latest finding.
     pub fn poll(&mut self) -> Option<OutputIssue> {
         let now = Instant::now();
-        match self.pending.take() {
-            Some(mut pending) => match pending.read() {
-                Ok(None) if now < pending.deadline => self.pending = Some(pending),
-                Ok(None) => self.finish(now, Err(io::Error::from(ErrorKind::TimedOut).into())),
-                Err(error) => self.finish(now, Err(error)),
-                Ok(Some(body)) => {
-                    let answer = serde_json::from_slice(&body)
-                        .map(|status| (status, pending.local))
-                        .map_err(RequestError::from);
-                    self.finish(now, answer);
-                }
-            },
-            None if now >= self.next => match self.send(now) {
+        if let Some(pending) = &mut self.pending {
+            let answer = match pending.read() {
+                Ok(None) if now < pending.deadline => return self.issue,
+                Ok(None) => Err(io::Error::from(ErrorKind::TimedOut).into()),
+                Ok(Some(body)) => serde_json::from_slice(&body)
+                    .map(|status| (status, pending.local))
+                    .map_err(RequestError::from),
+                Err(error) => Err(error),
+            };
+            self.pending = None;
+            self.finish(now, answer);
+        } else if now >= self.next {
+            match self.send(now) {
                 Ok(pending) => self.pending = Some(pending),
                 Err(error) => self.finish(now, Err(error)),
-            },
-            None => {}
+            }
         }
         self.issue
     }
@@ -117,7 +119,7 @@ impl Observer {
             + if answer.is_ok() {
                 self.every
             } else {
-                self.every * 5
+                self.every * BACKOFF
             };
         self.issue = match answer {
             Ok((status, local)) => self.judge(&status, local),
@@ -159,7 +161,7 @@ impl Pending {
             match self.stream.read(&mut chunk) {
                 Ok(0) => {
                     return match http::parse(&self.reply, true)? {
-                        Some(reply) => accept(reply).map(Some),
+                        Some(response) => response.success().map(Some),
                         None => Err(RequestError::Malformed("connection closed mid-response")),
                     };
                 }
@@ -171,19 +173,13 @@ impl Pending {
                 }
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    return http::parse(&self.reply, false)?.map(accept).transpose();
+                    return http::parse(&self.reply, false)?
+                        .map(http::Response::success)
+                        .transpose();
                 }
                 Err(error) => return Err(error.into()),
             }
         }
-    }
-}
-
-fn accept((status, body): (u16, Vec<u8>)) -> Result<Vec<u8>, RequestError> {
-    if (200..300).contains(&status) {
-        Ok(body)
-    } else {
-        Err(RequestError::Status(status))
     }
 }
 

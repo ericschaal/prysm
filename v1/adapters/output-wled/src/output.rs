@@ -11,6 +11,9 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::Duration;
 
+/// WLED's DDP port (UDP).
+const DDP_PORT: u16 = 4048;
+
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
 #[derive(Debug)]
 pub struct Wled {
@@ -23,7 +26,7 @@ pub struct Wled {
 impl Default for Wled {
     fn default() -> Self {
         Self {
-            ddp_port: 4048,
+            ddp_port: DDP_PORT,
             check_every: observe::EVERY,
             names: Names::new(system_lookup),
         }

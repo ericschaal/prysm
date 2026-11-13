@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 /// WLED's HTTP API port when the address names none.
-const DEFAULT_PORT: u16 = 80;
+pub const DEFAULT_PORT: u16 = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Host {
@@ -118,8 +118,7 @@ fn split_port(text: &str) -> Result<(&str, Option<&str>), &'static str> {
         0 => Ok((text, None)),
         1 => Ok(text
             .split_once(':')
-            .map(|(host, port)| (host, Some(port)))
-            .unwrap_or((text, None))),
+            .map_or((text, None), |(host, port)| (host, Some(port)))),
         _ if text.parse::<Ipv6Addr>().is_ok() => Ok((text, None)),
         _ => Err("an IPv6 address with a port needs brackets, such as `[fe80::1]:8080`"),
     }
@@ -190,10 +189,15 @@ impl Names {
             Host::Ip(ip) => return Ok(*ip),
             Host::Name(name) => name,
         };
-        let mut resolver = self.resolver.lock().unwrap_or_else(PoisonError::into_inner);
-        resolver.take_if(|resolver| resolver.host() != name || resolver.port() != address.port);
+        let mut kept = self.resolver.lock().unwrap_or_else(PoisonError::into_inner);
+        // A lookup for another host or port is dropped; this one is kept.
+        let resolver = match &mut *kept {
+            Some(resolver) if resolver.host() == name && resolver.port() == address.port => {
+                resolver
+            }
+            other => other.insert(Resolver::new(name, address.port).with_lookup(self.lookup)),
+        };
         let ip = resolver
-            .get_or_insert_with(|| Resolver::new(name, address.port).with_lookup(self.lookup))
             .resolve(wait)
             .map_err(|source| {
                 Error::adapter(format!("cannot resolve WLED host {}", address.host), source)

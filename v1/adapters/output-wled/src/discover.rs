@@ -9,6 +9,7 @@
 //!
 //! Only devices the multicast question reaches answer: the same network
 //! segment, and in a container only with host networking.
+use crate::address::{DEFAULT_PORT, DeviceAddress, Host};
 use crate::http;
 use prysm_ports::Candidate;
 use serde::{Deserialize, Serialize};
@@ -42,7 +43,7 @@ impl Default for Browse {
     fn default() -> Self {
         Self {
             group: MDNS,
-            http_port: 80,
+            http_port: DEFAULT_PORT,
             window: WINDOW,
             info: INFO,
         }
@@ -95,7 +96,10 @@ impl Browse {
                     break;
                 }
                 // A stray ICMP error or signal; keep listening.
-                Err(_) => continue,
+                Err(error) => {
+                    tracing::debug!(%error, "WLED discovery skipped a receive error");
+                    continue;
+                }
             };
             let SocketAddr::V4(from) = from else {
                 continue;
@@ -125,18 +129,21 @@ impl Browse {
         struct Fields<'a> {
             address: &'a str,
         }
-        let address = if self.http_port == 80 {
-            ip.to_string()
-        } else {
-            format!("{ip}:{}", self.http_port)
-        };
+        let address = DeviceAddress {
+            host: Host::Ip(ip.into()),
+            port: self.http_port,
+        }
+        .to_string();
         let info = http::get_json(
             SocketAddr::from((ip, self.http_port)),
             "/json/info",
             self.info,
         )
-        .ok()
-        .and_then(|info| serde_json::from_value::<Info>(info).ok());
+        .and_then(|info| Ok(serde_json::from_value::<Info>(info)?))
+        .inspect_err(|error| {
+            tracing::debug!(%ip, error = %prysm_ports::chain(error), "WLED device gave no info");
+        })
+        .ok();
         let mut detail = address.clone();
         let mut label = instance;
         if let Some(info) = info {

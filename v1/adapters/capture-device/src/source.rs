@@ -12,7 +12,7 @@ use std::time::Duration;
 /// The native capture as the adapter runs it: blocks until the sink asks to
 /// stop or capture fails, then releases. Private test seam.
 pub(crate) type Capture = Box<dyn FnOnce(&Arc<dyn CaptureSink>) -> CaptureResult + Send>;
-pub(crate) type CaptureResult = std::result::Result<(), CaptureError>;
+pub(crate) type CaptureResult = Result<(), CaptureError>;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Deadlines {

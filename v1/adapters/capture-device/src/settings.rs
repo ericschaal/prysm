@@ -59,7 +59,8 @@ impl DeviceSettings {
             ));
         }
         if let Err(reason) = CaptureResolution::new(self.width, self.height) {
-            let field = if self.width == 0 || self.width > 3840 {
+            // The width alone, with any valid height, says which is wrong.
+            let field = if CaptureResolution::new(self.width, 1).is_err() {
                 "width"
             } else {
                 "height"

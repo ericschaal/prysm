@@ -10,7 +10,7 @@ mod source;
 
 pub use settings::DeviceSettings;
 
-use prysm_ports::{Candidate, Error, FrameSource, Result, SourceFactory, ValidationError};
+use prysm_ports::{Candidate, FrameSource, Result, SourceFactory, ValidationError};
 use serde::Serialize;
 use std::num::NonZeroU32;
 
@@ -28,8 +28,8 @@ impl SourceFactory for DeviceSource {
 
     /// Blocks until the device is capturing, or fails within a bounded wait.
     fn open(&self, settings: &DeviceSettings) -> Result<Box<dyn FrameSource>> {
-        let fps =
-            NonZeroU32::new(settings.fps).ok_or_else(|| Error::other("fps must be positive"))?;
+        let fps = NonZeroU32::new(settings.fps)
+            .ok_or_else(|| ValidationError::new("fps", "must be a positive frame rate"))?;
         let (path, width, height) = (settings.path.clone(), settings.width, settings.height);
         let capture: source::Capture =
             Box::new(move |sink| prysm_capture::capture(Some(&path), width, height, fps, sink));

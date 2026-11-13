@@ -32,23 +32,37 @@ pub enum RequestError {
     Unacknowledged,
 }
 
+/// A complete HTTP response.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Response {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+impl Response {
+    /// The body of a 2xx response.
+    ///
+    /// # Errors
+    /// [`RequestError::Status`] for any other status.
+    pub fn success(self) -> Result<Vec<u8>, RequestError> {
+        if (200..300).contains(&self.status) {
+            Ok(self.body)
+        } else {
+            Err(RequestError::Status(self.status))
+        }
+    }
+}
+
 /// Send `state` to `device`, naming `host` (the configured `host[:port]`) in
 /// the `Host` header, and require WLED's `{"success":true}` reply.
 pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), RequestError> {
-    let mut stream = TcpStream::connect_timeout(&device, TIMEOUT).map_err(RequestError::Connect)?;
-    stream.set_read_timeout(Some(TIMEOUT))?;
-    stream.set_write_timeout(Some(TIMEOUT))?;
     let body = state.to_string();
     let request = format!(
         "POST /json/state HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(request.as_bytes())?;
-    let (status, body) = read_response(&mut stream)?;
-    if !(200..300).contains(&status) {
-        return Err(RequestError::Status(status));
-    }
+    let body = exchange(device, &request, TIMEOUT)?.success()?;
     let reply: Value = serde_json::from_slice(&body)?;
     if let Some(error) = reply.get("error") {
         return Err(RequestError::Rejected(error.to_string()));
@@ -63,32 +77,39 @@ pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), R
 /// `GET path` from `device` and its JSON reply, waiting at most `timeout`
 /// for the connect and for each read or write.
 pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Value, RequestError> {
-    let mut stream = TcpStream::connect_timeout(&device, timeout).map_err(RequestError::Connect)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: {device}\r\nAccept: application/json\r\n\
          Connection: close\r\n\r\n"
     );
-    stream.write_all(request.as_bytes())?;
-    let (status, body) = read_response(&mut stream)?;
-    if !(200..300).contains(&status) {
-        return Err(RequestError::Status(status));
-    }
+    let body = exchange(device, &request, timeout)?.success()?;
     Ok(serde_json::from_slice(&body)?)
 }
 
-fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError> {
+/// Connect to `device`, send `request` and read the whole response, waiting
+/// at most `timeout` for the connect and for each read or write.
+fn exchange(
+    device: SocketAddr,
+    request: &str,
+    timeout: Duration,
+) -> Result<Response, RequestError> {
+    let mut stream = TcpStream::connect_timeout(&device, timeout).map_err(RequestError::Connect)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    stream.write_all(request.as_bytes())?;
+    read_response(&mut stream)
+}
+
+fn read_response(stream: &mut impl Read) -> Result<Response, RequestError> {
     let mut data = Vec::new();
     let mut chunk = [0; 1024];
     loop {
         let count = stream.read(&mut chunk)?;
         data.extend_from_slice(&chunk[..count]);
-        if let Some((status, body)) = parse(&data, count == 0)? {
-            if body.len() > MAX_BODY {
+        if let Some(response) = parse(&data, count == 0)? {
+            if response.body.len() > MAX_BODY {
                 return Err(RequestError::Malformed("body exceeds 16 KiB"));
             }
-            return Ok((status, body));
+            return Ok(response);
         }
         if count == 0 {
             return Err(RequestError::Malformed("connection closed mid-response"));
@@ -99,8 +120,9 @@ fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError>
     }
 }
 
-/// A response's status and body; `Ok(None)`: incomplete so far.
-pub fn parse(data: &[u8], eof: bool) -> Result<Option<(u16, Vec<u8>)>, RequestError> {
+/// The response in `data`, or `None` while it is incomplete; `eof`: no more
+/// data follows.
+pub fn parse(data: &[u8], eof: bool) -> Result<Option<Response>, RequestError> {
     let Some(end) = find(data, b"\r\n\r\n") else {
         return Ok(None);
     };
@@ -125,15 +147,21 @@ pub fn parse(data: &[u8], eof: bool) -> Result<Option<(u16, Vec<u8>)>, RequestEr
     };
     let body = &data[end + 4..];
     if header("transfer-encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
-        return Ok(dechunk(body)?.map(|body| (status, body)));
+        return Ok(dechunk(body)?.map(|body| Response { status, body }));
     }
     if let Some(length) = header("content-length") {
         let length: usize = length
             .parse()
             .map_err(|_| RequestError::Malformed("invalid Content-Length"))?;
-        return Ok((body.len() >= length).then(|| (status, body[..length].to_vec())));
+        return Ok((body.len() >= length).then(|| Response {
+            status,
+            body: body[..length].to_vec(),
+        }));
     }
-    Ok(eof.then(|| (status, body.to_vec())))
+    Ok(eof.then(|| Response {
+        status,
+        body: body.to_vec(),
+    }))
 }
 
 fn dechunk(mut rest: &[u8]) -> Result<Option<Vec<u8>>, RequestError> {

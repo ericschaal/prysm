@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 /// Bytes of FFmpeg's stderr kept for error messages.
 pub(crate) const STDERR_TAIL: usize = 2048;
+/// How often a child is checked for having exited while it is awaited.
+const REAP_POLL: Duration = Duration::from_millis(2);
 
 /// The FFmpeg invocation, as the shipping application runs it: decode the
 /// first video stream once (endlessly with `repeat`: `-stream_loop -1`), cap the rate at `fps`, scale to the frame size
@@ -127,7 +129,9 @@ fn readable(fd: &PollFd<'_>) -> bool {
     fd.revents().is_some_and(|events| !events.is_empty())
 }
 
-/// Rounded up so a sub-millisecond remainder does not spin.
+/// Rounded up so a sub-millisecond remainder does not spin. Longer than
+/// `poll` takes (about 65 s) is cut short; every caller polls again until
+/// its deadline.
 fn poll_timeout(left: Duration) -> PollTimeout {
     let millis = left.as_nanos().div_ceil(1_000_000);
     PollTimeout::from(u16::try_from(millis).unwrap_or(u16::MAX))
@@ -140,11 +144,18 @@ impl Pipes {
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let (out, err) = {
-                let mut fds = vec![PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN)];
-                if let Some(stderr) = &self.stderr {
-                    fds.push(PollFd::new(stderr.as_fd(), PollFlags::POLLIN));
-                }
-                match poll(&mut fds, poll_timeout(left)) {
+                // On the frame path: no allocation per wait.
+                let stdout = PollFd::new(self.stdout.as_fd(), PollFlags::POLLIN);
+                let mut both;
+                let mut one;
+                let fds: &mut [PollFd<'_>] = if let Some(stderr) = &self.stderr {
+                    both = [stdout, PollFd::new(stderr.as_fd(), PollFlags::POLLIN)];
+                    &mut both
+                } else {
+                    one = [stdout];
+                    &mut one
+                };
+                match poll(fds, poll_timeout(left)) {
                     Ok(_) => {}
                     Err(Errno::EINTR) => continue,
                     Err(errno) => return Err(errno.into()),
@@ -173,7 +184,10 @@ impl Pipes {
             Ok(0) => self.stderr = None,
             Ok(read) => self.tail.push(&buffer[..read]),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => self.stderr = None,
+            Err(error) => {
+                tracing::debug!(%error, "FFmpeg's stderr is no longer read");
+                self.stderr = None;
+            }
         }
     }
 
@@ -185,7 +199,10 @@ impl Pipes {
             match poll(&mut fds, poll_timeout(left)) {
                 Ok(_) => {}
                 Err(Errno::EINTR) => continue,
-                Err(_) => return,
+                Err(errno) => {
+                    tracing::debug!(%errno, "FFmpeg's last stderr is not collected");
+                    return;
+                }
             }
             let ready = readable(&fds[0]);
             if ready {
@@ -251,7 +268,7 @@ fn wait_until(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitSta
         if Instant::now() >= deadline {
             return Ok(None);
         }
-        thread::sleep(Duration::from_millis(2));
+        thread::sleep(REAP_POLL);
     }
 }
 
@@ -383,18 +400,21 @@ impl FileFrames {
         } else {
             String::new()
         };
-        Err(match status {
-            Ok(Some(status)) if status.success() && filled == 0 => return Ok(()),
-            Ok(Some(status)) => failed(format!("{partial}FFmpeg exited with {status}"), stderr),
-            Ok(None) => failed(
+        match status {
+            Ok(Some(status)) if status.success() && filled == 0 => Ok(()),
+            Ok(Some(status)) => Err(failed(
+                format!("{partial}FFmpeg exited with {status}"),
+                stderr,
+            )),
+            Ok(None) => Err(failed(
                 format!(
                     "{partial}FFmpeg closed its output but did not exit within {:?}",
                     self.deadlines.exit
                 ),
                 stderr,
-            ),
-            Err(error) => Error::adapter("cannot wait for FFmpeg", error),
-        })
+            )),
+            Err(error) => Err(Error::adapter("cannot wait for FFmpeg", error)),
+        }
     }
 }
 
@@ -424,8 +444,10 @@ impl FrameSource for FileFrames {
 impl Drop for FileFrames {
     /// Without `close`, FFmpeg is still killed and reaped within the bound.
     fn drop(&mut self) {
-        if !self.closed {
-            let _ = kill_and_reap(&mut self.child, self.deadlines.reap);
+        if !self.closed
+            && let Err(error) = kill_and_reap(&mut self.child, self.deadlines.reap)
+        {
+            tracing::warn!(error = %prysm_ports::chain(&error), "FFmpeg was dropped unconfirmed");
         }
     }
 }
