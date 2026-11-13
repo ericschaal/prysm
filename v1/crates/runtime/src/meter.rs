@@ -9,9 +9,11 @@ use tokio::time::{Instant, Interval, MissedTickBehavior};
 /// How often [`Snapshot::input`] is measured and republished.
 const MEASURE: Duration = Duration::from_secs(1);
 
-/// A window counts as saturated when the frame loop spent at least this share
-/// of it on frames (received to written): little or no idle time waiting for
-/// the next frame, so frames are being dropped.
+/// A window counts as saturated when its frames took at least this share of
+/// the loop's time (received to written, against the time from one frame
+/// being done to the next): little or no idle time waiting for the next
+/// frame, so frames are being dropped. Both are sums over the same frames, so
+/// a frame in progress at the window's edge does not count as idle.
 const SATURATED: f64 = 0.85;
 
 /// Consecutive windows that set [`Behind`] (saturated) or clear it (not), so
@@ -50,7 +52,7 @@ impl Pace {
 
 /// One window's verdict: which step, if the loop had no slack. `busy` is the
 /// received-to-written time of the window's flushed frames, `processing` its
-/// received-to-processed part, `elapsed` the window's length.
+/// received-to-processed part, `elapsed` the loop time those frames took.
 fn verdict(busy: Duration, processing: Duration, elapsed: Duration) -> Behind {
     if elapsed.is_zero() || busy.as_secs_f64() < SATURATED * elapsed.as_secs_f64() {
         return Behind::None;
@@ -70,6 +72,7 @@ pub(crate) struct Meter {
     /// The totals at the last sample.
     last: Counters,
     last_captured: Timing,
+    last_cycles: Timing,
     at: Instant,
     pace: Pace,
 }
@@ -88,6 +91,7 @@ impl Meter {
             interval,
             last: stats.read(),
             last_captured: stats.captured(),
+            last_cycles: stats.cycles(),
             at: Instant::now(),
             pace: Pace::default(),
         }
@@ -124,7 +128,10 @@ impl Meter {
             .processing
             .total
             .saturating_sub(self.last.processing.total);
-        let behind = self.pace.window(verdict(output, processing, window));
+        let cycles = stats.cycles();
+        let spent = cycles.total.saturating_sub(self.last_cycles.total);
+        self.last_cycles = cycles;
+        let behind = self.pace.window(verdict(output, processing, spent));
         // Capture to received, only when every flushed frame had a capture time.
         let stamped = captured.count.saturating_sub(self.last_captured.count);
         let capture = (flushed > 0 && stamped == flushed)

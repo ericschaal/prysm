@@ -14,6 +14,9 @@ pub(crate) struct Stats {
     flushed: Timer,
     /// Like `flushed`, from the frame's capture time, for frames that carry one.
     captured: Timer,
+    /// For flushed frames, the time each took of the loop: from the frame
+    /// before it being done to its own write returning, waiting included.
+    cycles: Timer,
     output_writes: Timer,
     output_write_failures: AtomicU64,
     source_opens: AtomicU64,
@@ -75,6 +78,8 @@ impl Timer {
 /// When one frame passed each step on the session thread.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FrameTimes {
+    /// The frame before it was done, if this session had one.
+    pub(crate) previous: Option<Instant>,
     /// The source handed it over.
     pub(crate) received: Instant,
     /// The source captured it, if it says.
@@ -111,6 +116,9 @@ impl Stats {
         if let Some(written) = times.written {
             self.frames_sent.fetch_add(1, Ordering::Relaxed);
             self.flushed.add(written - times.received);
+            // The first frame waited for nothing that counts.
+            self.cycles
+                .add(written - times.previous.unwrap_or(times.received));
             if let Some(captured) = times.captured {
                 // Capture to received: the part before Prysm.
                 self.captured
@@ -140,5 +148,11 @@ impl Stats {
     /// capture part of the latency when every frame of a window had one.
     pub(crate) fn captured(&self) -> Timing {
         self.captured.read()
+    }
+
+    /// For flushed frames, the loop time each took, waiting for it included.
+    /// Not a metric: against it the engine judges whether the loop has slack.
+    pub(crate) fn cycles(&self) -> Timing {
+        self.cycles.read()
     }
 }
