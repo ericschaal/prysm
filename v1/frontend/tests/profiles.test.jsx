@@ -190,11 +190,8 @@ test('profile errors from the server land on their control; the list is capped',
     const tint = field('processing.profiles[3].correction.tint');
     await edit(tint, 40);
     await settle();
-    assert.equal(errorOf(tint), 'must be -100 to 100');
-    assert.equal(
-      $('.processing [role="alert"]').textContent,
-      'Not applied: must be -100 to 100',
-    );
+    assert.equal(errorOf(tint), 'Prysm can’t use this value.');
+    assert.equal($('.save-status').textContent, 'Not saved');
     await settle();
     assert.equal(saves(fixture), 1, 'not retried until edited');
     await edit(tint, 30);
@@ -210,7 +207,7 @@ test('profile errors from the server land on their control; the list is capped',
     });
     await edit(active(), 'p5');
     await settle();
-    assert.equal(errorOf(active()), 'no profile has id `p5`');
+    assert.equal(errorOf(active()), 'Prysm can’t use this value.');
     await edit(active(), 'p6');
     await settle();
     assert.equal(processing(fixture).active_profile, 'p6');

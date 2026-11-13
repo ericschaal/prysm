@@ -20,6 +20,7 @@ export {
   processingControls,
   processingDelayMs,
   processingLimits,
+  rebased,
   throttled,
   trialIntervalMs,
   useLiveProcessing,
@@ -52,3 +53,4 @@ export {
   type Theme,
 } from './theme';
 export { ThemeChoice } from './theme-choice';
+export { savedForMs } from './save-state';

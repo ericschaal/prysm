@@ -16,4 +16,8 @@ export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   // How the picture travels: H.264 (either encoder) or raw frames.
   transport: (value) =>
     (value.encoding ?? remoteDefaults.encoding) === 'raw' ? 'raw' : 'h264',
+  problems: {
+    'capture.encoding':
+      'Choose Uncompressed, or a picture of at least 16 × 16 pixels.',
+  },
 };

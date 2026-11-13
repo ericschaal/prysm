@@ -304,7 +304,7 @@ button[aria-busy='true'] {
 .field {
   display: grid;
   gap: var(--space-2);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-3);
   min-width: 0;
   align-content: start;
 }
@@ -374,10 +374,67 @@ legend {
 .field [aria-invalid='true']:hover:enabled {
   border-color: var(--danger);
 }
+/*
+ * The line under a control: help, or in its place the problem. Both share
+ * one grid cell, so the slot keeps the taller one's height and never moves
+ * what follows. An empty slot still keeps one line.
+ */
+.field-note {
+  display: grid;
+  min-height: calc(var(--text-small) * var(--leading));
+}
+.field-note > * {
+  grid-area: 1 / 1;
+}
+.field-note[data-state='error'] > .help,
+.field-note[data-state='help'] > .field-error {
+  visibility: hidden;
+}
 .field-error {
   color: var(--danger);
   font-size: var(--text-small);
-  animation: fade-up var(--duration) var(--ease-out) both;
+  line-height: var(--leading);
+}
+.field-note[data-state='error'] > .field-error {
+  animation: fade-in var(--duration) var(--ease-out) both;
+}
+/* A text button inside a sentence, such as “Try again”. */
+button.link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A form's one status line, kept above its buttons. */
+.form-status,
+.problem-line {
+  min-height: calc(var(--text-small) * var(--leading));
+  color: var(--text-2);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+/* Two lines kept, so a longer message never pushes the buttons down. */
+.form-status {
+  display: flex;
+  align-items: flex-end;
+  min-height: calc(2 * var(--text-small) * var(--leading));
+}
+.form-status:focus {
+  outline: none;
+}
+.form-status[data-tone='warning'] {
+  color: var(--warning);
+}
+.form-status[data-tone='error'],
+.problem-line {
+  color: var(--danger);
 }
 @media (forced-colors: active) {
   .field select {
@@ -1654,8 +1711,19 @@ fieldset > .help {
   border-style: dashed;
   color: var(--text-3);
 }
-.light-card .quick-picture > .notice {
-  margin-top: var(--space-4);
+/* Home's problem line sits in the card's bottom padding: it takes no room. */
+.light-card .quick-picture {
+  position: relative;
+}
+.light-card .quick-picture > .problem-line {
+  position: absolute;
+  top: 100%;
+  inset-inline: 0;
+  margin-top: var(--space-2);
+}
+/* On Home a failed save shows once, under the chips, with its retry. */
+.light-card .brightness .field-note {
+  display: none;
 }
 .device-link {
   display: inline-flex;
@@ -2200,25 +2268,43 @@ fieldset > .help {
   container-type: inline-size;
   padding-top: var(--space-8);
 }
-.settings-section > h2,
-.section-heading h2 {
+.settings-section > h2 {
   font-size: var(--text-title);
   margin-bottom: var(--space-5);
 }
-.section-heading {
-  display: grid;
-  gap: var(--space-1);
-  margin-bottom: var(--space-5);
-}
-.section-heading h2 {
-  margin-bottom: 0;
-}
-.save-state {
-  font-size: var(--text-small);
+
+/* The page's one save status, under the title. Its line is always there. */
+.save-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--text-small) * var(--leading));
+  margin-top: var(--space-2);
   color: var(--text-3);
+  font-size: var(--text-small);
+  line-height: var(--leading);
 }
-.save-state.attention {
-  color: var(--warning);
+.save-status-mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  transition: background-color var(--duration) var(--ease-out);
+}
+.save-status[data-phase='saving'] .save-status-mark,
+.save-status[data-phase='changed'] .save-status-mark,
+.save-status[data-phase='offline'] .save-status-mark {
+  background: var(--warning);
+}
+.save-status[data-phase='saving'] .save-status-mark {
+  animation: breathe 1.2s var(--ease-in-out) infinite;
+}
+.save-status[data-phase='failed'] {
+  color: var(--danger);
+}
+.save-status[data-phase='failed'] .save-status-mark {
+  background: var(--danger);
 }
 
 /* Grouped rows: one quiet surface per list, hairlines between rows. */

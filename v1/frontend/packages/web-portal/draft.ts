@@ -59,6 +59,15 @@ export function useDraft<T>({
     setDraft: setDraftValue,
     /** Discard the draft and show the saved section. */
     reload: () => load(saved, true),
+    /** Start again from the saved section, with `next` as the edit on top. */
+    rebase: (next: T) => {
+      setBase(saved);
+      setPristine(saved ?? fresh());
+      if (!same(next, draft)) {
+        setDraftValue(next);
+        setGeneration((count) => count + 1);
+      }
+    },
     /** `value` was saved as `revision`. */
     saved: (value: T, savedRevision: number) => {
       setBase(value);

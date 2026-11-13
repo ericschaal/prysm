@@ -1,8 +1,14 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { failureOf, same } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
 import { useDraft } from './draft';
-import { staleNotice, useFieldErrors, useFieldScope } from './form';
+import type { SaveState } from './save-state';
+import {
+  refusedValue,
+  saveProblem,
+  useFieldErrors,
+  useFieldScope,
+} from './form';
 
 /**
  * What this panel owns: six controls plus the colour profiles and the active
@@ -127,10 +133,38 @@ export function withProfiles<T extends object>(
 }
 
 /**
+ * `draft`, moved onto `saved`: every control the user changed since `base`
+ * keeps the user's value, every other one takes the saved value. A change
+ * made on another device to a different control is kept; to the same one,
+ * the user's own (shown) value wins.
+ */
+export function rebased(
+  saved: ProcessingControls,
+  base: ProcessingControls,
+  draft: ProcessingControls,
+): ProcessingControls {
+  const next: Record<string, unknown> = { ...saved };
+  const mine = draft as Record<string, unknown>;
+  const before = base as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(mine), ...Object.keys(before)])) {
+    if (same(mine[key], before[key])) continue;
+    if (key in mine) next[key] = mine[key];
+    else delete next[key];
+  }
+  return next as unknown as ProcessingControls;
+}
+
+/**
  * The processing section as a draft that saves itself: each change is applied
  * shortly after the user stops adjusting it, and `commit` applies one at once.
- * Shared by the Picture panel and the calibration wizard, so both save the
- * same way. Render the fields inside `FieldScopeProvider value={scope}`.
+ * Shared by the Picture panel, the light card and the calibration wizard, so
+ * all save the same way. Render the fields inside `FieldScopeProvider
+ * value={scope}`.
+ *
+ * A save refused because the settings changed elsewhere is not lost: once
+ * the newer settings arrive, the user's changes are moved onto them and
+ * saved again. A failed save is shown at the control that was changed, with
+ * a retry there.
  */
 export function useLiveProcessing({
   processing,
@@ -158,8 +192,12 @@ export function useLiveProcessing({
   const [failure, setFailure] = useState('');
   /** The draft that last failed; not retried until it changes. */
   const [failed, setFailed] = useState<ProcessingControls | null>(null);
-  const [notice, setNotice] = useState('');
-  const scope = useFieldScope(disabled, errors, true);
+  /** The control last changed, where a failed save is shown. */
+  const changedRef = useRef('');
+  /** A failed save that may work again, offered at its control. */
+  const [retryAt, setRetryAt] = useState<string | null>(null);
+  /** Refused as stale at this revision: wait for newer settings. */
+  const [staleAt, setStaleAt] = useState<number | null>(null);
   /** A slider is held: its value is tried on the lights and saved on release. */
   const [held, setHeld] = useState(false);
   // Also as a ref: a key's change follows its keydown before a render.
@@ -171,6 +209,7 @@ export function useLiveProcessing({
     disabled ||
     busy ||
     draft.syncing ||
+    staleAt === revision ||
     Object.keys(errors.local).length > 0 ||
     Object.keys(errors.server).length > 0 ||
     (failed !== null && same(failed, draft.draft));
@@ -182,13 +221,15 @@ export function useLiveProcessing({
   });
 
   /** Save `value`; resolves with whether it was saved. */
-  async function apply(value: ProcessingControls): Promise<boolean> {
-    if (draft.conflicted) {
-      draft.reload();
-      setNotice(staleNotice);
-      return false;
+  async function apply(edited: ProcessingControls): Promise<boolean> {
+    let value = edited;
+    // Changed elsewhere since the draft began: keep both changes.
+    if (draft.conflicted && draft.base) {
+      value = rebased(saved, draft.base, edited);
+      draft.rebase(value);
     }
     setBusy(true);
+    setStaleAt(null);
     try {
       // A trial still on its way must not land after the save.
       await trials.settle();
@@ -197,18 +238,21 @@ export function useLiveProcessing({
       draft.saved(value, next);
       setFailure('');
       setFailed(null);
+      setRetryAt(null);
       return true;
     } catch (error) {
       const reason = failureOf(error);
+      // Saved again once the newer settings arrive.
       if (reason.kind === 'stale_revision') {
-        draft.reload();
-        setNotice(staleNotice);
-      } else {
-        if (reason.kind === 'invalid' && reason.field)
-          errors.setServer({ [reason.field]: reason.message });
-        setFailed(value);
-        setFailure(`Not applied: ${reason.message}`);
+        setStaleAt(revision);
+        return false;
       }
+      const invalid = reason.kind === 'invalid';
+      const at = (invalid && reason.field) || changedRef.current;
+      if (at) errors.setServer({ [at]: invalid ? refusedValue : 'Not saved.' });
+      setRetryAt(at && !invalid ? at : null);
+      setFailed(value);
+      setFailure(saveProblem(reason));
       return false;
     } finally {
       setBusy(false);
@@ -226,10 +270,35 @@ export function useLiveProcessing({
     return () => clearTimeout(timer);
   }, [draft.draft, draft.dirty, blocked, held, revision]);
 
-  function replace(next: ProcessingControls) {
+  const { clearServer } = errors;
+  const retry = useMemo(
+    () =>
+      retryAt === null
+        ? null
+        : {
+            path: retryAt,
+            run: () => {
+              clearServer();
+              setFailed(null);
+              setFailure('');
+              setRetryAt(null);
+            },
+          },
+    [retryAt, clearServer],
+  );
+  const scope = useFieldScope(disabled, errors, true, retry);
+
+  /** Change the draft; `path` names the control, for where a failure shows. */
+  function replace(next: ProcessingControls, path?: string) {
+    if (path) changedRef.current = path;
     draft.setDraft(next);
-    setNotice('');
   }
+  const invalid =
+    Object.keys(errors.local).length > 0 ||
+    Object.keys(errors.server).length > 0;
+  let state: SaveState = 'idle';
+  if (failure || invalid) state = 'failed';
+  else if (busy || draft.syncing || draft.dirty) state = 'saving';
   return {
     value: draft.draft,
     /** Changes when the draft is replaced from outside, to remount inputs. */
@@ -237,14 +306,16 @@ export function useLiveProcessing({
     dirty: draft.dirty,
     /** A save is on its way. */
     saving: busy || draft.syncing,
+    /** For the page's save status: changes apply by themselves. */
+    state,
     failure,
-    notice,
+    /** Try the failed save again, if it may work. */
+    retry: retry?.run,
     scope,
-    /** Change the draft; it is applied after a short wait. */
     replace,
     /** Change the draft and apply it now (pending changes included). */
-    commit: (next: ProcessingControls) => {
-      replace(next);
+    commit: (next: ProcessingControls, path?: string) => {
+      replace(next, path);
       return apply(next);
     },
     /**
@@ -259,8 +330,8 @@ export function useLiveProcessing({
         holding.current = true;
         setHeld(true);
       },
-      slide: (next: ProcessingControls) => {
-        replace(next);
+      slide: (next: ProcessingControls, path?: string) => {
+        replace(next, path);
         if (!tryProcessing || !holding.current) return;
         setTried(true);
         trials.push(whole(next), tryProcessing);

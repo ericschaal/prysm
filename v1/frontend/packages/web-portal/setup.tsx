@@ -6,10 +6,11 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { failureOf, same } from '@prysm/application-client';
+import { failureOf, plainFailure, same } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
+  refusal,
   kindsOf,
   type AdapterSection,
   type AdapterUis,
@@ -17,6 +18,7 @@ import {
 import {
   FieldScopeProvider,
   focusField,
+  saveProblem,
   staleNotice,
   useFieldErrors,
   useFieldScope,
@@ -209,9 +211,14 @@ export function SetupWizard<
         return;
       }
       const field = reason.kind === 'invalid' ? reason.field : undefined;
-      if (field) errors.setServer({ [field]: reason.message });
+      if (field) {
+        const side = field.startsWith('capture')
+          ? adapterFor(captures, capture.kind)
+          : adapterFor(outputs, output.kind);
+        errors.setServer({ [field]: refusal(side, field) });
+      }
       setStep(stepOf(field));
-      setFailure(`Not saved: ${reason.message}`);
+      setFailure(saveProblem(reason));
       setFocus({ field });
       return;
     }
@@ -221,7 +228,7 @@ export function SetupWizard<
       close('Setup saved. Screen sync is starting.');
     } catch (error) {
       close(
-        `Setup saved, but screen sync did not start: ${failureOf(error).message}`,
+        `Setup saved, but screen sync did not start. ${plainFailure(failureOf(error), 'processed', 'Device effects')}`,
       );
     }
   }
@@ -235,7 +242,7 @@ export function SetupWizard<
     setAttempted(true);
     const [invalid] = Object.keys(errors.local);
     if (invalid) {
-      setFailure('Correct the highlighted fields to continue.');
+      setFailure('Check the marked field to continue.');
       setFocus({ field: invalid });
       return;
     }
@@ -288,6 +295,9 @@ export function SetupWizard<
         />
       </div>
     );
+  let tone: 'error' | 'warning' | undefined;
+  if (failure) tone = 'error';
+  else if (notice) tone = 'warning';
   let submitLabel = 'Save and start screen sync';
   if (step < 2) submitLabel = 'Next';
   else if (busy) submitLabel = 'Saving…';
@@ -332,16 +342,15 @@ export function SetupWizard<
         {current.intro}
       </p>
       <FieldScopeProvider value={scope}>{body}</FieldScopeProvider>
-      {notice ? (
-        <p className="notice warning" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {failure ? (
-        <p className="notice error" role="alert" tabIndex={-1} data-form-alert>
-          {failure}
-        </p>
-      ) : null}
+      <p
+        className="form-status"
+        data-tone={tone}
+        role="status"
+        tabIndex={-1}
+        data-form-alert
+      >
+        {failure || notice}
+      </p>
       <div className="actions">
         {step > 0 ? (
           <button type="button" disabled={busy} onClick={() => goTo(step - 1)}>

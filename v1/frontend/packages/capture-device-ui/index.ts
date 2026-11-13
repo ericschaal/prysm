@@ -18,6 +18,12 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
     `${path}, ${describePicture(width ?? deviceDefaults.width, height ?? deviceDefaults.height, fps ?? deviceDefaults.fps)}`,
   // A device on this computer: nothing travels over a network.
   transport: () => 'local',
+  problems: {
+    'capture.path': 'Pick a device with Find devices, or type its name.',
+    'capture.width': 'Use a size the device supports.',
+    'capture.height': 'Use a size the device supports.',
+    'capture.fps': 'Use a rate the device supports.',
+  },
   facts: ({ width, height, fps }) => [
     {
       label: 'Picture',

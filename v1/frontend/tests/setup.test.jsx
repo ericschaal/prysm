@@ -89,8 +89,8 @@ test('setup steps keep the drafts, check each step and save both sections with o
     assert.equal(errorOf(field('capture.path')), 'Enter a value.');
     assert.equal(document.activeElement, field('capture.path'));
     assert.equal(
-      $('[role="alert"]', wizard()).textContent,
-      'Correct the highlighted fields to continue.',
+      $('.form-status', wizard()).textContent,
+      'Check the marked field to continue.',
     );
 
     await edit(field('capture.path'), ' /dev/video2 ');
@@ -177,12 +177,12 @@ test('a server error sends setup back to the step with the field', async () => {
     assert.equal(heading(), 'Your lights');
     assert.equal(
       errorOf(field('output.address')),
-      'a unicast device address is required',
+      'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
     );
     assert.equal(document.activeElement, field('output.address'));
     assert.equal(
-      $('[role="alert"]', wizard()).textContent,
-      'Not saved: a unicast device address is required',
+      $('.form-status', wizard()).textContent,
+      'Not saved. Check the marked field.',
     );
 
     await edit(field('output.address'), '192.0.2.9');
@@ -194,7 +194,10 @@ test('a server error sends setup back to the step with the field', async () => {
     });
     await next();
     assert.equal(heading(), 'Video source');
-    assert.equal(errorOf(field('capture.path')), 'no such device');
+    assert.equal(
+      errorOf(field('capture.path')),
+      'Pick a device with Find devices, or type its name.',
+    );
     assert.equal(document.activeElement, field('capture.path'));
 
     // An error without a control here stays on the review, in its alert.
@@ -208,7 +211,7 @@ test('a server error sends setup back to the step with the field', async () => {
     assert.equal(document.activeElement, $('[data-form-alert]', wizard()));
     assert.equal(
       document.activeElement.textContent,
-      'Not saved: settings file is read-only',
+      'Not saved: something went wrong. Try again.',
     );
     assert.equal(saves(fixture), 3);
     assert.equal(fixture.snapshot().revision, 0);
@@ -275,10 +278,7 @@ test('setup reloads instead of overwriting settings changed elsewhere', async ()
     await next();
     assert.equal(saves(fixture), 1, 'only the other client saved');
     assert.equal(heading(), 'Review and start');
-    assert.equal(
-      $('.notice[role="status"]', wizard()).textContent,
-      staleNotice,
-    );
+    assert.equal($('.form-status', wizard()).textContent, staleNotice);
     assert.match(
       plain($$('.review-item p')[0]),
       /^Video file \(development only\)\/clip\.mkv/,
@@ -430,7 +430,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
     await press(button('Find lights'));
     assert.equal(
       $('.find [role="status"]').textContent,
-      'Could not look: The portal did not answer. Enter the address below.',
+      'Couldn’t search just now. Enter the address below.',
     );
     assert.equal(field('output.address').value, '');
   } finally {

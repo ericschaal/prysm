@@ -10,6 +10,7 @@ import {
 } from './live-processing';
 import { nameOf } from './profile-model';
 import { ProfileControls } from './profiles';
+import { useSaveReport } from './save-state';
 
 const percent = (value: number) => `${value}%`;
 
@@ -21,21 +22,21 @@ interface PictureProps {
   save: (expected: number, processing: Processing) => Promise<number>;
 }
 
-/** What went wrong applying a change, under the controls. */
-function Problems({ notice, failure }: { notice: string; failure: string }) {
+/** Why the last change was not saved, in a slot kept under the controls. */
+function Problem({ failure, retry }: { failure: string; retry?: () => void }) {
   return (
-    <>
-      {notice ? (
-        <p className="notice warning" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {failure ? (
-        <p className="notice error" role="alert">
-          {failure}
-        </p>
-      ) : null}
-    </>
+    <p className="problem-line" role="status">
+      {failure && retry ? (
+        <>
+          Not saved.{' '}
+          <button type="button" className="link" onClick={retry}>
+            Try again
+          </button>
+        </>
+      ) : (
+        failure
+      )}
+    </p>
   );
 }
 
@@ -88,7 +89,10 @@ export function QuickPicture({
             className="brightness"
             value={value.brightness_percent}
             onChange={(brightness_percent) =>
-              live.slider.slide({ ...live.value, brightness_percent })
+              live.slider.slide(
+                { ...live.value, brightness_percent },
+                'processing.brightness_percent',
+              )
             }
             onPress={live.slider.press}
             onRelease={live.slider.release}
@@ -114,6 +118,7 @@ export function QuickPicture({
                 if (choice.id !== active)
                   void live.commit(
                     withProfiles(live.value, [...profiles], choice.id),
+                    'processing.active_profile',
                   );
               }}
             >
@@ -132,100 +137,103 @@ export function QuickPicture({
           )}
         </div>
       </div>
-      <Problems notice={live.notice} failure={live.failure} />
+      <Problem failure={live.failure} retry={live.retry} />
     </section>
   );
 }
 
 /**
  * Picture settings apply live: processing-only changes reach a running
- * session at the next frame without restarting lighting, so each change is
- * saved shortly after the user stops adjusting it. The rarely needed
- * controls sit under Advanced.
+ * session at the next frame without restarting lighting. A slider is tried on
+ * the lights while it is dragged and saved where it is let go, as on Home;
+ * other controls save shortly after the last change. The rarely needed
+ * controls sit under Fine-tuning.
  */
 export function ProcessingPanel({
   processing,
   revision,
   disabled,
-  running,
   save,
-}: PictureProps & { running: boolean }) {
-  const live = useLiveProcessing({ processing, revision, disabled, save });
-  const { failure, notice, scope, replace } = live;
+  tryProcessing,
+}: PictureProps & {
+  /** Light with a processing section unsaved, while a slider is held. */
+  tryProcessing: (processing: Processing) => Promise<unknown>;
+}) {
+  const live = useLiveProcessing({
+    processing,
+    revision,
+    disabled,
+    save,
+    tryProcessing,
+  });
+  useSaveReport('picture', live.state);
   const headingId = useId();
-  function change(next: Partial<ProcessingControls>) {
-    replace({ ...live.value, ...next });
-  }
   const value = live.value;
-  let status = running
-    ? 'Changes show on your lights right away.'
-    : 'Changes are used when screen sync is on.';
-  if (live.saving) status = 'Applying…';
-  else if (live.dirty) status = failure ? 'Not applied' : 'Waiting to apply…';
+  function change<K extends keyof ProcessingControls>(
+    key: K,
+    next: ProcessingControls[K],
+  ) {
+    live.replace({ ...live.value, [key]: next }, `processing.${key}`);
+  }
+  /** A slider's props: tried while held, saved on release. */
+  function slider<K extends keyof ProcessingControls>(key: K) {
+    return {
+      path: `processing.${key}`,
+      value: value[key] as number,
+      onChange: (next: number) =>
+        live.slider.slide({ ...live.value, [key]: next }, `processing.${key}`),
+      onPress: live.slider.press,
+      onRelease: live.slider.release,
+    };
+  }
   return (
     <section
       className="settings-section processing"
       aria-labelledby={headingId}
     >
-      <div className="section-heading">
-        <h2 id={headingId}>Picture</h2>
-        <span
-          className={`save-state${live.dirty ? ' attention' : ''}`}
-          role="status"
-        >
-          {status}
-        </span>
-      </div>
-      <FieldScopeProvider value={scope}>
+      <h2 id={headingId}>Picture</h2>
+      <FieldScopeProvider value={live.scope}>
         <div key={`basic-${live.generation}`}>
           <RangeField
-            path="processing.brightness_percent"
             label="Brightness"
-            value={value.brightness_percent}
-            onChange={(brightness_percent) => change({ brightness_percent })}
             format={percent}
+            {...slider('brightness_percent')}
             {...processingLimits.brightness_percent}
           />
           <CheckboxField
             path="processing.remove_black_bars"
             label="Remove black bars"
-            help="Ignores letterbox bars when choosing colours."
+            help="Ignores the black bars above and below a film."
             checked={value.remove_black_bars}
-            onChange={(remove_black_bars) => change({ remove_black_bars })}
+            onChange={(next) => change('remove_black_bars', next)}
           />
         </div>
         <ProfileControls
           key={`profiles-${live.generation}`}
           profiles={value.profiles ?? []}
           active={value.active_profile}
-          onChange={(profiles, active) =>
-            replace(withProfiles(live.value, profiles, active))
+          onChange={(profiles, active, path) =>
+            live.slider.slide(withProfiles(live.value, profiles, active), path)
           }
+          onPress={live.slider.press}
+          onRelease={live.slider.release}
         />
         <div key={`advanced-${live.generation}`}>
           <details className="disclosure advanced">
-            <summary>Advanced</summary>
+            <summary>Fine-tuning</summary>
             <div className="disclosure-body">
               <RangeField
-                path="processing.shadow_lift_percent"
                 label="Shadow lift"
                 help="Lifts dark colours; black stays off."
-                value={value.shadow_lift_percent}
-                onChange={(shadow_lift_percent) =>
-                  change({ shadow_lift_percent })
-                }
                 format={percent}
+                {...slider('shadow_lift_percent')}
                 {...processingLimits.shadow_lift_percent}
               />
               <RangeField
-                path="processing.spatial_reach_percent"
-                label="Spatial reach"
-                help="How far into the picture each LED looks."
-                value={value.spatial_reach_percent}
-                onChange={(spatial_reach_percent) =>
-                  change({ spatial_reach_percent })
-                }
+                label="Edge depth"
+                help="How far into the picture each light looks."
                 format={percent}
+                {...slider('spatial_reach_percent')}
                 {...processingLimits.spatial_reach_percent}
               />
               <div className="grid">
@@ -233,20 +241,17 @@ export function ProcessingPanel({
                   path="processing.smoothing_seconds"
                   label="Smoothing"
                   unit="seconds"
-                  help="0 turns smoothing off."
+                  help="Softens quick changes. 0 turns it off."
                   value={value.smoothing_seconds}
-                  onChange={(smoothing_seconds) =>
-                    change({ smoothing_seconds })
-                  }
+                  onChange={(next) => change('smoothing_seconds', next)}
                   {...processingLimits.smoothing_seconds}
                 />
                 <NumberField
                   path="processing.sample_density"
-                  label="Sample density"
-                  unit="per 1000 pixels"
-                  help="Higher follows detail more closely and uses more CPU. 128 is a good start."
+                  label="Detail"
+                  help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
                   value={value.sample_density}
-                  onChange={(sample_density) => change({ sample_density })}
+                  onChange={(next) => change('sample_density', next)}
                   {...processingLimits.sample_density}
                 />
               </div>
@@ -254,7 +259,6 @@ export function ProcessingPanel({
           </details>
         </div>
       </FieldScopeProvider>
-      <Problems notice={notice} failure={failure} />
     </section>
   );
 }

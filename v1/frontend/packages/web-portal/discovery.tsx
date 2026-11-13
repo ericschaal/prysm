@@ -1,6 +1,5 @@
 import { use, useEffect, useRef, useState } from 'react';
 import {
-  failureOf,
   type Candidate,
   type DiscoveryClient,
 } from '@prysm/application-client';
@@ -11,7 +10,7 @@ type Search =
   | { state: 'idle' }
   | { state: 'looking' }
   | { state: 'found'; found: Candidate[] }
-  | { state: 'failed'; message: string };
+  | { state: 'failed' };
 
 /**
  * A button that asks the adapter for `kind` what it finds (devices present,
@@ -68,9 +67,8 @@ export function FindDevices({
           (candidate) => typeof candidate.fields[field] === 'string',
         ),
       });
-    } catch (error) {
-      if (!controller.signal.aborted)
-        setSearch({ state: 'failed', message: failureOf(error).message });
+    } catch {
+      if (!controller.signal.aborted) setSearch({ state: 'failed' });
     }
   }
 
@@ -78,7 +76,7 @@ export function FindDevices({
   if (search.state === 'failed')
     result = (
       <p className="notice warning" role="status">
-        Could not look: {search.message} {fallback}
+        Couldn’t search just now. {fallback}
       </p>
     );
   else if (search.state === 'found' && !search.found.length)

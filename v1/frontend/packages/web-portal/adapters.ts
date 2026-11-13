@@ -1,3 +1,4 @@
+import { refusedValue } from './form';
 import type { ComponentType } from 'react';
 
 /** An adapter settings section: `{ kind, ...fields }`. */
@@ -68,6 +69,19 @@ export interface AdapterUi<S extends AdapterSection> {
   transport?: (saved: S) => Transport;
   /** Outputs only: the LEDs around the screen, for the drawing on Home. */
   edges?: (saved: S) => LedEdges;
+  /**
+   * What a field says when Prysm refuses its value, by field path
+   * (`output.address`): how to fill it in. Others say `refusedValue`.
+   */
+  problems?: Readonly<Record<string, string>>;
+}
+
+/** What the field at `path` says when Prysm refused its value. */
+export function refusal(
+  adapter: { problems?: AdapterUi<AdapterSection>['problems'] } | undefined,
+  path: string,
+) {
+  return adapter?.problems?.[path] ?? refusedValue;
 }
 
 /**

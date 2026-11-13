@@ -6,9 +6,8 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
   return (
     <>
       <p className="help">
-        Plays a video file through FFmpeg 9 or newer, which must be installed on
-        this machine. The Docker image and Debian package do not include FFmpeg,
-        so this source does not work there.
+        Plays a video file instead of a live picture, for testing. Needs FFmpeg
+        9 or newer on this computer.
       </p>
       <TextField
         path="capture.path"
@@ -17,7 +16,7 @@ export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
         placeholder="/home/me/Videos/clip.mkv"
         value={value.path}
         onChange={(path) => onChange({ ...value, path })}
-        help="A path Prysm can read; any file FFmpeg 9 or later can decode. It plays once."
+        help="Where the file is on this computer. It plays once."
       />
       <div className="grid three">
         <NumberField

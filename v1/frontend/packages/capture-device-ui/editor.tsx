@@ -29,7 +29,7 @@ export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
         placeholder="/dev/video0"
         value={value.path}
         onChange={(path) => onChange({ ...value, path })}
-        help="A V4L2 device node on Linux, such as /dev/video0, or the AVFoundation unique ID on macOS. In a container, use the mapped device path."
+        help="Pick it with Find devices, or type its name, such as /dev/video0."
       />
       <div className="grid three">
         <NumberField

@@ -3,6 +3,7 @@ import { failureOf } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
+  refusal,
   kindsOf,
   type AdapterSection,
   type AdapterUis,
@@ -12,11 +13,14 @@ import { SelectField } from './fields';
 import {
   FieldScopeProvider,
   focusField,
+  saveProblem,
+  showsField,
   staleNotice,
   useFieldErrors,
   useFieldScope,
   useFieldScopeContext,
 } from './form';
+import { useSaveReport, type SaveState } from './save-state';
 
 /**
  * The kind selector (when the host registers more than one kind) and the
@@ -147,7 +151,7 @@ export function SectionForm<S extends AdapterSection>({
     if (locked) return;
     setAttempted(true);
     if (invalid) {
-      setFailure('Correct the highlighted fields before saving.');
+      setFailure('Not saved. Check the marked field.');
       setFocus({ field: Object.keys(errors.local)[0] });
       return;
     }
@@ -165,16 +169,20 @@ export function SectionForm<S extends AdapterSection>({
       draft.setDraft(value);
       draft.saved(value, next);
       setAttempted(false);
-      setNotice('Saved.');
+      setNotice('Saved');
     } catch (error) {
       const reason = failureOf(error);
       if (reason.kind === 'stale_revision') {
         reset();
         setNotice(staleNotice);
       } else {
-        if (reason.kind === 'invalid' && reason.field)
-          errors.setServer({ [reason.field]: reason.message });
-        setFailure(`Not saved: ${reason.message}`);
+        const field = reason.kind === 'invalid' ? reason.field : undefined;
+        if (field) errors.setServer({ [field]: refusal(adapter, field) });
+        // A field this form does not show cannot be pointed at.
+        const shown = showsField(formRef.current, field);
+        setFailure(
+          saveProblem(shown ? reason : { ...reason, field: undefined }),
+        );
         setFocus({ field: reason.field });
       }
     } finally {
@@ -184,8 +192,23 @@ export function SectionForm<S extends AdapterSection>({
 
   let status = 'Saved';
   if (busy || draft.syncing) status = 'Saving…';
-  else if (draft.unconfigured) status = 'Not configured';
-  else if (draft.dirty) status = 'Unsaved changes';
+  else if (draft.unconfigured) status = 'Not set up';
+  else if (draft.dirty) status = 'Not saved yet';
+  let state: SaveState = 'idle';
+  if (failure) state = 'failed';
+  else if (busy || draft.syncing) state = 'saving';
+  else if (draft.dirty) state = 'changed';
+  useSaveReport(section, state);
+  // One line, kept in place: what went wrong, else what happened.
+  let line = notice;
+  let tone = notice === staleNotice ? 'warning' : '';
+  if (failure) {
+    line = failure;
+    tone = 'error';
+  } else if (draft.conflicted && draft.dirty) {
+    line = 'Changed on another device. Saving shows the current settings.';
+    tone = 'warning';
+  }
   const summary = saved ? adapterFor(adapters, saved.kind) : undefined;
   return (
     <form
@@ -227,30 +250,15 @@ export function SectionForm<S extends AdapterSection>({
               onChange={change}
             />
           </FieldScopeProvider>
-          {draft.conflicted && draft.dirty ? (
-            <p className="notice warning" role="status">
-              Changed elsewhere since you started editing. Saving will load the
-              current settings instead.
-            </p>
-          ) : null}
-          {notice ? (
-            <p
-              className={`notice${notice === staleNotice ? ' warning' : ''}`}
-              role="status"
-            >
-              {notice}
-            </p>
-          ) : null}
-          {failure ? (
-            <p
-              className="notice error"
-              role="alert"
-              tabIndex={-1}
-              data-form-alert
-            >
-              {failure}
-            </p>
-          ) : null}
+          <p
+            className="form-status"
+            data-tone={tone || undefined}
+            role="status"
+            tabIndex={-1}
+            data-form-alert
+          >
+            {line}
+          </p>
           <div className="actions">
             <button
               type="button"

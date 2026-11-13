@@ -28,11 +28,23 @@ export function ProfileControls({
   profiles,
   active,
   onChange,
+  onPress,
+  onRelease,
 }: {
   profiles: readonly ColorProfile[];
   active: string | undefined;
-  /** The new list and active id; `undefined` applies no correction. */
-  onChange: (profiles: ColorProfile[], active: string | undefined) => void;
+  /**
+   * The new list and active id (`undefined` applies no correction), and the
+   * control that changed them.
+   */
+  onChange: (
+    profiles: ColorProfile[],
+    active: string | undefined,
+    path: string,
+  ) => void;
+  /** A correction slider went down or came up: see `RangeField`. */
+  onPress: () => void;
+  onRelease: () => void;
 }) {
   const { disabled, edited } = useFieldScopeContext();
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -47,26 +59,27 @@ export function ProfileControls({
     setConfirming(null);
     edited('processing.profiles');
     edited('processing.active_profile');
-    onChange(next, id);
+    onChange(next, id, 'processing.profiles');
   }
   function add(profile: Omit<ColorProfile, 'id'>) {
     const id = newProfileId(ids);
     restructure([...profiles, { ...profile, id }], id);
   }
-  function update(change: Partial<ColorProfile>) {
+  const path = `processing.profiles[${index}]`;
+  function update(change: Partial<ColorProfile>, at: string) {
     if (!selected) return;
     onChange(
-      profiles.map((profile, at) =>
-        at === index ? { ...profile, ...change } : profile,
+      profiles.map((profile, i) =>
+        i === index ? { ...profile, ...change } : profile,
       ),
       active,
+      at,
     );
   }
-  function correct(change: Partial<CorrectionControls>) {
+  function correct(change: Partial<CorrectionControls>, at: string) {
     if (selected)
-      update({ correction: { ...correctionOf(selected), ...change } });
+      update({ correction: { ...correctionOf(selected), ...change } }, at);
   }
-  const path = `processing.profiles[${index}]`;
   const correction = selected ? correctionOf(selected) : noCorrection;
   return (
     <section className="profiles" aria-labelledby={headingId}>
@@ -161,7 +174,7 @@ export function ProfileControls({
               help="Saved when you leave the field or press Enter."
               value={selected.name ?? ''}
               maxChars={profileLimits.name}
-              onChange={(name) => update({ name })}
+              onChange={(name) => update({ name }, `${path}.name`)}
             />
             <div className="grid">
               {corrections.map(([name, label, help]) => (
@@ -171,7 +184,11 @@ export function ProfileControls({
                   label={label}
                   help={help}
                   value={correction[name]}
-                  onChange={(value) => correct({ [name]: value })}
+                  onChange={(value) =>
+                    correct({ [name]: value }, `${path}.correction.${name}`)
+                  }
+                  onPress={onPress}
+                  onRelease={onRelease}
                   format={signed}
                   {...correctionLimits[name]}
                 />
@@ -191,8 +208,13 @@ export function ProfileControls({
                     label={label}
                     value={correction.hue[name]}
                     onChange={(value) =>
-                      correct({ hue: { ...correction.hue, [name]: value } })
+                      correct(
+                        { hue: { ...correction.hue, [name]: value } },
+                        `${path}.correction.hue.${name}`,
+                      )
                     }
+                    onPress={onPress}
+                    onRelease={onRelease}
                     format={signed}
                     {...hueLimits[name]}
                   />
@@ -203,7 +225,9 @@ export function ProfileControls({
               <button
                 type="button"
                 disabled={disabled}
-                onClick={() => update({ correction: noCorrection })}
+                onClick={() =>
+                  update({ correction: noCorrection }, `${path}.correction`)
+                }
               >
                 Reset correction
               </button>

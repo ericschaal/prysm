@@ -10,13 +10,52 @@ import {
 import { nameProblem, numberProblem, type NumberLimits } from './checks';
 import { FieldContext, shownError, useCheck } from './form';
 
+/**
+ * The line under a control: its help, or in the same place its problem. Both
+ * sit in one grid cell, so the slot is as tall as the taller of the two and
+ * nothing below moves when a problem comes or goes. A failed save of this
+ * control offers its retry here.
+ */
+function Note({
+  id,
+  help,
+  error,
+  retry,
+}: {
+  id: string;
+  help?: ReactNode;
+  error?: string;
+  retry?: () => void;
+}) {
+  return (
+    <div className="field-note" data-state={error ? 'error' : 'help'}>
+      <p className="help" id={`${id}-help`}>
+        {help}
+      </p>
+      <p className="field-error" id={`${id}-error`}>
+        {error}
+        {error && retry ? (
+          <>
+            {' '}
+            <button type="button" className="link" onClick={retry}>
+              Try again
+            </button>
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
 function useField(path: string, help?: ReactNode) {
   const scope = use(FieldContext);
   const id = useId();
   const [touched, setTouched] = useState(false);
   const error = shownError(scope, path, touched);
-  const helpId = help ? `${id}-help` : undefined;
-  const errorId = error ? `${id}-error` : undefined;
+  const retry = scope.retry?.path === path ? scope.retry.run : undefined;
+  let described: string | undefined;
+  if (error) described = `${id}-error`;
+  else if (help) described = `${id}-help`;
   return {
     scope,
     id,
@@ -26,25 +65,15 @@ function useField(path: string, help?: ReactNode) {
       name: path,
       disabled: scope.disabled,
       'aria-invalid': error ? true : undefined,
-      'aria-describedby':
-        [helpId, errorId].filter(Boolean).join(' ') || undefined,
+      'aria-describedby': described,
       onBlur: () => setTouched(true),
     },
     touch: () => setTouched(true),
-    help: help ? (
-      <p className="help" id={helpId}>
-        {help}
-      </p>
-    ) : null,
-    message: error ? (
-      <p className="field-error" id={errorId}>
-        {error}
-      </p>
-    ) : null,
+    note: <Note id={id} help={help} error={error} retry={retry} />,
   };
 }
 
-/** A message for a group of inputs, such as `output.leds`. */
+/** The problem of a group of inputs, such as `output.leds`, in its own slot. */
 export function FieldMessage({
   path,
   touched = false,
@@ -54,11 +83,13 @@ export function FieldMessage({
   touched?: boolean;
 }) {
   const error = shownError(use(FieldContext), path, touched);
-  return error ? (
-    <p className="field-error" data-field-message={path}>
-      {error}
-    </p>
-  ) : null;
+  return (
+    <div className="field-note" data-state={error ? 'error' : 'help'}>
+      <p className="field-error" data-field-message={path}>
+        {error}
+      </p>
+    </div>
+  );
 }
 
 interface FieldProps {
@@ -103,8 +134,7 @@ export function TextField({
           onChange(event.currentTarget.value);
         }}
       />
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }
@@ -172,8 +202,7 @@ export function NameField({
           commit();
         }}
       />
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }
@@ -230,8 +259,7 @@ export function NumberField({
           }
         }}
       />
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }
@@ -323,8 +351,7 @@ export function RangeField({
             }
           : {})}
       />
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }
@@ -350,8 +377,7 @@ export function CheckboxField({
         }}
       />
       <label htmlFor={field.id}>{label}</label>
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }
@@ -391,8 +417,7 @@ export function SelectField<V extends string>({
           </option>
         ))}
       </select>
-      {field.help}
-      {field.message}
+      {field.note}
     </div>
   );
 }

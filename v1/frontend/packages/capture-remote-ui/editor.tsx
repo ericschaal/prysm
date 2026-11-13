@@ -24,17 +24,17 @@ export function RemoteEditor({
       />
       <SelectField
         path="capture.encoding"
-        label="Stream encoding"
+        label="How the TV sends the picture"
         value={encoding}
         options={encodingChoices}
         onChange={(next) => onChange({ ...value, encoding: next })}
         help={encodingChoices.find((choice) => choice.value === encoding)?.help}
       />
       <p className="help">
-        The TV sends this picture to this computer, at the address you open this
-        page with: give the TV that address. {'320\u00a0×\u00a0180'} at 30 fps
-        is plenty for lighting. If the TV cannot send it, lighting stops and
-        says why; change the encoding or size here and start screen sync again.
+        The TV sends its picture to this computer, at the address of this page:
+        give the TV that address. {'320\u00a0×\u00a0180'} at 30 fps is plenty
+        for lighting. If the TV can’t send it, Home says why; then change how it
+        sends the picture, or its size, here.
       </p>
     </>
   );

@@ -259,11 +259,6 @@ export function CalibrateWizard({
           {problem}
         </p>
       ) : null}
-      {live.notice ? (
-        <p className="notice warning" role="status">
-          {live.notice}
-        </p>
-      ) : null}
       {live.failure ? (
         <p className="notice error" role="alert">
           {live.failure}

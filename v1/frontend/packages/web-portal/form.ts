@@ -1,3 +1,4 @@
+import type { Failure } from '@prysm/application-client';
 import {
   createContext,
   use,
@@ -9,7 +10,29 @@ import {
 
 /** Shown when a save was refused because the settings changed elsewhere. */
 export const staleNotice =
-  'These settings were changed elsewhere, so yours were not saved. The current settings are shown; make your change again.';
+  'Changed on another device, so this was not saved. The current settings are shown.';
+
+/** Why a save did not happen, in plain words, for a form's status line. */
+export function saveProblem(failure: Failure) {
+  switch (failure.kind) {
+    case 'invalid':
+      return failure.field
+        ? 'Not saved. Check the marked field.'
+        : 'Not saved: Prysm can’t use these settings.';
+    case 'unavailable':
+    case 'timeout':
+      return 'Not saved: Prysm did not answer. Try again.';
+    case 'busy':
+      return 'Not saved: Prysm is busy. Try again in a moment.';
+    case 'faulted':
+      return 'Not saved: Prysm needs a restart.';
+    default:
+      return 'Not saved: something went wrong. Try again.';
+  }
+}
+
+/** What a field says when Prysm refused its value. */
+export const refusedValue = 'Prysm can’t use this value.';
 
 /**
  * The form a field belongs to: whether it is editable, the server's errors by
@@ -26,6 +49,8 @@ export interface FieldScope {
   report: (path: string, message: string | null) => void;
   /** The user changed a field; its server error no longer applies. */
   edited: (path: string) => void;
+  /** A failed save of the control at `path`, offered again at that control. */
+  retry?: { path: string; run: () => void } | null;
 }
 
 export const FieldContext = createContext<FieldScope>({
@@ -81,11 +106,20 @@ export function useFieldScope(
   disabled: boolean,
   errors: ReturnType<typeof useFieldErrors>,
   attempted: boolean,
+  retry: FieldScope['retry'] = null,
 ): FieldScope {
   const { server, local, report, edited } = errors;
   return useMemo(
-    () => ({ disabled, errors: server, local, attempted, report, edited }),
-    [disabled, server, local, attempted, report, edited],
+    () => ({
+      disabled,
+      errors: server,
+      local,
+      attempted,
+      report,
+      edited,
+      retry,
+    }),
+    [disabled, server, local, attempted, report, edited, retry],
   );
 }
 
@@ -110,18 +144,28 @@ export function useCheck(path: string, message: string | null) {
   useEffect(() => () => report(path, null), [report, path]);
 }
 
+/** The control for `field` in `form`, if the form shows one. */
+function controlOf(form: HTMLElement | null, field: string | undefined) {
+  // Field paths are dotted identifiers from the generated settings.
+  const path = field && /^[\w.]+$/.test(field) ? field : null;
+  if (!form || !path) return null;
+  return (
+    form.querySelector<HTMLElement>(`[name="${path}"]`) ??
+    form.querySelector<HTMLElement>(`[data-field="${path}"]`)
+  );
+}
+
+/** Whether `form` shows a control for `field`. */
+export const showsField = (form: HTMLElement | null, field?: string) =>
+  controlOf(form, field) !== null;
+
 /** Focus the control for `field` in `form`, or the form's alert. */
 export function focusField(
   form: HTMLElement | null,
   field: string | undefined,
 ) {
-  if (!form) return;
-  // Field paths are dotted identifiers from the generated settings.
-  const path = field && /^[\w.]+$/.test(field) ? field : null;
-  const target =
-    (path &&
-      (form.querySelector<HTMLElement>(`[name="${path}"]`) ??
-        form.querySelector<HTMLElement>(`[data-field="${path}"]`))) ||
-    form.querySelector<HTMLElement>('[data-form-alert]');
-  target?.focus();
+  (
+    controlOf(form, field) ??
+    form?.querySelector<HTMLElement>('[data-form-alert]')
+  )?.focus();
 }

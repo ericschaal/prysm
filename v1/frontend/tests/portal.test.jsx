@@ -12,6 +12,8 @@ import {
   processingDelayMs,
   processingLimits,
   profileLimits,
+  rebased,
+  savedForMs,
   throttled,
   trialIntervalMs,
   ringDelayMs,
@@ -170,9 +172,9 @@ test('Home says when video is awaited; the capture rate is in the technical deta
     );
     await openSettings();
     const rate = $$('.diagnostics dt').find(
-      (term) => term.textContent === 'Capture rate',
+      (term) => term.textContent === 'Frames per second',
     );
-    assert.equal(rate.nextElementSibling.textContent, '30 fps');
+    assert.equal(rate.nextElementSibling.textContent, '30');
     await click(button('Home'));
 
     await act(async () =>
@@ -573,6 +575,103 @@ test('modes that cannot work are disabled and say why; before setup only the pro
   }
 });
 
+test('a stale picture change keeps both changes: mine where I changed, theirs elsewhere', () => {
+  const base = { ...defaultProcessing, brightness_percent: 80 };
+  const mine = { ...base, shadow_lift_percent: 30, brightness_percent: 60 };
+  const theirs = { ...base, smoothing_seconds: 0.5, brightness_percent: 90 };
+  assert.deepEqual(rebased(theirs, base, mine), {
+    ...base,
+    shadow_lift_percent: 30,
+    smoothing_seconds: 0.5,
+    // The same control on both: the value the user sees wins.
+    brightness_percent: 60,
+  });
+  // A removed list stays removed; an untouched one follows theirs.
+  const profiles = [{ id: 'a', name: 'A' }];
+  assert.deepEqual(
+    rebased({ ...base, profiles }, { ...base, profiles }, base),
+    base,
+  );
+  assert.deepEqual(rebased({ ...base, profiles }, base, base), {
+    ...base,
+    profiles,
+  });
+});
+
+test('Settings has one save status; a refused stale change is saved again on the newer settings', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const status = () => $('.save-status').textContent;
+  try {
+    await openSettings();
+    assert.equal(status(), 'All changes saved');
+    await edit(field('processing.shadow_lift_percent'), 30);
+    assert.equal(status(), 'Saving…');
+    await settle();
+    assert.equal(status(), 'Saved');
+    await act(async () => sleep(savedForMs));
+    assert.equal(status(), 'All changes saved');
+
+    // Another device saved meanwhile; this page has not heard yet.
+    fixture.failNext({
+      kind: 'stale_revision',
+      message: 'settings revision 1 is stale; current is 2',
+      current: 2,
+    });
+    await edit(field('processing.shadow_lift_percent'), 40);
+    await settle();
+    assert.equal(saves(fixture), 2);
+    assert.equal(status(), 'Saving…', 'waits for the newer settings');
+    await elsewhere(fixture, {
+      processing: {
+        ...fixture.snapshot().settings.processing,
+        smoothing_seconds: 0.5,
+      },
+    });
+    await settle();
+    const saved = fixture.snapshot().settings.processing;
+    assert.equal(saved.shadow_lift_percent, 40);
+    assert.equal(saved.smoothing_seconds, 0.5);
+    assert.equal(field('processing.smoothing_seconds').value, '0.5');
+    assert.equal(status(), 'Saved');
+    assert(!text().includes('changed elsewhere'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a picture save that fails is shown at its control, with a retry there', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await openSettings();
+    const toggle = field('processing.remove_black_bars');
+    const row = () => toggle.closest('.field');
+    fixture.failNext({
+      kind: 'unavailable',
+      message: 'The portal did not answer.',
+    });
+    await click(toggle);
+    await settle();
+    assert.equal(errorOf(toggle), 'Not saved. Try again');
+    assert.equal($('.save-status').textContent, 'Not saved');
+    await settle();
+    assert.equal(saves(fixture), 1, 'not retried by itself');
+
+    await click(button('Try again', row()));
+    await settle();
+    assert.equal(saves(fixture), 2);
+    assert.equal(
+      fixture.snapshot().settings.processing.remove_black_bars,
+      true,
+    );
+    assert.equal(errorOf(toggle), undefined);
+    assert.equal($('.save-status').textContent, 'Saved');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('Open WLED derives http://host[:port]/ from the saved address', () => {
   for (const [address, url] of [
     ['192.168.1.50', 'http://192.168.1.50/'],
@@ -698,7 +797,10 @@ test('picture controls show the state, enforce ranges and apply live', async () 
     });
     await edit(control('shadow_lift_percent'), 30);
     await settle();
-    assert.equal(errorOf(control('shadow_lift_percent')), 'must be 0-100');
+    assert.equal(
+      errorOf(control('shadow_lift_percent')),
+      'Prysm can’t use this value.',
+    );
     await settle();
     assert.equal(saves(fixture), 3);
     await edit(control('shadow_lift_percent'), 20);
@@ -742,7 +844,7 @@ test('the capture form saves the exact section on Save, with dirty state and res
     assert.equal(button('Save', form('Video source')).disabled, true);
 
     await edit(field('capture.width'), 1280);
-    assert.equal(badge('Video source'), 'Unsaved changes');
+    assert.equal(badge('Video source'), 'Not saved yet');
     await click(button('Reset', form('Video source')));
     assert.equal(field('capture.width').value, '640');
     assert.equal(badge('Video source'), 'Saved');
@@ -774,7 +876,7 @@ test('the capture form saves the exact section on Save, with dirty state and res
     assert.equal(saves(fixture), 1);
     assert.equal(
       $('[data-form-alert]', form('Video source')).textContent,
-      'Correct the highlighted fields before saving.',
+      'Not saved. Check the marked field.',
     );
     assert.equal(document.activeElement, field('capture.width'));
 
@@ -802,11 +904,15 @@ test('server field errors land on their control and clear when it is edited', as
     await edit(field('capture.height'), 2000);
     await submit(form('Video source'));
     assert.equal(field('capture.height').getAttribute('aria-invalid'), 'true');
-    assert.equal(errorOf(field('capture.height')), 'height exceeds 2160');
+    // Prysm’s own words stay out: the field says how to fill it in.
+    assert.equal(
+      errorOf(field('capture.height')),
+      'Use a size the device supports.',
+    );
     assert.equal(document.activeElement, field('capture.height'));
     assert.equal(
-      $('[role="alert"]', form('Video source')).textContent,
-      'Not saved: height exceeds 2160',
+      $('.form-status', form('Video source')).textContent,
+      'Not saved. Check the marked field.',
     );
     await edit(field('capture.height'), 1080);
     assert.equal(errorOf(field('capture.height')), undefined);
@@ -821,25 +927,25 @@ test('server field errors land on their control and clear when it is edited', as
     await submit(form('Lights'));
     assert.equal(
       errorOf(field('output.address')),
-      'a unicast device address is required',
+      'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
     );
     assert.equal(document.activeElement, field('output.address'));
 
     fixture.failNext({
       kind: 'invalid',
       field: 'output.leds',
-      message: 'total LED count must be between 1 and 65535',
+      message: 'the LEDs must total 1 to 16384, the most WLED drives',
     });
     await edit(field('output.address'), '192.0.2.7');
     await submit(form('Lights'));
     assert.equal(
       $('[data-field-message="output.leds"]').textContent,
-      'total LED count must be between 1 and 65535',
+      'Use 1 to 16384 LEDs in total.',
     );
     assert.equal(document.activeElement, $('[data-field="output.leds"]'));
     // Editing any edge answers the group's error.
     await edit(field('output.leds.right'), 2);
-    assert.equal($('[data-field-message="output.leds"]'), null);
+    assert.equal($('[data-field-message="output.leds"]').textContent, '');
 
     // A field this form does not show still explains itself.
     fixture.failNext({
@@ -854,7 +960,7 @@ test('server field errors land on their control and clear when it is edited', as
     );
     assert.equal(
       document.activeElement.textContent,
-      'Not saved: unknown field',
+      'Not saved: Prysm can’t use these settings.',
     );
     // Every attempt reached the server and was refused; nothing was saved.
     assert.equal(saves(fixture), 4);
@@ -874,13 +980,13 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
     await elsewhere(fixture, {
       capture: { kind: 'device', path: '/dev/video9' },
     });
-    assert(text().includes('Changed elsewhere since you started editing.'));
+    assert(text().includes('Changed on another device.'));
     assert.equal(field('capture.path').value, '/dev/video1');
     await submit(form('Video source'));
     assert.equal(saves(fixture), 1);
     assert.equal(field('capture.path').value, '/dev/video9');
     assert.equal(
-      $('.notice[role="status"]', form('Video source')).textContent,
+      $('.form-status', form('Video source')).textContent,
       staleNotice,
     );
 
@@ -894,7 +1000,7 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
     await submit(form('Video source'));
     assert.equal(field('capture.path').value, '/dev/video9');
     assert.equal(
-      $('.notice[role="status"]', form('Video source')).textContent,
+      $('.form-status', form('Video source')).textContent,
       staleNotice,
     );
     assert.equal(fixture.snapshot().settings.capture.path, '/dev/video9');
@@ -908,10 +1014,7 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
     await edit(field('processing.brightness_percent'), 50);
     await settle();
     await submit(form('Video source'));
-    assert.equal(
-      $('.notice[role="status"]', form('Video source')).textContent,
-      'Saved.',
-    );
+    assert.equal($('.form-status', form('Video source')).textContent, 'Saved');
     assert.equal(fixture.snapshot().settings.capture.path, '/dev/video3');
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 50);
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.50');
@@ -954,7 +1057,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     // Development only: it says what it needs, and where it does not work.
     assert.match(
       form('Video source').textContent,
-      /Plays a video file through FFmpeg 9 or newer, which must be installed on this machine\. The Docker image and Debian package do not include FFmpeg, so this source does not work there\./,
+      /Plays a video file instead of a live picture, for testing\. Needs FFmpeg 9 or newer on this computer\./,
     );
     await edit(field('capture.kind'), 'remote');
     assert.equal(field('output.address').value, 'wled.local');
@@ -963,7 +1066,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'remote' });
     assert.deepEqual(fixture.snapshot().settings.output, output);
     assert.equal(field('output.address').value, 'wled.local');
-    assert.equal(badge('Lights'), 'Unsaved changes');
+    assert.equal(badge('Lights'), 'Not saved yet');
 
     await click(button('Reset', form('Lights')));
     await edit(field('output.kind'), 'null');
@@ -991,7 +1094,7 @@ test('an unconfigured section starts from its first kind and saves only when val
   try {
     await click(button('Leave setup'));
     await openSettings();
-    assert.equal(badge('Video source'), 'Not configured');
+    assert.equal(badge('Video source'), 'Not set up');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
     await submit(form('Video source'));
@@ -1282,7 +1385,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
         'Height (pixels)',
         'Frame rate (fps)',
         'Include TV menus',
-        'Stream encoding',
+        'How the TV sends the picture',
       ],
     );
     assert.equal(input('include_ui').checked, true);
@@ -1295,23 +1398,23 @@ test('the remote capture form asks the TV for a stream with the same picture fie
         item.textContent,
       ]),
       [
-        ['h264_hardware', 'Hardware H.264 (recommended)'],
-        ['h264_software', 'Software H.264'],
+        ['h264_hardware', 'Compressed by the TV’s video chip (recommended)'],
+        ['h264_software', 'Compressed by the TV’s processor'],
         ['raw', 'Uncompressed'],
       ],
     );
     assert.match(
       help(input('encoding')),
-      /Least work for the TV, little network \(about 2\sMbit\/s\)/,
+      /Easiest for the TV and light on your network/,
     );
     await edit(input('encoding'), 'h264_software');
     assert.match(
       help(input('encoding')),
-      /More work for the TV.*same little network/,
+      /More work for the TV, equally light on your network/,
     );
     await edit(input('encoding'), 'raw');
     assert.match(help(input('encoding')), /ten times the network/);
-    assert.equal(badge('Video source'), 'Unsaved changes');
+    assert.equal(badge('Video source'), 'Not saved yet');
 
     // Same validation as the webOS form.
     await edit(input('height'), 181);
@@ -1330,7 +1433,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     assert.equal(saves(fixture), 0);
     assert.match(
       errorOf(input('encoding')),
-      /H\.264 needs at least 16 × 16 pixels; choose Uncompressed/,
+      /A compressed picture needs at least 16 × 16 pixels; choose Uncompressed/,
     );
     await edit(input('height'), 144);
     await edit(input('width'), 256);
@@ -1357,7 +1460,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     await submit(form('Video source'));
     assert.equal(
       errorOf(input('encoding')),
-      'H.264 needs at least 16x16; use raw for smaller pictures',
+      'Choose Uncompressed, or a picture of at least 16 × 16 pixels.',
     );
     assert.equal(document.activeElement, input('encoding'));
   } finally {
@@ -1391,7 +1494,7 @@ test('the sender refusing the requested stream is shown in full with the lightin
     await openSettings();
     assert.match(
       form('Video source').textContent,
-      /If the TV cannot send it, lighting stops and says why; change the encoding or size here/,
+      /If the TV can’t send it, Home says why; then change how it sends the picture, or its size, here/,
     );
   } finally {
     await portal.unmount();
@@ -2191,7 +2294,7 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
     assert.equal(saves(fixture), 0);
     assert.equal(fixture.snapshot().revision, revision);
     assert.deepEqual(card(), calm);
-    assert(!text().includes('Not applied'));
+    assert(!text().includes('Not saved'));
     assert.equal(slider().value, '90');
 
     // Let go: the final value is saved, once, after the trials.
@@ -2229,10 +2332,13 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
     });
     await fire('pointerdown');
     await edit(slider(), 40);
-    assert(!text().includes('Not applied'));
+    assert(!text().includes('Not saved'));
     await fire('pointerup');
     await flush();
-    assert(text().includes('Not applied: settings file is read-only'));
+    assert.equal(
+      $('.quick-picture .problem-line').textContent,
+      'Not saved. Try again',
+    );
     assert.equal(slider().value, '40', 'the thumb stays where it was let go');
   } finally {
     t.mock.timers.reset();

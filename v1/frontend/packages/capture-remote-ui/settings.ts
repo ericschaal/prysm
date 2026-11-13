@@ -24,18 +24,18 @@ export const encodingChoices: readonly {
 }[] = [
   {
     value: 'h264_hardware',
-    label: 'Hardware H.264 (recommended)',
-    help: 'Least work for the TV, little network (about 2 Mbit/s).',
+    label: 'Compressed by the TV’s video chip (recommended)',
+    help: 'Easiest for the TV and light on your network.',
   },
   {
     value: 'h264_software',
-    label: 'Software H.264',
-    help: 'More work for the TV’s processor, the same little network.',
+    label: 'Compressed by the TV’s processor',
+    help: 'More work for the TV, equally light on your network.',
   },
   {
     value: 'raw',
     label: 'Uncompressed',
-    help: 'Least work for the TV, but about ten times the network.',
+    help: 'Easiest for the TV, but about ten times the network traffic.',
   },
 ];
 
@@ -45,6 +45,6 @@ export function encodingProblem(value: RemoteReceiverSettings): string | null {
   const width = value.width ?? remoteDefaults.width;
   const height = value.height ?? remoteDefaults.height;
   return encoding !== 'raw' && (width < 16 || height < 16)
-    ? 'H.264 needs at least 16 × 16 pixels; choose Uncompressed for smaller pictures.'
+    ? 'A compressed picture needs at least 16 × 16 pixels; choose Uncompressed for smaller ones.'
     : null;
 }

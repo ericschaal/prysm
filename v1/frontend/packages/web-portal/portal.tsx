@@ -18,6 +18,7 @@ import { LightCard } from './lighting';
 import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel, QuickPicture } from './processing';
+import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionForm } from './section-form';
 import { SetupWizard } from './setup';
 import { nameOf } from './profile-model';
@@ -80,12 +81,24 @@ function useRoute() {
   return [route, go] as const;
 }
 
+/** The lighting mode and session, in words, for “About this Prysm”. */
+const targetLabels = {
+  off: 'Off',
+  processed: 'Screen sync',
+  device_native: 'The lights’ own effects',
+} as const satisfies Record<
+  ApplicationSnapshot<unknown, unknown>['target'],
+  string
+>;
 const sessionLabels = {
-  stopped: 'stopped',
-  running: 'running',
-  native: 'device effects',
-  faulted: 'faulted',
-} as const;
+  stopped: 'Stopped',
+  running: 'Running',
+  native: 'Showing the lights’ own effects',
+  faulted: 'Stopped by a fault; restart Prysm',
+} as const satisfies Record<
+  ApplicationSnapshot<unknown, unknown>['session']['state'],
+  string
+>;
 
 function SettingsIcon() {
   return (
@@ -316,9 +329,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     : null;
   const offline = !online ? (
     <p className="notice warning" role="alert">
-      Connection lost
-      {connection.error ? `: ${connection.error.message}` : ''}. Reconnecting;
-      unsaved changes are kept.
+      Lost the connection to Prysm. Reconnecting; your changes are kept.
     </p>
   ) : null;
   const openSetup = () => {
@@ -396,15 +407,22 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     return page(
       'portal-page settings',
       'Prysm settings',
-      <>
+      <SaveStatusProvider>
         {pageHeading('Settings', '', 'Home')}
-        {notices}
+        <SaveStatus online={online} />
+        {setupNotice ? (
+          <p className="notice" role="status" tabIndex={-1} ref={noticeRef}>
+            {setupNotice}
+          </p>
+        ) : null}
         <ProcessingPanel
           processing={settings.processing}
           revision={revision}
           disabled={!online}
-          running={session.state === 'running'}
           save={saveProcessing}
+          tryProcessing={(processing) =>
+            dispatch(application.commands.tryProcessing(processing))
+          }
         />
         <section className="settings-section" aria-labelledby="setup-heading">
           <h2 id="setup-heading">Your setup</h2>
@@ -478,38 +496,35 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           // Failures have no identity; the list is replaced whole and rows hold no state.
           // eslint-disable-next-line @eslint-react/no-array-index-key
           <p key={index} className="notice warning">
-            A Prysm surface stopped: {failure.message}. Lighting continues.
+            Part of Prysm’s web service stopped. The lights keep working.
           </p>
         ))}
         <details className="disclosure diagnostics">
-          <summary>Technical details</summary>
+          <summary>About this Prysm</summary>
           <dl className="disclosure-body">
             <div>
-              <dt>Target</dt>
-              <dd>{snapshot.target}</dd>
+              <dt>Lights</dt>
+              <dd>{targetLabels[snapshot.target]}</dd>
             </div>
             <div>
-              <dt>Session</dt>
-              <dd>
-                {sessionLabels[session.state]}
-                {session.state === 'faulted' ? ` (${session.phase})` : ''}
-              </dd>
+              <dt>Status</dt>
+              <dd>{sessionLabels[session.state]}</dd>
             </div>
             <div>
-              <dt>Capture rate</dt>
+              <dt>Frames per second</dt>
               <dd>
                 {snapshot.input?.receiving
-                  ? `${Math.round(snapshot.input.fps)} fps`
-                  : 'no video'}
+                  ? Math.round(snapshot.input.fps)
+                  : 'No picture'}
               </dd>
             </div>
             <div>
-              <dt>Settings revision</dt>
+              <dt>Settings version</dt>
               <dd>{revision}</dd>
             </div>
           </dl>
         </details>
-      </>,
+      </SaveStatusProvider>,
     );
 
   if (route === 'preview' && preview)

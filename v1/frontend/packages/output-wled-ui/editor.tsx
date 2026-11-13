@@ -49,7 +49,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
           <>
             A name such as <code>wled.local</code> or an address such as{' '}
             <code>192.168.1.50</code>, with an optional port (
-            <code>wled.local:8080</code>). Colours go to UDP port 4048.
+            <code>wled.local:8080</code>).
           </>
         }
       />
