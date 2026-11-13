@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -11,6 +12,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parents[1]
 V1 = HERE.parents[1]
+FRONTEND = V1 / 'frontend'
 spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
 ipk = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ipk)
@@ -83,9 +85,48 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(refused.returncode, 2)
 
     def test_appinfo_version_is_the_workspace_version(self):
-        cargo = (V1 / 'Cargo.toml').read_text()
-        version = re.search(r'^version = "(\d+\.\d+\.\d+)', cargo, re.M).group(1)
-        self.assertEqual(load('app/appinfo.json')['version'], version)
+        # One place to bump: the source appinfo.json has no version of its own.
+        self.assertNotIn('version', load('app/appinfo.json'))
+        self.assertIn('ipk.py" appinfo "$v1/Cargo.toml"', (HERE / 'build-ipk.sh').read_text())
+        workspace = ipk.workspace_version((V1 / 'Cargo.toml').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            staged = Path(directory) / 'appinfo.json'
+            version = ipk.write_appinfo(V1 / 'Cargo.toml', HERE / 'app/appinfo.json', staged)
+            appinfo = json.loads(staged.read_text())
+        self.assertEqual(appinfo['version'], version)
+        self.assertEqual(appinfo['id'], ipk.APP_ID)
+        # ares-package's rule: three dot-separated numbers, nothing else.
+        self.assertRegex(version, r'^(?:[1-9]\d{0,8}|\d)\.(?:[1-9]\d{0,8}|\d)\.(?:[1-9]\d{0,8}|\d)$')
+        self.assertTrue(workspace == version or workspace.startswith(version + '-'), workspace)
+        self.assertEqual(ipk.app_version('1.0.0-alpha.0'), '1.0.0')
+        self.assertEqual(ipk.app_version('2.10.3'), '2.10.3')
+        for bad in ('1.0', '01.0.0', 'v1.0.0'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                ipk.app_version(bad)
+
+    @unittest.skipUnless(shutil.which('node') and (FRONTEND / 'node_modules/react/LICENSE').is_file(),
+                         'needs node and v1/frontend/node_modules')
+    def test_javascript_notices_include_react(self):
+        # The frontend build writes dist/<host>/licenses.txt with this module;
+        # build-ipk.sh ships it as licenses/javascript.txt.
+        build_ipk = (HERE / 'build-ipk.sh').read_text()
+        self.assertIn('dist/$host/licenses.txt', build_ipk)
+        self.assertIn('licenses/javascript.txt', build_ipk)
+        self.assertIn(ipk.SERVICE + 'licenses/javascript.txt', ipk.SERVICE_FILES)
+        bundled = [FRONTEND / 'node_modules/react/cjs/react.production.js',
+                   FRONTEND / 'node_modules/react-dom/cjs/react-dom-client.production.js',
+                   FRONTEND / 'packages/tv-ui/index.ts']
+        script = ("import { packageDir, notices } from './scripts/licenses.mjs';"
+                  "const ids = JSON.parse(process.argv[1]);"
+                  "process.stdout.write(await notices(ids.map(packageDir).filter(Boolean)));")
+        text = subprocess.run(['node', '--input-type=module', '-e', script, json.dumps([str(p) for p in bundled])],
+                              cwd=FRONTEND, capture_output=True, text=True, check=True).stdout
+        react = json.loads((FRONTEND / 'node_modules/react/package.json').read_text())
+        self.assertIn(f"react {react['version']} (MIT)", text)
+        self.assertIn((FRONTEND / 'node_modules/react/LICENSE').read_text().strip(), text)
+        self.assertIn('react-dom ', text)
+        # Prysm's own packages are covered by prysm.txt, not listed here.
+        self.assertNotIn('@prysm', text)
 
 
 def tar(*entries):

@@ -58,11 +58,10 @@ if [ "$flavour" = full ] && [ ! -f "$v1/frontend/dist/webos/web-portal/assets.rs
   exit 1
 fi
 
-# appinfo.json versions are numeric x.y.z: the workspace version without a pre-release.
-version=$(sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\).*"$/\1/p' "$v1/Cargo.toml" | head -n 1)
-appinfo_version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$here/app/appinfo.json")
-[ "$version" = "$appinfo_version" ] || {
-  echo "build-ipk.sh: app/appinfo.json version $appinfo_version differs from the workspace's $version" >&2
+# Notices for the JavaScript in this host's bundles, written by the frontend build.
+notices="$v1/frontend/dist/$host/licenses.txt"
+[ -f "$notices" ] || {
+  echo "build-ipk.sh: no JavaScript notices at $notices; rebuild v1/frontend (or pass --frontend)" >&2
   exit 1
 }
 
@@ -85,7 +84,10 @@ stage=$(mktemp -d "$output/stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/app" "$stage/service/licenses"
 cp -R "$ui/." "$stage/app/"
-cp "$here/app/appinfo.json" "$here/app/icon.png" "$stage/app/"
+cp "$here/app/icon.png" "$stage/app/"
+# The one version source is [workspace.package] in v1/Cargo.toml; appinfo.json
+# takes its major.minor.patch (ares-package accepts nothing else).
+version=$(python3 "$here/ipk.py" appinfo "$v1/Cargo.toml" "$here/app/appinfo.json" "$stage/app/appinfo.json")
 for file in services.json setup.sh supervisor.role.json worker.role.json supervisor.service \
   supervisor.client.json supervisor.api.json; do
   cp "$here/service/$file" "$stage/service/"
@@ -94,6 +96,7 @@ done
 cp "$binaries/$supervisor" "$stage/service/prysm-webos-service"
 cp "$binaries/$worker" "$stage/service/prysm-webos-worker"
 cp "$root/LICENSE" "$stage/service/licenses/prysm.txt"
+cp "$notices" "$stage/service/licenses/javascript.txt"
 for notice in hyperion tv-native-apis; do
   cp "$v1/adapters/capture-webos-sys/LICENSE.$notice" "$stage/service/licenses/$notice.txt"
 done

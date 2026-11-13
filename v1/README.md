@@ -26,8 +26,14 @@ Contracts: [ownership and generation](CONTRACTS.md), [portal HTTP](surfaces/web-
 
 | Host | Sources | Outputs | Surfaces |
 | --- | --- | --- | --- |
-| `prysm-headless` (production, Docker) | `device`, `file`, `remote` | `wled`, `null` | web portal |
-| `prysm-tui` (local testing) | `device`, `file`, `remote` | `wled`, `null` | web portal, terminal |
+| `prysm-headless` (production, Docker) | `device`, `file`¹, `remote` | `wled`, `null` | web portal |
+| `prysm-tui` (local testing) | `device`, `file`¹, `remote` | `wled`, `null` | web portal, terminal |
+
+¹ `file` is for development only: it plays a video file through FFmpeg, which
+Prysm does not ship. It works only where FFmpeg 9 or newer is installed and on
+`PATH` (check with `ffmpeg -version`), such as a developer machine running
+from a source checkout. The [Docker image and the Debian package](packaging/README.md)
+do not include FFmpeg, so `file` does not work there; use `device` or `remote`.
 
 A `file` source plays once (`"repeat": true` loops it); at its end lighting
 stops without a failure and the target becomes `off`. The `remote` source

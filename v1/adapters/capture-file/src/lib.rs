@@ -6,7 +6,8 @@
 //! - `source`: the running FFmpeg child; reads raw RGB24 frames from its
 //!   stdout and keeps a bounded tail of its stderr for failures.
 //!
-//! Requires FFmpeg 9+ on `PATH` (its `scale` filter maps HDR to sRGB). FFmpeg
+//! Development only: requires FFmpeg 9+ on `PATH` (its `scale` filter maps HDR
+//! to sRGB), which neither the Docker image nor the Debian package ships. FFmpeg
 //! paces frames by presentation time (`realtime` filter). Playback runs once:
 //! at the end of the file `next_frame` returns [`Pull::Ended`](prysm_ports::Pull::Ended),
 //! the session stops without a failure and lighting turns off; starting

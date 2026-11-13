@@ -8,7 +8,11 @@ the shipping product's [image](../../Dockerfile) and
 [package](../../packaging/debian/README.md), and assume a machine without them.
 
 Both offer the `device` (V4L2) and `remote` sources and the `wled` and `null`
-outputs. The `file` source needs FFmpeg 9+ on `PATH`, which neither ships.
+outputs. The `file` source (play a video file) is for development only: it
+needs FFmpeg 9 or newer on `PATH`, and neither the Docker image nor the Debian
+package includes FFmpeg, so `file` does not work in either. To try it, run
+`prysm-tui` or `prysm-headless` from a source checkout on a machine with
+FFmpeg 9+ installed ([hosts](../README.md#hosts)).
 
 ## Portal and settings
 
@@ -65,6 +69,8 @@ or `docker compose -f v1/packaging/docker/compose.yaml up -d`
 - The image's `HEALTHCHECK` reads `GET /api/v1/state` on port 8787; it reports
   unhealthy with `--no-portal` or another `--listen` port.
 - `docker stop` sends SIGTERM; the host idles the LEDs and exits. Allow 30 s.
+- The image has no FFmpeg, so the development-only `file` source fails to
+  start; use `device` or `remote`.
 
 Release images are published as `ghcr.io/ericschaal/prysm-headless:<version>`
 by [v1-release.yml](../../.github/workflows/v1-release.yml) on a `v1.*` tag.
@@ -100,6 +106,9 @@ restarts on failure and is sandboxed (read-only system, no capabilities,
 only V4L2 devices, IPv4/IPv6/Unix sockets). `apt remove` stops and disables
 the service; `apt purge` also deletes `/var/lib/prysm`. The `prysm` user is
 kept.
+
+The package does not depend on FFmpeg, so the development-only `file` source
+does not work with it; use `device` or `remote`.
 
 ## webOS TV packages
 
@@ -141,6 +150,14 @@ null`; without it the TV app says how to allow it. `null` is also the origin
 of sandboxed frames on any site, so any web page opened on that network can
 then drive the lights, as with the portal's other LAN exposure.
 
+`javascript.txt` comes from the frontend build: for each host,
+[`scripts/licenses.mjs`](../frontend/scripts/licenses.mjs) records which
+packages under `node_modules` end up in that host's bundles (the TV UI and,
+for `full`, the portal the worker serves) and writes their names, versions
+and licence files to `frontend/dist/<host>/licenses.txt`, which the build
+copies into the package. The build fails if a bundled package has no licence
+file.
+
 Requirements: the relocated webOS SDK (buildroot-nc4,
 `arm-webos-linux-gnueabi_sdk-buildroot`), `rustup target add
 armv7-unknown-linux-gnueabi`, `ares-package` from `@webos-tools/cli`, Python 3.9+
@@ -166,9 +183,16 @@ set or a symbol newer than glibc 2.12 or `CXXABI_1.3.9` ([`ipk.py elf`](webos/ip
 packages with `ares-package` and then rewrites the archive: root ownership,
 0755 for directories, the two binaries and `setup.sh`, 0644 for everything
 else; no install scripts, links, absolute or `..` paths, files outside the
-app, service and package directories, or unknown service files. The version
-is the workspace version without its pre-release (`app/appinfo.json` must
-match). Despite `_all`, the binaries are ARMv7.
+app, service and package directories, or unknown service files. Despite
+`_all`, the binaries are ARMv7.
+
+The version has one source: `version` under `[workspace.package]` in
+[`v1/Cargo.toml`](../Cargo.toml). The binaries report it in full
+(`prysm-webos-service --version` prints `1.0.0-alpha.0`). The app's
+`appinfo.json`, and with it the IPK's file name and control file, carry only
+its `major.minor.patch` (`1.0.0`), because `ares-package` accepts nothing but
+three numbers there. The `appinfo.json` in this repository has no version;
+[`ipk.py appinfo`](webos/ipk.py) adds it while packaging.
 
 The slim worker encodes its stream with H.264 by default
 ([`prysm-h264`](../adapters/h264/src/lib.rs)): the TV's hardware encoder
@@ -200,7 +224,7 @@ Installed layout (`/media/developer/apps/usr/palm/…`):
 | `services/io.prysm.tv.service/prysm-webos-worker` | the flavour's worker |
 | `services/io.prysm.tv.service/setup.sh` | run after every install or update (TV app via Homebrew Channel, `install-ipk.sh`, or ssh): `prysm-webos-service setup` |
 | `services/io.prysm.tv.service/*.json`, `supervisor.service` | [Luna files](webos/service/): supervisor role (name `io.prysm.tv.service`, inbound any, outbound `tvpower`, `videooutput`), worker role (capture and resource-manager clients), public API `getState setPreferences setEnabled uninstall`, client groups, D-Bus service |
-| `services/io.prysm.tv.service/licenses/` | Prysm, hyperion-webos and TV native API notices; slim also OpenH264, gstreamer-rs and gtk-rs |
+| `services/io.prysm.tv.service/licenses/` | Prysm, hyperion-webos and TV native API notices, `javascript.txt` for the bundled JavaScript; slim also OpenH264, gstreamer-rs and gtk-rs |
 
 `setup` writes `/var/luna-service2/manifests.d/io.prysm.tv.{supervisor,worker}.json`
 and the boot hook `/var/lib/webosbrew/init.d/io.prysm.tv`; preferences and
