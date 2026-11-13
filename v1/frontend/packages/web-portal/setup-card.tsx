@@ -91,8 +91,8 @@ export function SetupCard({
   link,
   openSettings,
 }: {
-  capture: SetupPart | null;
-  output: SetupPart | null;
+  capture: SetupPart;
+  output: SetupPart;
   edges?: LedEdges;
   link?: { label: string; href: string };
   openSettings: () => void;
@@ -110,12 +110,12 @@ export function SetupCard({
       <h2 id={headingId}>Screen &amp; lights</h2>
       <ol className="setup-flow">
         {parts.map(({ name, part, icon }) => (
-          <li key={name} data-missing={!part}>
+          <li key={name}>
             <span className="setup-icon">{icon}</span>
             <span className="setup-text">
               <span className="setup-name">{name}</span>
-              <strong>{part ? part.label : 'Not set up yet'}</strong>
-              {part?.summary ? (
+              <strong>{part.label}</strong>
+              {part.summary ? (
                 <span className="setup-summary">{part.summary}</span>
               ) : null}
             </span>
@@ -125,7 +125,7 @@ export function SetupCard({
       {edges ? <LedMap edges={edges} /> : null}
       <div className="setup-links">
         <button type="button" className="quiet" onClick={openSettings}>
-          {capture || output ? 'Change setup' : 'Open Settings'}
+          Change setup
         </button>
         {link ? (
           <a href={link.href} target="_blank" rel="noopener noreferrer">

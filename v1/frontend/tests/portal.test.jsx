@@ -241,6 +241,8 @@ test('the power button and the mode tiles set the target and show what the sessi
       }),
     );
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
+    assert($('.lighting-status').classList.contains('visually-hidden'));
+    assert.equal($$('.light-card .notice').length, 0, 'one sentence, no box');
     assert.equal(word(), 'Stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
@@ -276,47 +278,38 @@ test('the power button and the mode tiles set the target and show what the sessi
   }
 });
 
-test('modes that cannot work are disabled and say why', async () => {
-  for (const [initial, processed, native, effects, off] of [
-    [{ output }, 'Set up a video source first.', null, 'WLED effects', null],
-    [
-      { capture, output: { kind: 'null' } },
-      null,
+test('modes that cannot work are disabled and say why; before setup only the prompt shows', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture,
+    output: { kind: 'null' },
+  });
+  try {
+    assert.equal(mode('processed').disabled, false);
+    assert.equal(mode('device_native').disabled, true);
+    assert.equal(
+      hint(mode('device_native')),
       'These lights have no effects of their own.',
-      'Device effects',
-      null,
-    ],
-    [
-      { capture },
-      'Set up your lights first.',
-      'Set up your lights first.',
-      'Device effects',
-      'Set up your lights first.',
-    ],
-    [
-      {},
-      'Set up a video source and lights first.',
-      'Set up your lights first.',
-      'Device effects',
-      'Set up a video source and lights first.',
-    ],
-  ]) {
-    const portal = await renderPortal(HeadlessWebPortal, initial);
+    );
+    assert.equal(mode('device_native').textContent, 'Device effects');
+    assert.equal(power().disabled, false);
+    assert.equal($('.setup-links a'), null, 'no device to open');
+  } finally {
+    await portal.unmount();
+  }
+  for (const initial of [{ output }, { capture }, {}]) {
+    const unset = await renderPortal(HeadlessWebPortal, initial);
     try {
-      // Setup opens while capture or lights are missing; leave it to see the page.
-      if (!initial.capture || !initial.output)
-        await click(button('Leave setup'));
-      assert.equal(mode('processed').disabled, processed !== null);
-      if (processed) assert.equal(hint(mode('processed')), processed);
-      assert.equal(mode('device_native').disabled, native !== null);
-      if (native) assert.equal(hint(mode('device_native')), native);
-      assert.equal(mode('device_native').textContent, effects);
-      // Power turns on whichever mode can run, and says why when none can.
-      assert.equal(power().disabled, off !== null);
-      if (off) assert.equal(hint(power()), off);
-      assert.equal(!!$('.setup-links a'), initial.output?.kind === 'wled');
+      await click(button('Leave setup'));
+      // A calm card: the prompt and its one action, nothing disabled to puzzle over.
+      assert.equal($$('[data-target]').length, 0);
+      assert.equal(power(), null);
+      assert.equal($('.light-card input'), null);
+      assert.equal($('.chip'), null);
+      assert.equal(button('Set up Prysm').disabled, false);
+      assert.equal($('.setup-card'), null);
+      assert.equal(word(), 'Off');
     } finally {
-      await portal.unmount();
+      await unset.unmount();
     }
   }
 });
@@ -750,9 +743,9 @@ test('an unconfigured section starts from its first kind and saves only when val
       kind: 'device',
       path: '/dev/video0',
     });
+    // Lights still missing: Home keeps offering setup.
     await click(button('Home'));
-    assert.equal(mode('processed').disabled, true);
-    assert.equal(hint(mode('processed')), 'Set up your lights first.');
+    assert.equal(button('Set up Prysm').disabled, false);
   } finally {
     await portal.unmount();
   }

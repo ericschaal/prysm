@@ -66,8 +66,8 @@
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
   --text-display: clamp(2rem, 1.6rem + 1.8vw, 2.75rem);
   /* Home only: the headline and the lights' state word. */
-  --text-hero: clamp(2.5rem, 1.9rem + 2.6vw, 3.75rem);
-  --text-state: clamp(4.25rem, 3.4rem + 4vw, 6rem);
+  --text-hero: clamp(1.875rem, 1.2rem + 2.9vw, 3.75rem);
+  --text-state: clamp(3.75rem, 2.9rem + 4vw, 6rem);
   --text-title: 1.1875rem;
   --text-body: 1rem;
   --text-small: 0.8125rem;

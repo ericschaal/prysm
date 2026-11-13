@@ -73,7 +73,7 @@ export function LightingCard({
   } else if (snapshot) {
     status = describeLighting({
       ...snapshot,
-      effects: effectsOf(snapshot) ?? 'Light effects',
+      effects: effectsOf(snapshot) ?? 'Device effects',
     });
     const { state } = snapshot.session;
     quietStatus =
@@ -129,7 +129,7 @@ export function LightingCard({
     },
     {
       value: 'device_native',
-      label: effects ?? 'Light effects',
+      label: effects ?? 'Device effects',
       disabled: !effects,
     },
     { value: 'off', label: 'Off', disabled: false },
@@ -140,7 +140,7 @@ export function LightingCard({
       aria-labelledby="lighting-title"
     >
       <h2 id="lighting-title" className="card-title">
-        Lights show
+        Your lights
       </h2>
       <p
         id="lighting-status"

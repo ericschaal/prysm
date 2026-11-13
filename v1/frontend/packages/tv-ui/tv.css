@@ -338,7 +338,7 @@ button:disabled {
   text-align: center;
 }
 
-/* ---- Lights show: what the lights do, one segmented control ---- */
+/* ---- Your lights: what the lights do, one segmented control ---- */
 .lighting {
   margin-top: var(--space-8);
 }

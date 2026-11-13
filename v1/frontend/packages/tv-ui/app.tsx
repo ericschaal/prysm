@@ -366,7 +366,7 @@ export function TvApp({
                   <strong>Web portal</strong>
                   <code>{portalAddress}</code>
                   Open it on your phone or computer to set up capture and
-                  lights, and for colours, profiles and the preview.
+                  lights, and for colour profiles and the live preview.
                 </p>
               </section>
             ) : null}

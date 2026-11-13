@@ -73,7 +73,7 @@ export function ProfileControls({
       <h3 id={headingId}>Colour profile</h3>
       <SelectField
         path="processing.active_profile"
-        label="Active profile"
+        label="Colour profile"
         help="Corrects the colours for one source, such as a games console. Applied as you choose it."
         value={selected ? selected.id : ''}
         options={[

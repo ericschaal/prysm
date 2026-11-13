@@ -242,7 +242,7 @@ export function tvStatus(
       title = 'Lights off';
       description = 'Start screen sync and your lights follow the picture.';
     } else if (state.lighting === 'device_native') {
-      title = 'Light effects on';
+      title = 'WLED effects on';
       description = 'Your lights run their own effects.';
     } else if (state.capturing) {
       title = 'Screen sync is on';

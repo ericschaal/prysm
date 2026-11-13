@@ -126,13 +126,6 @@ function Entry({
   );
 }
 
-/** A greeting for the time of day, over the Home headline. */
-function greeting(hour: number) {
-  if (hour >= 5 && hour < 12) return 'Good morning';
-  if (hour >= 12 && hour < 18) return 'Good afternoon';
-  return 'Good evening';
-}
-
 /**
  * The browser portal. Home holds the light card (power, mode, brightness,
  * colour profile) and a summary of the setup; Settings (`#/settings`) holds
@@ -171,7 +164,6 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   /** Where Calibrate returns to: Settings when opened from there. */
   const [calibrateFrom, setCalibrateFrom] = useState('');
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
-  const [hour] = useState(() => new Date().getHours());
   useEffect(() => {
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
@@ -495,12 +487,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     'portal-page home',
     'Prysm',
     <>
-      <div className="home-intro">
-        <p className="overline">{greeting(hour)}</p>
-        <p className="display">
-          Light, in sync<span aria-hidden="true">.</span>
-        </p>
-      </div>
+      <p className="display">
+        Light, in sync<span aria-hidden="true">.</span>
+      </p>
       {notices}
       <div className="home-grid">
         <LightCard
@@ -526,24 +515,22 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             calibrate={calibrate}
           />
         </LightCard>
-        <SetupCard
-          capture={
-            capture && captureUi
-              ? {
-                  label: captureUi.label,
-                  summary: captureUi.summary?.(capture),
-                }
-              : null
-          }
-          output={
-            output && outputUi
-              ? { label: outputUi.label, summary: outputUi.summary?.(output) }
-              : null
-          }
-          edges={output ? outputUi?.edges?.(output) : undefined}
-          link={outputLighting?.link}
-          openSettings={() => go(settingsRoute)}
-        />
+        {/* Before setup the light card's prompt says it all. */}
+        {capture && output ? (
+          <SetupCard
+            capture={{
+              label: captureUi?.label ?? capture.kind,
+              summary: captureUi?.summary?.(capture),
+            }}
+            output={{
+              label: outputUi?.label ?? output.kind,
+              summary: outputUi?.summary?.(output),
+            }}
+            edges={outputUi?.edges?.(output)}
+            link={outputLighting?.link}
+            openSettings={() => go(settingsRoute)}
+          />
+        ) : null}
       </div>
     </>,
     true,

@@ -578,7 +578,7 @@ test('status card covers the supervisor states for both packages', () => {
   );
   assert.equal(
     title(true, full({ enabled: true, lighting: 'device_native' })),
-    'Light effects on',
+    'WLED effects on',
   );
   const noFrames = tvStatus(
     true,
@@ -1417,7 +1417,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       document.querySelector('.section-label').textContent,
       'Prysm on this TV',
     );
-    assert.equal(tv.text('lighting-title'), 'Lights show');
+    assert.equal(tv.text('lighting-title'), 'Your lights');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
       flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance,
