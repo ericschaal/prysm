@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 base64 = "0.23"
 # The upgrade's accept key; the remote source speaks the WebSocket itself.
 tungstenite = { workspace = true, features = ["handshake"] }
+tracing.workspace = true
 
 [dev-dependencies]
 prysm-capture-remote.workspace = true

@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// Bound on `ls-control scan-services` and on activation.
@@ -170,7 +170,7 @@ impl FsInstaller {
     }
 
     fn rescan(&self) -> Result<()> {
-        let (status, _) = run_bounded(
+        let Finished { status, .. } = run_bounded(
             Command::new(&self.layout.scanner).arg("scan-services"),
             self.timeout,
             false,
@@ -232,7 +232,7 @@ impl Installer for FsInstaller {
     }
 
     fn activate(&mut self, service: &str) -> Result<()> {
-        let (status, stdout) = run_bounded(
+        let Finished { status, stdout } = run_bounded(
             Command::new(&self.layout.luna_send)
                 .args(["-w", "5000", "-n", "1"])
                 .arg(format!("luna://{service}/getState"))
@@ -295,13 +295,18 @@ fn sync_directory(path: &Path) -> io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
 
+/// How a bounded child ended.
+struct Finished {
+    status: ExitStatus,
+    /// Up to 64 KiB of its stdout when kept, else empty.
+    stdout: Vec<u8>,
+}
+
 /// Run a child with stdin held open (luna-send exits without replying on
 /// EOF), kill it after `timeout`, and optionally keep up to 64 KiB of stdout.
-fn run_bounded(
-    command: &mut Command,
-    timeout: Duration,
-    keep_stdout: bool,
-) -> Result<(ExitStatus, Vec<u8>)> {
+/// A child that is not waited for to the end (a timeout, or `waitpid`
+/// failing) is killed and reaped before the error returns.
+fn run_bounded(command: &mut Command, timeout: Duration, keep_stdout: bool) -> Result<Finished> {
     let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::piped())
@@ -332,18 +337,29 @@ fn run_bounded(
                 std::thread::sleep(Duration::from_millis(20));
             }
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_and_reap(&mut child, &program);
                 return Err(InstallError::Timeout { program, timeout });
             }
-            Err(source) => return Err(InstallError::Wait { program, source }),
+            Err(source) => {
+                kill_and_reap(&mut child, &program);
+                return Err(InstallError::Wait { program, source });
+            }
         }
     };
     drop(stdin);
     let stdout = reader
         .map(|reader| reader.join().unwrap_or_default())
         .unwrap_or_default();
-    Ok((status, stdout))
+    Ok(Finished { status, stdout })
+}
+
+/// Stop a child that is given up on. A kill that fails (it already exited)
+/// leaves the reap; a failed reap is reported, the caller's error stands.
+fn kill_and_reap(child: &mut Child, program: &str) {
+    let _ = child.kill();
+    if let Err(error) = child.wait() {
+        eprintln!("prysm-webos-service: cannot reap {program}: {error}");
+    }
 }
 
 fn activation_reply(bytes: &[u8]) -> Result<()> {

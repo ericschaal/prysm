@@ -15,6 +15,8 @@ use tokio::{
 
 /// How long a closing connection keeps discarding what the client still sends.
 const LINGER: Duration = Duration::from_secs(2);
+/// How long a write may make no progress before the connection fails.
+const WRITE_STALL: Duration = Duration::from_secs(5);
 
 pub(super) struct TimedIo {
     socket: TcpStream,
@@ -46,7 +48,7 @@ impl TimedIo {
         }
         let deadline = self
             .stalled
-            .get_or_insert_with(|| Box::pin(sleep(Duration::from_secs(5))));
+            .get_or_insert_with(|| Box::pin(sleep(WRITE_STALL)));
         if deadline.as_mut().poll(cx).is_ready() {
             Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::TimedOut,

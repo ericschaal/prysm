@@ -5,15 +5,13 @@
 //! Demand-driven and independent of the preview: each open stream holds a
 //! [`ColorsWatch`], so the session copies the written colors (never the frame)
 //! only while somebody listens, and nothing is encoded but a short JSON line.
-use crate::response::{Body, Response, failure};
+use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
 use bytes::Bytes;
-use futures::{StreamExt, stream};
-use http_body_util::StreamBody;
-use hyper::{StatusCode, body::Frame as BodyFrame, header};
+use futures::stream;
+use hyper::{StatusCode, body::Frame as BodyFrame};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_protocol::{COLOR_SEGMENTS, ColorsEvent, FailureKind, LedColor, LedColors};
 use prysm_runtime::{ColorsWatch, EngineHandle, Shutdown};
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -23,9 +21,6 @@ use tokio::time::{Instant, Interval, MissedTickBehavior, interval};
 const LISTENERS: usize = 8;
 /// At most one event per stream per period: 10 per second.
 pub(crate) const CADENCE: Duration = Duration::from_millis(100);
-/// A stream with nothing new sends a comment this often, so a vanished reader
-/// is noticed by the write deadline and releases its slot.
-const KEEPALIVE: Duration = Duration::from_secs(15);
 
 /// The listener limit, shared by all streams.
 pub(crate) struct Colors {
@@ -58,16 +53,7 @@ impl Colors {
             sent: Instant::now(),
             _permit: permit,
         };
-        let shutdown = shutdown.clone();
-        let body = stream::unfold(listener, Listener::next)
-            .take_until(async move { shutdown.requested().await })
-            .map(Ok::<_, Infallible>);
-        let mut response = Response::new(Body::new(StreamBody::new(body)));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/event-stream"),
-        );
-        response
+        response::event_stream(stream::unfold(listener, Listener::next), shutdown)
     }
 }
 
@@ -113,7 +99,7 @@ impl Listener {
             self.shown = shown;
             let event = match event {
                 Some(event) => event,
-                None if self.sent.elapsed() >= KEEPALIVE => Bytes::from_static(b":\n\n"),
+                None if self.sent.elapsed() >= KEEPALIVE => KEEPALIVE_COMMENT,
                 None => continue,
             };
             self.sent = Instant::now();

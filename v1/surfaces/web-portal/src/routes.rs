@@ -5,16 +5,15 @@ use crate::capture;
 use crate::colors::Colors;
 use crate::metrics;
 use crate::preview::Previews;
-use crate::response::{self, Body, Response, failure};
+use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
 use bytes::Bytes;
-use futures::{StreamExt, stream};
-use http_body_util::{BodyExt, Limited, StreamBody};
+use futures::stream;
+use http_body_util::{BodyExt, Limited};
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
 use prysm_ports::{CAPTURE_STREAM_PATH, Calibration, Handoff, Processing, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
-use std::convert::Infallible;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,9 +25,6 @@ pub(crate) const BODY_DEADLINE: Duration = Duration::from_secs(5);
 /// Longer than the engine's default stop deadline plus an adapter open.
 const COMMAND_DEADLINE: Duration = Duration::from_secs(15);
 const STREAMS: usize = 8;
-/// Idle streams send a comment this often so a vanished reader is noticed by
-/// the write deadline and releases its stream slot.
-const KEEPALIVE: Duration = Duration::from_secs(15);
 /// The Prometheus scrape path, served only when the host enables it.
 const METRICS: &str = "/metrics";
 /// `GET /api/v1/candidates/{section}/{kind}`.
@@ -104,94 +100,104 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
 
 fn asset(context: &Context, path: &str, method: &Method) -> Response {
     if method != Method::GET {
-        return failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found");
+        return not_found();
     }
     let path = if path == "/" { "/index.html" } else { path };
     match context.assets.iter().find(|asset| asset.path == path) {
         Some(asset) => response::bytes(StatusCode::OK, asset.content_type, asset.bytes),
-        None => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
+        None => not_found(),
     }
 }
 
+/// One API path's methods. A known path with another method is `405`, an
+/// unknown path `404`.
 async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Response {
     let method = request.method().clone();
-    match (path, method) {
-        ("/api/v1/state", Method::GET) => response::json(
+    let get = method == Method::GET;
+    match path {
+        "/api/v1/state" if get => response::json(
             StatusCode::OK,
             &State::from(&*context.engine.snapshot().borrow()),
         ),
-        ("/api/v1/state/stream", Method::GET) => stream_state(context),
-        (METRICS, Method::GET) => {
+        "/api/v1/state/stream" if get => stream_state(context),
+        METRICS if get => {
             let text =
                 metrics::render(&context.engine.stats(), &context.engine.snapshot().borrow());
             response::bytes(StatusCode::OK, metrics::CONTENT_TYPE, text)
         }
-        ("/api/v1/preview/stream", Method::GET) => {
+        "/api/v1/preview/stream" if get => {
             context.previews.stream(&context.engine, &context.shutdown)
         }
-        ("/api/v1/colors/stream", Method::GET) => {
-            context.colors.stream(&context.engine, &context.shutdown)
-        }
-        (CAPTURE_STREAM_PATH, method) => match (&context.capture, method) {
-            (Some(handoff), Method::GET) => capture::upgrade(handoff, request),
-            (Some(_), _) => failure(
-                StatusCode::METHOD_NOT_ALLOWED,
-                FailureKind::MethodNotAllowed,
-                "method not allowed",
-            ),
-            (None, _) => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
+        "/api/v1/colors/stream" if get => context.colors.stream(&context.engine, &context.shutdown),
+        CAPTURE_STREAM_PATH => match &context.capture {
+            Some(handoff) if get => capture::upgrade(handoff, request),
+            Some(_) => method_not_allowed(),
+            None => not_found(),
         },
-        ("/api/v1/target", Method::PUT) => match decode::<TargetRequest>(request).await {
+        "/api/v1/target" if method == Method::PUT => match decode::<TargetRequest>(request).await {
             Ok(body) => applied(command(context.engine.set_target(body.target)).await),
             Err(response) => *response,
         },
-        ("/api/v1/calibration", Method::PUT) => match decode::<Calibration>(request).await {
-            Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
-            Err(response) => *response,
-        },
-        ("/api/v1/calibration", Method::DELETE) => {
+        "/api/v1/calibration" if method == Method::PUT => {
+            match decode::<Calibration>(request).await {
+                Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
+                Err(response) => *response,
+            }
+        }
+        "/api/v1/calibration" if method == Method::DELETE => {
             applied(command(context.engine.set_calibration(None)).await)
         }
-        ("/api/v1/processing/trial", Method::PUT) => match decode::<Processing>(request).await {
-            Ok(body) => applied(command(context.engine.try_processing(body)).await),
-            Err(response) => *response,
-        },
-        ("/api/v1/settings", Method::PUT) => match decode::<SettingsRequest>(request).await {
-            Ok(body) => {
-                match command(
-                    context
-                        .engine
-                        .replace_settings(body.expected, body.settings),
-                )
-                .await
-                {
-                    Ok(revision) => response::json(StatusCode::OK, &SettingsReplaced { revision }),
-                    Err(response) => *response,
-                }
+        "/api/v1/processing/trial" if method == Method::PUT => {
+            match decode::<Processing>(request).await {
+                Ok(body) => applied(command(context.engine.try_processing(body)).await),
+                Err(response) => *response,
             }
-            Err(response) => *response,
-        },
-        (path, method) if path.starts_with(CANDIDATES) => {
+        }
+        "/api/v1/settings" if method == Method::PUT => replace_settings(context, request).await,
+        _ if path.starts_with(CANDIDATES) => {
             candidates(context, &path[CANDIDATES.len()..], &method).await
         }
-        (
-            "/api/v1/state"
-            | "/api/v1/state/stream"
-            | "/api/v1/preview/stream"
-            | "/api/v1/colors/stream"
-            | "/api/v1/target"
-            | "/api/v1/calibration"
-            | "/api/v1/processing/trial"
-            | "/api/v1/settings"
-            | METRICS,
-            _,
-        ) => failure(
-            StatusCode::METHOD_NOT_ALLOWED,
-            FailureKind::MethodNotAllowed,
-            "method not allowed",
-        ),
-        _ => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
+        "/api/v1/state"
+        | "/api/v1/state/stream"
+        | "/api/v1/preview/stream"
+        | "/api/v1/colors/stream"
+        | "/api/v1/target"
+        | "/api/v1/calibration"
+        | "/api/v1/processing/trial"
+        | "/api/v1/settings"
+        | METRICS => method_not_allowed(),
+        _ => not_found(),
     }
+}
+
+/// `PUT /api/v1/settings`: the new revision once saved.
+async fn replace_settings(context: &Context, request: Request<Incoming>) -> Response {
+    let body = match decode::<SettingsRequest>(request).await {
+        Ok(body) => body,
+        Err(response) => return *response,
+    };
+    match command(
+        context
+            .engine
+            .replace_settings(body.expected, body.settings),
+    )
+    .await
+    {
+        Ok(revision) => response::json(StatusCode::OK, &SettingsReplaced { revision }),
+        Err(response) => *response,
+    }
+}
+
+fn not_found() -> Response {
+    failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found")
+}
+
+fn method_not_allowed() -> Response {
+    failure(
+        StatusCode::METHOD_NOT_ALLOWED,
+        FailureKind::MethodNotAllowed,
+        "method not allowed",
+    )
 }
 
 /// What the adapter for `capture/<kind>` or `output/<kind>` finds to choose
@@ -204,14 +210,10 @@ async fn candidates(context: &Context, rest: &str, method: &Method) -> Response 
     };
     let Some((section, kind)) = section.filter(|(_, kind)| !kind.is_empty() && !kind.contains('/'))
     else {
-        return failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found");
+        return not_found();
     };
     if method != Method::GET {
-        return failure(
-            StatusCode::METHOD_NOT_ALLOWED,
-            FailureKind::MethodNotAllowed,
-            "method not allowed",
-        );
+        return method_not_allowed();
     }
     match command(context.engine.candidates(section, kind)).await {
         Ok(found) => response::json(StatusCode::OK, &found),
@@ -308,17 +310,7 @@ fn stream_state(context: &Context) -> Response {
         keepalive: interval_at(Instant::now() + KEEPALIVE, KEEPALIVE),
         _permit: permit,
     };
-    let shutdown = context.shutdown.clone();
-    let body = stream::unfold(events, Events::next)
-        .take_until(async move { shutdown.requested().await })
-        .map(Ok::<_, Infallible>);
-    let mut response = Response::new(Body::new(StreamBody::new(body)));
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("text/event-stream"),
-    );
-    response
+    response::event_stream(stream::unfold(events, Events::next), &context.shutdown)
 }
 
 struct Events {
@@ -333,10 +325,10 @@ impl Events {
             changed = self.snapshot.changed() => {
                 changed.ok()?;
                 let state = State::from(&*self.snapshot.borrow_and_update());
-                format!("data: {}\n\n", serde_json::to_string(&state).ok()?)
+                Bytes::from(format!("data: {}\n\n", serde_json::to_string(&state).ok()?))
             }
-            _ = self.keepalive.tick() => ":\n\n".to_owned(),
+            _ = self.keepalive.tick() => KEEPALIVE_COMMENT,
         };
-        Some((Frame::data(Bytes::from(event)), self))
+        Some((Frame::data(event), self))
     }
 }

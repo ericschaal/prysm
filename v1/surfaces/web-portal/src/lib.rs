@@ -76,9 +76,7 @@ impl WebPortal {
         self.metrics = enabled;
         self
     }
-}
 
-impl WebPortal {
     /// Serve the capture stream path: a capture-only host's WebSocket
     /// connections go to the remote source holding the same `handoff`
     /// (without this the path is `404`).

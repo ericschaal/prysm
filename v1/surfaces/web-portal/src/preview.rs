@@ -5,13 +5,12 @@
 //! publishes previews only while somebody watches, and a frame is encoded only
 //! when a stream is due to send it. Encoding runs on the blocking pool; one
 //! encoded event is shared by every viewer of the same frame.
-use crate::response::{Body, Response, failure};
+use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
-use futures::{StreamExt, stream};
-use http_body_util::StreamBody;
-use hyper::{StatusCode, body::Frame as BodyFrame, header};
+use futures::stream;
+use hyper::{StatusCode, body::Frame as BodyFrame};
 use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
 use prysm_core::{ColorStrip, Frame, Viewport};
@@ -19,7 +18,6 @@ use prysm_protocol::{
     FailureKind, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport,
 };
 use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
-use std::convert::Infallible;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -34,14 +32,17 @@ const LONGEST_SIDE: u32 = 480;
 const QUALITY: u8 = 75;
 /// Colors per edge, at most; longer strips are resampled.
 const STRIP_SAMPLES: usize = 256;
-/// A stream with nothing new sends a comment this often, so a vanished reader
-/// is noticed by the write deadline and releases its viewer slot.
-const KEEPALIVE: Duration = Duration::from_secs(15);
 
 /// The viewer limit and the latest encoded event, shared by all streams.
 pub(crate) struct Previews {
     viewers: Arc<Semaphore>,
-    encoded: Arc<Mutex<Option<(u64, Bytes)>>>,
+    encoded: Arc<Mutex<Option<Encoded>>>,
+}
+
+/// One preview's event, encoded once for every viewer.
+struct Encoded {
+    sequence: u64,
+    event: Bytes,
 }
 
 impl Previews {
@@ -72,16 +73,7 @@ impl Previews {
             sent: Instant::now(),
             _permit: permit,
         };
-        let shutdown = shutdown.clone();
-        let body = stream::unfold(viewer, Viewer::next)
-            .take_until(async move { shutdown.requested().await })
-            .map(Ok::<_, Infallible>);
-        let mut response = Response::new(Body::new(StreamBody::new(body)));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/event-stream"),
-        );
-        response
+        response::event_stream(stream::unfold(viewer, Viewer::next), shutdown)
     }
 }
 
@@ -98,7 +90,7 @@ enum Shown {
 /// One open stream. Holds at most one preview and one encoded event.
 struct Viewer {
     watch: PreviewWatch,
-    encoded: Arc<Mutex<Option<(u64, Bytes)>>>,
+    encoded: Arc<Mutex<Option<Encoded>>>,
     ticks: Interval,
     shown: Shown,
     sent: Instant,
@@ -130,7 +122,7 @@ impl Viewer {
             };
             let event = match event {
                 Some(event) => event,
-                None if self.sent.elapsed() >= KEEPALIVE => Bytes::from_static(b":\n\n"),
+                None if self.sent.elapsed() >= KEEPALIVE => KEEPALIVE_COMMENT,
                 None => continue,
             };
             self.sent = Instant::now();
@@ -141,10 +133,10 @@ impl Viewer {
     /// The event for `preview`, encoded once for every viewer.
     async fn encode(&self, preview: Preview) -> Bytes {
         let sequence = preview.sequence;
-        if let Some((cached, event)) = &*lock(&self.encoded)
-            && *cached == sequence
+        if let Some(cached) = &*lock(&self.encoded)
+            && cached.sequence == sequence
         {
-            return event.clone();
+            return cached.event.clone();
         }
         let event = tokio::task::spawn_blocking(move || sse(&event(&preview)))
             .await
@@ -154,8 +146,14 @@ impl Viewer {
                 })
             });
         let mut cached = lock(&self.encoded);
-        if cached.as_ref().is_none_or(|(newest, _)| *newest < sequence) {
-            *cached = Some((sequence, event.clone()));
+        if cached
+            .as_ref()
+            .is_none_or(|newest| newest.sequence < sequence)
+        {
+            *cached = Some(Encoded {
+                sequence,
+                event: event.clone(),
+            });
         }
         event
     }

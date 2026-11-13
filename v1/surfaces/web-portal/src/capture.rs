@@ -45,24 +45,39 @@ pub(crate) fn upgrade(handoff: &Handoff, mut request: Request<Incoming>) -> Resp
     let upgraded = hyper::upgrade::on(&mut request);
     let handoff = handoff.clone();
     tokio::spawn(async move {
-        let Ok(upgraded) = upgraded.await else {
-            return;
+        let upgraded = match upgraded.await {
+            Ok(upgraded) => upgraded,
+            Err(error) => {
+                tracing::debug!(%error, "the capture stream upgrade did not complete");
+                return;
+            }
         };
-        // Always the portal's own connection type; anything else is dropped.
+        // Always the portal's own connection type.
         let Ok(parts) = upgraded.downcast::<TokioIo<TimedIo>>() else {
+            tracing::warn!("the capture stream upgrade is not a portal connection");
             return;
         };
-        let Ok(socket) = parts.io.into_inner().into_socket().into_std() else {
-            return;
+        let socket = match parts.io.into_inner().into_socket().into_std() {
+            Ok(socket) => socket,
+            Err(error) => {
+                tracing::debug!(%error, "the capture stream socket cannot be handed over");
+                return;
+            }
         };
-        if socket.set_nonblocking(false).is_err() {
+        if let Err(error) = socket.set_nonblocking(false) {
+            tracing::debug!(%error, "the capture stream socket cannot be made blocking");
             return;
         }
         // A source that stopped in between: the connection closes.
-        let _ = handoff.offer(Accepted {
-            socket,
-            buffered: parts.read_buf.to_vec(),
-        });
+        if handoff
+            .offer(Accepted {
+                socket,
+                buffered: parts.read_buf.to_vec(),
+            })
+            .is_err()
+        {
+            tracing::debug!("the capture stream arrived after its source stopped");
+        }
     });
     let mut response = response::empty(StatusCode::SWITCHING_PROTOCOLS);
     let headers = response.headers_mut();
