@@ -931,7 +931,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
       [
         ['device', 'Video capture device'],
         ['remote', 'Capture-only TV (remote)'],
-        ['file', 'Video file'],
+        ['file', 'Video file (development only)'],
       ],
     );
     assert.deepEqual(
@@ -949,6 +949,11 @@ test('kind selectors swap panels without losing drafts or the other section', as
     await edit(field('capture.kind'), 'file');
     assert.equal(field('capture.path').value, '');
     assert.equal(field('capture.path').labels[0].textContent, 'Video file');
+    // Development only: it says what it needs, and where it does not work.
+    assert.match(
+      form('Video source').textContent,
+      /Plays a video file through FFmpeg 9 or newer, which must be installed on this machine\. The Docker image and Debian package do not include FFmpeg, so this source does not work there\./,
+    );
     await edit(field('capture.kind'), 'remote');
     assert.equal(field('capture.listen').value, '0.0.0.0:7380');
     assert.equal(field('output.address').value, 'wled.local');
@@ -1560,8 +1565,21 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     const links = () =>
       $$('.path-link').map((link) => [
         link.dataset.state,
-        $('.path-label', link).textContent || undefined,
+        // The numbers below the hairline, without their description.
+        $('.path-numbers', link).firstChild?.textContent || undefined,
       ]);
+    // Above each hairline: what it carries, there in every state. A local
+    // capture device names nothing; WLED's colours travel by DDP.
+    const protocols = () =>
+      $$('.path-protocol').map(
+        (label) => label.firstChild?.textContent || undefined,
+      );
+    assert.deepEqual(protocols(), ['Local', 'DDP']);
+    // Said in full in the tooltip and for screen readers.
+    assert.deepEqual(
+      $$('.path-protocol').map((label) => label.title),
+      ['Video from a device on this computer', 'DDP over UDP'],
+    );
     assert.equal($('.setup-card').dataset.path, 'off');
     assert.deepEqual(links(), [
       ['still', undefined],
@@ -1573,14 +1591,46 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       portal.fixture.publish({
         target: 'processed',
         session: { state: 'running' },
-        input: { fps: 29.97, receiving: true },
+        input: {
+          fps: 29.97,
+          receiving: true,
+          sent_fps: 29.97,
+          latency_ms: 11.6,
+        },
       }),
     );
     assert.equal($('.setup-card').dataset.path, 'flowing');
     assert.deepEqual(links(), [
       ['flowing', '30 fps'],
-      ['flowing', undefined],
+      ['flowing', '30 fps · 12 ms'],
     ]);
+    assert.deepEqual(protocols(), ['Local', 'DDP'], 'unchanged while flowing');
+    // Said for what it is: measured inside Prysm, never "screen to lights".
+    const sent = $$('.path-numbers')[1];
+    assert.match(sent.title, /measured inside Prysm, from a frame received/);
+    assert(!/screen/i.test(sent.title));
+    assert.match(
+      sent.textContent,
+      /measured inside Prysm/,
+      'for screen readers',
+    );
+    // No frame flushed in the window: the rate only, no number made up.
+    await act(async () =>
+      portal.fixture.publish({
+        input: { fps: 29.97, receiving: true, sent_fps: 0 },
+      }),
+    );
+    assert.deepEqual(links()[1], ['flowing', '0 fps']);
+    await act(async () =>
+      portal.fixture.publish({
+        input: {
+          fps: 29.97,
+          receiving: true,
+          sent_fps: 29.97,
+          latency_ms: 11.6,
+        },
+      }),
+    );
     await act(async () =>
       portal.fixture.publish({ input: { fps: 0, receiving: false } }),
     );
@@ -1657,6 +1707,25 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       ['false', 'true', 'false'],
     );
     assert.deepEqual(discovery.calls.sort(), ['capture/device', 'output/wled']);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a remote capture names its encoding above the first link', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'remote', listen: '0.0.0.0:7380', encoding: 'raw' },
+    output,
+  });
+  try {
+    assert.deepEqual(
+      $$('.path-protocol').map((label) => label.firstChild.textContent),
+      ['Raw', 'DDP'],
+    );
+    assert.equal($('.path-protocol').title, 'Raw video over TCP');
+    // The fact lines stay the picture and the LEDs.
+    assert.equal($$('.path-fact')[0].textContent, '320 × 180');
+    assert.equal($$('.path-fact')[2].textContent, '14 LEDs');
   } finally {
     await portal.unmount();
   }

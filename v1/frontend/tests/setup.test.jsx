@@ -279,7 +279,10 @@ test('setup reloads instead of overwriting settings changed elsewhere', async ()
       $('.notice[role="status"]', wizard()).textContent,
       staleNotice,
     );
-    assert.match(plain($$('.review-item p')[0]), /^Video file\/clip\.mkv/);
+    assert.match(
+      plain($$('.review-item p')[0]),
+      /^Video file \(development only\)\/clip\.mkv/,
+    );
     await next();
     assert.equal(saves(fixture), 2);
     assert.deepEqual(fixture.snapshot().settings.capture, {

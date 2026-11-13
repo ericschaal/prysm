@@ -293,6 +293,7 @@ mod tests {
             input: Some(Input {
                 fps: 29.9,
                 receiving: true,
+                ..Input::default()
             }),
             output_issue: Some(OutputIssue::OtherSender),
             ..Snapshot::default()

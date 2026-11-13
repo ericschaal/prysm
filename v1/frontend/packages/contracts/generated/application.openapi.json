@@ -289,9 +289,23 @@
             "minimum": 0,
             "type": "number"
           },
+          "latency_ms": {
+            "description": "Mean milliseconds over the last second from Prysm receiving a frame\nfrom its source to the output write for it returning: measured inside\nPrysm, per frame (not from the screen). Absent when no frame reached\nthe output.",
+            "example": 11.8,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
           "receiving": {
             "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
             "type": "boolean"
+          },
+          "sent_fps": {
+            "description": "Frames per second whose colours were written to the output over the\nlast second, to one decimal.",
+            "example": 29.9,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
           }
         },
         "required": [

@@ -31,6 +31,12 @@ export interface LedEdges {
   left: number;
 }
 
+/**
+ * How a link of the signal path carries its data: the lights' protocol, or
+ * a capture stream's encoding. A closed set, named by the portal.
+ */
+export type Transport = 'local' | 'file' | 'built_in' | 'h264' | 'raw' | 'ddp';
+
 /** One fact about a configured section, for Home: `Picture` `640 × 360`. */
 export interface AdapterFact {
   label: string;
@@ -55,6 +61,11 @@ export interface AdapterUi<S extends AdapterSection> {
   facts?: (saved: S) => AdapterFact[];
   /** Outputs only: lighting actions for the saved section. */
   lighting?: (saved: S) => OutputLighting;
+  /**
+   * How the saved section's data travels: the stream from a capture, the
+   * colours to an output. Absent for a local device (nothing to name).
+   */
+  transport?: (saved: S) => Transport;
   /** Outputs only: the LEDs around the screen, for the drawing on Home. */
   edges?: (saved: S) => LedEdges;
 }

@@ -16,6 +16,8 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
   normalize: (value) => ({ ...value, path: value.path.trim() }),
   summary: ({ path, width, height, fps }) =>
     `${path}, ${describePicture(width ?? deviceDefaults.width, height ?? deviceDefaults.height, fps ?? deviceDefaults.fps)}`,
+  // A device on this computer: nothing travels over a network.
+  transport: () => 'local',
   facts: ({ width, height, fps }) => [
     {
       label: 'Picture',

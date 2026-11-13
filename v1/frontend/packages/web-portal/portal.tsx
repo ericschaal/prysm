@@ -147,7 +147,12 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
   }
   if (target === 'processed' && session.state === 'running')
     return input?.receiving
-      ? { kind: 'flowing', fps: input.fps }
+      ? {
+          kind: 'flowing',
+          fps: input.fps,
+          sentFps: input.sent_fps ?? 0,
+          latencyMs: input.latency_ms,
+        }
       : { kind: 'waiting' };
   if (target === 'device_native' && session.state === 'native')
     return { kind: 'effects' };
@@ -587,6 +592,10 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
               facts: outputUi?.facts?.(output) ?? [],
             }}
             edges={outputUi?.edges?.(output)}
+            transports={{
+              capture: captureUi?.transport?.(capture),
+              output: outputUi?.transport?.(output),
+            }}
             discovery={discovery ?? null}
             path={pathOf(snapshot)}
             profile={activeProfile(settings.processing)}

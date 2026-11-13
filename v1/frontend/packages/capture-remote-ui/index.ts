@@ -14,4 +14,7 @@ export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   summary: (value) =>
     `Listens on ${value.listen}, ${describeTvPicture(value, remoteDefaults)}`,
   facts: (value) => tvPictureFacts(value, remoteDefaults),
+  // How the picture travels: H.264 (either encoder) or raw frames.
+  transport: (value) =>
+    (value.encoding ?? remoteDefaults.encoding) === 'raw' ? 'raw' : 'h264',
 };

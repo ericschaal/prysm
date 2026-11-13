@@ -13,6 +13,7 @@ pub(crate) struct Stats {
     frames_received: AtomicU64,
     frames_sent: AtomicU64,
     processing: Timer,
+    flushed: Timer,
     output_writes: Timer,
     output_write_failures: AtomicU64,
     source_opens: AtomicU64,
@@ -28,6 +29,9 @@ pub struct Counters {
     pub frames_sent: u64,
     /// Turning frames into colors.
     pub processing: Timing,
+    /// Frames whose colors reached the output, each timed from when Prysm
+    /// received it from the source to when the output write returned.
+    pub flushed: Timing,
     /// Every output write: frames and the keep-alive rewrites, failed ones included.
     pub output_writes: Timing,
     /// Output writes that failed (each ends its session).
@@ -62,6 +66,12 @@ impl Timer {
         done
     }
 
+    fn add(&self, span: Duration) {
+        let nanos = u64::try_from(span.as_nanos()).unwrap_or(u64::MAX);
+        self.nanos.fetch_add(nanos, Ordering::Relaxed);
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn read(&self) -> Timing {
         Timing {
             count: self.count.load(Ordering::Relaxed),
@@ -78,6 +88,7 @@ impl Stats {
             frames_received: load(&self.frames_received),
             frames_sent: load(&self.frames_sent),
             processing: self.processing.read(),
+            flushed: self.flushed.read(),
             output_writes: self.output_writes.read(),
             output_write_failures: load(&self.output_write_failures),
             source_opens: load(&self.source_opens),
@@ -99,6 +110,12 @@ impl Stats {
 
     pub(crate) fn output_opened(&self) {
         self.output_opens.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A frame received at `received` reached the output now: one span, from
+    /// the source handing it over to the write returning. Two relaxed adds.
+    pub(crate) fn flushed(&self, received: Instant) {
+        self.flushed.add(received.elapsed());
     }
 
     pub(crate) fn process<T>(&self, work: impl FnOnce() -> T) -> T {

@@ -205,6 +205,18 @@ pub struct InputSchema {
     /// At least one frame arrived in the last second. `false` right after
     /// lighting starts and while the source is quiet (no signal, no sender).
     receiving: bool,
+    /// Frames per second whose colours were written to the output over the
+    /// last second, to one decimal.
+    #[schema(minimum = 0, example = 29.9)]
+    #[serde(default)]
+    sent_fps: f32,
+    /// Mean milliseconds over the last second from Prysm receiving a frame
+    /// from its source to the output write for it returning: measured inside
+    /// Prysm, per frame (not from the screen). Absent when no frame reached
+    /// the output.
+    #[schema(minimum = 0, example = 11.8, nullable = false)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    latency_ms: Option<f32>,
 }
 
 // Mirrors `prysm_ports::OutputIssue`.
@@ -539,6 +551,8 @@ mod tests {
         same_shape::<Input, InputSchema>(&Input {
             fps: 29.5,
             receiving: true,
+            sent_fps: 29.5,
+            latency_ms: Some(11.8),
         });
         for issue in [
             OutputIssue::Off,

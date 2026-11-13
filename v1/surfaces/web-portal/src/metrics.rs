@@ -154,6 +154,11 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
         counters.processing,
     );
     text.summary(
+        "prysm_frame_flush_seconds",
+        "Per frame, from Prysm receiving it from the source to its output write returning.",
+        counters.flushed,
+    );
+    text.summary(
         "prysm_output_write_seconds",
         "Time spent in output writes, including keep-alive rewrites and failed writes.",
         counters.output_writes,
@@ -195,6 +200,10 @@ mod tests {
                 count: 1210,
                 total: Duration::from_micros(605_500),
             },
+            flushed: Timing {
+                count: 1199,
+                total: Duration::from_millis(14_388),
+            },
             output_write_failures: 1,
             source_opens: 2,
             output_opens: 3,
@@ -206,6 +215,7 @@ mod tests {
             input: Some(Input {
                 fps: 29.9,
                 receiving: true,
+                ..Input::default()
             }),
             ..Snapshot::default()
         };
@@ -241,6 +251,10 @@ prysm_frames_sent_total 1199
 # TYPE prysm_processing_seconds summary
 prysm_processing_seconds_sum 2.4
 prysm_processing_seconds_count 1200
+# HELP prysm_frame_flush_seconds Per frame, from Prysm receiving it from the source to its output write returning.
+# TYPE prysm_frame_flush_seconds summary
+prysm_frame_flush_seconds_sum 14.388
+prysm_frame_flush_seconds_count 1199
 # HELP prysm_output_write_seconds Time spent in output writes, including keep-alive rewrites and failed writes.
 # TYPE prysm_output_write_seconds summary
 prysm_output_write_seconds_sum 0.6055

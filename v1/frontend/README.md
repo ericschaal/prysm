@@ -79,8 +79,12 @@ supervisor in each of its states and play the phone's calibration part). See the
     after a second). Your setup is the signal path: Video, Prysm, Lights,
     named (via discovery, when it finds the saved device) with one fact each
     from the adapters' typed `facts`, joined by hairlines that light up while
-    frames flow and carry the measured input rate; a failure marks its stop
-    (by the failure's `field`) in red. On a wide card the TV drawing with the
+    frames flow. Above each hairline its transport (the adapters' closed
+    `Transport`: Local, File, Built in, H.264, Raw, DDP; said in full in a
+    tooltip), below it the live numbers: frames per second, and on the
+    second the mean time measured inside Prysm from a frame received to its
+    colours sent (`Input.latency_ms`). A failure marks its stop (by the
+    failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)

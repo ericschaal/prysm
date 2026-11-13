@@ -112,6 +112,15 @@ pub struct Input {
     /// after a few seconds without one, so a waiting session does not hold
     /// the LEDs.
     pub receiving: bool,
+    /// Frames per second whose colours were written to the output over the
+    /// last window, to one decimal.
+    #[serde(default)]
+    pub sent_fps: f32,
+    /// Mean milliseconds, over the last window, from Prysm receiving a frame
+    /// from its source to the output write for it returning: measured inside
+    /// Prysm, per frame. Absent when no frame reached the output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<f32>,
 }
 
 #[cfg(test)]

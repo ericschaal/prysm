@@ -5,6 +5,11 @@ import { fileDefaults, fileLimits } from './settings';
 export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
   return (
     <>
+      <p className="help">
+        Plays a video file through FFmpeg 9 or newer, which must be installed on
+        this machine. The Docker image and Debian package do not include FFmpeg,
+        so this source does not work there.
+      </p>
       <TextField
         path="capture.path"
         label="Video file"

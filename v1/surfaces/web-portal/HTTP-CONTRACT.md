@@ -77,6 +77,15 @@ is not taking realtime colours), `other_sender` or `unreachable`. It is not a
 failure: lighting keeps sending, nothing is switched back, and the field
 clears once the device shows the colours again.
 
+`input`, while a session runs, is measured about once a second: `fps`
+(frames from the source per second), `receiving`, `sent_fps` (frames whose
+colours were written to the output per second) and `latency_ms`: per frame,
+the time from Prysm receiving it from the source to the output write for it
+returning, as the mean over the window. It is measured inside Prysm (not
+from the screen, and not including the device's own delay); it is absent
+when no frame reached the output in the window. `/metrics` has the same
+spans as the `prysm_frame_flush_seconds` summary.
+
 Settings replacement is whole-document and optimistic: send the `revision` you
 edited from as `expected`. The engine validates, persists, then applies. A
 successful reply means saved; an apply failure afterwards appears in

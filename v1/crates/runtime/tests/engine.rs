@@ -758,6 +758,53 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
     .await;
 }
 
+/// What reaches the lights: the rate of frames written, and per frame the
+/// span from Prysm receiving it to the write for it returning (here a slow
+/// device of 20 ms), as a mean over the sample window. Frames whose write
+/// fails do not count.
+#[tokio::test]
+async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
+    within(async {
+        let log = CallLog::new();
+        let slow = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                write_delay_ms: 20,
+                fail_after: Some(60),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, slow, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        let measured =
+            snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency_ms.is_some())).await;
+        let input = measured.input.unwrap();
+        let latency = input.latency_ms.unwrap();
+        // At least the write itself; the rest is processing and the hand-over.
+        assert!(latency >= 20.0, "{latency}");
+        assert!(latency < 200.0, "{latency}");
+        // One write at a time, about 50 a second.
+        assert!(
+            input.sent_fps > 0.0 && input.sent_fps <= 55.0,
+            "{}",
+            input.sent_fps
+        );
+
+        // The 61st write fails: only flushed frames are timed.
+        snapshot_until(&handle, |s| s.failure.is_some()).await;
+        let stats = handle.stats();
+        assert_eq!(stats.flushed.count, stats.frames_sent);
+        assert_eq!(stats.frames_sent, 60);
+        assert!(stats.frames_received > stats.frames_sent);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
 /// A device that stops showing the colours is reported, not fought: the
 /// session keeps writing, and the report goes with the session.
 #[tokio::test]

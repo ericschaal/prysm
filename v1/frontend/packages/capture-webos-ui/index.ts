@@ -12,4 +12,6 @@ export const webosCapture: AdapterUi<WebosSettings> = {
   Editor: WebosEditor,
   summary: (value) => describeTvPicture(value, webosDefaults),
   facts: (value) => tvPictureFacts(value, webosDefaults),
+  // The TV's own picture, captured on the TV.
+  transport: () => 'built_in',
 };

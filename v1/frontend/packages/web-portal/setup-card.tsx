@@ -1,6 +1,11 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import type { DiscoveryClient } from '@prysm/application-client';
-import type { AdapterFact, AdapterSection, LedEdges } from './adapters';
+import type {
+  AdapterFact,
+  AdapterSection,
+  LedEdges,
+  Transport,
+} from './adapters';
 
 /** A configured section for Home: what it is, and a few facts about it. */
 export interface SetupPart {
@@ -206,7 +211,14 @@ function LedMap({ edges }: { edges: LedEdges }) {
  */
 export type PathState =
   | { kind: 'off' }
-  | { kind: 'flowing'; fps: number }
+  | {
+      kind: 'flowing';
+      /** Frames arriving, and leaving for the lights, per second. */
+      fps: number;
+      sentFps: number;
+      /** Mean ms from a frame received to its colours sent (inside Prysm). */
+      latencyMs?: number;
+    }
   | { kind: 'waiting' }
   | { kind: 'effects' }
   | { kind: 'failed'; at: 'capture' | 'output' | null };
@@ -267,17 +279,61 @@ function Stop({
 }
 
 /** A link between two stops: a hairline, its light, and what it carries. */
-function Link({ state, label }: { state: string; label?: string }) {
+function Link({
+  state,
+  transport,
+  numbers,
+  about,
+}: {
+  state: string;
+  /** Above the hairline: how the link carries its data. */
+  transport?: Transport;
+  /** Below it: the live numbers, while frames flow. */
+  numbers?: string;
+  /** What the numbers measure, for a tooltip and screen readers. */
+  about?: string;
+}) {
+  const [name, said] = transport ? transportNames[transport] : [];
   return (
-    <li className="path-link" data-state={state} aria-hidden={!label}>
+    <li
+      className="path-link"
+      data-state={state}
+      aria-hidden={!name && !numbers}
+    >
       <span className="path-line">
         <span className="path-pulse" />
       </span>
-      {/* Always there, so both hairlines sit at the same height. */}
-      <span className="path-label">{label}</span>
+      {/* Both always there, so nothing moves when they fill. */}
+      <span className="path-label path-protocol" title={said}>
+        {name}
+        {said ? <span className="visually-hidden">: {said}</span> : null}
+      </span>
+      <span
+        className="path-label path-numbers"
+        title={numbers ? about : undefined}
+      >
+        {numbers}
+        {numbers && about ? (
+          <span className="visually-hidden">: {about}</span>
+        ) : null}
+      </span>
     </li>
   );
 }
+
+/**
+ * How each transport is named on its link, and said in full (a tooltip and
+ * for screen readers). Checked against the adapters: the remote capture's
+ * stream is TCP, WLED's colours are DDP over UDP (port 4048).
+ */
+const transportNames: Record<Transport, [name: string, about: string]> = {
+  local: ['Local', 'Video from a device on this computer'],
+  file: ['File', 'Video from a file'],
+  built_in: ['Built in', 'The TV’s own picture'],
+  h264: ['H.264', 'H.264 over TCP'],
+  raw: ['Raw', 'Raw video over TCP'],
+  ddp: ['DDP', 'DDP over UDP'],
+};
 
 /** A section's name, found by discovery when it can be. */
 function Named({
@@ -309,6 +365,7 @@ export function SetupCard({
   capture,
   output,
   edges,
+  transports,
   discovery,
   path,
   profile,
@@ -317,6 +374,8 @@ export function SetupCard({
   capture: SetupPart;
   output: SetupPart;
   edges?: LedEdges;
+  /** How each link carries its data, when the adapter names it. */
+  transports: { capture?: Transport; output?: Transport };
   discovery: DiscoveryClient | null;
   path: PathState;
   /** The active colour profile's name, or `null` for no correction. */
@@ -336,6 +395,13 @@ export function SetupCard({
   }
   const rate =
     path.kind === 'flowing' ? `${Math.round(path.fps)} fps` : undefined;
+  // What leaves for the lights: the rate, and the span inside Prysm.
+  const flowing = path.kind === 'flowing' ? path : null;
+  const sent = flowing ? `${Math.round(flowing.sentFps)} fps` : undefined;
+  const latency =
+    flowing?.latencyMs === undefined
+      ? undefined
+      : `${Math.round(flowing.latencyMs)} ms`;
   const total = edges
     ? edges.top + edges.right + edges.bottom + edges.left
     : undefined;
@@ -365,7 +431,7 @@ export function SetupCard({
             />
           )}
         </Named>
-        <Link state={into} label={rate} />
+        <Link state={into} transport={transports.capture} numbers={rate} />
         <Stop
           title="Processing"
           icon={<PrysmIcon />}
@@ -374,8 +440,12 @@ export function SetupCard({
           fact={profile ? `${profile} profile` : undefined}
           failed={path.kind === 'failed' && failedAt === null}
         />
-        {/* What leaves Prysm is not measured yet: no number here. */}
-        <Link state={out} />
+        <Link
+          state={out}
+          transport={transports.output}
+          numbers={sent && (latency ? `${sent} · ${latency}` : sent)}
+          about="rate of frames sent; time measured inside Prysm, from a frame received to its colours sent, mean over the last second"
+        />
         <Named part={output} discovery={discovery}>
           {(name) => (
             <Stop

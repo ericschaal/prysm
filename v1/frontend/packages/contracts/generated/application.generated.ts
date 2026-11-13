@@ -123,10 +123,26 @@ export interface components {
              */
             fps: number;
             /**
+             * Format: float
+             * @description Mean milliseconds over the last second from Prysm receiving a frame
+             *     from its source to the output write for it returning: measured inside
+             *     Prysm, per frame (not from the screen). Absent when no frame reached
+             *     the output.
+             * @example 11.8
+             */
+            latency_ms?: number;
+            /**
              * @description At least one frame arrived in the last second. `false` right after
              *     lighting starts and while the source is quiet (no signal, no sender).
              */
             receiving: boolean;
+            /**
+             * Format: float
+             * @description Frames per second whose colours were written to the output over the
+             *     last second, to one decimal.
+             * @example 29.9
+             */
+            sent_fps?: number;
         };
         LedColor: [
             number,

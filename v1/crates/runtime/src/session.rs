@@ -264,7 +264,9 @@ struct SessionLoop {
 
 impl SessionLoop {
     fn on_frame(&mut self, frame: Frame) -> Result<()> {
-        self.last_frame = Instant::now();
+        // The frame's one timestamp: when the source handed it over.
+        let received = Instant::now();
+        self.last_frame = received;
         self.stats.frame_received();
         if let Some(config) = self.control.config.take() {
             self.processor.configure(&config);
@@ -275,6 +277,8 @@ impl SessionLoop {
         self.leds
             .write(&colors, &mut self.open_output, &self.stats)
             .map_err(|error| error.in_section(Section::Output))?;
+        // Flushed: the span ends when the write for this frame returned.
+        self.stats.flushed(received);
         self.stats.frame_sent();
         self.control.report(self.leds.observe());
         self.last = Some((colors.clone(), Instant::now()));

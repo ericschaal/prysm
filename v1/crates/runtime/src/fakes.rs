@@ -196,6 +196,8 @@ pub struct FakeOutputSettings {
     pub invalid: bool,
     /// `observe` reports the device overridden after this many writes.
     pub overridden_after: Option<u32>,
+    /// Each `write` takes this long, like a slow device.
+    pub write_delay_ms: u64,
 }
 
 /// Registers kind `"fake"`.
@@ -243,6 +245,9 @@ pub struct FakeOutput {
 
 impl LedOutput for FakeOutput {
     fn write(&mut self, _colors: &EdgeColors) -> Result<()> {
+        if self.settings.write_delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(self.settings.write_delay_ms));
+        }
         if self.settings.fail_after.is_some_and(|n| self.writes >= n) {
             return Err(Error::other("fake output failed"));
         }

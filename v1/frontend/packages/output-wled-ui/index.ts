@@ -34,6 +34,8 @@ export const wledOutput: AdapterUi<WledSettings> = {
       ...(href ? { link: { label: 'Open WLED', href } } : {}),
     };
   },
+  // `prysm-output-wled` writes DDP over UDP (port 4048).
+  transport: () => 'ddp',
   edges: ({ leds }) => ({
     top: leds.top ?? 0,
     right: leds.right ?? 0,

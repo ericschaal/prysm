@@ -1872,7 +1872,8 @@ fieldset > .help {
 .path-link {
   position: relative;
   grid-column: 1 / -1;
-  height: 32px;
+  /* Room for its name and its numbers beside it, a line each. */
+  height: 40px;
 }
 .path-line {
   position: absolute;
@@ -1905,6 +1906,16 @@ fieldset > .help {
   white-space: nowrap;
   transform: translateY(-50%);
   transition: color var(--duration-slow) var(--ease-out);
+}
+/* Column: beside the hairline, the protocol at the top, the numbers below. */
+.path-protocol {
+  top: 3px;
+  transform: none;
+}
+.path-numbers {
+  top: auto;
+  bottom: 3px;
+  transform: none;
 }
 .path-link[data-state='flowing'] .path-line {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -2005,11 +2016,16 @@ fieldset > .help {
   .path-link[data-state='flowing'] .path-pulse {
     animation-name: travel-across;
   }
+  /* Row: the protocol above the hairline, the numbers below; one each side. */
   .path-label {
     top: auto;
     bottom: calc(50% + 6px);
     left: 50%;
     transform: translateX(-50%);
+  }
+  .path-numbers {
+    top: calc(50% + 6px);
+    bottom: auto;
   }
 }
 /* The drawing is for room to spare: on a phone the path says enough. */

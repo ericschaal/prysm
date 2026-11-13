@@ -7,7 +7,7 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, Error, HueControls,
-    LightingTarget, OutputIssue, Pattern, Processing, Revision, Section, SessionPhase,
+    Input, LightingTarget, OutputIssue, Pattern, Processing, Revision, Section, SessionPhase,
     SessionState, Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
@@ -147,6 +147,12 @@ fn states() -> Vec<State> {
             session: SessionState::Running,
             settings: configured(),
             revision: Revision(7),
+            input: Some(Input {
+                fps: 29.9,
+                receiving: true,
+                sent_fps: 29.9,
+                latency_ms: Some(11.8),
+            }),
             output_issue: Some(OutputIssue::Overridden),
             surface_failures: vec![Error::other("portal listener failed")],
             ..Snapshot::default()

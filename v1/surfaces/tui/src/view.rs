@@ -639,6 +639,7 @@ mod tests {
         snapshot.input = Some(prysm_ports::Input {
             fps: 29.94,
             receiving: true,
+            ..prysm_ports::Input::default()
         });
         let ui = Ui::default();
         let view = View {
