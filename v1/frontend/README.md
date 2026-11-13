@@ -62,8 +62,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     cannot work are disabled with the reason. Brightness and the profiles
     apply to screen sync only, so the effects tile shows a note and
     "Open WLED" in their place. The card's light (CSS only, transform and
-    opacity) drifts while the session runs and blooms from the button when
-    the lights come on.
+    opacity) drifts while the session runs; it grows out of the power button
+    when the session lights up and draws back in when it stops. The state
+    word follows the session, not the request. Words appear only when they
+    inform (a failure, faulted, waiting for video, an output issue, or
+    starting after a second).
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue

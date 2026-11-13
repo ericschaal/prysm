@@ -664,15 +664,50 @@ fieldset > .help {
   inherits: true;
   initial-value: #ff8a4c;
 }
-.light-card {
+.light-frame {
   --light-a: var(--aurora-1);
   --light-b: var(--aurora-2);
   --light-c: var(--aurora-3);
   --light-d: var(--aurora-4);
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  /* Switching modes cross-fades the colours; turning on starts in them. */
+  transition:
+    --light-a var(--duration-mix) var(--ease-in-out),
+    --light-b var(--duration-mix) var(--ease-in-out),
+    --light-c var(--duration-mix) var(--ease-in-out),
+    --light-d var(--duration-mix) var(--ease-in-out);
+}
+.light-frame[data-palette='effects'] {
+  --light-a: var(--effects-1);
+  --light-b: var(--effects-2);
+  --light-c: var(--effects-3);
+  --light-d: var(--effects-4);
+}
+/* Lit, the card throws its light onto the page beneath it (opacity only). */
+.light-spill {
+  position: absolute;
+  z-index: -1;
+  inset: 45% 4% -5%;
+  background:
+    radial-gradient(closest-side at 25% 60%, var(--light-a), transparent),
+    radial-gradient(closest-side at 75% 60%, var(--light-b), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-light-off) var(--ease-in-out);
+}
+.light-frame[data-lit='true'] .light-spill {
+  opacity: 0.45;
+  transition: opacity var(--duration-light-on) var(--ease-in-out);
+}
+.light-frame[data-lit='true'][data-palette='effects'] .light-spill {
+  opacity: 0.3;
+}
+.light-card {
   --pad: var(--space-6);
   position: relative;
   isolation: isolate;
-  overflow: hidden;
   display: grid;
   align-content: start;
   padding: var(--pad);
@@ -682,45 +717,36 @@ fieldset > .help {
     var(--hero-bg);
   box-shadow: var(--hero-shadow);
   color: var(--text);
-  transition:
-    box-shadow var(--duration-warm) var(--ease-out),
-    --light-a var(--duration-warm) var(--ease-out),
-    --light-b var(--duration-warm) var(--ease-out),
-    --light-c var(--duration-warm) var(--ease-out),
-    --light-d var(--duration-warm) var(--ease-out);
 }
 @media (min-width: 900px) {
   .light-card {
     --pad: var(--space-8);
   }
 }
-.light-card[data-mood='effects'] {
-  --light-a: var(--effects-1);
-  --light-b: var(--effects-2);
-  --light-c: var(--effects-3);
-  --light-d: var(--effects-4);
-}
-/* Lit, the card throws its light onto the page beneath it. */
-.light-card[data-mood='sync'] {
-  box-shadow:
-    var(--hero-shadow),
-    -40px 40px 90px -50px var(--light-a),
-    40px 40px 90px -50px var(--light-b);
-}
-.light-card[data-mood='effects'] {
-  box-shadow:
-    var(--hero-shadow),
-    0 40px 90px -56px var(--light-a);
-}
 
-/* Four soft lights, each drifting on its own slow path (transform only). */
+/*
+ * Four soft lights, each drifting on its own slow path (transform only). The
+ * drift never stops; turning on grows the whole light out of the power
+ * button in one long ease-out, and turning off draws it back in.
+ */
 .aurora {
   position: absolute;
   inset: 0;
   z-index: -1;
-  opacity: 0;
+  overflow: hidden;
+  border-radius: inherit;
   pointer-events: none;
-  transition: opacity var(--duration-warm) var(--ease-out);
+}
+.aurora-light {
+  position: absolute;
+  inset: 0;
+  /* The power button's centre: the light is born there. */
+  transform-origin: calc(100% - var(--pad) - 38px) calc(var(--pad) + 56px);
+  transform: scale(0.2);
+  opacity: 0;
+  transition:
+    transform var(--duration-light-off) var(--ease-in-out),
+    opacity var(--duration-light-off) var(--ease-in-out);
 }
 .aurora span {
   position: absolute;
@@ -774,13 +800,26 @@ fieldset > .help {
     color-mix(in srgb, var(--hero-bg) 80%, transparent)
   );
 }
-.light-card[data-mood='sync'] .aurora,
-.light-card[data-mood='effects'] .aurora {
-  opacity: 0.9;
-  /* Follows the bloom in; going dark has no delay. */
-  transition: opacity 1600ms var(--ease-out) 240ms;
+/* Starting: a small glow gathers at the button while Prysm gets ready. */
+.light-card[data-mood='starting']:not([data-lit='true']) .aurora-light {
+  transform: scale(0.28);
+  opacity: 0.22;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-light-on) var(--ease-light);
 }
-.light-card[data-mood='effects'] .aurora {
+/*
+ * Lit: the light grows to rest. Opacity rises a little slower than the
+ * size, so the light is never brighter near the button than it rests.
+ */
+.light-card[data-lit='true'] .aurora-light {
+  transform: none;
+  opacity: 0.9;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-light-on) var(--ease-out);
+}
+.light-card[data-lit='true'][data-mode='device_native'] .aurora-light {
   opacity: 0.62;
 }
 @keyframes drift-a {
@@ -817,14 +856,17 @@ fieldset > .help {
 }
 .light-card .overline {
   color: var(--text-2);
-  transition: color var(--duration-warm) var(--ease-out);
+  transition: color var(--duration-light-off) var(--ease-in-out);
 }
 /* Over the brightest light, full strength keeps it readable (measured ≥ 4.5:1). */
-.light-card[data-mood='sync'] .overline,
-.light-card[data-mood='effects'] .overline {
+.light-card[data-lit='true'] .overline {
   color: var(--text);
+  transition: color var(--duration-light-on) var(--ease-light);
 }
+/* Off, On and Stopped share one cell and cross-fade: no snap, no shift. */
 .light-word {
+  display: grid;
+  align-items: center;
   min-width: 0;
   /* Optical: without its descender room the word's capitals sit centred. */
   padding-bottom: 0.06em;
@@ -832,55 +874,84 @@ fieldset > .help {
   font-weight: var(--weight-strong);
   letter-spacing: -0.055em;
   line-height: 1;
-  color: var(--text-3);
-  transition:
-    color var(--duration-warm) var(--ease-out),
-    text-shadow var(--duration-warm) var(--ease-out);
-  animation: word-in var(--duration-slow) var(--ease-out) both;
 }
-.light-card[data-mood='sync'] .light-word,
-.light-card[data-mood='effects'] .light-word,
-.light-card[data-mood='starting'] .light-word {
+.light-word span {
+  grid-area: 1 / 1;
+  color: var(--text-3);
+  opacity: 0;
+  transform: translateY(0.08em);
+  transition:
+    opacity var(--duration-slow) var(--ease-in-out),
+    transform var(--duration-slow) var(--ease-in-out);
+}
+.light-word span[data-shown='true'] {
+  opacity: 1;
+  transform: none;
+}
+.light-word [data-word='On'] {
   color: var(--text);
   text-shadow: 0 0 36px rgb(255 255 255 / 0.28);
 }
-.light-card[data-mood='problem'] .light-word {
+.light-word [data-word='Stopped'] {
   /* A longer word, said calmly: smaller than On and Off. */
   font-size: var(--text-hero);
   letter-spacing: -0.04em;
   color: var(--danger);
 }
-.lighting-status {
-  margin-top: var(--space-3);
-  color: var(--text-2);
-  font-size: var(--text-body);
-  text-wrap: balance;
+/* "On" arrives with the light, at the light's pace. */
+.light-card[data-lit='true'] .light-word [data-word='On'] {
+  transition:
+    opacity var(--duration-light-on) var(--ease-light),
+    transform var(--duration-light-on) var(--ease-light);
 }
-.light-card[data-mood='sync'] .lighting-status,
-.light-card[data-mood='effects'] .lighting-status {
-  color: var(--text);
+
+/*
+ * The card's one line of words, only when it informs (a problem, a warning,
+ * a note). It opens and closes its own space, so the controls slide.
+ */
+.light-info {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--duration-slow) var(--ease-in-out),
+    opacity var(--duration-slow) var(--ease-in-out);
 }
-.lighting-detail {
-  margin-top: var(--space-1);
-  color: var(--text-3);
-  font-size: var(--text-small);
+.light-info[data-shown='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
 }
-.light-card > .notice {
-  margin-top: var(--space-4);
-}
-/* What went wrong, as the card's one sentence, with the one fix. */
-.light-problem {
+.light-info > div {
   display: grid;
   justify-items: start;
   gap: var(--space-4);
-  margin-top: var(--space-3);
-  color: var(--text);
+  min-height: 0;
+  overflow: hidden;
+  /* Room for focus rings inside the fold. */
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+}
+.light-info p {
+  padding-top: var(--space-3);
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
-.light-problem button {
+.light-info[data-tone='problem'] p,
+.light-card[data-lit='true'] .light-info[data-tone='note'] p {
+  /* Over the light, full strength (measured ≥ 4.5:1). */
+  color: var(--text);
+}
+.light-info[data-tone='warning'] p {
+  color: var(--warning);
+}
+/* Lit, a paler amber keeps the warning readable over the light. */
+.light-card[data-lit='true'] .light-info[data-tone='warning'] p {
+  color: var(--warning-lit);
+}
+.light-info button {
   border-color: var(--line-strong);
 }
-.light-problem button:hover:enabled {
+.light-info button:hover:enabled {
   border-color: rgb(255 255 255 / 0.36);
   background: rgb(255 255 255 / 0.08);
 }
@@ -894,6 +965,7 @@ fieldset > .help {
 }
 .power {
   position: relative;
+  isolation: isolate;
   width: 76px;
   height: 76px;
   padding: 0;
@@ -902,11 +974,30 @@ fieldset > .help {
   background: rgb(255 255 255 / 0.04);
   color: var(--text-2);
   transition:
-    background-color var(--duration-warm) var(--ease-out),
     border-color var(--duration) var(--ease-out),
-    box-shadow var(--duration-warm) var(--ease-out),
-    color var(--duration) var(--ease-out),
+    color var(--duration-light-off) var(--ease-in-out),
     transform var(--duration-fast) var(--ease-out);
+}
+/* A click in flight keeps the button as it is; only "cannot" greys it. */
+.power:disabled {
+  opacity: 1;
+}
+.power[data-unavailable='true']:disabled {
+  opacity: 0.4;
+}
+/* The lamp: drawn under the icon and faded in with the light (opacity only). */
+.power::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 28%, #fff, #e6e1ff 70%);
+  box-shadow:
+    0 0 0 6px rgb(255 255 255 / 0.08),
+    0 0 28px rgb(255 255 255 / 0.32);
+  opacity: 0;
+  transition: opacity var(--duration-light-off) var(--ease-in-out);
 }
 .power svg {
   width: 30px;
@@ -924,17 +1015,21 @@ fieldset > .help {
 .power:active:enabled {
   transform: scale(0.95);
 }
-.power[aria-pressed='true'] {
+.light-card[data-lit='true'] .power {
   border-color: transparent;
-  background: radial-gradient(circle at 50% 28%, #fff, #e6e1ff 70%);
   color: #1d1934;
-  box-shadow:
-    0 0 0 6px rgb(255 255 255 / 0.08),
-    0 0 32px rgb(255 255 255 / 0.4),
-    0 0 72px var(--light-c);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    color var(--duration-slow) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
-.power[aria-pressed='true']:hover:enabled {
-  background: radial-gradient(circle at 50% 28%, #fff, #f1eeff 70%);
+.light-card[data-lit='true'] .power::before {
+  opacity: 1;
+  /* The lamp lights first and softly; the room's light follows. */
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.light-card[data-lit='true'] .power:hover:enabled {
+  background: transparent;
   color: #1d1934;
 }
 /* On but stopped: the button still turns it off, without the glow. */
@@ -956,72 +1051,10 @@ fieldset > .help {
   transition: opacity var(--duration) var(--ease-out);
 }
 .power-wrap .power[aria-busy='true']::after,
-.light-card[data-mood='starting'] .power::after {
+.light-card[data-mood='starting']:not([data-lit='true']) .power::after {
   opacity: 1;
   animation: spin 0.9s linear infinite;
 }
-/*
- * Turning on is an event: a flash and a ring of light leave the button, and
- * the drifting light follows them in (see the aurora's delayed fade).
- */
-.bloom,
-.bloom::after {
-  position: absolute;
-  width: 76px;
-  height: 76px;
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-}
-.bloom {
-  z-index: -1;
-  background: radial-gradient(
-    closest-side,
-    rgb(255 255 255 / 0.85),
-    color-mix(in srgb, var(--light-c) 70%, transparent) 40%,
-    color-mix(in srgb, var(--light-a) 35%, transparent) 70%,
-    transparent
-  );
-  animation: bloom var(--duration-bloom) cubic-bezier(0.16, 1, 0.3, 1);
-}
-.bloom::after {
-  content: '';
-  inset: 0;
-  box-shadow:
-    0 0 0 2px rgb(255 255 255 / 0.7),
-    0 0 24px 4px color-mix(in srgb, var(--light-b) 60%, transparent);
-  animation: bloom-ring 900ms cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-@keyframes bloom {
-  from {
-    opacity: 1;
-    transform: scale(0.8);
-  }
-  35% {
-    opacity: 0.9;
-  }
-  to {
-    opacity: 0;
-    transform: scale(17);
-  }
-}
-@keyframes bloom-ring {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(9);
-  }
-}
-@keyframes word-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-
 /* What is missing, with the one fix. */
 .light-setup {
   display: grid;
@@ -1067,10 +1100,13 @@ fieldset > .help {
   opacity: 0.5;
   transition:
     transform var(--duration-slow) var(--ease-out),
-    opacity var(--duration-slow) var(--ease-out);
+    opacity var(--duration-light-off) var(--ease-in-out);
 }
-.modes[data-on='true']::before {
+.light-card[data-lit='true'] .modes::before {
   opacity: 1;
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    opacity var(--duration-light-on) var(--ease-light);
 }
 .modes[data-mode='device_native']::before {
   transform: translateX(calc(100% + 6px));
@@ -1087,6 +1123,11 @@ fieldset > .help {
   color: var(--text-3);
   font-size: var(--text-small);
   font-weight: var(--weight-strong);
+  transition:
+    background-color var(--duration) var(--ease-out),
+    color var(--duration-slow) var(--ease-in-out),
+    opacity var(--duration-slow) var(--ease-in-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 .mode:hover:enabled {
   background: rgb(255 255 255 / 0.04);
@@ -1102,10 +1143,18 @@ fieldset > .help {
 .modes[data-mode='device_native'] [data-target='device_native'] {
   color: var(--text-2);
 }
-.mode[aria-pressed='true'] {
+.light-card[data-lit='true'] .modes[data-mode='processed'] [data-target='processed'],
+.light-card[data-lit='true']
+  .modes[data-mode='device_native']
+  [data-target='device_native'] {
   color: var(--text);
 }
+/* Only a mode that cannot run looks disabled; a click in flight does not. */
 .mode:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.mode[data-unavailable='true'] {
   opacity: 0.38;
 }
 .mode-label {
@@ -1125,8 +1174,8 @@ fieldset > .help {
   opacity: 0.6;
   filter: saturate(0.3);
   transition:
-    opacity var(--duration-slow) var(--ease-out),
-    filter var(--duration-slow) var(--ease-out);
+    opacity var(--duration-light-off) var(--ease-in-out),
+    filter var(--duration-light-off) var(--ease-in-out);
 }
 .art-line {
   stroke: currentColor;
@@ -1149,17 +1198,24 @@ fieldset > .help {
   opacity: 0.85;
   filter: saturate(0.85);
 }
-.mode[aria-pressed='true'] .mode-art {
-  opacity: 1;
-  filter: saturate(1) drop-shadow(0 0 6px rgb(196 168 255 / 0.45));
-}
-/* Off, nothing glows: the tile power will start is marked by the selection alone. */
-.modes[data-on='false'] .mode .mode-art {
+/* Not lit, nothing glows: the tile power will start is marked by the selection alone. */
+.light-card:not([data-lit='true']) .mode .mode-art {
   opacity: 0.5;
   filter: saturate(0);
 }
-.modes[data-on='false'] .mode:hover:enabled .mode-art {
+.light-card:not([data-lit='true']) .mode:hover:enabled .mode-art {
   opacity: 0.7;
+}
+.light-card[data-lit='true']
+  .modes[data-mode='processed']
+  [data-target='processed']
+  .mode-art,
+.light-card[data-lit='true']
+  .modes[data-mode='device_native']
+  [data-target='device_native']
+  .mode-art {
+  opacity: 1;
+  filter: saturate(1) drop-shadow(0 0 6px rgb(196 168 255 / 0.45));
 }
 .mode[aria-busy='true'] .mode-art {
   animation: breathe 1.1s var(--ease-in-out) infinite;
@@ -1183,22 +1239,31 @@ fieldset > .help {
   font-weight: var(--weight-strong);
   text-align: right;
 }
-.light-card .range input {
-  --track: linear-gradient(
-    90deg,
-    rgb(255 255 255 / 0.75) var(--fill-to, 0%),
-    rgb(255 255 255 / 0.2) var(--fill-to, 0%)
-  );
+/* The fill takes the light's colours as the light comes on (one tint, eased). */
+@property --tint {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
 }
-.light-card[data-mood='sync'] .range input,
-.light-card[data-mood='effects'] .range input {
+.light-card .range input {
+  --tint: 0%;
   --track:
     linear-gradient(
       90deg,
       transparent var(--fill-to, 0%),
       rgb(255 255 255 / 0.2) var(--fill-to, 0%)
     ),
-    linear-gradient(90deg, var(--light-a), var(--light-c) 55%, var(--light-b));
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--light-a) var(--tint), rgb(255 255 255 / 0.75)),
+      color-mix(in srgb, var(--light-c) var(--tint), rgb(255 255 255 / 0.75)) 55%,
+      color-mix(in srgb, var(--light-b) var(--tint), rgb(255 255 255 / 0.75))
+    );
+  transition: --tint var(--duration-light-off) var(--ease-in-out);
+}
+.light-card[data-lit='true'] .range input {
+  --tint: 100%;
+  transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
 .light-card .range input::-webkit-slider-runnable-track {
   height: 8px;
@@ -1228,9 +1293,14 @@ fieldset > .help {
     opacity var(--duration-slow) var(--ease-out),
     transform var(--duration-slow) var(--ease-out);
 }
+/* The new panel arrives as the old one has nearly gone: no double exposure. */
+.mode-panel:not([inert]) {
+  transition-delay: 120ms;
+}
 .mode-panel[inert] {
   opacity: 0;
   transform: translateY(6px);
+  transition-duration: var(--duration);
 }
 .effects-panel {
   display: grid;

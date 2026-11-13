@@ -3,6 +3,7 @@ import {
   describeLighting,
   describeOutputIssue,
   failureOf,
+  same,
   type Failure,
   type LightingTarget,
   type OutputIssue,
@@ -56,6 +57,21 @@ function saveMode(mode: LightingMode) {
   } catch {
     // Without storage the power button turns on screen sync next time.
   }
+}
+
+/** The state words, drawn in one place and cross-faded. */
+const words = ['Off', 'On', 'Stopped'] as const;
+type Word = (typeof words)[number];
+
+/** Starting is mentioned only once it takes longer than this. */
+export const slowStartMs = 1000;
+
+/** The card's one informative line: a problem, a warning or a note. */
+interface Info {
+  tone: 'problem' | 'warning' | 'note';
+  text: string;
+  /** Offer Try again: the requested mode failed. */
+  retry?: boolean;
 }
 
 /** Why screen sync cannot start yet, or `null`. */
@@ -180,14 +196,6 @@ export function LightCard({
   useEffect(() => {
     if (target !== 'off') saveMode(target);
   }, [target]);
-  const lit = session.state === 'running' || session.state === 'native';
-  // Light spreads from the power button each time the lights come on.
-  const [wasLit, setWasLit] = useState(lit);
-  const [blooms, setBlooms] = useState(0);
-  if (lit !== wasLit) {
-    setWasLit(lit);
-    if (lit) setBlooms(blooms + 1);
-  }
   const headingId = useId();
   const statusId = useId();
   const effects = output?.effects ?? 'Device effects';
@@ -226,11 +234,45 @@ export function LightCard({
   else if (faulted || (on && failure)) mood = 'problem';
   else if (on) mood = 'starting';
   if (!configured) mood = 'unset';
-  let word = on ? 'On' : 'Off';
+  // Switching modes passes through starting: the light stays up meanwhile.
+  const [stayLit, setStayLit] = useState(false);
+  const running = mood === 'sync' || mood === 'effects';
+  if (running && !stayLit) setStayLit(true);
+  if (!running && mood !== 'starting' && stayLit) setStayLit(false);
+  const lit = running || (mood === 'starting' && stayLit);
+  // The word follows the light, not the request: "On" arrives with the light.
+  let word: Word = lit ? 'On' : 'Off';
   if (mood === 'problem') word = 'Stopped';
   /** What went wrong, in one sentence: the latest command's error, else the failure. */
   // Faulted, the status says what to do instead.
   const problem = faulted ? '' : error || failure?.message || '';
+
+  // Starting is said only when it lasts.
+  const [slowStart, setSlowStart] = useState(false);
+  useEffect(() => {
+    if (mood !== 'starting') return;
+    const timer = setTimeout(() => setSlowStart(true), slowStartMs);
+    return () => {
+      clearTimeout(timer);
+      setSlowStart(false);
+    };
+  }, [mood]);
+  const status = headline({ target, session, failure, effects });
+  // The card's one line of words, only when it says what the card does not.
+  let info: Info | null = null;
+  if (problem)
+    info = { tone: 'problem', text: problem, retry: !!failure && on };
+  else if (faulted) info = { tone: 'problem', text: status, retry: false };
+  else if (outputIssue && session.state === 'running')
+    info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
+  else if (input && session.state === 'running' && !input.receiving)
+    info = { tone: 'note', text: 'Waiting for video.' };
+  else if (mood === 'starting' && slowStart && !lit)
+    info = { tone: 'note', text: status };
+  // Kept while the line folds away, so it leaves as it came.
+  const [kept, setKept] = useState(info);
+  if (info && !same(info, kept)) setKept(info);
+  const shown = info ?? kept;
 
   const tiles = [
     { value: 'processed', label: 'Screen sync', art: <SyncArt /> },
@@ -240,181 +282,200 @@ export function LightCard({
   const shownReasons = new Set<string>();
 
   return (
-    <section
-      className="light-card"
-      data-mood={mood}
-      data-mode={mode}
-      aria-labelledby={headingId}
-      aria-busy={pending !== null}
+    // The frame carries the light's colours to the glow under the card.
+    <div
+      className="light-frame"
+      data-lit={lit}
+      data-palette={mode === 'device_native' ? 'effects' : 'sync'}
     >
-      <div className="aurora" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-      </div>
-      <h2 id={headingId} className="overline">
-        Your lights
-      </h2>
-      <div className="light-head">
-        <p key={word} className="light-word" aria-hidden="true">
-          {word}
-        </p>
-        {configured ? (
-          <div className="power-wrap">
-            {blooms ? (
-              <span key={blooms} className="bloom" aria-hidden="true" />
-            ) : null}
-            <button
-              type="button"
-              className="power"
-              data-power=""
-              aria-label="Power"
-              aria-pressed={on}
-              aria-busy={pending !== null && (pending === 'off') === on}
-              aria-describedby={
-                powerReason
-                  ? `${headingId}-power`
-                  : `${statusId} ${headingId}-starts`
-              }
-              disabled={locked || powerReason !== null}
-              onClick={() => void choose(on ? 'off' : mode)}
-            >
-              <PowerIcon />
-            </button>
-          </div>
-        ) : null}
-      </div>
-      {/* A problem or the setup prompt is the visible sentence; the status stays for AT. */}
-      <p
-        id={statusId}
-        className={
-          problem || !configured
-            ? 'lighting-status visually-hidden'
-            : 'lighting-status'
-        }
-        role="status"
-        aria-live="polite"
+      <section
+        className="light-card"
+        data-mood={mood}
+        data-mode={mode}
+        data-lit={lit}
+        aria-labelledby={headingId}
+        aria-busy={pending !== null}
       >
-        {headline({ target, session, failure, effects })}
-      </p>
-      {powerReason ? (
-        <small id={`${headingId}-power`} className="visually-hidden">
-          {powerReason}
-        </small>
-      ) : (
-        <small id={`${headingId}-starts`} className="visually-hidden">
-          {on
-            ? ''
-            : `Turns on ${mode === 'processed' ? 'Screen sync' : effects}.`}
-        </small>
-      )}
-      {problem ? (
-        <div className="light-problem">
-          <p role="alert">{problem}</p>
-          {failure && on && !faulted ? (
-            <button
-              type="button"
-              disabled={locked}
-              onClick={() => void choose(target)}
-            >
-              Try again
-            </button>
-          ) : null}
+        <div className="aurora" aria-hidden="true">
+          <div className="aurora-light">
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
         </div>
-      ) : null}
-      {configured ? null : (
-        <div className="light-setup">
-          <p>Prysm needs a video source and lights before it can light up.</p>
-          <button type="button" className="primary" onClick={openSetup}>
-            Set up Prysm
-          </button>
-        </div>
-      )}
-      {input && session.state === 'running' && !input.receiving ? (
-        <p className="lighting-detail" role="status">
-          Waiting for video.
-        </p>
-      ) : null}
-      {outputIssue && session.state === 'running' ? (
-        <p className="notice warning output-issue" role="status">
-          {describeOutputIssue(outputIssue)}
-        </p>
-      ) : null}
-      {configured ? (
-        <>
-          <div
-            className="modes"
-            role="group"
-            aria-label="Lighting mode"
-            data-mode={mode}
-            data-on={on}
-          >
-            {tiles.map((tile) => (
+        <h2 id={headingId} className="overline">
+          Your lights
+        </h2>
+        <div className="light-head">
+          {/* The three words share one cell and cross-fade. */}
+          <p className="light-word" aria-hidden="true">
+            {words.map((each) => (
+              <span key={each} data-word={each} data-shown={each === word}>
+                {each}
+              </span>
+            ))}
+          </p>
+          {configured ? (
+            <div className="power-wrap">
               <button
                 type="button"
-                key={tile.value}
-                className="mode"
-                data-target={tile.value}
-                aria-pressed={target === tile.value}
-                aria-busy={pending === tile.value}
+                className="power"
+                data-power=""
+                aria-label="Power"
+                aria-pressed={on}
+                aria-busy={pending !== null && (pending === 'off') === on}
                 aria-describedby={
-                  reasons[tile.value] ? `${headingId}-${tile.value}` : undefined
+                  powerReason
+                    ? `${headingId}-power`
+                    : `${statusId} ${headingId}-starts`
                 }
-                disabled={locked || reasons[tile.value] !== null}
-                onClick={() => {
-                  // Already on and fine: nothing to restart. After a failure it retries.
-                  if (target !== tile.value || failure) void choose(tile.value);
-                }}
+                disabled={locked || powerReason !== null}
+                data-unavailable={powerReason !== null}
+                onClick={() => void choose(on ? 'off' : mode)}
               >
-                {tile.art}
-                <span className="mode-label">{tile.label}</span>
+                <PowerIcon />
               </button>
-            ))}
-          </div>
-          {tiles.map(({ value }) => {
-            const reason = reasons[value];
-            if (!reason) return null;
-            const repeated = shownReasons.has(reason);
-            shownReasons.add(reason);
-            return (
-              <small
-                key={value}
-                id={`${headingId}-${value}`}
-                className={repeated ? 'visually-hidden' : 'mode-reason'}
-              >
-                {reason}
-              </small>
-            );
-          })}
-          {/* Both panels share one cell, so switching modes never moves the page. */}
-          <div className="mode-panels">
-            <div className="mode-panel" inert={mode !== 'processed'}>
-              {children}
             </div>
-            <div
-              className="mode-panel effects-panel"
-              inert={mode !== 'device_native'}
-            >
-              <p>
-                {effects} run on the lights themselves. Choose an effect and its
-                brightness there.
-              </p>
-              {output?.link ? (
-                <a
-                  className="device-link"
-                  href={output.link.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
+          ) : null}
+        </div>
+        {/* For screen readers; sighted people see the word and the chosen tile. */}
+        <p
+          id={statusId}
+          className="lighting-status visually-hidden"
+          role="status"
+          aria-live="polite"
+        >
+          {status}
+        </p>
+        {powerReason ? (
+          <small id={`${headingId}-power`} className="visually-hidden">
+            {powerReason}
+          </small>
+        ) : (
+          <small id={`${headingId}-starts`} className="visually-hidden">
+            {on
+              ? ''
+              : `Turns on ${mode === 'processed' ? 'Screen sync' : effects}.`}
+          </small>
+        )}
+        {configured ? (
+          // Opens and closes its own space, so nothing below jumps.
+          <div
+            className="light-info"
+            data-shown={!!info}
+            data-tone={shown?.tone}
+            inert={!info}
+          >
+            <div>
+              {shown ? (
+                <p role={shown.tone === 'problem' ? 'alert' : 'status'}>
+                  {shown.text}
+                </p>
+              ) : null}
+              {shown?.retry ? (
+                <button
+                  type="button"
+                  disabled={locked}
+                  onClick={() => void choose(target)}
                 >
-                  {output.link.label}
-                  <span className="visually-hidden"> (opens in a new tab)</span>
-                </a>
+                  Try again
+                </button>
               ) : null}
             </div>
           </div>
-        </>
-      ) : null}
-    </section>
+        ) : (
+          <div className="light-setup">
+            <p>Prysm needs a video source and lights before it can light up.</p>
+            <button type="button" className="primary" onClick={openSetup}>
+              Set up Prysm
+            </button>
+          </div>
+        )}
+        {configured ? (
+          <>
+            <div
+              className="modes"
+              role="group"
+              aria-label="Lighting mode"
+              data-mode={mode}
+              data-on={on}
+            >
+              {tiles.map((tile) => (
+                <button
+                  type="button"
+                  key={tile.value}
+                  className="mode"
+                  data-target={tile.value}
+                  aria-pressed={target === tile.value}
+                  aria-busy={pending === tile.value}
+                  aria-describedby={
+                    reasons[tile.value]
+                      ? `${headingId}-${tile.value}`
+                      : undefined
+                  }
+                  disabled={locked || reasons[tile.value] !== null}
+                  // Only a mode that cannot run looks disabled; a click in flight does not.
+                  data-unavailable={reasons[tile.value] !== null}
+                  onClick={() => {
+                    // Already on and fine: nothing to restart. After a failure it retries.
+                    if (target !== tile.value || failure)
+                      void choose(tile.value);
+                  }}
+                >
+                  {tile.art}
+                  <span className="mode-label">{tile.label}</span>
+                </button>
+              ))}
+            </div>
+            {tiles.map(({ value }) => {
+              const reason = reasons[value];
+              if (!reason) return null;
+              const repeated = shownReasons.has(reason);
+              shownReasons.add(reason);
+              return (
+                <small
+                  key={value}
+                  id={`${headingId}-${value}`}
+                  className={repeated ? 'visually-hidden' : 'mode-reason'}
+                >
+                  {reason}
+                </small>
+              );
+            })}
+            {/* Both panels share one cell, so switching modes never moves the page. */}
+            <div className="mode-panels">
+              <div className="mode-panel" inert={mode !== 'processed'}>
+                {children}
+              </div>
+              <div
+                className="mode-panel effects-panel"
+                inert={mode !== 'device_native'}
+              >
+                <p>
+                  {effects} run on the lights themselves. Choose an effect and
+                  its brightness there.
+                </p>
+                {output?.link ? (
+                  <a
+                    className="device-link"
+                    href={output.link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {output.link.label}
+                    <span className="visually-hidden">
+                      {' '}
+                      (opens in a new tab)
+                    </span>
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          </>
+        ) : null}
+      </section>
+      <span className="light-spill" aria-hidden="true" />
+    </div>
   );
 }

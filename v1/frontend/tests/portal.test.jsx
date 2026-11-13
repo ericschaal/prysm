@@ -12,6 +12,7 @@ import {
   processingLimits,
   profileLimits,
   saveTheme,
+  slowStartMs,
   staleNotice,
   storedTheme,
   applyTheme,
@@ -62,7 +63,12 @@ const output = {
 const mode = (target) => $(`[data-target="${target}"]`);
 const power = () => $('[data-power]');
 /** The lights' state in one word, as drawn in the light card. */
-const word = () => $('.light-word').textContent;
+const word = () => $('.light-word [data-shown="true"]').textContent;
+/** The card's one informative line, while it is shown. */
+const info = () =>
+  $('.light-info').dataset.shown === 'true'
+    ? $('.light-info p').textContent
+    : null;
 const chip = (id) => $(`[data-profile="${id}"]`);
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
@@ -98,24 +104,17 @@ test('the lighting card says why the lights are not showing screen sync', async 
       $('.lighting-status').textContent,
       'Lights follow your screen',
     );
-    assert.match(
-      $('.light-card .output-issue').textContent,
-      /^Live override is on/,
-    );
+    assert.match(info(), /^Live override is on/);
+    assert.equal($('.light-info').dataset.tone, 'warning');
     assert.equal($('.light-card [role="alert"]'), null, 'not a failure');
 
     await act(async () => fixture.publish({ output_issue: 'off' }));
-    assert.match(
-      $('.light-card .output-issue').textContent,
-      /switched off on the device/,
-    );
+    assert.match(info(), /switched off on the device/);
 
     await act(async () => fixture.publish({ output_issue: undefined }));
-    assert.equal(
-      $('.light-card .output-issue'),
-      null,
-      'cleared once the lights follow',
-    );
+    assert.equal(info(), null, 'cleared once the lights follow');
+    // It folds away with its last words, out of the tab order.
+    assert.equal($('.light-info').hasAttribute('inert'), true);
   } finally {
     await portal.unmount();
   }
@@ -136,12 +135,12 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       $('.lighting-status').textContent,
       'Lights follow your screen',
     );
-    assert.equal($('.lighting-detail').textContent, 'Waiting for video.');
+    assert.equal(info(), 'Waiting for video.');
 
     await act(async () =>
       fixture.publish({ input: { fps: 29.9, receiving: true } }),
     );
-    assert.equal($('.lighting-detail'), null);
+    assert.equal(info(), null);
     assert(
       !$('.light-card').textContent.includes('fps'),
       'no live frame rate on Home',
@@ -181,16 +180,18 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert.equal($('.lighting-status').textContent, 'Lights are off');
     assert.equal($('.light-card').dataset.mood, 'off');
     assert.equal($('.modes').dataset.mode, 'processed', 'power turns on sync');
-    assert.equal($('.bloom'), null);
+    assert.equal($('.light-card').dataset.lit, 'false');
+    assert.equal(info(), null, 'no sentence in the normal states');
 
-    // Power turns screen sync on; light blooms from the button once lit.
+    // Power turns screen sync on; the light, and the word, come with the session.
     await press(power());
     assert.deepEqual(targets(), ['target:processed']);
     assert.equal(power().getAttribute('aria-pressed'), 'true');
     assert.equal(mode('processed').getAttribute('aria-pressed'), 'true');
     assert.equal(word(), 'On');
     assert.equal($('.light-card').dataset.mood, 'sync');
-    assert($('.bloom'));
+    assert.equal($('.light-card').dataset.lit, 'true');
+    assert.equal(info(), null);
     assert.equal(
       $('.lighting-status').textContent,
       'Lights follow your screen',
@@ -243,6 +244,7 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert($('.lighting-status').classList.contains('visually-hidden'));
     assert.equal($$('.light-card .notice').length, 0, 'one sentence, no box');
+    assert.equal(info(), 'WLED at 192.0.2.1 did not switch to live mode');
     assert.equal(word(), 'Stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
@@ -273,6 +275,50 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert($$('[data-target]').every((item) => item.disabled));
     assert.equal(power().disabled, true);
     assert.equal(hint(power()), 'Restart Prysm to change the lights.');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the word follows the light; starting is said only when it lasts', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    // The engine accepts the target; the session follows later.
+    await act(async () =>
+      fixture.publish({ target: 'processed', session: { state: 'stopped' } }),
+    );
+    assert.equal(power().getAttribute('aria-pressed'), 'true');
+    assert.equal(word(), 'Off', 'no "On" before the light');
+    assert.equal($('.light-card').dataset.mood, 'starting');
+    assert.equal(info(), null, 'a quick start says nothing');
+    await act(async () => sleep(slowStartMs + 50));
+    assert.equal(info(), 'Starting screen sync…');
+
+    await act(async () => fixture.publish({ session: { state: 'running' } }));
+    assert.equal(word(), 'On');
+    assert.equal(info(), null);
+
+    // Switching modes passes through starting without the light going out.
+    await act(async () =>
+      fixture.publish({
+        target: 'device_native',
+        session: { state: 'stopped' },
+      }),
+    );
+    assert.equal($('.light-card').dataset.lit, 'true');
+    assert.equal(word(), 'On');
+    await act(async () => sleep(slowStartMs + 50));
+    assert.equal(info(), null, 'still lit: nothing to say');
+    await act(async () => fixture.publish({ session: { state: 'native' } }));
+    assert.equal($('.light-frame').dataset.palette, 'effects');
+
+    // Off: the light goes, and with it the word.
+    await act(async () =>
+      fixture.publish({ target: 'off', session: { state: 'stopped' } }),
+    );
+    assert.equal($('.light-card').dataset.lit, 'false');
+    assert.equal(word(), 'Off');
   } finally {
     await portal.unmount();
   }

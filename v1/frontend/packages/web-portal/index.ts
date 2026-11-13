@@ -8,7 +8,12 @@ export * from './checks';
 export { FindDevices } from './discovery';
 export * from './fields';
 export * from './form';
-export { LightCard, modeStorageKey, type LightingMode } from './lighting';
+export {
+  LightCard,
+  modeStorageKey,
+  slowStartMs,
+  type LightingMode,
+} from './lighting';
 export {
   processingControls,
   processingDelayMs,

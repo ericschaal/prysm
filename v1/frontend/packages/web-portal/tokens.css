@@ -105,9 +105,13 @@
   --duration: 200ms;
   --duration-slow: 320ms;
   --duration-warm: 700ms;
-  --duration-bloom: 1200ms;
+  /* The light growing out of the power button, and drawing back in. */
+  --duration-light-on: 1600ms;
+  --duration-light-off: 500ms;
+  --duration-mix: 900ms;
   --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1);
   --ease-in-out: cubic-bezier(0.55, 0, 0.3, 1);
+  --ease-light: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Touch */
   --hit: 44px;
@@ -198,6 +202,8 @@
   --accent-soft: rgb(255 255 255 / 0.08);
   --warning: #f3c47e;
   --warning-soft: rgb(240 189 114 / 0.14);
+  /* Over the lit aurora (measured ≥ 4.5:1). */
+  --warning-lit: #ffe4bd;
   --danger: #ff9aa6;
   --danger-soft: rgb(255 138 152 / 0.14);
   --focus: #d2cbff;
