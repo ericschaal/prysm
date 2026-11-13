@@ -1,4 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import {
   describeLighting,
   describeOutputIssue,
@@ -157,50 +164,10 @@ function PowerIcon() {
   );
 }
 
-/** A screen throwing its two halves' colours onto the wall beside it. */
-function SyncArt() {
-  return (
-    <svg
-      className="mode-art"
-      viewBox="0 0 64 48"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        className="art-warm"
-        d="M32 10H17a3 3 0 0 0-3 3v17a3 3 0 0 0 3 3h15"
-      />
-      <path
-        className="art-cool"
-        d="M32 10h15a3 3 0 0 1 3 3v17a3 3 0 0 1-3 3H32"
-      />
-      <path className="art-line" d="M26 40h12M32 33v7" />
-      <path className="art-warm art-led" d="M7 15v13" />
-      <path className="art-cool art-led" d="M57 15v13" />
-    </svg>
-  );
-}
-
-/** Light moving on its own: three waves, the middle one lit. */
-function EffectsArt() {
-  return (
-    <svg
-      className="mode-art"
-      viewBox="0 0 64 48"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path className="art-line" d="M10 24c11-26 27 12 44-17" />
-      <path className="art-line" d="M10 42c11-26 27 12 44-17" />
-      <path className="art-glow" d="M10 33c11-26 27 12 44-17" />
-    </svg>
-  );
-}
-
 /**
- * Your lights: the state as one word, the power button, the two modes as
- * illustrated tiles and the picture controls, over a light that drifts
- * while the lights are on. Each control sets a `LightingTarget`; the state
+ * Your lights: the state as one word and the power button, then three
+ * labelled controls (what the lights follow, brightness, colour profile),
+ * over a light that drifts while the lights are on. Each control sets a `LightingTarget`; the state
  * stream, not the click, decides what is shown as on.
  */
 export function LightCard({
@@ -334,16 +301,24 @@ export function LightCard({
 
   // The calm line, said for sighted people (the status says it for screen
   // readers): what Power will do, a pause once it lasts, or what runs.
-  const modeName = mode === 'processed' ? 'Screen sync' : effects;
   let calm = '';
   if (info) calm = '';
-  else if (!on) calm = powerReason ? '' : `Power turns on ${modeName}.`;
+  else if (!on && powerReason) calm = '';
+  else if (!on)
+    calm =
+      mode === 'processed'
+        ? 'Power makes the lights follow the screen.'
+        : `Power turns on ${effects}.`;
   else if (note === 'waiting') calm = 'Waiting for the picture.';
-  else if (note === 'starting') calm = `Starting ${modeName}…`;
+  else if (note === 'starting') calm = 'Starting…';
   else if (lit && target === 'processed' && input?.receiving)
     calm = 'Following the screen.';
   else if (target === 'device_native' && session.state === 'native')
     calm = `${effects} are showing.`;
+  // With the lights' own effects chosen, Prysm's picture controls do not
+  // reach the lights (the engine runs no session): one line says so, with
+  // the way to the device's own controls.
+  const ownEffects = mode === 'device_native' && !info && !(on && note);
 
   // Kept while the line folds away, so it leaves as it came.
   const [kept, setKept] = useState(info);
@@ -351,9 +326,28 @@ export function LightCard({
   const shown = info ?? kept;
 
   const tiles = [
-    { value: 'processed', label: 'Screen sync', art: <SyncArt /> },
-    { value: 'device_native', label: effects, art: <EffectsArt /> },
+    { value: 'processed', label: 'The screen' },
+    { value: 'device_native', label: effects },
   ] as const;
+  /** Arrow keys move the choice, as in any radio group. */
+  function arrow(event: KeyboardEvent<HTMLButtonElement>) {
+    const steps: Record<string, number> = {
+      ArrowRight: 1,
+      ArrowDown: 1,
+      ArrowLeft: -1,
+      ArrowUp: -1,
+    };
+    const step = steps[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const index = tiles.findIndex((tile) => tile.value === mode);
+    const next = tiles[(index + step + tiles.length) % tiles.length];
+    if (!next || locked || reasons[next.value]) return;
+    void choose(next.value);
+    event.currentTarget.parentElement
+      ?.querySelector<HTMLButtonElement>(`[data-target="${next.value}"]`)
+      ?.focus();
+  }
   // One visible line per distinct reason; every tile keeps its own for AT.
   const shownReasons = new Set<string>();
 
@@ -449,8 +443,30 @@ export function LightCard({
             data-shown={!!info}
             data-tone={shown?.tone}
           >
-            <p className="light-calm" aria-hidden="true" data-shown={!info}>
-              {calm}
+            <p className="light-calm" data-shown={!info}>
+              {/* Said by the status for screen readers. */}
+              <span aria-hidden="true">
+                {ownEffects && (on || !calm)
+                  ? `${effects.replace(/ effects$/, '')} controls its own effects.`
+                  : calm}
+              </span>
+              {ownEffects && output?.link ? (
+                <>
+                  {' '}
+                  <a
+                    className="device-link"
+                    href={output.link.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {output.link.label}
+                    <span className="visually-hidden">
+                      {' '}
+                      (opens in a new tab)
+                    </span>
+                  </a>
+                </>
+              ) : null}
             </p>
             <div inert={!info}>
               {shown ? (
@@ -490,39 +506,46 @@ export function LightCard({
         )}
         {configured ? (
           <>
-            <div
-              className="modes"
-              role="group"
-              aria-label="Lighting mode"
-              data-mode={mode}
-              data-on={on}
-            >
-              {tiles.map((tile) => (
-                <button
-                  type="button"
-                  key={tile.value}
-                  className="mode"
-                  data-target={tile.value}
-                  aria-pressed={target === tile.value}
-                  aria-busy={pending === tile.value}
-                  aria-describedby={
-                    reasons[tile.value]
-                      ? `${headingId}-${tile.value}`
-                      : undefined
-                  }
-                  disabled={locked || reasons[tile.value] !== null}
-                  // Only a mode that cannot run looks disabled; a click in flight does not.
-                  data-unavailable={reasons[tile.value] !== null}
-                  onClick={() => {
-                    // Already on and fine: nothing to restart. After a failure it retries.
-                    if (target !== tile.value || failure)
-                      void choose(tile.value);
-                  }}
-                >
-                  {tile.art}
-                  <span className="mode-label">{tile.label}</span>
-                </button>
-              ))}
+            <div className="follow">
+              <span id={`${headingId}-follow`} className="follow-label">
+                Lights follow
+              </span>
+              <div
+                className="modes"
+                role="radiogroup"
+                aria-labelledby={`${headingId}-follow`}
+                data-mode={mode}
+                data-on={on}
+              >
+                {tiles.map((tile) => (
+                  <button
+                    type="button"
+                    role="radio"
+                    key={tile.value}
+                    className="mode"
+                    data-target={tile.value}
+                    aria-checked={mode === tile.value}
+                    tabIndex={mode === tile.value ? 0 : -1}
+                    onKeyDown={arrow}
+                    aria-busy={pending === tile.value}
+                    aria-describedby={
+                      reasons[tile.value]
+                        ? `${headingId}-${tile.value}`
+                        : undefined
+                    }
+                    disabled={locked || reasons[tile.value] !== null}
+                    // Only a mode that cannot run looks disabled; a click in flight does not.
+                    data-unavailable={reasons[tile.value] !== null}
+                    onClick={() => {
+                      // Already on and fine: nothing to restart. After a failure it retries.
+                      if (target !== tile.value || failure)
+                        void choose(tile.value);
+                    }}
+                  >
+                    {tile.label}
+                  </button>
+                ))}
+              </div>
             </div>
             {tiles.map(({ value }) => {
               const reason = reasons[value];
@@ -539,34 +562,14 @@ export function LightCard({
                 </small>
               );
             })}
-            {/* Both panels share one cell, so switching modes never moves the page. */}
-            <div className="mode-panels">
-              <div className="mode-panel" inert={mode !== 'processed'}>
-                {children}
-              </div>
-              <div
-                className="mode-panel effects-panel"
-                inert={mode !== 'device_native'}
-              >
-                <p>
-                  {effects} run on the lights themselves. Choose an effect and
-                  its brightness there.
-                </p>
-                {output?.link ? (
-                  <a
-                    className="device-link"
-                    href={output.link.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {output.link.label}
-                    <span className="visually-hidden">
-                      {' '}
-                      (opens in a new tab)
-                    </span>
-                  </a>
-                ) : null}
-              </div>
+            {/* Prysm's picture controls: always in place, quiet (and out of
+                reach) while the lights show their own effects. */}
+            <div
+              className="picture-controls"
+              data-quiet={mode === 'device_native'}
+              inert={mode === 'device_native'}
+            >
+              {children}
             </div>
           </>
         ) : null}

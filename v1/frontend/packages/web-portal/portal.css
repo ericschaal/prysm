@@ -1352,14 +1352,27 @@ fieldset > .help {
 }
 
 /* The two modes: illustrated tiles, a selection that slides between them. */
+/*
+ * What the lights follow: a labelled control of two words, as tall as a
+ * profile chip. The chosen side is a segment that slides across; off, it is
+ * only outlined (nothing runs), lit, it is filled.
+ */
+.follow {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-8);
+}
+.follow-label {
+  font-weight: var(--weight-strong);
+}
 .modes {
   position: relative;
   isolation: isolate;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
-  margin-top: var(--space-4);
-  padding: 4px;
+  padding: 3px;
   border-radius: var(--radius-pill);
   background: rgb(0 0 0 / 0.2);
   box-shadow: 0 0 0 1px var(--line) inset;
@@ -1368,10 +1381,10 @@ fieldset > .help {
   content: '';
   position: absolute;
   z-index: -1;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: calc(50% - 6px);
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 5px);
   border-radius: var(--radius-pill);
   /* Off: an outline only, the mode power will start. */
   background: transparent;
@@ -1391,22 +1404,27 @@ fieldset > .help {
   transform: translateX(calc(100% + 4px));
 }
 .mode {
-  flex-direction: row;
-  gap: var(--space-2);
   min-width: 0;
-  min-height: 40px;
+  min-height: calc(var(--hit) - 6px);
   padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-3);
-  font-size: var(--text-small);
+  font-size: 0.9375rem;
   font-weight: var(--weight-strong);
+  white-space: nowrap;
   transition:
     background-color var(--duration) var(--ease-out),
     color var(--duration-slow) var(--ease-in-out),
     opacity var(--duration-slow) var(--ease-in-out),
     transform var(--duration-fast) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .modes::before,
+  .mode {
+    transition: none;
+  }
 }
 /* Hover only hints: it must never look like the selection. */
 .mode:hover:enabled {
@@ -1439,80 +1457,21 @@ fieldset > .help {
 .mode[data-unavailable='true'] {
   opacity: 0.38;
 }
-.mode-label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* On a phone the two words need the room: no drawings. */
-@media (max-width: 480px) {
-  .mode-art {
-    display: none;
-  }
-}
-.mode-art {
-  flex: none;
-  width: 28px;
-  height: 21px;
-  overflow: visible;
-  fill: none;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: 0.6;
-  filter: saturate(0.3);
-  transition:
-    opacity var(--duration-light-off) var(--ease-in-out),
-    filter var(--duration-light-off) var(--ease-in-out);
-}
-.art-line {
-  stroke: currentColor;
-}
-.art-warm {
-  stroke: #f2a774;
-}
-.art-cool {
-  stroke: #6fcbe0;
-}
-.art-led {
-  stroke-width: 2.6;
-}
-.art-glow {
-  stroke: #c4a8ff;
-  stroke-width: 2;
-}
-.modes[data-mode='processed'] [data-target='processed'] .mode-art,
-.modes[data-mode='device_native'] [data-target='device_native'] .mode-art {
-  opacity: 0.85;
-  filter: saturate(0.85);
-}
-/* Not lit, nothing glows: the tile power will start is marked by the selection alone. */
-.light-card:not([data-lit='true']) .mode .mode-art {
-  opacity: 0.5;
-  filter: saturate(0);
-}
-.light-card:not([data-lit='true']) .mode:hover:enabled .mode-art {
-  opacity: 0.7;
-}
-.light-card[data-lit='true']
-  .modes[data-mode='processed']
-  [data-target='processed']
-  .mode-art,
-.light-card[data-lit='true']
-  .modes[data-mode='device_native']
-  [data-target='device_native']
-  .mode-art {
-  opacity: 1;
-  filter: saturate(1) drop-shadow(0 0 6px rgb(196 168 255 / 0.45));
-}
-.mode[aria-busy='true'] .mode-art {
-  animation: breathe 1.1s var(--ease-in-out) infinite;
-}
 .mode-reason {
-  margin-top: var(--space-2);
+  margin-top: calc(-1 * var(--space-6));
+  margin-bottom: var(--space-6);
   color: var(--text-3);
-  text-align: center;
+}
+/*
+ * Prysm's picture controls stay in place in every mode; while the lights
+ * show their own effects they go quiet (and out of reach), as they do not
+ * reach the lights then.
+ */
+.picture-controls {
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+.picture-controls[data-quiet='true'] {
+  opacity: 0.32;
 }
 
 /* Brightness: the track fills with the light's own colours while lit. */
@@ -1557,57 +1516,10 @@ fieldset > .help {
   transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
 
-/* Screen sync's controls and the effects note share one cell: no jump. */
-.mode-panels {
-  display: grid;
-  margin-top: var(--space-6);
-}
-.mode-panel {
-  grid-area: 1 / 1;
-  min-width: 0;
-  transition:
-    opacity var(--duration-slow) var(--ease-out),
-    transform var(--duration-slow) var(--ease-out);
-}
-/* The new panel arrives as the old one has nearly gone: no double exposure. */
-.mode-panel:not([inert]) {
-  transition-delay: 120ms;
-}
-.mode-panel[inert] {
-  opacity: 0;
-  transform: translateY(6px);
-  transition-duration: var(--duration);
-}
-.effects-panel {
-  display: grid;
-  align-content: center;
-  justify-items: start;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  border-radius: var(--radius-lg);
-  background: rgb(255 255 255 / 0.04);
-  box-shadow: 0 0 0 1px var(--line) inset;
-  color: var(--text-2);
-}
-.effects-panel .device-link {
-  padding: 0 var(--space-5);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  color: var(--text);
-  font-size: var(--text-small);
-  transition:
-    background-color var(--duration) var(--ease-out),
-    border-color var(--duration) var(--ease-out);
-}
-.effects-panel .device-link:hover {
-  border-color: rgb(255 255 255 / 0.36);
-  background: rgb(255 255 255 / 0.08);
-}
-
 /* Colour profiles: one tap each. */
 .chips-label {
   display: block;
-  padding-top: var(--space-5);
+  padding-top: var(--space-6);
   font-weight: var(--weight-strong);
 }
 /* The profiles wrap onto more rows: every chip whole, nothing cut. */
@@ -1670,10 +1582,10 @@ fieldset > .help {
 .device-link {
   display: inline-flex;
   align-items: center;
-  min-height: var(--hit);
-  color: var(--text-2);
+  color: var(--text);
   font-weight: 500;
-  text-decoration: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .device-link:hover {
   color: var(--text);

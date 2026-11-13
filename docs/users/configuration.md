@@ -57,12 +57,14 @@ counts.
 Home has two cards.
 
 - **The light card**: whether the lights are **Off**, **On** or **Stopped**,
-  the power button, the two modes **Screen sync** (the lights follow the
-  picture) and **WLED effects** (WLED runs its own effects), brightness, and
-  your colour profiles. A line under **Off** / **On** says what is happening,
-  for example what Power turns on, or that the lights follow the screen.
-  While the lights are off the chosen mode is only outlined; choosing a mode while
-  off turns them on in that mode. Problems show here in plain words, with the
+  the power button, **Lights follow** (**The screen**, which is Screen sync,
+  or **WLED effects**, where WLED runs its own effects), brightness, and your
+  colour profiles. A line under **Off** / **On** says what is happening, for
+  example what Power turns on, or that the lights follow the screen. While
+  the lights are off the chosen option is only outlined; choosing one while
+  off turns the lights on that way. With WLED effects, brightness and colour
+  profiles do not apply (WLED controls its own effects), so they are dimmed
+  until the lights follow the screen again. Problems show here in plain words, with the
   action that fixes them. **Open WLED** opens WLED's own page.
 - **Your setup**: the path from the video source through Prysm to the lights,
   with what each step is and whether pictures are flowing, and your LEDs

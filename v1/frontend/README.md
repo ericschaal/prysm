@@ -45,8 +45,13 @@ supervisor in each of its states and play the phone's calibration part). See the
     light card (the state in one word as the only headline, the power button,
     one kept line for a problem with its fix, else what is happening: off,
     what Power turns on; on, "Following the screen." or "WLED effects are
-    showing."; a start or a wait for the picture once it lasts, the two modes as a light segmented control, brightness and the
-    colour profiles as chips) and [Your setup](packages/web-portal/setup-card.tsx)
+    showing." or, for the lights' own effects, "WLED controls its own
+    effects." with Open WLED; a start or a wait for the picture once it
+    lasts), then three labelled controls 32 px apart: "Lights follow" (a
+    segmented radio group: "The screen" or "WLED effects", as tall as a chip;
+    the chosen side outlined while off, filled while lit; arrow keys move it;
+    no slide with reduced motion), Brightness and the colour profiles as
+    chips) and [Your setup](packages/web-portal/setup-card.tsx)
     (the video source and lights from the adapters' `summary`, a kind named
     without its qualifier such as "(development only)", Prysm by its active
     profile's name beside the frame rate, the LEDs per edge
@@ -84,13 +89,16 @@ supervisor in each of its states and play the phone's calibration part). See the
     for the page). Tests turn it on with `saveDeveloper(true)` or that key.
   - [Lighting](packages/web-portal/lighting.tsx): the power button turns the
     lights `off`, or back on in the last mode (kept per browser in
-    `localStorage`; screen sync without one); the modes choose Screen sync
-    (`processed`) or the output's own effects (`device_native`, named by the
-    output's `lighting().effects`, e.g. "WLED effects"), and a tile chosen
-    while off turns that mode on; after a failure a tile retries. Modes that
-    cannot work are disabled with the reason. Brightness and the profiles
-    apply to screen sync only, so the effects tile shows a note and
-    "Open WLED" in their place. The card's light (CSS only, transform and
+    `localStorage`; screen sync without one); "Lights follow" chooses the
+    screen (Screen sync, `processed`) or the output's own effects
+    (`device_native`, named by the output's `lighting().effects`, e.g. "WLED
+    effects"), and a choice made while off turns that mode on; after a
+    failure it retries. A mode that cannot work is disabled with the reason.
+    Brightness and the profiles are Prysm's processing, which only a running
+    session applies (the engine stops the session and idles the output for
+    `device_native`), so with the lights' own effects they stay in place,
+    dimmed and inert, and the card's line says "WLED controls its own
+    effects." with "Open WLED". The card's light (CSS only, transform and
     opacity) drifts while the session runs; it grows out of the power button
     when the session lights up and draws back in when it stops. All colour
     stays inside the card; outside it has the same neutral shadow as the

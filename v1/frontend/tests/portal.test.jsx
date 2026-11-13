@@ -197,9 +197,23 @@ test('the power button and the mode tiles set the target and show what the sessi
   const targets = () =>
     fixture.calls.filter((call) => call.startsWith('target:'));
   try {
+    // What the lights follow: a labelled radio group of two words.
+    const group = $('[role="radiogroup"]');
+    assert.equal(
+      document.getElementById(group.getAttribute('aria-labelledby'))
+        .textContent,
+      'Lights follow',
+    );
     assert.deepEqual(
-      $$('[data-target]').map((item) => item.textContent),
-      ['Screen sync', 'WLED effects'],
+      $$('[role="radio"]').map((item) => [
+        item.textContent,
+        item.getAttribute('aria-checked'),
+        item.tabIndex,
+      ]),
+      [
+        ['The screen', 'true', 0],
+        ['WLED effects', 'false', -1],
+      ],
     );
     assert.equal(power().getAttribute('aria-pressed'), 'false');
     assert.equal(word(), 'Off');
@@ -213,7 +227,7 @@ test('the power button and the mode tiles set the target and show what the sessi
     await press(power());
     assert.deepEqual(targets(), ['target:processed']);
     assert.equal(power().getAttribute('aria-pressed'), 'true');
-    assert.equal(mode('processed').getAttribute('aria-pressed'), 'true');
+    assert.equal(mode('processed').getAttribute('aria-checked'), 'true');
     assert.equal(word(), 'On');
     assert.equal($('.light-card').dataset.mood, 'sync');
     assert.equal($('.light-card').dataset.lit, 'true');
@@ -227,16 +241,22 @@ test('the power button and the mode tiles set the target and show what the sessi
     await press(mode('processed'));
     assert.equal(targets().length, 1);
 
-    // The other tile switches mode while on; its own note replaces the
-    // screen sync controls in the same place.
+    // The other option switches mode while on. Prysm's picture controls do
+    // not reach the lights' own effects: they stay in place, quiet and out of
+    // reach, and the card's line says so with the way to WLED.
     await press(mode('device_native'));
     assert.deepEqual(targets().slice(-1), ['target:device_native']);
     assert.equal($('.lighting-status').textContent, 'WLED effects are on');
     assert.equal($('.light-card').dataset.mood, 'effects');
-    const [syncPanel, effectsPanel] = $$('.mode-panel');
-    assert.equal(syncPanel.hasAttribute('inert'), true);
-    assert.equal(effectsPanel.hasAttribute('inert'), false);
-    const link = $('.device-link', effectsPanel);
+    assert.equal(mode('device_native').getAttribute('aria-checked'), 'true');
+    const controls = $('.picture-controls');
+    assert.equal(controls.hasAttribute('inert'), true);
+    assert.equal(controls.dataset.quiet, 'true');
+    assert.match(
+      $('.light-calm').textContent,
+      /^WLED controls its own effects\./,
+    );
+    const link = $('.light-calm .device-link');
     assert.equal(link.href, 'http://192.0.2.1/');
     assert.equal(link.target, '_blank');
     assert.match(link.rel, /\bnoopener\b/);
@@ -326,7 +346,7 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal($('.light-card').dataset.ignite, undefined, 'not yet lit');
     await act(async () => sleep(slowStartMs + 50));
     assert.equal(info(), null, 'not a problem');
-    assert.equal(note(), 'Starting Screen sync…');
+    assert.equal(note(), 'Starting…');
 
     await act(async () => fixture.publish({ session: { state: 'running' } }));
     assert.equal(word(), 'On');
@@ -344,8 +364,9 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal($('.light-card').dataset.lit, 'true');
     assert.equal(word(), 'On');
     await act(async () => sleep(slowStartMs + 50));
-    assert.equal(info(), null, 'still lit: nothing to say');
-    assert.equal(note(), null);
+    assert.equal(info(), null, 'still lit: no problem to say');
+    // The picture controls go quiet for the lights' own effects, and say so.
+    assert.match(note(), /^WLED controls its own effects\./);
     await act(async () => fixture.publish({ session: { state: 'native' } }));
     assert.equal($('.light-frame').dataset.palette, 'effects');
 
@@ -477,7 +498,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     await act(async () => fixture.publish({ failure: null }));
     assert.equal($('.light-card').dataset.mood, 'starting');
     await act(async () => sleep(slowStartMs + 100));
-    assert.equal(note(), 'Starting Screen sync…');
+    assert.equal(note(), 'Starting…');
     assert(!text().includes('WLED effects are on'));
 
     // Off with a failure left over: no failure sentence under "Off".
@@ -554,7 +575,7 @@ test('modes that cannot work are disabled and say why; before setup only the pro
     );
     assert.equal(mode('device_native').textContent, 'Device effects');
     assert.equal(power().disabled, false);
-    assert.equal($('.effects-panel .device-link'), null, 'no device to open');
+    assert.equal($('.device-link'), null, 'no device to open');
   } finally {
     await portal.unmount();
   }
@@ -671,6 +692,30 @@ test('a picture save that fails is shown at its control, with a retry there', as
     );
     assert.equal(errorOf(toggle), undefined);
     assert.equal($('.save-status').textContent, 'Saved');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('arrow keys move what the lights follow, as in a radio group', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture, dom } = portal;
+  const key = (element, name) =>
+    act(async () => {
+      element.dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: name, bubbles: true }),
+      );
+      await sleep(0);
+    });
+  try {
+    await key(mode('processed'), 'ArrowRight');
+    assert.equal(fixture.snapshot().target, 'device_native');
+    assert.equal(document.activeElement, mode('device_native'));
+    assert.equal(mode('device_native').tabIndex, 0);
+    assert.equal(mode('processed').tabIndex, -1);
+    await key(mode('device_native'), 'ArrowLeft');
+    assert.equal(fixture.snapshot().target, 'processed');
+    assert.equal(document.activeElement, mode('processed'));
   } finally {
     await portal.unmount();
   }
@@ -1213,7 +1258,7 @@ test('kind selectors swap panels without losing drafts', async () => {
     // Home: no WLED link, and these lights have no effects of their own.
     await leaveEditor();
     await click(button('Home'));
-    assert.equal($('.effects-panel .device-link'), null);
+    assert.equal($('.device-link'), null);
     assert.equal(mode('device_native').disabled, true);
   } finally {
     await portal.unmount();
@@ -1312,10 +1357,9 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     assert.equal(field('output.address').value, 'wled.local:8080');
     await leaveEditor();
     await click(button('Home'));
-    assert.equal(
-      $('.effects-panel .device-link').href,
-      'http://wled.local:8080/',
-    );
+    // The way to WLED, with its effects chosen.
+    await press(mode('device_native'));
+    assert.equal($('.light-calm .device-link').href, 'http://wled.local:8080/');
   } finally {
     await portal.unmount();
   }
@@ -1731,7 +1775,10 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal($$('form').length, 0, 'no forms on Home');
     // One headline, the lights' state; off, it says what Power will do.
     assert.equal($('.display'), null);
-    assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
+    assert.equal(
+      $('.light-calm').textContent,
+      'Power makes the lights follow the screen.',
+    );
     assert.equal($('.header-link').textContent, 'Settings');
     assert.equal($('.diagnostics'), null);
     assert.equal($('.preview'), null, 'no preview on Home');
@@ -2293,10 +2340,10 @@ test('colour profiles swap with one tap on Home, applied at once', async () => {
     );
     assert.equal(saves(fixture), 3);
 
-    // Profiles correct the screen's colours: folded away for the lights' effects.
-    assert.equal($('.mode-panel').hasAttribute('inert'), false);
+    // Profiles correct the screen's colours: quiet for the lights' effects.
+    assert.equal($('.picture-controls').hasAttribute('inert'), false);
     await press(mode('device_native'));
-    assert.equal($('.mode-panel').hasAttribute('inert'), true);
+    assert.equal($('.picture-controls').hasAttribute('inert'), true);
   } finally {
     await portal.unmount();
   }
