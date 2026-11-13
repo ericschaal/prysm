@@ -1,16 +1,14 @@
 //! JSON values Prysm surfaces exchange with their clients.
 //!
-//! Settings, targets and revisions are `prysm_ports` types and serialize as
-//! they do in the settings file. This crate adds only what ports cannot carry:
-//! a serializable session state and failure, and the request/response bodies.
-//! It has no HTTP or runtime dependencies.
-use prysm_ports::Input as InputRate;
-use prysm_ports::OutputIssue as PortsOutputIssue;
+//! Settings, targets, revisions, inputs, output issues and session phases are
+//! `prysm_ports` types and serialize as ports does. This crate adds only what
+//! ports cannot carry: a tagged session state, a failure body, and the
+//! request/response bodies. It has no HTTP or runtime dependencies.
 use prysm_ports::{
-    Calibration, Error, LightingTarget, Revision, SessionPhase, SessionState, Settings, Snapshot,
+    Calibration, Error, Input, LightingTarget, OutputIssue, Revision, SessionPhase, SessionState,
+    Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
-use std::error::Error as _;
 
 #[cfg(feature = "schema")]
 pub mod schema;
@@ -28,13 +26,19 @@ pub struct State {
     /// Frames arriving from the source, measured about once a second; absent
     /// while no session runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<schema::InputSchema>, nullable = false)
+    )]
     pub input: Option<Input>,
     /// Why the lights are not showing Prysm's colours while lighting runs,
     /// from the output's own checks (about once a second); absent while they
     /// show them, while the output cannot tell, and while no session runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<schema::OutputIssueSchema>, nullable = false)
+    )]
     pub output_issue: Option<OutputIssue>,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
     /// absent while not calibrating. Never saved.
@@ -49,7 +53,9 @@ pub struct State {
     /// Pass back as `expected` when replacing settings.
     #[cfg_attr(feature = "schema", schema(value_type = u64))]
     pub revision: Revision,
-    /// Last lighting failure; cleared when lighting next starts.
+    /// The last lighting failure. Every target change, settings apply,
+    /// shutdown and session end replaces it, so the next one that succeeds
+    /// clears it.
     #[cfg_attr(feature = "schema", schema(required = true))]
     pub failure: Option<Failure>,
     /// Surfaces that stopped. Lighting continues without them.
@@ -61,8 +67,8 @@ impl From<&Snapshot> for State {
         Self {
             target: snapshot.target,
             session: snapshot.session.into(),
-            input: snapshot.input.map(Input::from),
-            output_issue: snapshot.output_issue.map(OutputIssue::from),
+            input: snapshot.input,
+            output_issue: snapshot.output_issue,
             calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
@@ -72,58 +78,6 @@ impl From<&Snapshot> for State {
                 .iter()
                 .map(Failure::from)
                 .collect(),
-        }
-    }
-}
-
-/// Whether frames are arriving, and how fast.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub struct Input {
-    /// Frames per second over the last second, to one decimal.
-    #[cfg_attr(feature = "schema", schema(minimum = 0, example = 29.9))]
-    pub fps: f32,
-    /// At least one frame arrived in the last second. `false` right after
-    /// lighting starts and while the source is quiet (no signal, no sender).
-    pub receiving: bool,
-}
-
-impl From<InputRate> for Input {
-    fn from(input: InputRate) -> Self {
-        Self {
-            fps: input.fps,
-            receiving: input.receiving,
-        }
-    }
-}
-
-/// Why the lights are not showing Prysm's colours. Prysm keeps sending; they
-/// follow again once the device takes the colours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub enum OutputIssue {
-    /// The device was switched off (WLED: power off).
-    Off,
-    /// The device's own override is on (WLED: live override).
-    Overridden,
-    /// The device is not taking the colours (WLED: not in live mode, or no
-    /// DDP arriving).
-    NotLive,
-    /// Another sender's colours reach the device.
-    OtherSender,
-    /// The device does not answer state requests.
-    Unreachable,
-}
-
-impl From<PortsOutputIssue> for OutputIssue {
-    fn from(issue: PortsOutputIssue) -> Self {
-        match issue {
-            PortsOutputIssue::Off => Self::Off,
-            PortsOutputIssue::Overridden => Self::Overridden,
-            PortsOutputIssue::NotLive => Self::NotLive,
-            PortsOutputIssue::OtherSender => Self::OtherSender,
-            PortsOutputIssue::Unreachable => Self::Unreachable,
         }
     }
 }
@@ -139,7 +93,8 @@ pub enum Session {
     Native,
     /// A session did not stop in time; only a restart recovers.
     Faulted {
-        phase: Phase,
+        #[cfg_attr(feature = "schema", schema(value_type = schema::PhaseSchema))]
+        phase: SessionPhase,
     },
 }
 
@@ -149,31 +104,7 @@ impl From<SessionState> for Session {
             SessionState::Stopped => Self::Stopped,
             SessionState::Running => Self::Running,
             SessionState::Native => Self::Native,
-            SessionState::Faulted(phase) => Self::Faulted {
-                phase: phase.into(),
-            },
-        }
-    }
-}
-
-/// Where a faulted session stopped making progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub enum Phase {
-    Running,
-    ClosingSource,
-    IdlingOutput,
-    Finishing,
-}
-
-impl From<SessionPhase> for Phase {
-    fn from(phase: SessionPhase) -> Self {
-        match phase {
-            SessionPhase::Running => Self::Running,
-            SessionPhase::ClosingSource => Self::ClosingSource,
-            SessionPhase::IdlingOutput => Self::IdlingOutput,
-            SessionPhase::Finished => Self::Finishing,
+            SessionState::Faulted(phase) => Self::Faulted { phase },
         }
     }
 }
@@ -216,6 +147,8 @@ pub enum FailureKind {
     Invalid,
     /// Settings changed since `expected`; see `current`.
     StaleRevision,
+    /// Calibration patterns need the `processed` target.
+    NotProcessed,
     /// The runtime is faulted and accepts nothing until restarted.
     Faulted,
     /// A device or adapter failed.
@@ -239,31 +172,26 @@ pub enum FailureKind {
 
 impl From<&Error> for Failure {
     fn from(error: &Error) -> Self {
-        let kind = match error {
-            Error::Invalid(_) | Error::Decode { .. } => FailureKind::Invalid,
-            Error::StaleRevision { .. } => FailureKind::StaleRevision,
-            Error::Faulted(_) => FailureKind::Faulted,
-            Error::Adapter { .. } => FailureKind::Adapter,
-            Error::Closed => FailureKind::Unavailable,
-            _ => FailureKind::Internal,
-        };
-        let mut failure = Self::new(kind, error.to_string());
+        let message = error.to_string();
         match error {
-            Error::Adapter { .. } => failure.message = prysm_ports::chain(error),
-            Error::Invalid(invalid) => {
-                failure.field = Some(invalid.field.clone());
-                failure.message.clone_from(&invalid.reason);
-            }
+            Error::Invalid(invalid) => Self {
+                field: Some(invalid.field.clone()),
+                ..Self::new(FailureKind::Invalid, invalid.reason.clone())
+            },
             // The decoder's message names the field the user got wrong.
-            Error::Decode { .. } => {
-                if let Some(source) = error.source() {
-                    failure.message = format!("{error}: {source}");
-                }
+            Error::Decode { source, .. } => {
+                Self::new(FailureKind::Invalid, format!("{message}: {source}"))
             }
-            Error::StaleRevision { current, .. } => failure.current = Some(*current),
-            _ => {}
+            Error::Adapter { .. } => Self::new(FailureKind::Adapter, prysm_ports::chain(error)),
+            Error::StaleRevision { current, .. } => Self {
+                current: Some(*current),
+                ..Self::new(FailureKind::StaleRevision, message)
+            },
+            Error::NotProcessed => Self::new(FailureKind::NotProcessed, message),
+            Error::Faulted(_) => Self::new(FailureKind::Faulted, message),
+            Error::Panicked(_) => Self::new(FailureKind::Internal, message),
+            Error::Closed => Self::new(FailureKind::Unavailable, message),
         }
-        failure
     }
 }
 
@@ -336,11 +264,11 @@ mod tests {
 
         let running = Snapshot {
             session: SessionState::Running,
-            input: Some(InputRate {
+            input: Some(Input {
                 fps: 29.9,
                 receiving: true,
             }),
-            output_issue: Some(PortsOutputIssue::OtherSender),
+            output_issue: Some(OutputIssue::OtherSender),
             ..Snapshot::default()
         };
         let running = Snapshot {
@@ -381,6 +309,10 @@ mod tests {
             current: Revision(2),
         });
         assert_eq!(stale.current, Some(Revision(2)));
+
+        let not_processed = Failure::from(&Error::NotProcessed);
+        assert_eq!(not_processed.kind, FailureKind::NotProcessed);
+        assert_eq!(not_processed.field, None);
 
         let source = serde_json::from_str::<u8>("\"x\"").unwrap_err();
         let decode = Failure::from(&Error::Decode {

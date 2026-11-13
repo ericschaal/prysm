@@ -78,6 +78,10 @@
       "message": "settings revision 1 is stale; current is 2"
     },
     {
+      "kind": "not_processed",
+      "message": "calibration patterns need lighting on: set the target to processed first"
+    },
+    {
       "kind": "adapter",
       "message": "device unplugged"
     },

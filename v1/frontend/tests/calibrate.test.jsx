@@ -183,7 +183,7 @@ test('without screen sync on the TV the page says what to do and shows no patter
   // The engine refuses a pattern without screen sync: nothing is created.
   const refused = await openCalibrate();
   try {
-    refused.fixture.failNext({ kind: 'invalid', field: 'target', message: 'set the target to processed first' });
+    refused.fixture.failNext({ kind: 'not_processed', message: 'set the target to processed first' });
     await press(button('Start'));
     assert.equal($('.calibrate [role="alert"]').textContent.includes('Open Prysm on the TV and choose Calibrate.'), true);
     assert.equal(processing(refused.fixture).profiles, undefined);

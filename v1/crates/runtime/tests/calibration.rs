@@ -127,10 +127,7 @@ async fn patterns_need_processed_lighting() {
                 .set_calibration(pattern(Pattern::Red, false))
                 .await
                 .unwrap_err();
-            assert!(
-                matches!(error, Error::Invalid(ref e) if e.field == "target"),
-                "{error:?}"
-            );
+            assert!(matches!(error, Error::NotProcessed), "{error:?}");
             assert_eq!(calibration(&handle), None);
             // Clearing is always accepted.
             handle.set_calibration(None).await.unwrap();

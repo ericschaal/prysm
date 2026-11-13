@@ -87,7 +87,7 @@ impl<T: Send + 'static> Worker<T> {
                 let flags = flags.clone();
                 move || {
                     let end = body(&flags);
-                    flags.set_phase(SessionPhase::Finished);
+                    flags.set_phase(SessionPhase::Finishing);
                     let _ = sender.send(end);
                 }
             })

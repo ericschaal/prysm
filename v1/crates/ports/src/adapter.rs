@@ -77,7 +77,8 @@ pub trait LedOutput: Send {
 /// Why the LEDs are not showing Prysm's colours although lighting runs.
 /// Prysm reports it and keeps sending: the LEDs follow again as soon as the
 /// device takes the colours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputIssue {
     /// The device was switched off.
     Off,

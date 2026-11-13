@@ -192,7 +192,8 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
   as usual, and `Snapshot::calibration` (the TV's pattern, and whether to
   compare uncorrected) is ephemeral state beside the target. While set, the
   session's config has no smoothing (and no correction when uncorrected);
-  settings and revision stay untouched. It needs target `Processed`, and
+  settings and revision stay untouched. It needs target `Processed`
+  (otherwise `Error::NotProcessed`, wire kind `not_processed`), and
   clears when the target leaves it, at shutdown, and after
   `CALIBRATION_TIMEOUT` (10 minutes) without being set again. No tokens,
   leases, heartbeats or locks.

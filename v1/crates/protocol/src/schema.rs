@@ -23,11 +23,12 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    Failure, FailureKind, Input, OutputIssue, Phase, PreviewColor, PreviewColors, PreviewEvent,
-    PreviewFrame, PreviewViewport, Session, SettingsReplaced, SettingsRequest, State,
-    TargetRequest,
+    Failure, FailureKind, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
+    Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
-use prysm_ports::{OutputFactory, SourceFactory};
+use prysm_ports::{
+    MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS, MAX_PROFILES, OutputFactory, SourceFactory,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
@@ -52,6 +53,10 @@ pub struct SettingsSchema {
     output: Option<OutputSettings>,
     processing: ProcessingSchema,
 }
+
+// `schema(...)` takes literals only: the profile limits below are spelled out.
+const _: () =
+    assert!(MAX_PROFILES == 32 && MAX_PROFILE_ID_LEN == 64 && MAX_PROFILE_NAME_CHARS == 64);
 
 // Mirrors `prysm_ports::Processing`.
 /// Processing controls in plain units.
@@ -188,6 +193,51 @@ pub enum LightingTargetSchema {
     DeviceNative,
 }
 
+// Mirrors `prysm_ports::Input`.
+/// Whether frames are arriving, and how fast.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Input)]
+pub struct InputSchema {
+    /// Frames per second over the last second, to one decimal.
+    #[schema(minimum = 0, example = 29.9)]
+    fps: f32,
+    /// At least one frame arrived in the last second. `false` right after
+    /// lighting starts and while the source is quiet (no signal, no sender).
+    receiving: bool,
+}
+
+// Mirrors `prysm_ports::OutputIssue`.
+/// Why the lights are not showing Prysm's colours. Prysm keeps sending; they
+/// follow again once the device takes the colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = OutputIssue)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputIssueSchema {
+    /// The device was switched off (WLED: power off).
+    Off,
+    /// The device's own override is on (WLED: live override).
+    Overridden,
+    /// The device is not taking the colours (WLED: not in live mode, or no
+    /// DDP arriving).
+    NotLive,
+    /// Another sender's colours reach the device.
+    OtherSender,
+    /// The device does not answer state requests.
+    Unreachable,
+}
+
+// Mirrors `prysm_ports::SessionPhase`.
+/// Where a faulted session stopped making progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Phase)]
+#[serde(rename_all = "snake_case")]
+pub enum PhaseSchema {
+    Running,
+    ClosingSource,
+    IdlingOutput,
+    Finishing,
+}
+
 /// A capture section, `{ "kind": "...", ...fields }`. Replaced by the
 /// registered adapters' tagged schemas in [`Contract::document`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -229,10 +279,10 @@ impl ToSchema for OutputSettings {}
 #[derive(utoipa::OpenApi)]
 #[openapi(components(schemas(
     State,
-    Input,
-    OutputIssue,
+    InputSchema,
+    OutputIssueSchema,
     Session,
-    Phase,
+    PhaseSchema,
     Failure,
     FailureKind,
     TargetRequest,
@@ -395,7 +445,8 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Calibration, ColorProfile, CorrectionControls, FrameSource, HueControls,
-        LightingTarget, Pattern, Processing, Result, Settings, ValidationError,
+        Input, LightingTarget, OutputIssue, Pattern, Processing, Result, SessionPhase, Settings,
+        ValidationError,
     };
     use serde_json::json;
 
@@ -451,12 +502,29 @@ mod tests {
             },
             ..Settings::default()
         });
-        for target in [
-            LightingTarget::Off,
-            LightingTarget::Processed,
-            LightingTarget::DeviceNative,
-        ] {
+        for target in LightingTarget::ALL {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
+        }
+        same_shape::<Input, InputSchema>(&Input {
+            fps: 29.5,
+            receiving: true,
+        });
+        for issue in [
+            OutputIssue::Off,
+            OutputIssue::Overridden,
+            OutputIssue::NotLive,
+            OutputIssue::OtherSender,
+            OutputIssue::Unreachable,
+        ] {
+            same_shape::<OutputIssue, OutputIssueSchema>(&issue);
+        }
+        for phase in [
+            SessionPhase::Running,
+            SessionPhase::ClosingSource,
+            SessionPhase::IdlingOutput,
+            SessionPhase::Finishing,
+        ] {
+            same_shape::<SessionPhase, PhaseSchema>(&phase);
         }
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             same_shape::<Calibration, CalibrationSchema>(&Calibration {

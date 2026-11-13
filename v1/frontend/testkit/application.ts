@@ -136,8 +136,7 @@ export function fakeApplicationPort<C, O>(initial: {
         publish({});
       } else if (snapshot.target !== 'processed') {
         throw new ApplicationError({
-          kind: 'invalid',
-          field: 'target',
+          kind: 'not_processed',
           message: 'calibration patterns need lighting on: set the target to processed first',
         });
       } else publish({ calibration });

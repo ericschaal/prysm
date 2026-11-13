@@ -174,6 +174,7 @@ fn application() -> Value {
             expected: Revision(1),
             current: Revision(2),
         },
+        Error::NotProcessed,
         Error::other("device unplugged"),
         Error::Closed,
     ];

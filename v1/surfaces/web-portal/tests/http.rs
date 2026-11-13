@@ -481,11 +481,11 @@ async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
         let put = |body: Value| portal.json(Method::PUT, "/api/v1/calibration", body);
         let gray = json!({ "pattern": "gray-192", "uncorrected": false });
 
-        // Lighting must be on first; the refusal names the target.
+        // Lighting must be on first.
         let (status, body) = put(gray.clone()).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["kind"], "invalid");
-        assert_eq!(body["field"], "target");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["kind"], "not_processed");
+        assert!(body.get("field").is_none());
         assert!(portal.state().await.get("calibration").is_none());
 
         portal.target("processed").await;

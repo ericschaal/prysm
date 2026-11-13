@@ -6,9 +6,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-// Schema export hook: when the OpenAPI export moves here, add a `ToSchema` bound
-// on `Settings` behind a feature and collect schemas per kind in `Registry`.
-
 /// Opens a [`FrameSource`] from typed settings. Opening may block.
 pub trait SourceFactory: Send + Sync + 'static {
     /// Tag in the settings file, such as `"device"` or `"webos"`.

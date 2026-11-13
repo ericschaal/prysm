@@ -194,7 +194,7 @@ export function CalibrateWizard({
     } catch (error) {
       const reason = failureOf(error);
       setProblem(
-        reason.kind === 'invalid' && reason.field === 'target'
+        reason.kind === 'not_processed'
           ? needsTv
           : `The TV pattern did not change: ${reason.message}`,
       );

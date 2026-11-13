@@ -14,6 +14,20 @@ pub enum LightingTarget {
     DeviceNative,
 }
 
+impl LightingTarget {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Processed, Self::DeviceNative];
+
+    /// The serialized name, such as `device_native`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Processed => "processed",
+            Self::DeviceNative => "device_native",
+        }
+    }
+}
+
 /// What the runtime is actually doing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SessionState {
@@ -27,13 +41,26 @@ pub enum SessionState {
     Faulted(SessionPhase),
 }
 
+/// `stopped`, `running`, `native` or `faulted while <phase>`.
+impl fmt::Display for SessionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stopped => f.write_str("stopped"),
+            Self::Running => f.write_str("running"),
+            Self::Native => f.write_str("native"),
+            Self::Faulted(phase) => write!(f, "faulted while {phase}"),
+        }
+    }
+}
+
 /// Where a session thread is; reported when it fails to stop in time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
     Running,
     ClosingSource,
     IdlingOutput,
-    Finished,
+    Finishing,
 }
 
 impl fmt::Display for SessionPhase {
@@ -42,7 +69,7 @@ impl fmt::Display for SessionPhase {
             Self::Running => "running",
             Self::ClosingSource => "closing the source",
             Self::IdlingOutput => "idling the output",
-            Self::Finished => "finishing",
+            Self::Finishing => "finishing",
         })
     }
 }
@@ -64,7 +91,9 @@ pub struct Snapshot {
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.
     pub calibration: Option<Calibration>,
-    /// Last lighting failure; cleared when lighting next starts successfully.
+    /// The last lighting failure. Every target change, settings apply,
+    /// shutdown and session end replaces it, so the next one that succeeds
+    /// clears it.
     pub failure: Option<Error>,
     /// Surfaces that failed. Lighting continues without them.
     pub surface_failures: Vec<Error>,
@@ -72,7 +101,7 @@ pub struct Snapshot {
 
 /// Frames arriving from the running session's source, measured over about one
 /// second and republished at most that often.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Input {
     /// Frames per second over the last window, to one decimal.
     pub fps: f32,
@@ -83,4 +112,25 @@ pub struct Input {
     /// after a few seconds without one, so a waiting session does not hold
     /// the LEDs.
     pub receiving: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_names_are_the_serde_names() {
+        for target in LightingTarget::ALL {
+            assert_eq!(serde_json::to_value(target).unwrap(), target.as_str());
+        }
+    }
+
+    #[test]
+    fn session_states_display_their_phase() {
+        assert_eq!(SessionState::Native.to_string(), "native");
+        assert_eq!(
+            SessionState::Faulted(SessionPhase::ClosingSource).to_string(),
+            "faulted while closing the source"
+        );
+    }
 }

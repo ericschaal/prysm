@@ -530,11 +530,7 @@ impl Core {
 
     fn set_calibration(&mut self, calibration: Option<Calibration>) -> Result<()> {
         if calibration.is_some() && self.state.borrow().target != LightingTarget::Processed {
-            return Err(ValidationError::new(
-                "target",
-                "calibration patterns need lighting on: set the target to processed first",
-            )
-            .into());
+            return Err(Error::NotProcessed);
         }
         self.calibrate(calibration);
         Ok(())

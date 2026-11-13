@@ -178,6 +178,7 @@
         "enum": [
           "invalid",
           "stale_revision",
+          "not_processed",
           "faulted",
           "adapter",
           "unavailable",
@@ -883,7 +884,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Failure",
-                "description": "Last lighting failure; cleared when lighting next starts."
+                "description": "The last lighting failure. Every target change, settings apply,\nshutdown and session end replaces it, so the next one that succeeds\nclears it."
               },
               {
                 "type": "null"

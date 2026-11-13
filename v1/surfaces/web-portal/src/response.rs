@@ -73,7 +73,7 @@ pub(crate) fn error(error: &Error) -> Response {
     let body = Failure::from(error);
     let status = match body.kind {
         FailureKind::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
-        FailureKind::StaleRevision => StatusCode::CONFLICT,
+        FailureKind::StaleRevision | FailureKind::NotProcessed => StatusCode::CONFLICT,
         FailureKind::Faulted | FailureKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         FailureKind::Adapter => StatusCode::BAD_GATEWAY,
         _ => StatusCode::INTERNAL_SERVER_ERROR,

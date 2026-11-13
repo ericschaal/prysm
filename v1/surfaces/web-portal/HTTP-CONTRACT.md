@@ -100,7 +100,7 @@ on the state stream.
 - `PUT /api/v1/calibration` with `{ "pattern": "gray-192", "uncorrected": false }`
   shows or switches the pattern. Both fields are required; unknown fields and
   patterns are `400`. It needs `target` `processed` and does not start
-  lighting: otherwise `422 invalid` with `field` `target`.
+  lighting: otherwise `409 not_processed`.
 - While a pattern is set, the processor runs without smoothing, so a profile
   change shows at once, and with `uncorrected: true` without any color
   profile, to compare. Brightness, shadow lift, black bars and the saved
@@ -209,9 +209,10 @@ Source chains stay in the process; `message` is what the user can act on.
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |
 | 408 | `bad_request` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
+| 409 | `not_processed` | A calibration pattern while the target is not `processed` |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, `Processed` without capture/output configured, or a calibration pattern while the target is not `processed` (`target`) |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, or `Processed` without capture/output configured |
 | 429 | `busy` | More than 8 open state streams, or more than 4 preview streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle |

@@ -92,7 +92,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        FailureKind: "invalid" | "stale_revision" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        FailureKind: "invalid" | "stale_revision" | "not_processed" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
         /**
          * @description `{ "kind": "file", "path": "/home/me/clip.mkv", "width": 640, "height": 360, "fps": 30, "repeat": false }`
          *

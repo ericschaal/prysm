@@ -20,7 +20,6 @@ pub fn chain(error: &dyn StdError) -> String {
 /// The one runtime error. Sources are shared (`Arc`) so a failure can be both
 /// returned to the caller and kept in the snapshot without losing its chain.
 #[derive(Debug, Clone, thiserror::Error)]
-#[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
     Invalid(#[from] ValidationError),
@@ -41,6 +40,10 @@ pub enum Error {
         expected: Revision,
         current: Revision,
     },
+    /// A calibration pattern was asked for while the target is not
+    /// `Processed`: patterns are shown through processed lighting.
+    #[error("calibration patterns need lighting on: set the target to processed first")]
+    NotProcessed,
     /// A session did not stop within its deadline; only shutdown is accepted.
     #[error("runtime is faulted: session did not finish {0}")]
     Faulted(SessionPhase),
