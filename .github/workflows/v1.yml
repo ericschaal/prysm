@@ -6,16 +6,17 @@
 # which is why `frontend` also needs Rust and libclang.
 #
 # TV crates (armv7-unknown-linux-gnueabi):
-# - `webos-armv7` type-checks every TV crate that compiles without the webOS
-#   SDK, with Ubuntu's stock soft-float cross compiler (the C++ in
-#   capture-webos-sys and OpenH264 only need a g++; Luna and VTCapture are
-#   loaded at run time), and runs their unit tests under qemu-user. Only
-#   prysm-webos-slim (and prysm-h264's `hardware` feature) needs the SDK: its
-#   GStreamer sys crates look up the sysroot's GStreamer with pkg-config.
-#   Advisory until its first green run.
+# - `webos-armv7` lints (clippy -D warnings) every TV crate that compiles
+#   without the webOS SDK, with Ubuntu's stock soft-float cross compiler (the
+#   C++ in capture-webos-sys and OpenH264 only need a g++; Luna and VTCapture
+#   are loaded at run time), and runs their unit tests under qemu-user. Only
+#   prysm-webos-slim and prysm-h264-rvenc-sys (prysm-h264's `hardware`
+#   feature) need the SDK: their GStreamer sys crates look up the sysroot's
+#   GStreamer with pkg-config.
 # - `webos-ipk` installs the pinned SDK (as check.yml does), checks the Luna
-#   bindings against its headers and builds both IPKs with build-ipk.sh, which
-#   links against the sysroot and checks the binaries with ipk.py.
+#   bindings against its headers, lints the SDK-only TV crates and builds both
+#   IPKs with build-ipk.sh, which links against the sysroot and checks the
+#   binaries with ipk.py.
 #
 # Not here: the root workspace check, Markdown links and actionlint run in
 # check.yml on every push and pull request; on-TV tests (native-smoke.py) need a
@@ -169,8 +170,6 @@ jobs:
 
   webos-armv7:
     needs: frontend
-    # Advisory until its first green run: see the comment at the top.
-    continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -191,6 +190,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabi qemu-user
           rustup update stable --no-self-update
           rustup default stable
+          rustup component add clippy
           rustup target add armv7-unknown-linux-gnueabi
       - uses: Swatinem/rust-cache@v2
         with:
@@ -201,22 +201,27 @@ jobs:
         with:
           name: v1-frontend-dist
           path: v1/frontend/dist
-      # Not prysm-webos-slim: it needs the SDK sysroot's GStreamer (webos-ipk).
-      - name: Type-check the TV crates for armv7
+      # Not prysm-webos-slim or prysm-h264-rvenc-sys: they need the SDK
+      # sysroot's GStreamer (webos-ipk lints them).
+      - name: Lint the TV crates for armv7
         run: >-
-          cargo check --manifest-path v1/Cargo.toml --locked --all-targets
+          cargo clippy --manifest-path v1/Cargo.toml --locked --all-targets
           --target armv7-unknown-linux-gnueabi
           -p prysm-webos-link -p prysm-webos-service -p prysm-webos
           -p prysm-capture-webos -p prysm-capture-webos-sys -p prysm-webos-luna-sys
           -p prysm-capture-remote -p prysm-h264
+          -- -D warnings
       # Library tests only: integration tests start the armv7 binaries
       # themselves, which needs binfmt_misc rather than the cargo runner.
+      # Skipped test: qemu-user reports a successful spawn for a missing
+      # program (it fails after the fork); the `rust` job runs it natively.
       - name: ABI, exception boundary, Luna wrapper and supervisor tests under qemu
         run: >-
           cargo test --manifest-path v1/Cargo.toml --locked --lib
           --target armv7-unknown-linux-gnueabi
           -p prysm-capture-webos-sys -p prysm-webos-luna-sys
           -p prysm-webos-link -p prysm-webos-service
+          -- --skip launcher::tests::a_missing_program_fails_to_spawn
 
   webos-ipk:
     # The SDK below is built for aarch64 hosts.
@@ -239,6 +244,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev file python3
           rustup update stable --no-self-update
           rustup default stable
+          rustup component add clippy
           rustup target add armv7-unknown-linux-gnueabi
           npm install --global @webos-tools/cli@3.2.6
       # The same pinned SDK as check.yml's webos-package job.
@@ -265,6 +271,14 @@ jobs:
       - name: Fetch crates
         # build-ipk.sh builds with --offline.
         run: cargo fetch --manifest-path v1/Cargo.toml --locked
+      # prysm-webos-slim enables prysm-h264's `hardware` feature, so this also
+      # lints the arm-only GStreamer code in prysm-h264-rvenc-sys.
+      - name: Lint the SDK-only TV crates for armv7
+        run: |
+          . v1/packaging/webos/env.sh
+          cargo clippy --manifest-path v1/Cargo.toml --locked --offline --all-targets \
+            --target armv7-unknown-linux-gnueabi \
+            -p prysm-webos-slim -p prysm-h264-rvenc-sys -p prysm-h264 -- -D warnings
       - name: Build and verify both IPKs
         run: |
           v1/packaging/webos/build-ipk.sh full --out "$RUNNER_TEMP/ipk/full"

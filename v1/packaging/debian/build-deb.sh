@@ -48,8 +48,10 @@ install -D -m 0644 "$v1/hosts/headless/settings.example.json" \
     printf ' found in /usr/share/common-licenses/Apache-2.0.\n'
 } >"$work/copyright"
 install -D -m 0644 "$work/copyright" "$root/usr/share/doc/$package/copyright"
+# Outside the pipeline below so that a failing date stops the script (no pipefail in sh).
+changelog_date=$(date -R -u ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"})
 printf '%s (%s) unstable; urgency=medium\n\n  * Release %s.\n\n -- Eric Schaal <eric@schaal.dev>  %s\n' \
-    "$package" "$version" "$version" "$(date -R -u ${SOURCE_DATE_EPOCH:+-d @$SOURCE_DATE_EPOCH})" \
+    "$package" "$version" "$version" "$changelog_date" \
     | gzip -9n >"$work/changelog.Debian.gz"
 install -m 0644 "$work/changelog.Debian.gz" "$root/usr/share/doc/$package/changelog.Debian.gz"
 
