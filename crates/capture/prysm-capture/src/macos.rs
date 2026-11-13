@@ -438,6 +438,16 @@ async fn stop_when_capture_closes(
     }
 }
 
+pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
+    AVCaptureDevice::devices_with_media_type(unsafe { AVMediaTypeVideo })
+        .iter()
+        .map(|device| crate::DeviceInfo {
+            name: device.localized_name().to_string(),
+            id: device.unique_id().to_string(),
+        })
+        .collect()
+}
+
 pub(crate) fn run(
     device_uid: Option<&str>,
     width: u32,

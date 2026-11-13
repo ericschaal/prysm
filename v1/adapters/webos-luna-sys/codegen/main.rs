@@ -9,10 +9,17 @@
 //!
 //! `--check` fails when a committed file differs and changes nothing.
 #![forbid(unsafe_code)]
+use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: generate-luna-bindings [--check]  (WEBOS_SDK must be set)";
+/// Generate the Luna and GLib bindings from the webOS SDK in WEBOS_SDK.
+#[derive(Debug, Parser)]
+struct Cli {
+    /// Fail when a committed file differs; change nothing
+    #[arg(long)]
+    check: bool,
+}
 
 /// `(output file, header, function allowlist, library struct)`.
 const BINDINGS: [(&str, &str, &str, &str); 2] = [
@@ -31,16 +38,7 @@ const BINDINGS: [(&str, &str, &str, &str); 2] = [
 ];
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let check = match args.as_slice() {
-        [] => false,
-        [flag] if flag == "--check" => true,
-        _ => {
-            eprintln!("{USAGE}");
-            return ExitCode::from(2);
-        }
-    };
-    match run(check) {
+    match run(Cli::parse().check) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("generate-luna-bindings: {message}");
@@ -50,7 +48,8 @@ fn main() -> ExitCode {
 }
 
 fn run(check: bool) -> Result<(), String> {
-    let sdk = std::env::var_os("WEBOS_SDK").ok_or_else(|| format!("set WEBOS_SDK; {USAGE}"))?;
+    let sdk =
+        std::env::var_os("WEBOS_SDK").ok_or_else(|| "set WEBOS_SDK to the webOS SDK".to_owned())?;
     let sdk = PathBuf::from(sdk)
         .canonicalize()
         .map_err(|error| format!("WEBOS_SDK: {error}"))?;

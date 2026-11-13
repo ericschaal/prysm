@@ -2,6 +2,8 @@ import {
   ApplicationError,
   type ApplicationClient,
   type ApplicationSnapshot,
+  type Candidate,
+  type DiscoveryClient,
   type Failure,
   type LightingTarget,
   type PreviewClient,
@@ -168,6 +170,48 @@ export function httpPreviewClient({
       };
     },
   };
+}
+
+/** The portal's `GET /api/v1/candidates/{section}/{kind}`. */
+export function httpDiscoveryClient({
+  baseUrl = '',
+  fetch: fetcher = fetch,
+}: HttpClientOptions = {}): DiscoveryClient {
+  const api = `${baseUrl.replace(/\/+$/, '')}/api/v1/candidates`;
+  return {
+    candidates: async (section, kind, signal) => {
+      let response: Response;
+      try {
+        response = await fetcher(
+          `${api}/${section}/${encodeURIComponent(kind)}`,
+          {
+            signal: signal ?? timeoutSignal(COMMAND_TIMEOUT_MS),
+            cache: 'no-store',
+            redirect: 'error',
+          },
+        );
+      } catch {
+        throw failure('unavailable', 'The portal did not answer.');
+      }
+      if (!response.ok) throw await responseError(response);
+      const found: unknown = await response.json().catch(() => null);
+      if (!Array.isArray(found) || !found.every(validCandidate))
+        throw failure('unavailable', 'Invalid candidates reply.');
+      return found;
+    },
+  };
+}
+
+function validCandidate(value: unknown): value is Candidate {
+  const candidate = value as Partial<Candidate> | null;
+  return (
+    !!candidate &&
+    typeof candidate.label === 'string' &&
+    (candidate.detail === undefined || typeof candidate.detail === 'string') &&
+    !!candidate.fields &&
+    typeof candidate.fields === 'object' &&
+    !Array.isArray(candidate.fields)
+  );
 }
 
 function streamError(error: unknown) {

@@ -5,6 +5,7 @@ import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import { staleNotice } from '@prysm/web-portal';
 import { defaultProcessing } from '../testkit/application';
+import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
   $,
   $$,
@@ -322,6 +323,111 @@ test('setup shows the same quiet size hint above 640 × 360', async () => {
       null,
       'the hint does not stop the next step',
     );
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('setup offers found devices and lights; the typed fields stay', async () => {
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [
+      {
+        label: 'USB Video',
+        detail: '/dev/video2',
+        fields: { path: '/dev/video2' },
+      },
+      {
+        label: 'Elgato',
+        detail: '/dev/video4',
+        fields: { path: '/dev/video4' },
+      },
+    ],
+    'output/wled': [
+      {
+        label: 'Living room',
+        detail: '192.0.2.40, 120 LEDs',
+        fields: { address: '192.0.2.40' },
+      },
+    ],
+  });
+  const portal = await renderPortal(HeadlessWebPortal, {}, undefined, {
+    discovery: discovery.client,
+  });
+  const { fixture } = portal;
+  try {
+    // Nothing is looked up until asked.
+    assert.deepEqual(discovery.calls, []);
+    await press(button('Find devices'));
+    assert.deepEqual(discovery.calls, ['capture/device']);
+    assert.deepEqual($$('.found button').map(plain), [
+      'USB Video/dev/video2',
+      'Elgato/dev/video4',
+    ]);
+    await press($$('.found button')[1]);
+    assert.equal(field('capture.path').value, '/dev/video4');
+    assert.equal($$('.found button')[1].getAttribute('aria-pressed'), 'true');
+    // Typing still works after picking.
+    await edit(field('capture.path'), '/dev/video9');
+    await next();
+
+    await press(button('Find lights'));
+    assert.deepEqual(discovery.calls, ['capture/device', 'output/wled']);
+    assert.equal(plain($('.found button')), 'Living room192.0.2.40, 120 LEDs');
+    await press($('.found button'));
+    assert.equal(field('output.address').value, '192.0.2.40');
+    // Per-edge counts are left to the person.
+    assert.equal(field('output.leds.top').value, '0');
+    await edit(field('output.leds.top'), 120);
+    await next();
+    await next();
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'device',
+      path: '/dev/video9',
+    });
+    assert.deepEqual(fixture.snapshot().settings.output, {
+      kind: 'wled',
+      address: '192.0.2.40',
+      leds: { top: 120 },
+    });
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('nothing found or a failed lookup leaves the typed field', async () => {
+  const discovery = fakeDiscoveryClient();
+  const portal = await renderPortal(WebosWebPortal, {}, undefined, {
+    discovery: discovery.client,
+  });
+  try {
+    // This TV's capture has nothing to find: no button.
+    assert.equal(button('Find devices'), undefined);
+    await next();
+    await press(button('Find lights'));
+    assert.equal(
+      $('.find [role="status"]').textContent,
+      'No WLED lights found on this network. Enter the address below.',
+    );
+    discovery.refuseNext({
+      kind: 'unavailable',
+      message: 'The portal did not answer.',
+    });
+    await press(button('Find lights'));
+    assert.equal(
+      $('.find [role="status"]').textContent,
+      'Could not look: The portal did not answer. Enter the address below.',
+    );
+    assert.equal(field('output.address').value, '');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('without a discovery client the editors offer only typed fields', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {});
+  try {
+    assert.equal(button('Find devices'), undefined);
+    assert.equal(field('capture.path').value, '');
   } finally {
     await portal.unmount();
   }

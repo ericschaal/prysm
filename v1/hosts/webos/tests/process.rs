@@ -23,7 +23,7 @@ fn bad_arguments_exit_with_usage() {
         let output = Command::new(BINARY).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(output.stdout.is_empty(), "no events before the link exists");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("usage"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Usage:"));
     }
 }
 

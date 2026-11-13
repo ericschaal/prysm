@@ -2,6 +2,7 @@
 use crate::identity::Identity;
 use crate::install::{FsInstaller, Installer};
 use crate::state::Flavor;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use prysm_ports::chain;
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -11,85 +12,48 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-const USAGE: &str = "[run] [--sandbox DIR --run-for SECONDS [--service-name NAME]]
-       setup [--sandbox DIR]
-       uninstall [--sandbox DIR]
-
-run        Register the Luna service and supervise the worker (Luna activation).
-setup      Write the Luna manifests and boot hook, rescan, activate (setup.sh, boot hook).
-uninstall  Remove the boot hook and manifests and rescan; preferences stay.
---sandbox  Keep every file in DIR (a private prysm-supervisor.* directory under
-           the temporary directory) with a probe app and service name; `run`
-           then also needs --run-for (1 to 300 seconds).";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
-    Run,
-    Setup,
-    Uninstall,
-}
-
-#[derive(Debug, PartialEq, Eq)]
+/// The TV supervisor of Prysm.
+#[derive(Debug, Parser)]
+#[command(
+    version,
+    args_conflicts_with_subcommands = true,
+    disable_help_subcommand = true
+)]
 struct Cli {
-    action: Action,
+    #[command(subcommand)]
+    action: Option<Action>,
+    #[command(flatten)]
+    run: RunArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum Action {
+    /// Register the Luna service and supervise the worker (Luna activation; the default)
+    Run(RunArgs),
+    /// Write the Luna manifests and boot hook, rescan, activate (setup.sh, boot hook)
+    Setup(Sandbox),
+    /// Remove the boot hook and manifests and rescan; preferences stay
+    Uninstall(Sandbox),
+}
+
+#[derive(Debug, Args)]
+struct Sandbox {
+    /// Keep every file in DIR, a private prysm-supervisor.* temporary directory, with a probe app and service name
+    #[arg(long, value_name = "DIR")]
     sandbox: Option<PathBuf>,
-    run_for: Option<Duration>,
+}
+
+#[derive(Debug, Args)]
+struct RunArgs {
+    /// Keep every file in DIR, a private prysm-supervisor.* temporary directory, with a probe app; needs --run-for
+    #[arg(long, value_name = "DIR", requires = "run_for")]
+    sandbox: Option<PathBuf>,
+    /// Stop a sandboxed run after SECONDS (1 to 300)
+    #[arg(long, value_name = "SECONDS", requires = "sandbox", value_parser = clap::value_parser!(u64).range(1..=300))]
+    run_for: Option<u64>,
+    /// Luna service name of a sandboxed run
+    #[arg(long, value_name = "NAME", requires = "sandbox")]
     service_name: Option<String>,
-}
-
-fn parse(args: &[String]) -> Result<Cli, String> {
-    let mut args = args.iter().peekable();
-    let action = match args.peek().map(|arg| arg.as_str()) {
-        Some("run") => Action::Run,
-        Some("setup") => Action::Setup,
-        Some("uninstall") => Action::Uninstall,
-        _ => {
-            return parse_options(Action::Run, args);
-        }
-    };
-    args.next();
-    parse_options(action, args)
-}
-
-fn parse_options<'a>(
-    action: Action,
-    mut args: impl Iterator<Item = &'a String>,
-) -> Result<Cli, String> {
-    let mut cli = Cli {
-        action,
-        sandbox: None,
-        run_for: None,
-        service_name: None,
-    };
-    while let Some(arg) = args.next() {
-        let mut value = || {
-            args.next()
-                .cloned()
-                .ok_or_else(|| format!("{arg} needs a value"))
-        };
-        match arg.as_str() {
-            "--sandbox" if cli.sandbox.is_none() => cli.sandbox = Some(value()?.into()),
-            "--run-for" if cli.run_for.is_none() => {
-                let seconds: u64 = value()?
-                    .parse()
-                    .map_err(|_| "--run-for needs whole seconds".to_owned())?;
-                if !(1..=300).contains(&seconds) {
-                    return Err("--run-for must be 1 to 300 seconds".into());
-                }
-                cli.run_for = Some(Duration::from_secs(seconds));
-            }
-            "--service-name" if cli.service_name.is_none() => cli.service_name = Some(value()?),
-            _ => return Err(format!("unexpected argument `{arg}`")),
-        }
-    }
-    let probe = cli.run_for.is_some() || cli.service_name.is_some();
-    if probe && (cli.action != Action::Run || cli.sandbox.is_none()) {
-        return Err("--run-for and --service-name are for `run --sandbox`".into());
-    }
-    if cli.action == Action::Run && cli.sandbox.is_some() && cli.run_for.is_none() {
-        return Err("a sandboxed run needs --run-for".into());
-    }
-    Ok(cli)
 }
 
 /// The process entry point of both supervisor binaries.
@@ -98,19 +62,9 @@ pub fn main(flavor: Flavor) -> ExitCode {
         Flavor::Full => "prysm-webos-service",
         Flavor::Slim => "prysm-webos-slim-service",
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("usage: {name} {USAGE}");
-        return ExitCode::SUCCESS;
-    }
-    let cli = match parse(&args) {
-        Ok(cli) => cli,
-        Err(message) => {
-            eprintln!("{name}: {message}\n\nusage: {name} {USAGE}");
-            return ExitCode::from(2);
-        }
-    };
-    match run(flavor, &cli) {
+    let cli = Cli::command().name(name).bin_name(name).get_matches();
+    let cli = Cli::from_arg_matches(&cli).unwrap_or_else(|error| error.exit());
+    match run(flavor, cli.action.unwrap_or(Action::Run(cli.run))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("{name}: {message}");
@@ -119,14 +73,18 @@ pub fn main(flavor: Flavor) -> ExitCode {
     }
 }
 
-fn run(flavor: Flavor, cli: &Cli) -> Result<(), String> {
-    let identity = match &cli.sandbox {
+fn run(flavor: Flavor, action: Action) -> Result<(), String> {
+    let (sandbox, service_name) = match &action {
+        Action::Run(run) => (&run.sandbox, run.service_name.clone()),
+        Action::Setup(setup) | Action::Uninstall(setup) => (&setup.sandbox, None),
+    };
+    let identity = match sandbox {
         Some(root) => {
             let root = sandbox_root(root)?;
             let binaries = std::env::current_exe()
                 .map_err(|error| format!("cannot locate this binary: {error}"))?;
             let binaries = binaries.parent().unwrap_or(Path::new("/"));
-            Identity::sandbox(flavor, &root, binaries, cli.service_name.clone())
+            Identity::sandbox(flavor, &root, binaries, service_name)
         }
         None => {
             if !nix::unistd::Uid::effective().is_root() {
@@ -136,8 +94,8 @@ fn run(flavor: Flavor, cli: &Cli) -> Result<(), String> {
         }
     };
     let mut installer = FsInstaller::new(identity.layout.clone());
-    match cli.action {
-        Action::Setup => {
+    match &action {
+        Action::Setup(_) => {
             installer.install().map_err(|error| chain(&error))?;
             installer
                 .activate(&identity.service)
@@ -145,15 +103,17 @@ fn run(flavor: Flavor, cli: &Cli) -> Result<(), String> {
             println!("{} is registered and running", identity.service);
             Ok(())
         }
-        Action::Uninstall => installer.uninstall().map_err(|error| chain(&error)),
-        Action::Run => {
-            private_dir(&identity.state_dir, cli.sandbox.is_none())?;
+        Action::Uninstall(_) => installer.uninstall().map_err(|error| chain(&error)),
+        Action::Run(run) => {
+            private_dir(&identity.state_dir, sandbox.is_none())?;
             let stop = Arc::new(AtomicBool::new(false));
             for signal in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
                 signal_hook::flag::register(signal, stop.clone())
                     .map_err(|error| format!("cannot install signal handlers: {error}"))?;
             }
-            let deadline = cli.run_for.map(|lifetime| Instant::now() + lifetime);
+            let deadline = run
+                .run_for
+                .map(|seconds| Instant::now() + Duration::from_secs(seconds));
             crate::luna::serve(&identity, stop, deadline).map_err(|error| chain(&error))
         }
     }
@@ -210,16 +170,16 @@ fn private_dir(path: &Path, require_root: bool) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn strings(args: &[&str]) -> Vec<String> {
-        args.iter().map(|arg| (*arg).to_owned()).collect()
+    fn parse(args: &[&str]) -> Result<Action, clap::Error> {
+        let cli = Cli::try_parse_from(["prysm"].iter().chain(args))?;
+        Ok(cli.action.unwrap_or(Action::Run(cli.run)))
     }
 
     #[test]
     fn arguments() {
-        let run = parse(&[]).unwrap();
-        assert_eq!(run.action, Action::Run);
-        assert_eq!(parse(&strings(&["setup"])).unwrap().action, Action::Setup);
-        let probe = parse(&strings(&[
+        assert!(matches!(parse(&[]).unwrap(), Action::Run(_)));
+        assert!(matches!(parse(&["setup"]).unwrap(), Action::Setup(_)));
+        let Action::Run(probe) = parse(&[
             "run",
             "--sandbox",
             "/tmp/prysm-supervisor.x",
@@ -227,16 +187,16 @@ mod tests {
             "30",
             "--service-name",
             "a.b",
-        ]))
-        .unwrap();
-        assert_eq!(probe.run_for, Some(Duration::from_secs(30)));
+        ])
+        .unwrap() else {
+            panic!("expected run");
+        };
+        assert_eq!(probe.run_for, Some(30));
         assert_eq!(probe.service_name.as_deref(), Some("a.b"));
-        assert_eq!(
-            parse(&strings(&["uninstall", "--sandbox", "/tmp/x"]))
-                .unwrap()
-                .action,
-            Action::Uninstall
-        );
+        assert!(matches!(
+            parse(&["uninstall", "--sandbox", "/tmp/x"]).unwrap(),
+            Action::Uninstall(_)
+        ));
         for bad in [
             &["--run-for", "30"][..],
             &["--sandbox", "/tmp/x"],
@@ -247,7 +207,7 @@ mod tests {
             &["--sandbox"],
             &["--sandbox", "a", "--sandbox", "b", "--run-for", "5"],
         ] {
-            assert!(parse(&strings(bad)).is_err(), "{bad:?}");
+            assert!(parse(bad).is_err(), "{bad:?}");
         }
     }
 

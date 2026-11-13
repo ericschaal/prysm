@@ -1,6 +1,7 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
 import type {
   ApplicationSnapshot,
+  DiscoveryClient,
   PreviewClient,
 } from '@prysm/application-client';
 import { useEffect, useRef, useState } from 'react';
@@ -10,6 +11,7 @@ import {
 } from '@prysm/application-react';
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { calibrateRoute, CalibrateWizard } from './calibrate';
+import { DiscoveryContext } from './discovery-context';
 import { LightingControls } from './lighting';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel } from './processing';
@@ -28,6 +30,11 @@ export interface WebPortalProps<
   outputs: AdapterUis<NoInfer<O>>;
   /** The live preview; without one the portal shows no Preview panel. */
   preview?: PreviewClient;
+  /**
+   * Finds devices to choose from in the capture and lights editors; without
+   * one they offer only typed fields.
+   */
+  discovery?: DiscoveryClient;
 }
 
 /**
@@ -67,6 +74,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   captures,
   outputs,
   preview,
+  discovery,
 }: WebPortalProps<C, O>) {
   const connection = useApplication(application);
   const dispatch = useApplicationDispatch<C, O>();
@@ -167,24 +175,28 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         <main id="content">
           <h1 className="visually-hidden">Prysm setup</h1>
           {offline}
-          <SetupWizard
-            captures={captures}
-            outputs={outputs}
-            capture={settings.capture ?? null}
-            output={output}
-            revision={revision}
-            disabled={!online}
-            save={(expected, capture, value) =>
-              dispatch(
-                application.commands.configureSetup(expected, capture, value),
-              )
-            }
-            start={() => dispatch(application.commands.setTarget('processed'))}
-            close={(notice) => {
-              setSetup('closed');
-              setSetupNotice(notice);
-            }}
-          />
+          <DiscoveryContext value={discovery ?? null}>
+            <SetupWizard
+              captures={captures}
+              outputs={outputs}
+              capture={settings.capture ?? null}
+              output={output}
+              revision={revision}
+              disabled={!online}
+              save={(expected, capture, value) =>
+                dispatch(
+                  application.commands.configureSetup(expected, capture, value),
+                )
+              }
+              start={() =>
+                dispatch(application.commands.setTarget('processed'))
+              }
+              close={(notice) => {
+                setSetup('closed');
+                setSetupNotice(notice);
+              }}
+            />
+          </DiscoveryContext>
         </main>
       </div>
     );
@@ -254,30 +266,32 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             {settings.capture && output ? 'Run setup again' : 'Run setup'}
           </button>
         </div>
-        <SectionForm
-          section="capture"
-          title="Capture"
-          description="Where the picture comes from. Saving restarts screen sync if it is running."
-          adapters={captures}
-          saved={settings.capture ?? null}
-          revision={revision}
-          disabled={!online}
-          save={(expected, capture) =>
-            dispatch(application.commands.configureCapture(expected, capture))
-          }
-        />
-        <SectionForm
-          section="output"
-          title="Lights"
-          description="Where the colours go. Saving restarts screen sync if it is running."
-          adapters={outputs}
-          saved={output}
-          revision={revision}
-          disabled={!online}
-          save={(expected, value) =>
-            dispatch(application.commands.configureOutput(expected, value))
-          }
-        />
+        <DiscoveryContext value={discovery ?? null}>
+          <SectionForm
+            section="capture"
+            title="Capture"
+            description="Where the picture comes from. Saving restarts screen sync if it is running."
+            adapters={captures}
+            saved={settings.capture ?? null}
+            revision={revision}
+            disabled={!online}
+            save={(expected, capture) =>
+              dispatch(application.commands.configureCapture(expected, capture))
+            }
+          />
+          <SectionForm
+            section="output"
+            title="Lights"
+            description="Where the colours go. Saving restarts screen sync if it is running."
+            adapters={outputs}
+            saved={output}
+            revision={revision}
+            disabled={!online}
+            save={(expected, value) =>
+              dispatch(application.commands.configureOutput(expected, value))
+            }
+          />
+        </DiscoveryContext>
         {snapshot.surface_failures.map((failure, index) => (
           // Failures have no identity; the list is replaced whole and rows hold no state.
           // eslint-disable-next-line @eslint-react/no-array-index-key

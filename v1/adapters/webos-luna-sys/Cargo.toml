@@ -11,6 +11,7 @@ libloading.workspace = true
 thiserror.workspace = true
 # Only for the binding generator (`--features codegen`); needs libclang.
 bindgen = { version = "0.73.2", default-features = false, features = ["runtime"], optional = true }
+clap = { workspace = true, optional = true }
 
 # One of the three v1 crates allowed to use `unsafe` (with capture-webos-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
@@ -22,7 +23,7 @@ undocumented_unsafe_blocks = "deny"
 
 [features]
 # The binding generator: regenerate or `--check` src/generated from the webOS SDK.
-codegen = ["dep:bindgen"]
+codegen = ["dep:bindgen", "dep:clap"]
 
 [[bin]]
 name = "generate-luna-bindings"

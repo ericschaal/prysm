@@ -26,6 +26,7 @@ schema = ["dep:utoipa"]
 prysm-ports.workspace = true
 prysm-webos-link.workspace = true
 prysm-webos-luna-sys.workspace = true
+clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true

@@ -49,14 +49,32 @@ cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.ex
 ```
 
 Both take a JSON settings file (examples: [headless](hosts/headless/settings.example.json),
-[tui](hosts/tui/settings.example.json)) and process options on the command line:
-`--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable;
-`null` for the slim TV app, `'*'` for any), `--no-portal`, `--start`, `--log-file PATH` and
-`--metrics` (also serve [Prometheus metrics](surfaces/web-portal/HTTP-CONTRACT.md#metrics)
-at `/metrics` on the portal; off by default). `--check-settings` only
-validates the settings file against the host's capture and output kinds,
-prints `settings OK` or the invalid field with its causes and exits 0 or 1,
-without opening a device or the portal. Log lines (`tracing`
+[tui](hosts/tui/settings.example.json)) and the same process options on the command line:
+
+```text
+Usage: prysm-headless [OPTIONS] <settings.json>
+
+Arguments:
+  <settings.json>  Settings file
+
+Options:
+      --listen <ADDR>          Portal address; port 0 picks one [default: 0.0.0.0:8787]
+      --allow-origin <ORIGIN>  Also allow browser pages from ORIGIN (repeatable; 'null': no origin, as the TV app; '*': any)
+      --metrics                Also serve Prometheus metrics at /metrics on the portal
+      --no-portal              Serve no web portal
+      --start                  Request processed lighting at launch (else idle)
+      --log-file <PATH>        Append log lines to PATH instead of stderr
+      --check-settings         Only validate the settings file for this host's adapters, then exit
+  -h, --help                   Print help
+  -V, --version                Print version
+```
+
+`--no-portal` excludes the portal options, `'*'` excludes other origins and
+`--check-settings` takes no other option; bad arguments exit 2. `--metrics`
+serves [Prometheus metrics](surfaces/web-portal/HTTP-CONTRACT.md#metrics).
+`--check-settings` validates the settings file against the host's capture and
+output kinds, prints `settings OK` or the invalid field with its causes and
+exits 0 or 1, without opening a device or the portal. Log lines (`tracing`
 events, including those of the shared capture and processing crates) go to
 stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
 `RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the

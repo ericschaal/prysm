@@ -102,6 +102,13 @@ impl Portal {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    async fn get(&self, path: &str) -> (StatusCode, Value) {
+        let response = self.request(Method::GET, path).send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
     async fn state(&self) -> Value {
         let response = self
             .request(Method::GET, "/api/v1/state")
@@ -468,6 +475,57 @@ async fn state_read_and_set_target() {
         let (status, body) = portal.target("sideways").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["kind"], "bad_request");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Candidates are an on-request lookup: no revision or state change, unknown
+/// kinds name the field, other paths are unknown routes, and the origin
+/// policy applies as to every API call.
+#[tokio::test]
+async fn candidates_list_what_an_adapter_finds() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let revision = portal.state().await["revision"].clone();
+
+        let (status, body) = portal.get("/api/v1/candidates/output/fake").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            json!([{ "label": "Fake lights", "detail": "fake", "fields": { "name": "found" } }])
+        );
+        assert_eq!(portal.log.count("output.candidates"), 1);
+        // The fake source finds nothing: the default.
+        let (status, body) = portal.get("/api/v1/candidates/capture/fake").await;
+        assert_eq!((status, body), (StatusCode::OK, json!([])));
+
+        let (status, body) = portal.get("/api/v1/candidates/output/hue").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "output.kind");
+        for path in [
+            "/api/v1/candidates/processing/fake",
+            "/api/v1/candidates/output/",
+            "/api/v1/candidates/output",
+            "/api/v1/candidates/output/fake/more",
+        ] {
+            let (status, body) = portal.get(path).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(body["kind"], "not_found");
+        }
+        let (status, _) = portal
+            .json(Method::PUT, "/api/v1/candidates/output/fake", json!({}))
+            .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let foreign = portal
+            .request(Method::GET, "/api/v1/candidates/output/fake")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.log.count("output.candidates"), 1);
+        assert_eq!(portal.state().await["revision"], revision);
         portal.shutdown().await.unwrap();
     })
     .await;

@@ -6,6 +6,7 @@ mod link;
 mod resolve;
 
 use capture::RequestedCapture;
+use clap::{Parser, Subcommand};
 use link::{ForwarderLink, Uplink};
 use prysm_capture_remote::RemoteSender;
 use prysm_capture_webos::{VideoSignal, WebosCapture};
@@ -18,10 +19,32 @@ use resolve::Resolver;
 use std::process::ExitCode;
 use std::time::Duration;
 
-const USAGE: &str = "prysm-webos-slim --receiver HOST:PORT
-Started by prysm-webos-slim-service: commands on stdin, events on stdout, logs on stderr.
-The receiver's request sets what is captured and how it is encoded.
-prysm-webos-slim check-encoder --help: a bounded encoder check for the TV.";
+const NAME: &str = "prysm-webos-slim";
+
+const ABOUT: &str = "The slim TV worker. Started by prysm-webos-slim-service: commands on stdin,
+events on stdout, logs on stderr. The receiver's request sets what is captured
+and how it is encoded.";
+
+/// The worker's arguments, or the encoder check.
+#[derive(Debug, Parser)]
+#[command(
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true,
+    disable_help_subcommand = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    check: Option<Check>,
+    /// `None` only with a subcommand.
+    #[command(flatten)]
+    worker: Option<SlimArgs>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Check {
+    /// A bounded encoder check for the TV; not used by the supervisor
+    CheckEncoder(check::Options),
+}
 
 /// Above the capture adapter's 4 s release limit, below the supervisor's 8 s
 /// TERM-to-KILL window.
@@ -29,16 +52,13 @@ const STOP_DEADLINE: Duration = Duration::from_secs(6);
 
 fn main() -> ExitCode {
     // stdout carries the supervisor protocol; log lines go to stderr only.
-    logging::init("prysm-webos-slim", Logs::Stderr);
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("check-encoder") {
-        if args.get(1).map(String::as_str) == Some("--help") {
-            println!("{}", check::USAGE);
-            return ExitCode::SUCCESS;
-        }
-        return check::main(&args[1..]);
+    logging::init(NAME, Logs::Stderr);
+    let cli: Cli = worker::args(NAME, ABOUT);
+    match cli.check {
+        Some(Check::CheckEncoder(options)) => check::main(options),
+        // Without a subcommand clap requires --receiver.
+        None => worker::main(NAME, cli.worker.expect("--receiver is required"), run),
     }
-    worker::main("prysm-webos-slim", USAGE, SlimArgs::parse, run)
 }
 
 /// The receiver listens only while its host is lighting, so the uplink

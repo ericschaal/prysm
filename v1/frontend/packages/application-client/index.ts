@@ -1,5 +1,6 @@
 import type {
   Calibration,
+  Candidate,
   Failure,
   LightingTarget,
   OutputIssue,
@@ -13,6 +14,7 @@ import type {
 
 export type {
   Calibration,
+  Candidate,
   Failure,
   LightingTarget,
   OutputIssue,
@@ -136,6 +138,19 @@ export interface PreviewStream {
  */
 export interface PreviewClient {
   preview(signal: AbortSignal): Promise<PreviewStream>;
+}
+
+/**
+ * What an adapter kind finds to choose from: the video devices present, the
+ * lights answering on the network. An on-request lookup of up to about two
+ * seconds, not state; nothing found is an empty list.
+ */
+export interface DiscoveryClient {
+  candidates(
+    section: 'capture' | 'output',
+    kind: string,
+    signal?: AbortSignal,
+  ): Promise<Candidate[]>;
 }
 
 export class ApplicationError extends Error {

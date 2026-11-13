@@ -14,12 +14,17 @@
 //!   live override on, not in live mode, another sender, or no answer. Prysm
 //!   does not switch WLED back; the colours show again once WLED takes them.
 //!
+//! - `candidates` finds devices on the local network for the portal's setup:
+//!   one multicast DNS question for `_wled._tcp.local`, then `GET /json/info`
+//!   per device for its name and LED count (see `discover`).
+//!
 //! No threads or timers beyond a lookup thread for a host name (open waits for
 //! it within a deadline; a lookup still running is kept for the next open): the runtime
 //! rewrites the last colours while the source is briefly quiet, which keeps
 //! WLED in live mode, and after a few seconds without frames idles the output
 //! `Native` (WLED's own state) and opens it again at the next frame.
 mod address;
+mod discover;
 mod http;
 mod observe;
 mod output;

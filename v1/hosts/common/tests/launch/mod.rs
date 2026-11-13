@@ -174,15 +174,19 @@ pub fn put_target(port: u16, target: &str, origin: Option<&str>) -> Reply {
     )
 }
 
-/// `--help` prints usage to stdout only; bad arguments exit 2 before touching settings.
+/// `--help` and `--version` print to stdout only; bad arguments exit 2 before touching settings.
 pub fn check_arguments(binary: &str, name: &str) {
     let help = Command::new(binary).arg("--help").output().unwrap();
     assert!(help.status.success());
     let text = String::from_utf8(help.stdout).unwrap();
-    assert!(text.starts_with(&format!("usage: {name} [options] <settings.json>")));
+    assert!(text.contains(&format!("Usage: {name} [OPTIONS] <settings.json>")));
     assert!(text.contains("--no-portal") && text.contains("--allow-origin"));
     assert!(!text.contains("token"));
     assert!(help.stderr.is_empty());
+    let version = Command::new(binary).arg("--version").output().unwrap();
+    assert!(version.status.success());
+    let text = String::from_utf8(version.stdout).unwrap();
+    assert_eq!(text, format!("{name} {}\n", env!("CARGO_PKG_VERSION")));
 
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("unused.json");
@@ -205,7 +209,11 @@ pub fn check_arguments(binary: &str, name: &str) {
         let output = Command::new(binary).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(output.stdout.is_empty());
-        assert!(String::from_utf8(output.stderr).unwrap().contains("usage:"));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.starts_with("error: ") && stderr.contains("--help"),
+            "{stderr}"
+        );
         assert!(!Path::new(settings).exists());
     }
 }

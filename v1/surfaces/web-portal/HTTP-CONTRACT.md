@@ -10,7 +10,7 @@ own beyond connection limits.
 ```mermaid
 flowchart LR
     Browser[Browser portal] -->|HTTP| Portal[WebPortal surface]
-    Portal -->|set_target, replace_settings, set_calibration| Engine
+    Portal -->|set_target, replace_settings, set_calibration, candidates| Engine
     Engine -->|watch: Snapshot| Portal
     Host[Host main] -->|listener, assets, access| Portal
 ```
@@ -56,6 +56,7 @@ into `@prysm/contracts/application`.
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
 | `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
 | `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
+| `GET /api/v1/candidates/{section}/{kind}` | — | `200 Candidate[]`: what the adapter finds to choose from; see [Candidates](#candidates) |
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
 
 `State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
@@ -118,6 +119,44 @@ on the state stream.
 | `blue-pair`, `red-pair`, `green-pair` | Moderate (left) and vivid (right) blue, red, green |
 | `coast`, `garden`, `dusk` | Peach/teal, rose/sage, amber/violet |
 | `review-grid` | A grid of colors |
+
+## Candidates
+
+`GET /api/v1/candidates/capture/device` or `.../output/wled` asks the adapter
+registered for that kind what a person could pick instead of typing: the
+video devices present, the WLED lights answering on the network. The setup
+wizard and the capture and lights forms call it on "Find devices" / "Find
+lights" only; nothing polls it.
+
+- `section` is `capture` or `output`; anything else, an empty or extra path
+  segment is `404`. A kind the host does not register in that section is
+  `422 invalid` with `field` `capture.kind` or `output.kind`. Other methods
+  are `405`. The origin policy applies as to every API call.
+- The reply is a JSON array of `Candidate { label, detail?, fields }`:
+  `label` is what a person recognises (a device's name), `detail` where it is
+  or what it has (`/dev/video2`, `192.168.1.40, 120 LEDs`), and `fields` the
+  part of the kind's settings picking it fills (`{ "path": "/dev/video2" }`,
+  `{ "address": "192.168.1.40" }`). Nothing found, or a kind that cannot
+  look, is `[]`: the typed fields stay the way to configure it.
+- It is a lookup, not state: it is not in `State`, changes no revision and
+  does not pass through the engine's command queue. The adapter's
+  `candidates` runs off the async runtime (the engine's blocking pool),
+  opens nothing for capture or output and keeps nothing; the adapter bounds
+  it to about two seconds, and the 15 s command deadline backs that up.
+
+What each adapter finds:
+
+| Kind | Finds | How |
+| --- | --- | --- |
+| `device` | Video capture devices, filling `path` | Linux: each `/dev/video*` node that reports V4L2 video capture (asked for its capabilities, not started), named by its card name. macOS: AVFoundation's video devices, by localized name, filling the unique ID. Elsewhere nothing. |
+| `wled` | WLED lights, filling `address` (the IPv4 address that answered) | One multicast DNS question for `_wled._tcp.local` from an ephemeral port (a one-shot legacy unicast query, so nothing binds port 5353), answers collected for 1.2 s, then one `GET /json/info` per answer (at most 16, in parallel, 350 ms per step) for its name and LED count. Nothing else is sent to WLED. |
+
+Others (`file`, `remote`, `webos`, `null`) find nothing. WLED discovery only
+reaches lights on the same network segment as Prysm: across VLANs or subnets
+without an mDNS reflector nothing answers, and in Docker only host networking
+(`network_mode: host`) lets the question out; on a bridge network the reply is
+`[]`. The LED count is shown, not split over the edges: the person enters
+the per-edge counts.
 
 ## Preview
 
@@ -206,14 +245,14 @@ Source chains stay in the process; `message` is what the user can act on.
 | --- | --- | --- |
 | 400 | `bad_request` | Malformed JSON, unknown fields or wrong value types |
 | 403 | `forbidden` | An `Origin` that is neither the portal's own nor allowed (`origin denied`) |
-| 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled) |
+| 404 | `not_found` | Unknown route or asset (and `/metrics` when disabled), a candidates path without `capture/<kind>` or `output/<kind>` |
 | 405 | `method_not_allowed` | Known API path (or enabled `/metrics`), wrong method |
 | 408 | `bad_request` | Body not received within 5 s |
 | 409 | `stale_revision` | `expected` is not current; `current` is the revision to reload |
 | 409 | `not_processed` | A calibration pattern while the target is not `processed` |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`), undecodable adapter fields, or `Processed` without capture/output configured |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
 | 429 | `busy` | More than 8 open state streams, or more than 4 preview streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle |
@@ -322,6 +361,8 @@ media type and size limits, stream delivery, the stream limit, a faulted engine
 session ends, frames while running, no viewer registered without a stream, the
 viewer limit, the 8 per second cap, the origin policy and streams ending at
 shutdown, and `/metrics`: `404` when disabled; content type, counted frames,
-`405` and the origin policy when enabled. Unit tests in `src/metrics.rs` check
+`405` and the origin policy when enabled; candidates: the fake output's
+list, the default empty list, an unknown kind (422), malformed paths (404),
+`405`, the origin policy, and no revision change. Unit tests in `src/metrics.rs` check
 the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,
 the sRGB colors and the strip bound.

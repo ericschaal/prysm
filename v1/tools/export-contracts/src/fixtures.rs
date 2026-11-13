@@ -6,7 +6,7 @@ use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, StreamEncodin
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, Calibration, ColorProfile, CorrectionControls, Error, HueControls,
+    AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, Error, HueControls,
     LightingTarget, OutputIssue, Pattern, Processing, Revision, SessionPhase, SessionState,
     Settings, Snapshot, ValidationError,
 };
@@ -242,6 +242,11 @@ fn application() -> Value {
         ],
         "SettingsReplaced": [SettingsReplaced { revision: Revision(8) }],
         "Settings": [Settings::default(), with_profiles()],
+        "Candidate": [
+            Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
+            Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
+                .detail("192.168.1.40, 120 LEDs"),
+        ],
     })
 }
 

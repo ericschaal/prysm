@@ -69,6 +69,14 @@ their `demo.html` pages run the same UI on an
     the profile, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on
     the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
+  - [Find devices](packages/web-portal/discovery.tsx): "Find devices" in the
+    video device editor and "Find lights" in the WLED editor ask the portal
+    (`GET /api/v1/candidates/{section}/{kind}`) what is present and list it;
+    picking one fills the path or address, and the typed field stays the
+    fallback (nothing found: "No devices found. Enter the path below.").
+    A button rather than a lookup when the editor opens: the editors are on
+    the main page too, and WLED discovery takes over a second and asks the
+    network. Hosts pass `httpDiscoveryClient()`; without one there is no button.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless`
@@ -106,6 +114,8 @@ their `demo.html` pages run the same UI on an
   [HTTP transport](packages/application-client/http.ts),
   [RTK state](packages/application-state/index.ts) and
   [React bindings](packages/application-react/index.tsx).
+- [Discovery fixture](testkit/discovery.ts): scripted candidates per
+  `section/kind`, recorded calls and a scriptable refusal.
 - [Application fixture](testkit/application.ts): revision checks, immediate
   state updates, engine-like target results and scripted failures, outside the
   shipped packages. DOM tests run with [setup-dom](tests/setup-dom.js) loaded

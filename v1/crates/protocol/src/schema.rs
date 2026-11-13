@@ -226,6 +226,33 @@ pub enum OutputIssueSchema {
     Unreachable,
 }
 
+// Mirrors `prysm_ports::Candidate`.
+/// Something an adapter found that a person can pick instead of typing, one
+/// item of `GET /api/v1/candidates/{section}/{kind}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Candidate)]
+pub struct CandidateSchema {
+    /// What a person recognises, such as the device's name.
+    label: String,
+    /// Where it is or what it has, such as `192.168.1.40, 120 LEDs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    detail: Option<String>,
+    #[schema(schema_with = candidate_fields)]
+    fields: Map<String, Value>,
+}
+
+/// Any object; `schema_with` replaces the doc comment, so it is here.
+fn candidate_fields() -> ObjectBuilder {
+    ObjectBuilder::new()
+        .schema_type(Type::Object)
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .description(Some(
+            "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: \
+             part of the kind's settings, merged over what the person has.",
+        ))
+}
+
 // Mirrors `prysm_ports::SessionPhase`.
 /// Where a faulted session stopped making progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -303,6 +330,7 @@ impl ToSchema for OutputSettings {}
     PreviewViewport,
     PreviewColors,
     PreviewColor,
+    CandidateSchema,
 )))]
 struct Roots;
 
@@ -444,9 +472,9 @@ impl std::error::Error for SchemaConflict {}
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, Calibration, ColorProfile, CorrectionControls, FrameSource, HueControls,
-        Input, LightingTarget, OutputIssue, Pattern, Processing, Result, SessionPhase, Settings,
-        ValidationError,
+        AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, FrameSource,
+        HueControls, Input, LightingTarget, OutputIssue, Pattern, Processing, Result, SessionPhase,
+        Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -526,6 +554,14 @@ mod tests {
         ] {
             same_shape::<SessionPhase, PhaseSchema>(&phase);
         }
+        same_shape::<Candidate, CandidateSchema>(&Candidate::new(
+            "USB Video",
+            &json!({ "path": "/dev/video0" }),
+        ));
+        same_shape::<Candidate, CandidateSchema>(
+            &Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))
+                .detail("192.168.1.40, 120 LEDs"),
+        );
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
             same_shape::<Calibration, CalibrationSchema>(&Calibration {
                 pattern,

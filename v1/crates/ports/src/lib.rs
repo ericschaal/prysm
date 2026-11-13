@@ -20,7 +20,7 @@ pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,
     MAX_PROFILES,
 };
-pub use registry::{OutputFactory, Registry, SourceFactory};
+pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use slot::LatestSlot;

@@ -1,5 +1,6 @@
 import {
   httpApplicationClient,
+  httpDiscoveryClient,
   httpPreviewClient,
 } from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
@@ -17,5 +18,9 @@ const application = createApplicationRuntime(
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing frontend root.');
 createRoot(root).render(
-  <HeadlessWebPortal application={application} preview={httpPreviewClient()} />,
+  <HeadlessWebPortal
+    application={application}
+    preview={httpPreviewClient()}
+    discovery={httpDiscoveryClient()}
+  />,
 );

@@ -18,6 +18,29 @@ pub struct CaptureExit {
     pub failure: Option<CaptureError>,
 }
 
+/// A video capture device present on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    /// The name the device gives itself, such as `USB Video`.
+    pub name: String,
+    /// What [`DeviceCapture::open`] takes: the V4L2 node on Linux, the
+    /// `AVFoundation` unique ID on macOS.
+    pub id: String,
+}
+
+/// The video capture devices present, without starting any: V4L2 asks each
+/// `/dev/video*` node for its capabilities, `AVFoundation` lists its devices.
+/// Empty on other platforms.
+#[must_use]
+pub fn list_devices() -> Vec<DeviceInfo> {
+    #[cfg(target_os = "macos")]
+    return crate::macos::list_devices();
+    #[cfg(target_os = "linux")]
+    return crate::linux::list_devices();
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    Vec::new()
+}
+
 pub struct CaptureWorker {
     cancel: CancellationToken,
     finished: oneshot::Receiver<()>,

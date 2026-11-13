@@ -12,6 +12,20 @@ export interface components {
             /** @description Apply no color profile while the pattern shows, to compare. */
             uncorrected: boolean;
         };
+        /**
+         * @description Something an adapter found that a person can pick instead of typing, one
+         *     item of `GET /api/v1/candidates/{section}/{kind}`.
+         */
+        Candidate: {
+            /** @description Where it is or what it has, such as `192.168.1.40, 120 LEDs`. */
+            detail?: string;
+            /** @description The settings fields picking it fills, such as `{ "path": "/dev/video0" }`: part of the kind's settings, merged over what the person has. */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** @description What a person recognises, such as the device's name. */
+            label: string;
+        };
         CaptureSettings: {
             kind: string;
         } & {
@@ -287,6 +301,7 @@ export interface components {
     pathItems: never;
 }
 export type Calibration = components['schemas']['Calibration'];
+export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type ColorProfile = components['schemas']['ColorProfile'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];

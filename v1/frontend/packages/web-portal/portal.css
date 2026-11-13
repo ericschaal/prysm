@@ -571,3 +571,32 @@ button.compare[aria-pressed='true'] {
     flex: 1 1 auto;
   }
 }
+
+/* Devices found to choose from */
+.find {
+  margin: 0 0 14px;
+}
+.find .notice {
+  margin-bottom: 0;
+}
+.found {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.found button {
+  width: 100%;
+  text-align: left;
+}
+.found button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.found-detail {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}

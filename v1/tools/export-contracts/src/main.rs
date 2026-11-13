@@ -2,6 +2,7 @@
 //! documents, or with `--fixtures` actual Rust serializations the frontend
 //! tests validate against them.
 mod fixtures;
+use clap::Parser;
 use prysm_capture_device::DeviceSource;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
@@ -46,11 +47,19 @@ fn webos() -> Contract {
         .output::<Wled>()
 }
 
+/// Prints the OpenAPI documents the frontend generates its types from.
+#[derive(Debug, Parser)]
+struct Cli {
+    /// Print Rust serializations the frontend tests validate instead
+    #[arg(long)]
+    fixtures: bool,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let output = match std::env::args().nth(1).as_deref() {
-        None => serde_json::to_value(documents()?)?,
-        Some("--fixtures") => fixtures::serialized(),
-        Some(_) => return Err("usage: prysm-export-contracts [--fixtures]".into()),
+    let output = if Cli::parse().fixtures {
+        fixtures::serialized()
+    } else {
+        serde_json::to_value(documents()?)?
     };
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &output)?;

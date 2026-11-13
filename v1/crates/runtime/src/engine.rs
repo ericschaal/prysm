@@ -2,8 +2,8 @@ use crate::session::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd}
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, Calibration, Error, IdleMode, Input, LightingTarget, Registry, Result,
-    Revision, Section, SessionPhase, SessionState, Settings, SettingsStore, Snapshot,
+    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, LightingTarget, Registry,
+    Result, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore, Snapshot,
     ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
@@ -38,6 +38,8 @@ pub struct EngineHandle {
     snapshot: watch::Receiver<Snapshot>,
     preview: Arc<PreviewSlot>,
     stats: Arc<Stats>,
+    /// For [`candidates`](Self::candidates), which needs no engine state.
+    registry: Registry,
 }
 
 impl EngineHandle {
@@ -76,6 +78,19 @@ impl EngineHandle {
     pub async fn set_calibration(&self, calibration: Option<Calibration>) -> Result<()> {
         self.call(|reply| Command::SetCalibration(calibration, reply))
             .await
+    }
+
+    /// What the adapter registered for `kind` in `section` finds to choose
+    /// from (devices present, devices on the network). The lookup runs off
+    /// the async runtime and bypasses the engine's mailbox: it is not state,
+    /// and the adapter bounds it to about two seconds.
+    ///
+    /// # Errors
+    /// A kind not registered in `section` (field `<section>.kind`), or a
+    /// panicking lookup.
+    pub async fn candidates(&self, section: Section, kind: &str) -> Result<Vec<Candidate>> {
+        let (registry, kind) = (self.registry.clone(), kind.to_owned());
+        blocking(move || registry.candidates(section, &kind)).await?
     }
 
     #[must_use]
@@ -153,7 +168,7 @@ impl Engine {
         let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
         let core = Core {
-            registry,
+            registry: registry.clone(),
             store,
             running: None,
             calibration_expires: None,
@@ -168,6 +183,7 @@ impl Engine {
             snapshot,
             preview,
             stats,
+            registry,
         };
         Ok((handle, Self { commands, task }))
     }

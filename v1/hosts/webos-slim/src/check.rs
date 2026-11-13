@@ -1,16 +1,19 @@
 //! `prysm-webos-slim check-encoder`: a bounded on-TV check of the configured
 //! H.264 encoder with synthetic pictures, and optionally a stream of them to
 //! a desktop receiver. Not used by the supervisor.
+use clap::{Parser, ValueEnum};
 use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
 use prysm_h264::{Backend, Decoder, Encoder, EncoderSettings, FORMAT};
 use prysm_ports::FrameSink;
-use prysm_webos_link::{ReceiverAddress, SlimEncoding};
+use prysm_webos_link::ReceiverAddress;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-pub const USAGE: &str = "prysm-webos-slim check-encoder [--encoding h264_hardware|h264_software]
-    [--width 640] [--height 280] [--fps 30] [--frames 90] [--bitrate 2000000] [--receiver HOST:PORT]
+/// Largest accepted mean absolute NV12 difference per picture.
+const TOLERANCE: f64 = 8.0;
+
+const AFTER_HELP: &str = "\
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
 compares it with its input, restarts the session half way (as on resume), and
 prints timings and sizes. With --receiver, then streams the same pictures to a
@@ -18,79 +21,58 @@ Prysm frame receiver for --frames more frames, at the default bitrate; the
 receiver must request this encoding, size and rate. Exit 0 when every check
 passed.";
 
-/// Largest accepted mean absolute NV12 difference per picture.
-const TOLERANCE: f64 = 8.0;
-
-#[derive(Debug, Clone)]
-struct Options {
-    backend: Backend,
+#[derive(Debug, Clone, Parser)]
+#[command(after_help = AFTER_HELP)]
+pub struct Options {
+    /// Encoder to check
+    #[arg(long, value_enum, default_value_t = Encoding::H264Hardware)]
+    encoding: Encoding,
+    /// Picture width, even, 16 to 1920
+    #[arg(long, default_value_t = 640, value_parser = even(1920))]
     width: u32,
+    /// Picture height, even, 16 to 1080
+    #[arg(long, default_value_t = 280, value_parser = even(1080))]
     height: u32,
+    /// Pictures per second
+    #[arg(long, default_value_t = 30)]
     fps: u32,
+    /// Pictures to encode (and to stream), 1 to 10000
+    #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     frames: u32,
+    /// Encoder bitrate in bit/s
+    #[arg(long, default_value_t = prysm_h264::DEFAULT_BITRATE)]
     bitrate: u32,
+    /// Then stream the pictures to this Prysm frame receiver
+    #[arg(long, value_name = "HOST:PORT")]
     receiver: Option<ReceiverAddress>,
 }
 
-fn parse(args: &[String]) -> Result<Options, String> {
-    let mut options = Options {
-        backend: Backend::Hardware,
-        width: 640,
-        height: 280,
-        fps: 30,
-        frames: 90,
-        bitrate: prysm_h264::DEFAULT_BITRATE,
-        receiver: None,
-    };
-    let mut args = args.iter();
-    while let Some(key) = args.next() {
-        let value = args.next().ok_or_else(|| format!("{key} needs a value"))?;
-        let number = || {
-            value
-                .parse::<u32>()
-                .map_err(|error| format!("{key} `{value}`: {error}"))
-        };
-        match key.as_str() {
-            "--encoding" => {
-                options.backend = match value.parse::<SlimEncoding>()? {
-                    SlimEncoding::H264Hardware => Backend::Hardware,
-                    SlimEncoding::H264Software => Backend::Software,
-                    SlimEncoding::Raw => return Err("--encoding: raw has no encoder".into()),
-                };
-            }
-            "--width" => options.width = number()?,
-            "--height" => options.height = number()?,
-            "--fps" => options.fps = number()?,
-            "--frames" => options.frames = number()?,
-            "--bitrate" => options.bitrate = number()?,
-            "--receiver" => {
-                options.receiver = Some(
-                    value
-                        .parse()
-                        .map_err(|error| format!("--receiver `{value}`: {error}"))?,
-                );
-            }
-            _ => return Err(format!("unexpected argument `{key}`")),
-        }
-    }
-    let even = |n: u32, max: u32| (16..=max).contains(&n) && n.is_multiple_of(2);
-    if !(even(options.width, 1920) && even(options.height, 1080)) {
-        return Err("--width/--height: even, 16 to 1920x1080".into());
-    }
-    if !(1..=10_000).contains(&options.frames) {
-        return Err("--frames: 1 to 10000".into());
-    }
-    Ok(options)
+/// The encoders `check-encoder` can check: the slim encodings except raw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum Encoding {
+    H264Hardware,
+    H264Software,
 }
 
-pub fn main(args: &[String]) -> ExitCode {
-    let options = match parse(args) {
-        Ok(options) => options,
-        Err(error) => {
-            eprintln!("check-encoder: {error}\n{USAGE}");
-            return ExitCode::from(2);
+impl Encoding {
+    const fn backend(self) -> Backend {
+        match self {
+            Self::H264Hardware => Backend::Hardware,
+            Self::H264Software => Backend::Software,
         }
-    };
+    }
+}
+
+/// An even number from 16 to `max`.
+fn even(max: u32) -> impl Fn(&str) -> Result<u32, String> + Clone {
+    move |text| match text.parse::<u32>() {
+        Ok(n) if (16..=max).contains(&n) && n.is_multiple_of(2) => Ok(n),
+        _ => Err(format!("expected an even number from 16 to {max}")),
+    }
+}
+
+pub fn main(options: Options) -> ExitCode {
     match run(options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -142,7 +124,7 @@ fn chain(error: &dyn std::error::Error) -> String {
 
 fn run(options: Options) -> Result<(), String> {
     let Options {
-        backend,
+        encoding,
         width,
         height,
         fps,
@@ -150,6 +132,7 @@ fn run(options: Options) -> Result<(), String> {
         bitrate,
         receiver,
     } = options;
+    let backend = encoding.backend();
     let settings = EncoderSettings {
         backend,
         fps,
@@ -298,26 +281,29 @@ fn stream(
 mod tests {
     use super::*;
 
-    fn strings(args: &[&str]) -> Vec<String> {
-        args.iter().map(|&arg| arg.to_owned()).collect()
+    fn parse(args: &[&str]) -> Result<Options, clap::Error> {
+        Options::try_parse_from(["check-encoder"].iter().chain(args))
     }
 
     #[test]
     fn options_parse_and_validate() {
-        let options = parse(&strings(&["--encoding", "h264_software", "--frames", "5"])).unwrap();
-        assert_eq!(options.backend, Backend::Software);
+        let options = parse(&["--encoding", "h264_software", "--frames", "5"]).unwrap();
+        assert_eq!(options.encoding, Encoding::H264Software);
         assert_eq!(options.frames, 5);
-        assert_eq!(parse(&[]).unwrap().backend, Backend::Hardware);
+        let defaults = parse(&[]).unwrap();
+        assert_eq!(defaults.encoding, Encoding::H264Hardware);
+        assert_eq!((defaults.width, defaults.height), (640, 280));
         for bad in [
             &["--encoding", "raw"][..],
             &["--width", "641"],
+            &["--height", "1082"],
             &["--frames", "0"],
             &["--receiver", "nope"],
             &["--receiver", "0.0.0.0:7380"],
             &["--fps"],
             &["--colour", "red"],
         ] {
-            assert!(parse(&strings(bad)).is_err(), "{bad:?}");
+            assert!(parse(bad).is_err(), "{bad:?}");
         }
     }
 
@@ -326,7 +312,7 @@ mod tests {
         let options = Options {
             frames: 8,
             fps: 60,
-            ..parse(&strings(&["--encoding", "h264_software"])).unwrap()
+            ..parse(&["--encoding", "h264_software"]).unwrap()
         };
         run(options).unwrap();
     }

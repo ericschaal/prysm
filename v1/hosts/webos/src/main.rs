@@ -17,9 +17,10 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
-const USAGE: &str =
-    "prysm-webos --settings PATH --listen ADDR --lighting off|processed|device_native
-Started by prysm-webos-service: commands on stdin, events on stdout, logs on stderr.";
+const NAME: &str = "prysm-webos";
+
+const ABOUT: &str = "The full TV worker. Started by prysm-webos-service: commands on stdin,
+events on stdout, logs on stderr.";
 
 const ASSETS: &[FrontendAsset] = include!("../../../frontend/dist/webos/web-portal/assets.rs");
 
@@ -29,8 +30,8 @@ const STOP_DEADLINE: Duration = Duration::from_secs(6);
 
 fn main() -> ExitCode {
     // stdout carries the supervisor protocol; log lines go to stderr only.
-    logging::init("prysm-webos", Logs::Stderr);
-    worker::main("prysm-webos", USAGE, FullArgs::parse, run)
+    logging::init(NAME, Logs::Stderr);
+    worker::main(NAME, worker::args::<FullArgs>(NAME, ABOUT), run)
 }
 
 async fn run(args: FullArgs, link: Link) -> Result<()> {

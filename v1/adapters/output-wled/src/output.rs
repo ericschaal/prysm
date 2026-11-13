@@ -3,7 +3,8 @@ use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError, system_lookup,
+    Candidate, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError,
+    system_lookup,
 };
 use prysm_renderer_wled::WledRenderer;
 use serde_json::{Value, json};
@@ -54,6 +55,12 @@ impl OutputFactory for Wled {
 
     fn validate(&self, settings: &WledSettings) -> Result<(), ValidationError> {
         settings.validate()
+    }
+
+    /// WLED devices answering on the local network, each filling `address`;
+    /// about 1.5 s at most. See `discover`.
+    fn candidates(&self) -> Vec<Candidate> {
+        crate::discover::Browse::default().candidates()
     }
 
     /// Resolves the host, then takes the device over for live colours. On

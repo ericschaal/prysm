@@ -1,11 +1,27 @@
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
-import { NumberField, TextField, type EditorProps } from '@prysm/web-portal';
+import {
+  FindDevices,
+  NumberField,
+  TextField,
+  type EditorProps,
+} from '@prysm/web-portal';
 import { deviceDefaults, deviceLimits } from './settings';
 
 export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
   const { width, height, fps } = deviceLimits;
   return (
     <>
+      <FindDevices
+        section="capture"
+        kind="device"
+        path="capture.path"
+        field="path"
+        label="Find devices"
+        looking="Looking for devices…"
+        nothing="No devices found."
+        fallback="Enter the path below."
+        onPick={(path) => onChange({ ...value, path })}
+      />
       <TextField
         path="capture.path"
         label="Capture device"

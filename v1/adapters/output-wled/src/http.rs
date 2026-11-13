@@ -1,5 +1,6 @@
-//! One blocking `POST /json/state` per call: no retries, no keep-alive, no proxy.
-//! [`parse`] also reads the state checks' replies.
+//! One blocking `POST /json/state` (or, for discovery, `GET /json/info`) per
+//! call: no retries, no keep-alive, no proxy. [`parse`] also reads the state
+//! checks' replies.
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -8,8 +9,9 @@ use std::time::Duration;
 /// Bounds name resolution, connecting and each read or write, separately. Two requests at worst case
 /// must fit inside the runtime stop deadline (10 s by default).
 pub const TIMEOUT: Duration = Duration::from_millis(1500);
-const MAX_BODY: usize = 4096;
-const MAX_RESPONSE: usize = 8192;
+/// `/json/info` is about 1.5 KiB, more with usermods.
+const MAX_BODY: usize = 16 * 1024;
+const MAX_RESPONSE: usize = 20 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RequestError {
@@ -58,6 +60,24 @@ pub fn post_state(device: SocketAddr, host: &str, state: &Value) -> Result<(), R
     }
 }
 
+/// `GET path` from `device` and its JSON reply, waiting at most `timeout`
+/// for the connect and for each read or write.
+pub fn get_json(device: SocketAddr, path: &str, timeout: Duration) -> Result<Value, RequestError> {
+    let mut stream = TcpStream::connect_timeout(&device, timeout).map_err(RequestError::Connect)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {device}\r\nAccept: application/json\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes())?;
+    let (status, body) = read_response(&mut stream)?;
+    if !(200..300).contains(&status) {
+        return Err(RequestError::Status(status));
+    }
+    Ok(serde_json::from_slice(&body)?)
+}
+
 fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError> {
     let mut data = Vec::new();
     let mut chunk = [0; 1024];
@@ -66,7 +86,7 @@ fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError>
         data.extend_from_slice(&chunk[..count]);
         if let Some((status, body)) = parse(&data, count == 0)? {
             if body.len() > MAX_BODY {
-                return Err(RequestError::Malformed("body exceeds 4096 bytes"));
+                return Err(RequestError::Malformed("body exceeds 16 KiB"));
             }
             return Ok((status, body));
         }
@@ -74,7 +94,7 @@ fn read_response(stream: &mut impl Read) -> Result<(u16, Vec<u8>), RequestError>
             return Err(RequestError::Malformed("connection closed mid-response"));
         }
         if data.len() > MAX_RESPONSE {
-            return Err(RequestError::Malformed("response exceeds 8192 bytes"));
+            return Err(RequestError::Malformed("response exceeds 20 KiB"));
         }
     }
 }

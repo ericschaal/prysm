@@ -3,7 +3,7 @@
 use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
-    AdapterSettings, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
+    AdapterSettings, Candidate, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
     OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory,
     ValidationError,
 };
@@ -220,6 +220,16 @@ impl OutputFactory for FakeOutputs {
             settings: settings.clone(),
             writes: 0,
         }))
+    }
+
+    /// One fake device, `{ "name": "found" }`.
+    fn candidates(&self) -> Vec<Candidate> {
+        #[derive(Serialize)]
+        struct Found {
+            name: &'static str,
+        }
+        self.0.record("output.candidates");
+        vec![Candidate::new("Fake lights", &Found { name: "found" }).detail("fake")]
     }
 }
 

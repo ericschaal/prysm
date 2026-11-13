@@ -1,6 +1,7 @@
 import type { WledSettings } from '@prysm/contracts/host-desktop';
 import {
   FieldMessage,
+  FindDevices,
   NumberField,
   TextField,
   useCheck,
@@ -26,6 +27,17 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   );
   return (
     <>
+      <FindDevices
+        section="output"
+        kind="wled"
+        path="output.address"
+        field="address"
+        label="Find lights"
+        looking="Looking for WLED lights…"
+        nothing="No WLED lights found on this network."
+        fallback="Enter the address below."
+        onPick={(address) => onChange({ ...value, address })}
+      />
       <TextField
         path="output.address"
         label="WLED address"

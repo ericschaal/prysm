@@ -56,6 +56,8 @@ prysm-surface-tui = { path = "surfaces/tui" }
 prysm-web-portal = { path = "surfaces/web-portal" }
 prysm-host = { path = "hosts/common" }
 # External
+# Only the features the hosts' help and usage errors need; no colour or suggestions.
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures = "0.3"
 libloading = "0.9"
 nix = "0.31"

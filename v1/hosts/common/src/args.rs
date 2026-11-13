@@ -1,217 +1,102 @@
 //! Command-line options. Process options live here, never in the settings file.
+use clap::error::ErrorKind;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use prysm_web_portal::Access;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-const DEFAULT_LISTEN: &str = "0.0.0.0:8787";
-
-const OPTIONS: &str = "Options:
-  --listen ADDR             Portal address; port 0 picks one
-                            [default: 0.0.0.0:8787, every interface]
-  --allow-origin ORIGIN     Also let browser pages from ORIGIN (such as
-                            http://192.168.1.30:3000) use the API, repeatable;
-                            'null' allows pages without an origin, such as the
-                            Prysm TV app (and sandboxed frames on any site);
-                            '*' allows every origin
-                            [default: only the portal's own pages]
-  --metrics                 Also serve Prometheus metrics at /metrics on
-                            the portal [default: off]
-  --no-portal               Serve no web portal
-  --start                   Request processed lighting at launch (else idle)
-  --log-file PATH           Append log lines to PATH instead of stderr
-                            [default: stderr; none while a full-screen
-                            terminal surface uses the terminal]
-  --check-settings          Validate the settings file against this host's
-                            capture and output kinds, print the result and
-                            exit (0 if valid) without opening any device or
-                            the portal; takes no other option
-  -h, --help                Print this help
-
-The portal has no password: anyone who can reach ADDR can control the
-lights. Browser pages from other sites are refused unless allowed above.
+const AFTER_HELP: &str = "\
+The portal has no password: anyone who can reach ADDR can control the lights.
+Browser pages from other sites are refused unless allowed with --allow-origin.
 SIGINT or SIGTERM stops lighting, idles the output and exits. Status goes to
 stderr. RUST_LOG filters log lines by target [default: warn,prysm=info].";
 
-pub(crate) fn usage(name: &str, about: &str) -> String {
-    format!("usage: {name} [options] <settings.json>\n{about}\n\n{OPTIONS}")
-}
-
-/// What the command line asked for.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Parsed {
-    Help,
-    Run(Options),
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Parser)]
+#[command(version, after_help = AFTER_HELP)]
 pub struct Options {
+    /// Settings file
+    #[arg(value_name = "settings.json")]
     pub settings: PathBuf,
-    /// `None` under `--no-portal`.
-    pub portal: Option<PortalOptions>,
+    /// Portal address; port 0 picks one
+    #[arg(long, value_name = "ADDR", default_value = "0.0.0.0:8787")]
+    pub listen: SocketAddr,
+    /// Also allow browser pages from ORIGIN (repeatable; 'null': no origin, as the TV app; '*': any)
+    #[arg(long, value_name = "ORIGIN")]
+    pub allow_origin: Vec<String>,
+    /// Also serve Prometheus metrics at /metrics on the portal
+    #[arg(long)]
+    pub metrics: bool,
+    /// Serve no web portal
+    #[arg(long, conflicts_with_all = ["listen", "allow_origin", "metrics"])]
+    pub no_portal: bool,
+    /// Request processed lighting at launch (else idle)
+    #[arg(long)]
     pub start: bool,
+    /// Append log lines to PATH instead of stderr
+    #[arg(long, value_name = "PATH")]
     pub log_file: Option<PathBuf>,
-    /// `--check-settings`: validate and exit; no other option is set.
+    /// Only validate the settings file for this host's adapters, then exit
+    #[arg(long, conflicts_with_all = ["listen", "allow_origin", "metrics", "no_portal", "start", "log_file"])]
     pub check_settings: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct PortalOptions {
-    pub listen: SocketAddr,
-    /// Validated by `WebPortal`.
-    pub access: Access,
-    /// Serve `GET /metrics`.
-    pub metrics: bool,
+impl Options {
+    /// Who may use the API besides the portal's own pages; validated by `WebPortal`.
+    #[must_use]
+    pub fn access(&self) -> Access {
+        match self.allow_origin.as_slice() {
+            [] => Access::SameOrigin,
+            [any] if any == "*" => Access::AnyOrigin,
+            origins => Access::Origins(origins.to_vec()),
+        }
+    }
 }
 
-/// Parse arguments after the program name.
+/// Parse a full command line (program name first) for the program `name`.
 ///
 /// # Errors
-/// A message naming the offending argument.
-pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String> {
-    let mut args = args.into_iter();
-    let mut settings = None;
-    let mut listen = None;
-    let mut origins = Vec::new();
-    let mut any_origin = false;
-    let mut no_portal = false;
-    let mut metrics = false;
-    let mut start = false;
-    let mut log_file = None;
-    let mut check_settings = false;
-    while let Some(arg) = args.next() {
-        let Some(flag) = arg.to_str().filter(|arg| arg.starts_with('-')) else {
-            if arg.as_encoded_bytes().starts_with(b"-") {
-                return Err(format!("unknown option {}", arg.to_string_lossy()));
-            }
-            if settings.replace(PathBuf::from(arg)).is_some() {
-                return Err("expected exactly one settings file".into());
-            }
-            continue;
-        };
-        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
-        match flag {
-            "-h" | "--help" => return Ok(Parsed::Help),
-            "--listen" => {
-                let address = value()?;
-                let address = address
-                    .to_str()
-                    .and_then(|address| address.parse().ok())
-                    .ok_or_else(|| {
-                        format!("--listen expects IP:PORT, got {}", address.display())
-                    })?;
-                once(&mut listen, address, flag)?;
-            }
-            "--allow-origin" => {
-                let origin = value()?
-                    .into_string()
-                    .map_err(|_| "--allow-origin must be UTF-8".to_owned())?;
-                if origin == "*" {
-                    switch(&mut any_origin, "--allow-origin '*'")?;
-                } else {
-                    origins.push(origin);
-                }
-            }
-            "--metrics" => switch(&mut metrics, flag)?,
-            "--no-portal" => switch(&mut no_portal, flag)?,
-            "--start" => switch(&mut start, flag)?,
-            "--log-file" => once(&mut log_file, PathBuf::from(value()?), flag)?,
-            "--check-settings" => switch(&mut check_settings, flag)?,
-            _ => return Err(format!("unknown option {flag}")),
-        }
+/// Help, version or a usage error, to be shown with [`clap::Error::exit`].
+pub fn parse<I, T>(name: &'static str, about: &'static str, args: I) -> Result<Options, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let mut command = Options::command().name(name).bin_name(name).about(about);
+    let matches = command.try_get_matches_from_mut(args)?;
+    let options =
+        Options::from_arg_matches(&matches).map_err(|error| error.format(&mut command))?;
+    if options.allow_origin.len() > 1 && options.allow_origin.iter().any(|origin| origin == "*") {
+        return Err(command.error(
+            ErrorKind::ArgumentConflict,
+            "--allow-origin '*' cannot be combined with other origins",
+        ));
     }
-    let settings = settings.ok_or("expected a settings file path")?;
-    if check_settings {
-        if listen.is_some()
-            || !origins.is_empty()
-            || any_origin
-            || no_portal
-            || metrics
-            || start
-            || log_file.is_some()
-        {
-            return Err("--check-settings takes only a settings file".into());
-        }
-        return Ok(Parsed::Run(Options {
-            settings,
-            portal: None,
-            start: false,
-            log_file: None,
-            check_settings,
-        }));
-    }
-    let portal = if no_portal {
-        if listen.is_some() || !origins.is_empty() || any_origin || metrics {
-            return Err("--no-portal cannot be combined with portal options".into());
-        }
-        None
-    } else {
-        let access = match (any_origin, origins.is_empty()) {
-            (false, true) => Access::SameOrigin,
-            (false, false) => Access::Origins(origins),
-            (true, true) => Access::AnyOrigin,
-            (true, false) => {
-                return Err("--allow-origin '*' cannot be combined with other origins".into());
-            }
-        };
-        Some(PortalOptions {
-            listen: listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().expect("valid default")),
-            access,
-            metrics,
-        })
-    };
-    Ok(Parsed::Run(Options {
-        settings,
-        portal,
-        start,
-        log_file,
-        check_settings,
-    }))
-}
-
-fn once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
-    if slot.replace(value).is_some() {
-        return Err(format!("{flag} given more than once"));
-    }
-    Ok(())
-}
-
-fn switch(on: &mut bool, flag: &str) -> Result<(), String> {
-    if std::mem::replace(on, true) {
-        return Err(format!("{flag} given more than once"));
-    }
-    Ok(())
+    Ok(options)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn run(args: &[&str]) -> Result<Parsed, String> {
-        parse(args.iter().map(OsString::from))
+    fn run(args: &[&str]) -> Result<Options, clap::Error> {
+        parse("prysm", "about", ["prysm"].iter().chain(args))
     }
 
     #[test]
     fn defaults_to_an_idle_host_with_a_same_origin_portal_on_every_interface() {
-        let Parsed::Run(options) = run(&["settings.json"]).unwrap() else {
-            panic!("expected options");
-        };
+        let options = run(&["settings.json"]).unwrap();
         assert_eq!(options.settings, PathBuf::from("settings.json"));
-        assert!(!options.start);
+        assert!(!options.start && !options.no_portal && !options.metrics);
+        assert!(!options.check_settings);
         assert_eq!(options.log_file, None);
-        assert_eq!(
-            options.portal,
-            Some(PortalOptions {
-                listen: "0.0.0.0:8787".parse().unwrap(),
-                access: Access::SameOrigin,
-                metrics: false,
-            })
-        );
+        assert_eq!(options.listen, "0.0.0.0:8787".parse().unwrap());
+        assert_eq!(options.access(), Access::SameOrigin);
     }
 
     #[test]
     fn reads_every_option_in_any_order() {
-        let parsed = run(&[
+        let options = run(&[
             "--start",
             "--listen",
             "[::1]:0",
@@ -227,48 +112,37 @@ mod tests {
             "--metrics",
         ])
         .unwrap();
+        assert_eq!(options.settings, PathBuf::from("s.json"));
+        assert!(options.start && options.metrics && !options.no_portal);
+        assert_eq!(options.log_file, Some("prysm.log".into()));
+        assert_eq!(options.listen, "[::1]:0".parse().unwrap());
         assert_eq!(
-            parsed,
-            Parsed::Run(Options {
-                settings: "s.json".into(),
-                start: true,
-                log_file: Some("prysm.log".into()),
-                check_settings: false,
-                portal: Some(PortalOptions {
-                    listen: "[::1]:0".parse().unwrap(),
-                    access: Access::Origins(vec![
-                        "http://192.168.1.30:3000".into(),
-                        "app://tv".into(),
-                        "null".into()
-                    ]),
-                    metrics: true,
-                }),
-            })
+            options.access(),
+            Access::Origins(vec![
+                "http://192.168.1.30:3000".into(),
+                "app://tv".into(),
+                "null".into()
+            ])
         );
-        let Parsed::Run(options) = run(&["s.json", "--allow-origin", "*"]).unwrap() else {
-            panic!("expected options");
-        };
-        assert_eq!(options.portal.unwrap().access, Access::AnyOrigin);
-        let Parsed::Run(options) = run(&["s.json", "--no-portal"]).unwrap() else {
-            panic!("expected options");
-        };
-        assert_eq!(options.portal, None);
-        assert_eq!(
-            run(&["--check-settings", "s.json"]).unwrap(),
-            Parsed::Run(Options {
-                settings: "s.json".into(),
-                portal: None,
-                start: false,
-                log_file: None,
-                check_settings: true,
-            })
-        );
+        let options = run(&["s.json", "--allow-origin", "*"]).unwrap();
+        assert_eq!(options.access(), Access::AnyOrigin);
+        assert!(run(&["s.json", "--no-portal"]).unwrap().no_portal);
+        let options = run(&["--check-settings", "s.json"]).unwrap();
+        assert!(options.check_settings);
+        assert_eq!(options.settings, PathBuf::from("s.json"));
     }
 
     #[test]
-    fn help_wins_over_everything_else() {
-        assert_eq!(run(&["--help"]).unwrap(), Parsed::Help);
-        assert_eq!(run(&["s.json", "-h", "--bogus"]).unwrap(), Parsed::Help);
+    fn help_and_version_win_over_everything_else() {
+        assert_eq!(run(&["--help"]).unwrap_err().kind(), ErrorKind::DisplayHelp);
+        assert_eq!(
+            run(&["s.json", "-h", "--bogus"]).unwrap_err().kind(),
+            ErrorKind::DisplayHelp
+        );
+        assert_eq!(
+            run(&["--version"]).unwrap_err().kind(),
+            ErrorKind::DisplayVersion
+        );
     }
 
     #[test]
@@ -311,8 +185,10 @@ mod tests {
             &["s.json", "--check-settings", "--start"],
             &["s.json", "--check-settings", "--no-portal"],
             &["s.json", "--check-settings", "--listen", "127.0.0.1:1"],
+            &["s.json", "--check-settings", "--log-file", "a.log"],
         ] {
-            assert!(run(args).is_err(), "{args:?} should be rejected");
+            let error = run(args).expect_err(&format!("{args:?} should be rejected"));
+            assert_eq!(error.exit_code(), 2, "{args:?}");
         }
     }
 }

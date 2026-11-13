@@ -187,6 +187,34 @@ fn configure_stream(
     })
 }
 
+/// Nodes that capture video (not metadata or output nodes), by number.
+pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
+    let Ok(entries) = std::fs::read_dir("/dev") else {
+        return Vec::new();
+    };
+    let mut nodes: Vec<(u32, String)> = entries
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().into_string().ok()?;
+            let number = name.strip_prefix("video")?.parse().ok()?;
+            Some((number, format!("/dev/{name}")))
+        })
+        .collect();
+    nodes.sort_unstable();
+    nodes
+        .into_iter()
+        .filter_map(|(_, path)| {
+            // Opening a node and asking its capabilities starts nothing.
+            let caps = Device::with_path(&path).ok()?.query_caps().ok()?;
+            caps.capabilities
+                .contains(v4l::capability::Flags::VIDEO_CAPTURE)
+                .then_some(crate::DeviceInfo {
+                    name: caps.card,
+                    id: path,
+                })
+        })
+        .collect()
+}
+
 pub(crate) fn run(
     device_path: Option<&str>,
     width: u32,

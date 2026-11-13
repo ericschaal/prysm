@@ -289,33 +289,34 @@ pub fn guard_parent() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse argv, take over stdio, run `body` on a current-thread runtime until
-/// it returns, and exit with the code for how it ended. On failure a final
-/// status carries the cause.
-pub fn main<A, F, Fut>(
-    name: &'static str,
-    usage: &str,
-    parse: impl FnOnce(&[String]) -> Result<A, String>,
-    body: F,
-) -> ExitCode
+/// The worker's arguments, parsed by clap for the program `name`. Prints help
+/// and exits 0 on `--help`; prints the error and exits [`exit::USAGE`] on
+/// arguments the worker does not accept (a packaging bug).
+#[must_use]
+pub fn args<A: clap::Parser>(name: &'static str, about: &'static str) -> A {
+    let mut command = A::command().name(name).bin_name(name).about(about);
+    let parsed = command
+        .try_get_matches_from_mut(std::env::args_os())
+        .and_then(|matches| A::from_arg_matches(&matches))
+        .map_err(|error| error.format(&mut command));
+    parsed.unwrap_or_else(|error| {
+        let _ = error.print();
+        std::process::exit(if error.use_stderr() {
+            exit::USAGE.into()
+        } else {
+            0
+        })
+    })
+}
+
+/// Take over stdio, run `body` with the parsed `options` (see [`args`]) on a
+/// current-thread runtime until it returns, and exit with the code for how it
+/// ended. On failure a final status carries the cause.
+pub fn main<A, F, Fut>(name: &'static str, options: A, body: F) -> ExitCode
 where
     F: FnOnce(A, Link) -> Fut,
     Fut: Future<Output = prysm_ports::Result<()>>,
 {
-    let args: Option<Vec<String>> = std::env::args_os()
-        .skip(1)
-        .map(|arg| arg.into_string().ok())
-        .collect();
-    let parsed = args
-        .ok_or_else(|| "arguments must be UTF-8".to_owned())
-        .and_then(|args| parse(&args));
-    let options = match parsed {
-        Ok(options) => options,
-        Err(message) => {
-            eprintln!("{name}: {message}\n\nusage: {usage}");
-            return ExitCode::from(exit::USAGE);
-        }
-    };
     if let Err(message) = guard_parent() {
         eprintln!("{name}: {message}");
         return ExitCode::from(exit::FAILED);

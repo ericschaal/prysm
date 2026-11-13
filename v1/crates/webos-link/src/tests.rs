@@ -171,6 +171,11 @@ fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
+/// What the worker parses from `argv` (after its program name).
+fn parse<A: clap::Parser>(argv: &[String]) -> Result<A, clap::Error> {
+    A::try_parse_from(std::iter::once("worker").chain(argv.iter().map(String::as_str)))
+}
+
 #[test]
 fn full_args_round_trip_and_reject_mistakes() {
     let args = FullArgs {
@@ -190,7 +195,15 @@ fn full_args_round_trip_and_reject_mistakes() {
             "device_native"
         ])
     );
-    assert_eq!(FullArgs::parse(&argv).unwrap(), args);
+    assert_eq!(parse::<FullArgs>(&argv).unwrap(), args);
+    for lighting in LightingTarget::ALL {
+        let args = FullArgs {
+            listen: "[::1]:0".parse().unwrap(),
+            lighting,
+            ..args.clone()
+        };
+        assert_eq!(parse::<FullArgs>(&args.to_args()).unwrap(), args);
+    }
     for bad in [
         strings(&["--settings", "s", "--listen", "0.0.0.0:8787"]),
         strings(&["--settings", "s", "--listen", "x", "--lighting", "off"]),
@@ -216,7 +229,7 @@ fn full_args_round_trip_and_reject_mistakes() {
         strings(&["full", "--settings", "s"]),
         strings(&["--receiver", "1.2.3.4:5"]),
     ] {
-        assert!(FullArgs::parse(&bad).is_err(), "{bad:?}");
+        assert!(parse::<FullArgs>(&bad).is_err(), "{bad:?}");
     }
 }
 
@@ -227,15 +240,17 @@ fn slim_args_carry_only_the_receiver() {
     };
     let argv = args.to_args();
     assert_eq!(argv, strings(&["--receiver", "192.168.1.20:7380"]));
-    assert_eq!(SlimArgs::parse(&argv).unwrap(), args);
+    assert_eq!(parse::<SlimArgs>(&argv).unwrap(), args);
     // Capture and encoding are the receiver's request, not arguments.
     let mut old = argv.clone();
     old.extend(strings(&["--width", "320"]));
-    assert!(SlimArgs::parse(&old).unwrap_err().contains("--width"));
-    assert!(SlimArgs::parse(&strings(&["--receiver", "nope"])).is_err());
-    assert!(SlimArgs::parse(&[]).unwrap_err().contains("--receiver"));
+    let error = parse::<SlimArgs>(&old).unwrap_err().to_string();
+    assert!(error.contains("--width"), "{error}");
+    assert!(parse::<SlimArgs>(&strings(&["--receiver", "nope"])).is_err());
+    let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
+    assert!(error.contains("--receiver"), "{error}");
     // A host name is resolved by the worker, not here.
-    let named = SlimArgs::parse(&strings(&["--receiver", "prysm.local:7380"])).unwrap();
+    let named = parse::<SlimArgs>(&strings(&["--receiver", "prysm.local:7380"])).unwrap();
     assert_eq!(named.receiver.host(), "prysm.local");
     assert_eq!(
         named.to_args(),

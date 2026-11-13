@@ -10,7 +10,8 @@ mod source;
 
 pub use settings::DeviceSettings;
 
-use prysm_ports::{FrameSource, Result, SourceFactory, ValidationError};
+use prysm_ports::{Candidate, FrameSource, Result, SourceFactory, ValidationError};
+use serde::Serialize;
 
 /// Opens local video devices.
 #[derive(Debug, Clone, Copy, Default)]
@@ -31,6 +32,19 @@ impl SourceFactory for DeviceSource {
             native,
             source::Deadlines::DEVICE,
         )?))
+    }
+
+    /// The video devices present (V4L2 nodes that capture, `AVFoundation`
+    /// devices), each filling `path`. Listing starts no capture.
+    fn candidates(&self) -> Vec<Candidate> {
+        #[derive(Serialize)]
+        struct Path<'a> {
+            path: &'a str,
+        }
+        prysm_capture::list_devices()
+            .into_iter()
+            .map(|device| Candidate::new(device.name, &Path { path: &device.id }).detail(device.id))
+            .collect()
     }
 }
 

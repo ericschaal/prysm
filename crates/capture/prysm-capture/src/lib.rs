@@ -9,7 +9,7 @@ mod webos;
 #[cfg(feature = "remote")]
 pub use receiver::WebosReceiver;
 mod device;
-pub use device::{CaptureExit, CaptureWorker, DeviceCapture};
+pub use device::{CaptureExit, CaptureWorker, DeviceCapture, DeviceInfo, list_devices};
 
 #[cfg(any(feature = "remote", test))]
 use futures::{Stream, StreamExt};

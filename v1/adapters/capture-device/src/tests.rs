@@ -390,3 +390,22 @@ fn real_backend_missing_device_fails_without_hanging() {
     };
     assert!(!chain(&error).is_empty());
 }
+
+/// Whatever this machine has (often nothing): each found device fills a
+/// `path` that validates, and listing opens nothing. The platform's own
+/// enumeration can take seconds (macOS with a Continuity camera).
+#[test]
+fn candidates_fill_a_valid_path() {
+    let found = within_for(Duration::from_secs(30), || {
+        let mut registry = Registry::default();
+        registry.add_source(DeviceSource);
+        registry.candidates(prysm_ports::Section::Capture, "device")
+    })
+    .unwrap();
+    for candidate in found {
+        let settings: DeviceSettings =
+            serde_json::from_value(candidate.fields.clone().into()).unwrap();
+        assert_eq!(settings.validate(), Ok(()), "{candidate:?}");
+        assert_eq!(candidate.detail.as_deref(), Some(settings.path.as_str()));
+    }
+}

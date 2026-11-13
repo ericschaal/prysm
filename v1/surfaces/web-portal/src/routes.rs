@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{StreamExt, stream};
 use http_body_util::{BodyExt, Limited, StreamBody};
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{Calibration, Result};
+use prysm_ports::{Calibration, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -29,6 +29,8 @@ const STREAMS: usize = 8;
 const KEEPALIVE: Duration = Duration::from_secs(15);
 /// The Prometheus scrape path, served only when the host enables it.
 const METRICS: &str = "/metrics";
+/// `GET /api/v1/candidates/{section}/{kind}`.
+const CANDIDATES: &str = "/api/v1/candidates/";
 
 pub(crate) struct Context {
     pub engine: EngineHandle,
@@ -145,6 +147,9 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             }
             Err(response) => *response,
         },
+        (path, method) if path.starts_with(CANDIDATES) => {
+            candidates(context, &path[CANDIDATES.len()..], &method).await
+        }
         (
             "/api/v1/state"
             | "/api/v1/state/stream"
@@ -160,6 +165,31 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             "method not allowed",
         ),
         _ => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
+    }
+}
+
+/// What the adapter for `capture/<kind>` or `output/<kind>` finds to choose
+/// from. The adapter bounds the lookup; the command deadline backs it up.
+async fn candidates(context: &Context, rest: &str, method: &Method) -> Response {
+    let section = match rest.split_once('/') {
+        Some(("capture", kind)) => Some((Section::Capture, kind)),
+        Some(("output", kind)) => Some((Section::Output, kind)),
+        _ => None,
+    };
+    let Some((section, kind)) = section.filter(|(_, kind)| !kind.is_empty() && !kind.contains('/'))
+    else {
+        return failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found");
+    };
+    if method != Method::GET {
+        return failure(
+            StatusCode::METHOD_NOT_ALLOWED,
+            FailureKind::MethodNotAllowed,
+            "method not allowed",
+        );
+    }
+    match command(context.engine.candidates(section, kind)).await {
+        Ok(found) => response::json(StatusCode::OK, &found),
+        Err(response) => *response,
     }
 }
 

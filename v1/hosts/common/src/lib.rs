@@ -25,7 +25,7 @@
 //! the host's adapters and the run closure is never called.
 mod args;
 
-pub use args::{Options, Parsed, PortalOptions, parse};
+pub use args::{Options, parse};
 
 use prysm_ports::{Error, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain};
 use prysm_runtime::logging::{self, Logs};
@@ -51,8 +51,8 @@ pub struct Program {
 
 /// Parse arguments, install logging, register `adapters` on a builder over
 /// the settings file, run `host` with it on a current-thread runtime and map
-/// its result to an exit code: 0 after a clean stop, 1 if it failed, 2 for
-/// bad arguments. Under `--check-settings` only validates the settings
+/// its result to an exit code: 0 after a clean stop or `--help`/`--version`,
+/// 1 if it failed, 2 for bad arguments. Under `--check-settings` only validates the settings
 /// ([`Builder::check`]): 0 if valid, else 1; `host` is not called.
 pub fn main<A, F, Fut>(program: Program, adapters: A, host: F) -> ExitCode
 where
@@ -65,17 +65,7 @@ where
         about,
         full_screen,
     } = program;
-    let options = match parse(std::env::args_os().skip(1)) {
-        Ok(Parsed::Help) => {
-            println!("{}", args::usage(name, about));
-            return ExitCode::SUCCESS;
-        }
-        Ok(Parsed::Run(options)) => options,
-        Err(message) => {
-            eprintln!("{name}: {message}\n\n{}", args::usage(name, about));
-            return ExitCode::from(2);
-        }
-    };
+    let options = parse(name, about, std::env::args_os()).unwrap_or_else(|error| error.exit());
     let quiet = full_screen && io::stderr().is_terminal();
     let logs = match &options.log_file {
         Some(path) => match OpenOptions::new().create(true).append(true).open(path) {
@@ -215,12 +205,11 @@ impl Host {
     /// # Errors
     /// Bind failure, or an origin `WebPortal` rejects.
     pub fn portal(&self, assets: &'static [FrontendAsset]) -> Result<impl Surface + use<>> {
-        let portal = match &self.options.portal {
-            None => {
-                eprintln!("{}: portal disabled", self.name);
-                None
-            }
-            Some(options) => Some(self.open_portal(options, assets)?),
+        let portal = if self.options.no_portal {
+            eprintln!("{}: portal disabled", self.name);
+            None
+        } else {
+            Some(self.open_portal(assets)?)
         };
         Ok(move |engine: EngineHandle, shutdown: Shutdown| async move {
             match portal {
@@ -230,24 +219,22 @@ impl Host {
         })
     }
 
-    fn open_portal(
-        &self,
-        options: &PortalOptions,
-        assets: &'static [FrontendAsset],
-    ) -> Result<WebPortal> {
+    fn open_portal(&self, assets: &'static [FrontendAsset]) -> Result<WebPortal> {
+        let options = &self.options;
+        let access = options.access();
         let listener = TcpListener::bind(options.listen).map_err(|error| {
             Error::adapter(format!("cannot listen on {}", options.listen), error)
         })?;
         let address = listener
             .local_addr()
             .map_err(|error| Error::adapter("cannot read the portal address", error))?;
-        let portal = WebPortal::from_listener(listener, assets, options.access.clone())?
-            .metrics(options.metrics);
+        let portal =
+            WebPortal::from_listener(listener, assets, access.clone())?.metrics(options.metrics);
         eprintln!(
             "{}: {} ({}{})",
             self.name,
             reachable(address),
-            access(&options.access),
+            describe(&access),
             if options.metrics {
                 "; metrics at /metrics"
             } else {
@@ -268,7 +255,7 @@ fn reachable(address: SocketAddr) -> String {
     }
 }
 
-fn access(access: &Access) -> String {
+fn describe(access: &Access) -> String {
     match access {
         Access::SameOrigin => "no password; other sites' pages refused".into(),
         Access::Origins(origins) => format!(

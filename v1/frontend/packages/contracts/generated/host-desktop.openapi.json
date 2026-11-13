@@ -19,6 +19,29 @@
         ],
         "type": "object"
       },
+      "Candidate": {
+        "description": "Something an adapter found that a person can pick instead of typing, one\nitem of `GET /api/v1/candidates/{section}/{kind}`.",
+        "properties": {
+          "detail": {
+            "description": "Where it is or what it has, such as `192.168.1.40, 120 LEDs`.",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "description": "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
+            "type": "object"
+          },
+          "label": {
+            "description": "What a person recognises, such as the device's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "fields"
+        ],
+        "type": "object"
+      },
       "CaptureSettings": {
         "oneOf": [
           {

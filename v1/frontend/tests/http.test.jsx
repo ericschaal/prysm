@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { httpApplicationClient } from '@prysm/application-client/http';
+import {
+  httpApplicationClient,
+  httpDiscoveryClient,
+} from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakeApplicationPort } from '../testkit/application';
 
@@ -169,4 +172,44 @@ test('a base URL targets a remote portal for commands and the stream', async () 
     'http://192.168.1.20:8787/api/v1/settings',
     'http://192.168.1.20:8787/api/v1/state/stream',
   ]);
+});
+
+test('candidates are a GET per section and kind, validated', async () => {
+  const urls = [];
+  const found = [
+    {
+      label: 'Living room',
+      detail: '192.0.2.40, 120 LEDs',
+      fields: { address: '192.0.2.40' },
+    },
+  ];
+  let reply = json(200, found);
+  const client = httpDiscoveryClient({
+    baseUrl: 'http://192.0.2.9:8787/',
+    fetch: async (url, init) => {
+      urls.push(url);
+      assert.equal(init.method, undefined);
+      return reply;
+    },
+  });
+  assert.deepEqual(await client.candidates('output', 'wled'), found);
+  assert.deepEqual(urls, [
+    'http://192.0.2.9:8787/api/v1/candidates/output/wled',
+  ]);
+
+  reply = json(422, {
+    kind: 'invalid',
+    message: 'unknown kind',
+    field: 'output.kind',
+  });
+  await assert.rejects(client.candidates('output', 'hue'), (error) => {
+    assert(error instanceof ApplicationError);
+    assert.equal(error.failure.field, 'output.kind');
+    return true;
+  });
+  reply = json(200, [{ label: 'x' }]);
+  await assert.rejects(
+    client.candidates('capture', 'device'),
+    /Invalid candidates reply/,
+  );
 });

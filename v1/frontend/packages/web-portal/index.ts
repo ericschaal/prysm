@@ -5,6 +5,7 @@ export {
   type CalibrateProps,
 } from './calibrate';
 export * from './checks';
+export { FindDevices } from './discovery';
 export * from './fields';
 export * from './form';
 export { LightingControls } from './lighting';

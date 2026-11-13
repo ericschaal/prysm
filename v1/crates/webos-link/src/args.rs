@@ -1,28 +1,32 @@
 //! Worker argv. The supervisor builds it with `to_args`; the worker parses it
-//! with `parse`; a rejection is a packaging bug (exit `USAGE`).
+//! with clap ([`crate::worker::args`]); a rejection is a packaging bug (exit `USAGE`).
+use clap::Parser;
 use prysm_ports::LightingTarget;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
 
 /// `prysm-webos --settings PATH --listen ADDR --lighting off|processed|device_native`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Parser)]
 pub struct FullArgs {
-    /// The engine's settings file.
+    /// The engine's settings file
+    #[arg(long, value_name = "PATH")]
     pub settings: PathBuf,
-    /// Portal listen address, `0.0.0.0:8787` on the TV.
+    /// Portal listen address, 0.0.0.0:8787 on the TV
+    #[arg(long, value_name = "ADDR")]
     pub listen: SocketAddr,
-    /// Initial lighting target.
+    /// Initial lighting target: off, processed or device_native
+    #[arg(long, value_name = "TARGET", value_parser = lighting_target)]
     pub lighting: LightingTarget,
 }
 
 /// `prysm-webos-slim --receiver HOST:PORT`. What to capture and how to
 /// encode it comes from the receiver (its stream request), not from the TV.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Parser)]
 pub struct SlimArgs {
-    /// The headless host's frame receiver.
+    /// The headless host's frame receiver
+    #[arg(long, value_name = "HOST:PORT")]
     pub receiver: ReceiverAddress,
 }
 
@@ -192,17 +196,6 @@ impl FullArgs {
             self.lighting.as_str().into(),
         ]
     }
-
-    /// # Errors
-    /// A missing, repeated, unknown or invalid option.
-    pub fn parse(args: &[String]) -> Result<Self, String> {
-        let mut options = Options::parse(args, &["settings", "listen", "lighting"])?;
-        Ok(Self {
-            settings: PathBuf::from(options.take("settings")?),
-            listen: options.value("listen")?,
-            lighting: target(&options.take("lighting")?)?,
-        })
-    }
 }
 
 impl SlimArgs {
@@ -210,58 +203,12 @@ impl SlimArgs {
     pub fn to_args(&self) -> Vec<String> {
         vec!["--receiver".into(), self.receiver.to_string()]
     }
-
-    /// # Errors
-    /// A missing, repeated, unknown or invalid option.
-    pub fn parse(args: &[String]) -> Result<Self, String> {
-        let mut options = Options::parse(args, &["receiver"])?;
-        Ok(Self {
-            receiver: options.value("receiver")?,
-        })
-    }
 }
 
 /// `--lighting` values are the serde names of [`LightingTarget`].
-fn target(name: &str) -> Result<LightingTarget, String> {
+fn lighting_target(name: &str) -> Result<LightingTarget, String> {
     LightingTarget::ALL
         .into_iter()
         .find(|target| target.as_str() == name)
-        .ok_or_else(|| format!("--lighting: unknown target `{name}`"))
-}
-
-/// `--key value` pairs; every key in `keys` exactly once.
-struct Options(BTreeMap<String, String>);
-
-impl Options {
-    fn parse(args: &[String], keys: &[&str]) -> Result<Self, String> {
-        let mut values = BTreeMap::new();
-        let mut args = args.iter();
-        while let Some(arg) = args.next() {
-            let key = arg
-                .strip_prefix("--")
-                .filter(|key| keys.contains(key))
-                .ok_or_else(|| format!("unexpected argument `{arg}`"))?;
-            let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
-            if values.insert(key.to_owned(), value.clone()).is_some() {
-                return Err(format!("{arg} given twice"));
-            }
-        }
-        Ok(Self(values))
-    }
-
-    fn take(&mut self, key: &str) -> Result<String, String> {
-        self.0
-            .remove(key)
-            .ok_or_else(|| format!("--{key} is required"))
-    }
-
-    fn value<T: FromStr>(&mut self, key: &str) -> Result<T, String>
-    where
-        T::Err: std::fmt::Display,
-    {
-        let value = self.take(key)?;
-        value
-            .parse()
-            .map_err(|error| format!("--{key} `{value}`: {error}"))
-    }
+        .ok_or_else(|| format!("unknown target `{name}`"))
 }

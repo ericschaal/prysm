@@ -57,6 +57,22 @@
       "uncorrected": true
     }
   ],
+  "Candidate": [
+    {
+      "detail": "/dev/video0",
+      "fields": {
+        "path": "/dev/video0"
+      },
+      "label": "USB Video"
+    },
+    {
+      "detail": "192.168.1.40, 120 LEDs",
+      "fields": {
+        "address": "192.168.1.40"
+      },
+      "label": "Living room"
+    }
+  ],
   "DeviceSettings": [
     {
       "fps": 30,
