@@ -1,6 +1,14 @@
 {
   "components": {
     "schemas": {
+      "Behind": {
+        "description": "What makes Prysm fall behind its source: for several seconds the frame\nloop had no slack, and this step took the larger share. A source that\njust sends fewer frames is never this.",
+        "enum": [
+          "processing",
+          "output"
+        ],
+        "type": "string"
+      },
       "Calibration": {
         "additionalProperties": false,
         "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
@@ -375,6 +383,10 @@
       "Input": {
         "description": "Whether frames are arriving, and how fast.",
         "properties": {
+          "behind": {
+            "$ref": "#/components/schemas/Behind",
+            "description": "Which step keeps Prysm from keeping up with its source, if one does.\nAbsent while it keeps up."
+          },
           "fps": {
             "description": "Frames per second over the last second, to one decimal.",
             "example": 29.9,

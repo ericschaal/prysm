@@ -1897,6 +1897,26 @@ fieldset > .help {
   color: var(--danger);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent) inset;
 }
+/*
+ * Working, but behind: the step that keeps Prysm from keeping up, in orange.
+ * Never red (that is a failure, and a failure shows no flowing path).
+ */
+.path-stop[data-behind='true'] .path-icon {
+  color: var(--behind);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--behind) 60%, transparent) inset;
+}
+.path-stop[data-behind='true'] .path-figure {
+  color: var(--behind);
+}
+.path-link[data-behind='true'] .path-line {
+  background: color-mix(in srgb, var(--behind) 70%, transparent);
+}
+.path-link[data-behind='true'] .path-pulse {
+  background: linear-gradient(transparent, var(--behind), transparent);
+}
+.path-link[data-behind='true'] .path-numbers {
+  color: var(--behind);
+}
 @keyframes travel-down {
   to {
     transform: translateY(240%);
@@ -1966,6 +1986,9 @@ fieldset > .help {
   }
   .path-link[data-state='flowing'] .path-pulse {
     animation-name: travel-across;
+  }
+  .path-link[data-behind='true'] .path-pulse {
+    background: linear-gradient(90deg, transparent, var(--behind), transparent);
   }
   /* Row: the protocol above the hairline, the numbers below; one each side. */
   .path-label {

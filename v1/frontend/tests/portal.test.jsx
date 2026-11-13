@@ -1775,6 +1775,70 @@ test('a remote capture names its encoding above the first link', async () => {
   }
 });
 
+test('the step that keeps Prysm behind shows in orange; a failure stays red', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const flowing = (behind) =>
+    act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        failure: null,
+        input: {
+          fps: 24.3,
+          receiving: true,
+          sent_fps: 24.3,
+          latency: { output_ms: 38.2 },
+          ...(behind ? { behind } : {}),
+        },
+      }),
+    );
+  const stopsBehind = () => $$('.path-stop').map((stop) => stop.dataset.behind);
+  const linksBehind = () => $$('.path-link').map((link) => link.dataset.behind);
+  try {
+    // Keeping up: nothing orange.
+    await flowing(undefined);
+    assert.deepEqual(stopsBehind(), ['false', 'false', 'false']);
+    assert.deepEqual(linksBehind(), ['false', 'false']);
+    assert.match($('.path-figure').title, /^frames per second Prysm/);
+
+    // Processing: the Prysm stop and its figure, said in plain words.
+    await flowing('processing');
+    assert.deepEqual(stopsBehind(), ['false', 'true', 'false']);
+    assert.deepEqual(linksBehind(), ['false', 'false']);
+    const figure = $('.path-figure');
+    assert.match(figure.title, /^Prysm can’t keep up: processing each frame/);
+    assert.match(
+      figure.textContent,
+      /Prysm can’t keep up/,
+      'for screen readers',
+    );
+
+    // Output: the lights link, with its delay.
+    await flowing('output');
+    assert.deepEqual(stopsBehind(), ['false', 'false', 'false']);
+    assert.deepEqual(linksBehind(), ['false', 'true']);
+    const sent = $$('.path-numbers')[1];
+    assert.match(sent.title, /^Prysm can’t keep up: sending to the lights/);
+    assert.match(sent.textContent, /sending to the lights/);
+    assert.match($('.path-figure').title, /^frames per second Prysm/);
+
+    // A failure wins: red, never orange, whatever input still says.
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'stopped' },
+        failure: { kind: 'adapter', section: 'output', message: 'gone' },
+      }),
+    );
+    assert.equal($('.setup-card').dataset.path, 'failed');
+    assert.deepEqual(stopsBehind(), ['false', 'false', 'false']);
+    assert.deepEqual(linksBehind(), ['false', 'false']);
+    assert.equal($$('.path-stop')[2].dataset.failed, 'true');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('discovered names are kept in this browser: shown at once next time, dropped for another device', async () => {
   const memory = {};
   // A storage the portal reads before discovery answers.

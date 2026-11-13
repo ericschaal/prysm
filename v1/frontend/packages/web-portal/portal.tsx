@@ -154,6 +154,7 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
             captureMs: input.latency.capture_ms,
             outputMs: input.latency.output_ms,
           },
+          behind: input.behind,
         }
       : { kind: 'waiting' };
   if (target === 'device_native' && session.state === 'native')

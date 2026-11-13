@@ -1,6 +1,6 @@
 use prysm_ports::{
-    AdapterSettings, Error, Latency, LightingTarget, OutputIssue, Processing, Registry, Revision,
-    Section, SessionPhase, SessionState, Settings, Snapshot,
+    AdapterSettings, Behind, Error, Latency, LightingTarget, OutputIssue, Processing, Registry,
+    Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -1082,6 +1082,109 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
         let snapshot = handle.snapshot().borrow().clone();
         assert_eq!(snapshot.session, SessionState::Running);
         assert!(snapshot.failure.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Wait until `input.behind` is `wanted`, giving up after `seconds`.
+async fn behind_within(handle: &EngineHandle, wanted: Behind, seconds: u64) -> bool {
+    tokio::time::timeout(
+        Duration::from_secs(seconds),
+        handle
+            .snapshot()
+            .wait_for(|s| s.input.is_some_and(|input| input.behind == wanted)),
+    )
+    .await
+    .is_ok()
+}
+
+/// A picture that takes longer to turn into colours than the source takes to
+/// send the next: processing is what keeps Prysm behind, after the grace.
+#[tokio::test]
+async fn a_slow_processing_step_is_named_after_a_few_seconds() {
+    within(async {
+        let log = CallLog::new();
+        let large = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                // 4K: far slower to process than the 2 ms between frames,
+                // also in an optimized build.
+                width: 3840,
+                height: 2160,
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, large, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        // Not after the first slow second: the grace is several windows.
+        snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        assert_eq!(
+            handle.snapshot().borrow().input.unwrap().behind,
+            Behind::None
+        );
+        assert!(behind_within(&handle, Behind::Processing, 8).await);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Lights that take longer to write than the source takes to send the next.
+#[tokio::test]
+async fn a_slow_output_is_named_after_a_few_seconds() {
+    within(async {
+        let log = CallLog::new();
+        let slow = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                write_delay_ms: 40,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, slow, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        assert!(behind_within(&handle, Behind::Output, 8).await);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// A source that sends few frames (here every 60 ms, with a 20 ms write)
+/// leaves the loop idle between them: Prysm keeps up, however slow each
+/// frame is.
+#[tokio::test]
+async fn a_slow_source_is_not_falling_behind() {
+    within(async {
+        let log = CallLog::new();
+        let sparse = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                frame_interval_ms: 60,
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                write_delay_ms: 20,
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, sparse, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        snapshot_until(&handle, |s| s.input.is_some_and(|i| i.receiving)).await;
+        // Five windows: well past the grace, still keeping up.
+        assert!(!behind_within(&handle, Behind::Output, 5).await);
+        assert_eq!(
+            handle.snapshot().borrow().input.unwrap().behind,
+            Behind::None
+        );
         engine.shutdown().await.unwrap();
     })
     .await;

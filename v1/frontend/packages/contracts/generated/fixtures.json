@@ -440,6 +440,7 @@
     {
       "failure": null,
       "input": {
+        "behind": "output",
         "fps": 29.899999618530273,
         "latency": {
           "capture_ms": 88,

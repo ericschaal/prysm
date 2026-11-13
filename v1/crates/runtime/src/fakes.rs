@@ -93,6 +93,11 @@ pub struct FakeSourceSettings {
     pub blink: Option<u8>,
     /// Frames carry a capture time this long before the source hands them over.
     pub captured_ago_ms: Option<u64>,
+    /// Hand over a frame this often; 0: every 2 ms.
+    pub frame_interval_ms: u64,
+    /// Frame size; 0: 16 × 9. A large picture makes processing slow.
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Frames per `blink` phase of a [`FakeSource`].
@@ -163,7 +168,11 @@ impl FrameSource for FakeSource {
             }
             self.quiet_done = true;
         }
-        thread::sleep(timeout.min(Duration::from_millis(2)));
+        let interval = match self.settings.frame_interval_ms {
+            0 => 2,
+            ms => ms,
+        };
+        thread::sleep(timeout.min(Duration::from_millis(interval)));
         self.frames += 1;
         let fill = match self.settings.blink {
             Some(other) if (self.frames / BLINK_FRAMES) % 2 == 1 => other,
@@ -173,7 +182,11 @@ impl FrameSource for FakeSource {
             .settings
             .captured_ago_ms
             .and_then(|ago| Instant::now().checked_sub(Duration::from_millis(ago)));
-        Frame::fill(fill, 16, 9, PixelFormat::RGB24)
+        let (width, height) = match (self.settings.width, self.settings.height) {
+            (0, _) | (_, 0) => (16, 9),
+            size => size,
+        };
+        Frame::fill(fill, width, height, PixelFormat::RGB24)
             .map(|frame| Pull::Frame(frame.with_captured(captured)))
             .map_err(|error| Error::adapter("fake frame", error))
     }

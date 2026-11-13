@@ -6,9 +6,9 @@ use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, StreamEncodin
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, Error, HueControls,
-    Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision, Section,
-    SessionPhase, SessionState, Settings, Snapshot, ValidationError,
+    AdapterSettings, Behind, Calibration, Candidate, ColorProfile, CorrectionControls, Error,
+    HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision,
+    Section, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -155,6 +155,7 @@ fn states() -> Vec<State> {
                     capture_ms: Some(88.0),
                     output_ms: 2.4,
                 }),
+                behind: Behind::Output,
             }),
             output_issue: Some(OutputIssue::Overridden),
             surface_failures: vec![Error::other("portal listener failed")],

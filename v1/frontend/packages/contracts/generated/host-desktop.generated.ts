@@ -4,6 +4,13 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * @description What makes Prysm fall behind its source: for several seconds the frame
+         *     loop had no slack, and this step took the larger share. A source that
+         *     just sends fewer frames is never this.
+         * @enum {string}
+         */
+        Behind: "processing" | "output";
+        /**
          * @description A calibration pattern shown on the TV: the body of
          *     `PUT /api/v1/calibration` and `State.calibration`.
          */
@@ -179,6 +186,11 @@ export interface components {
         };
         /** @description Whether frames are arriving, and how fast. */
         Input: {
+            /**
+             * @description Which step keeps Prysm from keeping up with its source, if one does.
+             *     Absent while it keeps up.
+             */
+            behind?: components["schemas"]["Behind"];
             /**
              * Format: float
              * @description Frames per second over the last second, to one decimal.
@@ -516,6 +528,7 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type Behind = components['schemas']['Behind'];
 export type Calibration = components['schemas']['Calibration'];
 export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];

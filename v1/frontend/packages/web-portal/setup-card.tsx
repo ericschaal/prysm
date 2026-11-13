@@ -220,6 +220,8 @@ export type PathState =
        * source stamps capture times), received to colours sent.
        */
       latency?: { captureMs?: number; outputMs: number };
+      /** The step that keeps Prysm from keeping up, while one does. */
+      behind?: 'processing' | 'output';
     }
   | { kind: 'waiting' }
   | { kind: 'effects' }
@@ -260,6 +262,7 @@ function Stop({
   fact,
   figure,
   failed,
+  behind = false,
 }: {
   title: string;
   icon: ReactNode;
@@ -268,9 +271,11 @@ function Stop({
   /** A measured figure after the fact; the fact gives way to it, never the reverse. */
   figure?: { text: string; about: string };
   failed: boolean;
+  /** Working, but this stop keeps Prysm from keeping up (shown in orange). */
+  behind?: boolean;
 }) {
   return (
-    <li className="path-stop" data-failed={failed}>
+    <li className="path-stop" data-failed={failed} data-behind={behind}>
       <span className="path-icon">{icon}</span>
       <span className="path-text">
         <span className="visually-hidden">{title}: </span>
@@ -315,8 +320,11 @@ function Link({
   transport,
   numbers,
   about,
+  behind = false,
 }: {
   state: string;
+  /** Working, but this link keeps Prysm from keeping up (shown in orange). */
+  behind?: boolean;
   /** Above the hairline: how the link carries its data. */
   transport?: Transport;
   /** Below it: the live numbers, while frames flow. */
@@ -329,6 +337,7 @@ function Link({
     <li
       className="path-link"
       data-state={state}
+      data-behind={behind}
       aria-hidden={!name && !numbers}
     >
       <span className="path-line">
@@ -427,11 +436,16 @@ export function SetupCard({
   // The rate once, on the video stop; each link only its own delay.
   const flowing = path.kind === 'flowing' ? path : null;
   // The rate counts the frames Prysm takes and sends: it is Prysm's figure.
+  // What keeps Prysm from keeping up, if anything: working, so orange, not
+  // red. A failure shows no flowing path, so red always wins.
+  const behind = flowing?.behind;
   const processed = flowing
     ? {
         text: frameRate(flowing.fps),
         about:
-          'frames per second Prysm processes and sends, over the last second',
+          behind === 'processing'
+            ? 'Prysm can’t keep up: processing each frame takes longer than the time between frames, so some are skipped. Frames per second Prysm processes and sends, over the last second'
+            : 'frames per second Prysm processes and sends, over the last second',
       }
     : undefined;
   const total = edges
@@ -481,6 +495,7 @@ export function SetupCard({
           fact={profile ? `${profile} profile` : undefined}
           figure={processed}
           failed={path.kind === 'failed' && failedAt === null}
+          behind={behind === 'processing'}
         />
         <Link
           state={out}
@@ -488,9 +503,14 @@ export function SetupCard({
           numbers={delay(flowing?.latency?.outputMs)}
           about={
             flowing?.latency
-              ? 'time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included'
+              ? `${
+                  behind === 'output'
+                    ? 'Prysm can’t keep up: sending to the lights takes longer than the time between frames, so some are skipped. '
+                    : ''
+                }time inside Prysm from a frame received to its colours sent, mean over the last second; the lights’ own delay is not included`
               : undefined
           }
+          behind={behind === 'output'}
         />
         <Named part={output} discovery={discovery}>
           {(name) => (

@@ -29,6 +29,8 @@
   --success: #62d5ad;
   --warning: #f0bd72;
   --warning-soft: rgb(240 189 114 / 0.1);
+  /* Working but behind (the step that keeps Prysm from keeping up): orange, apart from red. */
+  --behind: #ffa45c;
   --danger: #ff8a98;
   --danger-soft: rgb(255 138 152 / 0.1);
   --danger-fill: #ff8a98;
@@ -149,6 +151,7 @@
   --success: #1b7a55;
   --warning: #855400;
   --warning-soft: rgb(210 140 20 / 0.11);
+  --behind: #b45309;
   --danger: #b0253c;
   --danger-soft: rgb(176 37 60 / 0.07);
   --danger-fill: #b0253c;
@@ -182,6 +185,7 @@
     --success: #1b7a55;
     --warning: #855400;
     --warning-soft: rgb(210 140 20 / 0.11);
+    --behind: #b45309;
     --danger: #b0253c;
     --danger-soft: rgb(176 37 60 / 0.07);
     --danger-fill: #b0253c;

@@ -215,6 +215,25 @@ pub struct InputSchema {
     #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     latency: Option<LatencySchema>,
+    /// Which step keeps Prysm from keeping up with its source, if one does.
+    /// Absent while it keeps up.
+    #[schema(nullable = false)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    behind: Option<BehindSchema>,
+}
+
+// Mirrors `prysm_ports::Behind` (`none` is not sent: the field is absent).
+/// What makes Prysm fall behind its source: for several seconds the frame
+/// loop had no slack, and this step took the larger share. A source that
+/// just sends fewer frames is never this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Behind)]
+#[serde(rename_all = "snake_case")]
+pub enum BehindSchema {
+    /// Turning frames into colours takes most of the time.
+    Processing,
+    /// Writing the colours to the lights takes most of the time.
+    Output,
 }
 
 // Mirrors `prysm_ports::Latency`.
@@ -337,6 +356,7 @@ impl ToSchema for OutputSettings {}
     State,
     InputSchema,
     LatencySchema,
+    BehindSchema,
     OutputIssueSchema,
     Session,
     PhaseSchema,
@@ -504,9 +524,9 @@ impl std::error::Error for SchemaConflict {}
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, FrameSource,
-        HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Result,
-        SessionPhase, Settings, ValidationError,
+        AdapterSettings, Behind, Calibration, Candidate, ColorProfile, CorrectionControls,
+        FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing,
+        Result, SessionPhase, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -573,6 +593,11 @@ mod tests {
                 capture_ms: Some(88.0),
                 output_ms: 2.4,
             }),
+            behind: Behind::Output,
+        });
+        same_shape::<Input, InputSchema>(&Input {
+            behind: Behind::Processing,
+            ..Input::default()
         });
         same_shape::<Input, InputSchema>(&Input {
             latency: Some(Latency {

@@ -87,7 +87,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     the source stamps capture times); on the second, received to colours
     sent (`output_ms`). The frame rate (`Input.fps`, the frames Prysm takes
     and sends) is said once, on the Prysm stop after the active profile;
-    `sent_fps` stays in the API and `/metrics` but is not shown. A failure marks its stop (by the
+    `sent_fps` stays in the API and `/metrics` but is not shown.
+    When `Input.behind` names the step that keeps Prysm from keeping up
+    (`processing` or `output`), that stop or link turns orange (`--behind`),
+    with plain words in its tooltip; a failure shows no flowing path, so red
+    always wins. A failure marks its stop (by the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`

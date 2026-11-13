@@ -120,6 +120,33 @@ pub struct Input {
     /// window. Absent when no frame reached the output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency: Option<Latency>,
+    /// Which step keeps Prysm from keeping up with its source, if one does.
+    #[serde(default, skip_serializing_if = "Behind::is_none")]
+    pub behind: Behind,
+}
+
+/// What makes Prysm fall behind its source: the frame loop has had no slack
+/// (busy almost all the time) for several seconds, and this step took the
+/// larger share. A source that just sends fewer frames leaves slack and is
+/// never this.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Behind {
+    /// Prysm keeps up.
+    #[default]
+    None,
+    /// Turning frames into colours takes most of the time.
+    Processing,
+    /// Writing the colours to the lights takes most of the time.
+    Output,
+}
+
+impl Behind {
+    /// Prysm keeps up: nothing to report.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        *self == Self::None
+    }
 }
 
 /// Mean milliseconds per frame along the path, measured by Prysm, in two
