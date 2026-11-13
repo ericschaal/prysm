@@ -18,15 +18,19 @@ tests. `npm run build` does the same without tests. Build the frontend before
 compiling a Rust host that `include!`s the asset list; Cargo never launches npm.
 
 ```sh
-npm --prefix v1/frontend run dev:headless      # desktop portal, no API behind Vite
-npm --prefix v1/frontend run dev:webos-portal
+npm --prefix v1/frontend run dev:headless      # desktop portal, with hot reload
+npm --prefix v1/frontend run dev:webos-portal  # TV portal: PRYSM=http://<tv>:8787
 npm --prefix v1/frontend run dev:webos         # TV UI: open /demo.html (in-memory fakes)
 npm --prefix v1/frontend run dev:webos-slim
 ```
 
 The browser portals connect at once to the same-origin
 [portal API](../surfaces/web-portal/HTTP-CONTRACT.md), which needs no
-credentials. The TV entry points use the Luna client of the TV supervisor;
+credentials. The two portal dev servers forward `/api` to a running
+Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
+`PRYSM` names another one. Start a host first
+(`cargo run --manifest-path v1/Cargo.toml -p prysm-headless -- v1/hosts/headless/settings.example.json`);
+without one the page says "Invalid state stream response." The TV entry points use the Luna client of the TV supervisor;
 their `demo.html` pages run the same UI on an
 [in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,
 `?refused`, `?unreachable`). See the
