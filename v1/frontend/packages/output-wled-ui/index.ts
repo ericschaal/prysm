@@ -30,4 +30,10 @@ export const wledOutput: AdapterUi<WledSettings> = {
       ...(href ? { link: { label: 'Open WLED', href } } : {}),
     };
   },
+  edges: ({ leds }) => ({
+    top: leds.top ?? 0,
+    right: leds.right ?? 0,
+    bottom: leds.bottom ?? 0,
+    left: leds.left ?? 0,
+  }),
 };

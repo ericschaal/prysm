@@ -102,7 +102,7 @@ test("the TV's link opens Calibrate directly; leaving returns Home", async () =>
     await press(button('Leave'));
     assert.equal($('.calibrate'), null);
     assert.equal(window.location.hash, '');
-    assert($('.lighting'), 'Home');
+    assert($('.light-card'), 'Home');
   } finally {
     await portal.unmount();
   }

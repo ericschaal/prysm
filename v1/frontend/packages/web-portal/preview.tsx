@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type {
   LightingTarget,
   PreviewClient,
@@ -147,10 +147,11 @@ function idleMessage(target: LightingTarget, session: Session) {
 }
 
 /**
- * The captured picture with the colours sent to each edge around it. The
- * stream is open only while the panel is shown, the page is visible and the
- * portal is connected: the portal counts viewers and encodes previews only
- * while somebody watches.
+ * The captured picture with the colours sent to each edge around it, for
+ * checking black-bar removal and the LED colours. The stream is open only
+ * while the panel is mounted, the page is visible and the portal is
+ * connected: the portal counts viewers and encodes previews only while
+ * somebody watches.
  */
 export function PreviewPanel({
   client,
@@ -163,15 +164,10 @@ export function PreviewPanel({
   target: LightingTarget;
   session: Session;
 }) {
-  /** The viewer's own choice; until then shown while screen sync runs. */
-  const [choice, setChoice] = useState<boolean | null>(null);
-  const open = choice ?? session.state === 'running';
   const [attempt, setAttempt] = useState(0);
   const visible = usePageVisible();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const headingId = useId();
-  const bodyId = useId();
-  const active = open && visible && online;
+  const active = visible && online;
   const view = usePreviewStream(client, active, attempt, canvasRef);
   const retry = (
     <button type="button" onClick={() => setAttempt((count) => count + 1)}>
@@ -209,53 +205,28 @@ export function PreviewPanel({
       </div>
     );
   const showing = online && view.kind === 'frame';
-  const toggle = (
-    <button
-      type="button"
-      className="preview-toggle quiet"
-      aria-expanded={open}
-      aria-controls={bodyId}
-      onClick={() => setChoice(!open)}
-    >
-      {open ? 'Hide preview' : 'Show preview'}
-    </button>
-  );
   return (
-    <section
+    <div
       className="preview"
-      data-open={open}
-      data-showing={showing}
-      aria-labelledby={headingId}
+      data-view={online ? view.kind : 'offline'}
+      aria-live="polite"
     >
-      <h2 id={headingId} className="visually-hidden">
-        Preview
-      </h2>
-      {open ? (
-        <div
-          id={bodyId}
-          className="preview-body"
-          data-view={online ? view.kind : 'offline'}
-          aria-live="polite"
-        >
-          <canvas
-            ref={canvasRef}
-            className="preview-canvas"
-            role="img"
-            aria-label="Captured picture with the colours sent to the lights around it"
-            hidden={!showing}
-          />
-          {showing ? (
-            <p className="visually-hidden preview-info">
-              {view.sampled
-                ? `Picture ${view.source}. Black bars removed: colours come from the outlined ${view.sampled} area.`
-                : `Picture ${view.source}.`}
-            </p>
-          ) : (
-            message
-          )}
-        </div>
-      ) : null}
-      {toggle}
-    </section>
+      <canvas
+        ref={canvasRef}
+        className="preview-canvas"
+        role="img"
+        aria-label="Captured picture with the colours sent to the lights around it"
+        hidden={!showing}
+      />
+      {showing ? (
+        <p className="preview-info">
+          {view.sampled
+            ? `Picture ${view.source}. Black bars removed: colours come from the outlined ${view.sampled} area.`
+            : `Picture ${view.source}.`}
+        </p>
+      ) : (
+        message
+      )}
+    </div>
   );
 }

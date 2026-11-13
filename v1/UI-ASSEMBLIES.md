@@ -69,16 +69,16 @@ no credentials.
 [application-state](frontend/STATE.md) holds the latest state and command
 feedback in one RTK store per frontend.
 
-The [shared portal](frontend/packages/web-portal/portal.tsx) has two pages.
-Home shows the lighting state, one switch for Screen sync with the output's
-own effects (such as "WLED effects") and Off as quiet choices, "Open WLED",
-the live preview while screen sync runs, brightness and the colour profile.
-Settings (`#/settings`) holds the live picture controls with colour profiles,
-Calibrate colours, Run setup again, one Save form each for capture and
-output, the theme and the technical details. Both browser hosts
+The [shared portal](frontend/packages/web-portal/portal.tsx) has three pages.
+Home shows the light card (power, Screen sync or the output's own effects
+such as "WLED effects", brightness and the colour profiles as one-tap chips)
+and a summary of the setup with the LEDs per edge. Settings (`#/settings`)
+holds the live picture controls with colour profiles, Calibrate colours, Run
+setup again, the live preview (`#/preview`), one Save form each for capture
+and output, the theme and the technical details. Both browser hosts
 pass `httpPreviewClient()` (same `baseUrl` option as the application client)
 as `WebPortal`'s optional `preview`. A host registers each section's kinds as an `AdapterUis` map of
-`AdapterUi { label, create, Editor, normalize?, lighting? }`; the map is
+`AdapterUi { label, create, Editor, normalize?, summary?, lighting?, edges? }`; the map is
 exhaustive over the host's generated union, the form shows a kind selector when
 there is more than one, and editors are controlled components built from the
 portal's fields. Saves copy the latest observed settings and replace one

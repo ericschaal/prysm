@@ -49,7 +49,7 @@ test('setup opens instead of the page while capture or lights are missing', asyn
     const portal = await renderPortal(HeadlessWebPortal, initial);
     try {
       assert.equal(!!wizard(), open, JSON.stringify(initial));
-      assert.equal(!!$('.lighting'), !open);
+      assert.equal(!!$('.light-card'), !open);
       if (!open) {
         await openSettings();
         assert.equal(button('Run setup again').disabled, false);
@@ -62,7 +62,7 @@ test('setup opens instead of the page while capture or lights are missing', asyn
       assert.equal(field('capture.path').value, initial.capture?.path ?? '');
       await click(button('Leave setup'));
       assert.equal(wizard(), null);
-      assert.equal($('.lighting').tagName, 'SECTION');
+      assert.equal($('.light-card').tagName, 'SECTION');
       assert.equal(
         document.activeElement.textContent,
         'Setup closed; nothing was saved.',

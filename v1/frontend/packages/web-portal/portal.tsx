@@ -12,11 +12,12 @@ import {
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { calibrateRoute, CalibrateWizard } from './calibrate';
 import { DiscoveryContext } from './discovery-context';
-import { LightingControls } from './lighting';
+import { LightCard } from './lighting';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel, QuickPicture } from './processing';
 import { SectionForm } from './section-form';
 import { SetupWizard } from './setup';
+import { SetupCard } from './setup-card';
 import { ThemeChoice } from './theme-choice';
 import './tokens.css';
 import './portal.css';
@@ -42,12 +43,15 @@ export interface WebPortalProps<
 
 /** The hash route of the Settings page. */
 export const settingsRoute = '#/settings';
+/** The hash route of the live preview, opened from Settings. */
+export const previewRoute = '#/preview';
 
-type Route = 'home' | 'settings' | 'calibrate';
+type Route = 'home' | 'settings' | 'calibrate' | 'preview';
 
 /**
- * Which page the hash names (Home, `#/settings`, `#/calibrate`) and a way to
- * go to another. The hash keeps the portal's own address and history.
+ * Which page the hash names (Home, `#/settings`, `#/calibrate`,
+ * `#/preview`) and a way to go to another. The hash keeps the portal's own
+ * address and history.
  */
 function useRoute() {
   const [hash, setHash] = useState(() => window.location.hash);
@@ -63,6 +67,7 @@ function useRoute() {
   let route: Route = 'home';
   if (hash === calibrateRoute) route = 'calibrate';
   else if (hash === settingsRoute) route = 'settings';
+  else if (hash === previewRoute) route = 'preview';
   return [route, go] as const;
 }
 
@@ -121,13 +126,20 @@ function Entry({
   );
 }
 
+/** A greeting for the time of day, over the Home headline. */
+function greeting(hour: number) {
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 /**
- * The browser portal. Home shows the lighting state, the main switch, the
- * live picture and brightness; Settings (`#/settings`) holds the picture
- * tuning, the capture and lights forms and the technical details; the
- * Calibrate page is at `#/calibrate`; the guided setup takes over while
- * capture or lights are missing. The host chooses which capture and output
- * kinds exist.
+ * The browser portal. Home holds the light card (power, mode, brightness,
+ * colour profile) and a summary of the setup; Settings (`#/settings`) holds
+ * the picture tuning, the capture and lights forms, the live preview
+ * (`#/preview`) and the technical details; the Calibrate page is at
+ * `#/calibrate`; the guided setup takes over while capture or lights are
+ * missing. The host chooses which capture and output kinds exist.
  */
 export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   application,
@@ -153,17 +165,20 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
-  const [route, go] = useRoute();
+  const [hashRoute, go] = useRoute();
+  // Without a preview client there is no Preview page: Home instead.
+  const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
   /** Where Calibrate returns to: Settings when opened from there. */
   const [calibrateFrom, setCalibrateFrom] = useState('');
-  const settingsHeadingRef = useRef<HTMLHeadingElement>(null);
+  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [hour] = useState(() => new Date().getHours());
   useEffect(() => {
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
-  // Arriving in Settings: its heading, for screen readers and keyboards.
+  // Arriving in Settings or Preview: its heading, for screen readers and keyboards.
   useEffect(() => {
-    if (route === 'settings')
-      settingsHeadingRef.current?.focus({ preventScroll: true });
+    if (route === 'settings' || route === 'preview')
+      pageHeadingRef.current?.focus({ preventScroll: true });
   }, [route]);
 
   let connectionLabel = 'Offline';
@@ -207,13 +222,32 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </span>
     </header>
   );
-  const page = (className: string, title: string, content: ReactNode) => (
-    <div className="portal">
+  const page = (
+    className: string,
+    title: string,
+    content: ReactNode,
+    wide = false,
+  ) => (
+    <div className={wide ? 'portal wide' : 'portal'}>
       {header}
       <main id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
         {content}
       </main>
+    </div>
+  );
+  /** A page under Settings: its title and the way back. */
+  const pageHeading = (title: string, back: string, backLabel: string) => (
+    <div className="page-heading">
+      <button type="button" className="back quiet" onClick={() => go(back)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M15 5.5 8.5 12l6.5 6.5" />
+        </svg>
+        {backLabel}
+      </button>
+      <h2 ref={pageHeadingRef} tabIndex={-1}>
+        {title}
+      </h2>
     </div>
   );
   if (!snapshot)
@@ -315,17 +349,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       'portal-page settings',
       'Prysm settings',
       <>
-        <div className="page-heading">
-          <button type="button" className="back quiet" onClick={() => go('')}>
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M15 5.5 8.5 12l6.5 6.5" />
-            </svg>
-            Home
-          </button>
-          <h2 ref={settingsHeadingRef} tabIndex={-1}>
-            Settings
-          </h2>
-        </div>
+        {pageHeading('Settings', '', 'Home')}
         {notices}
         <ProcessingPanel
           processing={settings.processing}
@@ -354,6 +378,13 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
               }
               onClick={openSetup}
             />
+            {preview ? (
+              <Entry
+                label="Live preview"
+                description="See what Prysm captures and the colours it sends."
+                onClick={() => go(previewRoute)}
+              />
+            ) : null}
           </ul>
           <DiscoveryContext value={discovery ?? null}>
             <div className="section-forms">
@@ -433,51 +464,88 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </>,
     );
 
-  // Under the headline: what is missing, or the live picture.
-  let hero: ReactNode = null;
-  if (!configured)
-    hero = (
-      <div className="setup-needed">
-        <p>Prysm needs a video source and lights before screen sync can run.</p>
-        <button type="button" className="primary" onClick={openSetup}>
-          Set up Prysm
-        </button>
-      </div>
+  if (route === 'preview' && preview)
+    return page(
+      'portal-page preview-page',
+      'Prysm live preview',
+      <>
+        {pageHeading('Live preview', settingsRoute, 'Settings')}
+        <p className="page-intro">
+          What Prysm captures, with the colours it sends to each edge around it.
+          Check black bars and LED placement here.
+        </p>
+        {offline}
+        <PreviewPanel
+          client={preview}
+          online={online}
+          target={snapshot.target}
+          session={session}
+        />
+      </>,
     );
-  else if (preview)
-    hero = (
-      <PreviewPanel
-        client={preview}
-        online={online}
-        target={snapshot.target}
-        session={session}
-      />
-    );
+
+  const capture = settings.capture ?? null;
+  const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
+  const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
+  const calibrate = () => {
+    setCalibrateFrom('');
+    go(calibrateRoute);
+  };
   return page(
     'portal-page home',
     'Prysm',
     <>
+      <div className="home-intro">
+        <p className="overline">{greeting(hour)}</p>
+        <p className="display">
+          Light, in sync<span aria-hidden="true">.</span>
+        </p>
+      </div>
       {notices}
-      <LightingControls
-        target={snapshot.target}
-        session={session}
-        failure={snapshot.failure}
-        outputIssue={snapshot.output_issue}
-        input={snapshot.input}
-        hasCapture={!!settings.capture}
-        hasOutput={!!output}
-        output={outputLighting}
-        disabled={!online}
-        setTarget={(target) => dispatch(application.commands.setTarget(target))}
-      >
-        {hero}
-      </LightingControls>
-      <QuickPicture
-        processing={settings.processing}
-        revision={revision}
-        disabled={!online}
-        save={saveProcessing}
-      />
+      <div className="home-grid">
+        <LightCard
+          target={snapshot.target}
+          session={session}
+          failure={snapshot.failure}
+          outputIssue={snapshot.output_issue}
+          input={snapshot.input}
+          hasCapture={!!capture}
+          hasOutput={!!output}
+          output={outputLighting}
+          disabled={!online}
+          setTarget={(target) =>
+            dispatch(application.commands.setTarget(target))
+          }
+          openSetup={openSetup}
+        >
+          <QuickPicture
+            processing={settings.processing}
+            revision={revision}
+            disabled={!online}
+            save={saveProcessing}
+            calibrate={calibrate}
+          />
+        </LightCard>
+        <SetupCard
+          capture={
+            capture && captureUi
+              ? {
+                  label: captureUi.label,
+                  summary: captureUi.summary?.(capture),
+                }
+              : null
+          }
+          output={
+            output && outputUi
+              ? { label: outputUi.label, summary: outputUi.summary?.(output) }
+              : null
+          }
+          edges={output ? outputUi?.edges?.(output) : undefined}
+          link={outputLighting?.link}
+          openSettings={() => go(settingsRoute)}
+        />
+      </div>
     </>,
+    true,
   );
 }

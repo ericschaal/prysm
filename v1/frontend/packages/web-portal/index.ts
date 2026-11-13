@@ -8,7 +8,7 @@ export * from './checks';
 export { FindDevices } from './discovery';
 export * from './fields';
 export * from './form';
-export { LightingControls } from './lighting';
+export { LightCard, modeStorageKey, type LightingMode } from './lighting';
 export {
   processingControls,
   processingDelayMs,
@@ -27,7 +27,12 @@ export { PreviewPanel } from './preview';
 export { drawPreview, previewLayout } from './preview-canvas';
 export { SectionFields, SectionForm } from './section-form';
 export { SetupWizard, type SetupWizardProps } from './setup';
-export { settingsRoute, WebPortal, type WebPortalProps } from './portal';
+export {
+  previewRoute,
+  settingsRoute,
+  WebPortal,
+  type WebPortalProps,
+} from './portal';
 export {
   applyTheme,
   saveTheme,

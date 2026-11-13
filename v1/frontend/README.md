@@ -39,34 +39,44 @@ supervisor in each of its states and play the phone's calibration part). See the
 
 ## Read the composition
 
-- [Shared portal](packages/web-portal/portal.tsx): two pages and two flows.
-  It imports no adapters.
-  - Home: the lighting state as a headline, the main switch, the live
-    picture, brightness and (with profiles) the colour profile. Problems show
-    here in plain words with the action that fixes them ("Set up Prysm").
+- [Shared portal](packages/web-portal/portal.tsx): three pages and two
+  flows. It imports no adapters.
+  - Home: the light card (the state in one word, the power button, the two
+    modes, brightness and the colour profiles as chips) and
+    [Your setup](packages/web-portal/setup-card.tsx) (the video source and
+    lights from the adapters' `summary`, and the LEDs per edge from an
+    output's `edges`). Problems show in the light card in plain words with
+    the action that fixes them ("Set up Prysm").
   - Settings (`#/settings`, the icon in the header): Picture (brightness,
     black bars, colour profiles, and under Advanced shadow lift, spatial
     reach, smoothing and sample density), Calibrate colours, Run setup again,
-    the Video source and Lights forms (one disclosure each), the theme
+    Live preview, the Video source and Lights forms (one disclosure each), the theme
     (System, Light, Dark; kept per browser in `localStorage`, never sent to
     Prysm) and the technical details (with the capture rate).
-  - [Lighting](packages/web-portal/lighting.tsx): one switch for Screen sync
-    (`processed`; pressed again it turns the lights off, after a failure it
-    retries), and the output's own effects (`device_native`, "WLED effects")
-    and Off as quiet choices; modes that cannot work are disabled with the
-    reason; "Open WLED" for a WLED output.
+  - [Lighting](packages/web-portal/lighting.tsx): the power button turns the
+    lights `off`, or back on in the last mode (kept per browser in
+    `localStorage`; screen sync without one); the tiles choose Screen sync
+    (`processed`) or the output's own effects (`device_native`, named by the
+    output's `lighting().effects`, e.g. "WLED effects"), and a tile chosen
+    while off turns that mode on; after a failure a tile retries. Modes that
+    cannot work are disabled with the reason. Brightness and the profiles
+    apply to screen sync only, so the effects tile shows a note and
+    "Open WLED" in their place. The card's light (CSS only, transform and
+    opacity) drifts while the session runs and blooms from the button when
+    the lights come on.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue
     shift), applied live (debounced 400 ms) because processing-only changes
-    reach a running session without restarting it. Home's brightness and
-    profile choice save the same way.
+    reach a running session without restarting it. Home's brightness saves
+    the same way; a profile chip saves at once.
   - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
     a canvas with each edge's colours around it and the sampled area outlined
-    when black bars are removed. Shown on Home while screen sync runs unless
-    the viewer hid it; the stream is open only while it is shown, the page is
-    visible and the portal is connected (the portal counts viewers). Hosts
-    pass `httpPreviewClient()`; without a preview client there is none.
+    when black bars are removed, on its own page (`#/preview`, from
+    Settings); the stream is open only while that page is shown, the
+    browser tab is visible and the portal is connected (the portal counts
+    viewers). Hosts pass `httpPreviewClient()`; without a preview client
+    there is none.
   - [Section form](packages/web-portal/section-form.tsx) with its
     [draft](packages/web-portal/draft.ts): capture and output kind selector,
     explicit Save, Reset, dirty badge, field errors, stale reload.

@@ -23,6 +23,14 @@ export interface OutputLighting {
   link?: { label: string; href: string };
 }
 
+/** LEDs on each edge of the screen, seen from the front. */
+export interface LedEdges {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 /** One registered adapter kind: how the portal names, creates and edits it. */
 export interface AdapterUi<S extends AdapterSection> {
   label: string;
@@ -35,6 +43,8 @@ export interface AdapterUi<S extends AdapterSection> {
   summary?: (value: S) => string;
   /** Outputs only: lighting actions for the saved section. */
   lighting?: (saved: S) => OutputLighting;
+  /** Outputs only: the LEDs around the screen, for the drawing on Home. */
+  edges?: (saved: S) => LedEdges;
 }
 
 /**

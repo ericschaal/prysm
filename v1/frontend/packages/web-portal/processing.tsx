@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import type { Processing } from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
-import { CheckboxField, NumberField, RangeField, SelectField } from './fields';
+import { CheckboxField, NumberField, RangeField } from './fields';
 import {
   processingLimits,
   useLiveProcessing,
@@ -40,29 +40,43 @@ function Problems({ notice, failure }: { notice: string; failure: string }) {
 }
 
 /**
- * The everyday picture controls on the home page: brightness, and the colour
- * profile when there are any. Applied live like the Picture settings.
+ * The everyday screen sync controls in the light card: brightness, and the
+ * colour profiles as one-tap chips. Brightness applies after a short wait
+ * like the Picture settings; a chip applies at once.
  */
 export function QuickPicture({
   processing,
   revision,
   disabled,
   save,
-}: PictureProps) {
+  calibrate,
+}: PictureProps & {
+  /** Opens the calibration, offered while there are no profiles. */
+  calibrate: () => void;
+}) {
   const live = useLiveProcessing({ processing, revision, disabled, save });
   const headingId = useId();
+  const profilesId = useId();
   const value = live.value;
   const profiles = value.profiles ?? [];
+  const active = profiles.some(({ id }) => id === value.active_profile)
+    ? value.active_profile
+    : undefined;
+  const choices = [
+    ...profiles.map((profile) => ({ id: profile.id, label: nameOf(profile) })),
+    { id: undefined, label: 'No correction' },
+  ];
   return (
     <section className="quick-picture" aria-labelledby={headingId}>
-      <h2 id={headingId} className="visually-hidden">
+      <h3 id={headingId} className="visually-hidden">
         Picture
-      </h2>
+      </h3>
       <FieldScopeProvider value={live.scope}>
-        <div key={live.generation} className="quick-fields">
+        <div key={live.generation}>
           <RangeField
             path="processing.brightness_percent"
             label="Brightness"
+            className="brightness"
             value={value.brightness_percent}
             onChange={(brightness_percent) =>
               live.replace({ ...live.value, brightness_percent })
@@ -70,27 +84,43 @@ export function QuickPicture({
             format={percent}
             {...processingLimits.brightness_percent}
           />
-          {profiles.length ? (
-            <SelectField
-              path="processing.active_profile"
-              label="Colour profile"
-              value={value.active_profile ?? ''}
-              options={[
-                { value: '', label: 'None' },
-                ...profiles.map((profile) => ({
-                  value: profile.id,
-                  label: nameOf(profile),
-                })),
-              ]}
-              onChange={(id) =>
-                live.replace(
-                  withProfiles(live.value, [...profiles], id || undefined),
-                )
-              }
-            />
-          ) : null}
         </div>
       </FieldScopeProvider>
+      <div className="profile-chips" role="group" aria-labelledby={profilesId}>
+        <span id={profilesId} className="chips-label">
+          Colour profile
+        </span>
+        <div className="chips">
+          {choices.map((choice) => (
+            <button
+              type="button"
+              key={choice.id ?? ''}
+              className="chip"
+              data-profile={choice.id ?? ''}
+              aria-pressed={choice.id === active}
+              disabled={disabled}
+              onClick={() => {
+                if (choice.id !== active)
+                  void live.commit(
+                    withProfiles(live.value, [...profiles], choice.id),
+                  );
+              }}
+            >
+              {choice.label}
+            </button>
+          ))}
+          {profiles.length ? null : (
+            <button
+              type="button"
+              className="chip add"
+              disabled={disabled}
+              onClick={calibrate}
+            >
+              Calibrate colours
+            </button>
+          )}
+        </div>
+      </div>
       <Problems notice={live.notice} failure={live.failure} />
     </section>
   );

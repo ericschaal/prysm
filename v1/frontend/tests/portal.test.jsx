@@ -60,6 +60,10 @@ const output = {
   leds: { top: 10, left: 4 },
 };
 const mode = (target) => $(`[data-target="${target}"]`);
+const power = () => $('[data-power]');
+/** The lights' state in one word, as drawn in the light card. */
+const word = () => $('.light-word').textContent;
+const chip = (id) => $(`[data-profile="${id}"]`);
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
 const badge = (title) => $('.badge', form(title)).textContent;
@@ -95,20 +99,20 @@ test('the lighting card says why the lights are not showing screen sync', async 
       'Lights follow your screen',
     );
     assert.match(
-      $('.lighting .output-issue').textContent,
+      $('.light-card .output-issue').textContent,
       /^Live override is on/,
     );
-    assert.equal($('.lighting [role="alert"]'), null, 'not a failure');
+    assert.equal($('.light-card [role="alert"]'), null, 'not a failure');
 
     await act(async () => fixture.publish({ output_issue: 'off' }));
     assert.match(
-      $('.lighting .output-issue').textContent,
+      $('.light-card .output-issue').textContent,
       /switched off on the device/,
     );
 
     await act(async () => fixture.publish({ output_issue: undefined }));
     assert.equal(
-      $('.lighting .output-issue'),
+      $('.light-card .output-issue'),
       null,
       'cleared once the lights follow',
     );
@@ -138,7 +142,10 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       fixture.publish({ input: { fps: 29.9, receiving: true } }),
     );
     assert.equal($('.lighting-detail'), null);
-    assert(!text().includes('fps'), 'no frame rate on Home');
+    assert(
+      !$('.light-card').textContent.includes('fps'),
+      'no live frame rate on Home',
+    );
     await openSettings();
     const rate = $$('.diagnostics dt').find(
       (term) => term.textContent === 'Capture rate',
@@ -159,46 +166,69 @@ test('Home says when video is awaited; the capture rate is in the technical deta
   }
 });
 
-test('lighting modes set the target and show what the session is doing', async () => {
+test('the power button and the mode tiles set the target and show what the session is doing', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
+  const targets = () =>
+    fixture.calls.filter((call) => call.startsWith('target:'));
   try {
     assert.deepEqual(
       $$('[data-target]').map((item) => item.textContent),
-      ['Screen sync', 'WLED effects', 'Off'],
+      ['Screen sync', 'WLED effects'],
     );
-    assert.equal(mode('off').getAttribute('aria-pressed'), 'true');
+    assert.equal(power().getAttribute('aria-pressed'), 'false');
+    assert.equal(word(), 'Off');
     assert.equal($('.lighting-status').textContent, 'Lights are off');
+    assert.equal($('.light-card').dataset.mood, 'off');
+    assert.equal($('.modes').dataset.mode, 'processed', 'power turns on sync');
+    assert.equal($('.bloom'), null);
 
-    await press(mode('processed'));
-    assert.deepEqual(fixture.calls.slice(-1), ['target:processed']);
+    // Power turns screen sync on; light blooms from the button once lit.
+    await press(power());
+    assert.deepEqual(targets(), ['target:processed']);
+    assert.equal(power().getAttribute('aria-pressed'), 'true');
     assert.equal(mode('processed').getAttribute('aria-pressed'), 'true');
-    assert.equal(mode('off').getAttribute('aria-pressed'), 'false');
+    assert.equal(word(), 'On');
+    assert.equal($('.light-card').dataset.mood, 'sync');
+    assert($('.bloom'));
     assert.equal(
       $('.lighting-status').textContent,
       'Lights follow your screen',
     );
 
-    // The main switch turns screen sync off again.
+    // The tile that is already on restarts nothing.
     await press(mode('processed'));
-    assert.deepEqual(fixture.calls.slice(-1), ['target:off']);
-    assert.equal(mode('processed').getAttribute('aria-pressed'), 'false');
-    assert.equal(mode('off').getAttribute('aria-pressed'), 'true');
-    assert.equal($('.lighting-status').textContent, 'Lights are off');
+    assert.equal(targets().length, 1);
 
+    // The other tile switches mode while on; its own note replaces the
+    // screen sync controls in the same place.
     await press(mode('device_native'));
-    assert.deepEqual(fixture.calls.slice(-1), ['target:device_native']);
+    assert.deepEqual(targets().slice(-1), ['target:device_native']);
     assert.equal($('.lighting-status').textContent, 'WLED effects are on');
-
-    await press(mode('off'));
-    assert.deepEqual(fixture.calls.slice(-1), ['target:off']);
-    assert.equal($('.lighting-status').textContent, 'Lights are off');
-
-    const link = $('.device-link a');
+    assert.equal($('.light-card').dataset.mood, 'effects');
+    const [syncPanel, effectsPanel] = $$('.mode-panel');
+    assert.equal(syncPanel.hasAttribute('inert'), true);
+    assert.equal(effectsPanel.hasAttribute('inert'), false);
+    const link = $('.device-link', effectsPanel);
     assert.equal(link.href, 'http://192.0.2.1/');
     assert.equal(link.target, '_blank');
     assert.match(link.rel, /\bnoopener\b/);
     assert.match(link.textContent, /^Open WLED/);
+
+    // Off, then on again: power brings back the last mode.
+    await press(power());
+    assert.deepEqual(targets().slice(-1), ['target:off']);
+    assert.equal(word(), 'Off');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
+    assert.equal($('.modes').dataset.mode, 'device_native');
+    await press(power());
+    assert.deepEqual(targets().slice(-1), ['target:device_native']);
+    await press(power());
+
+    // A tile chosen while off turns that mode on.
+    await press(mode('processed'));
+    assert.deepEqual(targets().slice(-2), ['target:off', 'target:processed']);
+    assert.equal(word(), 'On');
 
     await act(async () =>
       fixture.publish({
@@ -211,15 +241,22 @@ test('lighting modes set the target and show what the session is doing', async (
       }),
     );
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
+    assert.equal(word(), 'Stopped');
     assert.equal(
-      $('.lighting [role="alert"]').textContent,
+      $('.light-card [role="alert"]').textContent,
       'WLED at 192.0.2.1 did not switch to live mode',
     );
+    assert.equal(power().getAttribute('aria-pressed'), 'true', 'still on');
 
-    // After a failure the main switch retries screen sync.
+    // After a failure Try again, or the screen sync tile, retries.
     fixture.failNext({ kind: 'adapter', message: 'fake output cannot open' });
-    await press(mode('processed'));
+    await press(button('Try again'));
+    assert.deepEqual(targets().slice(-1), ['target:processed']);
     assert(text().includes('fake output cannot open'));
+    fixture.failNext({ kind: 'adapter', message: 'still cannot open' });
+    await press(mode('processed'));
+    assert.equal(targets().length, 8);
+    assert(text().includes('still cannot open'));
 
     await act(async () =>
       fixture.publish({
@@ -232,32 +269,36 @@ test('lighting modes set the target and show what the session is doing', async (
       'Prysm stopped responding while closing the capture source. Restart Prysm to recover.',
     );
     assert($$('[data-target]').every((item) => item.disabled));
-    assert.equal(hint(mode('off')), 'Restart Prysm to change the lights.');
+    assert.equal(power().disabled, true);
+    assert.equal(hint(power()), 'Restart Prysm to change the lights.');
   } finally {
     await portal.unmount();
   }
 });
 
 test('modes that cannot work are disabled and say why', async () => {
-  for (const [initial, processed, native, effects] of [
-    [{ output }, 'Set up a video source first.', null, 'WLED effects'],
+  for (const [initial, processed, native, effects, off] of [
+    [{ output }, 'Set up a video source first.', null, 'WLED effects', null],
     [
       { capture, output: { kind: 'null' } },
       null,
       'These lights have no effects of their own.',
       'Device effects',
+      null,
     ],
     [
       { capture },
       'Set up your lights first.',
       'Set up your lights first.',
       'Device effects',
+      'Set up your lights first.',
     ],
     [
       {},
       'Set up a video source and lights first.',
       'Set up your lights first.',
       'Device effects',
+      'Set up a video source and lights first.',
     ],
   ]) {
     const portal = await renderPortal(HeadlessWebPortal, initial);
@@ -270,8 +311,10 @@ test('modes that cannot work are disabled and say why', async () => {
       assert.equal(mode('device_native').disabled, native !== null);
       if (native) assert.equal(hint(mode('device_native')), native);
       assert.equal(mode('device_native').textContent, effects);
-      assert.equal(mode('off').disabled, false);
-      assert.equal(!!$('.device-link a'), initial.output?.kind === 'wled');
+      // Power turns on whichever mode can run, and says why when none can.
+      assert.equal(power().disabled, off !== null);
+      if (off) assert.equal(hint(power()), off);
+      assert.equal(!!$('.setup-links a'), initial.output?.kind === 'wled');
     } finally {
       await portal.unmount();
     }
@@ -682,7 +725,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     });
     // Home: no WLED link, and these lights have no effects of their own.
     await click(button('Home'));
-    assert.equal($('.device-link a'), null);
+    assert.equal($('.setup-links a'), null);
     assert.equal(mode('device_native').disabled, true);
   } finally {
     await portal.unmount();
@@ -778,7 +821,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     });
     assert.equal(field('output.address').value, 'wled.local:8080');
     await click(button('Home'));
-    assert.equal($('.device-link a').href, 'http://wled.local:8080/');
+    assert.equal($('.setup-links a').href, 'http://wled.local:8080/');
   } finally {
     await portal.unmount();
   }
@@ -1086,7 +1129,7 @@ test('the sender refusing the requested stream is shown in full with the lightin
     );
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert.equal(
-      $('.lighting [role="alert"]').textContent,
+      $('.light-card [role="alert"]').textContent,
       refusal,
       'not shortened',
     );
@@ -1166,7 +1209,7 @@ test('limits and defaults written in the panels match the generated schemas', as
   );
 });
 
-test('Home holds the state, the switch, brightness and the profile; the rest is in Settings', async () => {
+test('Home holds the light card and the setup; the rest is in Settings', async () => {
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -1184,21 +1227,27 @@ test('Home holds the state, the switch, brightness and the profile; the rest is 
   try {
     assert.equal($$('form').length, 0, 'no forms on Home');
     assert.equal($('.diagnostics'), null);
+    assert.equal($('.preview'), null, 'no preview on Home');
     assert.deepEqual(
-      $$('.quick-picture input, .quick-picture select').map(
-        (control) => control.name,
-      ),
-      ['processing.brightness_percent', 'processing.active_profile'],
+      $$('.light-card input').map((control) => control.name),
+      ['processing.brightness_percent'],
+    );
+    // The setup card: what sends the picture, what shows it, the LEDs.
+    assert.deepEqual(
+      $$('.setup-flow strong').map((item) => item.textContent),
+      ['Video capture device', 'WLED'],
+    );
+    assert.equal(
+      $('.led-map figcaption').textContent,
+      '14 LEDs: 10 along the top, 0 on the right, 0 along the bottom and 4 on the left.',
     );
     await edit(field('processing.brightness_percent'), 55);
-    await edit(field('processing.active_profile'), 'movie');
     await settle();
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 55);
-    assert.equal(
-      fixture.snapshot().settings.processing.active_profile,
-      'movie',
-    );
 
+    await click(button('Change setup'));
+    assert.equal(window.location.hash, '#/settings');
+    await click(button('Home'));
     await openSettings();
     assert.equal(window.location.hash, '#/settings');
     assert.equal(document.activeElement.textContent, 'Settings');
@@ -1206,9 +1255,81 @@ test('Home holds the state, the switch, brightness and the profile; the rest is 
     assert($('.diagnostics'));
     await click(button('Home'));
     assert.equal(window.location.hash, '');
-    assert($('.lighting'));
+    assert($('.light-card'));
   } finally {
     await portal.unmount();
+  }
+});
+
+test('colour profiles swap with one tap on Home, applied at once', async () => {
+  const profiles = [
+    { id: 'tv', name: 'TV' },
+    { id: 'ps5', name: 'PS5' },
+  ];
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({
+      settings: {
+        ...snapshot.settings,
+        processing: {
+          ...snapshot.settings.processing,
+          profiles,
+          active_profile: 'tv',
+        },
+      },
+    }),
+  );
+  const { fixture } = portal;
+  const pressed = () =>
+    $$('.chip')
+      .filter((item) => item.getAttribute('aria-pressed') === 'true')
+      .map((item) => item.textContent);
+  try {
+    assert.deepEqual(
+      $$('.chip').map((item) => item.textContent),
+      ['TV', 'PS5', 'No correction'],
+    );
+    assert.deepEqual(pressed(), ['TV']);
+
+    await press(chip('ps5'));
+    assert.deepEqual(pressed(), ['PS5']);
+    assert.equal(saves(fixture), 1, 'no wait');
+    assert.equal(fixture.snapshot().settings.processing.active_profile, 'ps5');
+    assert.deepEqual(fixture.snapshot().settings.processing.profiles, profiles);
+
+    await press(chip('ps5'));
+    assert.equal(saves(fixture), 1, 'the active one again saves nothing');
+    await press(chip('tv'));
+    assert.equal(fixture.snapshot().settings.processing.active_profile, 'tv');
+    await press(chip(''));
+    assert.deepEqual(pressed(), ['No correction']);
+    assert.equal(
+      'active_profile' in fixture.snapshot().settings.processing,
+      false,
+    );
+    assert.equal(saves(fixture), 3);
+
+    // Profiles correct the screen's colours: folded away for the lights' effects.
+    assert.equal($('.mode-panel').hasAttribute('inert'), false);
+    await press(mode('device_native'));
+    assert.equal($('.mode-panel').hasAttribute('inert'), true);
+  } finally {
+    await portal.unmount();
+  }
+  // Without profiles, Home offers to make one.
+  const empty = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    assert.deepEqual(
+      $$('.chip').map((item) => item.textContent),
+      ['No correction', 'Calibrate colours'],
+    );
+    await press(button('Calibrate colours'));
+    assert.equal(window.location.hash, '#/calibrate');
+    await press(button('Leave'));
+    assert.equal(window.location.hash, '');
+  } finally {
+    await empty.unmount();
   }
 });
 

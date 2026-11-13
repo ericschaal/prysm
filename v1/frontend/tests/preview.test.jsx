@@ -7,7 +7,7 @@ import { previewLayout } from '@prysm/web-portal';
 import { httpPreviewClient } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakePreviewClient } from '../testkit/preview';
-import { $, button, renderPortal, sleep } from './dom';
+import { $, button, click, openSettings, renderPortal, sleep } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
 const output = {
@@ -89,7 +89,7 @@ test('the preview layout spreads each edge along the picture and maps the viewpo
   assert.equal(previewLayout(frame()).viewport, null);
 });
 
-test('the preview streams only while shown and draws the frame on a canvas', async () => {
+test('the preview has its own page, reached from Settings, and streams only while shown', async () => {
   const preview = fakePreviewClient();
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -102,12 +102,14 @@ test('the preview streams only while shown and draws the frame on a canvas', asy
   const canvas = fakeCanvas(portal.dom.window);
   const message = () => $('.preview-message')?.textContent;
   try {
-    assert.equal(preview.opened(), 0, 'collapsed: no viewer');
-    assert.equal(button('Show preview').getAttribute('aria-expanded'), 'false');
+    assert.equal($('.preview'), null, 'not on Home');
+    assert.equal(preview.opened(), 0, 'no viewer on Home');
 
-    await act(async () => button('Show preview').click());
+    await openSettings();
+    await click(button('Live preview'));
+    assert.equal(window.location.hash, '#/preview');
+    assert.equal(document.activeElement.textContent, 'Live preview');
     assert.equal(preview.open(), 1);
-    assert.equal(button('Hide preview').getAttribute('aria-expanded'), 'true');
     assert.equal(message(), 'Connecting to the preview…');
 
     await act(async () => preview.send({ type: 'idle' }));
@@ -178,11 +180,12 @@ test('the preview streams only while shown and draws the frame on a canvas', asy
       'This picture cannot be shown: MJPEG frames cannot be previewed',
     );
 
-    // Hiding the panel or the page releases the viewer; showing it again reopens.
-    await act(async () => button('Hide preview').click());
+    // Leaving the page or hiding it releases the viewer; coming back reopens.
+    await click(button('Settings'));
+    assert.equal(window.location.hash, '#/settings');
     assert.equal(preview.open(), 0);
     assert.equal($('.preview-canvas'), null);
-    await act(async () => button('Show preview').click());
+    await click(button('Live preview'));
     assert.equal(preview.open(), 1);
     Object.defineProperty(document, 'visibilityState', {
       value: 'hidden',
@@ -221,7 +224,10 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
   const alert = () => $('.preview [role="alert"] p')?.textContent;
   try {
     preview.refuseNext({ kind: 'busy', message: 'too many preview viewers' });
-    await act(async () => button('Show preview').click());
+    await act(async () => {
+      window.location.hash = '#/preview';
+      await sleep(0);
+    });
     await flush();
     assert.equal(
       alert(),
@@ -239,10 +245,18 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
     assert.equal(preview.open(), 0);
 
     // The rest of the portal is unaffected.
+    await act(async () => {
+      window.location.hash = '';
+      await sleep(0);
+    });
     await act(async () => $('[data-target="processed"]').click());
     await flush();
     assert.equal(portal.fixture.snapshot().target, 'processed');
-    await act(async () => button('Try again').click());
+    await act(async () => {
+      window.location.hash = '#/preview';
+      await sleep(0);
+    });
+    assert.equal(preview.open(), 1, 'a new visit opens a new stream');
     await act(async () => preview.send({ type: 'idle' }));
     assert.equal(
       $('.preview-message').textContent,
@@ -253,10 +267,17 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
   }
 });
 
-test('without a preview client the portal shows no Preview panel', async () => {
+test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
+    await openSettings();
+    assert.equal(button('Live preview'), undefined);
+    await act(async () => {
+      window.location.hash = '#/preview';
+      await sleep(0);
+    });
     assert.equal($('.preview'), null);
+    assert($('.light-card'), 'Home instead');
   } finally {
     await portal.unmount();
   }
