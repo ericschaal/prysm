@@ -216,8 +216,8 @@ export type PathState =
       /** Frames arriving, and leaving for the lights, per second. */
       fps: number;
       sentFps: number;
-      /** Mean ms from a frame received to its colours sent (inside Prysm). */
-      latencyMs?: number;
+      /** Mean ms to a frame's colours sent (inside Prysm), from its capture or its receipt. */
+      latency?: { ms: number; from: 'capture' | 'received' };
     }
   | { kind: 'waiting' }
   | { kind: 'effects' }
@@ -398,10 +398,9 @@ export function SetupCard({
   // What leaves for the lights: the rate, and the span inside Prysm.
   const flowing = path.kind === 'flowing' ? path : null;
   const sent = flowing ? `${Math.round(flowing.sentFps)} fps` : undefined;
-  const latency =
-    flowing?.latencyMs === undefined
-      ? undefined
-      : `${Math.round(flowing.latencyMs)} ms`;
+  const latency = flowing?.latency
+    ? `${Math.round(flowing.latency.ms)} ms`
+    : undefined;
   const total = edges
     ? edges.top + edges.right + edges.bottom + edges.left
     : undefined;
@@ -444,7 +443,11 @@ export function SetupCard({
           state={out}
           transport={transports.output}
           numbers={sent && (latency ? `${sent} · ${latency}` : sent)}
-          about="rate of frames sent; time measured inside Prysm, from a frame received to its colours sent, mean over the last second"
+          about={`rate of frames sent; time measured inside Prysm, ${
+            flowing?.latency?.from === 'capture'
+              ? 'from capture to colours sent'
+              : 'from a frame received to its colours sent'
+          }, mean over the last second`}
         />
         <Named part={output} discovery={discovery}>
           {(name) => (

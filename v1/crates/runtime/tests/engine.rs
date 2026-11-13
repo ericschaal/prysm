@@ -1,6 +1,6 @@
 use prysm_ports::{
-    AdapterSettings, Error, LightingTarget, OutputIssue, Processing, Registry, Revision, Section,
-    SessionPhase, SessionState, Settings, Snapshot,
+    AdapterSettings, Error, Latency, LatencyFrom, LightingTarget, OutputIssue, Processing,
+    Registry, Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -758,6 +758,35 @@ async fn input_reports_frame_rate_and_quiet_sources_about_once_a_second() {
     .await;
 }
 
+/// A source that says when it captured each frame: the span starts there.
+#[tokio::test]
+async fn latency_starts_at_capture_when_every_frame_has_a_capture_time() {
+    within(async {
+        let log = CallLog::new();
+        let captured = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                captured_ago_ms: Some(300),
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, captured, DEADLINE).await;
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        let measured =
+            snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
+        let input = measured.input.unwrap();
+        let Latency { ms: latency, from } = input.latency.unwrap();
+        assert_eq!(from, LatencyFrom::Capture);
+        assert!((300.0..600.0).contains(&latency), "{latency}");
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
 /// What reaches the lights: the rate of frames written, and per frame the
 /// span from Prysm receiving it to the write for it returning (here a slow
 /// device of 20 ms), as a mean over the sample window. Frames whose write
@@ -781,12 +810,14 @@ async fn input_reports_frames_sent_and_the_received_to_flushed_span() {
         let (handle, engine, _) = start(&log, slow, DEADLINE).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
         let measured =
-            snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency_ms.is_some())).await;
+            snapshot_until(&handle, |s| s.input.is_some_and(|i| i.latency.is_some())).await;
         let input = measured.input.unwrap();
-        let latency = input.latency_ms.unwrap();
+        let Latency { ms: latency, from } = input.latency.unwrap();
         // At least the write itself; the rest is processing and the hand-over.
         assert!(latency >= 20.0, "{latency}");
         assert!(latency < 200.0, "{latency}");
+        // Frames without a capture time are timed from receipt.
+        assert_eq!(from, LatencyFrom::Received);
         // One write at a time, about 50 a second.
         assert!(
             input.sent_fps > 0.0 && input.sent_fps <= 55.0,

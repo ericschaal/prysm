@@ -1728,6 +1728,7 @@ dependencies = [
  "objc2-foundation",
  "prysm-core",
  "prysm-metrics",
+ "rustix 1.1.6",
  "thiserror 2.0.21",
  "tracing",
  "v4l",

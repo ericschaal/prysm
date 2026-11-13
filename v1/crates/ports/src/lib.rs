@@ -26,4 +26,6 @@ pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use slot::LatestSlot;
-pub use snapshot::{Input, LightingTarget, SessionPhase, SessionState, Snapshot};
+pub use snapshot::{
+    Input, Latency, LatencyFrom, LightingTarget, SessionPhase, SessionState, Snapshot,
+};

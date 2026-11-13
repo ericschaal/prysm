@@ -382,12 +382,9 @@
             "minimum": 0,
             "type": "number"
           },
-          "latency_ms": {
-            "description": "Mean milliseconds over the last second from Prysm receiving a frame\nfrom its source to the output write for it returning: measured inside\nPrysm, per frame (not from the screen). Absent when no frame reached\nthe output.",
-            "example": 11.8,
-            "format": "float",
-            "minimum": 0,
-            "type": "number"
+          "latency": {
+            "$ref": "#/components/schemas/Latency",
+            "description": "The mean time per frame to its colours being sent, over the last\nsecond. Absent when no frame reached the output."
           },
           "receiving": {
             "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
@@ -406,6 +403,33 @@
           "receiving"
         ],
         "type": "object"
+      },
+      "Latency": {
+        "description": "Mean milliseconds from a frame's start to the output write for it\nreturning: measured inside Prysm, per frame (not from the screen).",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/LatencyFrom"
+          },
+          "ms": {
+            "example": 11.8,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "ms",
+          "from"
+        ],
+        "type": "object"
+      },
+      "LatencyFrom": {
+        "description": "Where a latency starts.",
+        "enum": [
+          "received",
+          "capture"
+        ],
+        "type": "string"
       },
       "LedColor": {
         "items": {},

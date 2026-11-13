@@ -115,7 +115,7 @@ impl Stream {
         }
         Ok(())
     }
-    pub fn frame<T>(&mut self, copy: impl FnOnce(&[u8], u32) -> T) -> io::Result<T> {
+    pub fn frame<T>(&mut self, copy: impl FnOnce(&[u8], &v4l2_buffer) -> T) -> io::Result<T> {
         if self.handle.poll(libc::POLLIN, self.timeout)? == 0 {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "VIDIOC_DQBUF"));
         }
@@ -133,7 +133,7 @@ impl Stream {
             // SAFETY: this buffer is dequeued and owned by userspace until queue below.
             Ok(copy(
                 unsafe { std::slice::from_raw_parts(mapping.pointer.as_ptr(), length) },
-                info.flags,
+                &info,
             ))
         };
         self.queue(info.index)?;

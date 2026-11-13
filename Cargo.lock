@@ -1928,6 +1928,7 @@ dependencies = [
  "prysm-core",
  "prysm-metrics",
  "prysm-webos-protocol",
+ "rustix 1.1.6",
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",

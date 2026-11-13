@@ -14,6 +14,8 @@ pub(crate) struct Stats {
     frames_sent: AtomicU64,
     processing: Timer,
     flushed: Timer,
+    /// Like `flushed`, from the frame's capture time, for frames that carry one.
+    captured: Timer,
     output_writes: Timer,
     output_write_failures: AtomicU64,
     source_opens: AtomicU64,
@@ -112,10 +114,22 @@ impl Stats {
         self.output_opens.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A frame received at `received` reached the output now: one span, from
-    /// the source handing it over to the write returning. Two relaxed adds.
-    pub(crate) fn flushed(&self, received: Instant) {
-        self.flushed.add(received.elapsed());
+    /// A frame received at `received` (captured at `captured`, if the source
+    /// says) reached the output now: one span from the source handing it
+    /// over, one from its capture, each to the write returning.
+    pub(crate) fn flushed(&self, received: Instant, captured: Option<Instant>) {
+        let now = Instant::now();
+        self.flushed.add(now - received);
+        if let Some(captured) = captured {
+            self.captured.add(now.saturating_duration_since(captured));
+        }
+    }
+
+    /// The `flushed` spans of frames with a capture time, from that time.
+    /// Not a metric: the engine reports it as the latency when every frame
+    /// of a window had one.
+    pub(crate) fn captured(&self) -> Timing {
+        self.captured.read()
     }
 
     pub(crate) fn process<T>(&self, work: impl FnOnce() -> T) -> T {

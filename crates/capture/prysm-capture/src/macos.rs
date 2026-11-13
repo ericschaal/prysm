@@ -1,7 +1,8 @@
+use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
 use std::slice;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
@@ -19,7 +20,8 @@ use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_media::format_description::CMVideoFormatDescription;
 use core_media::sample_buffer::{CMSampleBuffer, CMSampleBufferRef};
-use core_media::time::CMTime;
+use core_media::sync::CMClock;
+use core_media::time::{CMTime, kCMTimeFlags_Valid};
 use core_video::buffer::TCVBuffer;
 use core_video::image_buffer::{CVImageBufferKeys, ycbcr_matrix_get_integer_code_point_for_string};
 use core_video::pixel_buffer::{
@@ -74,6 +76,7 @@ define_class!(
             _connection: &AVCaptureConnection,
         ) {
             let sample_buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(sample_buffer) };
+            let captured = captured_at(sample_buffer.get_presentation_time_stamp());
             let Some(image_buffer) = sample_buffer.get_image_buffer() else {
                 return;
             };
@@ -86,7 +89,7 @@ define_class!(
                 let started = capture.stats.start();
                 if let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, &mut capture.pool) {
                     capture.stats.record(started, frame.len(), Some(capture.pool.stats()));
-                    capture.sink.frame(frame);
+                    capture.sink.frame(frame.with_captured(captured));
                 } else {
                     capture.stats.failure();
                 }
@@ -162,6 +165,19 @@ impl Drop for Delegate {
         // SAFETY: self is the live observer registered by observe_failure.
         unsafe { NSNotificationCenter::defaultCenter().removeObserver(self) };
     }
+}
+
+/// When a sample with presentation time `pts` was captured. Capture sessions
+/// stamp samples on the host time clock, the clock [`Instant`] reads too.
+fn captured_at(pts: CMTime) -> Option<Instant> {
+    if pts.flags & kCMTimeFlags_Valid == 0 {
+        return None;
+    }
+    // The wrapper takes this Get-rule singleton under the create rule;
+    // releasing it would over-release the clock.
+    let clock = ManuallyDrop::new(CMClock::get_host_time_clock());
+    let age = clock.get_time().subtract(pts).get_seconds();
+    crate::capture_time::since(Instant::now(), age)
 }
 
 /// Copies a `yuvs` (YUYV) pixel buffer into a [`Frame`], stripping any row
@@ -558,6 +574,14 @@ mod tests {
             &(Arc::new(crate::device::Discard) as Arc<dyn CaptureSink>),
         );
         assert!(matches!(result, Err(CaptureError::DeviceNotFound { .. })));
+    }
+
+    #[test]
+    fn capture_time_comes_from_valid_host_clock_stamps() {
+        assert_eq!(captured_at(CMTime::default()), None, "invalid stamp");
+        let host = ManuallyDrop::new(CMClock::get_host_time_clock()).get_time();
+        let captured = captured_at(host).expect("a stamp from the host clock now");
+        assert!(captured.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

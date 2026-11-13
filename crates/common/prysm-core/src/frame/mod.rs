@@ -7,6 +7,7 @@ use crate::{YuvRange, YuvStandardMatrix};
 use std::{
     fmt::{Display, Formatter},
     sync::Arc,
+    time::Instant,
 };
 
 /// Pixel encoding, including color metadata only where it applies.
@@ -153,6 +154,7 @@ pub struct Frame {
     width: u32,
     height: u32,
     format: PixelFormat,
+    captured: Option<Instant>,
 }
 
 impl Frame {
@@ -195,6 +197,7 @@ impl Frame {
             width,
             height,
             format,
+            captured: None,
         })
     }
 
@@ -234,6 +237,20 @@ impl Frame {
     #[must_use]
     pub const fn format(&self) -> PixelFormat {
         self.format
+    }
+
+    /// When the source captured this frame, on [`Instant`]'s clock; `None`
+    /// when the source does not say.
+    #[must_use]
+    pub const fn captured(&self) -> Option<Instant> {
+        self.captured
+    }
+
+    /// This frame, captured at `captured`.
+    #[must_use]
+    pub const fn with_captured(mut self, captured: Option<Instant>) -> Self {
+        self.captured = captured;
+        self
     }
 
     /// The Y plane (`width` bytes per row) and the interleaved UV plane

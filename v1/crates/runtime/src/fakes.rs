@@ -91,6 +91,8 @@ pub struct FakeSourceSettings {
     /// Switch between `fill` and this every [`BLINK_FRAMES`] frames, so tests
     /// can observe smoothing in the preview.
     pub blink: Option<u8>,
+    /// Frames carry a capture time this long before the source hands them over.
+    pub captured_ago_ms: Option<u64>,
 }
 
 /// Frames per `blink` phase of a [`FakeSource`].
@@ -167,8 +169,12 @@ impl FrameSource for FakeSource {
             Some(other) if (self.frames / BLINK_FRAMES) % 2 == 1 => other,
             _ => self.settings.fill,
         };
+        let captured = self
+            .settings
+            .captured_ago_ms
+            .and_then(|ago| Instant::now().checked_sub(Duration::from_millis(ago)));
         Frame::fill(fill, 16, 9, PixelFormat::RGB24)
-            .map(Pull::Frame)
+            .map(|frame| Pull::Frame(frame.with_captured(captured)))
             .map_err(|error| Error::adapter("fake frame", error))
     }
 

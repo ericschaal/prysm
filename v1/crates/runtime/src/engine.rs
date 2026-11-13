@@ -1,10 +1,10 @@
 use crate::session::{ColorsWatch, Feeds, OpenOutput, PreviewWatch, Session, SessionEnd};
-use crate::stats::{Counters, Stats};
+use crate::stats::{Counters, Stats, Timing};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, LightingTarget, Registry,
-    Result, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore, Snapshot,
-    ValidationError,
+    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, Latency, LatencyFrom,
+    LightingTarget, Registry, Result, Revision, Section, SessionPhase, SessionState, Settings,
+    SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -253,29 +253,33 @@ struct Meter {
     interval: Interval,
     /// The totals at the last sample.
     last: Counters,
+    last_captured: Timing,
     at: Instant,
 }
 
 impl Meter {
-    /// Measure from `counters`, the totals when the session starts.
-    fn new(counters: Counters) -> Self {
+    /// Measure from the totals when the session starts.
+    fn new(stats: &Stats) -> Self {
         let mut interval = tokio::time::interval_at(Instant::now() + MEASURE, MEASURE);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         Self {
             interval,
-            last: counters,
+            last: stats.read(),
+            last_captured: stats.captured(),
             at: Instant::now(),
         }
     }
 
     /// The rates and the mean frame span since the last sample, to one
-    /// decimal.
+    /// decimal. The span starts at capture when every frame flushed since
+    /// had a capture time, else at receipt.
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         reason = "per-second frame counts and spans are far below f64 precision and f32 range"
     )]
-    fn sample(&mut self, counters: Counters) -> Input {
+    fn sample(&mut self, stats: &Stats) -> Input {
+        let (counters, captured) = (stats.read(), stats.captured());
         let now = Instant::now();
         let elapsed = now.duration_since(self.at).as_secs_f64();
         let received = counters
@@ -286,11 +290,23 @@ impl Meter {
             .flushed
             .count
             .saturating_sub(self.last.flushed.count);
-        let span = counters
-            .flushed
-            .total
-            .saturating_sub(self.last.flushed.total);
+        let (span, from) =
+            if flushed > 0 && captured.count.saturating_sub(self.last_captured.count) == flushed {
+                (
+                    captured.total.saturating_sub(self.last_captured.total),
+                    LatencyFrom::Capture,
+                )
+            } else {
+                (
+                    counters
+                        .flushed
+                        .total
+                        .saturating_sub(self.last.flushed.total),
+                    LatencyFrom::Received,
+                )
+            };
         self.last = counters;
+        self.last_captured = captured;
         self.at = now;
         let tenth = |value: f64| ((value * 10.0).round() / 10.0) as f32;
         let rate = |counted: u64| {
@@ -304,7 +320,10 @@ impl Meter {
             fps: rate(received),
             receiving: received > 0,
             sent_fps: rate(sent),
-            latency_ms: (flushed > 0).then(|| tenth(span.as_secs_f64() * 1000.0 / flushed as f64)),
+            latency: (flushed > 0).then(|| Latency {
+                ms: tenth(span.as_secs_f64() * 1000.0 / flushed as f64),
+                from,
+            }),
         }
     }
 }
@@ -404,7 +423,7 @@ impl Core {
         let Some(running) = &mut self.running else {
             return;
         };
-        let input = Some(running.meter.sample(self.stats.read()));
+        let input = Some(running.meter.sample(&self.stats));
         let issue = running.session.output_issue();
         self.state.send_if_modified(|s| {
             let changed = s.input != input || s.output_issue != issue;
@@ -565,7 +584,7 @@ impl Core {
         };
         self.running = Some(Running {
             session,
-            meter: Meter::new(self.stats.read()),
+            meter: Meter::new(&self.stats),
         });
         self.state.send_modify(|s| {
             s.session = SessionState::Running;

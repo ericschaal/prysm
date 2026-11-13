@@ -205,6 +205,8 @@ mod tests {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod capture_time;
 #[cfg(target_os = "linux")]
 mod linux;
 

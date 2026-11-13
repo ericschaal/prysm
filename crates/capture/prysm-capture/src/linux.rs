@@ -3,7 +3,7 @@ use crate::{
 };
 use anyhow::Context;
 use std::num::NonZeroU32;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use v4l::buffer::Type;
 mod stream;
 use stream::Stream;
@@ -189,6 +189,32 @@ fn configure_stream(
     })
 }
 
+// The shared guard's copy of the timestamp-type bits matches the kernel's.
+const _: () = assert!(
+    crate::capture_time::V4L2_TIMESTAMP_MASK == v4l::v4l_sys::V4L2_BUF_FLAG_TIMESTAMP_MASK
+        && crate::capture_time::V4L2_TIMESTAMP_MONOTONIC
+            == v4l::v4l_sys::V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC
+);
+
+/// When `buffer` was captured, if the driver stamped it on `CLOCK_MONOTONIC`.
+#[allow(
+    clippy::useless_conversion,
+    reason = "the kernel's time fields are c_long, narrower on 32-bit targets"
+)]
+fn captured_at(buffer: &v4l::v4l_sys::v4l2_buffer) -> Option<Instant> {
+    let now = Instant::now();
+    let monotonic = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+    crate::capture_time::v4l2(
+        buffer.flags,
+        (
+            i64::from(buffer.timestamp.tv_sec),
+            i64::from(buffer.timestamp.tv_usec),
+        ),
+        (monotonic.tv_sec, i64::from(monotonic.tv_nsec)),
+        now,
+    )
+}
+
 /// Nodes that capture video (not metadata or output nodes), by number.
 pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
     let Ok(entries) = std::fs::read_dir("/dev") else {
@@ -263,15 +289,17 @@ pub(crate) fn run(
                 return Ok(());
             }
             let started = stats.start();
-            match stream.frame(|data, flags| {
+            match stream.frame(|data, buffer| {
+                let captured = captured_at(buffer);
                 pool.copy_from_strided(
                     data,
                     format.width,
                     format.height,
                     pixel_format,
                     format.stride as usize,
-                    flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0,
+                    buffer.flags & v4l::v4l_sys::V4L2_BUF_FLAG_ERROR != 0,
                 )
+                .map(|frame| frame.with_captured(captured))
             }) {
                 Ok(Some(frame)) => {
                     stats.record(started, frame.len(), Some(pool.stats()));

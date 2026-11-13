@@ -210,13 +210,35 @@ pub struct InputSchema {
     #[schema(minimum = 0, example = 29.9)]
     #[serde(default)]
     sent_fps: f32,
-    /// Mean milliseconds over the last second from Prysm receiving a frame
-    /// from its source to the output write for it returning: measured inside
-    /// Prysm, per frame (not from the screen). Absent when no frame reached
-    /// the output.
-    #[schema(minimum = 0, example = 11.8, nullable = false)]
+    /// The mean time per frame to its colours being sent, over the last
+    /// second. Absent when no frame reached the output.
+    #[schema(nullable = false)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    latency_ms: Option<f32>,
+    latency: Option<LatencySchema>,
+}
+
+// Mirrors `prysm_ports::Latency`.
+/// Mean milliseconds from a frame's start to the output write for it
+/// returning: measured inside Prysm, per frame (not from the screen).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Latency)]
+pub struct LatencySchema {
+    #[schema(minimum = 0, example = 11.8)]
+    ms: f32,
+    from: LatencyFromSchema,
+}
+
+// Mirrors `prysm_ports::LatencyFrom`.
+/// Where a latency starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = LatencyFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum LatencyFromSchema {
+    /// Prysm received the frame from its source.
+    Received,
+    /// The source captured the frame: every frame of the window carried a
+    /// capture time (video devices on macOS, and on Linux with monotonic stamps).
+    Capture,
 }
 
 // Mirrors `prysm_ports::OutputIssue`.
@@ -320,6 +342,8 @@ impl ToSchema for OutputSettings {}
 #[openapi(components(schemas(
     State,
     InputSchema,
+    LatencySchema,
+    LatencyFromSchema,
     OutputIssueSchema,
     Session,
     PhaseSchema,
@@ -488,8 +512,8 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, FrameSource,
-        HueControls, Input, LightingTarget, OutputIssue, Pattern, Processing, Result, SessionPhase,
-        Settings, ValidationError,
+        HueControls, Input, Latency, LatencyFrom, LightingTarget, OutputIssue, Pattern, Processing,
+        Result, SessionPhase, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -552,8 +576,19 @@ mod tests {
             fps: 29.5,
             receiving: true,
             sent_fps: 29.5,
-            latency_ms: Some(11.8),
+            latency: Some(Latency {
+                ms: 11.8,
+                from: LatencyFrom::Capture,
+            }),
         });
+        same_shape::<Input, InputSchema>(&Input {
+            latency: Some(Latency {
+                ms: 4.0,
+                from: LatencyFrom::Received,
+            }),
+            ..Input::default()
+        });
+        same_shape::<Input, InputSchema>(&Input::default());
         for issue in [
             OutputIssue::Off,
             OutputIssue::Overridden,

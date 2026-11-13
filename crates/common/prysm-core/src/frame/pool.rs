@@ -52,6 +52,7 @@ impl FrameWriter<'_> {
             width: self.width,
             height: self.height,
             format: self.format,
+            captured: None,
         }
     }
 }

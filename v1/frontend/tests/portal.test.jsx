@@ -1595,7 +1595,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
           fps: 29.97,
           receiving: true,
           sent_fps: 29.97,
-          latency_ms: 11.6,
+          latency: { ms: 11.6, from: 'received' },
         },
       }),
     );
@@ -1614,6 +1614,25 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       /measured inside Prysm/,
       'for screen readers',
     );
+    // A source that stamps capture: the same number, said from capture.
+    await act(async () =>
+      portal.fixture.publish({
+        input: {
+          fps: 29.97,
+          receiving: true,
+          sent_fps: 29.97,
+          latency: { ms: 31.4, from: 'capture' },
+        },
+      }),
+    );
+    assert.deepEqual(links()[1], ['flowing', '30 fps · 31 ms']);
+    assert.match(sent.title, /from capture to colours sent/);
+    assert(!/received/.test(sent.title));
+    assert.match(
+      sent.textContent,
+      /from capture to colours sent/,
+      'for screen readers',
+    );
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>
       portal.fixture.publish({
@@ -1627,7 +1646,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
           fps: 29.97,
           receiving: true,
           sent_fps: 29.97,
-          latency_ms: 11.6,
+          latency: { ms: 11.6, from: 'received' },
         },
       }),
     );

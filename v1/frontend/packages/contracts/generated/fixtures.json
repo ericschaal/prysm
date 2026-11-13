@@ -441,7 +441,10 @@
       "failure": null,
       "input": {
         "fps": 29.899999618530273,
-        "latency_ms": 11.800000190734863,
+        "latency": {
+          "from": "capture",
+          "ms": 11.800000190734863
+        },
         "receiving": true,
         "sent_fps": 29.899999618530273
       },
