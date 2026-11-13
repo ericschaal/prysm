@@ -424,7 +424,7 @@ fn idle_applies_pause_and_resume_and_close_pauses_first() {
     let until = |sender: &mut RemoteSender, paused: bool| {
         let deadline = Instant::now() + BOUND;
         loop {
-            sender.idle().unwrap();
+            sender.tick().unwrap();
             if sender.paused() == paused {
                 return;
             }
@@ -439,7 +439,7 @@ fn idle_applies_pause_and_resume_and_close_pauses_first() {
 
     Box::new(source).close().unwrap();
     let deadline = Instant::now() + BOUND;
-    while sender.idle().is_ok() {
+    while sender.tick().is_ok() {
         assert!(Instant::now() < deadline, "sender never noticed the close");
         thread::sleep(Duration::from_millis(10));
     }

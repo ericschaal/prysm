@@ -73,6 +73,8 @@ pub trait LedOutput: Send {
 /// Capture-only hosts forward frames instead of colors.
 pub trait FrameSink: Send {
     fn send(&mut self, frame: &Frame) -> Result<(), AdapterError>;
+    /// No frame this tick; a sink that keeps a connection may use it.
+    fn tick(&mut self) -> Result<(), AdapterError> { Ok(()) }
 }
 
 pub trait SettingsStore: Send {
@@ -231,7 +233,7 @@ Each host is a `main` that lists blocks.
 
 ```rust,ignore
 // prysm-headless / docker
-Prysm::builder(FileSettings::new(path)?)
+Prysm::builder(SettingsFile::new(path)?)
     .source(DeviceSource)          // v4l / AVFoundation
     .source(RemoteReceiver)        // frames from webOS slim
     .output(Wled)
@@ -239,7 +241,7 @@ Prysm::builder(FileSettings::new(path)?)
     .run(shutdown).await
 
 // prysm-tui
-Prysm::builder(FileSettings::new(path)?)
+Prysm::builder(SettingsFile::new(path)?)
     .source(DeviceSource).source(RemoteReceiver)
     .output(Wled).output(NullOutput)
     .surface(WebPortal::new(assets, policy))
@@ -247,7 +249,7 @@ Prysm::builder(FileSettings::new(path)?)
     .run(shutdown).await
 
 // prysm-webos (full)
-Prysm::builder(FileSettings::new(path)?)
+Prysm::builder(SettingsFile::new(path)?)
     .source(WebosCapture::new(luna))
     .output(Wled)
     .surface(LunaBridge::new(luna))
@@ -270,9 +272,9 @@ new adapter crate and one builder line; no shared crate changes.
 | --- | --- |
 | `prysm-core`, `prysm-processor` (root workspace) | Unchanged |
 | `prysm-ports` (`crates/ports`) | Ports, `Registry`, factories, `Settings`, `Snapshot`, one `Error`, `LatestSlot` |
-| `prysm-runtime` (`crates/runtime`) | `Engine`/`EngineHandle`, `Session`, `Forwarder`, `Surface<H>`, `Shutdown`, `Prysm` builder, `NullOutput`; fakes behind feature `testkit` |
+| `prysm-runtime` (`crates/runtime`) | `Engine`/`EngineHandle`, `Forwarder`, `Surface<H>`, `Shutdown`, `Prysm` builder, `NullOutput`, `Preview`/`PreviewWatch`, `Counters`, `sample_rgb`; the session thread is internal; fakes behind feature `testkit` |
 | `prysm-protocol` (`crates/protocol`) | JSON wire values and OpenAPI roots |
-| `prysm-output-wled`, `prysm-capture-device`, `prysm-capture-remote`, `prysm-capture-webos`, `prysm-settings-file` (`adapters/`) | Plain adapters: `Wled`, `DeviceSource`, `RemoteReceiver`/`RemoteSender`, the webOS capture, `FileSettings` |
+| `prysm-output-wled`, `prysm-capture-device`, `prysm-capture-remote`, `prysm-capture-webos`, `prysm-settings-file` (`adapters/`) | Plain adapters: `Wled`, `DeviceSource`, `RemoteReceiver`/`RemoteSender`, the webOS capture, `SettingsFile` |
 | `prysm-surface-tui`, `prysm-web-portal` (`surfaces/`) | `Tui` and `WebPortal` surfaces |
 | `prysm-headless`, `prysm-tui`, `prysm-host` (`hosts/`) | Desktop host binaries and their shared process code |
 | `prysm-contract`, `prysm-flow`, `prysm-application`, `prysm-output`, `output-terminal`, `control-terminal`, `assemblies`, `testkit` | Removed |

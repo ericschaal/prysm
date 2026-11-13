@@ -67,7 +67,7 @@ async fn an_ended_source_finishes_forwarding_without_a_failure() {
     assert_eq!(log.count("source.close:"), 1);
 }
 
-/// Counts sends and idle ticks.
+/// Counts sends and ticks.
 struct Counting(CallLog);
 
 impl prysm_ports::FrameSink for Counting {
@@ -75,8 +75,8 @@ impl prysm_ports::FrameSink for Counting {
         self.0.record("sink.send");
         Ok(())
     }
-    fn idle(&mut self) -> prysm_ports::Result<()> {
-        self.0.record("sink.idle");
+    fn tick(&mut self) -> prysm_ports::Result<()> {
+        self.0.record("sink.tick");
         Ok(())
     }
 }
@@ -84,7 +84,7 @@ impl prysm_ports::FrameSink for Counting {
 /// A quiet source still gives the sink a turn every tick, so a sink that
 /// connects to a peer does not wait for the first frame.
 #[tokio::test]
-async fn a_quiet_source_gives_the_sink_idle_turns() {
+async fn a_quiet_source_gives_the_sink_ticks() {
     let log = CallLog::new();
     let source = FakeSource::new(
         &log,
@@ -96,7 +96,7 @@ async fn a_quiet_source_gives_the_sink_idle_turns() {
     let run = Forwarder::new(source, Counting(log.clone())).run({
         let log = log.clone();
         async move {
-            assert!(log.wait_for("sink.idle", 2).await);
+            assert!(log.wait_for("sink.tick", 2).await);
         }
     });
     tokio::time::timeout(Duration::from_secs(10), run)

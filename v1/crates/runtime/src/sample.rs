@@ -1,6 +1,33 @@
 //! Nearest-pixel sampling of a captured frame into RGB, for the surfaces' previews.
 use prysm_core::nv12::Nv12View;
 use prysm_core::{Frame, PixelFormat, Viewport};
+use std::fmt;
+
+/// Why a frame cannot be sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleError {
+    /// The frame has no pixels.
+    Empty,
+    /// The frame is compressed (MJPEG).
+    Compressed,
+}
+
+impl From<SampleError> for &'static str {
+    fn from(error: SampleError) -> Self {
+        match error {
+            SampleError::Empty => "the frame is empty",
+            SampleError::Compressed => "MJPEG frames cannot be previewed",
+        }
+    }
+}
+
+impl fmt::Display for SampleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).into())
+    }
+}
+
+impl std::error::Error for SampleError {}
 
 /// Sample `area` of `frame` into `width` x `height` RGB pixels, row-major, by
 /// nearest pixel. Reads only the sampled pixels; never converts the whole frame.
@@ -8,18 +35,18 @@ use prysm_core::{Frame, PixelFormat, Viewport};
 /// frame are black.
 ///
 /// # Errors
-/// The frame is empty, or compressed (MJPEG).
+/// [`SampleError`]: the frame is empty, or compressed.
 pub fn sample_rgb(
     frame: &Frame,
     area: Viewport,
     width: u32,
     height: u32,
-) -> Result<Vec<[u8; 3]>, &'static str> {
+) -> Result<Vec<[u8; 3]>, SampleError> {
     if frame.width() == 0 || frame.height() == 0 {
-        return Err("the frame is empty");
+        return Err(SampleError::Empty);
     }
     if frame.format() == PixelFormat::MJPEG {
-        return Err("MJPEG frames cannot be previewed");
+        return Err(SampleError::Compressed);
     }
     let nv12 = Nv12View::new(frame);
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
@@ -208,12 +235,12 @@ mod tests {
         let empty = Frame::dummy(0, 2).unwrap();
         assert_eq!(
             sample_rgb(&empty, full(&empty), 1, 1),
-            Err("the frame is empty")
+            Err(SampleError::Empty)
         );
         let jpeg = Frame::new(vec![1, 2, 3], 4, 2, PixelFormat::MJPEG).unwrap();
         assert_eq!(
             sample_rgb(&jpeg, full(&jpeg), 1, 1),
-            Err("MJPEG frames cannot be previewed")
+            Err(SampleError::Compressed)
         );
     }
 }

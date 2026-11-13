@@ -124,13 +124,13 @@ impl Upstream for RemoteSender {
 /// reconnecting; it never fails. The receiver only listens while its host is
 /// lighting, so a refused connection or a dropped receiver is a normal wait:
 /// frames are dropped, a new connection is tried at most every
-/// [`RECONNECT`] (on the next frame or idle tick after it), and [`Flow`]
+/// [`RECONNECT`] (on the next frame or tick after it), and [`Flow`]
 /// carries the reason. Each connection publishes the receiver's request,
 /// which the capture follows; the frame that opens a connection is dropped,
 /// since it was captured before the request was known.
 ///
 /// A receiver that pauses the stream (its lighting is off) stops the
-/// capture through [`Flow::wanted`]; idle ticks keep reading its control
+/// capture through [`Flow::wanted`]; ticks keep reading its control
 /// messages, so a resume starts it again. A receiver that pauses and then
 /// closes (lighting stopped) leaves the capture stopped until a receiver
 /// connects again; one that vanishes without pausing (a crash, the
@@ -245,12 +245,12 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
 
     /// Reconnect, or read the receiver's pause and resume while the
     /// capture delivers nothing (it is stopped while paused).
-    fn idle(&mut self) -> Result<()> {
+    fn tick(&mut self) -> Result<()> {
         let Some(sink) = &mut self.sink else {
             self.reconnect();
             return Ok(());
         };
-        match sink.idle() {
+        match sink.tick() {
             Ok(()) => self.flow.lock().paused = sink.paused(),
             Err(error) => self.lost(&error),
         }

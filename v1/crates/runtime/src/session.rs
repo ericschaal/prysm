@@ -1,5 +1,5 @@
-use crate::Stats;
-use crate::worker::{Pumped, Worker};
+use crate::stats::Stats;
+use crate::worker::{Flags, Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame, Viewport};
 use prysm_ports::{
     Error, FrameSource, IdleMode, LatestSlot, LedOutput, OutputIssue, Result, SessionPhase,
@@ -17,16 +17,16 @@ const REFRESH: Duration = Duration::from_millis(500);
 /// output to [`RELEASE`] (no signal, screen saver, no sender). The output is
 /// opened only at the first frame and again at the first frame after a
 /// release.
-pub const VIDEO_GRACE: Duration = Duration::from_secs(3);
+pub(crate) const VIDEO_GRACE: Duration = Duration::from_secs(3);
 
 /// What a released output shows while waiting for frames: the device's own
 /// state (WLED's preset or effect).
-pub const RELEASE: IdleMode = IdleMode::Native;
+pub(crate) const RELEASE: IdleMode = IdleMode::Native;
 
 /// Opens the session's output. Called on the session thread at the first
 /// frame and at the first frame after each release, and at the end when the
 /// final idle mode differs from the one the output was left in.
-pub type OpenOutput = Box<dyn FnMut() -> Result<Box<dyn LedOutput>> + Send>;
+pub(crate) type OpenOutput = Box<dyn FnMut() -> Result<Box<dyn LedOutput>> + Send>;
 
 /// The latest processed frame, for surfaces that render what the LEDs show.
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ pub struct Preview {
 /// one [`PreviewWatch`] exists, so nobody watching costs one atomic load per
 /// frame and pins no frame buffer. Empty while no session runs.
 #[derive(Debug)]
-pub struct PreviewSlot {
+pub(crate) struct PreviewSlot {
     latest: LatestSlot<Preview>,
     viewers: AtomicUsize,
     sequence: AtomicU64,
@@ -64,14 +64,14 @@ impl Default for PreviewSlot {
 impl PreviewSlot {
     /// Register a viewer until the returned watch is dropped.
     #[must_use]
-    pub fn watch(self: &Arc<Self>) -> PreviewWatch {
+    pub(crate) fn watch(self: &Arc<Self>) -> PreviewWatch {
         self.viewers.fetch_add(1, Ordering::SeqCst);
         PreviewWatch(self.clone())
     }
 
     /// How many watches exist.
     #[must_use]
-    pub fn viewers(&self) -> usize {
+    pub(crate) fn viewers(&self) -> usize {
         self.viewers.load(Ordering::SeqCst)
     }
 
@@ -119,14 +119,14 @@ impl Drop for PreviewWatch {
 
 /// How a session ended. Release and idle run on every exit path.
 #[derive(Debug)]
-pub struct SessionEnd {
+pub(crate) struct SessionEnd {
     /// Why the loop stopped; `None` when it was asked to or the source ended.
-    pub failure: Option<Error>,
+    pub(crate) failure: Option<Error>,
     /// The source reported [`Pull::Ended`](prysm_ports::Pull::Ended): the
     /// session finished on its own without a failure.
-    pub ended: bool,
-    pub released: Result<()>,
-    pub idled: Result<()>,
+    pub(crate) ended: bool,
+    pub(crate) released: Result<()>,
+    pub(crate) idled: Result<()>,
 }
 
 impl SessionEnd {
@@ -134,7 +134,7 @@ impl SessionEnd {
     ///
     /// # Errors
     /// The loop failure, else the release failure, else the idle failure.
-    pub fn result(self) -> Result<()> {
+    pub(crate) fn result(self) -> Result<()> {
         match self.failure {
             Some(failure) => Err(failure),
             None => self.released.and(self.idled),
@@ -155,14 +155,14 @@ enum Leds {
 
 impl Leds {
     fn write(&mut self, colors: &EdgeColors, open: &mut OpenOutput, stats: &Stats) -> Result<()> {
-        if !matches!(self, Self::Held(_)) {
-            *self = Self::Held(open()?);
-            stats.output_opened();
+        if let Self::Held(output) = self {
+            return stats.write(output.as_mut(), colors);
         }
-        match self {
-            Self::Held(output) => stats.write(output.as_mut(), colors),
-            Self::Untouched | Self::Left(_) | Self::Unknown => Ok(()),
-        }
+        let mut output = open()?;
+        stats.output_opened();
+        let written = stats.write(output.as_mut(), colors);
+        *self = Self::Held(output);
+        written
     }
 
     /// What a held output last learned about its device.
@@ -214,96 +214,139 @@ impl Control {
     }
 }
 
-/// One dedicated thread owning a source, the processor and an output.
+/// The session thread's state between frames.
 ///
-/// Loop: stop flag, pending config at the frame boundary, `next_frame`,
-/// count, process, open the output if not held, write, observe, preview (only
-/// while watched); a quiet tick rewrites (and observes) the last colors, and after
-/// [`VIDEO_GRACE`] without frames idles the output in [`RELEASE`] and closes
-/// it until the next frame; [`Pull::Ended`](prysm_ports::Pull::Ended) leaves
-/// the loop like a stop. Then the preview is cleared, `source.close()`, and
-/// the output is left in the stop's idle mode (idled if held, reopened only
-/// if it was left in another mode; never opened for `Off` if no frame came).
-pub struct Session {
+/// Each frame: count, apply a pending config, process, open the output if not
+/// held, write, observe, preview (only while watched). A quiet tick rewrites
+/// (and observes) the last colors, and after [`VIDEO_GRACE`] without frames
+/// idles the output in [`RELEASE`] and closes it until the next frame. When
+/// the loop ends (stop, failure, or [`Pull::Ended`](prysm_ports::Pull::Ended))
+/// the preview is cleared, `source.close()`, and the output is left in the
+/// stop's idle mode (idled if held, reopened only if it was left in another
+/// mode; never opened for `Off` if no frame came).
+struct SessionLoop {
+    processor: PrysmProcessor,
+    leds: Leds,
+    /// The last colors written and when.
+    last: Option<(EdgeColors, Instant)>,
+    last_frame: Instant,
+    open_output: OpenOutput,
+    control: Arc<Control>,
+    preview: Arc<PreviewSlot>,
+    stats: Arc<Stats>,
+}
+
+impl SessionLoop {
+    fn on_frame(&mut self, frame: Frame) -> Result<()> {
+        self.last_frame = Instant::now();
+        self.stats.frame_received();
+        if let Some(config) = self.control.config.take() {
+            self.processor.configure(&config);
+        }
+        let shown = (self.preview.viewers() > 0).then(|| frame.clone());
+        let colors = self.stats.process(|| self.processor.process_frame(frame));
+        self.leds
+            .write(&colors, &mut self.open_output, &self.stats)?;
+        self.stats.frame_sent();
+        self.control.report(self.leds.observe());
+        self.last = Some((colors.clone(), Instant::now()));
+        if let Some(shown) = shown {
+            let viewport = self
+                .processor
+                .viewport()
+                .unwrap_or_else(|| Viewport::full_frame(shown.width(), shown.height()));
+            self.preview.publish(shown, colors, viewport);
+        }
+        Ok(())
+    }
+
+    fn on_quiet(&mut self) -> Result<()> {
+        let Some(output) = self.leds.held() else {
+            return Ok(());
+        };
+        if self.last_frame.elapsed() >= VIDEO_GRACE {
+            self.last = None;
+            self.control.report(None);
+            return self.leds.release(RELEASE);
+        }
+        if let Some((colors, written)) = &mut self.last
+            && written.elapsed() >= REFRESH
+        {
+            self.stats.write(output, colors)?;
+            *written = Instant::now();
+            self.control.report(output.observe());
+        }
+        Ok(())
+    }
+
+    fn finish(mut self, pumped: Pumped, source: Box<dyn FrameSource>, flags: &Flags) -> SessionEnd {
+        let ended = matches!(pumped, Pumped::Ended);
+        let failure = pumped.failure();
+        self.control.report(None);
+        self.preview.clear();
+        flags.set_phase(SessionPhase::ClosingSource);
+        let released = source.close();
+        flags.set_phase(SessionPhase::IdlingOutput);
+        let mode = *self
+            .control
+            .idle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let idled = self.leds.finish(mode, &mut self.open_output);
+        SessionEnd {
+            failure,
+            ended,
+            released,
+            idled,
+        }
+    }
+}
+
+/// One dedicated thread owning a source, the processor and an output; the
+/// rules are [`SessionLoop`]'s.
+pub(crate) struct Session {
     control: Arc<Control>,
     worker: Worker<SessionEnd>,
 }
 
 impl Session {
     /// # Errors
-    /// The thread could not be spawned; the source is dropped unreleased.
-    pub fn start(
-        mut source: Box<dyn FrameSource>,
-        mut open_output: OpenOutput,
+    /// The thread could not be spawned. The source comes back unclosed, so the
+    /// caller can still release it.
+    pub(crate) fn start(
+        source: Box<dyn FrameSource>,
+        open_output: OpenOutput,
         config: Config,
         preview: Arc<PreviewSlot>,
         stats: Arc<Stats>,
-    ) -> Result<Self> {
+    ) -> Result<Self, (Error, Box<dyn FrameSource>)> {
         let control = Arc::new(Control {
             config: LatestSlot::new(),
             idle: Mutex::new(IdleMode::Off),
             issue: Mutex::new(None),
         });
-        let shared = control.clone();
-        let worker = Worker::spawn("prysm-session", move |flags| {
-            let mut processor = PrysmProcessor::new(&config);
-            let mut leds = Leds::Untouched;
-            let mut last: Option<(EdgeColors, Instant)> = None;
-            let mut last_frame = Instant::now();
-            let pumped = flags.pump(&mut *source, |frame| {
-                let Some(frame) = frame else {
-                    let Some(output) = leds.held() else {
-                        return Ok(());
-                    };
-                    if last_frame.elapsed() >= VIDEO_GRACE {
-                        last = None;
-                        shared.report(None);
-                        return leds.release(RELEASE);
-                    }
-                    if let Some((colors, written)) = &mut last
-                        && written.elapsed() >= REFRESH
-                    {
-                        stats.write(output, colors)?;
-                        *written = Instant::now();
-                        shared.report(output.observe());
-                    }
-                    return Ok(());
-                };
-                last_frame = Instant::now();
-                stats.frame_received();
-                if let Some(config) = shared.config.take() {
-                    processor.configure(&config);
-                }
-                let shown = (preview.viewers() > 0).then(|| frame.clone());
-                let colors = stats.process(|| processor.process_frame(frame));
-                leds.write(&colors, &mut open_output, &stats)?;
-                stats.frame_sent();
-                shared.report(leds.observe());
-                last = Some((colors.clone(), Instant::now()));
-                if let Some(shown) = shown {
-                    let viewport = processor
-                        .viewport()
-                        .unwrap_or_else(|| Viewport::full_frame(shown.width(), shown.height()));
-                    preview.publish(shown, colors, viewport);
-                }
-                Ok(())
-            });
-            let ended = matches!(pumped, Pumped::Ended);
-            let failure = pumped.failure();
-            shared.report(None);
-            preview.clear();
-            flags.set_phase(SessionPhase::ClosingSource);
-            let released = source.close();
-            flags.set_phase(SessionPhase::IdlingOutput);
-            let mode = *shared.idle.lock().unwrap_or_else(PoisonError::into_inner);
-            let idled = leds.finish(mode, &mut open_output);
-            SessionEnd {
-                failure,
-                ended,
-                released,
-                idled,
-            }
-        })?;
+        let session = SessionLoop {
+            processor: PrysmProcessor::new(&config),
+            leds: Leds::Untouched,
+            last: None,
+            last_frame: Instant::now(),
+            open_output,
+            control: control.clone(),
+            preview,
+            stats,
+        };
+        let worker = Worker::spawn(
+            "prysm-session",
+            (source, session),
+            |(mut source, mut session), flags| {
+                let pumped = flags.pump(&mut *source, |frame| match frame {
+                    Some(frame) => session.on_frame(frame),
+                    None => session.on_quiet(),
+                });
+                session.finish(pumped, source, flags)
+            },
+        )
+        .map_err(|(error, (source, _))| (error, source))?;
         Ok(Self { control, worker })
     }
 
@@ -395,6 +438,7 @@ mod tests {
             slot.clone(),
             Arc::new(Stats::default()),
         )
+        .map_err(|(error, _)| error)
         .unwrap();
         (session, frames)
     }

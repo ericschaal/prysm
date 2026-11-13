@@ -3,23 +3,9 @@
 //! fixed word from a closed set, so nothing needs escaping.
 use prysm_ports::{LightingTarget, SessionState, Snapshot};
 use prysm_runtime::{Counters, Timing};
-use std::fmt::Write;
+use std::fmt::{self, Display, Write};
 
 pub(crate) const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
-
-const TARGETS: [LightingTarget; 3] = [
-    LightingTarget::Off,
-    LightingTarget::Processed,
-    LightingTarget::DeviceNative,
-];
-
-fn target_name(target: LightingTarget) -> &'static str {
-    match target {
-        LightingTarget::Off => "off",
-        LightingTarget::Processed => "processed",
-        LightingTarget::DeviceNative => "device_native",
-    }
-}
 
 /// The session state without the faulted phase, to keep the label set small.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,24 +61,30 @@ impl Kind {
 struct Text(String);
 
 impl Text {
+    fn line(&mut self, line: fmt::Arguments<'_>) {
+        let _ = self.0.write_fmt(line);
+        self.0.push('\n');
+    }
+
     fn header(&mut self, name: &str, kind: Kind, help: &str) {
         let kind = kind.name();
-        let _ = writeln!(self.0, "# HELP {name} {help}\n# TYPE {name} {kind}");
+        self.line(format_args!("# HELP {name} {help}\n# TYPE {name} {kind}"));
     }
 
     fn counter(&mut self, name: &str, help: &str, value: u64) {
         self.header(name, Kind::Counter, help);
-        let _ = writeln!(self.0, "{name} {value}");
+        self.line(format_args!("{name} {value}"));
+    }
+
+    fn gauge(&mut self, name: &str, help: &str, value: impl Display) {
+        self.header(name, Kind::Gauge, help);
+        self.line(format_args!("{name} {value}"));
     }
 
     fn summary(&mut self, name: &str, help: &str, timing: Timing) {
         self.header(name, Kind::Summary, help);
-        let _ = writeln!(
-            self.0,
-            "{name}_sum {}\n{name}_count {}",
-            timing.total.as_secs_f64(),
-            timing.count
-        );
+        let (sum, count) = (timing.total.as_secs_f64(), timing.count);
+        self.line(format_args!("{name}_sum {sum}\n{name}_count {count}"));
     }
 
     /// One 0/1 sample per label value, 1 for the current one.
@@ -107,12 +99,8 @@ impl Text {
     ) {
         self.header(name, Kind::Gauge, help);
         for &value in all {
-            let _ = writeln!(
-                self.0,
-                "{name}{{{label}=\"{}\"}} {}",
-                value_name(value),
-                u8::from(value == current)
-            );
+            let (value_name, sample) = (value_name(value), u8::from(value == current));
+            self.line(format_args!("{name}{{{label}=\"{value_name}\"}} {sample}"));
         }
     }
 }
@@ -120,18 +108,17 @@ impl Text {
 pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
     let mut text = Text(String::with_capacity(2048));
     text.header("prysm_build_info", Kind::Gauge, "Prysm version; always 1.");
-    let _ = writeln!(
-        text.0,
+    text.line(format_args!(
         "prysm_build_info{{version=\"{}\"}} 1",
         env!("CARGO_PKG_VERSION")
-    );
+    ));
     text.one_of(
         "prysm_target",
         "What the user asked the LEDs to do; 1 for the current target.",
         "target",
-        &TARGETS,
+        &LightingTarget::ALL,
         snapshot.target,
-        target_name,
+        LightingTarget::as_str,
     );
     text.one_of(
         "prysm_session_state",
@@ -141,19 +128,16 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
         State::from(snapshot.session),
         State::name,
     );
-    text.header(
+    text.gauge(
         "prysm_settings_revision",
-        Kind::Gauge,
         "Revision of the saved settings; starts at a random value per process.",
+        snapshot.revision.0,
     );
-    let _ = writeln!(text.0, "prysm_settings_revision {}", snapshot.revision.0);
-    text.header(
+    text.gauge(
         "prysm_input_fps",
-        Kind::Gauge,
         "Frames per second from the source over the last second; 0 while no session runs.",
+        snapshot.input.map_or(0.0, |input| input.fps),
     );
-    let fps = snapshot.input.map_or(0.0, |input| input.fps);
-    let _ = writeln!(text.0, "prysm_input_fps {fps}");
     text.counter(
         "prysm_frames_received_total",
         "Frames taken from the capture source.",

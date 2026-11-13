@@ -8,11 +8,11 @@ use std::{
 
 /// A [`SettingsStore`] backed by one JSON file, replaced atomically on save.
 #[derive(Debug, Clone)]
-pub struct FileSettings {
+pub struct SettingsFile {
     path: PathBuf,
 }
 
-impl FileSettings {
+impl SettingsFile {
     /// Nothing is touched until the first `load` or `save`. A relative path
     /// resolves against the working directory at each call.
     pub fn new(path: impl Into<PathBuf>) -> Self {
@@ -43,7 +43,7 @@ impl FileSettings {
     }
 }
 
-impl SettingsStore for FileSettings {
+impl SettingsStore for SettingsFile {
     fn load(&mut self) -> Result<Option<Settings>> {
         let bytes = match fs::read(&self.path) {
             Ok(bytes) => bytes,

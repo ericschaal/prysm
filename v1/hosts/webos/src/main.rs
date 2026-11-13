@@ -9,7 +9,7 @@ use prysm_output_wled::Wled;
 use prysm_ports::{AdapterSettings, Error, Result, Settings, SettingsStore, SourceFactory};
 use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
-use prysm_settings_file::FileSettings;
+use prysm_settings_file::SettingsFile;
 use prysm_web_portal::{Access, FrontendAsset, WebPortal};
 use prysm_webos_link::FullArgs;
 use prysm_webos_link::worker::{self, Link};
@@ -48,7 +48,7 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
     );
     let video = VideoSignal::default();
     let stopped = link.stop.stopped();
-    Prysm::builder(FileSettings::new(&args.settings))
+    Prysm::builder(SettingsFile::new(&args.settings))
         .source(WebosCapture::new(video.clone()))
         .output(Wled::default())
         .surface(EngineLink::new(link, video, args.lighting, portal))
@@ -66,7 +66,7 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
 /// A missing settings file starts as webOS capture with defaults, so the
 /// portal only has to add the WLED output.
 fn seed(path: &Path) -> Result<()> {
-    let mut store = FileSettings::new(path);
+    let mut store = SettingsFile::new(path);
     if store.load()?.is_none() {
         store.save(&Settings {
             capture: Some(AdapterSettings::new(

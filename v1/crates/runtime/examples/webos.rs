@@ -7,7 +7,7 @@ use std::time::Duration;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> prysm_ports::Result<()> {
     let log = CallLog::new();
-    Prysm::builder(MemoryStore::with(fakes::settings())) // FileSettings::new(path)?
+    Prysm::builder(MemoryStore::with(fakes::settings())) // SettingsFile::new(path)?
         .source(FakeSources(log.clone())) // WebosCapture::new(luna)
         .output(FakeOutputs(log.clone())) // Wled
         .surface(fakes::light_until_shutdown) // LunaBridge::new(luna)

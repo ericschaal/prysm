@@ -38,7 +38,8 @@ mod screen;
 mod video;
 mod view;
 
-use futures::future::BoxFuture;
+use futures::FutureExt;
+use futures::future::{BoxFuture, Fuse, FusedFuture};
 use input::Notice;
 use prysm_ports::{Error, Result};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
@@ -91,16 +92,16 @@ impl Tui {
             commands,
             notices,
         })?;
-        let mut running: Option<BoxFuture<'static, Notice>> = None;
+        // The command being executed; terminated while none is.
+        let mut running: Fuse<BoxFuture<'static, Notice>> = Fuse::terminated();
         let ended = loop {
             tokio::select! {
                 () = shutdown.requested() => break None,
                 ended = &mut screen.done => break Some(ended),
-                Some(command) = queued.recv(), if running.is_none() => {
-                    running = Some(Box::pin(command::execute(engine.clone(), command)));
+                Some(command) = queued.recv(), if running.is_terminated() => {
+                    running = command::execute(engine.clone(), command).boxed().fuse();
                 }
-                notice = async { running.as_mut().expect("guarded").await }, if running.is_some() => {
-                    running = None;
+                notice = &mut running, if !running.is_terminated() => {
                     let _ = notify.send(notice);
                 }
             }

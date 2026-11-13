@@ -4,7 +4,7 @@ use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, Pull, Result, SessionPhase};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -75,23 +75,42 @@ pub(crate) struct Worker<T> {
 }
 
 impl<T: Send + 'static> Worker<T> {
-    pub(crate) fn spawn(
+    /// Run `body(state, flags)` on a new thread named `name`.
+    ///
+    /// # Errors
+    /// The thread could not be spawned; `state` comes back with the error, so
+    /// the caller can still release what it holds.
+    pub(crate) fn spawn<S: Send + 'static>(
         name: &str,
-        body: impl FnOnce(&Flags) -> T + Send + 'static,
-    ) -> Result<Self> {
+        state: S,
+        body: impl FnOnce(S, &Flags) -> T + Send + 'static,
+    ) -> Result<Self, (Error, S)> {
         let flags = Arc::new(Flags::default());
         let (sender, done) = oneshot::channel();
-        let thread = std::thread::Builder::new()
-            .name(name.into())
-            .spawn({
-                let flags = flags.clone();
-                move || {
-                    let end = body(&flags);
-                    flags.set_phase(SessionPhase::Finishing);
-                    let _ = sender.send(end);
-                }
-            })
-            .map_err(|error| Error::adapter("cannot start session thread", error))?;
+        // `state` is handed over only once the thread exists, since a failed
+        // spawn drops the closure and everything it owns.
+        let (hand_over, handed) = mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new().name(name.into()).spawn({
+            let flags = flags.clone();
+            move || {
+                let Ok(state) = handed.recv() else {
+                    return;
+                };
+                let end = body(state, &flags);
+                flags.set_phase(SessionPhase::Finishing);
+                let _ = sender.send(end);
+            }
+        });
+        let thread = match spawned {
+            Ok(thread) => thread,
+            Err(error) => {
+                return Err((Error::adapter("cannot start session thread", error), state));
+            }
+        };
+        // The thread waits in `recv`, so this fails only if it panicked first.
+        if let Err(mpsc::SendError(state)) = hand_over.send(state) {
+            return Err((Error::Panicked("session thread"), state));
+        }
         Ok(Self {
             flags,
             done,

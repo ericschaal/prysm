@@ -1,4 +1,5 @@
-use crate::{Counters, OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd, Stats};
+use crate::session::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd};
+use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
     AdapterSettings, Calibration, Error, IdleMode, Input, LightingTarget, Registry, Result,
@@ -154,8 +155,7 @@ impl Engine {
         let core = Core {
             registry,
             store,
-            session: None,
-            meter: None,
+            running: None,
             calibration_expires: None,
             preview: preview.clone(),
             stats: stats.clone(),
@@ -259,12 +259,32 @@ impl Meter {
     }
 }
 
+/// The session and the measurement of its frame rate.
+struct Running {
+    session: Session,
+    meter: Meter,
+}
+
+/// What a running session needs from the engine.
+enum Event {
+    Ended(Result<SessionEnd>),
+    Measure,
+}
+
+impl Running {
+    /// The session ended on its own, or it is time to measure. Cancel-safe.
+    async fn next(&mut self) -> Event {
+        tokio::select! {
+            end = self.session.finished() => Event::Ended(end),
+            _ = self.meter.interval.tick() => Event::Measure,
+        }
+    }
+}
+
 struct Core {
     registry: Registry,
     store: Store,
-    session: Option<Session>,
-    /// Present exactly while `session` is.
-    meter: Option<Meter>,
+    running: Option<Running>,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
     preview: Arc<PreviewSlot>,
@@ -278,12 +298,11 @@ impl Core {
         loop {
             let command = tokio::select! {
                 command = inbox.recv() => command,
-                end = finished(&mut self.session) => {
-                    self.session_ended(end).await;
-                    continue;
-                }
-                () = measure(&mut self.meter) => {
-                    self.measure();
+                event = next(&mut self.running) => {
+                    match event {
+                        Event::Ended(end) => self.session_ended(end).await,
+                        Event::Measure => self.measure(),
+                    }
                     continue;
                 }
                 () = expiry(self.calibration_expires) => {
@@ -304,47 +323,39 @@ impl Core {
                     self.state.send_modify(|s| s.surface_failures.push(error));
                 }
                 Some(Command::SetTarget(target, reply)) => {
-                    let result = match self.faulted() {
-                        Some(fault) => Err(fault),
-                        None => self.set_target(target).await,
-                    };
-                    let _ = reply.send(result);
+                    let _ = reply.send(self.set_target(target).await);
                 }
                 Some(Command::SetCalibration(calibration, reply)) => {
-                    let result = match self.faulted() {
-                        Some(fault) => Err(fault),
-                        None => self.set_calibration(calibration),
-                    };
-                    let _ = reply.send(result);
+                    let _ = reply.send(self.set_calibration(calibration));
                 }
                 Some(Command::ReplaceSettings {
                     expected,
                     settings,
                     reply,
                 }) => {
-                    let result = match self.faulted() {
-                        Some(fault) => Err(fault),
-                        None => self.replace_settings(expected, *settings).await,
-                    };
-                    let _ = reply.send(result);
+                    let _ = reply.send(self.replace_settings(expected, *settings).await);
                 }
             }
         }
     }
 
-    fn faulted(&self) -> Option<Error> {
+    /// Refuse commands once a session is faulted: only a restart recovers.
+    ///
+    /// # Errors
+    /// [`Error::Faulted`] with the phase the session got stuck in.
+    fn faulted(&self) -> Result<()> {
         match self.state.borrow().session {
-            SessionState::Faulted(phase) => Some(Error::Faulted(phase)),
-            _ => None,
+            SessionState::Faulted(phase) => Err(Error::Faulted(phase)),
+            _ => Ok(()),
         }
     }
 
     fn measure(&mut self) {
-        let (Some(session), Some(meter)) = (&self.session, &mut self.meter) else {
+        let Some(running) = &mut self.running else {
             return;
         };
-        let input = Some(meter.sample(self.stats.read().frames_received));
-        let issue = session.output_issue();
+        let input = Some(running.meter.sample(self.stats.read().frames_received));
+        let issue = running.session.output_issue();
         self.state.send_if_modified(|s| {
             let changed = s.input != input || s.output_issue != issue;
             s.input = input;
@@ -357,9 +368,8 @@ impl Core {
     /// ended source is completion: the target becomes `Off`, so lighting does
     /// not restart (a file would replay) until asked again.
     async fn session_ended(&mut self, end: Result<SessionEnd>) {
-        self.meter = None;
-        if let Some(session) = self.session.take() {
-            session.join().await;
+        if let Some(running) = self.running.take() {
+            running.session.join().await;
         }
         let session = match &end {
             Ok(end) if end.released.is_err() => UNRELEASED,
@@ -382,6 +392,7 @@ impl Core {
     }
 
     async fn set_target(&mut self, target: LightingTarget) -> Result<()> {
+        self.faulted()?;
         let current = self.state.borrow().session;
         self.state.send_modify(|s| s.target = target);
         if target != LightingTarget::Processed {
@@ -408,6 +419,7 @@ impl Core {
         expected: Revision,
         settings: Settings,
     ) -> Result<Revision> {
+        self.faulted()?;
         let current = self.state.borrow().revision;
         if expected != current {
             return Err(Error::StaleRevision { expected, current });
@@ -445,8 +457,8 @@ impl Core {
                 }
             }
             SessionState::Running if previous.processing != settings.processing => {
-                if let Some(session) = &self.session {
-                    session.configure(effective(&self.state.borrow()));
+                if let Some(running) = &self.running {
+                    running.session.configure(effective(&self.state.borrow()));
                 }
                 Ok(())
             }
@@ -474,14 +486,29 @@ impl Core {
         self.stats.source_opened();
         let registry = self.registry.clone();
         let open_output: OpenOutput = Box::new(move || registry.open_output(&output));
-        self.session = Some(Session::start(
+        let session = match Session::start(
             source,
             open_output,
             config,
             self.preview.clone(),
             self.stats.clone(),
-        )?);
-        self.meter = Some(Meter::new(self.stats.read().frames_received));
+        ) {
+            Ok(session) => session,
+            Err((error, source)) => {
+                // The session never ran: release the source here instead.
+                let released = blocking(move || source.close())
+                    .await
+                    .and_then(|closed| closed);
+                if released.is_err() {
+                    self.state.send_modify(|s| s.session = UNRELEASED);
+                }
+                return Err(error);
+            }
+        };
+        self.running = Some(Running {
+            session,
+            meter: Meter::new(self.stats.read().frames_received),
+        });
         self.state.send_modify(|s| {
             s.session = SessionState::Running;
             s.input = Some(Input::default());
@@ -490,11 +517,10 @@ impl Core {
     }
 
     async fn stop(&mut self, mode: IdleMode) -> Result<()> {
-        let Some(session) = self.session.take() else {
+        let Some(running) = self.running.take() else {
             return Ok(());
         };
-        self.meter = None;
-        let result = session.stop(mode, self.stop_deadline).await;
+        let result = running.session.stop(mode, self.stop_deadline).await;
         let state = match &result {
             Err(Error::Faulted(phase)) => SessionState::Faulted(*phase),
             Ok(end) if end.released.is_err() => UNRELEASED,
@@ -529,6 +555,7 @@ impl Core {
     }
 
     fn set_calibration(&mut self, calibration: Option<Calibration>) -> Result<()> {
+        self.faulted()?;
         if calibration.is_some() && self.state.borrow().target != LightingTarget::Processed {
             return Err(Error::NotProcessed);
         }
@@ -547,10 +574,10 @@ impl Core {
             changed
         });
         let after = effective(&self.state.borrow());
-        if let Some(session) = &self.session
+        if let Some(running) = &self.running
             && after != before
         {
-            session.configure(after);
+            running.session.configure(after);
         }
     }
 
@@ -561,9 +588,7 @@ impl Core {
 
     async fn shutdown(&mut self) -> Result<()> {
         self.calibrate(None);
-        if let Some(fault) = self.faulted() {
-            return Err(fault);
-        }
+        self.faulted()?;
         let result = self.stop(IdleMode::Off).await;
         self.record(&result);
         result
@@ -592,18 +617,9 @@ async fn expiry(at: Option<Instant>) {
     }
 }
 
-async fn finished(session: &mut Option<Session>) -> Result<SessionEnd> {
-    match session {
-        Some(session) => session.finished().await,
-        None => std::future::pending().await,
-    }
-}
-
-async fn measure(meter: &mut Option<Meter>) {
-    match meter {
-        Some(meter) => {
-            meter.interval.tick().await;
-        }
+async fn next(running: &mut Option<Running>) -> Event {
+    match running {
+        Some(running) => running.next().await,
         None => std::future::pending().await,
     }
 }

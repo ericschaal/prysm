@@ -121,7 +121,7 @@ pub trait FrameSink: Send {
     fn send(&mut self, frame: &Frame) -> Result<()>;
     /// No frame arrived within the source's timeout. A sink that keeps a
     /// connection may use it to connect without waiting for a frame.
-    fn idle(&mut self) -> Result<()> {
+    fn tick(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -130,8 +130,8 @@ impl<T: FrameSink + ?Sized> FrameSink for Box<T> {
     fn send(&mut self, frame: &Frame) -> Result<()> {
         (**self).send(frame)
     }
-    fn idle(&mut self) -> Result<()> {
-        (**self).idle()
+    fn tick(&mut self) -> Result<()> {
+        (**self).tick()
     }
 }
 

@@ -1,15 +1,16 @@
 //! Process concerns shared by the desktop hosts, so each host `main` is only
-//! its builder list: arguments, logging, the portal listener, signals and a
-//! status surface that reports to stderr.
+//! its builder list: arguments, logging, the portal listener, signals, a
+//! status surface that reports to stderr and the `--start` request.
 //!
 //! ```ignore
 //! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
 //!
 //! fn main() -> ExitCode {
 //!     prysm_host::main(PROGRAM, |host| async move {
-//!         Prysm::builder(FileSettings::new(host.settings()))
+//!         Prysm::builder(SettingsFile::new(host.settings()))
 //!             .output(Wled)
 //!             .surface(host.status())
+//!             .surface(host.start())
 //!             .surface(host.portal(ASSETS)?)
 //!             .run(host.signals()?)
 //!             .await
@@ -23,11 +24,11 @@ pub use args::{Options, Parsed, PortalOptions, parse};
 use prysm_ports::{Error, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain};
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
-use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::{self, IsTerminal};
-use std::net::{IpAddr, SocketAddr, TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -159,14 +160,33 @@ impl Host {
     }
 
     /// Reports state changes and surface failures to stderr, unless a
-    /// full-screen surface owns it, and requests processed lighting once if
-    /// `--start` was given.
+    /// full-screen surface owns it.
     #[must_use]
     pub fn status(&self) -> Status {
         Status {
             name: self.name,
-            start: self.options.start,
             print: !self.quiet,
+        }
+    }
+
+    /// Requests processed lighting once if `--start` was given, then ends.
+    /// A failure is printed like a status line; the snapshot keeps it too.
+    #[must_use]
+    pub fn start(&self) -> impl Surface + use<> {
+        let start = self.options.start;
+        let status = self.status();
+        move |engine: EngineHandle, shutdown: Shutdown| async move {
+            if start {
+                tokio::select! {
+                    () = shutdown.requested() => {}
+                    started = engine.set_target(LightingTarget::Processed) => {
+                        if let Err(error) = started {
+                            status.say(&format!("--start failed: {}", chain(&error)));
+                        }
+                    }
+                }
+            }
+            Ok(())
         }
     }
 
@@ -219,33 +239,14 @@ impl Host {
     }
 }
 
-/// Where the portal can be opened. On every interface, the address of the
-/// interface with the default route, if there is one.
+/// Where the portal can be opened; see [`lan_url`].
 fn reachable(address: SocketAddr) -> String {
-    let port = address.port();
-    if !address.ip().is_unspecified() {
-        return format!("portal http://{address}/");
+    let everywhere = address.ip().is_unspecified();
+    match lan_url(address) {
+        Some(url) if everywhere => format!("portal {url} on all interfaces"),
+        Some(url) => format!("portal {url}"),
+        None => format!("portal on all interfaces, port {}", address.port()),
     }
-    match lan_address(address.ip()) {
-        Some(ip) => format!(
-            "portal http://{}/ on all interfaces",
-            SocketAddr::new(ip, port)
-        ),
-        None => format!("portal on all interfaces, port {port}"),
-    }
-}
-
-/// Connecting a UDP socket only picks a route and a local address; nothing is sent.
-fn lan_address(unspecified: IpAddr) -> Option<IpAddr> {
-    let (local, probe) = if unspecified.is_ipv4() {
-        ("0.0.0.0:0", "192.0.2.1:9")
-    } else {
-        ("[::]:0", "[2001:db8::1]:9")
-    };
-    let socket = UdpSocket::bind(local).ok()?;
-    socket.connect(probe).ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
 }
 
 fn access(access: &Access) -> String {
@@ -263,7 +264,6 @@ fn access(access: &Access) -> String {
 #[derive(Debug)]
 pub struct Status {
     name: &'static str,
-    start: bool,
     print: bool,
 }
 
@@ -277,21 +277,9 @@ impl Status {
     async fn watch(self, engine: EngineHandle, shutdown: Shutdown) -> Result<()> {
         let mut snapshots = engine.snapshot();
         let mut seen = Seen::default();
-        let mut start = self.start;
         loop {
             for line in seen.update(&snapshots.borrow_and_update()) {
                 self.say(&line);
-            }
-            if std::mem::take(&mut start) {
-                tokio::select! {
-                    () = shutdown.requested() => return Ok(()),
-                    started = engine.set_target(LightingTarget::Processed) => {
-                        if let Err(error) = started {
-                            self.say(&format!("--start failed: {}", chain(&error)));
-                        }
-                    }
-                }
-                continue;
             }
             tokio::select! {
                 () = shutdown.requested() => return Ok(()),
@@ -325,8 +313,8 @@ impl Seen {
         let mut lines = Vec::new();
         let state = format!(
             "target {}, session {}",
-            target(snapshot.target),
-            session(snapshot.session)
+            snapshot.target.as_str(),
+            snapshot.session
         );
         if self.state.as_ref() != Some(&state) {
             lines.push(state.clone());
@@ -359,23 +347,6 @@ impl Seen {
         }
         self.surface_failures = snapshot.surface_failures.len();
         lines
-    }
-}
-
-fn target(target: LightingTarget) -> &'static str {
-    match target {
-        LightingTarget::Off => "off",
-        LightingTarget::Processed => "processed",
-        LightingTarget::DeviceNative => "device native",
-    }
-}
-
-fn session(state: SessionState) -> String {
-    match state {
-        SessionState::Stopped => "stopped".into(),
-        SessionState::Running => "running".into(),
-        SessionState::Native => "native".into(),
-        SessionState::Faulted(phase) => format!("faulted while {phase}"),
     }
 }
 

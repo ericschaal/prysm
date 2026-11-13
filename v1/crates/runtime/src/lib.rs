@@ -1,7 +1,7 @@
 //! The Prysm runtime: concurrency lives here, adapters are plain blocking objects.
 //!
 //! - [`Engine`]: one Tokio task and the only mailbox; settings, target, session.
-//! - [`Session`]: one thread owning source, processor and output.
+//! - `Session`: one thread owning source, processor and output.
 //! - [`Counters`]: totals the sessions keep for an opt-in `/metrics`.
 //! - [`Forwarder`]: the session loop for capture-only hosts.
 //! - [`Prysm`]: the builder hosts list their adapters and surfaces on.
@@ -25,9 +25,7 @@ pub use builder::{Builder, Prysm};
 pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
-pub use sample::sample_rgb;
-pub use session::{
-    OpenOutput, Preview, PreviewSlot, PreviewWatch, RELEASE, Session, SessionEnd, VIDEO_GRACE,
-};
-pub use stats::{Counters, Stats, Timing};
+pub use sample::{SampleError, sample_rgb};
+pub use session::{Preview, PreviewWatch};
+pub use stats::{Counters, Timing};
 pub use surface::{Shutdown, Surface};

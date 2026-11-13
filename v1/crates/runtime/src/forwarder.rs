@@ -42,27 +42,40 @@ impl Forwarder {
     /// the source and stop the surfaces. Surface failures do not stop forwarding.
     ///
     /// # Errors
-    /// The forwarding failure, the source's close failure, or
-    /// [`Error::Faulted`] if the thread did not stop in time.
+    /// The thread could not be spawned (the source is closed), the forwarding
+    /// failure, the source's close failure, or [`Error::Faulted`] if the thread
+    /// did not stop in time.
     pub async fn run(self, shutdown: impl Future<Output = ()>) -> Result<()> {
         let Self {
-            mut source,
-            mut sink,
+            source,
+            sink,
             surfaces,
             stop_deadline,
         } = self;
-        let mut worker = Worker::spawn("prysm-forwarder", move |flags| {
-            // A source that ends finishes forwarding without a failure.
-            let failure = flags
-                .pump(&mut *source, |frame| match frame {
-                    Some(frame) => sink.send(&frame),
-                    None => sink.idle(),
-                })
-                .failure();
-            flags.set_phase(SessionPhase::ClosingSource);
-            let released = source.close();
-            failure.map_or(released, Err)
-        })?;
+        let spawned = Worker::spawn(
+            "prysm-forwarder",
+            (source, sink),
+            |(mut source, mut sink), flags| {
+                // A source that ends finishes forwarding without a failure.
+                let failure = flags
+                    .pump(&mut *source, |frame| match frame {
+                        Some(frame) => sink.send(&frame),
+                        None => sink.tick(),
+                    })
+                    .failure();
+                flags.set_phase(SessionPhase::ClosingSource);
+                let released = source.close();
+                failure.map_or(released, Err)
+            },
+        );
+        let mut worker = match spawned {
+            Ok(worker) => worker,
+            Err((error, (source, _))) => {
+                // Release the source anyway; the spawn failure is the cause.
+                let _ = tokio::task::spawn_blocking(move || source.close()).await;
+                return Err(error);
+            }
+        };
         let mut surfaces = Surfaces::spawn(surfaces, &());
         tokio::pin!(shutdown);
         let ended = loop {

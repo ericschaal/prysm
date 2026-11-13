@@ -1,9 +1,8 @@
 //! Pure presentation: snapshot, preview and UI state in, cells out.
-use crate::command::{describe, target_label};
 use crate::input::{Notice, Severity, Ui, clean};
 use crate::video::{self, HalfBlocks};
 use prysm_core::{ColorStrip, EdgeColors};
-use prysm_ports::{AdapterSettings, SessionState, Snapshot};
+use prysm_ports::{AdapterSettings, SessionState, Snapshot, chain};
 use prysm_runtime::Preview;
 use ratatui::{
     Frame,
@@ -106,13 +105,13 @@ fn compact(frame: &mut Frame<'_>, view: &View<'_>) {
             Line::from(match input_label(snapshot) {
                 Some(input) => format!(
                     "Target: {} · Session: {} · Input: {input}{issue}",
-                    target_label(snapshot.target),
-                    session_label(snapshot.session)
+                    snapshot.target.as_str(),
+                    snapshot.session
                 ),
                 None => format!(
                     "Target: {} · Session: {}{issue}",
-                    target_label(snapshot.target),
-                    session_label(snapshot.session)
+                    snapshot.target.as_str(),
+                    snapshot.session
                 ),
             }),
             Line::from(format!(
@@ -135,7 +134,7 @@ fn header_line(snapshot: &Snapshot) -> Line<'static> {
         Span::styled(" PRYSM ", Style::default().fg(BACKGROUND).bg(ACCENT).bold()),
         Span::styled("  TERMINAL  /  ", Style::default().fg(MUTED)),
         Span::styled(
-            session_label(snapshot.session),
+            snapshot.session.to_string(),
             Style::default().fg(session_color(snapshot.session)).bold(),
         ),
     ])
@@ -150,11 +149,11 @@ fn footer_line(frame: &mut Frame<'_>, ui: &Ui, area: Rect) {
 pub(crate) fn status_lines(view: &View<'_>) -> Vec<Line<'static>> {
     let snapshot = view.snapshot;
     let mut lines = vec![
-        field("Target", target_label(snapshot.target).to_owned()),
+        field("Target", snapshot.target.as_str().to_owned()),
         Line::from(vec![
             Span::styled("Session   ", Style::default().fg(MUTED)),
             Span::styled(
-                session_label(snapshot.session),
+                snapshot.session.to_string(),
                 Style::default().fg(session_color(snapshot.session)).bold(),
             ),
         ]),
@@ -221,12 +220,12 @@ pub(crate) fn diagnostics(view: &View<'_>) -> Vec<Line<'static>> {
     let failures = snapshot
         .failure
         .iter()
-        .map(|error| Notice::error(format!("Lighting: {}", describe(error))));
+        .map(|error| Notice::error(format!("Lighting: {}", chain(error))));
     let surfaces = snapshot
         .surface_failures
         .iter()
         .rev()
-        .map(|error| Notice::error(format!("Surface: {}", describe(error))));
+        .map(|error| Notice::error(format!("Surface: {}", chain(error))));
     failures
         .chain(surfaces)
         .chain(view.ui.notices().cloned())
@@ -251,15 +250,6 @@ fn panel(title: &str) -> Block<'_> {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BORDER))
         .title(Span::styled(title, Style::default().fg(TEXT)))
-}
-
-pub(crate) fn session_label(state: SessionState) -> String {
-    match state {
-        SessionState::Stopped => "stopped".into(),
-        SessionState::Running => "running".into(),
-        SessionState::Native => "native".into(),
-        SessionState::Faulted(phase) => format!("faulted while {phase}"),
-    }
 }
 
 fn session_color(state: SessionState) -> Color {

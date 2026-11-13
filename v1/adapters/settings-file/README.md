@@ -5,7 +5,7 @@ It is plain blocking I/O; the runtime calls it off the async executor and owns
 ordering (validate, persist, apply).
 
 ```rust
-let store = prysm_settings_file::FileSettings::new("/var/lib/prysm/settings.json");
+let store = prysm_settings_file::SettingsFile::new("/var/lib/prysm/settings.json");
 ```
 
 ## Location

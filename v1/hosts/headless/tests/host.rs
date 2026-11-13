@@ -9,7 +9,7 @@ use prysm_capture_remote::RemoteReceiver;
 use prysm_output_wled::Wled;
 use prysm_ports::{Registry, SettingsStore};
 use prysm_runtime::NullOutput;
-use prysm_settings_file::FileSettings;
+use prysm_settings_file::SettingsFile;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_prysm-headless");
 
@@ -137,7 +137,7 @@ fn example_settings_load_and_validate() {
     registry.add_output(Wled::default());
     registry.add_output(NullOutput);
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.example.json");
-    let settings = FileSettings::new(path).load().unwrap().unwrap();
+    let settings = SettingsFile::new(path).load().unwrap().unwrap();
     registry.validate(&settings).unwrap();
     assert_eq!(settings.capture.unwrap().kind, "device");
     assert_eq!(settings.output.unwrap().kind, "wled");

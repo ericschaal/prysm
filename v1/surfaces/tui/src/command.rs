@@ -1,6 +1,6 @@
 //! Commands typed in the terminal, executed against the engine.
 use crate::input::Notice;
-use prysm_ports::{Error, LightingTarget, Result, Settings};
+use prysm_ports::{Error, LightingTarget, Result, Settings, chain};
 use prysm_runtime::EngineHandle;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -19,18 +19,14 @@ pub(crate) enum Command {
 pub(crate) async fn execute(engine: EngineHandle, command: Command) -> Notice {
     match command {
         Command::SetTarget(target) => match engine.set_target(target).await {
-            Ok(()) => Notice::info(format!("Target {}", target_label(target))),
-            Err(error) => Notice::error(format!(
-                "Target {}: {}",
-                target_label(target),
-                describe(&error)
-            )),
+            Ok(()) => Notice::info(format!("Target {}", target.as_str())),
+            Err(error) => Notice::error(format!("Target {}: {}", target.as_str(), chain(&error))),
         },
         Command::Load(path) => {
             let shown = path.display().to_string();
             match load(&engine, path).await {
                 Ok(revision) => Notice::info(format!("Settings revision {revision} from {shown}")),
-                Err(error) => Notice::error(format!("Load {shown}: {}", describe(&error))),
+                Err(error) => Notice::error(format!("Load {shown}: {}", chain(&error))),
             }
         }
     }
@@ -54,26 +50,6 @@ fn read_settings(path: &Path) -> Result<Settings> {
         return Err(Error::other("settings file exceeds 1 MiB"));
     }
     serde_json::from_slice(&bytes).map_err(|e| Error::adapter("invalid settings file", e))
-}
-
-pub(crate) fn target_label(target: LightingTarget) -> &'static str {
-    match target {
-        LightingTarget::Off => "off",
-        LightingTarget::Processed => "processed",
-        LightingTarget::DeviceNative => "native",
-    }
-}
-
-/// An error and its causes on one line.
-pub(crate) fn describe(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 #[cfg(test)]

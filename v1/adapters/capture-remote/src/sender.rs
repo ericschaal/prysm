@@ -244,7 +244,7 @@ impl FrameSink for RemoteSender {
 
     /// No frame to send: apply the receiver's pending control messages, so
     /// a sender whose capture is stopped while paused learns of the resume.
-    fn idle(&mut self) -> Result<()> {
+    fn tick(&mut self) -> Result<()> {
         self.poll_control()
     }
 }

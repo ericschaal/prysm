@@ -135,17 +135,19 @@ fn with_output(output: FakeOutputSettings) -> Settings {
 }
 
 #[tokio::test]
-async fn construction_accepts_any_address_and_rejects_bad_assets_and_origins() {
+async fn construction_rejects_bad_assets_and_origins() {
     let field = |result: prysm_ports::Result<WebPortal>| match result {
         Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,
         other => panic!("expected a validation error, got {other:?}"),
     };
-    let lan: SocketAddr = "0.0.0.0:0".parse().unwrap();
-    WebPortal::new(lan, ASSETS, Access::SameOrigin).unwrap();
-    WebPortal::new(lan, ASSETS, Access::AnyOrigin).unwrap();
+    let portal = |assets, access| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        WebPortal::from_listener(listener, assets, access)
+    };
+    portal(ASSETS, Access::SameOrigin).unwrap();
+    portal(ASSETS, Access::AnyOrigin).unwrap();
     let origins = |origins: &[&str]| Access::Origins(origins.iter().map(|o| (*o).into()).collect());
-    WebPortal::new(
-        lan,
+    portal(
         ASSETS,
         origins(&[
             "http://192.168.1.20:3000",
@@ -167,7 +169,7 @@ async fn construction_accepts_any_address_and_rejects_bad_assets_and_origins() {
         "",
     ] {
         assert_eq!(
-            field(WebPortal::new(lan, ASSETS, origins(&[origin]))),
+            field(portal(ASSETS, origins(&[origin]))),
             "portal.access",
             "{origin}"
         );
@@ -180,10 +182,7 @@ async fn construction_accepts_any_address_and_rejects_bad_assets_and_origins() {
                 ..ASSETS[1].clone()
             },
         ]));
-        assert_eq!(
-            field(WebPortal::new(lan, assets, Access::SameOrigin)),
-            "portal.assets"
-        );
+        assert_eq!(field(portal(assets, Access::SameOrigin)), "portal.assets");
     }
 }
 

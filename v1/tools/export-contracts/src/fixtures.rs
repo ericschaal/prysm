@@ -28,12 +28,14 @@ use std::net::SocketAddr;
 /// A fixture key `module/Name` names a schema of one document; a plain
 /// `Name` is looked up in every document.
 pub fn serialized() -> Value {
-    let mut fixtures = application();
-    fixtures
-        .as_object_mut()
-        .expect("fixtures are an object")
-        .extend(luna().as_object().expect("fixtures are an object").clone());
-    fixtures
+    let mut fixtures = serde_json::Map::new();
+    for document in [application(), adapter_sections(), luna()] {
+        // Each is a `json!({ .. })` object.
+        if let Value::Object(document) = document {
+            fixtures.extend(document);
+        }
+    }
+    Value::Object(fixtures)
 }
 
 /// The TV supervisor's Luna values, one representative state per flavor.
@@ -119,9 +121,9 @@ fn with_profiles() -> Settings {
     }
 }
 
-/// The portal's values and the host documents' adapter sections.
-fn application() -> Value {
-    let configured = Settings {
+/// A configured device capture into WLED, as raw adapter sections.
+fn configured() -> Settings {
+    Settings {
         capture: Some(AdapterSettings::new(
             "device",
             &json!({ "path": "/dev/video0" }),
@@ -131,13 +133,18 @@ fn application() -> Value {
             &json!({ "address": "192.0.2.1", "leds": { "top": 10, "left": 4 } }),
         )),
         processing: Processing::default(),
-    };
-    let states = [
+    }
+}
+
+/// Idle, running (with an output issue, a surface failure, or calibrating),
+/// device-native and faulted.
+fn states() -> Vec<State> {
+    let snapshots = [
         Snapshot::default(),
         Snapshot {
             target: LightingTarget::Processed,
             session: SessionState::Running,
-            settings: configured.clone(),
+            settings: configured(),
             revision: Revision(7),
             output_issue: Some(OutputIssue::Overridden),
             surface_failures: vec![Error::other("portal listener failed")],
@@ -165,7 +172,11 @@ fn application() -> Value {
             ..Snapshot::default()
         },
     ];
-    let failures = [
+    snapshots.iter().map(State::from).collect()
+}
+
+fn failures() -> Vec<Failure> {
+    let errors = [
         Error::from(ValidationError::new(
             "output.address",
             "a unicast device address is required",
@@ -178,28 +189,44 @@ fn application() -> Value {
         Error::other("device unplugged"),
         Error::Closed,
     ];
+    errors.iter().map(Failure::from).collect()
+}
+
+fn preview_events() -> Vec<PreviewEvent> {
+    vec![
+        PreviewEvent::Idle,
+        PreviewEvent::Unavailable {
+            message: "MJPEG frames cannot be previewed".into(),
+        },
+        PreviewEvent::Frame(PreviewFrame {
+            sequence: 42,
+            source_width: 1920,
+            source_height: 1080,
+            width: 480,
+            height: 270,
+            viewport: PreviewViewport {
+                x: 0,
+                y: 140,
+                width: 1920,
+                height: 800,
+            },
+            colors: PreviewColors {
+                top: vec![PreviewColor([255, 0, 0]), PreviewColor([0, 255, 0])],
+                right: vec![PreviewColor([0, 0, 255])],
+                bottom: vec![PreviewColor([188, 188, 188])],
+                left: vec![PreviewColor([0, 0, 0])],
+            },
+            jpeg: "/9j/2wBDAP/Z".into(),
+        }),
+    ]
+}
+
+/// The portal's wire values.
+fn application() -> Value {
     json!({
-        "State": states.iter().map(State::from).collect::<Vec<_>>(),
-        "PreviewEvent": [
-            PreviewEvent::Idle,
-            PreviewEvent::Unavailable { message: "MJPEG frames cannot be previewed".into() },
-            PreviewEvent::Frame(PreviewFrame {
-                sequence: 42,
-                source_width: 1920,
-                source_height: 1080,
-                width: 480,
-                height: 270,
-                viewport: PreviewViewport { x: 0, y: 140, width: 1920, height: 800 },
-                colors: PreviewColors {
-                    top: vec![PreviewColor([255, 0, 0]), PreviewColor([0, 255, 0])],
-                    right: vec![PreviewColor([0, 0, 255])],
-                    bottom: vec![PreviewColor([188, 188, 188])],
-                    left: vec![PreviewColor([0, 0, 0])],
-                },
-                jpeg: "/9j/2wBDAP/Z".into(),
-            }),
-        ],
-        "Failure": failures.iter().map(Failure::from).collect::<Vec<_>>(),
+        "State": states(),
+        "PreviewEvent": preview_events(),
+        "Failure": failures(),
         "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
         // Every pattern, as `PUT /api/v1/calibration` bodies.
         "Calibration": Pattern::ALL
@@ -209,12 +236,17 @@ fn application() -> Value {
             .collect::<Vec<_>>(),
         "SettingsRequest": [
             SettingsRequest { expected: Revision(0), settings: Settings::default() },
-            SettingsRequest { expected: Revision(7), settings: configured },
+            SettingsRequest { expected: Revision(7), settings: configured() },
             SettingsRequest { expected: Revision(8), settings: with_profiles() },
         ],
         "SettingsReplaced": [SettingsReplaced { revision: Revision(8) }],
         "Settings": [Settings::default(), with_profiles()],
-        // Host-document sections, as the registry stores them.
+    })
+}
+
+/// The host documents' adapter sections, as the registry stores them.
+fn adapter_sections() -> Value {
+    json!({
         "DeviceSettings": [AdapterSettings::new(
             DeviceSource::KIND,
             &DeviceSettings::new("/dev/video0"),

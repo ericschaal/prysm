@@ -54,14 +54,6 @@ impl Registry {
         assert!(previous.is_none(), "duplicate output kind `{}`", F::KIND);
     }
 
-    pub fn source_kinds(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.sources.keys().copied()
-    }
-
-    pub fn output_kinds(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.outputs.keys().copied()
-    }
-
     /// Validate processing (including color profiles and the active profile)
     /// and every configured adapter against its factory.
     ///

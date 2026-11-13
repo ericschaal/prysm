@@ -7,7 +7,7 @@
 //! Prysm::builder(store)
 //!     .source(DeviceSource)
 //!     .output(Wled)
-//!     .surface(WebPortal::new(listen, ASSETS, Access::SameOrigin)?)
+//!     .surface(WebPortal::from_listener(listener, ASSETS, Access::SameOrigin)?)
 //!     .run(shutdown)
 //!     .await
 //! ```
@@ -24,7 +24,7 @@ pub use access::Access;
 use futures::future::BoxFuture;
 use prysm_ports::Result;
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr, TcpListener, UdpSocket};
 
 /// A host-built asset; paths are exact URL paths, never filesystem paths.
 #[derive(Debug, Clone)]
@@ -35,52 +35,30 @@ pub struct FrontendAsset {
 }
 
 /// The portal surface. Construction validates the assets and access;
-/// [`Surface::run`] binds (unless given a listener) and serves until shutdown.
+/// [`Surface::run`] serves until shutdown.
 #[derive(Debug)]
 pub struct WebPortal {
-    pub(crate) listen: Listen,
+    pub(crate) listener: TcpListener,
     pub(crate) assets: &'static [FrontendAsset],
     pub(crate) access: Access,
     pub(crate) metrics: bool,
 }
 
-#[derive(Debug)]
-pub(crate) enum Listen {
-    Address(SocketAddr),
-    Listener(std::net::TcpListener),
-}
-
 impl WebPortal {
-    /// Serve on `listen`, bound when the surface starts.
-    ///
-    /// # Errors
-    /// [`prysm_ports::Error::Invalid`] for invalid or duplicate asset paths or
-    /// a malformed origin in `access`.
-    pub fn new(
-        listen: SocketAddr,
-        assets: &'static [FrontendAsset],
-        access: Access,
-    ) -> Result<Self> {
-        Self::with(Listen::Address(listen), assets, access)
-    }
-
     /// Serve on an already bound listener, so bind failures surface before the
     /// host starts and the port is known in advance.
     ///
     /// # Errors
-    /// As [`WebPortal::new`].
+    /// [`prysm_ports::Error::Invalid`] for invalid or duplicate asset paths or
+    /// a malformed origin in `access`.
     pub fn from_listener(
-        listener: std::net::TcpListener,
+        listener: TcpListener,
         assets: &'static [FrontendAsset],
         access: Access,
     ) -> Result<Self> {
-        Self::with(Listen::Listener(listener), assets, access)
-    }
-
-    fn with(listen: Listen, assets: &'static [FrontendAsset], access: Access) -> Result<Self> {
         access::validate_assets(assets)?;
         Ok(Self {
-            listen,
+            listener,
             assets,
             access: access.validated()?,
             metrics: false,
@@ -104,4 +82,30 @@ impl Surface for WebPortal {
     ) -> BoxFuture<'static, Result<()>> {
         Box::pin(server::serve(*self, engine, shutdown))
     }
+}
+
+/// The URL a browser elsewhere on the LAN opens for a portal bound to
+/// `address`. For a wildcard address this is the address of the interface the
+/// default route uses; `None` when there is none, or it is only loopback.
+#[must_use]
+pub fn lan_url(address: SocketAddr) -> Option<String> {
+    let ip = if address.ip().is_unspecified() {
+        default_route_address(address.ip())?
+    } else {
+        address.ip()
+    };
+    Some(format!("http://{}/", SocketAddr::new(ip, address.port())))
+}
+
+/// Connecting a UDP socket only picks a route and a local address; nothing is sent.
+fn default_route_address(unspecified: IpAddr) -> Option<IpAddr> {
+    let (local, probe) = if unspecified.is_ipv4() {
+        ("0.0.0.0:0", "192.0.2.1:9")
+    } else {
+        ("[::]:0", "[2001:db8::1]:9")
+    };
+    let socket = UdpSocket::bind(local).ok()?;
+    socket.connect(probe).ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
 }

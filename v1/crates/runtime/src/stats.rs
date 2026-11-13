@@ -1,6 +1,6 @@
 //! Totals of what the engine's sessions did since the process started, for
 //! the portal's opt-in `/metrics`. The session thread only adds to atomics
-//! (no locks, no allocation); readers copy them out with [`Stats::read`].
+//! (no locks, no allocation); readers copy them out as [`Counters`].
 use prysm_core::EdgeColors;
 use prysm_ports::{LedOutput, Result};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 /// Shared by the engine and its sessions; never reset, so every total only
 /// grows and Prometheus can take rates and averages across sessions.
 #[derive(Debug, Default)]
-pub struct Stats {
+pub(crate) struct Stats {
     frames_received: AtomicU64,
     frames_sent: AtomicU64,
     processing: Timer,
@@ -19,7 +19,7 @@ pub struct Stats {
     output_opens: AtomicU64,
 }
 
-/// A copy of [`Stats`] at one moment.
+/// A copy of the totals at one moment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counters {
     /// Frames taken from the source.
@@ -72,7 +72,7 @@ impl Timer {
 
 impl Stats {
     #[must_use]
-    pub fn read(&self) -> Counters {
+    pub(crate) fn read(&self) -> Counters {
         let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         Counters {
             frames_received: load(&self.frames_received),
