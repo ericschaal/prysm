@@ -26,7 +26,8 @@ export {
   useLiveProcessing,
   type ProcessingControls,
 } from './live-processing';
-export { ProcessingPanel, QuickPicture } from './processing';
+export { undoForMs } from './profiles';
+export { developerStorageKey, saveDeveloper } from './developer';
 export {
   correctionLimits,
   hueLimits,
@@ -35,7 +36,7 @@ export {
 } from './profile-model';
 export { PreviewPanel } from './preview';
 export { colorsRetryMs, ledProperties, ledValues } from './live-colors';
-export { deviceNamesKey } from './setup-card';
+export { deviceNamesKey } from './device-name';
 export { drawPreview, previewLayout } from './preview-canvas';
 export {
   checkForMs,
@@ -48,7 +49,9 @@ export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';
 export {
   lightsRoute,
+  pictureRoute,
   previewRoute,
+  profilesRoute,
   settingsRoute,
   videoRoute,
   WebPortal,

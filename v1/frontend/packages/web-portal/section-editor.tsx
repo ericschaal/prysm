@@ -349,7 +349,7 @@ export function SectionEditor<S extends AdapterSection>({
             disabled={busy}
             onClick={leave}
           >
-            Done
+            {goBack ? copy.keep : 'Done'}
           </button>
         )}
       </>

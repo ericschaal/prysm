@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createApplicationRuntime } from '@prysm/application-state';
+import { saveDeveloper } from '@prysm/web-portal';
 import { fakeApplicationPort } from '../testkit/application';
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +38,8 @@ export async function renderPortal(Host, initial, change, props = {}) {
     application,
     async unmount() {
       await act(async () => root.unmount());
+      // Developer options outlive a page without storage: off for the next.
+      saveDeveloper(false);
       dom.window.close();
     },
   };
@@ -90,8 +93,29 @@ export const openSettings = () =>
 export async function openEditor(label) {
   if (!$('.settings')) await openSettings();
   await act(async () => {
-    $$('.entry button')
-      .find((item) => item.firstChild?.textContent === label)
+    const card = pathCard(label);
+    const change = card && button('Change', card);
+    // A part not set up yet has no Change: its editor is still at its address.
+    if (change) change.click();
+    else
+      window.location.hash =
+        label === 'Video source' ? '#/settings/video' : '#/settings/lights';
+    await sleep(0);
+  });
+}
+
+/** A card of the path on Settings by its title: `Video source`, `Prysm`, `Lights`. */
+export const pathCard = (title) =>
+  $$('.path-card').find(
+    (card) => $('h2', card)?.textContent.toLowerCase() === title.toLowerCase(),
+  );
+
+/** Open a page from Settings by its row: `Colour profiles`, `Picture fine-tuning`. */
+export async function openPage(label) {
+  if (!$('.settings')) await openSettings();
+  await act(async () => {
+    $$('.card-link')
+      .find((item) => $('.card-link-label', item).textContent === label)
       .click();
     await sleep(0);
   });

@@ -9,6 +9,7 @@ export const stepCopy = {
     intro: 'Choose where the picture comes from.',
     use: 'Use this video source',
     previous: 'the previous video source',
+    keep: 'Keep this video source',
   },
   output: {
     title: 'Your lights',
@@ -16,8 +17,15 @@ export const stepCopy = {
       'Tell Prysm where the colours go and how your LEDs run around the screen.',
     use: 'Use these lights',
     previous: 'the previous lights',
+    keep: 'Keep these lights',
   },
 } as const satisfies Record<
   'capture' | 'output',
-  { title: string; intro: string; use: string; previous: string }
+  {
+    title: string;
+    intro: string;
+    use: string;
+    previous: string;
+    keep: string;
+  }
 >;

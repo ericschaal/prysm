@@ -106,7 +106,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal(preview.opened(), 0, 'no viewer on Home');
 
     await openSettings();
-    await click(button('Live preview'));
+    await click(button('See the picture'));
     assert.equal(window.location.hash, '#/preview');
     assert.equal(document.activeElement.textContent, 'Live preview');
     assert.equal(preview.open(), 1);
@@ -185,7 +185,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal(window.location.hash, '#/settings');
     assert.equal(preview.open(), 0);
     assert.equal($('.preview-canvas'), null);
-    await click(button('Live preview'));
+    await click(button('See the picture'));
     assert.equal(preview.open(), 1);
     Object.defineProperty(document, 'visibilityState', {
       value: 'hidden',
@@ -271,7 +271,8 @@ test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     await openSettings();
-    assert.equal(button('Live preview'), undefined);
+    assert.equal(button('See the picture'), undefined);
+    assert.equal(button('Check placement'), undefined);
     await act(async () => {
       window.location.hash = '#/preview';
       await sleep(0);

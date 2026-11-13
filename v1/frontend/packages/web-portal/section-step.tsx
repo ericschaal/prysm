@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { use, useState } from 'react';
 import {
   adapterFor,
   createSection,
-  kindsOf,
+  offeredKinds,
   type AdapterSection,
   type AdapterUis,
 } from './adapters';
+import { DeveloperContext } from './developer';
 import { SelectField } from './fields';
 import { useFieldScopeContext } from './form';
 
@@ -31,7 +32,12 @@ export function SectionFields<S extends AdapterSection>({
   const scope = useFieldScopeContext();
   /** Drafts of other kinds, so switching back keeps what was typed. */
   const [others, setOthers] = useState<Record<string, S>>({});
-  const kinds = kindsOf(adapters);
+  const developer = use(DeveloperContext);
+  const kinds = offeredKinds(
+    adapters,
+    developer,
+    [value.kind, base?.kind].filter((kind) => kind !== undefined),
+  );
   function switchKind(kind: S['kind']) {
     if (kind === value.kind) return;
     setOthers({ ...others, [value.kind]: value });

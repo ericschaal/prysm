@@ -14,7 +14,7 @@ import {
   button,
   edit,
   field,
-  openSettings,
+  openPage,
   renderPortal,
   sleep,
   text,
@@ -63,8 +63,8 @@ async function openCalibrate({
       },
     },
   }));
-  await openSettings();
-  await press(button('Calibrate colours'));
+  await openPage('Colour profiles');
+  await press(button('New profile (guided)'));
   return portal;
 }
 
@@ -83,7 +83,7 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       );
       await press(button('Leave'));
       assert.equal($('.calibrate'), null);
-      assert(button('Calibrate colours'), 'back in Settings');
+      assert(button('New profile (guided)'), 'back in Colour profiles');
       assert.deepEqual(patterns(portal.fixture), []);
     } finally {
       await portal.unmount();

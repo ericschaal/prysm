@@ -76,48 +76,63 @@ Good to know:
 
 ## 5. Change settings
 
-Open **Settings** (the icon in the header). The line under the title says
-whether everything is saved: **All changes saved**, **Saving…** or **Not
-saved**; a change that could not be saved also says so at its control, with
-**Try again**.
+Open **Settings** (the icon in the header). It shows your setup in the order
+the light takes, as on Home: **Video source**, **Prysm**, **Lights**. The line
+under the title says whether everything is saved: **All changes saved**,
+**Saving…** or **Not saved**; a change that could not be saved also says so at
+its control, with **Try again**. Brightness and the colour profile in use are
+chosen on Home.
 
 <a id="processing"></a>
 
 ### Picture
 
 Picture changes apply while you move the control; there is no Save button.
+**Remove black bars** is on Prysm's card; the rest is under **Picture
+fine-tuning**.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| Brightness | 100% | Overall LED brightness. Also on Home. |
 | Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
-| Colour profile | No correction | A saved colour correction; see [Calibrate colours](calibration.md). |
-| Shadow lift (Fine-tuning) | 0% | Brightens dark colours; black stays off. |
-| Edge depth (Fine-tuning) | 10% | How far into the picture each light looks. |
-| Smoothing (Fine-tuning) | 0.1 s | Softens quick changes. 0 reacts at once. |
-| Detail (Fine-tuning) | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. |
+| Shadow lift | 0% | Brightens dark colours; black stays off. |
+| Edge depth | 10% | How far into the picture each light looks. |
+| Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. |
+| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. |
 
-Use [Live preview](preview.md) to check a change.
+**Colour profiles** lists your profiles: rename one in place, open
+**Fine-tune** to adjust its colours, or **Delete** it (**Undo** brings it back
+for a few seconds). **New profile (guided)** makes one with test patterns on
+the TV; see [Calibrate colours](calibration.md).
+
+Use [Live preview](preview.md) (**See the picture** or **Check
+placement**) to check a change.
 
 ### Video source and lights
 
-Choose **Video source** or **Lights** in Settings to change them on a page of
-their own, with the same steps as the setup wizard. **Use this video source**
-or **Use these lights** saves; **Cancel** leaves without saving. A problem with
-either shows on its row in Settings.
+Choose **Change** on the **Video source** or **Lights** card to change it on a
+page of its own, with the same steps as the setup wizard. **Use this video
+source** or **Use these lights** saves; **Cancel** leaves without saving. A
+problem with either shows on its card, and **Change setup** on Home opens the
+part that has the problem.
 
 Saving restarts Screen sync if it is on, and Prysm then checks the change: it
 says when the picture arrives or the lights work, or that they don't. Until
 they work, **Go back to the previous video source** (or lights) puts the old
-one back. With Screen sync off nothing is tried; **Turn on screen sync to
-try** does that.
+one back; **Keep this video source** (or lights) keeps the new one. With
+Screen sync off nothing is tried; **Turn on screen sync to try** does that.
 
 If someone changed the same part in another browser, Prysm asks: **Use
-theirs** shows their settings, **Keep mine** saves yours. **Run setup again**
-reopens the wizard.
+theirs** shows their settings, **Keep mine** saves yours.
 
-Settings also has the theme (System, Light, Dark; kept in this browser only)
-and **About this Prysm**.
+### More
+
+The theme (System, Light, Dark; kept in this browser only), **About this
+Prysm** and **Start over with setup**, which reopens the wizard.
+
+**Developer options**, under About this Prysm, also offer a video file and
+**No lights (test)** as a setup, for testing Prysm without a capture device or
+LEDs. They are kept in this browser only. A setup already using one of them
+always shows and can be changed.
 
 ## Settings file
 

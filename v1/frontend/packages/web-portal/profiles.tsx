@@ -1,240 +1,350 @@
-import { useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   ColorProfile,
   CorrectionControls,
+  Processing,
 } from '@prysm/contracts/application';
-import { useFieldScopeContext } from './form';
-import { FieldMessage, NameField, RangeField, SelectField } from './fields';
+import { FieldMessage, NameField, RangeField } from './fields';
+import { FieldScopeProvider } from './form';
+import { useLiveProcessing, withProfiles } from './live-processing';
 import {
   correctionLimits,
   correctionOf,
   corrections,
-  freeName,
   hueLimits,
   hues,
   nameOf,
-  newProfileId,
   noCorrection,
   profileLimits,
   signed,
 } from './profile-model';
+import { useSaveReport } from './save-state';
+
+/** How long a deleted profile can be brought back. */
+export const undoForMs = 5000;
+
+interface ProfilesProps {
+  processing: Processing;
+  revision: number;
+  disabled: boolean;
+  /** Save the whole processing section against `expected`. */
+  save: (expected: number, processing: Processing) => Promise<number>;
+  /** Light with a processing section unsaved, while a slider is held. */
+  tryProcessing: (processing: Processing) => Promise<unknown>;
+  /** Make a new profile with the guided calibration. */
+  calibrate: () => void;
+}
+
+/** A profile deleted on this page: kept in its place, to undo for a while. */
+interface Deleted {
+  profile: ColorProfile;
+  index: number;
+  wasActive: boolean;
+  undoable: boolean;
+}
 
 /**
- * Choose, add, rename, duplicate, delete and edit colour profiles. The
- * selected profile is the active one, so its edits show on the lights at
- * once; the Picture panel saves them like its other controls.
+ * The colour profiles, each a row: its name (renamed in place), whether it
+ * is in use, its fine-tuning and Delete. A deleted profile leaves its row in
+ * place with Undo for a few seconds, so nothing below moves. New profiles
+ * come from the guided calibration. Everything saves as it changes.
  */
-export function ProfileControls({
-  profiles,
-  active,
-  onChange,
+export function ProfilesPage({
+  processing,
+  revision,
+  disabled,
+  save,
+  tryProcessing,
+  calibrate,
+}: ProfilesProps) {
+  const live = useLiveProcessing({
+    processing,
+    revision,
+    disabled,
+    save,
+    tryProcessing,
+  });
+  useSaveReport('profiles', live.state);
+  const [deleted, setDeleted] = useState<Record<string, Deleted>>({});
+  const profiles = live.value.profiles ?? [];
+  const active = live.value.active_profile;
+  const full = profiles.length >= profileLimits.count;
+
+  function update(id: string, change: Partial<ColorProfile>, path: string) {
+    live.slider.slide(
+      withProfiles(
+        live.value,
+        profiles.map((profile) =>
+          profile.id === id ? { ...profile, ...change } : profile,
+        ),
+        active,
+      ),
+      path,
+    );
+  }
+  function remove(profile: ColorProfile) {
+    const index = profiles.findIndex(({ id }) => id === profile.id);
+    setDeleted({
+      ...deleted,
+      [profile.id]: {
+        profile,
+        index,
+        wasActive: active === profile.id,
+        undoable: true,
+      },
+    });
+    void live.commit(
+      withProfiles(
+        live.value,
+        profiles.filter(({ id }) => id !== profile.id),
+        active === profile.id ? undefined : active,
+      ),
+      'processing.profiles',
+    );
+  }
+  function undo(gone: Deleted) {
+    setDeleted(
+      Object.fromEntries(
+        Object.entries(deleted).filter(([id]) => id !== gone.profile.id),
+      ),
+    );
+    const next = [...profiles];
+    next.splice(Math.min(gone.index, next.length), 0, gone.profile);
+    void live.commit(
+      withProfiles(live.value, next, gone.wasActive ? gone.profile.id : active),
+      'processing.profiles',
+    );
+  }
+  // Undo is offered for a while; the row then just says it was deleted.
+  const undoable = Object.values(deleted).filter((gone) => gone.undoable);
+  useEffect(() => {
+    if (!undoable.length) return;
+    const timer = setTimeout(
+      () =>
+        setDeleted((current) =>
+          Object.fromEntries(
+            Object.entries(current).map(([id, gone]) => [
+              id,
+              { ...gone, undoable: false },
+            ]),
+          ),
+        ),
+      undoForMs,
+    );
+    return () => clearTimeout(timer);
+  }, [undoable.length]);
+
+  // The rows: the profiles, with deleted ones back in their places.
+  const rows: ({ profile: ColorProfile } | { gone: Deleted })[] = profiles.map(
+    (profile) => ({ profile }),
+  );
+  for (const gone of Object.values(deleted).sort((a, b) => a.index - b.index))
+    rows.splice(Math.min(gone.index, rows.length), 0, { gone });
+
+  return (
+    <FieldScopeProvider value={live.scope}>
+      <p className="page-intro">
+        A profile corrects the colours for one source, such as a games console.
+        Choose the one in use on Home.
+      </p>
+      {rows.length ? (
+        <ul className="profile-list" key={live.generation}>
+          {rows.map((row) =>
+            'gone' in row ? (
+              <li
+                className="profile-row deleted"
+                key={`gone-${row.gone.profile.id}`}
+              >
+                <p role="status">
+                  Deleted “{nameOf(row.gone.profile)}”.
+                  {row.gone.undoable ? (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="link"
+                        disabled={disabled || full}
+                        onClick={() => undo(row.gone)}
+                      >
+                        Undo
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              </li>
+            ) : (
+              <ProfileRow
+                key={row.profile.id}
+                profile={row.profile}
+                path={`processing.profiles[${profiles.indexOf(row.profile)}]`}
+                inUse={row.profile.id === active}
+                disabled={disabled}
+                use={() =>
+                  void live.commit(
+                    withProfiles(live.value, profiles, row.profile.id),
+                    'processing.active_profile',
+                  )
+                }
+                update={(change, path) => update(row.profile.id, change, path)}
+                remove={() => remove(row.profile)}
+                onPress={live.slider.press}
+                onRelease={live.slider.release}
+              />
+            ),
+          )}
+        </ul>
+      ) : (
+        <p className="profiles-empty">
+          No profiles yet. A profile matches the lights to your TV for one
+          source, such as a games console.
+        </p>
+      )}
+      <FieldMessage path="processing.profiles" touched />
+      <div className="profiles-new">
+        <button
+          type="button"
+          className="primary"
+          disabled={disabled || full}
+          onClick={calibrate}
+        >
+          New profile (guided)
+        </button>
+        <p className="help">
+          {full
+            ? `You have the most profiles Prysm keeps (${profileLimits.count}). Delete one to add another.`
+            : 'Shows test patterns on the TV and matches the lights to them, step by step.'}
+        </p>
+      </div>
+    </FieldScopeProvider>
+  );
+}
+
+/** One profile: its name in place, and its fine-tuning when opened. */
+function ProfileRow({
+  profile,
+  path,
+  inUse,
+  disabled,
+  use,
+  update,
+  remove,
   onPress,
   onRelease,
 }: {
-  profiles: readonly ColorProfile[];
-  active: string | undefined;
-  /**
-   * The new list and active id (`undefined` applies no correction), and the
-   * control that changed them.
-   */
-  onChange: (
-    profiles: ColorProfile[],
-    active: string | undefined,
-    path: string,
-  ) => void;
-  /** A correction slider went down or came up: see `RangeField`. */
+  profile: ColorProfile;
+  /** Its place in the settings, for errors: `processing.profiles[2]`. */
+  path: string;
+  inUse: boolean;
+  disabled: boolean;
+  use: () => void;
+  update: (change: Partial<ColorProfile>, path: string) => void;
+  remove: () => void;
   onPress: () => void;
   onRelease: () => void;
 }) {
-  const { disabled, edited } = useFieldScopeContext();
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const headingId = useId();
-  const index = profiles.findIndex((profile) => profile.id === active);
-  const selected = index >= 0 ? profiles[index] : undefined;
-  const full = profiles.length >= profileLimits.count;
-  const ids = profiles.map((profile) => profile.id);
-
-  /** Add, remove or choose a profile: earlier errors on the list no longer apply. */
-  function restructure(next: ColorProfile[], id: string | undefined) {
-    setConfirming(null);
-    edited('processing.profiles');
-    edited('processing.active_profile');
-    onChange(next, id, 'processing.profiles');
-  }
-  function add(profile: Omit<ColorProfile, 'id'>) {
-    const id = newProfileId(ids);
-    restructure([...profiles, { ...profile, id }], id);
-  }
-  const path = `processing.profiles[${index}]`;
-  function update(change: Partial<ColorProfile>, at: string) {
-    if (!selected) return;
-    onChange(
-      profiles.map((profile, i) =>
-        i === index ? { ...profile, ...change } : profile,
-      ),
-      active,
-      at,
-    );
-  }
+  const correction = correctionOf(profile);
   function correct(change: Partial<CorrectionControls>, at: string) {
-    if (selected)
-      update({ correction: { ...correctionOf(selected), ...change } }, at);
+    update({ correction: { ...correction, ...change } }, at);
   }
-  const correction = selected ? correctionOf(selected) : noCorrection;
   return (
-    <section className="profiles" aria-labelledby={headingId}>
-      <h3 id={headingId}>Colour profile</h3>
-      <SelectField
-        path="processing.active_profile"
-        label="Colour profile"
-        help="Corrects the colours for one source, such as a games console. Applied as you choose it."
-        value={selected ? selected.id : ''}
-        options={[
-          { value: '', label: 'None (no correction)' },
-          ...profiles.map((profile) => ({
-            value: profile.id,
-            label: nameOf(profile),
-          })),
-        ]}
-        onChange={(id) => restructure([...profiles], id || undefined)}
-      />
-      <div className="profile-actions">
+    <li className="profile-row" data-in-use={inUse}>
+      <div className="profile-head">
+        <NameField
+          className="profile-name"
+          path={`${path}.name`}
+          label="Name"
+          value={profile.name ?? ''}
+          maxChars={profileLimits.name}
+          onChange={(name) => update({ name }, `${path}.name`)}
+        />
+        <span className="profile-tag">{inUse ? 'In use' : ''}</span>
         <button
           type="button"
-          disabled={disabled || full}
-          onClick={() =>
-            add({
-              name: freeName('New profile', profiles),
-              correction: noCorrection,
-            })
-          }
+          className="danger quiet"
+          disabled={disabled}
+          onClick={remove}
         >
-          New profile
+          Delete
         </button>
-        {selected ? (
-          <>
-            <button
-              type="button"
-              disabled={disabled || full}
-              onClick={() =>
-                add({
-                  name: freeName(`${nameOf(selected)} copy`, profiles),
-                  correction: correctionOf(selected),
-                })
-              }
-            >
-              Duplicate
-            </button>
-            <button
-              type="button"
-              className="danger"
-              disabled={disabled}
-              onClick={() => setConfirming(selected.id)}
-            >
-              Delete…
-            </button>
-          </>
-        ) : null}
       </div>
-      {full ? (
-        <p className="help">
-          You have the most profiles Prysm keeps ({profileLimits.count}). Delete
-          one to add another.
-        </p>
-      ) : null}
-      <FieldMessage path="processing.profiles" touched />
-      {selected && confirming === selected.id ? (
-        <div className="notice warning profile-confirm" role="alert">
-          <p>Delete “{nameOf(selected)}”? This cannot be undone.</p>
-          <button
-            type="button"
-            className="danger solid"
-            disabled={disabled}
-            onClick={() =>
-              restructure(
-                profiles.filter((profile) => profile.id !== selected.id),
-                undefined,
-              )
-            }
-          >
-            Delete profile
-          </button>
-          <button type="button" onClick={() => setConfirming(null)}>
-            Keep
-          </button>
-        </div>
-      ) : null}
-      {selected ? (
-        <details className="disclosure profile-editor" key={selected.id}>
-          <summary>Adjust this profile</summary>
-          <div className="disclosure-body">
-            <NameField
-              path={`${path}.name`}
-              label="Profile name"
-              help="Saved when you leave the field or press Enter."
-              value={selected.name ?? ''}
-              maxChars={profileLimits.name}
-              onChange={(name) => update({ name }, `${path}.name`)}
-            />
-            <div className="grid">
-              {corrections.map(([name, label, help]) => (
+      <details className="disclosure profile-tune">
+        <summary>Fine-tune</summary>
+        <div className="disclosure-body">
+          <p className="help profile-use">
+            {inUse ? (
+              'In use: changes show on the lights as you make them.'
+            ) : (
+              <>
+                Not in use, so changes don’t show on the lights.{' '}
+                <button
+                  type="button"
+                  className="link"
+                  disabled={disabled}
+                  onClick={use}
+                >
+                  Use it now
+                </button>
+              </>
+            )}
+          </p>
+          <div className="grid">
+            {corrections.map(([name, label, help]) => (
+              <RangeField
+                key={name}
+                path={`${path}.correction.${name}`}
+                label={label}
+                help={help}
+                value={correction[name]}
+                onChange={(value) =>
+                  correct({ [name]: value }, `${path}.correction.${name}`)
+                }
+                onPress={onPress}
+                onRelease={onRelease}
+                format={signed}
+                {...correctionLimits[name]}
+              />
+            ))}
+          </div>
+          <fieldset>
+            <legend>Hue shift</legend>
+            <p className="help">
+              Turns each colour toward the next: red toward yellow, yellow
+              toward green, and so on to magenta toward red.
+            </p>
+            <div className="grid three">
+              {hues.map(([name, label]) => (
                 <RangeField
                   key={name}
-                  path={`${path}.correction.${name}`}
+                  path={`${path}.correction.hue.${name}`}
                   label={label}
-                  help={help}
-                  value={correction[name]}
+                  value={correction.hue[name]}
                   onChange={(value) =>
-                    correct({ [name]: value }, `${path}.correction.${name}`)
+                    correct(
+                      { hue: { ...correction.hue, [name]: value } },
+                      `${path}.correction.hue.${name}`,
+                    )
                   }
                   onPress={onPress}
                   onRelease={onRelease}
                   format={signed}
-                  {...correctionLimits[name]}
+                  {...hueLimits[name]}
                 />
               ))}
             </div>
-            <fieldset>
-              <legend>Hue shift</legend>
-              <p className="help">
-                Turns each colour toward the next: red toward yellow, yellow
-                toward green, and so on to magenta toward red.
-              </p>
-              <div className="grid three">
-                {hues.map(([name, label]) => (
-                  <RangeField
-                    key={name}
-                    path={`${path}.correction.hue.${name}`}
-                    label={label}
-                    value={correction.hue[name]}
-                    onChange={(value) =>
-                      correct(
-                        { hue: { ...correction.hue, [name]: value } },
-                        `${path}.correction.hue.${name}`,
-                      )
-                    }
-                    onPress={onPress}
-                    onRelease={onRelease}
-                    format={signed}
-                    {...hueLimits[name]}
-                  />
-                ))}
-              </div>
-            </fieldset>
-            <div className="actions">
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() =>
-                  update({ correction: noCorrection }, `${path}.correction`)
-                }
-              >
-                Reset correction
-              </button>
-            </div>
+          </fieldset>
+          <div className="actions">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                update({ correction: noCorrection }, `${path}.correction`)
+              }
+            >
+              Reset to no correction
+            </button>
           </div>
-        </details>
-      ) : null}
-    </section>
+        </div>
+      </details>
+    </li>
   );
 }

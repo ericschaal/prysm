@@ -51,6 +51,11 @@ export const pictureSize = (width: number, height: number) =>
 /** One registered adapter kind: how the portal names, creates and edits it. */
 export interface AdapterUi<S extends AdapterSection> {
   label: string;
+  /**
+   * For development and tests only (a video file, no lights): offered with
+   * developer options on, or while the saved setup is of this kind.
+   */
+  developer?: boolean;
   /** A new section of this kind, before the user fills it in. */
   create: () => S;
   Editor: ComponentType<EditorProps<S>>;
@@ -119,4 +124,21 @@ export function createSection<S extends AdapterSection>(
 
 export function kindsOf<S extends AdapterSection>(adapters: AdapterUis<S>) {
   return Object.keys(adapters) as S['kind'][];
+}
+
+/**
+ * The kinds to offer: all of them with developer options on, else those not
+ * meant for development, plus any in `keep` (what is saved or being edited).
+ */
+export function offeredKinds<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  developer: boolean,
+  keep: readonly string[],
+) {
+  return kindsOf(adapters).filter(
+    (kind) =>
+      developer ||
+      !adapterFor(adapters, kind)?.developer ||
+      keep.includes(kind),
+  );
 }

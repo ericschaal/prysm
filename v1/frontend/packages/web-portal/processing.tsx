@@ -9,7 +9,6 @@ import {
   type ProcessingControls,
 } from './live-processing';
 import { nameOf } from './profile-model';
-import { ProfileControls } from './profiles';
 import { useSaveReport } from './save-state';
 
 const percent = (value: number) => `${value}%`;
@@ -142,123 +141,98 @@ export function QuickPicture({
   );
 }
 
-/**
- * Picture settings apply live: processing-only changes reach a running
- * session at the next frame without restarting lighting. A slider is tried on
- * the lights while it is dragged and saved where it is let go, as on Home;
- * other controls save shortly after the last change. The rarely needed
- * controls sit under Fine-tuning.
- */
-export function ProcessingPanel({
-  processing,
-  revision,
-  disabled,
-  save,
-  tryProcessing,
-}: PictureProps & {
+interface LiveProps extends PictureProps {
   /** Light with a processing section unsaved, while a slider is held. */
   tryProcessing: (processing: Processing) => Promise<unknown>;
-}) {
-  const live = useLiveProcessing({
-    processing,
-    revision,
-    disabled,
-    save,
-    tryProcessing,
-  });
-  useSaveReport('picture', live.state);
-  const headingId = useId();
-  const value = live.value;
-  function change<K extends keyof ProcessingControls>(
-    key: K,
-    next: ProcessingControls[K],
-  ) {
-    live.replace({ ...live.value, [key]: next }, `processing.${key}`);
-  }
-  /** A slider's props: tried while held, saved on release. */
-  function slider<K extends keyof ProcessingControls>(key: K) {
-    return {
+}
+
+/** One live control of the processing section, saved like the others. */
+function useControls(props: LiveProps, source: string) {
+  const live = useLiveProcessing(props);
+  useSaveReport(source, live.state);
+  return {
+    live,
+    change: <K extends keyof ProcessingControls>(
+      key: K,
+      next: ProcessingControls[K],
+    ) => {
+      live.replace({ ...live.value, [key]: next }, `processing.${key}`);
+    },
+    /** A slider's props: tried while held, saved on release. */
+    slider: <K extends keyof ProcessingControls>(key: K) => ({
       path: `processing.${key}`,
-      value: value[key] as number,
+      value: live.value[key] as number,
       onChange: (next: number) =>
         live.slider.slide({ ...live.value, [key]: next }, `processing.${key}`),
       onPress: live.slider.press,
       onRelease: live.slider.release,
-    };
-  }
+    }),
+  };
+}
+
+/** “Remove black bars”, on Prysm's card in Settings; saved as it is switched. */
+export function BlackBars(props: LiveProps) {
+  const { live, change } = useControls(props, 'black-bars');
   return (
-    <section
-      className="settings-section processing"
-      aria-labelledby={headingId}
-    >
-      <h2 id={headingId}>Picture</h2>
-      <FieldScopeProvider value={live.scope}>
-        <div key={`basic-${live.generation}`}>
-          <RangeField
-            label="Brightness"
-            format={percent}
-            {...slider('brightness_percent')}
-            {...processingLimits.brightness_percent}
-          />
-          <CheckboxField
-            path="processing.remove_black_bars"
-            label="Remove black bars"
-            help="Ignores the black bars above and below a film."
-            checked={value.remove_black_bars}
-            onChange={(next) => change('remove_black_bars', next)}
-          />
-        </div>
-        <ProfileControls
-          key={`profiles-${live.generation}`}
-          profiles={value.profiles ?? []}
-          active={value.active_profile}
-          onChange={(profiles, active, path) =>
-            live.slider.slide(withProfiles(live.value, profiles, active), path)
-          }
-          onPress={live.slider.press}
-          onRelease={live.slider.release}
+    <FieldScopeProvider value={live.scope}>
+      <div key={live.generation}>
+        <CheckboxField
+          path="processing.remove_black_bars"
+          label="Remove black bars"
+          help="Ignores the black bars above and below a film."
+          checked={live.value.remove_black_bars}
+          onChange={(next) => change('remove_black_bars', next)}
         />
-        <div key={`advanced-${live.generation}`}>
-          <details className="disclosure advanced">
-            <summary>Fine-tuning</summary>
-            <div className="disclosure-body">
-              <RangeField
-                label="Shadow lift"
-                help="Lifts dark colours; black stays off."
-                format={percent}
-                {...slider('shadow_lift_percent')}
-                {...processingLimits.shadow_lift_percent}
-              />
-              <RangeField
-                label="Edge depth"
-                help="How far into the picture each light looks."
-                format={percent}
-                {...slider('spatial_reach_percent')}
-                {...processingLimits.spatial_reach_percent}
-              />
-              <div className="grid">
-                <NumberField
-                  path="processing.smoothing_seconds"
-                  label="Smoothing"
-                  unit="seconds"
-                  help="Softens quick changes. 0 turns it off."
-                  value={value.smoothing_seconds}
-                  onChange={(next) => change('smoothing_seconds', next)}
-                  {...processingLimits.smoothing_seconds}
-                />
-                <NumberField
-                  path="processing.sample_density"
-                  label="Detail"
-                  help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
-                  value={value.sample_density}
-                  onChange={(next) => change('sample_density', next)}
-                  {...processingLimits.sample_density}
-                />
-              </div>
-            </div>
-          </details>
+      </div>
+    </FieldScopeProvider>
+  );
+}
+
+/**
+ * Picture fine-tuning, on its own page: the rarely needed controls. They
+ * apply live; a slider is tried on the lights while dragged and saved where
+ * it is let go, as on Home.
+ */
+export function FineTuning(props: LiveProps) {
+  const { live, change, slider } = useControls(props, 'fine-tuning');
+  const value = live.value;
+  return (
+    <FieldScopeProvider value={live.scope}>
+      <div className="fine-tuning" key={live.generation}>
+        <RangeField
+          label="Shadow lift"
+          help="Lifts dark colours; black stays off."
+          format={percent}
+          {...slider('shadow_lift_percent')}
+          {...processingLimits.shadow_lift_percent}
+        />
+        <RangeField
+          label="Edge depth"
+          help="How far into the picture each light looks."
+          format={percent}
+          {...slider('spatial_reach_percent')}
+          {...processingLimits.spatial_reach_percent}
+        />
+        <div className="grid">
+          <NumberField
+            path="processing.smoothing_seconds"
+            label="Smoothing"
+            unit="seconds"
+            help="Softens quick changes. 0 turns it off."
+            value={value.smoothing_seconds}
+            onChange={(next) => change('smoothing_seconds', next)}
+            {...processingLimits.smoothing_seconds}
+          />
+          <NumberField
+            path="processing.sample_density"
+            label="Detail"
+            help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
+            value={value.sample_density}
+            onChange={(next) => change('sample_density', next)}
+            {...processingLimits.sample_density}
+          />
         </div>
-      </FieldScopeProvider>
-    </section>
+      </div>
+    </FieldScopeProvider>
   );
 }

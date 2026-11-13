@@ -7,25 +7,27 @@ import {
   type DiscoveryClient,
   type PreviewClient,
 } from '@prysm/application-client';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   useApplication,
   useApplicationDispatch,
 } from '@prysm/application-react';
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { calibrateRoute, CalibrateWizard } from './calibrate';
+import { DeveloperContext, useDeveloper } from './developer';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
 import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
-import { ProcessingPanel, QuickPicture } from './processing';
+import { FineTuning, QuickPicture } from './processing';
+import { ProfilesPage } from './profiles';
 import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionEditor } from './section-editor';
 import { stepCopy } from './step-copy';
 import { SetupWizard } from './setup';
 import { nameOf } from './profile-model';
 import { SetupCard, type PathState } from './setup-card';
-import { ThemeChoice } from './theme-choice';
+import { SettingsPage, type SettingsPlace } from './settings-page';
 import './tokens.css';
 import './portal.css';
 import './flows.css';
@@ -60,8 +62,19 @@ export const previewRoute = '#/preview';
 /** The hash routes of the video source and lights editors, under Settings. */
 export const videoRoute = '#/settings/video';
 export const lightsRoute = '#/settings/lights';
+/** The hash routes of the colour profiles and picture fine-tuning pages. */
+export const profilesRoute = '#/settings/profiles';
+export const pictureRoute = '#/settings/picture';
 
-type Route = 'home' | 'settings' | 'calibrate' | 'preview' | 'video' | 'lights';
+type Route =
+  | 'home'
+  | 'settings'
+  | 'calibrate'
+  | 'preview'
+  | 'video'
+  | 'lights'
+  | 'profiles'
+  | 'picture';
 
 /**
  * Which page the hash names (Home, `#/settings`, `#/calibrate`,
@@ -85,27 +98,10 @@ function useRoute() {
   else if (hash === previewRoute) route = 'preview';
   else if (hash === videoRoute) route = 'video';
   else if (hash === lightsRoute) route = 'lights';
+  else if (hash === profilesRoute) route = 'profiles';
+  else if (hash === pictureRoute) route = 'picture';
   return [route, go] as const;
 }
-
-/** The lighting mode and session, in words, for “About this Prysm”. */
-const targetLabels = {
-  off: 'Off',
-  processed: 'Screen sync',
-  device_native: 'The lights’ own effects',
-} as const satisfies Record<
-  ApplicationSnapshot<unknown, unknown>['target'],
-  string
->;
-const sessionLabels = {
-  stopped: 'Stopped',
-  running: 'Running',
-  native: 'Showing the lights’ own effects',
-  faulted: 'Stopped by a fault; restart Prysm',
-} as const satisfies Record<
-  ApplicationSnapshot<unknown, unknown>['session']['state'],
-  string
->;
 
 function SettingsIcon() {
   return (
@@ -114,59 +110,6 @@ function SettingsIcon() {
       <circle cx="15" cy="7" r="2" />
       <circle cx="9" cy="17" r="2" />
     </svg>
-  );
-}
-
-function ChevronIcon() {
-  return (
-    <svg
-      className="chevron"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M9 5.5 15.5 12 9 18.5" />
-    </svg>
-  );
-}
-
-/**
- * A row in Settings that opens a flow: what it does, and the button. A row
- * for part of the setup keeps a line for its live problem, in place.
- */
-function Entry({
-  description,
-  label,
-  onClick,
-  problem,
-}: {
-  description: string;
-  label: string;
-  onClick: () => void;
-  /** The live problem of this part; `undefined` for rows without one. */
-  problem?: string | null;
-}) {
-  const id = useId();
-  return (
-    <li className="entry">
-      <button
-        type="button"
-        aria-describedby={problem === undefined ? id : `${id} ${id}-problem`}
-        onClick={onClick}
-      >
-        {label}
-        <ChevronIcon />
-      </button>
-      {/* Drawn inside the row; the whole row is the button. */}
-      <span id={id} className="entry-description">
-        {description}
-      </span>
-      {problem === undefined ? null : (
-        <span id={`${id}-problem`} className="entry-problem" role="status">
-          {problem}
-        </span>
-      )}
-    </li>
   );
 }
 
@@ -195,17 +138,6 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
   if (target === 'device_native' && session.state === 'native')
     return { kind: 'effects' };
   return { kind: 'off' };
-}
-
-/** What a saved section is, in one line: its kind, and a few details. */
-function describe<S extends AdapterSection>(
-  adapters: AdapterUis<S>,
-  saved: S | null,
-) {
-  if (!saved) return 'Not set up yet.';
-  const adapter = adapterFor(adapters, saved.kind);
-  const label = adapter?.label ?? saved.kind;
-  return adapter?.summary ? `${label} · ${adapter.summary(saved)}` : label;
 }
 
 /** The active colour profile's name, or `null` without one. */
@@ -250,6 +182,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const [hashRoute, go] = useRoute();
+  const developer = useDeveloper();
   // Without a preview client there is no Preview page: Home instead.
   const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
   /**
@@ -334,7 +267,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       {header}
       <main id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
-        {content}
+        <DeveloperContext value={developer}>{content}</DeveloperContext>
       </main>
     </div>
   );
@@ -364,7 +297,6 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
 
   const { settings, revision, session } = snapshot;
   const output = settings.output ?? null;
-  const configured = !!settings.capture && !!output;
   const outputLighting = output
     ? (adapterFor(outputs, output.kind)?.lighting?.(output) ?? {})
     : null;
@@ -446,7 +378,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
 
   const path = pathOf(snapshot);
   /** The live problem of one side, in plain words; `null` while it works. */
-  const problemAt = (section: 'capture' | 'output') =>
+  const problemAt = (section: 'capture' | 'output' | null) =>
     path.kind === 'failed' && path.at === section && snapshot.failure
       ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
       : null;
@@ -505,6 +437,64 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </>,
     );
 
+  const tryProcessing = (processing: Processing) =>
+    dispatch(application.commands.tryProcessing(processing));
+  /** A page under Settings that saves as it changes: its title and status. */
+  const livePage = (
+    className: string,
+    title: string,
+    heading: string,
+    content: ReactNode,
+  ) =>
+    page(
+      `portal-page ${className}`,
+      title,
+      <SaveStatusProvider>
+        {pageHeading(heading, settingsRoute, 'Settings')}
+        <SaveStatus online={online} />
+        {content}
+      </SaveStatusProvider>,
+    );
+  const places: Record<SettingsPlace, () => void> = {
+    video: () => go(videoRoute),
+    lights: () => go(lightsRoute),
+    profiles: () => go(profilesRoute),
+    picture: () => go(pictureRoute),
+    preview: () => go(previewRoute),
+    setup: openSetup,
+  };
+
+  if (route === 'profiles')
+    return livePage(
+      'profiles-page',
+      'Prysm colour profiles',
+      'Colour profiles',
+      <ProfilesPage
+        processing={settings.processing}
+        revision={revision}
+        disabled={!online}
+        save={saveProcessing}
+        tryProcessing={tryProcessing}
+        calibrate={() => {
+          setCalibrateFrom(profilesRoute);
+          go(calibrateRoute);
+        }}
+      />,
+    );
+  if (route === 'picture')
+    return livePage(
+      'picture-page',
+      'Prysm picture fine-tuning',
+      'Picture fine-tuning',
+      <FineTuning
+        processing={settings.processing}
+        revision={revision}
+        disabled={!online}
+        save={saveProcessing}
+        tryProcessing={tryProcessing}
+      />,
+    );
+
   if (route === 'settings')
     return page(
       'portal-page settings',
@@ -517,98 +507,25 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             {setupNotice}
           </p>
         ) : null}
-        <ProcessingPanel
-          processing={settings.processing}
-          revision={revision}
-          disabled={!online}
-          save={saveProcessing}
-          tryProcessing={(processing) =>
-            dispatch(application.commands.tryProcessing(processing))
-          }
-        />
-        <section className="settings-section" aria-labelledby="setup-heading">
-          <h2 id="setup-heading">Your setup</h2>
-          <ul className="entries">
-            <Entry
-              label="Calibrate colours"
-              description="Match the lights to your TV with test patterns."
-              onClick={() => {
-                setCalibrateFrom(settingsRoute);
-                go(calibrateRoute);
-              }}
-            />
-            <Entry
-              label={configured ? 'Run setup again' : 'Run setup'}
-              description={
-                configured
-                  ? 'Change the video source and lights step by step.'
-                  : 'Prysm needs a video source and lights before screen sync can run.'
-              }
-              onClick={openSetup}
-            />
-            {preview ? (
-              <Entry
-                label="Live preview"
-                description="See what Prysm captures and the colours it sends."
-                onClick={() => go(previewRoute)}
-              />
-            ) : null}
-          </ul>
-          <ul className="entries">
-            <Entry
-              label="Video source"
-              description={describe(captures, settings.capture ?? null)}
-              problem={problemAt('capture')}
-              onClick={() => go(videoRoute)}
-            />
-            <Entry
-              label="Lights"
-              description={describe(outputs, output)}
-              problem={problemAt('output')}
-              onClick={() => go(lightsRoute)}
-            />
-          </ul>
-        </section>
-        <section
-          className="settings-section"
-          aria-labelledby="appearance-heading"
-        >
-          <h2 id="appearance-heading">Appearance</h2>
-          <ThemeChoice />
-        </section>
-        {snapshot.surface_failures.map((failure, index) => (
-          // Failures have no identity; the list is replaced whole and rows hold no state.
-          // eslint-disable-next-line @eslint-react/no-array-index-key
-          <p key={index} className="notice warning">
+        {snapshot.surface_failures.length ? (
+          <p className="notice warning">
             Part of Prysm’s web service stopped. The lights keep working.
           </p>
-        ))}
-        <details className="disclosure diagnostics">
-          <summary>About this Prysm</summary>
-          <dl className="disclosure-body">
-            <div>
-              <dt>Lights</dt>
-              <dd>{targetLabels[snapshot.target]}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{sessionLabels[session.state]}</dd>
-            </div>
-            <div>
-              <dt>Frames per second</dt>
-              <dd>
-                {snapshot.input?.receiving
-                  ? Math.round(snapshot.input.fps)
-                  : 'No picture'}
-              </dd>
-            </div>
-            <div>
-              <dt>Settings version</dt>
-              <dd>{revision}</dd>
-            </div>
-          </dl>
-        </details>
+        ) : null}
+        <SettingsPage
+          captures={captures}
+          outputs={outputs}
+          snapshot={snapshot}
+          online={online}
+          discovery={discovery ?? null}
+          preview={!!preview}
+          problemAt={problemAt}
+          save={saveProcessing}
+          tryProcessing={tryProcessing}
+          open={(place) => places[place]()}
+        />
       </SaveStatusProvider>,
+      true,
     );
 
   if (route === 'preview' && preview)
@@ -701,7 +618,13 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             discovery={discovery ?? null}
             path={path}
             profile={activeProfile(settings.processing)}
-            openSettings={() => go(settingsRoute)}
+            openSettings={() => {
+              if (path.kind === 'failed' && path.at === 'capture')
+                go(videoRoute);
+              else if (path.kind === 'failed' && path.at === 'output')
+                go(lightsRoute);
+              else go(settingsRoute);
+            }}
           />
         ) : null}
       </div>

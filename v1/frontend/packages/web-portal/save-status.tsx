@@ -17,7 +17,6 @@ import {
 const phaseTexts: Record<SavePhase, string> = {
   'all-saved': 'All changes saved',
   saved: 'Saved',
-  changed: 'Some changes are not saved yet',
   saving: 'Saving…',
   failed: 'Not saved',
 };
@@ -44,7 +43,6 @@ export function SaveStatusProvider({ children }: { children: ReactNode }) {
   let phase: SavePhase = justSaved ? 'saved' : 'all-saved';
   if (all.includes('failed')) phase = 'failed';
   else if (all.includes('saving')) phase = 'saving';
-  else if (all.includes('changed')) phase = 'changed';
   const value = useMemo(() => ({ report, phase }), [report, phase]);
   return <SaveContext value={value}>{children}</SaveContext>;
 }

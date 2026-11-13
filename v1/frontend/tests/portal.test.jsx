@@ -13,6 +13,7 @@ import {
   processingLimits,
   profileLimits,
   rebased,
+  saveDeveloper,
   savedForMs,
   throttled,
   trialIntervalMs,
@@ -57,7 +58,9 @@ import {
   form,
   leaveEditor,
   openEditor,
+  openPage,
   openSettings,
+  pathCard,
   renderPortal,
   sleep,
   submit,
@@ -174,7 +177,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       'no live frame rate on Home',
     );
     await openSettings();
-    const rate = $$('.diagnostics dt').find(
+    const rate = $$('.about-facts dt').find(
       (term) => term.textContent === 'Frames per second',
     );
     assert.equal(rate.nextElementSibling.textContent, '30');
@@ -608,6 +611,9 @@ test('Settings has one save status; a refused stale change is saved again on the
   try {
     await openSettings();
     assert.equal(status(), 'All changes saved');
+    await openPage('Picture fine-tuning');
+    assert.equal(window.location.hash, '#/settings/picture');
+    assert.equal(status(), 'All changes saved');
     await edit(field('processing.shadow_lift_percent'), 30);
     assert.equal(status(), 'Saving…');
     await settle();
@@ -697,7 +703,7 @@ test('Open WLED derives http://host[:port]/ from the saved address', () => {
   );
 });
 
-test('picture controls show the state, enforce ranges and apply live', async () => {
+test('Settings keeps brightness and the profile choice on Home; the picture saves live', async () => {
   const profiles = [{ id: 'ps5', name: 'PS5' }];
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -719,45 +725,50 @@ test('picture controls show the state, enforce ranges and apply live', async () 
     ['type', 'value', 'min', 'max', 'step'].map((name) => element[name] ?? '');
   try {
     await openSettings();
+    // Only black bars here: brightness and the profile choice live on Home.
+    assert.equal(control('brightness_percent'), null);
+    assert.equal(control('active_profile'), null);
+    assert.equal(control('remove_black_bars').checked, false);
+    assert.equal(
+      $('.card-link-description', pathCard('Prysm')).textContent,
+      '1 profile · PS5 in use',
+    );
+    await click(control('remove_black_bars'));
+    await settle();
+    assert.equal(saves(fixture), 1);
+    assert.equal(
+      fixture.snapshot().settings.processing.remove_black_bars,
+      true,
+    );
+
+    await openPage('Picture fine-tuning');
     assert.deepEqual(
       [
-        'brightness_percent',
         'shadow_lift_percent',
         'spatial_reach_percent',
         'smoothing_seconds',
         'sample_density',
       ].map((name) => attributes(control(name))),
       [
-        ['range', '100', '0', '100', '1'],
         ['range', '0', '0', '100', '1'],
         ['range', '10', '1', '100', '1'],
         ['number', '0', '0', '', 'any'],
         ['number', '1', '1', '65535', '1'],
       ],
     );
-    assert.equal(control('remove_black_bars').checked, false);
-    assert.equal(
-      control('brightness_percent').labels[0].textContent,
-      'Brightness',
+    assert.deepEqual(
+      ['shadow_lift_percent', 'spatial_reach_percent', 'sample_density'].map(
+        (name) => control(name).labels[0].textContent,
+      ),
+      ['Shadow lift', 'Edge depth', 'Detail'],
     );
 
     // Two quick changes are applied once, after the user stops.
-    await edit(control('brightness_percent'), 90);
-    await edit(control('brightness_percent'), 80);
-    assert.equal($('.processing output').textContent, '80%');
-    assert.equal(saves(fixture), 0);
-    await settle();
+    await edit(control('spatial_reach_percent'), 30);
+    await edit(control('spatial_reach_percent'), 20);
     assert.equal(saves(fixture), 1);
-    assert.deepEqual(fixture.snapshot().settings, {
-      capture,
-      output,
-      processing: {
-        ...defaultProcessing,
-        brightness_percent: 80,
-        profiles,
-        active_profile: 'ps5',
-      },
-    });
+    await settle();
+    assert.equal(saves(fixture), 2);
 
     await edit(control('sample_density'), 0);
     assert.equal(
@@ -768,23 +779,23 @@ test('picture controls show the state, enforce ranges and apply live', async () 
       errorOf(control('sample_density')),
       'Enter a whole number from 1 to 65535.',
     );
+    assert.equal($('.save-status').textContent, 'Not saved');
     await edit(control('smoothing_seconds'), -1);
     assert.equal(
       errorOf(control('smoothing_seconds')),
       'Enter a number of at least 0.',
     );
     await settle();
-    assert.equal(saves(fixture), 1);
+    assert.equal(saves(fixture), 2);
 
     await edit(control('sample_density'), 128);
     await edit(control('smoothing_seconds'), 0.5);
-    await click(control('remove_black_bars'));
     assert.equal(errorOf(control('sample_density')), undefined);
     await settle();
-    assert.equal(saves(fixture), 2);
+    assert.equal(saves(fixture), 3);
     assert.deepEqual(fixture.snapshot().settings.processing, {
       ...defaultProcessing,
-      brightness_percent: 80,
+      spatial_reach_percent: 20,
       sample_density: 128,
       smoothing_seconds: 0.5,
       remove_black_bars: true,
@@ -805,10 +816,10 @@ test('picture controls show the state, enforce ranges and apply live', async () 
       'Prysm can’t use this value.',
     );
     await settle();
-    assert.equal(saves(fixture), 3);
+    assert.equal(saves(fixture), 4);
     await edit(control('shadow_lift_percent'), 20);
     await settle();
-    assert.equal(saves(fixture), 4);
+    assert.equal(saves(fixture), 5);
     assert.equal(
       fixture.snapshot().settings.processing.shadow_lift_percent,
       20,
@@ -1032,10 +1043,7 @@ test('a section changed on another device: use theirs, or keep mine', async () =
 });
 
 /** The live problem line of a part of the setup, on Settings. */
-const problem = (label) =>
-  $$('.entry')
-    .find((row) => $('button', row).firstChild?.textContent === label)
-    ?.querySelector('.entry-problem').textContent;
+const problem = (title) => $('.path-card-problem', pathCard(title)).textContent;
 
 test('new lights are checked after saving; failing ones can be swapped back', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
@@ -1122,10 +1130,51 @@ test('with screen sync off, a saved source can be tried at once', async () => {
   }
 });
 
+test('a video file and no lights are developer options; a saved one still shows', async () => {
+  const kinds = (name) =>
+    $$('option', field(name)).map((option) => option.value);
+  const saved = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'file', path: '/clip.mkv' },
+    output: { kind: 'null' },
+  });
+  try {
+    // Saved setups of such kinds show as they are, and stay editable.
+    await openEditor('Video source');
+    assert.deepEqual(kinds('capture.kind'), ['device', 'remote', 'file']);
+    assert.equal(field('capture.path').value, '/clip.mkv');
+    await leaveEditor();
+    await openEditor('Lights');
+    assert.deepEqual(kinds('output.kind'), ['wled', 'null']);
+  } finally {
+    await saved.unmount();
+  }
+
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    await openEditor('Video source');
+    assert.deepEqual(kinds('capture.kind'), ['device', 'remote']);
+    await leaveEditor();
+    // WLED is then the only lights: no choice to make.
+    await openEditor('Lights');
+    assert.equal(field('output.kind'), null);
+    await leaveEditor();
+    // On in About this Prysm, for this browser.
+    assert.equal(field('developer').checked, false);
+    await click(field('developer'));
+    assert.equal(field('developer').checked, true);
+    await openEditor('Lights');
+    assert.deepEqual(kinds('output.kind'), ['wled', 'null']);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('kind selectors swap panels without losing drafts', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    // A video file and no lights are developer options.
+    await act(async () => saveDeveloper(true));
     await openEditor('Video source');
     assert.deepEqual(
       $$('option', field('capture.kind')).map((item) => [
@@ -1195,11 +1244,11 @@ test('an unconfigured section starts from its first kind and saves only when val
   try {
     await click(button('Leave setup'));
     await openSettings();
-    assert(
-      $$('.entry-description').some(
-        (line) => line.textContent === 'Not set up yet.',
-      ),
+    assert.equal(
+      $('.path-card-name', pathCard('Video source')).textContent,
+      'Not set up yet',
     );
+    assert(button('Set up', pathCard('Video source')));
     await openEditor('Video source');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
@@ -1326,6 +1375,8 @@ test('fields the forms do not show are preserved on every save', async () => {
   );
   const { fixture } = portal;
   try {
+    // A video file and no lights are developer options.
+    await act(async () => saveDeveloper(true));
     await openEditor('Video source');
     await edit(field('capture.fps'), 50);
     await submit(form('Video source'));
@@ -1334,6 +1385,7 @@ test('fields the forms do not show are preserved on every save', async () => {
     await edit(field('output.leds.right'), 6);
     await submit(form('Your lights'));
     await leaveEditor();
+    await openPage('Picture fine-tuning');
     await edit(field('processing.spatial_reach_percent'), 20);
     await settle();
     assert.deepEqual(fixture.snapshot().settings, {
@@ -1731,7 +1783,21 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal(window.location.hash, '#/settings');
     assert.equal(document.activeElement.textContent, 'Settings');
     assert.equal($$('form').length, 0, 'nothing waits for a Save here');
-    assert($('.diagnostics'));
+    // The path in the order the light takes, then More.
+    assert.deepEqual(
+      $$('.path-card h2').map((title) => title.textContent),
+      ['Video source', 'Prysm', 'Lights'],
+    );
+    assert.deepEqual(
+      $$('.path-card-name').map((name) => name.textContent),
+      ['Video capture device', 'Prysm', 'WLED'],
+    );
+    assert($('.about'));
+    assert.equal($('.path-card a'), null, 'Open WLED stays on Home');
+    assert.equal(
+      $('.path-card-fact', pathCard('Lights')).textContent,
+      '14 LEDs · 192.0.2.1',
+    );
     await openEditor('Video source');
     assert.equal(window.location.hash, '#/settings/video');
     assert.equal(document.activeElement.textContent, 'Video source');
@@ -1745,6 +1811,15 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     await click(button('Home'));
     assert.equal(window.location.hash, '');
     assert($('.light-card'));
+    await act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'stopped' },
+        failure: { kind: 'adapter', section: 'output', message: 'no answer' },
+      }),
+    );
+    await click(button('Change setup'));
+    assert.equal(window.location.hash, '#/settings/lights');
   } finally {
     await portal.unmount();
   }

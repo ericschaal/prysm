@@ -11,7 +11,7 @@
  */
 import { test as base, expect } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -139,6 +139,8 @@ export interface Prysm {
   url: string;
   /** The engine's state, read straight from the API. */
   state(): Promise<State>;
+  /** The settings file as it is on disk now. */
+  savedSettings(): Promise<Settings>;
 }
 
 export interface Sender {
@@ -170,6 +172,8 @@ export const test = base.extend<{
       if (!url) throw new Error(`no address in ${line}`);
       await provide({
         url,
+        savedSettings: async () =>
+          JSON.parse(await readFile(file, 'utf8')) as Settings,
         state: async () => {
           const response = await fetch(`${url}/api/v1/state`);
           expect(response.status).toBe(200);

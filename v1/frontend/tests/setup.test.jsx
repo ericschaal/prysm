@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
-import { staleNotice } from '@prysm/web-portal';
+import { saveDeveloper, staleNotice } from '@prysm/web-portal';
 import { defaultProcessing } from '../testkit/application';
 import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
@@ -16,6 +16,7 @@ import {
   field,
   form,
   openEditor,
+  openPage,
   openSettings,
   renderPortal,
   sleep,
@@ -53,7 +54,11 @@ test('setup opens instead of the page while capture or lights are missing', asyn
       assert.equal(!!$('.light-card'), !open);
       if (!open) {
         await openSettings();
-        assert.equal(button('Run setup again').disabled, false);
+        assert(
+          $$('.card-link-label').some(
+            (label) => label.textContent === 'Start over with setup',
+          ),
+        );
         continue;
       }
       assert.equal(heading(), 'Video source');
@@ -80,7 +85,13 @@ test('setup steps keep the drafts, check each step and save both sections with o
   const portal = await renderPortal(HeadlessWebPortal, {});
   const { fixture } = portal;
   try {
-    // The host's kinds and the kind's own editor.
+    // The host's kinds and the kind's own editor; a video file only with
+    // developer options on.
+    assert.deepEqual(
+      $$('option', field('capture.kind')).map((item) => item.value),
+      ['device', 'remote'],
+    );
+    await act(async () => saveDeveloper(true));
     assert.deepEqual(
       $$('option', field('capture.kind')).map((item) => item.value),
       ['device', 'remote', 'file'],
@@ -149,7 +160,11 @@ test('setup steps keep the drafts, check each step and save both sections with o
       'Lights follow your screen',
     );
     await openSettings();
-    assert.equal(button('Run setup again').disabled, false);
+    assert(
+      $$('.card-link-label').some(
+        (label) => label.textContent === 'Start over with setup',
+      ),
+    );
   } finally {
     await portal.unmount();
   }
@@ -226,8 +241,7 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
-    await openSettings();
-    await click(button('Run setup again'));
+    await openPage('Start over with setup');
     assert.equal(heading(), 'Video source');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(field('capture.path').value, '/dev/video0');
@@ -237,14 +251,12 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
     assert.equal(field('output.leds.left').value, '4');
     await click(button('Leave setup'));
     assert.equal(saves(fixture), 0);
-    assert(
-      $$('.entry-description').some((line) =>
-        line.textContent.includes('/dev/video0'),
-      ),
-    );
+    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video0');
+    assert($('.settings'), 'back in Settings');
 
     // Again: a fresh start from the saved values; Save only keeps lights off.
-    await click(button('Run setup again'));
+    await act(async () => saveDeveloper(true));
+    await openPage('Start over with setup');
     assert.equal(field('capture.path').value, '/dev/video0');
     await next();
     await edit(field('output.kind'), 'null');

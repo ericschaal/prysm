@@ -250,11 +250,6 @@ button.danger {
 button.danger:hover:enabled {
   background: var(--danger-soft);
 }
-button.danger.solid {
-  border-color: transparent;
-  background: var(--danger-fill);
-  color: var(--on-danger);
-}
 button[aria-busy='true'] {
   cursor: progress;
 }
@@ -2259,15 +2254,6 @@ fieldset > .help {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.settings-section {
-  container-type: inline-size;
-  padding-top: var(--space-8);
-}
-.settings-section > h2 {
-  font-size: var(--text-title);
-  margin-bottom: var(--space-5);
-}
-
 /* The page's one save status, under the title. Its line is always there. */
 .save-status {
   display: flex;
@@ -2288,7 +2274,6 @@ fieldset > .help {
   transition: background-color var(--duration) var(--ease-out);
 }
 .save-status[data-phase='saving'] .save-status-mark,
-.save-status[data-phase='changed'] .save-status-mark,
 .save-status[data-phase='offline'] .save-status-mark {
   background: var(--warning);
 }
@@ -2302,79 +2287,6 @@ fieldset > .help {
   background: var(--danger);
 }
 
-/* Grouped rows: one quiet surface per list, hairlines between rows. */
-.entries {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-.entry + .entry {
-  border-top: 1px solid var(--line);
-}
-.entry {
-  display: grid;
-  grid-template-rows: 42px auto;
-}
-/* The description is drawn inside the row; the whole row is the button. */
-.entry button {
-  grid-area: 1 / 1 / 3 / 2;
-  justify-content: space-between;
-  align-items: flex-start;
-  width: 100%;
-  padding: 14px var(--space-4) 14px var(--space-5);
-  border: 0;
-  border-radius: 0;
-  text-align: left;
-}
-.entry:first-child button {
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-.entry:last-child button {
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-.entry-description {
-  grid-area: 2 / 1 / 3 / 2;
-  /* At most two lines: a long file path must not stretch the row. */
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-  padding: 0 52px 14px var(--space-5);
-  color: var(--text-3);
-  font-size: var(--text-small);
-  pointer-events: none;
-}
-/* A setup row's live problem: a line kept in place, under its description. */
-.entry:has(.entry-problem) {
-  grid-template-rows: 42px auto auto;
-}
-.entry:has(.entry-problem) button {
-  grid-area: 1 / 1 / 4 / 2;
-}
-.entry:has(.entry-problem) .entry-description {
-  padding-bottom: 0;
-}
-.entry-problem {
-  grid-area: 3 / 1 / 4 / 2;
-  min-height: calc(var(--text-small) * var(--leading));
-  margin-bottom: 14px;
-  padding: 0 52px 0 var(--space-5);
-  color: var(--danger);
-  font-size: var(--text-small);
-  line-height: var(--leading);
-  pointer-events: none;
-}
-.entry .chevron {
-  align-self: center;
-}
-.chevron {
-  margin-bottom: -18px;
-}
 .chevron {
   flex: none;
   width: 18px;
@@ -2422,12 +2334,6 @@ fieldset > .help {
 .disclosure[open] > .disclosure-body {
   animation: fade-up var(--duration-slow) var(--ease-out) both;
 }
-.profiles:has(.profile-editor) {
-  margin-bottom: 0;
-}
-.profiles:has(.profile-editor) + div .advanced {
-  border-top: 0;
-}
 
 /* The video source or lights editor, under Settings. */
 .section-editor {
@@ -2439,29 +2345,6 @@ fieldset > .help {
   color: var(--text-2);
 }
 
-.diagnostics {
-  margin-top: var(--space-4);
-  color: var(--text-2);
-}
-.diagnostics dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-  margin: 0;
-  padding-bottom: var(--space-4);
-}
-.diagnostics dt {
-  font-size: var(--text-small);
-  color: var(--text-3);
-}
-.diagnostics dd {
-  margin: 2px 0 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-small);
-}
-.settings-section .theme-choice {
-  margin: 0;
-}
 .theme-choice legend {
   position: absolute;
   width: 1px;
@@ -2471,12 +2354,196 @@ fieldset > .help {
   white-space: nowrap;
 }
 
-/* Colour profiles. */
-.profiles {
-  margin: var(--space-2) 0 var(--space-6);
+/* ── Settings: the path, as three cards; then More ─────────────────────── */
+.settings-path {
+  display: grid;
+  gap: var(--space-5);
 }
-/* The select's own label names the group. */
-.profiles > h3 {
+@media (min-width: 900px) {
+  /* The same grid as Home: the path from left to right. */
+  .settings-path {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-6);
+  }
+}
+.path-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line) inset,
+    var(--shadow);
+}
+.path-card-head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+}
+.path-card .path-icon {
+  grid-column: auto;
+}
+.path-card[data-failed='true'] .path-icon {
+  color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger) inset;
+}
+.path-card-text {
+  display: grid;
+  min-width: 0;
+}
+.path-card-name {
+  overflow: hidden;
+  font-weight: var(--weight-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-card-fact {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A line kept for the live problem, so a card never changes height. */
+.path-card-problem {
+  min-height: calc(var(--text-small) * var(--leading));
+  margin-top: calc(-1 * var(--space-2));
+  color: var(--danger);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+}
+.path-card-body {
+  display: grid;
+  flex: 1;
+  align-content: end;
+  gap: var(--space-3);
+}
+.path-card-body .field {
+  margin-bottom: 0;
+}
+.path-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* A row that opens a page: label, a line about it, and a chevron. */
+.card-links {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+.card-link {
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 64px;
+  padding: var(--space-3) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  text-align: left;
+}
+.card-link:hover:enabled {
+  background: none;
+}
+.card-link:hover:enabled .card-link-label {
+  color: var(--accent-text);
+}
+.card-link-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.card-link-label {
+  font-weight: 500;
+}
+.card-link-description {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-small);
+  font-weight: var(--weight-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-more {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+.more-grid {
+  display: grid;
+  gap: var(--space-5);
+}
+@media (min-width: 900px) {
+  .more-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: var(--space-6);
+  }
+}
+.more-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.more-card h3 {
+  padding-top: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.more-card .theme-choice {
+  margin: 0 0 var(--space-3);
+}
+.more-card .card-link:last-child,
+.card-links .card-link:last-child {
+  border-bottom: 0;
+}
+.about {
+  border-bottom: 1px solid var(--line);
+}
+.about-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+}
+.about-facts dt {
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.about-facts dd {
+  margin: 2px 0 0;
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Colour profiles and fine-tuning: pages under Settings ─────────────── */
+.profile-list {
+  display: grid;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.profile-row {
+  padding: var(--space-4) 0 0;
+  border-bottom: 1px solid var(--line);
+}
+.profile-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+/* The name is edited in place: its label is for screen readers. */
+.profile-name label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2484,40 +2551,49 @@ fieldset > .help {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-.profile-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: calc(-1 * var(--space-2)) 0 var(--space-5);
+.profile-name {
+  margin-bottom: 0;
 }
-.profile-actions button {
-  min-height: 40px;
-  padding-inline: var(--space-4);
+.profile-tag {
+  min-width: 6ch;
+  padding-top: 14px;
+  color: var(--success);
   font-size: var(--text-small);
+  font-weight: 500;
 }
-.profile-confirm {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-5);
+.profile-head > button {
+  margin-top: 4px;
 }
-.profile-confirm p {
-  flex: 1 1 220px;
-  margin: 0;
+.profile-tune > summary {
+  min-height: 48px;
+  color: var(--text-2);
 }
-.profile-editor,
-.advanced {
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-.profile-editor[open] > .disclosure-body,
-.advanced[open] > .disclosure-body {
+.profile-tune[open] > .disclosure-body {
   container-type: inline-size;
-  padding: var(--space-2) 0 var(--space-4);
+  padding-bottom: var(--space-4);
 }
-.profile-editor .actions {
-  margin-top: 0;
+.profile-use {
+  margin-bottom: var(--space-4);
+}
+/* A deleted profile keeps its row's height while Undo is offered. */
+.profile-row.deleted {
+  display: flex;
+  align-items: center;
+  min-height: 141px;
+  padding: 0;
+  color: var(--text-2);
+}
+.profiles-empty {
+  color: var(--text-2);
+}
+.profiles-new {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+.fine-tuning {
+  container-type: inline-size;
+  padding-top: var(--space-2);
 }
 
 /* ── Found devices ────────────────────────────────────────────────────── */

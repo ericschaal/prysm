@@ -16,7 +16,8 @@ have not been tested on a TV with Prysm 1.x.
    turns on and the TV shows a QR code. If the row is greyed out, the TV says
    why (for example, the lights are not using this TV's picture).
 2. Scan the QR code with your phone. It opens the portal's calibration page.
-   You can also open **Settings → Calibrate colours** in the portal.
+   You can also open **Settings → Colour profiles → New profile (guided)** in
+   the portal.
 3. Start a new profile, or start from a copy of a saved one.
 4. Follow the steps. Each shows a pattern on the TV:
    - **White balance:** make the wall as neutral as the grey on the TV with
@@ -38,8 +39,8 @@ keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 ## Use profiles
 
 - **Home:** tap a profile to use it, or **No correction**.
-- **Settings → Picture → Colour profile:** choose, create, rename, duplicate
-  or delete profiles.
+- **Settings → Colour profiles:** rename, fine-tune or delete profiles, and
+  make a new one with **New profile (guided)**.
 
 Profiles do not change brightness, smoothing or other picture settings, and do
 not switch with the TV's input. Check the result with the content you usually

@@ -12,6 +12,7 @@ export { fileDefaults, fileLimits } from './settings';
 export const fileCapture: AdapterUi<FileSettings> = {
   // For development: it needs FFmpeg, which the packaged builds leave out.
   label: 'Video file (development only)',
+  developer: true,
   create: () => ({ kind: 'file', path: '' }),
   Editor: FileEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),

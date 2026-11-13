@@ -4,6 +4,8 @@ import type { AdapterUi } from '@prysm/web-portal';
 /** Output kind `null`: runs screen sync without driving any LEDs. */
 export const nullOutput: AdapterUi<NullSettings> = {
   label: 'No lights (test)',
+  // For checking capture and processing: offered with developer options.
+  developer: true,
   create: () => ({ kind: 'null' }),
   Editor: () => (
     <p className="help">

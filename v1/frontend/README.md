@@ -47,12 +47,23 @@ supervisor in each of its states and play the phone's calibration part). See the
     lights from the adapters' `summary`, and the LEDs per edge from an
     output's `edges`). Problems show in the light card in plain words with
     the action that fixes them ("Set up Prysm").
-  - Settings (`#/settings`, the icon in the header): Picture (brightness,
-    black bars, colour profiles, and under Advanced shadow lift, spatial
-    reach, smoothing and sample density), Calibrate colours, Run setup again,
-    Live preview, the Video source and Lights forms (one disclosure each), the theme
-    (System, Light, Dark; kept per browser in `localStorage`, never sent to
-    Prysm) and the technical details (with the capture rate).
+  - [Settings](packages/web-portal/settings-page.tsx) (`#/settings`, the
+    icon in the header): one save status under the title
+    ([save status](packages/web-portal/save-status.tsx)), then the path in
+    the order the light takes, as three cards on Home's grid: Video source
+    (name and facts, a line for its live problem, Change, See the picture),
+    Prysm (Remove black bars, rows to Colour profiles and Picture
+    fine-tuning) and Lights (Change, Check placement; Open WLED stays on
+    Home). Then
+    More: the theme (System, Light, Dark; kept per browser in
+    `localStorage`, never sent to Prysm), About this Prysm (lights, status,
+    frames per second, settings version, and Developer options) and Start
+    over with setup. Brightness and choosing the profile are on Home only.
+  - Developer options ([developer](packages/web-portal/developer.ts)): an
+    adapter marked `developer` (the video file, no lights) is offered only
+    with them on, or while it is the saved kind. On in About this Prysm, kept
+    per browser (`localStorage` `prysm.developer` = `on`; without storage,
+    for the page). Tests turn it on with `saveDeveloper(true)` or that key.
   - [Lighting](packages/web-portal/lighting.tsx): the power button turns the
     lights `off`, or back on in the last mode (kept per browser in
     `localStorage`; screen sync without one); the tiles choose Screen sync
@@ -97,11 +108,15 @@ supervisor in each of its states and play the phone's calibration part). See the
     always wins. A failure marks its stop (by the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
-  - [Picture](packages/web-portal/processing.tsx): the six `Processing`
-    controls and the [colour profiles](packages/web-portal/profiles.tsx)
-    (choose the active one; new, rename, duplicate, delete; correction and hue
-    shift), applied live (debounced 400 ms) because processing-only changes
-    reach a running session without restarting it. Home's brightness changes
+  - [Picture](packages/web-portal/processing.tsx): black bars on Prysm's
+    card, and Picture fine-tuning (`#/settings/picture`: shadow lift, edge
+    depth, smoothing, detail), applied live (debounced 400 ms, sliders on
+    release) because processing-only changes reach a running session without
+    restarting it. [Colour profiles](packages/web-portal/profiles.tsx)
+    (`#/settings/profiles`): one row each, renamed in place, "In use", Fine-tune
+    (correction and hue shift; "Use it now" for one not in use), Delete at
+    once with Undo for 5 s in the row's place; "New profile (guided)" opens
+    Calibrate. Home's brightness changes
     the lights while it is dragged (pointer or keys): each value is tried
     unsaved (`PUT /api/v1/processing/trial`), throttled to one every 100 ms
     with one request in flight and the latest value winning, and the value
@@ -127,19 +142,23 @@ supervisor in each of its states and play the phone's calibration part). See the
     nothing was tried and offers "Turn on screen sync to try". While it is
     not known to work, "Go back to the previous …" saves what was there
     before. A change on another device asks: Use theirs, or Keep mine.
-    The rows in Settings keep a line for their side's live problem.
+    The cards in Settings keep a line for their side's live problem, and
+    Home's "Change setup" opens the editor of a failing side (else
+    Settings). After a failed check the buttons are "Go back to the previous
+    …" and "Keep this video source" / "Keep these lights".
   - [Setup](packages/web-portal/setup.tsx): shown instead of the page while
-    capture or output is missing, and on "Run setup again": video source, lights
+    capture or output is missing, and on "Start over with setup": video source, lights
     (the same step as the editors), review. Nothing is saved
     until the end, which saves both sections with one request and can start
     screen sync; a refused field returns to its step.
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
-    `#/calibrate` (entry "Calibrate colours" in Settings, which it returns
-    to; the TV's QR code points there, and leaving returns Home). Start creates a draft profile (new, or a copy of
+    `#/calibrate` ("New profile (guided)" in Colour profiles, which it
+    returns to; Home's chip while there are no profiles; the TV's QR code
+    points there, and leaving returns Home). Start creates a draft profile (new, or a copy of
     one) and makes it active; white balance (`gray-192`), one hue per colour,
     intensity (`red-pair`, `green-pair`, `blue-pair`), mixed colours and a
     review each show their pattern on the TV (`setCalibration`); sliders
-    save live through the Picture panel's `useLiveProcessing`. Finish names
+    save live through `useLiveProcessing`, as the profiles page does. Finish names
     the profile, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on
     the TV; if calibration ends elsewhere it offers Resume and keeps the draft.

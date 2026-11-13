@@ -1,13 +1,13 @@
 import { createContext, use, useEffect } from 'react';
 
 /**
- * Where one part of a page stands: nothing pending, edits not saved yet
- * (only a form with its own Save), a save on its way, or a save that failed.
+ * Where one part of a page stands: nothing pending, a save on its way, or a
+ * save that failed.
  */
-export type SaveState = 'idle' | 'changed' | 'saving' | 'failed';
+export type SaveState = 'idle' | 'saving' | 'failed';
 
 /** What the page says about its saves. */
-export type SavePhase = 'all-saved' | 'saved' | 'changed' | 'saving' | 'failed';
+export type SavePhase = 'all-saved' | 'saved' | 'saving' | 'failed';
 
 /** How long “Saved” shows before the page says all changes are saved. */
 export const savedForMs = 2000;
