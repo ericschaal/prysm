@@ -5,6 +5,7 @@
  * See docs/plans/prysm-v1-webos-supervisor.md §6.
  */
 import type {
+  FailureKind,
   Flavor,
   LightingTarget,
   Phase,
@@ -13,9 +14,11 @@ import type {
   SlimEncoding,
   State,
   Video,
+  WorkerFailure,
 } from '@prysm/contracts/luna';
 
 export type {
+  FailureKind,
   Flavor,
   LightingTarget,
   Phase,
@@ -24,6 +27,7 @@ export type {
   SlimEncoding,
   State,
   Video,
+  WorkerFailure,
 };
 
 export const SERVICE_URI = 'luna://io.prysm.tv.service';
@@ -107,11 +111,16 @@ const videos: Record<Video, true> = {
   unavailable: true,
   available: true,
 };
-const phases: Record<Phase, true> = {
+const phases: Record<Phase['phase'], true> = {
   stopped: true,
   running: true,
   stopping: true,
   retrying: true,
+};
+const failureKinds: Record<FailureKind, true> = {
+  encoder: true,
+  receiver: true,
+  other: true,
 };
 const targets: Record<LightingTarget, true> = {
   off: true,
@@ -122,6 +131,28 @@ const oneOf = (values: object, value: unknown) =>
   typeof value === 'string' && Object.keys(values).indexOf(value) >= 0;
 const optionalText = (value: unknown) =>
   value === undefined || value === null || typeof value === 'string';
+const optionalNumber = (value: unknown) =>
+  value === undefined || value === null || typeof value === 'number';
+
+function isPhase(value: unknown): value is Phase {
+  const phase = value as Partial<Record<string, unknown>> | null;
+  return (
+    !!phase &&
+    typeof phase === 'object' &&
+    oneOf(phases, phase.phase) &&
+    (phase.phase !== 'retrying' || typeof phase.seconds === 'number')
+  );
+}
+
+function isFailure(value: unknown): value is WorkerFailure | null | undefined {
+  if (value === undefined || value === null) return true;
+  const failure = value as Partial<Record<keyof WorkerFailure, unknown>>;
+  return (
+    typeof failure === 'object' &&
+    oneOf(failureKinds, failure.kind) &&
+    typeof failure.message === 'string'
+  );
+}
 
 export function isState(value: unknown): value is State {
   const state = value as Partial<Record<keyof State, unknown>> | null;
@@ -131,14 +162,15 @@ export function isState(value: unknown): value is State {
     oneOf(flavors, state.flavor) &&
     oneOf(powers, state.power) &&
     oneOf(videos, state.video) &&
-    oneOf(phases, state.worker) &&
+    isPhase(state.worker) &&
     typeof state.enabled === 'boolean' &&
     typeof state.capturing === 'boolean' &&
+    optionalNumber(state.fps) &&
     !!state.preferences &&
     typeof state.preferences === 'object' &&
     Array.isArray(state.log) &&
     (state.log as unknown[]).every((line) => typeof line === 'string') &&
-    optionalText(state.failure) &&
+    isFailure(state.failure) &&
     optionalText(state.portal) &&
     (state.lighting === undefined ||
       state.lighting === null ||

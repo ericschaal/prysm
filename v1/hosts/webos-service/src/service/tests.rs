@@ -192,7 +192,7 @@ fn get_state_is_open_and_subscribable() {
     assert_eq!(state["subscribed"], true);
     assert_eq!(state["flavor"], "full");
     assert_eq!(state["power"], "unknown");
-    assert_eq!(state["worker"], "stopped");
+    assert_eq!(state["worker"], serde_json::json!({ "phase": "stopped" }));
     assert_eq!(h.call("getState", "x", "{}")["subscribed"], false);
     for bad in [r#"{"subscribe":1}"#, r#"{"other":true}"#, "[]", "nope"] {
         assert_eq!(h.call("getState", "x", bad)["returnValue"], false, "{bad}");
@@ -334,8 +334,17 @@ fn worker_output_is_drained_on_tick_and_exits_are_reaped() {
     h.world.borrow_mut().exit = Some(Exit::Code(1));
     assert!(h.tick(300));
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"], "retrying");
-    assert!(published["failure"].as_str().unwrap().contains("malformed"));
+    assert_eq!(
+        published["worker"],
+        serde_json::json!({ "phase": "retrying", "seconds": 1 })
+    );
+    assert_eq!(published["failure"]["kind"], "other");
+    assert!(
+        published["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("malformed")
+    );
     assert!(h.tick(1_299));
     assert!(h.log().is_empty());
     assert!(h.tick(1_300));
@@ -348,9 +357,9 @@ fn a_spawn_failure_retries_without_a_worker() {
     h.world.borrow_mut().refuse_spawn = true;
     h.power("Active", 0);
     let published = h.bus.published.last().unwrap();
-    assert_eq!(published["worker"], "retrying");
+    assert_eq!(published["worker"]["phase"], "retrying");
     assert!(
-        published["failure"]
+        published["failure"]["message"]
             .as_str()
             .unwrap()
             .contains("no such file")
@@ -451,7 +460,7 @@ fn a_restart_within_one_boot_resumes_the_last_intent() {
         world.borrow().log[0],
         "spawn /svc/prysm-webos-worker --settings /state/settings.json --listen 0.0.0.0:8787 --lighting processed"
     );
-    assert!(service.machine().state().enabled);
+    assert!(service.machine().state(t0).enabled);
 
     // Turning it off is remembered too.
     service.request(

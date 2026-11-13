@@ -66,6 +66,19 @@ fn lighting(target: LightingTarget) -> Effect {
     Effect::Send(Command::Lighting { target })
 }
 
+/// The published failure's message.
+fn message(state: &State) -> Option<&str> {
+    state
+        .failure
+        .as_ref()
+        .map(|failure| failure.message.as_str())
+}
+
+/// The published failure's kind.
+fn kind(state: &State) -> Option<FailureKind> {
+    state.failure.as_ref().map(|failure| failure.kind)
+}
+
 fn status(target: Option<LightingTarget>) -> Input {
     Input::Worker(Event::Status(WorkerStatus {
         target,
@@ -121,7 +134,7 @@ fn full_runs_while_awake_and_gates_video_on_active() {
             ),
         ],
     );
-    assert_eq!(m.state().worker, P::Running);
+    assert_eq!(m.state(t).worker, P::Running);
 }
 
 #[test]
@@ -131,7 +144,7 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
         ..Preferences::default()
     });
     let t = Instant::now();
-    assert!(m.state().enabled);
+    assert!(m.state(t).enabled);
     script(
         &mut m,
         t,
@@ -146,8 +159,8 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
             (20, status(Some(LightingTarget::Processed)), vec![]),
         ],
     );
-    assert!(!m.state().enabled);
-    assert_eq!(m.state().lighting, Some(LightingTarget::Off));
+    assert!(!m.state(t).enabled);
+    assert_eq!(m.state(t).lighting, Some(LightingTarget::Off));
     script(
         &mut m,
         t,
@@ -157,8 +170,8 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
             (40, status(Some(LightingTarget::DeviceNative)), vec![]),
         ],
     );
-    assert!(m.state().enabled);
-    assert_eq!(m.state().lighting, Some(LightingTarget::DeviceNative));
+    assert!(m.state(t).enabled);
+    assert_eq!(m.state(t).lighting, Some(LightingTarget::DeviceNative));
     script(
         &mut m,
         t,
@@ -173,14 +186,14 @@ fn full_autostart_starts_processed_and_enable_maps_to_lighting() {
             (2059, status(Some(LightingTarget::Processed)), vec![]),
         ],
     );
-    assert_eq!(m.state().lighting, Some(LightingTarget::Off));
+    assert_eq!(m.state(t).lighting, Some(LightingTarget::Off));
     // After the echo window the worker's report wins again.
     script(
         &mut m,
         t,
         vec![(2060, status(Some(LightingTarget::Processed)), vec![])],
     );
-    assert_eq!(m.state().lighting, Some(LightingTarget::Processed));
+    assert_eq!(m.state(t).lighting, Some(LightingTarget::Processed));
 }
 
 #[test]
@@ -233,8 +246,8 @@ fn slim_needs_a_receiver_and_enable() {
             (4, Exited(Exit::Code(0)), vec![]),
         ],
     );
-    assert_eq!(m.state().worker, P::Stopped);
-    assert_eq!(m.state().lighting, None);
+    assert_eq!(m.state(t).worker, P::Stopped);
+    assert_eq!(m.state(t).lighting, None);
     // Lighting is never sent to a slim worker.
     let mut m = slim(Preferences {
         autostart: true,
@@ -298,7 +311,7 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             ),
         ],
     );
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state(t).failure, None);
 }
 
 #[test]
@@ -330,7 +343,39 @@ fn failures_back_off_doubling_to_thirty_seconds() {
         );
         now += delay;
     }
-    assert_eq!(m.state().failure.as_deref(), Some("worker failed"));
+    assert_eq!(message(&m.state(t0)), Some("worker failed"));
+}
+
+#[test]
+fn retrying_publishes_the_seconds_until_the_next_start() {
+    let (mut m, t0) = (full(), Instant::now());
+    let start = vec![spawn_full(LightingTarget::Off), video(Video::Unknown)];
+    script(
+        &mut m,
+        t0,
+        vec![
+            (0, Pw(Active), start.clone()),
+            (0, Exited(Exit::Code(1)), vec![]),
+            (1_000, Tick, start.clone()),
+            (1_000, Exited(Exit::Code(1)), vec![]),
+            (3_000, Tick, start),
+        ],
+    );
+    // The third failure waits 4 s; the state carries what is left, rounded up.
+    let effects = m.handle(Exited(Exit::Code(1)), t0 + Duration::from_millis(3_000));
+    assert!(effects.contains(&Effect::Publish));
+    let at = |ms| m.state(t0 + Duration::from_millis(ms)).worker;
+    assert_eq!(at(3_000), P::Retrying { seconds: 4 });
+    assert_eq!(at(3_001), P::Retrying { seconds: 4 });
+    assert_eq!(at(4_000), P::Retrying { seconds: 3 });
+    assert_eq!(at(6_999), P::Retrying { seconds: 1 });
+    assert_eq!(
+        serde_json::to_value(m.state(t0 + Duration::from_millis(3_500))).unwrap()["worker"],
+        serde_json::json!({ "phase": "retrying", "seconds": 4 })
+    );
+    // Time alone does not publish: the app counts down by itself.
+    let effects = m.handle(Tick, t0 + Duration::from_millis(5_000));
+    assert!(!effects.contains(&Effect::Publish));
 }
 
 #[test]
@@ -359,12 +404,12 @@ fn a_healthy_minute_resets_backoff_and_clears_the_failure() {
             ),
         ],
     );
-    assert!(m.state().failure.is_some());
+    assert!(m.state(t0).failure.is_some());
     for at in (14_000..=64_000).step_by(10_000) {
         script(&mut m, t0, vec![(at, status(None), vec![])]);
         script(&mut m, t0, vec![(at, Tick, vec![])]);
     }
-    assert_eq!(m.state().failure, None);
+    assert_eq!(m.state(t0).failure, None);
     script(
         &mut m,
         t0,
@@ -402,12 +447,9 @@ fn silence_is_a_hang_then_term_then_one_kill() {
             (40_001, Exited(Exit::Signal(9)), vec![]),
         ],
     );
-    let state = m.state();
-    assert_eq!(state.worker, P::Retrying);
-    assert_eq!(
-        state.failure.as_deref(),
-        Some("worker sent nothing for 15 s")
-    );
+    let state = m.state(t0);
+    assert!(matches!(state.worker, P::Retrying { .. }));
+    assert_eq!(message(&state), Some("worker sent nothing for 15 s"));
     script(
         &mut m,
         t0,
@@ -440,7 +482,7 @@ fn faults_broken_links_and_spawn_failures_retry() {
         ],
     );
     assert_eq!(
-        m.state().failure.as_deref(),
+        message(&m.state(t0)),
         Some("worker faulted: release unconfirmed")
     );
     script(
@@ -466,10 +508,10 @@ fn faults_broken_links_and_spawn_failures_retry() {
             (3_006, Input::SpawnFailed("no such file".into()), vec![]),
         ],
     );
-    let state = m.state();
-    assert_eq!(state.worker, P::Retrying);
+    let state = m.state(t0);
+    assert!(matches!(state.worker, P::Retrying { .. }));
     assert_eq!(
-        state.failure.as_deref(),
+        message(&state),
         Some("cannot start the worker: no such file")
     );
 }
@@ -498,7 +540,7 @@ fn an_exit_keeps_the_workers_last_failure() {
         ],
     );
     assert_eq!(
-        m.state().failure.as_deref(),
+        message(&m.state(t0)),
         Some("worker failed: cannot listen on 0.0.0.0:8787")
     );
 }
@@ -574,7 +616,7 @@ fn log_keeps_the_latest_lines_and_publish_follows_changes_only() {
     for line in 0..25 {
         m.handle(Input::WorkerLog(format!("line {line}")), t0);
     }
-    let log = m.state().log;
+    let log = m.state(t0).log;
     assert_eq!(log.len(), LOG_LINES);
     assert_eq!(log[0], "line 5");
     assert!(!m.handle(Pw(Unknown), t0).contains(&Effect::Publish));
@@ -592,6 +634,7 @@ fn published_state_reflects_the_worker() {
     m.handle(
         Input::Worker(Event::Status(WorkerStatus {
             capturing: true,
+            fps: Some(30),
             target: Some(LightingTarget::Processed),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
@@ -600,19 +643,20 @@ fn published_state_reflects_the_worker() {
         })),
         t0,
     );
-    let state = m.state();
+    let state = m.state(t0);
     assert_eq!(state.flavor, crate::state::Flavor::Full);
     assert!(state.capturing && state.enabled);
     assert_eq!(state.portal.as_deref(), Some("http://10.0.0.2:8787/"));
     let json = serde_json::to_value(&state).unwrap();
-    assert_eq!(json["worker"], "running");
+    assert_eq!(json["worker"], serde_json::json!({ "phase": "running" }));
     assert_eq!(json["power"], "active");
     assert_eq!(json["lighting"], "processed");
-    assert_eq!(json["failure_kind"], Value::Null);
+    assert_eq!(json["failure"], Value::Null);
+    assert_eq!(json["fps"], 30);
     m.handle(Exited(Exit::Code(1)), t0);
-    let state = m.state();
+    let state = m.state(t0);
     assert!(!state.capturing);
-    assert_eq!(state.portal, None);
+    assert_eq!((state.portal, state.fps), (None, None));
 }
 
 fn reported(status: WorkerStatus) -> Input {
@@ -645,7 +689,7 @@ fn only_a_running_worker_is_capturing() {
             (1, reported(capturing.clone()), vec![]),
         ],
     );
-    assert!(m.state().capturing);
+    assert!(m.state(t0).capturing);
     script(
         &mut m,
         t0,
@@ -662,7 +706,7 @@ fn only_a_running_worker_is_capturing() {
             ),
         ],
     );
-    let state = m.state();
+    let state = m.state(t0);
     assert!(!state.capturing && !state.enabled);
 
     // A worker being stopped, or a late line from it, never shows capturing.
@@ -672,7 +716,7 @@ fn only_a_running_worker_is_capturing() {
         vec![(4, Enabled(true), vec![lighting(LightingTarget::Processed)])],
     );
     script(&mut m, t0, vec![(5, reported(capturing.clone()), vec![])]);
-    assert!(m.state().capturing);
+    assert!(m.state(t0).capturing);
     script(
         &mut m,
         t0,
@@ -685,7 +729,7 @@ fn only_a_running_worker_is_capturing() {
             (7, reported(capturing), vec![]),
         ],
     );
-    let state = m.state();
+    let state = m.state(t0);
     assert_eq!(state.worker, P::Stopping);
     assert!(!state.capturing);
 }
@@ -719,10 +763,10 @@ fn failures_carry_their_kind() {
             ),
         ],
     );
-    let state = m.state();
-    assert_eq!(state.failure_kind, Some(FailureKind::Receiver));
+    let state = m.state(t0);
+    assert_eq!(kind(&state), Some(FailureKind::Receiver));
     assert_eq!(
-        serde_json::to_value(&state).unwrap()["failure_kind"],
+        serde_json::to_value(&state).unwrap()["failure"]["kind"],
         "receiver"
     );
 
@@ -745,12 +789,12 @@ fn failures_carry_their_kind() {
             (3, Exited(Exit::Code(1)), vec![]),
         ],
     );
-    let state = m.state();
+    let state = m.state(t0);
     assert_eq!(
-        state.failure.as_deref(),
+        message(&state),
         Some("worker failed: hardware H.264 cannot start")
     );
-    assert_eq!(state.failure_kind, Some(FailureKind::Encoder));
+    assert_eq!(kind(&state), Some(FailureKind::Encoder));
 
     // The supervisor's own failures are `other`; a worker's keep their kind.
     // (A report without a kind is `other` already on the wire.)
@@ -766,7 +810,7 @@ fn failures_carry_their_kind() {
             (1_004, Input::SpawnFailed("no such file".into()), vec![]),
         ],
     );
-    assert_eq!(m.state().failure_kind, Some(FailureKind::Other));
+    assert_eq!(kind(&m.state(t0)), Some(FailureKind::Other));
     let mut full = full();
     full.handle(Pw(Active), t0);
     full.handle(
@@ -776,7 +820,7 @@ fn failures_carry_their_kind() {
         }),
         t0,
     );
-    assert_eq!(full.state().failure_kind, Some(FailureKind::Other));
+    assert_eq!(kind(&full.state(t0)), Some(FailureKind::Other));
 }
 
 /// A receiver that paused the stream (its lighting is off) is not a
@@ -814,10 +858,10 @@ fn a_paused_receiver_is_published_without_a_failure() {
             ),
         ],
     );
-    let state = m.state();
+    let state = m.state(t0);
     assert!(state.paused && !state.capturing);
-    assert_eq!((state.failure, state.failure_kind), (None, None));
-    assert_eq!(serde_json::to_value(m.state()).unwrap()["paused"], true);
+    assert_eq!(state.failure, None);
+    assert_eq!(serde_json::to_value(m.state(t0)).unwrap()["paused"], true);
     script(
         &mut m,
         t0,
@@ -827,7 +871,7 @@ fn a_paused_receiver_is_published_without_a_failure() {
             vec![video(Video::Unavailable), Effect::Terminate],
         )],
     );
-    assert!(!m.state().paused, "a worker being stopped is not paused");
+    assert!(!m.state(t0).paused, "a worker being stopped is not paused");
 }
 
 #[test]
@@ -856,7 +900,7 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             (1_002, reported(WorkerStatus::default()), vec![]),
         ],
     );
-    assert_eq!(m.state().failure.as_deref(), Some("worker failed"));
+    assert_eq!(message(&m.state(t0)), Some("worker failed"));
     script(
         &mut m,
         t0,
@@ -870,8 +914,8 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             vec![],
         )],
     );
-    assert_eq!(m.state().failure, None);
-    assert_eq!(m.state().failure_kind, None);
+    assert_eq!(m.state(t0).failure, None);
+    assert_eq!(kind(&m.state(t0)), None);
     // Backoff accounting is unchanged: still doubled until a healthy minute.
     script(
         &mut m,
@@ -906,13 +950,13 @@ fn a_worker_that_is_up_again_clears_the_old_failure_before_a_healthy_minute() {
             ),
         ],
     );
-    assert!(full.state().failure.is_some());
+    assert!(full.state(t0).failure.is_some());
     script(
         &mut full,
         t0,
         vec![(1_100, status(Some(LightingTarget::Off)), vec![])],
     );
-    assert_eq!(full.state().failure, None);
+    assert_eq!(full.state(t0).failure, None);
 }
 
 #[test]
@@ -941,7 +985,7 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
     }
     steps.push((now + 1, Exited(Exit::Code(1)), vec![]));
     script(&mut m, t0, steps);
-    assert_eq!(m.state().worker, P::Retrying);
+    assert!(matches!(m.state(t0).worker, P::Retrying { .. }));
 
     // The new settings start now, not after the 16 s backoff.
     script(

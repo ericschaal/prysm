@@ -16,7 +16,7 @@ use prysm_protocol::{
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
-use prysm_webos_link::{FailureKind, Video};
+use prysm_webos_link::{FailureKind, Video, WorkerFailure};
 use prysm_webos_service::preferences::Preferences;
 use prysm_webos_service::service::{
     GetStateRequest, SetEnabledRequest, UninstallRequest, state_reply,
@@ -54,9 +54,9 @@ fn luna() -> Value {
         video: Video::Available,
         worker: Phase::Running,
         capturing: true,
+        fps: Some(30),
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: None,
-        failure_kind: None,
         encoding: None,
         paused: false,
         log: vec!["prysm-webos: portal on 0.0.0.0:8787".into()],
@@ -68,13 +68,14 @@ fn luna() -> Value {
         lighting: None,
         power: Power::ScreenSaver,
         video: Video::Unknown,
-        worker: Phase::Running,
+        worker: Phase::Retrying { seconds: 4 },
         capturing: false,
+        fps: None,
         portal: None,
-        failure: Some(
-            "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable".into(),
-        ),
-        failure_kind: Some(FailureKind::Encoder),
+        failure: Some(WorkerFailure::new(
+            FailureKind::Encoder,
+            "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
+        )),
         encoding: None,
         paused: false,
         log: Vec::new(),

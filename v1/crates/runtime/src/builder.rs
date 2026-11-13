@@ -1,6 +1,6 @@
 use crate::surface::Surfaces;
 use crate::{Engine, EngineHandle, Surface};
-use prysm_ports::{OutputFactory, Registry, Result, SettingsStore, SourceFactory};
+use prysm_ports::{Error, OutputFactory, Registry, Result, SettingsStore, SourceFactory};
 use std::future::Future;
 use std::time::Duration;
 
@@ -51,6 +51,19 @@ impl Builder {
     pub fn stop_deadline(mut self, deadline: Duration) -> Self {
         self.stop_deadline = deadline;
         self
+    }
+
+    /// Load the settings and validate them against the registered adapters,
+    /// without starting the engine, a surface or any device.
+    ///
+    /// # Errors
+    /// The store failed to load or holds nothing, or the settings are invalid.
+    pub fn check(mut self) -> Result<()> {
+        let settings = self
+            .store
+            .load()?
+            .ok_or_else(|| Error::other("no settings saved yet"))?;
+        self.registry.validate(&settings)
     }
 
     /// Run until `shutdown` resolves, then stop the session, idle the output and

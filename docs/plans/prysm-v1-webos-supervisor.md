@@ -127,10 +127,10 @@ pub enum Event {
 }
 pub struct WorkerStatus {
     pub capturing: bool,                 // full: session Running and frames arriving; slim: frames in the last second
+    pub fps: Option<u16>,                // frames/s over about a second while measured (full: session; slim: sending); 0 = waiting
     pub target: Option<LightingTarget>,  // full: the engine target, portal changes included
-    pub portal: Option<String>,          // full: "http://192.168.1.5:8787/"
-    pub failure: Option<String>,         // cause chain; texts are cut to 1 KiB
-    pub failure_kind: Option<FailureKind>, // encoder | receiver | other, with `failure`
+    pub portal: Option<String>,          // full: "http://192.168.1.5:8787/", looked up again at every heartbeat
+    pub failure: Option<WorkerFailure>,  // { kind: encoder | receiver | other, message }; message cut to 1 KiB
     pub encoding: Option<SlimEncoding>,  // slim: the encoding sent while connected
     pub paused: bool,                    // slim: the receiver paused the stream; capture closed, not a failure
 }
@@ -151,7 +151,8 @@ final `Status { failure }`; else 0.
   1 s doubling to 30 s (reset after 60 s running); `SessionState::Faulted` →
   `Faulted` event and stop. The full host seeds `settings.json` with
   `capture: { kind: "webos" }` when missing, binds the portal listener itself
-  (so it can report the LAN URL) and uses a 6 s stop deadline.
+  (so it can report the LAN URL, looked up again at every heartbeat so a new
+  TV address is advertised within 5 s) and uses a 6 s stop deadline.
 - [`ForwarderLink`](../../v1/hosts/webos-slim/src/link.rs) (`Surface<()>`):
   video commands into the capture; `capturing` sampled every second from the
   `Counted` sink. The slim host connects the `RemoteSender` before taking the device.
@@ -191,7 +192,11 @@ lighting ≠ Off`; `setEnabled(true)` keeps a non-Off target, else Processed.
   a failure; slim: frames flowing). Requested restarts have no backoff and no
   failure; a slim receiver or capture change restarts at once (also from
   backoff, or after a failed worker is reaped) with the delay reset.
-- `capturing` is published only while the worker is Running.
+- `capturing` and `fps` are published only while the worker is Running.
+- `Retrying { seconds }` is the time left until the restart, rounded up to
+  whole seconds and computed when the state is sent (a reply or a publish;
+  time alone publishes nothing). The TV app counts down from when it received
+  it, so no clock is shared and LS2's delivery delay is the only error.
 - `Publish` whenever the published `State` changed; the driver also drops
   identical payloads.
 - Persisted: `Preferences`, and the intent (`resume.json`: full target or slim
@@ -242,11 +247,11 @@ pub struct State {
     pub lighting: Option<LightingTarget>, // full only
     pub power: Power,               // unknown | active | screen_saver | asleep
     pub video: Video,
-    pub worker: Phase,              // stopped | running | stopping | retrying
+    pub worker: Phase,              // { phase: stopped | running | stopping } or { phase: retrying, seconds }
     pub capturing: bool,
+    pub fps: Option<u16>,           // the worker's frames/s while running and measured
     pub portal: Option<String>,
-    pub failure: Option<String>,
-    pub failure_kind: Option<FailureKind>, // encoder | receiver | other, set with `failure`
+    pub failure: Option<WorkerFailure>, // { kind: encoder | receiver | other, message }
     pub encoding: Option<SlimEncoding>, // slim only
     pub paused: bool,               // slim only: the receiver paused the stream (lighting off)
     pub log: Vec<String>,           // last 20 worker stderr lines

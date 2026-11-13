@@ -6,9 +6,8 @@
 //! const PROGRAM: Program = Program { name: "prysm-headless", about: ABOUT, full_screen: false };
 //!
 //! fn main() -> ExitCode {
-//!     prysm_host::main(PROGRAM, |host| async move {
-//!         Prysm::builder(SettingsFile::new(host.settings()))
-//!             .output(Wled)
+//!     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
+//!         prysm
 //!             .surface(host.status())
 //!             .surface(host.start())
 //!             .surface(host.portal(ASSETS)?)
@@ -16,20 +15,27 @@
 //!             .await
 //!     })
 //! }
+//!
+//! fn adapters(prysm: Builder) -> Builder {
+//!     prysm.source(DeviceSource).output(Wled::default())
+//! }
 //! ```
+//!
+//! `--check-settings` is handled here: the settings file is validated against
+//! the host's adapters and the run closure is never called.
 mod args;
 
 pub use args::{Options, Parsed, PortalOptions, parse};
 
 use prysm_ports::{Error, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain};
 use prysm_runtime::logging::{self, Logs};
-use prysm_runtime::{EngineHandle, Shutdown, Surface};
+use prysm_runtime::{Builder, EngineHandle, Prysm, Shutdown, Surface};
+use prysm_settings_file::SettingsFile;
 use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::{self, IsTerminal};
 use std::net::{SocketAddr, TcpListener};
-use std::path::Path;
 use std::process::ExitCode;
 
 /// What a host executable is.
@@ -43,12 +49,15 @@ pub struct Program {
     pub full_screen: bool,
 }
 
-/// Parse arguments, install logging, run `host` on a current-thread runtime
-/// and map its result to an exit code: 0 after a clean stop, 1 if it failed,
-/// 2 for bad arguments.
-pub fn main<F, Fut>(program: Program, host: F) -> ExitCode
+/// Parse arguments, install logging, register `adapters` on a builder over
+/// the settings file, run `host` with it on a current-thread runtime and map
+/// its result to an exit code: 0 after a clean stop, 1 if it failed, 2 for
+/// bad arguments. Under `--check-settings` only validates the settings
+/// ([`Builder::check`]): 0 if valid, else 1; `host` is not called.
+pub fn main<A, F, Fut>(program: Program, adapters: A, host: F) -> ExitCode
 where
-    F: FnOnce(Host) -> Fut,
+    A: FnOnce(Builder) -> Builder,
+    F: FnOnce(Host, Builder) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
     let Program {
@@ -82,6 +91,20 @@ where
     if let Some(logs) = logs {
         logging::init(name, logs);
     }
+    eprintln!("{name}: settings {}", options.settings.display());
+    let prysm = adapters(Prysm::builder(SettingsFile::new(&options.settings)));
+    if options.check_settings {
+        return match prysm.check() {
+            Ok(()) => {
+                eprintln!("{name}: settings OK");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{name}: {}", chain(&error));
+                ExitCode::FAILURE
+            }
+        };
+    }
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -92,12 +115,14 @@ where
             return ExitCode::FAILURE;
         }
     };
-    eprintln!("{name}: settings {}", options.settings.display());
-    match runtime.block_on(host(Host {
-        name,
-        options,
-        quiet,
-    })) {
+    match runtime.block_on(host(
+        Host {
+            name,
+            options,
+            quiet,
+        },
+        prysm,
+    )) {
         Ok(()) => {
             eprintln!("{name}: stopped");
             ExitCode::SUCCESS
@@ -119,12 +144,6 @@ pub struct Host {
 }
 
 impl Host {
-    /// The JSON settings file.
-    #[must_use]
-    pub fn settings(&self) -> &Path {
-        &self.options.settings
-    }
-
     /// Resolves on SIGINT or SIGTERM (Ctrl-C elsewhere). Registered now, so a
     /// signal that arrives while the host starts is not lost.
     ///

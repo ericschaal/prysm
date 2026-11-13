@@ -23,8 +23,9 @@ ends are blocking adapters on `std::net`:
   frame (older untaken frames are replaced, never queued) or `Pull::Idle` on
   timeout, and fails once with the sender's reason when the sender refuses
   the request (see below). `close` pauses the sender, stops the thread and
-  releases the socket within about `POLL_INTERVAL` (50 ms).
-  `RemoteSource::set_wanted(false)` pauses the sender without closing.
+  releases the socket within about `POLL_INTERVAL` (50 ms). Closing is the
+  only pause: the next source (lighting on again) gets a new connection,
+  which starts unpaused.
 - `RemoteSender::connect(peer)` is a `FrameSink`. It learns the request in
   the handshake (`request()`), and `send` encodes each frame with exactly the
   requested encoder from [`prysm-h264`](../h264/src/lib.rs), opened at the
@@ -44,17 +45,17 @@ every second and reports the wait, because the receiver listens only while
 its host is lighting. It captures at the requested size, rate and menus,
 reopening the TV capture when they change, and closes the capture while the
 receiver has paused the stream (it keeps reading control messages through
-`FrameSink::tick`, so a resume reaches it); a receiver that pauses and then
-closes, as on lighting stop, leaves the capture closed until a receiver
+`FrameSink::tick`, so a resume would reach it); a receiver that pauses and
+then closes, as on lighting stop, leaves the capture closed until a receiver
 connects again. The receiver may be given by host name: the worker resolves
 it at every connection attempt. When the requested encoder fails
-it reports `failure_kind: encoder` and refuses every later connection with the
+it reports a failure of kind `encoder` and refuses every later connection with the
 same request (the receiver's source fails with the reason, so lighting stops
 with it in the portal) until the receiver asks for something else.
 
 To watch a TV's stream on a desktop without lighting anything (one line per
-second; `--pause-at N` pauses the sender at second N and resumes it three
-seconds later; `--width`, `--height`, `--fps` and `--encoding` set the
+second; `--pause-at N` closes the source at second N, which pauses the
+sender, and listens again three seconds later; `--width`, `--height`, `--fps` and `--encoding` set the
 request):
 
 ```sh
@@ -157,9 +158,9 @@ reply; anything else fails the sender's connection):
 | `2` | resume | sends again; the next H.264 picture starts a new session |
 | `3` | keyframe | the next H.264 picture starts a new session |
 
-The receiver sends pause when its source is closed (lighting stops) and when
-`set_wanted(false)` is called, and resume after `set_wanted(true)`. The
-sender reads pending messages without blocking at the start of each `send`
+The receiver sends pause when its source is closed (lighting stops); it
+never sends resume (the next source's connection starts unpaused), but the
+sender honours it. The sender reads pending messages without blocking at the start of each `send`
 and in `tick` (a sender with nothing to send, such as the paused slim TV); a
 receiver that has closed shows as `WireError::Closed`.
 
@@ -175,7 +176,7 @@ receiver that has closed shows as `WireError::Closed`.
   sender disconnecting is not an error.
 - **Timeouts.** Sender: 3 s connect, 3 s for the reply, 2 s per write (a receiver that stops
   reading fails the send). Receiver: reads wake every 50 ms to check for
-  `close`, newer connections and pause/resume; a quiet connection is kept open.
+  `close` and newer connections; a quiet connection is kept open.
 - **Bandwidth.** Raw: the TV sends its capture tap's native limited BT.709
   NV12 without converting it; 320x180 NV12 at 30 fps is 86,416 bytes per frame
   (header included), about 20.7 Mbit/s; 640x360 about 83 Mbit/s. H.264 targets

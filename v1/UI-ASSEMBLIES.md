@@ -39,9 +39,10 @@ On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
   lights (lighting modes and calibration). Full: the TV's own portal over loopback (`http://127.0.0.1:<port of
   State.portal>`). Slim: `preferences.instance`, the computer's portal, which
   must allow the app's origin (`--allow-origin null`; a `file://` app sends
-  `Origin: null`); the UI says so when that portal answers but refuses. The
-  slim UI fills `preferences.receiver` from that portal's `capture.listen`
-  port. `demo.html` in each host folder runs the same UI on in-memory fakes
+  `Origin: null`); the UI says so when that portal answers but refuses, and
+  warns when a saved address has no portal that answers. The slim UI fills
+  `preferences.receiver` from that portal's `capture.listen` port (an IP or a
+  host name). `demo.html` in each host folder runs the same UI on in-memory fakes
   (`npm run dev:webos`, then `/demo.html`); production builds load only
   `index.html`.
 

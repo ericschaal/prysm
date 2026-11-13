@@ -47,6 +47,17 @@ pub enum FailureKindSchema {
     Other,
 }
 
+// Mirrors `prysm_webos_link::WorkerFailure`.
+/// A failure: what it is and its message with the causes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = WorkerFailure)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerFailureSchema {
+    pub kind: FailureKindSchema,
+    /// What failed, with its cause chain (cut to 1 KiB).
+    pub message: String,
+}
+
 // Mirrors `prysm_ports::LightingTarget`.
 /// What the user wants the LEDs to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -127,6 +138,7 @@ pub struct ErrorReply {
     Preferences,
     SlimEncodingSchema,
     FailureKindSchema,
+    WorkerFailureSchema,
     VideoSchema,
     LightingTargetSchema,
     GetStateRequest,
@@ -150,7 +162,7 @@ pub fn document() -> OpenApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video};
+    use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video, WorkerFailure};
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use std::fmt;
@@ -186,6 +198,7 @@ mod tests {
             FailureKind::Other,
         ] {
             same_shape::<FailureKind, FailureKindSchema>(&kind);
+            same_shape::<WorkerFailure, WorkerFailureSchema>(&WorkerFailure::new(kind, "x"));
         }
         for encoding in [
             SlimEncoding::H264Hardware,

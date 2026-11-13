@@ -70,12 +70,16 @@ pub enum Event {
 
 /// What a worker is doing.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(into = "StatusLine", try_from = "StatusLine")]
+#[serde(deny_unknown_fields)]
 pub struct WorkerStatus {
     /// Frames are flowing. Full: a lighting session is running and frames
     /// arrived in the last second (false while it waits for video). Slim:
     /// frames were sent in the last second.
     pub capturing: bool,
+    /// Frames per second over about the last second, rounded, while the
+    /// worker measures them (full: a lighting session runs; slim: connected
+    /// and sending); `Some(0)` while it waits for frames.
+    pub fps: Option<u16>,
     /// Full only: the engine's target, including changes made in the portal.
     pub target: Option<LightingTarget>,
     /// Full only: the portal's LAN address, such as `http://192.168.1.5:8787/`.
@@ -92,7 +96,8 @@ pub struct WorkerStatus {
 }
 
 /// A failure a worker or the supervisor reports.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkerFailure {
     pub kind: FailureKind,
     /// What failed, with its cause chain.
@@ -112,63 +117,6 @@ impl WorkerFailure {
     #[must_use]
     pub fn other(message: impl Into<String>) -> Self {
         Self::new(FailureKind::Other, message)
-    }
-}
-
-/// The wire form of [`WorkerStatus`]: the failure as two fields, `failure`
-/// (the message) and `failure_kind`, set together.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StatusLine {
-    capturing: bool,
-    target: Option<LightingTarget>,
-    portal: Option<String>,
-    failure: Option<String>,
-    #[serde(default)]
-    failure_kind: Option<FailureKind>,
-    #[serde(default)]
-    encoding: Option<SlimEncoding>,
-    #[serde(default)]
-    paused: bool,
-}
-
-impl From<WorkerStatus> for StatusLine {
-    fn from(status: WorkerStatus) -> Self {
-        let (failure, failure_kind) = status.failure.map_or((None, None), |failure| {
-            (Some(failure.message), Some(failure.kind))
-        });
-        Self {
-            capturing: status.capturing,
-            target: status.target,
-            portal: status.portal,
-            failure,
-            failure_kind,
-            encoding: status.encoding,
-            paused: status.paused,
-        }
-    }
-}
-
-impl TryFrom<StatusLine> for WorkerStatus {
-    type Error = &'static str;
-
-    fn try_from(line: StatusLine) -> Result<Self, Self::Error> {
-        let failure = match (line.failure, line.failure_kind) {
-            (Some(message), kind) => Some(WorkerFailure::new(
-                kind.unwrap_or(FailureKind::Other),
-                message,
-            )),
-            (None, None) => None,
-            (None, Some(_)) => return Err("`failure_kind` without `failure`"),
-        };
-        Ok(Self {
-            capturing: line.capturing,
-            target: line.target,
-            portal: line.portal,
-            failure,
-            encoding: line.encoding,
-            paused: line.paused,
-        })
     }
 }
 

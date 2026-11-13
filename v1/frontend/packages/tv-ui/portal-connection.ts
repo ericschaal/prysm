@@ -9,10 +9,11 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import type {
-  ApplicationClient,
-  ApplicationSnapshot,
-  LightingTarget,
+import {
+  failureOf,
+  type ApplicationClient,
+  type ApplicationSnapshot,
+  type LightingTarget,
 } from '@prysm/application-client';
 import {
   createApplicationRuntime,
@@ -47,6 +48,40 @@ export function portalSupported(): boolean {
 }
 
 export type Reach = 'unknown' | 'refused' | 'unreachable';
+
+/** How long {@link checkPortal} waits for the portal's state. */
+export const CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * Whether a Prysm portal answers at `baseUrl`, once (the slim package checks
+ * an address when it is saved): `ok`, `refused` (it answers but does not
+ * allow this app's origin) or `unreachable`. A browser without what the HTTP
+ * client needs can only tell `unreachable` from `ok`, through the probe.
+ */
+export async function checkPortal(
+  baseUrl: string,
+  options: PortalOptions,
+): Promise<'ok' | 'refused' | 'unreachable'> {
+  const reachable = async () =>
+    options.probe ? options.probe(baseUrl).catch(() => false) : false;
+  if (!(options.supported ?? portalSupported()))
+    return !options.probe || (await reachable()) ? 'ok' : 'unreachable';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+  try {
+    const observation = await options
+      .client(baseUrl)
+      .observe(controller.signal);
+    observation.close();
+    return 'ok';
+  } catch (reason) {
+    if (failureOf(reason).kind === 'forbidden') return 'refused';
+    // A CORS refusal looks like a network error; the probe ignores CORS.
+    return (await reachable()) ? 'refused' : 'unreachable';
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** The state stream of the portal at `baseUrl` while `active`. */
 export function usePortal(

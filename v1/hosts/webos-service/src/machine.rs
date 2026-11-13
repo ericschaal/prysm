@@ -187,7 +187,7 @@ impl Machine {
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
-        let before = self.state();
+        let before = self.state(now);
         let mut effects = Vec::new();
         let video_before = self.effective_video();
         match input {
@@ -227,15 +227,15 @@ impl Machine {
             effects.push(Effect::Send(Command::Video { video: video_after }));
         }
         self.reconcile(now, &mut effects);
-        if self.state() != before {
+        if self.state(now) != before {
             effects.push(Effect::Publish);
         }
         effects
     }
 
-    /// The state the TV app sees.
+    /// The state the TV app sees at `now`.
     #[must_use]
-    pub fn state(&self) -> State {
+    pub fn state(&self, now: Instant) -> State {
         let status = self.status.clone().unwrap_or_default();
         // The worker's own report wins over why the last one ended.
         let failure = status.failure.or_else(|| self.failure.clone());
@@ -254,14 +254,16 @@ impl Machine {
                 Phase::Idle => PublishedPhase::Stopped,
                 Phase::Running { .. } => PublishedPhase::Running,
                 Phase::Stopping { .. } => PublishedPhase::Stopping,
-                Phase::Retrying { .. } => PublishedPhase::Retrying,
+                Phase::Retrying { at } => PublishedPhase::Retrying {
+                    seconds: whole_seconds(at.saturating_duration_since(now)),
+                },
             },
             // Only a running worker's report counts: one being stopped (or
             // stuck exiting) is not capturing for the app.
             capturing: self.running() && status.capturing,
+            fps: status.fps.filter(|_| self.running()),
             portal: status.portal,
-            failure_kind: failure.as_ref().map(|failure| failure.kind),
-            failure: failure.map(|failure| failure.message),
+            failure,
             encoding: status.encoding,
             paused: self.running() && status.paused,
             log: self.log.iter().cloned().collect(),
@@ -509,6 +511,11 @@ impl Machine {
             self.echo_until = None;
         }
     }
+}
+
+/// `duration` in whole seconds, rounded up.
+fn whole_seconds(duration: Duration) -> u32 {
+    u32::try_from(duration.as_millis().div_ceil(1000)).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]

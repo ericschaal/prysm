@@ -14,12 +14,12 @@ prysm-capture-device.workspace = true
 prysm-capture-file.workspace = true
 prysm-capture-remote.workspace = true
 prysm-output-wled.workspace = true
-prysm-settings-file.workspace = true
 prysm-surface-tui.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 
 [dev-dependencies]
 prysm-ports.workspace = true
+prysm-settings-file.workspace = true
 tempfile.workspace = true
 
 [lints]

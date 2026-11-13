@@ -1838,6 +1838,7 @@ dependencies = [
  "futures",
  "prysm-ports",
  "prysm-runtime",
+ "prysm-settings-file",
  "prysm-web-portal",
  "tokio",
 ]

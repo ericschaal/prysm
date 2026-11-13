@@ -7,7 +7,6 @@ use prysm_ports::{
     Error, FrameSource, LatestSlot, Pull, Result, Section, SourceFactory, ValidationError, chain,
 };
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -158,7 +157,6 @@ pub struct RemoteSource {
     frames: Arc<LatestSlot<Frame>>,
     refused: Arc<Mutex<Option<Refusal>>>,
     stop: Arc<AtomicBool>,
-    wanted: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -180,13 +178,10 @@ impl RemoteSource {
         let frames = Arc::new(LatestSlot::new());
         let refused = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
-        let wanted = Arc::new(AtomicBool::new(true));
         let receiver = Receiver {
             wake: Wake {
                 listener,
                 stop: stop.clone(),
-                wanted: wanted.clone(),
-                told: Cell::new(true),
             },
             request,
             frames: frames.clone(),
@@ -205,17 +200,8 @@ impl RemoteSource {
             frames,
             refused,
             stop,
-            wanted,
             thread: Some(thread),
         })
-    }
-
-    /// Ask the sender to pause (`false`: it stops encoding and sending) or
-    /// resume (`true`, the default). Takes effect within about
-    /// [`POLL_INTERVAL`]; a new sender is told at once. `close` pauses the
-    /// sender before ending the connection.
-    pub fn set_wanted(&self, wanted: bool) {
-        self.wanted.store(wanted, Ordering::Release);
     }
 
     /// What every sender is asked for.
@@ -296,30 +282,11 @@ enum Next {
 struct Wake {
     listener: TcpListener,
     stop: Arc<AtomicBool>,
-    wanted: Arc<AtomicBool>,
-    /// What the current sender was last told (a new one starts unpaused).
-    told: Cell<bool>,
 }
 
 impl Wake {
     fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
-    }
-
-    /// Tell the sender about a change of [`RemoteSource::set_wanted`].
-    fn signal(&self, stream: &TcpStream) {
-        let wanted = self.wanted.load(Ordering::Acquire);
-        if wanted != self.told.get() {
-            send_control(
-                stream,
-                if wanted {
-                    Control::Resume
-                } else {
-                    Control::Pause
-                },
-            );
-            self.told.set(wanted);
-        }
     }
 
     /// The newest pending connection, if any.
@@ -372,7 +339,6 @@ impl Wake {
                     if let Some(newer) = self.accept() {
                         return Err(Next::Switch(newer));
                     }
-                    self.signal(stream);
                 }
                 Err(_) => return Err(Next::Wait),
             }
@@ -439,8 +405,6 @@ impl Receiver {
         match outcome {
             Ok(()) => {
                 self.rejected = None;
-                self.wake.told.set(true);
-                self.wake.signal(stream);
                 Ok(())
             }
             Err(error) => {
@@ -468,7 +432,6 @@ impl Receiver {
             if let Some(newer) = self.wake.accept() {
                 break Next::Switch(newer);
             }
-            self.wake.signal(stream);
             let mut header = [0; HEADER_LEN];
             if let Err(next) = self.wake.read_full(stream, &mut header) {
                 break next;

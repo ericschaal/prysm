@@ -85,6 +85,8 @@ their `demo.html` pages run the same UI on an
   [null output](packages/output-null-ui/index.tsx).
 - [TV UI](packages/tv-ui/app.tsx) (both packages): status card and primary
   action from the supervisor's state ([rules](packages/tv-ui/model.ts)),
+  with the capture rate and a countdown to a pending restart (counted from
+  when the state arrived),
   settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));
   capture, lights and the slim stream encoding are set up only in the web

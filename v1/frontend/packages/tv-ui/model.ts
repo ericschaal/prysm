@@ -1,5 +1,10 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
-import type { Preferences, SlimEncoding, State } from '@prysm/webos-platform';
+import type {
+  Phase,
+  Preferences,
+  SlimEncoding,
+  State,
+} from '@prysm/webos-platform';
 import type { PatternPlayer } from './patterns';
 import type { PortalView } from './portal-connection';
 
@@ -152,9 +157,26 @@ export interface PortalFacts {
 }
 
 /**
+ * Whole seconds until the supervisor restarts the worker, `elapsedMs` after
+ * `phase` arrived (it counts from then: no clock is shared), or `null` when
+ * no restart is pending. 0 once it is due.
+ */
+export function retrySeconds(phase: Phase, elapsedMs: number): number | null {
+  if (phase.phase !== 'retrying') return null;
+  return Math.max(0, Math.ceil(phase.seconds - elapsedMs / 1000));
+}
+
+/** The capture rate the TV reports, for the status card; `null` when none. */
+export function captureRate(state: State | null): string | null {
+  if (!state || state.fps === null || state.fps === undefined) return null;
+  return state.fps > 0 ? `${state.fps} frames/s` : 'waiting for frames';
+}
+
+/**
  * The status card and primary button from the supervisor's state. `online`
  * is `null` until the first reply; `draft` is the preferences being edited;
- * `portal` is `null` until the portal's state is known.
+ * `portal` is `null` until the portal's state is known; `elapsedMs` is the
+ * time since `state` arrived, for the retry countdown.
  */
 export function tvStatus(
   online: boolean | null,
@@ -162,6 +184,7 @@ export function tvStatus(
   draft: SavedPreferences,
   dirty: boolean,
   portal: PortalFacts | null = null,
+  elapsedMs = 0,
 ): TvStatus {
   if (online === null || (online && !state))
     return {
@@ -184,24 +207,27 @@ export function tvStatus(
     };
   const full = state.flavor === 'full';
   const { enabled } = state;
-  const failure = state.failure ?? null;
+  const failure = state.failure?.message ?? null;
+  const kind = state.failure?.kind ?? null;
+  const phase = state.worker.phase;
   // Slim: the receiver is unavailable; the worker keeps trying, not a failure.
-  const waiting = !!failure && state.failure_kind === 'receiver';
+  const waiting = kind === 'receiver';
   let title: string;
   let description: string;
   let attention = false;
   // Slim: the TV cannot produce the stream Prysm asked for. The encoding is
   // Prysm's setting, so the fix is in its portal, not here.
   const encodingHint =
-    !full && !!failure && state.failure_kind === 'encoder'
+    !full && kind === 'encoder'
       ? ' Choose another stream encoding under Capture in Prysm’s web portal.'
       : '';
-  if (state.worker === 'stopping') {
+  if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
     description = 'Finishing the current capture session.';
-  } else if (state.worker === 'retrying') {
+  } else if (phase === 'retrying') {
+    const left = retrySeconds(state.worker, elapsedMs);
     title = 'Capture needs attention';
-    description = `${failure ? `${failureText(failure)}. ` : ''}Prysm tries again automatically.${encodingHint}`;
+    description = `${failure ? `${failureText(failure)}. ` : ''}${left ? `Retrying in ${left} s.` : 'Retrying now…'}${encodingHint}`;
     attention = true;
   } else if (enabled && state.power !== 'active') {
     title = 'Waiting for TV';
@@ -223,7 +249,7 @@ export function tvStatus(
       title = 'Screen sync is on';
       description =
         'This TV is processing the picture and sending colours to your lights.';
-    } else if (state.portal && state.worker === 'running') {
+    } else if (state.portal && phase === 'running') {
       // Lighting is on but no frames arrive: the lights are released to WLED.
       title = 'Waiting for video';
       description = `Screen sync starts when a picture arrives.${FULL_RELEASED}`;
@@ -260,14 +286,14 @@ export function tvStatus(
   if (
     noLights &&
     (!failure || waiting) &&
-    state.worker !== 'stopping' &&
-    state.worker !== 'retrying'
+    phase !== 'stopping' &&
+    phase !== 'retrying'
   ) {
     title = 'Set up your lights';
     description = `Open ${portal.address ?? 'Prysm’s web portal'} on your phone or computer to set up your lights.`;
     attention = true;
   }
-  if (failure && !waiting && state.worker !== 'retrying') {
+  if (failure && !waiting && phase !== 'retrying') {
     title = 'Capture needs attention';
     description = `${failureText(failure)}.${encodingHint} Open Service options for diagnostics.`;
     attention = true;
@@ -334,8 +360,9 @@ export function diagnostics(state: State | null): string {
     `TV power: ${powerNames[state.power]}`,
     `Video: ${state.video}`,
     `Enabled: ${state.enabled ? 'yes' : 'no'}`,
-    `Background process: ${phaseNames[state.worker]}`,
+    `Background process: ${phaseNames[state.worker.phase]}`,
     `Capturing: ${capturingText(state)}`,
+    `Capture rate: ${captureRate(state) ?? 'not measured'}`,
   ];
   if (state.flavor === 'slim')
     lines.push(
@@ -343,7 +370,7 @@ export function diagnostics(state: State | null): string {
       `Stream encoding: ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
     );
   else lines.push(`Web portal: ${state.portal ?? 'not open'}`);
-  lines.push('', state.failure ?? 'No errors reported.');
+  lines.push('', state.failure?.message ?? 'No errors reported.');
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);
   return lines.join('\n');
 }

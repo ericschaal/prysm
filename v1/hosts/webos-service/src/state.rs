@@ -1,6 +1,6 @@
 //! What the TV app sees: the published state and its parts.
 use crate::preferences::Preferences;
-use prysm_webos_link::{FailureKind, LightingTarget, SlimEncoding, Video};
+use prysm_webos_link::{LightingTarget, SlimEncoding, Video, WorkerFailure};
 use serde::Serialize;
 
 /// Which package this supervisor belongs to.
@@ -36,15 +36,21 @@ impl Power {
     }
 }
 
+/// The worker process, as `{ "phase": … }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "phase", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub enum Phase {
     Stopped,
     Running,
     Stopping,
     /// Waiting before the next start after a failure.
-    Retrying,
+    Retrying {
+        /// Whole seconds until the next start, rounded up, when this state
+        /// was sent (at least 1). The app counts down from when it received
+        /// it; no clock is shared.
+        seconds: u32,
+    },
 }
 
 /// The `getState` reply and subscription payload (plus LS2's `returnValue`).
@@ -71,16 +77,20 @@ pub struct State {
     /// while it waits for video). Slim: frames were sent in the last second.
     /// Always false unless `worker` is `running`.
     pub capturing: bool,
+    /// Frames per second over about the last second, rounded, while the
+    /// worker measures them (full: lighting runs; slim: connected and
+    /// sending); 0 while it waits for frames. Always null unless `worker` is
+    /// `running`.
+    pub fps: Option<u16>,
     /// Full only: the portal's LAN address once the worker reported it.
     pub portal: Option<String>,
-    /// The current failure (or, slim, the receiver wait) with its causes.
-    pub failure: Option<String>,
-    /// What `failure` is; set exactly when `failure` is.
+    /// The current failure (or, slim, the receiver wait): what it is and
+    /// its message with the causes.
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<crate::schema::FailureKindSchema>)
+        schema(value_type = Option<crate::schema::WorkerFailureSchema>)
     )]
-    pub failure_kind: Option<FailureKind>,
+    pub failure: Option<WorkerFailure>,
     /// Slim only: the encoding of the frames being sent while connected to
     /// the receiver; always the one the receiver requested (set in the
     /// desktop portal's remote capture settings).

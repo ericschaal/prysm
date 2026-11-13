@@ -258,7 +258,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let request: GetStateRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 Ok(Reply {
-                    payload: self.state_json(Some(request.subscribe)),
+                    payload: self.state_json(Some(request.subscribe), now),
                     subscribe: request.subscribe,
                 })
             }
@@ -270,13 +270,13 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     .save(&preferences)
                     .map_err(|error| chain(&error))?;
                 self.input(bus, Input::Preferences(preferences), now);
-                Ok(self.state_reply())
+                Ok(self.state_reply(now))
             }
             Method::SetEnabled => {
                 let request: SetEnabledRequest =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 self.input(bus, Input::Enabled(request.enabled), now);
-                Ok(self.state_reply())
+                Ok(self.state_reply(now))
             }
             Method::Uninstall => {
                 let UninstallRequest {} = serde_json::from_value(payload).map_err(parse_error)?;
@@ -429,7 +429,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                     }
                 }
                 Effect::Publish => {
-                    let payload = self.state_json(Some(true));
+                    let payload = self.state_json(Some(true), now);
                     if self.published.as_ref() != Some(&payload) {
                         bus.publish(&payload);
                         self.published = Some(payload);
@@ -442,15 +442,15 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         }
     }
 
-    fn state_reply(&self) -> Reply {
+    fn state_reply(&self, now: Instant) -> Reply {
         Reply {
-            payload: self.state_json(None),
+            payload: self.state_json(None, now),
             subscribe: false,
         }
     }
 
-    fn state_json(&self, subscribed: Option<bool>) -> String {
-        state_reply(&self.machine.state(), subscribed).to_string()
+    fn state_json(&self, subscribed: Option<bool>, now: Instant) -> String {
+        state_reply(&self.machine.state(now), subscribed).to_string()
     }
 }
 

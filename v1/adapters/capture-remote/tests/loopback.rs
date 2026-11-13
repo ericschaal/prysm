@@ -413,29 +413,16 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
 }
 
 /// A sender with nothing to send (the slim TV stops capturing while paused)
-/// still learns of pause and resume through `idle`, and a receiver that
-/// closes (lighting stops) pauses it before the connection ends.
+/// still reads control messages through `tick`: a receiver that closes
+/// (lighting stops) pauses it before the connection ends.
 #[test]
-fn idle_applies_pause_and_resume_and_close_pauses_first() {
+fn idle_reads_the_pause_of_a_closing_receiver() {
     let mut source = bind();
     let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
     sender.send(&frame(1, 4, 4)).unwrap();
     receive(&mut source);
-    let until = |sender: &mut RemoteSender, paused: bool| {
-        let deadline = Instant::now() + BOUND;
-        loop {
-            sender.tick().unwrap();
-            if sender.paused() == paused {
-                return;
-            }
-            assert!(Instant::now() < deadline, "never paused: {paused}");
-            thread::sleep(Duration::from_millis(10));
-        }
-    };
-    source.set_wanted(false);
-    until(&mut sender, true);
-    source.set_wanted(true);
-    until(&mut sender, false);
+    sender.tick().unwrap();
+    assert!(!sender.paused());
 
     Box::new(source).close().unwrap();
     let deadline = Instant::now() + BOUND;

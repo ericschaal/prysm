@@ -566,8 +566,8 @@
       "enabled": true,
       "encoding": null,
       "failure": null,
-      "failure_kind": null,
       "flavor": "full",
+      "fps": 30,
       "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
@@ -581,15 +581,20 @@
         "receiver": null
       },
       "video": "available",
-      "worker": "running"
+      "worker": {
+        "phase": "running"
+      }
     },
     {
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
-      "failure_kind": "encoder",
+      "failure": {
+        "kind": "encoder",
+        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
+      },
       "flavor": "slim",
+      "fps": null,
       "lighting": null,
       "log": [],
       "paused": false,
@@ -601,7 +606,10 @@
         "receiver": "prysm.local:7380"
       },
       "video": "unknown",
-      "worker": "running"
+      "worker": {
+        "phase": "retrying",
+        "seconds": 4
+      }
     }
   ],
   "luna/StateReply": [
@@ -610,8 +618,8 @@
       "enabled": true,
       "encoding": null,
       "failure": null,
-      "failure_kind": null,
       "flavor": "full",
+      "fps": 30,
       "lighting": "processed",
       "log": [
         "prysm-webos: portal on 0.0.0.0:8787"
@@ -627,15 +635,20 @@
       "returnValue": true,
       "subscribed": true,
       "video": "available",
-      "worker": "running"
+      "worker": {
+        "phase": "running"
+      }
     },
     {
       "capturing": false,
       "enabled": true,
       "encoding": null,
-      "failure": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable",
-      "failure_kind": "encoder",
+      "failure": {
+        "kind": "encoder",
+        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
+      },
       "flavor": "slim",
+      "fps": null,
       "lighting": null,
       "log": [],
       "paused": false,
@@ -648,7 +661,10 @@
       },
       "returnValue": true,
       "video": "unknown",
-      "worker": "running"
+      "worker": {
+        "phase": "retrying",
+        "seconds": 4
+      }
     }
   ],
   "luna/UninstallRequest": [

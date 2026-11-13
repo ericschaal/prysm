@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "@prysm/application-client": "1.0.0-alpha.0",
-    "@prysm/application-react": "1.0.0-alpha.0",
     "@prysm/application-state": "1.0.0-alpha.0",
     "@prysm/contracts": "1.0.0-alpha.0",
     "@prysm/webos-platform": "1.0.0-alpha.0"

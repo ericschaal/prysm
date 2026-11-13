@@ -209,3 +209,49 @@ pub fn check_arguments(binary: &str, name: &str) {
         assert!(!Path::new(settings).exists());
     }
 }
+
+/// `--check-settings` validates without opening a device or the portal:
+/// exit 0 and "settings OK", or exit 1 with the field and cause chain.
+pub fn check_settings(binary: &str, name: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let check = |settings: &Path| {
+        let output = Command::new(binary)
+            .args(["--check-settings", settings.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(!stderr.contains("portal"), "{stderr}");
+        (output.status.code(), stderr)
+    };
+
+    let (code, stderr) = check(&null_settings(dir.path()));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        stderr.ends_with(&format!("{name}: settings OK\n")),
+        "{stderr}"
+    );
+
+    for (settings, message) in [
+        (
+            r#"{ "output": { "kind": "bogus" } }"#,
+            "invalid output.kind: unknown kind `bogus`",
+        ),
+        (
+            r#"{ "output": { "kind": "null", "leds": 1 } }"#,
+            "cannot decode `null` settings: invalid type: integer `1`",
+        ),
+    ] {
+        let path = dir.path().join("invalid.json");
+        std::fs::write(&path, settings).unwrap();
+        let (code, stderr) = check(&path);
+        assert_eq!(code, Some(1), "{stderr}");
+        assert!(stderr.contains(&format!("{name}: {message}")), "{stderr}");
+    }
+
+    let missing = dir.path().join("missing.json");
+    let (code, stderr) = check(&missing);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(stderr.contains("no settings saved yet"), "{stderr}");
+    assert!(!missing.exists());
+}

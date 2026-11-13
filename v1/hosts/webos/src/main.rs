@@ -41,17 +41,22 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
         .local_addr()
         .map_err(|error| Error::adapter("cannot read the portal address", error))?;
     // The URL a phone on the LAN opens; none rather than a loopback address.
-    let portal = lan_url(address);
+    // Looked up again at every heartbeat: the TV's address can change.
     eprintln!(
         "prysm-webos: portal {}",
-        portal.as_deref().unwrap_or("(no LAN address)")
+        lan_url(address).as_deref().unwrap_or("(no LAN address)")
     );
     let video = VideoSignal::default();
     let stopped = link.stop.stopped();
     Prysm::builder(SettingsFile::new(&args.settings))
         .source(WebosCapture::new(video.clone()))
         .output(Wled::default())
-        .surface(EngineLink::new(link, video, args.lighting, portal))
+        .surface(EngineLink::new(
+            link,
+            video,
+            args.lighting,
+            Box::new(move || lan_url(address)),
+        ))
         // The TV app is a `file://` page (`Origin: null`); it needs CORS.
         .surface(WebPortal::from_listener(
             listener,

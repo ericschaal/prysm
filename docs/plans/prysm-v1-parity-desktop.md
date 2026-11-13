@@ -32,7 +32,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Listen address | `--listen`/`PRYSM_LISTEN`, default `0.0.0.0:8787` | present | Same default; CLI only |
 | Host allowlist | `--allowed-host`/`PRYSM_ALLOWED_HOSTS`, default `localhost:8787,127.0.0.1:8787` (`apps/prysm/runtime/src/config.rs`) | changed | Replaced by `--allow-origin` (Origin/CORS policy); `Host` not checked |
 | Metrics listener | `--metrics-listen`/`PRYSM_METRICS_LISTEN` | changed | `--metrics` serves `/metrics` on the portal, off by default; no second listener (D10) |
-| Validate-only command | `prysm check` | missing | D15 |
+| Validate-only command | `prysm check` | present | `--check-settings` on both hosts: validates the file against the host's adapters, prints `settings OK` or the error with its field and causes, exits 0/1 without opening a device or the portal ([args.rs](../../v1/hosts/common/src/args.rs)); a missing file is an error (D15) |
 | Disable portal, autostart | — | added | `--no-portal`, `--start` are new in v1 |
 | Logging | `tracing` to stderr, `RUST_LOG` filter | missing | v1 installs no subscriber: `tracing` events from `prysm-capture`/`prysm-processor` are dropped (D11). Hosts print state changes with `eprintln!` |
 | Exit codes | 0 / 1 (anyhow) | present | 0 clean, 1 failure, 2 bad arguments |
@@ -62,7 +62,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Codecs | Raw, LZ4, H.264 (openh264 decode) (`prysm-capture/src/webos.rs`) | partial | Raw RGB24/BGR24/YUYV/NV12 and H.264 (OpenH264 decode to NV12), wire version 3: the receiver's settings request size, rate, menus and encoding (prysm-3jx.12.2, prysm-3jx.63) |
 | Multiple TVs | FIFO queue, `busy` reply, 16 clients | changed | Newest connection replaces the current one |
 | Receiver access control | Host allowlist on the HTTP port | missing | None; any LAN host can inject frames |
-| "Waiting for frames" status | `input unavailable; waiting for frames` (`pipeline/worker.rs`) | present | `State.input`: fps and `receiving`, sampled once a second; TUI shows "waiting for frames" or the rate (D17) |
+| "Waiting for frames" status | `input unavailable; waiting for frames` (`pipeline/worker.rs`) | present | `State.input`: fps and `receiving`, sampled once a second; TUI shows "waiting for frames" or the rate; the portal's lighting status adds "Waiting for video." or the rate ("30 fps.") (D17, prysm-3jx.54) |
 
 ### Processing and LED geometry
 
@@ -100,7 +100,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | State stream | — (polling) | added | `GET /api/v1/state/stream` (SSE) |
 | Set target | `PUT /api/state` `{power, source}` → 202 + operation id | changed | `PUT /api/v1/target` → 204 when applied |
 | Calibration | `POST /api/calibration` | missing | prysm-3jx.11 |
-| Preview | `/api/preview` WebSocket | missing | prysm-3jx.16 |
+| Preview | `/api/preview` WebSocket | changed | `GET /api/v1/preview/stream` (SSE: JPEG, viewport, edge colours; 8/s, 4 viewers) ([contract](../../v1/surfaces/web-portal/HTTP-CONTRACT.md#preview)) |
 | TV capture | `/api/capture` WebSocket | changed | Separate TCP port |
 | Health/readiness | none | n/a | Neither; state endpoint serves as probe |
 | CSRF / origin policy | Host allowlist, `tower-http` CSRF, Origin = Host | present | Origin policy with CORS opt-in (`surfaces/web-portal/src/access.rs`) |
@@ -128,7 +128,7 @@ and `frontend/hosts/headless/web-portal`.
 | Output kind `null` selector | missing | D4 |
 | Save & apply / Discard, conflict review | partial | Per-section save; local stale check, no draft review |
 | Colour profile picker, rename, delete | missing | D7 |
-| Preview (frame, crop outline, edge strips) | missing | prysm-3jx.16 |
+| Preview (frame, crop outline, edge strips) | present | [preview.tsx](../../v1/frontend/packages/web-portal/preview.tsx): streams only while shown (prysm-3jx.16) |
 | Technical details (frames processed, revisions, WLED live state) | partial | Target, session, revision, failures only |
 | Calibration (phone) and TV relay page | missing | prysm-3jx.11 |
 
@@ -160,9 +160,9 @@ Profile *application* (D7) is separable and should not wait for the session.
 | Debian package `prysm-led` (cargo-deb, `/usr/bin/prysm`) | `apps/prysm/Cargo.toml`, `packaging/debian` | missing | D13 |
 | systemd unit: user `prysm`, group `video`, `/etc/prysm`, SIGINT, 90 s stop, hardening | `packaging/debian/prysm.service` | missing | D13 |
 | sysusers, purge removes settings, upgrade test | `prysm.conf`, `postrm`, `tests/test_upgrade.py` | missing | D13 |
-| Docker image (non-root 10001, `/config`, port 8787, multi-arch) | `Dockerfile`, `compose.yaml` | missing | prysm-3jx.18 |
+| Docker image (non-root 10001, `/config`, port 8787, multi-arch) | `Dockerfile`, `compose.yaml` | changed | [v1/packaging/docker](../../v1/packaging/docker/Dockerfile): user 10001, `/data` instead of `/config`, 8787 and 7380, amd64/arm64 in [v1-release.yml](../../.github/workflows/v1-release.yml); the portal listens on every interface without a token (prysm-3jx.18) |
 | TrueNAS compose and guide | `packaging/docker/compose.truenas.yaml`, `docs/users/truenas.md` | missing | Uses `PRYSM_ALLOWED_HOSTS`, which v1 drops |
-| Image smoke test | `packaging/docker/smoke.py` | missing | Calls `/api/settings` |
+| Image smoke test | `packaging/docker/smoke.py` | present | [smoke.sh](../../v1/packaging/docker/smoke.sh): health check, `/api/v1/state`, clean SIGTERM exit; run by the release workflow |
 | xtask setup/check/codegen/package | `xtask/src/main.rs` | partial | npm scripts and cargo commands only |
 | CI and GHCR release on tag (version from `apps/prysm/Cargo.toml`) | `.github/workflows/check.yml` | missing | `.github/workflows/v1.yml` is stale: formats and runs removed crates (`prysm-contract`, `prysm-flow`, `prysm-assemblies` examples) (D14) |
 
@@ -224,15 +224,15 @@ Sizes: S < 200 lines, M < 800, L more. P1 must land before root code is deleted.
 | D6 | Add guided first-run setup to portal | Shipping shows Setup when input/output are missing (source → lights → review) | `frontend/hosts/headless` | M | D4 | Done (prysm-3jx.37) |
 | D7 | Persist and apply colour-correction profiles | Profiles (≤32, id, name, correction) and active id in settings; `Processing::config` passes correction; portal picker, rename, delete. Refines prysm-3jx.11 | `crates/ports` settings, frontend | M | — | P1 if calibration is kept (Q1): migrated users' colours change silently |
 | D8 | Port the calibration session (desktop side) | `/api/calibration`, TV/phone capabilities, leases, pattern relay page, phone UI. Tracked prysm-3jx.11 | `surfaces/web-portal`, `crates/runtime` | L | D7, TV UI | P2: needs the v1 TV UI anyway |
-| D9 | Serve browser preview with crop and edge strips | Demand-driven JPEG frames, viewport from the processor, sRGB strips, 8 fps, 4 viewers. `Preview` slot lacks the viewport. Tracked prysm-3jx.16 | `crates/runtime` session, `surfaces/web-portal`, frontend | M | — | P1: the user tuning guide depends on it |
+| D9 | Serve browser preview with crop and edge strips | Demand-driven JPEG frames, viewport from the processor, sRGB strips, 8 fps, 4 viewers. Tracked prysm-3jx.16 | `crates/runtime` session, `surfaces/web-portal`, frontend | M | — | P1: the user tuning guide depends on it. Done (prysm-3jx.16) |
 | D10 | Restore opt-in Prometheus metrics | Done for desktop hosts (prysm-3jx.38): `--metrics`, `/metrics` on the portal from session totals. Dashboard and catalog not updated (names differ from shipping) | `hosts/common`, `crates/runtime`, `surfaces/web-portal` | M | Q6 | P2: diagnostics only |
 | D11 | Install a logging subscriber with RUST_LOG | Capture/processor `tracing` events are dropped; add stderr subscriber in hosts (TUI: to a file or off while full-screen) | `hosts/common` | S | — | P1: production failures otherwise lose their cause |
-| D12 | Build the prysm-headless Docker image | Image from `v1/frontend` + v1 workspace, `CMD ["/config/settings.json"]`, user 10001, `/config`, 8787 and remote port, compose and TrueNAS compose without `PRYSM_ALLOWED_HOSTS`, smoke test on `/api/v1/state`. Tracked prysm-3jx.18 | repo root `Dockerfile`, `packaging/docker` | M | D11, D14 | P1 |
+| D12 | Build the prysm-headless Docker image | Image from `v1/frontend` + v1 workspace, `CMD ["/config/settings.json"]`, user 10001, `/config`, 8787 and remote port, compose and TrueNAS compose without `PRYSM_ALLOWED_HOSTS`, smoke test on `/api/v1/state`. Tracked prysm-3jx.18 | repo root `Dockerfile`, `packaging/docker` | M | D11, D14 | P1. Done (prysm-3jx.18) in `v1/packaging/docker`; no TrueNAS compose |
 | D13 | Package prysm-headless as a Debian service | cargo-deb metadata, unit with positional settings and `video` group, sysusers, purge, upgrade from `prysm-led` (binary rename, settings via D1), upgrade test | `v1/hosts/headless`, `packaging/debian` | M | D1 | P1: Raspberry Pi is the documented primary install |
 | D14 | Fix v1 CI and add release publishing | `v1.yml` references removed crates and examples; add tag check against v1 version, multi-arch image publish, frontend build before host build | `.github/workflows` | S | — | P1: v1 currently has no working CI gate |
-| D15 | Add settings check command | Validate a settings file against registered adapters without opening devices | `hosts/common` | S | — | P3: convenience |
+| D15 | Add settings check command | Validate a settings file against registered adapters without opening devices | `hosts/common` | S | — | P3: convenience. Done: `--check-settings` |
 | D16 | Observe WLED state and report takeover | Shipping watches WLED WebSocket/HTTP for power, live, override; v1 cannot tell the user that WLED left live mode | `adapters/output-wled` + snapshot field | M | — | P2 |
-| D17 | Report input availability and frame rate | `waiting for frames`/no sender connected, frames processed or fps in `State` | `crates/ports` snapshot, session | S | — | P2: remote source otherwise looks healthy with no TV |
+| D17 | Report input availability and frame rate | `waiting for frames`/no sender connected, frames processed or fps in `State` | `crates/ports` snapshot, session | S | — | P2: remote source otherwise looks healthy with no TV. Done: `State.input`, shown by the TUI and the portal (prysm-3jx.54) |
 | D18 | Keep the remote receiver listening while lighting is off | Bind independent of sessions, report connected sender, optional capture-size hint to the TV. Refines prysm-3jx.12 (with compression, reconnect) | `adapters/capture-remote`, runtime | M | TV link design | P1: TV link is a stated headless target |
 | D19 | Seed settings revision per process | Start from a random value as shipping does, so pre-restart drafts conflict | `crates/runtime` engine | S | — | P2: lost update across restart |
 | D20 | Add CSP and frame-ancestors headers to portal | Shipping sends CSP `default-src 'self'`, `frame-ancestors 'none'` | `surfaces/web-portal/src/response.rs` | S | — | P2: clickjacking defence |

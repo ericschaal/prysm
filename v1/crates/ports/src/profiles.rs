@@ -115,15 +115,16 @@ impl CorrectionControls {
         Ok(())
     }
 
-    /// The processor's correction for these controls.
+    /// The processor's correction for these controls; `None` when a control
+    /// is outside -100..=100, which [`Processing::validate`] reports with
+    /// its settings path.
     ///
-    /// # Errors
-    /// A control outside -100..=100, named under `correction`.
-    pub fn to_core(&self) -> Result<ColorCorrection, ValidationError> {
-        self.validate("correction")?;
+    /// [`Processing::validate`]: crate::Processing::validate
+    #[must_use]
+    pub fn to_core(&self) -> Option<ColorCorrection> {
         ColorCorrection::new(self.warmth, self.tint, self.midtones)
             .and_then(|c| c.with_chroma(self.intensity, self.hue.to_array()))
-            .map_err(|reason| ValidationError::new("correction", reason))
+            .ok()
     }
 
     /// Recover the controls a [`ColorCorrection`] was built from. Exact for
@@ -282,7 +283,7 @@ mod tests {
             ..CorrectionControls::default()
         };
         assert_eq!(bad.validate("c").unwrap_err().field, "c.tint");
-        assert_eq!(bad.to_core().unwrap_err().field, "correction.tint");
+        assert_eq!(bad.to_core(), None);
         let bad = CorrectionControls {
             hue: HueControls {
                 cyan: 101,
@@ -291,6 +292,7 @@ mod tests {
             ..CorrectionControls::default()
         };
         assert_eq!(bad.validate("c").unwrap_err().field, "c.hue.cyan");
+        assert_eq!(bad.to_core(), None);
     }
 
     #[test]

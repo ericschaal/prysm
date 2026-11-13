@@ -22,6 +22,10 @@ const OPTIONS: &str = "Options:
   --log-file PATH           Append log lines to PATH instead of stderr
                             [default: stderr; none while a full-screen
                             terminal surface uses the terminal]
+  --check-settings          Validate the settings file against this host's
+                            capture and output kinds, print the result and
+                            exit (0 if valid) without opening any device or
+                            the portal; takes no other option
   -h, --help                Print this help
 
 The portal has no password: anyone who can reach ADDR can control the
@@ -47,6 +51,8 @@ pub struct Options {
     pub portal: Option<PortalOptions>,
     pub start: bool,
     pub log_file: Option<PathBuf>,
+    /// `--check-settings`: validate and exit; no other option is set.
+    pub check_settings: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -72,6 +78,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
     let mut metrics = false;
     let mut start = false;
     let mut log_file = None;
+    let mut check_settings = false;
     while let Some(arg) = args.next() {
         let Some(flag) = arg.to_str().filter(|arg| arg.starts_with('-')) else {
             if arg.as_encoded_bytes().starts_with(b"-") {
@@ -109,10 +116,30 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
             "--no-portal" => switch(&mut no_portal, flag)?,
             "--start" => switch(&mut start, flag)?,
             "--log-file" => once(&mut log_file, PathBuf::from(value()?), flag)?,
+            "--check-settings" => switch(&mut check_settings, flag)?,
             _ => return Err(format!("unknown option {flag}")),
         }
     }
     let settings = settings.ok_or("expected a settings file path")?;
+    if check_settings {
+        if listen.is_some()
+            || !origins.is_empty()
+            || any_origin
+            || no_portal
+            || metrics
+            || start
+            || log_file.is_some()
+        {
+            return Err("--check-settings takes only a settings file".into());
+        }
+        return Ok(Parsed::Run(Options {
+            settings,
+            portal: None,
+            start: false,
+            log_file: None,
+            check_settings,
+        }));
+    }
     let portal = if no_portal {
         if listen.is_some() || !origins.is_empty() || any_origin || metrics {
             return Err("--no-portal cannot be combined with portal options".into());
@@ -138,6 +165,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Parsed, String>
         portal,
         start,
         log_file,
+        check_settings,
     }))
 }
 
@@ -205,6 +233,7 @@ mod tests {
                 settings: "s.json".into(),
                 start: true,
                 log_file: Some("prysm.log".into()),
+                check_settings: false,
                 portal: Some(PortalOptions {
                     listen: "[::1]:0".parse().unwrap(),
                     access: Access::Origins(vec![
@@ -224,6 +253,16 @@ mod tests {
             panic!("expected options");
         };
         assert_eq!(options.portal, None);
+        assert_eq!(
+            run(&["--check-settings", "s.json"]).unwrap(),
+            Parsed::Run(Options {
+                settings: "s.json".into(),
+                portal: None,
+                start: false,
+                log_file: None,
+                check_settings: true,
+            })
+        );
     }
 
     #[test]
@@ -267,6 +306,11 @@ mod tests {
             ],
             &["s.json", "--token-file", "t"],
             &["s.json", "--allow-authority", "localhost:8787"],
+            &["--check-settings"],
+            &["s.json", "--check-settings", "--check-settings"],
+            &["s.json", "--check-settings", "--start"],
+            &["s.json", "--check-settings", "--no-portal"],
+            &["s.json", "--check-settings", "--listen", "127.0.0.1:1"],
         ] {
             assert!(run(args).is_err(), "{args:?} should be rejected");
         }

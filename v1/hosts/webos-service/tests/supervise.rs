@@ -41,7 +41,7 @@ impl Installer for NoInstaller {
 const WORKER: &str = r#"#!/bin/sh
 trap 'echo "TERM" >&2; exit 0' TERM
 echo "args: $*" >&2
-echo '{"type":"status","capturing":false,"target":"off","portal":"http://10.0.0.2:8787/","failure":null}'
+echo '{"type":"status","capturing":false,"target":"off","portal":"http://10.0.0.2:8787/","failure":null,"paused":false}'
 exec 3<&0
 while read -r line <&3; do echo "command: $line" >&2; done &
 while :; do sleep 0.05; done
@@ -120,7 +120,7 @@ fn supervises_a_real_child_process() {
     until(&mut service, &mut bus, |bus, _| {
         bus.0
             .last()
-            .is_some_and(|state| state["worker"] == "stopped")
+            .is_some_and(|state| state["worker"]["phase"] == "stopped")
     });
     // The next worker starts with the remembered target.
     service.power(&mut bus, r#"{"state":"Active"}"#, Instant::now());

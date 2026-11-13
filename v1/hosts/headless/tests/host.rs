@@ -2,7 +2,7 @@
 #[path = "../../common/tests/launch/mod.rs"]
 mod launch;
 
-use launch::{Host, check_arguments, get, null_settings, put_target, request};
+use launch::{Host, check_arguments, check_settings, get, null_settings, put_target, request};
 use prysm_capture_device::DeviceSource;
 use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
@@ -16,6 +16,11 @@ const BINARY: &str = env!("CARGO_BIN_EXE_prysm-headless");
 #[test]
 fn help_and_bad_arguments() {
     check_arguments(BINARY, "prysm-headless");
+}
+
+#[test]
+fn check_settings_validates_and_exits() {
+    check_settings(BINARY, "prysm-headless");
 }
 
 #[test]

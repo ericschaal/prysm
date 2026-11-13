@@ -53,7 +53,10 @@ Both take a JSON settings file (examples: [headless](hosts/headless/settings.exa
 `--listen` (default `0.0.0.0:8787`), `--allow-origin ORIGIN` (repeatable;
 `null` for the slim TV app, `'*'` for any), `--no-portal`, `--start`, `--log-file PATH` and
 `--metrics` (also serve [Prometheus metrics](surfaces/web-portal/HTTP-CONTRACT.md#metrics)
-at `/metrics` on the portal; off by default). Log lines (`tracing`
+at `/metrics` on the portal; off by default). `--check-settings` only
+validates the settings file against the host's capture and output kinds,
+prints `settings OK` or the invalid field with its causes and exits 0 or 1,
+without opening a device or the portal. Log lines (`tracing`
 events, including those of the shared capture and processing crates) go to
 stderr as `prysm-headless: warn <target>: <message> <fields>`, filtered by
 `RUST_LOG` (default `warn,prysm=info`); while the TUI's preview uses the

@@ -9,8 +9,9 @@
 //! Asks the sender for that stream (default 320x180 at 30 fps, H.264 from
 //! the hardware encoder, menus included). Prints one line per second: frames
 //! decoded, size, format and the mean luma of the newest frame, or the
-//! sender's refusal. `--pause-at N` pauses the sender at second N and resumes
-//! it three seconds later. Exits after SECONDS (default 30).
+//! sender's refusal. `--pause-at N` closes the source at second N, which
+//! pauses the sender as lighting off does, and listens again three seconds
+//! later. Exits after SECONDS (default 30).
 use prysm_capture_remote::{RemoteSource, StreamRequest};
 use prysm_ports::{FrameSource, chain};
 use std::time::{Duration, Instant};
@@ -44,24 +45,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         request.encoding = encoding.parse()?;
     }
     request.validate()?;
-    let mut source = RemoteSource::bind(listen.parse()?, request)?;
-    println!(
-        "receive: listening on {} for {request}",
-        source.local_addr()
-    );
+    let listen = listen.parse()?;
+    let mut source = Some(RemoteSource::bind(listen, request)?);
+    println!("receive: listening on {listen} for {request}");
     let started = Instant::now();
     for second in 0..seconds {
-        if pause_at == Some(second) {
-            source.set_wanted(false);
-            println!("receive: pausing the sender");
+        if pause_at == Some(second)
+            && let Some(open) = source.take()
+        {
+            Box::new(open).close()?;
+            println!("receive: closed; the sender is paused");
         }
         if pause_at.map(|at| at + 3) == Some(second) {
-            source.set_wanted(true);
-            println!("receive: resuming the sender");
+            source = Some(RemoteSource::bind(listen, request)?);
+            println!("receive: listening again; the sender reconnects");
         }
         let until = started + Duration::from_secs(second + 1);
         let (mut frames, mut last) = (0, None);
         while let Some(left) = until.checked_duration_since(Instant::now()) {
+            let Some(source) = source.as_mut() else {
+                std::thread::sleep(left);
+                break;
+            };
             let pull = match source.next_frame(left) {
                 Ok(pull) => pull,
                 Err(error) => {
@@ -92,6 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => println!("receive: second={second} frames=0"),
         }
     }
-    Box::new(source).close()?;
+    if let Some(source) = source {
+        Box::new(source).close()?;
+    }
     Ok(())
 }

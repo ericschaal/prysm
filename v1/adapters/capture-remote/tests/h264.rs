@@ -348,37 +348,6 @@ fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
     assert_eq!(cause::<WireError>(&error), Some(&WireError::Control(9)));
 }
 
-#[test]
-fn a_real_receiver_pauses_and_resumes_its_sender() {
-    let mut source = bind(SOFTWARE);
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
-    round_trip(&mut sender, &mut source, &picture(64, 32, 0));
-
-    source.set_wanted(false);
-    let deadline = Instant::now() + BOUND;
-    while !sender.paused() {
-        assert!(Instant::now() < deadline, "never paused");
-        sender.send(&picture(64, 32, 1)).unwrap();
-        thread::sleep(Duration::from_millis(10));
-    }
-    // Nothing more arrives while paused (a frame in flight may still land).
-    let _ = try_receive(&mut source, Duration::from_millis(100));
-    sender.send(&picture(64, 32, 2)).unwrap();
-    assert!(try_receive(&mut source, Duration::from_millis(150)).is_none());
-
-    source.set_wanted(true);
-    let deadline = Instant::now() + BOUND;
-    while sender.paused() {
-        assert!(Instant::now() < deadline, "never resumed");
-        sender.send(&picture(64, 32, 3)).unwrap();
-        thread::sleep(Duration::from_millis(10));
-    }
-    let sent = picture(64, 32, 4);
-    let got = round_trip(&mut sender, &mut source, &sent);
-    assert!(mean_error(&got, &sent) < 8.0);
-    Box::new(source).close().unwrap();
-}
-
 /// Closing the source (lighting off) pauses the sender, then ends the stream.
 #[test]
 fn close_pauses_the_sender_before_ending_the_stream() {

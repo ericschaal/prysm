@@ -32,6 +32,7 @@ fn commands_have_a_stable_wire_form() {
 fn events_round_trip() {
     let status = Event::Status(WorkerStatus {
         capturing: true,
+        fps: Some(30),
         target: Some(LightingTarget::Processed),
         portal: Some("http://192.168.1.5:8787/".into()),
         failure: Some(WorkerFailure::new(
@@ -43,29 +44,18 @@ fn events_round_trip() {
     });
     let text = encode(&status).unwrap();
     assert!(
-        String::from_utf8_lossy(&text).contains(r#""failure_kind":"receiver""#),
+        String::from_utf8_lossy(&text).contains(
+            r#""failure":{"kind":"receiver","message":"waiting for the receiver: refused"}"#
+        ),
         "{}",
         String::from_utf8_lossy(&text)
     );
-    assert!(text.starts_with(br#"{"type":"status","capturing":true"#));
+    assert!(text.starts_with(br#"{"type":"status","capturing":true,"fps":30"#));
     assert_eq!(decode::<Event>(&text).unwrap(), status);
-    // The wire form is unchanged: the failure as `failure` and `failure_kind`.
     assert_eq!(
         String::from_utf8(encode(&Event::Status(WorkerStatus::default())).unwrap()).unwrap(),
-        "{\"type\":\"status\",\"capturing\":false,\"target\":null,\"portal\":null,\
-         \"failure\":null,\"failure_kind\":null,\"encoding\":null,\"paused\":false}\n"
-    );
-    // A failure without a kind (an older worker) is `other`.
-    let untyped = decode::<Event>(
-        br#"{"type":"status","capturing":false,"target":null,"portal":null,"failure":"x"}"#,
-    )
-    .unwrap();
-    assert_eq!(
-        untyped,
-        Event::Status(WorkerStatus {
-            failure: Some(WorkerFailure::other("x")),
-            ..WorkerStatus::default()
-        })
+        "{\"type\":\"status\",\"capturing\":false,\"fps\":null,\"target\":null,\
+         \"portal\":null,\"failure\":null,\"encoding\":null,\"paused\":false}\n"
     );
     let paused = Event::Status(WorkerStatus {
         paused: true,
@@ -100,10 +90,12 @@ fn unknown_types_and_fields_are_rejected() {
         );
     }
     for text in [
-        r#"{"type":"status","capturing":true,"target":null,"portal":null,"failure":null,"pid":1}"#,
+        r#"{"type":"status","capturing":true,"paused":false,"pid":1}"#,
         r#"{"type":"faulted","cause":"x","code":3}"#,
-        // A kind without a failure.
-        r#"{"type":"status","capturing":false,"target":null,"portal":null,"failure":null,"failure_kind":"other"}"#,
+        // The failure as two fields, or a failure without its kind.
+        r#"{"type":"status","capturing":false,"paused":false,"failure":"x","failure_kind":"other"}"#,
+        r#"{"type":"status","capturing":false,"paused":false,"failure":{"message":"x"}}"#,
+        r#"{"type":"status","capturing":false,"paused":false,"failure":{"kind":"other","message":"x","at":1}}"#,
     ] {
         assert!(decode::<Event>(text.as_bytes()).is_err(), "{text}");
     }

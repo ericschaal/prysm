@@ -18,6 +18,7 @@ import { failureOf } from '@prysm/application-client';
 import { CalibrationScreen } from './calibration';
 import {
   calibrationBlocker,
+  captureRate,
   derivedReceiver,
   diagnostics,
   encodingName,
@@ -31,7 +32,11 @@ import {
 import { useRemoteNavigation } from './navigation';
 import { msePatternPlayer, type PatternPlayer } from './patterns';
 import { LightingCard } from './portal';
-import { usePortal, type PortalOptions } from './portal-connection';
+import {
+  checkPortal,
+  usePortal,
+  type PortalOptions,
+} from './portal-connection';
 import { useTvService } from './service';
 import './tv.css';
 
@@ -77,6 +82,24 @@ function useVisible() {
   return visible;
 }
 
+/** Milliseconds since `since` (a `Date.now()`), updated every second; 0 for `null`. */
+function useElapsed(since: number | null) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  return since === null ? 0 : Math.max(0, now - since);
+}
+
+/** The warning when no portal that allows this app answers at a saved address. */
+function instanceWarning(instance: string, reach: 'refused' | 'unreachable') {
+  return reach === 'refused'
+    ? `Saved. ${instance} answers, but Prysm there does not allow control from the TV: start it with --allow-origin null. Capture works without it.`
+    : `Saved. No Prysm answers at ${instance}. Check that Prysm is running and that the address is right.`;
+}
+
 export function TvApp({
   flavor,
   service,
@@ -105,6 +128,9 @@ export function TvApp({
   // Capture, lights and the slim stream encoding are set up only in this
   // portal, never in this UI.
   const portalAddress = slim ? draft.instance : (state?.portal ?? null);
+  const elapsed = useElapsed(
+    state?.worker.phase === 'retrying' ? tv.stateAt : null,
+  );
   const status = tvStatus(
     online,
     state,
@@ -113,7 +139,9 @@ export function TvApp({
     portal.snapshot
       ? { lights: !!portal.snapshot.settings.output, address: portalAddress }
       : null,
+    elapsed,
   );
+  const rate = captureRate(state);
 
   // Slim: frames go to the Prysm's own receiver port, learned from its settings.
   const port = listenPort(portal.snapshot?.settings.capture);
@@ -130,6 +158,18 @@ export function TvApp({
     );
   }, [suggestion, draft.receiver, draft.instance, online, edit, say]);
 
+  /**
+   * Save; a newly saved Prysm address (slim) is checked, and a warning
+   * replaces the notice when no portal that allows this app answers there.
+   */
+  async function saveChecked(save: () => Promise<boolean>) {
+    const instance =
+      slim && draft.instance !== tv.saved.instance ? draft.instance : null;
+    if (!(await save()) || !instance) return;
+    const reach = await checkPortal(instance, portalOptions);
+    if (reach !== 'ok') say(instanceWarning(instance, reach), true);
+  }
+
   function primary() {
     switch (status.action) {
       case 'setup':
@@ -139,7 +179,7 @@ export function TvApp({
       case 'address':
         return nav.openDialog('instance');
       case 'save_enable':
-        return void tv.saveAndEnable();
+        return void saveChecked(tv.saveAndEnable);
       case 'enable':
         return void tv.enable(true);
     }
@@ -254,6 +294,11 @@ export function TvApp({
                   ? 'Install the Prysm package again so the app and its service come from the same package.'
                   : status.description}
               </p>
+              {rate && !mismatch ? (
+                <p id="capture-rate" className="stream-info">
+                  Capture rate: <strong>{rate}</strong>
+                </p>
+              ) : null}
               {slim && state?.encoding && !mismatch ? (
                 <p id="encoding-in-use" className="stream-info">
                   Encoding in use:{' '}
@@ -302,7 +347,7 @@ export function TvApp({
                     type="button"
                     className="secondary"
                     disabled={disabled || !tv.dirty}
-                    onClick={() => void tv.save()}
+                    onClick={() => void saveChecked(tv.save)}
                   >
                     Save changes
                   </button>

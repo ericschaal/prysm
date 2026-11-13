@@ -94,15 +94,18 @@ const tvState: TvState = {
   lighting: null,
   power: 'active',
   video: 'available',
-  worker: 'running',
+  worker: { phase: 'running' },
   capturing: true,
+  fps: 30,
   paused: false,
   portal: null,
   failure: null,
   log: [],
 };
+// @ts-expect-error A restart says when.
+const retrying: TvState['worker'] = { phase: 'retrying' };
 // @ts-expect-error Only full and slim packages exist.
 const otherFlavor: TvState['flavor'] = 'lite';
 // @ts-expect-error Preferences are strict.
 const extra: TvPreferences = { mode: 'slim' };
-void [tvState, otherFlavor, extra];
+void [tvState, retrying, otherFlavor, extra];

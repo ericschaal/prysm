@@ -487,35 +487,31 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
         (64, 32, prysm_h264::FORMAT)
     );
 
-    // The receiver pauses the stream: paused, not a failure, and the TV
-    // capture is closed until it resumes.
-    receiver.set_wanted(false);
-    peer.wait_for(|e| paused(e) && encoding(e) == Some(SlimEncoding::H264Software))
+    // While frames go out, the rate is reported.
+    peer.wait_for(|e| status(e).is_some_and(|s| s.fps.is_some_and(|fps| fps > 0)))
+        .await
+        .unwrap();
+
+    // Lighting off: the receiver pauses the stream and closes. Paused, not a
+    // failure; the TV capture stops and stays stopped while the worker keeps
+    // reconnecting.
+    Box::new(receiver).close().unwrap();
+    peer.wait_for(|e| paused(e) && encoding(e).is_none() && status(e).unwrap().fps.is_none())
         .await
         .unwrap();
     assert_eq!(opened.closed(), 1, "the capture stops while paused");
-    receiver.set_wanted(true);
-    peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
+    // Lighting on again: a new connection resumes the capture.
+    let receiver = RemoteSource::bind(address, SOFTWARE).unwrap();
+    peer.wait_for(|e| capturing(e) == Some(true) && !status(e).unwrap().paused)
+        .await
+        .unwrap();
     assert_eq!(
         opened.shapes(),
         [settings(&SOFTWARE); 2],
         "reopened on resume"
     );
-    // Lighting off: the receiver pauses and closes. The capture stays
-    // stopped while the worker keeps reconnecting, and it is still paused.
-    Box::new(receiver).close().unwrap();
-    peer.wait_for(|e| paused(e) && encoding(e).is_none())
-        .await
-        .unwrap();
-    assert_eq!(opened.closed(), 2);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(opened.shapes().len(), 2, "no capture while lighting is off");
-    // Lighting on again: a new connection starts the capture.
-    let receiver = RemoteSource::bind(address, SOFTWARE).unwrap();
-    peer.wait_for(|e| capturing(e) == Some(true) && !status(e).unwrap().paused)
-        .await
-        .unwrap();
-    assert_eq!(opened.shapes().len(), 3);
     Box::new(receiver).close().unwrap();
     assert!(!task.is_finished());
     peer.close();

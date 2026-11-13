@@ -73,13 +73,73 @@
         "type": "string"
       },
       "Phase": {
-        "enum": [
-          "stopped",
-          "running",
-          "stopping",
-          "retrying"
-        ],
-        "type": "string"
+        "description": "The worker process, as `{ \"phase\": … }`.",
+        "oneOf": [
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "stopping"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Waiting before the next start after a failure.",
+            "properties": {
+              "phase": {
+                "enum": [
+                  "retrying"
+                ],
+                "type": "string"
+              },
+              "seconds": {
+                "description": "Whole seconds until the next start, rounded up, when this state\nwas sent (at least 1). The app counts down from when it received\nit; no clock is shared.",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "seconds",
+              "phase"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Power": {
         "description": "TV power as `com.webos.service.tvpower` reports it.",
@@ -169,17 +229,10 @@
             ]
           },
           "failure": {
-            "description": "The current failure (or, slim, the receiver wait) with its causes.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "failure_kind": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/FailureKind",
-                "description": "What `failure` is; set exactly when `failure` is."
+                "$ref": "#/components/schemas/WorkerFailure",
+                "description": "The current failure (or, slim, the receiver wait): what it is and\nits message with the causes."
               },
               {
                 "type": "null"
@@ -189,6 +242,15 @@
           "flavor": {
             "$ref": "#/components/schemas/Flavor",
             "description": "The installed package; both install as `io.prysm.tv`."
+          },
+          "fps": {
+            "description": "Frames per second over about the last second, rounded, while the\nworker measures them (full: lighting runs; slim: connected and\nsending); 0 while it waits for frames. Always null unless `worker` is\n`running`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "lighting": {
             "oneOf": [
@@ -284,6 +346,24 @@
           "available"
         ],
         "type": "string"
+      },
+      "WorkerFailure": {
+        "additionalProperties": false,
+        "description": "A failure: what it is and its message with the causes.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/FailureKind"
+          },
+          "message": {
+            "description": "What failed, with its cause chain (cut to 1 KiB).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
       }
     }
   },

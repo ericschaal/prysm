@@ -8,16 +8,20 @@ use prysm_webos_link::{Backoff, Command, Event, HEARTBEAT, WorkerFailure, Worker
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
+/// Where people open the portal right now (its LAN address can change).
+pub type PortalUrl = Box<dyn Fn() -> Option<String> + Send>;
+
 /// `Surface<EngineHandle>`: applies the initial target, then turns link
 /// commands into video signals and targets, reports every snapshot change
 /// (and a heartbeat) as status (the last one before a fault too),
 /// re-applies a non-Off target after a session failure with [`Backoff`], and
-/// stops the worker on a faulted session.
+/// stops the worker on a faulted session. The portal URL is looked up again
+/// at every heartbeat, so a new LAN address is reported within one.
 pub struct EngineLink {
     link: Link,
     video: VideoSignal,
     initial: LightingTarget,
-    portal: Option<String>,
+    portal_url: PortalUrl,
     heartbeat: Duration,
     backoff: Backoff,
 }
@@ -27,13 +31,13 @@ impl EngineLink {
         link: Link,
         video: VideoSignal,
         initial: LightingTarget,
-        portal: Option<String>,
+        portal_url: PortalUrl,
     ) -> Self {
         Self {
             link,
             video,
             initial,
-            portal,
+            portal_url,
             heartbeat: HEARTBEAT,
             backoff: Backoff::default(),
         }
@@ -58,12 +62,13 @@ impl EngineLink {
             let _ = engine.set_target(self.initial).await;
         }
         let mut snapshots = engine.snapshot();
+        let mut portal = (self.portal_url)();
         let mut sent: Option<WorkerStatus> = None;
         let mut beat = Instant::now() + self.heartbeat;
         let mut retry = Retry::new(self.backoff);
         loop {
             let snapshot = snapshots.borrow_and_update().clone();
-            let status = status(&snapshot, self.portal.as_ref());
+            let status = status(&snapshot, portal.as_ref());
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
@@ -95,11 +100,10 @@ impl EngineLink {
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
+                // The heartbeat: the status again, with the current portal URL.
                 () = sleep_until(beat) => {
-                    if let Some(status) = &sent {
-                        events.send(&Event::Status(status.clone()));
-                    }
-                    beat = Instant::now() + self.heartbeat;
+                    portal = (self.portal_url)();
+                    sent = None;
                 }
                 () = wait(retry_at) => {
                     retry.cancel();
@@ -136,12 +140,23 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
         // Running and frames arriving: false while waiting for video.
         capturing: snapshot.session == SessionState::Running
             && snapshot.input.is_some_and(|input| input.receiving),
+        fps: snapshot.input.map(|input| whole_fps(input.fps)),
         target: Some(snapshot.target),
         portal: portal.cloned(),
         failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
         encoding: None,
         paused: false,
     }
+}
+
+/// A measured frame rate, rounded to whole frames per second.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "rounded and clamped to the u16 range first"
+)]
+fn whole_fps(fps: f32) -> u16 {
+    fps.round().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 
 /// When to re-apply the target after a session failure.

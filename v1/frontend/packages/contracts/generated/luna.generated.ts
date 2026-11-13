@@ -38,8 +38,27 @@ export interface components {
          * @enum {string}
          */
         LightingTarget: "off" | "processed" | "device_native";
-        /** @enum {string} */
-        Phase: "stopped" | "running" | "stopping" | "retrying";
+        /** @description The worker process, as `{ "phase": … }`. */
+        Phase: {
+            /** @enum {string} */
+            phase: "stopped";
+        } | {
+            /** @enum {string} */
+            phase: "running";
+        } | {
+            /** @enum {string} */
+            phase: "stopping";
+        } | {
+            /** @enum {string} */
+            phase: "retrying";
+            /**
+             * Format: int32
+             * @description Whole seconds until the next start, rounded up, when this state
+             *     was sent (at least 1). The app counts down from when it received
+             *     it; no clock is shared.
+             */
+            seconds: number;
+        };
         /**
          * @description TV power as `com.webos.service.tvpower` reports it.
          * @enum {string}
@@ -103,11 +122,17 @@ export interface components {
             /** @description Slim: frames should flow. Full: lighting is not off. */
             enabled: boolean;
             encoding?: components["schemas"]["SlimEncoding"] | null;
-            /** @description The current failure (or, slim, the receiver wait) with its causes. */
-            failure?: string | null;
-            failure_kind?: components["schemas"]["FailureKind"] | null;
+            failure?: components["schemas"]["WorkerFailure"] | null;
             /** @description The installed package; both install as `io.prysm.tv`. */
             flavor: components["schemas"]["Flavor"];
+            /**
+             * Format: int32
+             * @description Frames per second over about the last second, rounded, while the
+             *     worker measures them (full: lighting runs; slim: connected and
+             *     sending); 0 while it waits for frames. Always null unless `worker` is
+             *     `running`.
+             */
+            fps?: number | null;
             lighting?: components["schemas"]["LightingTarget"] | null;
             /** @description The latest worker stderr lines, oldest first (at most 20). */
             log: string[];
@@ -138,6 +163,12 @@ export interface components {
          * @enum {string}
          */
         Video: "unknown" | "unavailable" | "available";
+        /** @description A failure: what it is and its message with the causes. */
+        WorkerFailure: {
+            kind: components["schemas"]["FailureKind"];
+            /** @description What failed, with its cause chain (cut to 1 KiB). */
+            message: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -160,5 +191,6 @@ export type State = components['schemas']['State'];
 export type StateReply = components['schemas']['StateReply'];
 export type UninstallRequest = components['schemas']['UninstallRequest'];
 export type Video = components['schemas']['Video'];
+export type WorkerFailure = components['schemas']['WorkerFailure'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

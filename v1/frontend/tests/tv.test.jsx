@@ -21,6 +21,7 @@ import {
 } from '@prysm/webos-platform';
 import { TvApp } from '@prysm/tv-ui';
 import {
+  captureRate,
   derivedReceiver,
   diagnostics,
   encodingName,
@@ -28,6 +29,7 @@ import {
   listenPort,
   localPortal,
   receiverAddress,
+  retrySeconds,
   tvStatus,
   completePreferences,
 } from '../packages/tv-ui/model';
@@ -223,6 +225,15 @@ test('generated Rust states are accepted; contract violations are not', () => {
     assert(isState(value), JSON.stringify(value));
   assert(!isState({ ...state(), flavor: 'lite' }));
   assert(!isState({ ...state(), worker: 'idle' }));
+  assert(!isState({ ...state(), worker: 'running' }), 'the phase is an object');
+  assert(
+    !isState({ ...state(), worker: { phase: 'retrying' } }),
+    'a restart says when',
+  );
+  assert(!isState({ ...state(), failure: 'x' }), 'a failure has a kind');
+  assert(isState({ ...state(), failure: { kind: 'receiver', message: 'x' } }));
+  assert(!isState({ ...state(), failure: { kind: 'later', message: 'x' } }));
+  assert(!isState({ ...state(), fps: '30' }));
   assert(!isState({ ...state(), log: [1] }));
   assert(!isState(null));
 });
@@ -466,7 +477,7 @@ test('status card covers the supervisor states for both packages', () => {
     portal: null,
     preferences: prefs,
     enabled: true,
-    worker: 'running',
+    worker: { phase: 'running' },
     power: 'active',
     video: 'available',
     capturing: false,
@@ -489,8 +500,11 @@ test('status card covers the supervisor states for both packages', () => {
   const waiting = tvStatus(
     true,
     slim({
-      failure: 'waiting for the receiver: cannot connect to receiver: refused',
-      failure_kind: 'receiver',
+      failure: {
+        kind: 'receiver',
+        message:
+          'waiting for the receiver: cannot connect to receiver: refused',
+      },
     }),
     draft(),
     false,
@@ -500,20 +514,25 @@ test('status card covers the supervisor states for both packages', () => {
   const retrying = tvStatus(
     true,
     slim({
-      worker: 'retrying',
-      failure: 'worker exited 1',
-      failure_kind: 'other',
+      worker: { phase: 'retrying', seconds: 4 },
+      failure: { kind: 'other', message: 'worker exited 1' },
     }),
     draft(),
     false,
   );
   assert.equal(retrying.title, 'Capture needs attention');
-  assert.match(retrying.description, /worker exited 1\. Prysm tries again/);
+  assert.match(retrying.description, /worker exited 1\. Retrying in 4 s\./);
   assert.equal(
-    title(true, slim({ failure: 'capture failed', failure_kind: 'other' })),
+    title(
+      true,
+      slim({ failure: { kind: 'other', message: 'capture failed' } }),
+    ),
     'Capture needs attention',
   );
-  assert.equal(title(true, slim({ worker: 'stopping' })), 'Stopping capture…');
+  assert.equal(
+    title(true, slim({ worker: { phase: 'stopping' } })),
+    'Stopping capture…',
+  );
   const notSet = tvStatus(
     true,
     slim({ enabled: false }, {}),
@@ -538,7 +557,7 @@ test('status card covers the supervisor states for both packages', () => {
   const full = (change) => ({
     ...state(),
     flavor: 'full',
-    worker: 'running',
+    worker: { phase: 'running' },
     power: 'active',
     video: 'available',
     failure: null,
@@ -609,7 +628,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     portal: null,
     preferences: { receiver: '192.168.1.20:7380' },
     enabled: true,
-    worker: 'running',
+    worker: { phase: 'running' },
     power: 'active',
     video: 'available',
     capturing: false,
@@ -632,18 +651,22 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   const retrying = status(
     slim({
-      worker: 'retrying',
-      failure: 'worker failed: hardware H.264 encoder cannot start',
-      failure_kind: 'encoder',
+      worker: { phase: 'retrying', seconds: 4 },
+      failure: {
+        kind: 'encoder',
+        message: 'worker failed: hardware H.264 encoder cannot start',
+      },
     }),
   );
   assert.equal(retrying.title, 'Capture needs attention');
   assert.equal(
     retrying.description,
-    `worker failed: hardware H.264 encoder cannot start. Prysm tries again automatically. ${hint}`,
+    `worker failed: hardware H.264 encoder cannot start. Retrying in 4 s. ${hint}`,
   );
   const failed = status(
-    slim({ failure: 'worker failed: encoder lost', failure_kind: 'encoder' }),
+    slim({
+      failure: { kind: 'encoder', message: 'worker failed: encoder lost' },
+    }),
   );
   assert.equal(
     failed.description,
@@ -652,8 +675,10 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   assert(failed.attention);
   const other = status(
     slim({
-      failure: 'worker failed: the encoder of capture lost',
-      failure_kind: 'other',
+      failure: {
+        kind: 'other',
+        message: 'worker failed: the encoder of capture lost',
+      },
     }),
   );
   assert.equal(other.title, 'Capture needs attention');
@@ -664,9 +689,8 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   const otherRetrying = status(
     slim({
-      worker: 'retrying',
-      failure: 'worker exited 1',
-      failure_kind: 'other',
+      worker: { phase: 'retrying', seconds: 4 },
+      failure: { kind: 'other', message: 'worker exited 1' },
     }),
   );
   assert.doesNotMatch(otherRetrying.description, /encoding/);
@@ -683,16 +707,17 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   assert.match(diagnostics(slim()), /Capturing: no\n/);
   const wait = status(
     slim({
-      failure: 'waiting for the receiver: refused',
-      failure_kind: 'receiver',
+      failure: {
+        kind: 'receiver',
+        message: 'waiting for the receiver: refused',
+      },
     }),
   );
   assert.deepEqual([wait.title, wait.attention], ['Waiting for Prysm', false]);
   assert.doesNotMatch(wait.description, /encoding/);
   const unknownWait = status(
     slim({
-      failure: 'waiting for the receiver: refused',
-      failure_kind: 'other',
+      failure: { kind: 'other', message: 'waiting for the receiver: refused' },
     }),
   );
   assert.equal(
@@ -703,11 +728,10 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   const full = {
     ...state(),
     flavor: 'full',
-    worker: 'retrying',
+    worker: { phase: 'retrying', seconds: 4 },
     power: 'active',
     video: 'available',
-    failure: 'worker exited 1',
-    failure_kind: 'encoder',
+    failure: { kind: 'encoder', message: 'worker exited 1' },
   };
   assert.doesNotMatch(status(full).description, /encoding/);
   assert.match(
@@ -715,6 +739,75 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     /Stream encoding: Uncompressed in use/,
   );
   assert.match(diagnostics(slim()), /Stream encoding: none in use/);
+});
+
+test('a pending restart counts down from the published seconds', () => {
+  const phase = { phase: 'retrying', seconds: 4 };
+  assert.deepEqual(
+    [0, 999, 1000, 3500, 4000, 9000].map((ms) => retrySeconds(phase, ms)),
+    [4, 4, 3, 1, 0, 0],
+  );
+  assert.equal(retrySeconds({ phase: 'running' }, 0), null);
+  const value = {
+    ...state(),
+    worker: phase,
+    failure: { kind: 'other', message: 'worker failed' },
+  };
+  const draft = completePreferences({});
+  assert.equal(
+    tvStatus(true, value, draft, false, null, 1500).description,
+    'worker failed. Retrying in 3 s.',
+  );
+  assert.equal(
+    tvStatus(true, value, draft, false, null, 4000).description,
+    'worker failed. Retrying now…',
+  );
+});
+
+test('the TV counts a restart down by itself', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
+  const tv = await mountTv(t, {
+    supervisor: {
+      preferences: { receiver: '192.168.1.20:7380' },
+      state: {
+        enabled: true,
+        worker: { phase: 'retrying', seconds: 4 },
+        failure: { kind: 'other', message: 'worker exited 1' },
+      },
+    },
+  });
+  assert.equal(
+    tv.text('status-description'),
+    'worker exited 1. Retrying in 4 s.',
+  );
+  await act(async () => t.mock.timers.tick(2_000));
+  assert.equal(
+    tv.text('status-description'),
+    'worker exited 1. Retrying in 2 s.',
+  );
+});
+
+test('the capture rate is shown while the worker measures it', async (t) => {
+  assert.equal(captureRate(state({ fps: 30 })), '30 frames/s');
+  assert.equal(captureRate(state({ fps: 0 })), 'waiting for frames');
+  assert.equal(captureRate(state({ fps: null })), null);
+  assert.match(diagnostics(state({ fps: 30 })), /Capture rate: 30 frames\/s/);
+  assert.match(diagnostics(state({ fps: null })), /Capture rate: not measured/);
+  const tv = await mountTv(t, {
+    supervisor: {
+      preferences: { receiver: '192.168.1.20:7380' },
+      state: {
+        enabled: true,
+        worker: { phase: 'running' },
+        capturing: true,
+        fps: 30,
+      },
+    },
+  });
+  assert.equal(tv.text('capture-rate'), 'Capture rate: 30 frames/s');
+  await act(async () => tv.supervisor.publish({ capturing: false, fps: null }));
+  await settle();
+  assert.equal(tv.el('capture-rate'), null);
 });
 
 test('preferences are completed with their defaults', () => {
@@ -848,6 +941,44 @@ test('the Prysm address is explicit: invalid text is explained and Back keeps th
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
 });
 
+test('saving a Prysm address checks that a portal answers there, and only warns', async (t) => {
+  const save = async (options) => {
+    const tv = await mountTv(t, options);
+    await tv.click('primary');
+    await tv.type('instance-input', '192.168.1.30');
+    await tv.submit('instance-input');
+    await settle();
+    await tv.click('save');
+    await settle();
+    assert.equal(
+      tv.supervisor.state().preferences.instance,
+      'http://192.168.1.30:8787',
+      'saved anyway',
+    );
+    const notice = tv.text('notice');
+    await tv.unmount();
+    return notice;
+  };
+  assert.equal(
+    await save({ block: true }),
+    'Saved. No Prysm answers at http://192.168.1.30:8787. Check that Prysm is running and that the address is right.',
+  );
+  const refused =
+    'Saved. http://192.168.1.30:8787 answers, but Prysm there does not allow control from the TV: start it with --allow-origin null. Capture works without it.';
+  assert.equal(
+    await save({
+      block: { kind: 'forbidden', message: 'origin denied' },
+    }),
+    refused,
+  );
+  // A CORS refusal is a network error; the probe still gets an answer.
+  assert.equal(
+    await save({ block: true, probe: () => Promise.resolve(true) }),
+    refused,
+  );
+  assert.equal(await save({}), 'Settings saved.', 'a portal answers');
+});
+
 test('the receiver is derived from the remote capture port, then Save and start capture sends it first', async (t) => {
   const tv = await mountTv(t);
   await tv.click('primary');
@@ -936,7 +1067,7 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
     tv.supervisor.publish({
       capturing: true,
       enabled: true,
-      worker: 'running',
+      worker: { phase: 'running' },
     }),
   );
   await settle();
@@ -1074,10 +1205,12 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
       },
       state: {
         enabled: true,
-        worker: 'running',
-        failure:
-          'waiting for the receiver: cannot connect to receiver: refused',
-        failure_kind: 'receiver',
+        worker: { phase: 'running' },
+        failure: {
+          kind: 'receiver',
+          message:
+            'waiting for the receiver: cannot connect to receiver: refused',
+        },
       },
     },
   });
@@ -1319,7 +1452,7 @@ test('lights without a setup are named plainly with the portal address, in both 
 test('the lights setup hint gives way to failures and to a missing receiver', () => {
   const base = {
     ...state(),
-    worker: 'running',
+    worker: { phase: 'running' },
     power: 'active',
     video: 'available',
     capturing: false,
@@ -1358,8 +1491,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     status({
       ...base,
       flavor: 'full',
-      failure: 'worker exited 1',
-      failure_kind: 'other',
+      failure: { kind: 'other', message: 'worker exited 1' },
     }).title,
     'Capture needs attention',
   );
@@ -1367,9 +1499,8 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     status({
       ...base,
       flavor: 'full',
-      worker: 'retrying',
-      failure: 'x',
-      failure_kind: 'other',
+      worker: { phase: 'retrying', seconds: 4 },
+      failure: { kind: 'other', message: 'x' },
     }).title,
     'Capture needs attention',
   );
@@ -1434,7 +1565,7 @@ test('slim: the status card shows the encoding in use while streaming', async (t
   const tv = await mountTv(t, {
     supervisor: {
       preferences: linked,
-      state: { enabled: true, worker: 'running' },
+      state: { enabled: true, worker: { phase: 'running' } },
     },
   });
   assert.equal(
@@ -1466,9 +1597,8 @@ test('slim: an encoder failure shows the error and sends the user to the portal 
       preferences: linked,
       state: {
         enabled: true,
-        worker: 'running',
-        failure,
-        failure_kind: 'encoder',
+        worker: { phase: 'running' },
+        failure: { kind: 'encoder', message: failure },
         encoding: 'h264_hardware',
       },
     },
@@ -1492,9 +1622,11 @@ test('slim: a receiver wait or another failure does not mention the encoding', a
       preferences: linked,
       state: {
         enabled: true,
-        worker: 'running',
-        failure: 'waiting for the receiver: refused',
-        failure_kind: 'receiver',
+        worker: { phase: 'running' },
+        failure: {
+          kind: 'receiver',
+          message: 'waiting for the receiver: refused',
+        },
       },
     },
   });
@@ -1506,16 +1638,15 @@ test('slim: a receiver wait or another failure does not mention the encoding', a
       preferences: linked,
       state: {
         enabled: true,
-        worker: 'retrying',
-        failure: 'worker exited 1: capture failed',
-        failure_kind: 'other',
+        worker: { phase: 'retrying', seconds: 4 },
+        failure: { kind: 'other', message: 'worker exited 1: capture failed' },
       },
     },
   });
   assert.equal(tv.text('status-title'), 'Capture needs attention');
   assert.equal(
     tv.text('status-description'),
-    'worker exited 1: capture failed. Prysm tries again automatically.',
+    'worker exited 1: capture failed. Retrying in 4 s.',
   );
   await tv.key(DOWN);
   assert.equal(tv.focus(), 'service-options');
@@ -1526,9 +1657,8 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
     flavor: 'full',
     supervisor: {
       state: {
-        worker: 'retrying',
-        failure: 'worker exited 1',
-        failure_kind: 'encoder',
+        worker: { phase: 'retrying', seconds: 4 },
+        failure: { kind: 'encoder', message: 'worker exited 1' },
         encoding: 'h264_hardware',
       },
     },

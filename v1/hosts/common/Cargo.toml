@@ -9,6 +9,7 @@ description = "Process concerns shared by the desktop hosts: arguments, logging,
 [dependencies]
 prysm-ports.workspace = true
 prysm-runtime = { workspace = true, features = ["logging"] }
+prysm-settings-file.workspace = true
 prysm-web-portal.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["rt", "signal"] }

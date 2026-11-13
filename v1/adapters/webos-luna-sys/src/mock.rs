@@ -58,8 +58,27 @@ pub fn glib() -> crate::generated::glib::Glib {
     crate::generated::glib::Glib::test_api()
 }
 
+#[cfg(not(miri))]
 pub fn library() -> libloading::Library {
     libloading::os::unix::Library::this().into()
+}
+
+/// Miri cannot `dlopen`: a placeholder handle, never used to look up a
+/// symbol, closed by the `dlclose` stand-in below.
+#[cfg(miri)]
+pub fn library() -> libloading::Library {
+    // SAFETY: the handle only reaches `dlclose`, which Miri resolves to the
+    // stand-in below.
+    unsafe { libloading::os::unix::Library::from_raw(NonNull::<c_void>::dangling().as_ptr()) }
+        .into()
+}
+
+/// Miri runs an exported Rust function for a foreign call it has no shim
+/// for, so dropping the libraries above ends here instead of in libc.
+#[cfg(miri)]
+#[unsafe(no_mangle)]
+extern "C" fn dlclose(_: *mut c_void) -> std::ffi::c_int {
+    0
 }
 
 /// A message as LS2 would hand it to a callback.

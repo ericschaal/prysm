@@ -8,6 +8,7 @@ import {
   type OutputIssue,
   type Session,
 } from '@prysm/application-client';
+import type { Input } from '@prysm/contracts/application';
 import type { OutputLighting } from './adapters';
 
 export interface LightingProps {
@@ -16,6 +17,8 @@ export interface LightingProps {
   failure: Failure | null;
   /** Why the lights are not showing screen sync while it runs. */
   outputIssue?: OutputIssue;
+  /** Whether frames arrive and how fast, while screen sync runs. */
+  input?: Input;
   hasCapture: boolean;
   hasOutput: boolean;
   /** What the configured output offers, `null` without an output. */
@@ -30,6 +33,13 @@ function missingSetup(hasCapture: boolean, hasOutput: boolean) {
   if (!hasCapture) return 'Configure capture first.';
   if (!hasOutput) return 'Configure your lights first.';
   return null;
+}
+
+/** The capture rate, or that no frames arrive, for the status line. */
+function describeInput(input: Input) {
+  return input.receiving
+    ? `${Math.round(input.fps)} fps.`
+    : 'Waiting for video.';
 }
 
 /** Why the output's own effects cannot start, or `null`. */
@@ -48,6 +58,7 @@ export function LightingControls({
   session,
   failure,
   outputIssue,
+  input,
   hasCapture,
   hasOutput,
   output,
@@ -116,6 +127,9 @@ export function LightingControls({
         aria-live="polite"
       >
         {describeLighting({ target, session, failure, effects })}
+        {input && session.state === 'running'
+          ? ` ${describeInput(input)}`
+          : null}
       </p>
       <div
         className="modes"

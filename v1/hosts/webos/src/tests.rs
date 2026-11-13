@@ -7,6 +7,7 @@ use prysm_runtime::fakes::{
 };
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, Video, WorkerStatus};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn source(settings: &FakeSourceSettings) -> Settings {
@@ -19,17 +20,33 @@ fn source(settings: &FakeSourceSettings) -> Settings {
 /// The host task: its result and the stop reason.
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
 
+const PORTAL: &str = "http://10.0.0.2:8787/";
+
 /// Run a fake engine with the link surface until the link stops.
 fn start(settings: Settings, initial: LightingTarget) -> (Peer, VideoSignal, CallLog, Running) {
+    start_with_portal(
+        settings,
+        initial,
+        &Arc::new(Mutex::new(Some(PORTAL.into()))),
+    )
+}
+
+/// The same, with the portal URL read from `portal` at every heartbeat.
+fn start_with_portal(
+    settings: Settings,
+    initial: LightingTarget,
+    portal: &Arc<Mutex<Option<String>>>,
+) -> (Peer, VideoSignal, CallLog, Running) {
     let (link, peer) = Link::memory();
     let feed = VideoSignal::default();
     let log = CallLog::new();
     let stop = link.stop.clone();
+    let portal = portal.clone();
     let surface = EngineLink::new(
         link,
         feed.clone(),
         initial,
-        Some("http://10.0.0.2:8787/".into()),
+        Box::new(move || portal.lock().unwrap().clone()),
     )
     .with_timing(Duration::from_millis(50), Duration::from_millis(20));
     let (sources, outputs) = (FakeSources(log.clone()), FakeOutputs(log.clone()));
@@ -61,8 +78,9 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         status(&first).unwrap(),
         &WorkerStatus {
             capturing: false,
+            fps: None,
             target: Some(LightingTarget::Off),
-            portal: Some("http://10.0.0.2:8787/".into()),
+            portal: Some(PORTAL.into()),
             failure: None,
             encoding: None,
             paused: false,
@@ -108,9 +126,16 @@ async fn initial_target_applies_and_status_repeats_as_heartbeat() {
         .wait_for(|e| status(e).is_some_and(|s| s.capturing))
         .await
         .unwrap();
-    // Unchanged status keeps arriving.
+    let running = status(&running).unwrap().clone();
+    assert!(running.fps.is_some_and(|fps| fps > 0), "{running:?}");
+    // Unchanged status keeps arriving (the rate may have been measured anew).
+    let same = |status: &WorkerStatus| WorkerStatus {
+        fps: None,
+        ..status.clone()
+    };
     for _ in 0..3 {
-        assert_eq!(peer.event().await.unwrap(), running);
+        let event = peer.event().await.unwrap();
+        assert_eq!(same(status(&event).unwrap()), same(&running));
     }
     assert_eq!(log.count("source.open:"), 1);
     peer.close();
@@ -213,6 +238,29 @@ async fn an_unconfirmed_release_faults_the_worker() {
     );
 }
 
+/// A new LAN address (a DHCP renewal) is advertised at the next heartbeat.
+#[tokio::test]
+async fn the_portal_url_follows_the_tvs_address() {
+    let portal = Arc::new(Mutex::new(Some(PORTAL.to_owned())));
+    let (mut peer, _feed, _log, task) =
+        start_with_portal(fakes::settings(), LightingTarget::Off, &portal);
+    let first = peer.event().await.unwrap();
+    assert_eq!(status(&first).unwrap().portal.as_deref(), Some(PORTAL));
+    *portal.lock().unwrap() = Some("http://10.0.0.9:8787/".into());
+    peer.wait_for(|e| {
+        status(e).is_some_and(|s| s.portal.as_deref() == Some("http://10.0.0.9:8787/"))
+    })
+    .await
+    .unwrap();
+    // No LAN address at all: none is advertised.
+    *portal.lock().unwrap() = None;
+    peer.wait_for(|e| status(e).is_some_and(|s| s.portal.is_none()))
+        .await
+        .unwrap();
+    peer.close();
+    task.await.unwrap().0.unwrap();
+}
+
 #[test]
 fn the_portal_url_is_a_concrete_lan_address() {
     assert_eq!(
@@ -251,7 +299,9 @@ async fn a_session_waiting_for_video_is_not_capturing() {
     // Lighting is on but no frame arrives: not capturing, output untouched.
     let waiting = peer
         .wait_for(|e| {
-            status(e).is_some_and(|s| s.target == Some(LightingTarget::Processed) && !s.capturing)
+            status(e).is_some_and(|s| {
+                s.target == Some(LightingTarget::Processed) && !s.capturing && s.fps == Some(0)
+            })
         })
         .await
         .unwrap();

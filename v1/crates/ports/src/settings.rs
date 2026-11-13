@@ -167,7 +167,7 @@ impl Processing {
     #[must_use]
     pub fn correction(&self) -> ColorCorrection {
         self.active()
-            .and_then(|profile| profile.correction.to_core().ok())
+            .and_then(|profile| profile.correction.to_core())
             .unwrap_or_default()
     }
 

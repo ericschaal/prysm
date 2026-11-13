@@ -4,8 +4,7 @@ use prysm_capture_file::FileSource;
 use prysm_capture_remote::RemoteReceiver;
 use prysm_host::Program;
 use prysm_output_wled::Wled;
-use prysm_runtime::{NullOutput, Prysm};
-use prysm_settings_file::SettingsFile;
+use prysm_runtime::{Builder, NullOutput};
 use prysm_web_portal::FrontendAsset;
 use std::process::ExitCode;
 
@@ -23,17 +22,22 @@ const PROGRAM: Program = Program {
 };
 
 fn main() -> ExitCode {
-    prysm_host::main(PROGRAM, |host| async move {
-        Prysm::builder(SettingsFile::new(host.settings()))
-            .source(DeviceSource)
-            .source(FileSource)
-            .source(RemoteReceiver)
-            .output(Wled::default())
-            .output(NullOutput)
+    prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
+        prysm
             .surface(host.status())
             .surface(host.start())
             .surface(host.portal(ASSETS)?)
             .run(host.signals()?)
             .await
     })
+}
+
+/// The capture sources and outputs this host can use.
+fn adapters(prysm: Builder) -> Builder {
+    prysm
+        .source(DeviceSource)
+        .source(FileSource)
+        .source(RemoteReceiver)
+        .output(Wled::default())
+        .output(NullOutput)
 }

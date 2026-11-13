@@ -86,24 +86,28 @@ impl Flow {
         }
     }
 
-    /// The status fields the uplink owns. A paused stream is not a failure.
-    fn status(&self) -> WorkerStatus {
-        let (encoding, paused, failure) = match &self.lock().uplink {
-            UplinkState::Starting => (None, false, None),
-            UplinkState::Sending(encoding) => (Some(*encoding), false, None),
-            UplinkState::Paused(encoding) => (*encoding, true, None),
+    /// The status fields the uplink owns, with `fps` frames sent per second
+    /// reported while sending. A paused stream is not a failure.
+    fn status(&self, fps: u16) -> WorkerStatus {
+        let (fps, encoding, paused, failure) = match &self.lock().uplink {
+            UplinkState::Starting => (None, None, false, None),
+            UplinkState::Sending(encoding) => (Some(fps), Some(*encoding), false, None),
+            UplinkState::Paused(encoding) => (None, *encoding, true, None),
             UplinkState::Waiting(why) => (
+                None,
                 None,
                 false,
                 Some(WorkerFailure::new(FailureKind::Receiver, why.clone())),
             ),
             UplinkState::EncoderFailed(why) => (
                 None,
+                None,
                 false,
                 Some(WorkerFailure::new(FailureKind::Encoder, why.clone())),
             ),
         };
         WorkerStatus {
+            fps,
             failure,
             encoding,
             paused,
@@ -308,7 +312,8 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
 }
 
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
-/// `capturing` while frames are delivered, `encoding` while connected,
+/// `capturing` while frames are delivered, `fps` (frames sent per second)
+/// while sending, `encoding` while connected,
 /// `paused` while the receiver paused the stream, `failure` naming the
 /// encoder failure, or else the wait while the receiver is unavailable.
 /// `Lighting` is protocol misuse here and stops the worker as failed.
@@ -366,7 +371,7 @@ impl ForwarderLink {
                     let now = self.flow.sent();
                     let next = WorkerStatus {
                         capturing: now != counted,
-                        ..self.flow.status()
+                        ..self.flow.status(rate(now - counted, self.sample))
                     };
                     counted = now;
                     if next != status {
@@ -382,6 +387,19 @@ impl ForwarderLink {
             }
         }
     }
+}
+
+/// `frames` over `window`, in whole frames per second.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a frame count per second, rounded and clamped to the u16 range"
+)]
+fn rate(frames: u64, window: Duration) -> u16 {
+    (frames as f64 / window.as_secs_f64())
+        .round()
+        .clamp(0.0, f64::from(u16::MAX)) as u16
 }
 
 impl Surface<()> for ForwarderLink {

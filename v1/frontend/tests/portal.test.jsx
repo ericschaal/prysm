@@ -108,6 +108,43 @@ test('the lighting card says why the lights are not showing screen sync', async 
   }
 });
 
+test('the lighting status shows the capture rate or that video is awaited', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        input: { fps: 0, receiving: false },
+      }),
+    );
+    assert.equal(
+      $('.lighting-status').textContent,
+      'Screen sync is running. Waiting for video.',
+    );
+
+    await act(async () =>
+      fixture.publish({ input: { fps: 29.9, receiving: true } }),
+    );
+    assert.equal(
+      $('.lighting-status').textContent,
+      'Screen sync is running. 30 fps.',
+    );
+
+    await act(async () =>
+      fixture.publish({
+        target: 'off',
+        session: { state: 'stopped' },
+        input: undefined,
+      }),
+    );
+    assert.equal($('.lighting-status').textContent, 'Lights are off.');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('lighting modes set the target and show what the session is doing', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;

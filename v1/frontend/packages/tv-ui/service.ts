@@ -20,6 +20,8 @@ type Key = keyof Saved;
 interface ServiceState {
   online: boolean | null;
   state: State | null;
+  /** When `state` arrived (`Date.now()`), for countdowns it carries. */
+  stateAt: number;
   /** Unsaved values, and the saved value each edit started from. */
   edits: Edits;
   bases: Edits;
@@ -31,7 +33,7 @@ interface ServiceState {
 }
 
 type Action =
-  | { type: 'event'; event: ServiceEvent }
+  | { type: 'event'; event: ServiceEvent; at: number }
   | { type: 'edit'; patch: Edits }
   | { type: 'saved'; sent: Saved }
   | { type: 'settled' }
@@ -80,6 +82,7 @@ function reducer(current: ServiceState, action: Action): ServiceState {
         ...current,
         online: true,
         state: event.state,
+        stateAt: action.at,
         edits,
         bases,
         pending:
@@ -129,6 +132,7 @@ function reducer(current: ServiceState, action: Action): ServiceState {
 const initial: ServiceState = {
   online: null,
   state: null,
+  stateAt: 0,
   edits: {},
   bases: {},
   pending: null,
@@ -155,7 +159,9 @@ export function useTvService(service: TvService, active: boolean) {
   }, [service]);
   useEffect(() => {
     if (!active) return;
-    return service.watch((event) => dispatch({ type: 'event', event }));
+    return service.watch((event) =>
+      dispatch({ type: 'event', event, at: Date.now() }),
+    );
   }, [service, active, generation]);
   useEffect(() => {
     if (!current.pending) return;

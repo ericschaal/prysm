@@ -43,8 +43,9 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     lighting: full ? 'off' : null,
     power: 'active',
     video: 'available',
-    worker: full ? 'running' : 'stopped',
+    worker: { phase: full ? 'running' : 'stopped' },
     capturing: false,
+    fps: null,
     paused: false,
     portal: full ? 'http://192.168.1.5:8787/' : null,
     failure: null,
@@ -75,11 +76,12 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       state.power === 'active' || state.power === 'screen_saver'
         ? full || (state.enabled && !!state.preferences.receiver)
         : false;
-    state.worker = wanted ? 'running' : 'stopped';
+    state.worker = { phase: wanted ? 'running' : 'stopped' };
     if (full && !state.enabled) state.lighting = 'off';
     else if (full && state.lighting === 'off') state.lighting = 'processed';
     state.capturing =
       wanted && state.enabled && state.video === 'available' && !state.failure;
+    state.fps = state.capturing ? 30 : null;
   }
 
   function publish(change: Partial<State> = {}) {

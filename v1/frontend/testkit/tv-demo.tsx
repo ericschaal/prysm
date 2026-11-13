@@ -71,8 +71,9 @@ export function runDemo(
   setInterval(() => {
     const state = supervisor.state();
     const capturing =
-      state.enabled && state.worker === 'running' && !state.failure;
-    if (state.capturing !== capturing) supervisor.publish({ capturing });
+      state.enabled && state.worker.phase === 'running' && !state.failure;
+    if (state.capturing !== capturing)
+      supervisor.publish({ capturing, fps: capturing ? 30 : null });
     if (flavor !== 'full') return;
     const target = application.snapshot().target;
     if (state.lighting !== lighting && state.lighting)
@@ -82,6 +83,7 @@ export function runDemo(
         lighting: target,
         enabled: target !== 'off',
         capturing: target === 'processed',
+        fps: target === 'processed' ? 30 : null,
       });
     lighting = supervisor.state().lighting;
   }, 500);

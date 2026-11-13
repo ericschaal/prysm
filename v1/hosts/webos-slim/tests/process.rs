@@ -71,9 +71,9 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         .port();
     let mut child = spawn(&format!("127.0.0.1:{port}"));
     let status = statuses(&mut child, |event| !event["failure"].is_null());
-    assert_eq!(status["failure_kind"], "receiver", "{status}");
+    assert_eq!(status["failure"]["kind"], "receiver", "{status}");
     assert!(
-        status["failure"]
+        status["failure"]["message"]
             .as_str()
             .unwrap()
             .starts_with("waiting for the receiver"),
@@ -91,9 +91,12 @@ fn capture_off_the_tv_fails_with_its_cause() {
         RemoteSource::bind("127.0.0.1:0".parse().unwrap(), StreamRequest::default()).unwrap();
     let mut child = spawn(&receiver.local_addr().to_string());
     let stdin = child.stdin.take();
-    let status = statuses(&mut child, |event| event["failure_kind"] == "other");
+    let status = statuses(&mut child, |event| event["failure"]["kind"] == "other");
     assert!(
-        status["failure"].as_str().unwrap().contains("webOS"),
+        status["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("webOS"),
         "{status}"
     );
     assert_eq!(wait(&mut child), Some(1));
