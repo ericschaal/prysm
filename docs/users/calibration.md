@@ -39,8 +39,8 @@ keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 ## Use profiles
 
 - **Home:** tap a profile to use it, or **No correction**.
-- **Settings → Colour profiles:** rename, fine-tune or delete profiles, and
-  make a new one with **New profile (guided)**.
+- **Settings → Colour profiles:** choose a profile to rename it, adjust its
+  colours or delete it; make a new one with **New profile (guided)**.
 
 Profiles do not change brightness, smoothing or other picture settings, and do
 not switch with the TV's input. Check the result with the content you usually

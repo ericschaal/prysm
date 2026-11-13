@@ -492,7 +492,10 @@ button.link {
   }
 }
 
-/* Slider: a filled track (`--fill`, set by the field) and a clear thumb. */
+/*
+ * Slider: one style everywhere, Home's. A filled track (`--fill-from`,
+ * `--fill-to`, set by the field) in the text's own colour, a clear thumb.
+ */
 .range-heading {
   display: flex;
   align-items: baseline;
@@ -505,11 +508,13 @@ button.link {
   font-variant-numeric: tabular-nums;
 }
 .range input {
+  --rest: color-mix(in srgb, var(--text) 20%, transparent);
   --track: linear-gradient(
     90deg,
-    var(--line-strong) var(--fill-from, 0%),
-    var(--accent-fill) var(--fill-from, 0%) var(--fill-to, 0%),
-    var(--line-strong) var(--fill-to, 0%)
+    var(--rest) var(--fill-from, 0%),
+    color-mix(in srgb, var(--text) 75%, transparent) var(--fill-from, 0%)
+      var(--fill-to, 0%),
+    var(--rest) var(--fill-to, 0%)
   );
   appearance: none;
   display: block;
@@ -524,19 +529,19 @@ button.link {
   cursor: default;
 }
 .range input::-webkit-slider-runnable-track {
-  height: 6px;
+  height: 8px;
   border-radius: var(--radius-pill);
   background: var(--track);
 }
 .range input::-moz-range-track {
-  height: 6px;
+  height: 8px;
   border-radius: var(--radius-pill);
   background: var(--track);
 }
 .range input::-webkit-slider-thumb {
   appearance: none;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   margin-top: -9px;
   border: 0;
   border-radius: 50%;
@@ -549,8 +554,8 @@ button.link {
     box-shadow var(--duration) var(--ease-out);
 }
 .range input::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: 0;
   border-radius: 50%;
   background: #fff;
@@ -604,50 +609,6 @@ legend {
 }
 fieldset > .help {
   margin-bottom: var(--space-5);
-}
-
-/* Segmented control (radio group). */
-.segmented .segments {
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--field);
-  border: 1px solid var(--line);
-}
-.segmented label {
-  position: relative;
-  display: grid;
-}
-.segmented input {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-.segmented span {
-  display: grid;
-  place-items: center;
-  min-height: 40px;
-  border-radius: var(--radius-pill);
-  color: var(--text-2);
-  font-size: var(--text-small);
-  font-weight: 500;
-  transition:
-    background-color var(--duration) var(--ease-out),
-    color var(--duration) var(--ease-out),
-    box-shadow var(--duration) var(--ease-out);
-}
-.segmented input:checked + span {
-  background: var(--surface-raised);
-  color: var(--text);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
-}
-.segmented input:focus-visible + span {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
 }
 
 /* Form actions: the buttons at the end. */
@@ -1568,21 +1529,6 @@ fieldset > .help {
   --tint: 100%;
   transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
-.light-card .range input::-webkit-slider-runnable-track {
-  height: 8px;
-}
-.light-card .range input::-moz-range-track {
-  height: 8px;
-}
-.light-card .range input::-webkit-slider-thumb {
-  width: 26px;
-  height: 26px;
-  margin-top: -9px;
-}
-.light-card .range input::-moz-range-thumb {
-  width: 26px;
-  height: 26px;
-}
 
 /* Screen sync's controls and the effects note share one cell: no jump. */
 .mode-panels {
@@ -2299,301 +2245,146 @@ fieldset > .help {
   transition: transform var(--duration) var(--ease-out);
 }
 
-/* Disclosures: Advanced, each device section, technical details. */
-.disclosure > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: 56px;
-  list-style: none;
-  cursor: pointer;
-  font-weight: 500;
-}
-.disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-.disclosure > summary::after {
-  content: '';
-  flex: none;
-  width: 8px;
-  height: 8px;
-  margin: -4px 6px 0 0;
-  border-right: 2px solid var(--text-3);
-  border-bottom: 2px solid var(--text-3);
-  transform: rotate(45deg);
-  transition: transform var(--duration) var(--ease-out);
-}
-.disclosure[open] > summary::after {
-  transform: rotate(225deg);
-  margin-top: 4px;
-}
-.disclosure > summary:hover::after {
-  border-color: var(--text);
-}
-.disclosure[open] > .disclosure-body {
-  animation: fade-up var(--duration-slow) var(--ease-out) both;
-}
-
 /* The video source or lights editor, under Settings. */
 .section-editor {
   container-type: inline-size;
-  padding-top: var(--space-6);
+  padding-top: 0;
 }
 .section-editor .intro {
   margin-bottom: var(--space-6);
   color: var(--text-2);
 }
 
-.theme-choice legend {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* ── Settings: the path, as three cards; then More ─────────────────────── */
-.settings-path {
+/* ── Settings and its pages: one column of rows in small-headed groups ── */
+.group {
   display: grid;
-  gap: var(--space-5);
-}
-@media (min-width: 900px) {
-  /* The same grid as Home: the path from left to right. */
-  .settings-path {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-6);
-  }
-}
-.path-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow:
-    0 0 0 1px var(--line) inset,
-    var(--shadow);
-}
-.path-card-head {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-4);
-}
-.path-card .path-icon {
-  grid-column: auto;
-}
-.path-card[data-failed='true'] .path-icon {
-  color: var(--danger);
-  box-shadow: 0 0 0 1px var(--danger) inset;
-}
-.path-card-text {
-  display: grid;
-  min-width: 0;
-}
-.path-card-name {
-  overflow: hidden;
-  font-weight: var(--weight-strong);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.path-card-fact {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--text-small);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A line kept for the live problem, so a card never changes height. */
-.path-card-problem {
-  min-height: calc(var(--text-small) * var(--leading));
-  margin-top: calc(-1 * var(--space-2));
-  color: var(--danger);
-  font-size: var(--text-small);
-  line-height: var(--leading);
-}
-.path-card-body {
-  display: grid;
-  flex: 1;
-  align-content: end;
-  gap: var(--space-3);
-}
-.path-card-body .field {
-  margin-bottom: 0;
-}
-.path-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: var(--space-2);
 }
-/* A row that opens a page: label, a line about it, and a chevron. */
-.card-links {
+.rows {
   display: grid;
-  border-top: 1px solid var(--line);
-}
-.card-link {
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 64px;
-  padding: var(--space-3) 0;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  background: none;
-  text-align: left;
-}
-.card-link:hover:enabled {
-  background: none;
-}
-.card-link:hover:enabled .card-link-label {
-  color: var(--accent-text);
-}
-.card-link-text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.card-link-label {
-  font-weight: 500;
-}
-.card-link-description {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--text-small);
-  font-weight: var(--weight-regular);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings-more {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-}
-.more-grid {
-  display: grid;
-  gap: var(--space-5);
-}
-@media (min-width: 900px) {
-  .more-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-    gap: var(--space-6);
-  }
-}
-.more-card {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6) var(--space-3);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-.more-card h3 {
-  padding-top: var(--space-2);
-  font-size: var(--text-body);
-  font-weight: 500;
-}
-.more-card .theme-choice {
-  margin: 0 0 var(--space-3);
-}
-.more-card .card-link:last-child,
-.card-links .card-link:last-child {
-  border-bottom: 0;
-}
-.about {
-  border-bottom: 1px solid var(--line);
-}
-.about-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-  margin: 0 0 var(--space-5);
-}
-.about-facts dt {
-  color: var(--text-3);
-  font-size: var(--text-small);
-}
-.about-facts dd {
-  margin: 2px 0 0;
-  font-size: var(--text-small);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── Colour profiles and fine-tuning: pages under Settings ─────────────── */
-.profile-list {
-  display: grid;
-  margin: var(--space-2) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
   border-top: 1px solid var(--line);
 }
-.profile-row {
-  padding: var(--space-4) 0 0;
+.row {
   border-bottom: 1px solid var(--line);
 }
-.profile-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: start;
-  gap: var(--space-3);
-}
-/* The name is edited in place: its label is for screen readers. */
-.profile-name label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.profile-name {
-  margin-bottom: 0;
-}
-.profile-tag {
-  min-width: 6ch;
-  padding-top: 14px;
-  color: var(--success);
-  font-size: var(--text-small);
-  font-weight: 500;
-}
-.profile-head > button {
-  margin-top: 4px;
-}
-.profile-tune > summary {
-  min-height: 48px;
-  color: var(--text-2);
-}
-.profile-tune[open] > .disclosure-body {
-  container-type: inline-size;
-  padding-bottom: var(--space-4);
-}
-.profile-use {
-  margin-bottom: var(--space-4);
-}
-/* A deleted profile keeps its row's height while Undo is offered. */
-.profile-row.deleted {
+/* Label, its value on the line beneath, a chevron: the whole row is the link. */
+.row-link,
+.row-choice label {
   display: flex;
   align-items: center;
-  min-height: 141px;
-  padding: 0;
-  color: var(--text-2);
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 68px;
+  padding: var(--space-3) 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.profiles-empty {
-  color: var(--text-2);
+.row-link:hover:enabled {
+  background: none;
 }
-.profiles-new {
+.row-link:hover:enabled .row-label,
+.row-choice label:hover .row-label {
+  color: var(--accent-text);
+}
+.row-link:focus-visible,
+.row-choice label:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.row-text {
   display: grid;
-  justify-items: start;
-  gap: var(--space-2);
+  gap: 2px;
+  min-width: 0;
 }
-.fine-tuning {
+.row-label {
+  font-weight: 500;
+  transition: color var(--duration) var(--ease-out);
+}
+.row-value {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-small);
+  line-height: var(--leading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A live problem takes the value's line, in the error colour. */
+.row-value[data-problem='true'] {
+  color: var(--danger);
+}
+.row-fact {
+  display: flex;
+  align-items: center;
+  min-height: 68px;
+  padding: var(--space-3) 0;
+}
+.row-fact .row-value {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+/*
+ * A switch row: the on/off control in the chevron's place. The switch is
+ * taller than a label line, so less padding keeps the row a link row's height.
+ */
+.row-switch {
+  display: flex;
+  align-items: center;
+  min-height: 70px;
+  padding: 9px 0;
+}
+.row-switch > *,
+.row-switch .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+.row-switch .field.check {
+  row-gap: 2px;
+}
+.row-switch .field.check label {
+  font-weight: 500;
+}
+/* A choice row: a radio drawn as a tick in the chevron's place. */
+.row-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.row-check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity var(--duration) var(--ease-out);
+}
+.row-choice input:checked ~ .row-check {
+  opacity: 1;
+}
+/* The live preview, from an editor: one row above the fields. */
+.editor-preview {
+  margin-bottom: var(--space-6);
+}
+
+/* ── Fine-tuning and a profile: sliders in one column, as Home's ──────── */
+.fine-tuning,
+.profile-page {
   container-type: inline-size;
-  padding-top: var(--space-2);
+}
+.profile-page > .rows {
+  margin-bottom: var(--space-6);
 }
 
 /* ── Found devices ────────────────────────────────────────────────────── */

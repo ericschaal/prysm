@@ -20,14 +20,15 @@ import { LightCard } from './lighting';
 import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
 import { FineTuning, QuickPicture } from './processing';
-import { ProfilesPage } from './profiles';
+import { ProfileList, ProfilePage, type DeletedProfile } from './profiles';
 import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionEditor } from './section-editor';
 import { stepCopy } from './step-copy';
 import { SetupWizard } from './setup';
 import { nameOf } from './profile-model';
 import { SetupCard, type PathState } from './setup-card';
-import { SettingsPage, type SettingsPlace } from './settings-page';
+import { AboutPage, SettingsPage, type SettingsPlace } from './settings-page';
+import { ThemeChoice } from './theme-choice';
 import './tokens.css';
 import './portal.css';
 import './flows.css';
@@ -65,6 +66,9 @@ export const lightsRoute = '#/settings/lights';
 /** The hash routes of the colour profiles and picture fine-tuning pages. */
 export const profilesRoute = '#/settings/profiles';
 export const pictureRoute = '#/settings/picture';
+/** The hash routes of the appearance and about pages. */
+export const appearanceRoute = '#/settings/appearance';
+export const aboutRoute = '#/settings/about';
 
 type Route =
   | 'home'
@@ -74,7 +78,10 @@ type Route =
   | 'video'
   | 'lights'
   | 'profiles'
-  | 'picture';
+  | 'picture'
+  | 'appearance'
+  | 'about'
+  | 'profile';
 
 /**
  * Which page the hash names (Home, `#/settings`, `#/calibrate`,
@@ -100,7 +107,10 @@ function useRoute() {
   else if (hash === lightsRoute) route = 'lights';
   else if (hash === profilesRoute) route = 'profiles';
   else if (hash === pictureRoute) route = 'picture';
-  return [route, go] as const;
+  else if (hash === appearanceRoute) route = 'appearance';
+  else if (hash === aboutRoute) route = 'about';
+  else if (hash.startsWith(`${profilesRoute}/`)) route = 'profile';
+  return [route, go, hash] as const;
 }
 
 function SettingsIcon() {
@@ -181,7 +191,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
-  const [hashRoute, go] = useRoute();
+  const [hashRoute, go, hash] = useRoute();
   const developer = useDeveloper();
   // Without a preview client there is no Preview page: Home instead.
   const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
@@ -193,6 +203,10 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     capture: C | null;
     output: O | null;
   }>({ capture: null, output: null });
+  /** Profiles deleted on this visit, shown in their places with Undo. */
+  const [deletedProfiles, setDeletedProfiles] = useState<
+    Record<string, DeletedProfile>
+  >({});
   /** Where Calibrate returns to: Settings when opened from there. */
   const [calibrateFrom, setCalibrateFrom] = useState('');
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -378,7 +392,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
 
   const path = pathOf(snapshot);
   /** The live problem of one side, in plain words; `null` while it works. */
-  const problemAt = (section: 'capture' | 'output' | null) =>
+  const problemAt = (section: 'capture' | 'output') =>
     path.kind === 'failed' && path.at === section && snapshot.failure
       ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
       : null;
@@ -391,6 +405,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     failure: snapshot.failure ?? null,
     startSync,
     leave: () => go(settingsRoute),
+    showPreview: preview ? () => go(previewRoute) : undefined,
   };
   if (route === 'video' || route === 'lights')
     return page(
@@ -445,12 +460,14 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     title: string,
     heading: string,
     content: ReactNode,
+    back = settingsRoute,
+    backLabel = 'Settings',
   ) =>
     page(
       `portal-page ${className}`,
       title,
       <SaveStatusProvider>
-        {pageHeading(heading, settingsRoute, 'Settings')}
+        {pageHeading(heading, back, backLabel)}
         <SaveStatus online={online} />
         {content}
       </SaveStatusProvider>,
@@ -460,26 +477,68 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     lights: () => go(lightsRoute),
     profiles: () => go(profilesRoute),
     picture: () => go(pictureRoute),
-    preview: () => go(previewRoute),
+    appearance: () => go(appearanceRoute),
+    about: () => go(aboutRoute),
     setup: openSetup,
   };
 
+  const liveProps = {
+    processing: settings.processing,
+    revision,
+    disabled: !online,
+    save: saveProcessing,
+    tryProcessing,
+  };
   if (route === 'profiles')
     return livePage(
       'profiles-page',
       'Prysm colour profiles',
       'Colour profiles',
-      <ProfilesPage
-        processing={settings.processing}
-        revision={revision}
-        disabled={!online}
-        save={saveProcessing}
-        tryProcessing={tryProcessing}
+      <ProfileList
+        {...liveProps}
+        deleted={deletedProfiles}
+        setDeleted={setDeletedProfiles}
+        open={(id) => go(`${profilesRoute}/${encodeURIComponent(id)}`)}
         calibrate={() => {
           setCalibrateFrom(profilesRoute);
           go(calibrateRoute);
         }}
       />,
+    );
+  if (route === 'profile') {
+    const id = decodeURIComponent(hash.slice(profilesRoute.length + 1));
+    const profile = settings.processing.profiles?.find(
+      (item) => item.id === id,
+    );
+    return livePage(
+      'profile-page',
+      'Prysm colour profile',
+      profile ? nameOf(profile) : 'Colour profile',
+      <ProfilePage
+        {...liveProps}
+        id={id}
+        deleted={(gone) =>
+          setDeletedProfiles((current) => ({ ...current, [id]: gone }))
+        }
+        leave={() => go(profilesRoute)}
+      />,
+      profilesRoute,
+      'Colour profiles',
+    );
+  }
+  if (route === 'appearance')
+    return livePage(
+      'appearance-page',
+      'Prysm appearance',
+      'Appearance',
+      <ThemeChoice />,
+    );
+  if (route === 'about')
+    return livePage(
+      'about-page',
+      'About this Prysm',
+      'About this Prysm',
+      <AboutPage snapshot={snapshot} />,
     );
   if (route === 'picture')
     return livePage(
@@ -518,14 +577,12 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           snapshot={snapshot}
           online={online}
           discovery={discovery ?? null}
-          preview={!!preview}
           problemAt={problemAt}
           save={saveProcessing}
           tryProcessing={tryProcessing}
           open={(place) => places[place]()}
         />
       </SaveStatusProvider>,
-      true,
     );
 
   if (route === 'preview' && preview)

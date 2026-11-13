@@ -1,8 +1,9 @@
 import { useId } from 'react';
 import type { Processing } from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
-import { CheckboxField, NumberField, RangeField } from './fields';
+import { CheckboxField, RangeField } from './fields';
 import {
+  fineLimits,
   processingLimits,
   useLiveProcessing,
   withProfiles,
@@ -12,6 +13,7 @@ import { nameOf } from './profile-model';
 import { useSaveReport } from './save-state';
 
 const percent = (value: number) => `${value}%`;
+const seconds = (value: number) => `${value}\u00a0s`;
 
 interface PictureProps {
   processing: Processing;
@@ -194,7 +196,7 @@ export function BlackBars(props: LiveProps) {
  * it is let go, as on Home.
  */
 export function FineTuning(props: LiveProps) {
-  const { live, change, slider } = useControls(props, 'fine-tuning');
+  const { live, slider } = useControls(props, 'fine-tuning');
   const value = live.value;
   return (
     <FieldScopeProvider value={live.scope}>
@@ -213,25 +215,23 @@ export function FineTuning(props: LiveProps) {
           {...slider('spatial_reach_percent')}
           {...processingLimits.spatial_reach_percent}
         />
-        <div className="grid">
-          <NumberField
-            path="processing.smoothing_seconds"
-            label="Smoothing"
-            unit="seconds"
-            help="Softens quick changes. 0 turns it off."
-            value={value.smoothing_seconds}
-            onChange={(next) => change('smoothing_seconds', next)}
-            {...processingLimits.smoothing_seconds}
-          />
-          <NumberField
-            path="processing.sample_density"
-            label="Detail"
-            help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
-            value={value.sample_density}
-            onChange={(next) => change('sample_density', next)}
-            {...processingLimits.sample_density}
-          />
-        </div>
+        <RangeField
+          label="Smoothing"
+          help="Softens quick changes. 0 turns it off."
+          format={seconds}
+          {...slider('smoothing_seconds')}
+          // Steps of 0.05 s; a saved value above the usual 2 s still fits.
+          onChange={(next) =>
+            slider('smoothing_seconds').onChange(Math.round(next * 100) / 100)
+          }
+          {...fineLimits.smoothing(value.smoothing_seconds)}
+        />
+        <RangeField
+          label="Detail"
+          help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
+          {...slider('sample_density')}
+          {...fineLimits.detail(value.sample_density)}
+        />
       </div>
     </FieldScopeProvider>
   );

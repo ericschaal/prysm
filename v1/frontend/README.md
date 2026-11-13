@@ -49,16 +49,20 @@ supervisor in each of its states and play the phone's calibration part). See the
     the action that fixes them ("Set up Prysm").
   - [Settings](packages/web-portal/settings-page.tsx) (`#/settings`, the
     icon in the header): one save status under the title
-    ([save status](packages/web-portal/save-status.tsx)), then the path in
-    the order the light takes, as three cards on Home's grid: Video source
-    (name and facts, a line for its live problem, Change, See the picture),
-    Prysm (Remove black bars, rows to Colour profiles and Picture
-    fine-tuning) and Lights (Change, Check placement; Open WLED stays on
-    Home). Then
-    More: the theme (System, Light, Dark; kept per browser in
-    `localStorage`, never sent to Prysm), About this Prysm (lights, status,
-    frames per second, settings version, and Developer options) and Start
-    over with setup. Brightness and choosing the profile are on Home only.
+    ([save status](packages/web-portal/save-status.tsx)), then one column
+    of [rows](packages/web-portal/rows.tsx) in groups with a small heading:
+    Setup (Video source, Lights: name and facts, or the live problem in the
+    same line in red), Picture (Colour profiles, Fine-tuning, the Remove
+    black bars switch) and This device (Appearance, About this Prysm, Start
+    over with setup). A row is a label, its value beneath and a chevron; the
+    whole row is the link; a switch only for plain on/off. The pages under
+    Settings (editors, profiles, fine-tuning, appearance, about) have the
+    same width, heading, back link and save status. Appearance
+    (`#/settings/appearance`) is System, Light or Dark as rows (kept per
+    browser in `localStorage`, never sent to Prysm); About this Prysm
+    (`#/settings/about`) shows lights, status, frames per second and settings
+    version, and holds Developer options. Brightness and choosing the profile
+    are on Home only; Open WLED stays on Home.
   - Developer options ([developer](packages/web-portal/developer.ts)): an
     adapter marked `developer` (the video file, no lights) is offered only
     with them on, or while it is the saved kind. On in About this Prysm, kept
@@ -108,15 +112,17 @@ supervisor in each of its states and play the phone's calibration part). See the
     always wins. A failure marks its stop (by the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
-  - [Picture](packages/web-portal/processing.tsx): black bars on Prysm's
-    card, and Picture fine-tuning (`#/settings/picture`: shadow lift, edge
-    depth, smoothing, detail), applied live (debounced 400 ms, sliders on
+  - [Picture](packages/web-portal/processing.tsx): black bars as a switch
+    row, and Picture fine-tuning (`#/settings/picture`: shadow lift, edge
+    depth, smoothing 0 to 2 s, detail 1 to 512, all sliders in Home's one
+    slider style, widened to fit a saved value beyond), applied live (debounced 400 ms, sliders on
     release) because processing-only changes reach a running session without
     restarting it. [Colour profiles](packages/web-portal/profiles.tsx)
-    (`#/settings/profiles`): one row each, renamed in place, "In use", Fine-tune
-    (correction and hue shift; "Use it now" for one not in use), Delete at
-    once with Undo for 5 s in the row's place; "New profile (guided)" opens
-    Calibrate. Home's brightness changes
+    (`#/settings/profiles`): one row each ("In use" or "Not in use") opening
+    the profile's page (`#/settings/profiles/<id>`: name, an "In use" switch,
+    correction and hue shift, Reset, Delete). A deleted profile keeps its row
+    in the list with Undo for 5 s (kept by the portal across the two pages);
+    the "New profile (guided)" row opens Calibrate. Home's brightness changes
     the lights while it is dragged (pointer or keys): each value is tried
     unsaved (`PUT /api/v1/processing/trial`), throttled to one every 100 ms
     with one request in flight and the latest value winning, and the value
@@ -142,7 +148,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     nothing was tried and offers "Turn on screen sync to try". While it is
     not known to work, "Go back to the previous …" saves what was there
     before. A change on another device asks: Use theirs, or Keep mine.
-    The cards in Settings keep a line for their side's live problem, and
+    Each editor opens the live preview from a row ("See the picture",
+    "Check placement"). The rows in Settings show their side's live problem, and
     Home's "Change setup" opens the editor of a failing side (else
     Settings). After a failed check the buttons are "Go back to the previous
     …" and "Keep this video source" / "Keep these lights".

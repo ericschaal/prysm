@@ -29,6 +29,7 @@ import {
   useFieldErrors,
   useFieldScope,
 } from './form';
+import { RowLink } from './rows';
 import { SectionFields } from './section-step';
 import { stepCopy } from './step-copy';
 import type { PathState } from './setup-card';
@@ -87,6 +88,8 @@ export interface SectionEditorProps<S extends AdapterSection> {
   setPrevious: (previous: S | null) => void;
   /** Back to Settings. */
   leave: () => void;
+  /** Open the live preview, when this host has one. */
+  showPreview?: () => void;
 }
 
 /**
@@ -108,6 +111,7 @@ export function SectionEditor<S extends AdapterSection>({
   previous,
   setPrevious,
   leave,
+  showPreview,
 }: SectionEditorProps<S>) {
   const copy = stepCopy[section];
   const draft = useDraft<S>({
@@ -367,6 +371,21 @@ export function SectionEditor<S extends AdapterSection>({
       <p className="intro">
         {copy.intro} Saving restarts screen sync if it is on.
       </p>
+      {showPreview ? (
+        <ul className="rows editor-preview">
+          <RowLink
+            label={
+              section === 'capture' ? 'See the picture' : 'Check placement'
+            }
+            value={
+              section === 'capture'
+                ? 'What Prysm captures, live'
+                : 'The colours sent to each edge, around the picture'
+            }
+            onClick={showPreview}
+          />
+        </ul>
+      ) : null}
       <FieldScopeProvider value={scope}>
         <SectionFields
           key={draft.generation}

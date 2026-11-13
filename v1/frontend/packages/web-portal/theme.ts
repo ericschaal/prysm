@@ -1,6 +1,21 @@
 /** The portal's colour theme: the system's, or a fixed one. */
 export type Theme = 'system' | 'light' | 'dark';
 
+/** Each theme in words, for its row and for the Settings row's value. */
+export const themeChoices: readonly {
+  value: Theme;
+  label: string;
+  about: string;
+}[] = [
+  {
+    value: 'system',
+    label: 'System',
+    about: 'Light or dark, as this device is.',
+  },
+  { value: 'light', label: 'Light', about: 'Always light.' },
+  { value: 'dark', label: 'Dark', about: 'Always dark.' },
+];
+
 /** A per-browser preference: kept in local storage, never sent to Prysm. */
 export const themeStorageKey = 'prysm.theme';
 
@@ -12,6 +27,12 @@ export function storedTheme(): Theme {
   } catch {
     return 'system';
   }
+}
+
+/** The theme in use on this page: the one applied, else the system's. */
+export function currentTheme(): Theme {
+  const value = document.documentElement.getAttribute('data-theme');
+  return value === 'light' || value === 'dark' ? value : 'system';
 }
 
 /**

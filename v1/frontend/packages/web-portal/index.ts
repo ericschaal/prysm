@@ -48,6 +48,8 @@ export { SectionFields } from './section-step';
 export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';
 export {
+  aboutRoute,
+  appearanceRoute,
   lightsRoute,
   pictureRoute,
   previewRoute,

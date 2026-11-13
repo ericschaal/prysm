@@ -39,6 +39,23 @@ export const processingLimits = {
   sample_density: { min: 1, max: 65535, step: 1 },
 } as const;
 
+/**
+ * Smoothing and Detail as sliders: the range a person tunes in, widened to
+ * any saved value beyond it (both settings allow more than is useful).
+ */
+export const fineLimits = {
+  smoothing: (value: number) => ({
+    min: processingLimits.smoothing_seconds.min,
+    max: Math.max(2, value),
+    step: 0.05,
+  }),
+  detail: (value: number) => ({
+    min: processingLimits.sample_density.min,
+    max: Math.max(512, value),
+    step: 1,
+  }),
+};
+
 /** Wait this long after the last change before applying it. */
 export const processingDelayMs = 400;
 

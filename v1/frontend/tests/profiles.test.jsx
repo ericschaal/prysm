@@ -10,7 +10,6 @@ import {
 } from '@prysm/web-portal';
 import {
   $,
-  $$,
   button,
   click,
   edit,
@@ -18,8 +17,8 @@ import {
   field,
   openPage,
   renderPortal,
+  valueOf,
   sleep,
-  text,
 } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
@@ -51,7 +50,7 @@ const enter = (element) =>
     ),
   );
 
-test('colour profiles are listed, renamed, fine-tuned, used and deleted live, with Undo', async (t) => {
+test('colour profiles are rows; each opens its page, saved live, deleted with Undo', async (t) => {
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -70,19 +69,19 @@ test('colour profiles are listed, renamed, fine-tuned, used and deleted live, wi
     }),
   );
   const { fixture } = portal;
-  const names = () => $$('.profile-name input').map((input) => input.value);
-  const deletes = () => $$('button').filter((b) => b.textContent === 'Delete');
   try {
     await openPage('Colour profiles');
     assert.equal(window.location.hash, '#/settings/profiles');
-    assert.deepEqual(names(), ['Movie night', 'PS5']);
     assert.deepEqual(
-      $$('.profile-tag').map((tag) => tag.textContent),
-      ['In use', ''],
+      ['Movie night', 'PS5'].map((name) => valueOf(name)),
+      ['In use', 'Not in use'],
     );
     assert.equal($('.save-status').textContent, 'All changes saved');
 
-    // A name is saved whole, trimmed, on Enter (or leaving the field).
+    // A profile's page: its name, whether it is in use, its correction.
+    await openPage('PS5');
+    assert.equal(window.location.hash, '#/settings/profiles/ps5');
+    assert.equal($('.page-heading h2').textContent, 'PS5');
     const name = field('processing.profiles[1].name');
     await edit(name, '');
     assert.equal(errorOf(name), 'Enter a name.');
@@ -94,8 +93,9 @@ test('colour profiles are listed, renamed, fine-tuned, used and deleted live, wi
     await settle();
     assert.equal(processing(fixture).profiles[1].name, 'Game');
 
-    // Fine-tuning a profile not in use offers to use it.
-    await click(button('Use it now'));
+    const inUse = field('processing.active_profile');
+    assert.equal(inUse.checked, false);
+    await click(inUse);
     await settle();
     assert.equal(processing(fixture).active_profile, 'ps5');
     const warmth = field('processing.profiles[1].correction.warmth');
@@ -116,19 +116,17 @@ test('colour profiles are listed, renamed, fine-tuned, used and deleted live, wi
       hue: { ...zero.hue, cyan: -10 },
     });
 
-    // Deleted at once; the row stays, with Undo, so nothing moves.
-    const rows = $$('.profile-row').length;
-    await click(deletes()[0]);
+    // Deleted from its page; the list keeps its row, with Undo.
+    await click(button('Colour profiles'));
+    await openPage('Movie night');
+    await click(button('Delete profile'));
     await settle();
+    assert.equal(window.location.hash, '#/settings/profiles');
     assert.deepEqual(
       processing(fixture).profiles.map((profile) => profile.name),
       ['Game'],
     );
-    assert.equal($$('.profile-row').length, rows);
-    assert.equal(
-      $('.profile-row.deleted').textContent,
-      'Deleted “Movie night”. Undo',
-    );
+    assert.equal(valueOf('Movie night'), 'Deleted. Undo');
     await click(button('Undo'));
     await settle();
     assert.deepEqual(
@@ -136,24 +134,27 @@ test('colour profiles are listed, renamed, fine-tuned, used and deleted live, wi
       ['Movie night', 'Game'],
     );
     assert.equal(processing(fixture).active_profile, 'ps5');
+    assert.equal(valueOf('Movie night'), 'Not in use');
 
     // Undo is offered for a while; then the row only says what happened.
+    await openPage('Game');
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    await click(deletes()[1]);
+    await click(button('Delete profile'));
     assert.equal(processing(fixture).active_profile, undefined);
     await act(async () => t.mock.timers.tick(undoForMs));
     assert.equal(button('Undo'), undefined);
-    assert.equal($('.profile-row.deleted').textContent, 'Deleted “Game”.');
+    assert.equal(valueOf('Game'), 'Deleted. ');
     t.mock.timers.reset();
     await settle();
 
     // Removing the last profile leaves the list out, as the server does.
-    await click(deletes()[0]);
+    await openPage('Movie night');
+    await click(button('Delete profile'));
     await settle();
     assert.equal('profiles' in processing(fixture), false);
 
     // New profiles come from the guided calibration.
-    await click(button('New profile (guided)'));
+    await openPage('New profile (guided)');
     assert.equal(window.location.hash, '#/calibrate');
   } finally {
     await portal.unmount();
@@ -183,9 +184,14 @@ test('profile errors land on their control; the list is capped', async () => {
   const { fixture } = portal;
   try {
     await openPage('Colour profiles');
-    assert.equal(button('New profile (guided)').disabled, true);
-    assert(text().includes('You have the most profiles Prysm keeps (32).'));
+    assert.equal(
+      valueOf('New profile (guided)'),
+      'You have the most Prysm keeps (32). Delete one first.',
+    );
+    await openPage('New profile (guided)');
+    assert.equal(window.location.hash, '#/settings/profiles', 'stays');
 
+    await openPage('Profile 3');
     fixture.failNext({
       kind: 'invalid',
       field: 'processing.profiles[3].correction.tint',
@@ -204,10 +210,13 @@ test('profile errors land on their control; the list is capped', async () => {
     assert.equal(processing(fixture).profiles[3].correction.tint, 30);
     assert.equal(errorOf(tint), undefined);
 
-    await click($$('button').find((b) => b.textContent === 'Delete'));
+    await click(button('Delete profile'));
     await settle();
     assert.equal(processing(fixture).profiles.length, profileLimits.count - 1);
-    assert.equal(button('New profile (guided)').disabled, false);
+    assert.equal(
+      valueOf('New profile (guided)'),
+      'Test patterns on the TV, step by step',
+    );
   } finally {
     await portal.unmount();
   }

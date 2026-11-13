@@ -89,37 +89,24 @@ export const openSettings = () =>
     await sleep(0);
   });
 
-/** From Home or Settings: the editor of one part of the setup. */
-export async function openEditor(label) {
-  if (!$('.settings')) await openSettings();
-  await act(async () => {
-    const card = pathCard(label);
-    const change = card && button('Change', card);
-    // A part not set up yet has no Change: its editor is still at its address.
-    if (change) change.click();
-    else
-      window.location.hash =
-        label === 'Video source' ? '#/settings/video' : '#/settings/lights';
-    await sleep(0);
-  });
-}
+/** A row on Settings by its label: `Video source`, `Colour profiles`. */
+export const row = (label) =>
+  $$('.row').find((item) => $('.row-label', item)?.textContent === label);
 
-/** A card of the path on Settings by its title: `Video source`, `Prysm`, `Lights`. */
-export const pathCard = (title) =>
-  $$('.path-card').find(
-    (card) => $('h2', card)?.textContent.toLowerCase() === title.toLowerCase(),
-  );
+/** A row's value line: its facts, or its live problem in their place. */
+export const valueOf = (label) => $('.row-value', row(label)).textContent;
 
-/** Open a page from Settings by its row: `Colour profiles`, `Picture fine-tuning`. */
+/** Open a page from Settings by its row: `Colour profiles`, `Fine-tuning`. */
 export async function openPage(label) {
-  if (!$('.settings')) await openSettings();
+  if (!row(label)) await openSettings();
   await act(async () => {
-    $$('.card-link')
-      .find((item) => $('.card-link-label', item).textContent === label)
-      .click();
+    $('.row-link', row(label)).click();
     await sleep(0);
   });
 }
+
+/** From Home or Settings: the editor of one part of the setup. */
+export const openEditor = openPage;
 
 /** Leave an editor, dropping what it holds, for Settings. */
 export const leaveEditor = () =>

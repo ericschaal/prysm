@@ -7,7 +7,16 @@ import { previewLayout } from '@prysm/web-portal';
 import { httpPreviewClient } from '@prysm/application-client/http';
 import { ApplicationError } from '@prysm/application-client';
 import { fakePreviewClient } from '../testkit/preview';
-import { $, button, click, openSettings, renderPortal, sleep } from './dom';
+import {
+  $,
+  button,
+  click,
+  leaveEditor,
+  openEditor,
+  renderPortal,
+  row,
+  sleep,
+} from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
 const output = {
@@ -105,8 +114,9 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal($('.preview'), null, 'not on Home');
     assert.equal(preview.opened(), 0, 'no viewer on Home');
 
-    await openSettings();
-    await click(button('See the picture'));
+    // From the video source's page.
+    await openEditor('Video source');
+    await click($('.row-link', row('See the picture')));
     assert.equal(window.location.hash, '#/preview');
     assert.equal(document.activeElement.textContent, 'Live preview');
     assert.equal(preview.open(), 1);
@@ -185,7 +195,8 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal(window.location.hash, '#/settings');
     assert.equal(preview.open(), 0);
     assert.equal($('.preview-canvas'), null);
-    await click(button('See the picture'));
+    await openEditor('Video source');
+    await click($('.row-link', row('See the picture')));
     assert.equal(preview.open(), 1);
     Object.defineProperty(document, 'visibilityState', {
       value: 'hidden',
@@ -270,9 +281,12 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
 test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
-    await openSettings();
-    assert.equal(button('See the picture'), undefined);
-    assert.equal(button('Check placement'), undefined);
+    await openEditor('Video source');
+    assert.equal(row('See the picture'), undefined);
+    await leaveEditor();
+    await openEditor('Lights');
+    assert.equal(row('Check placement'), undefined);
+    await leaveEditor();
     await act(async () => {
       window.location.hash = '#/preview';
       await sleep(0);

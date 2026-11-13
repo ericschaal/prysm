@@ -55,7 +55,7 @@ test('setup opens instead of the page while capture or lights are missing', asyn
       if (!open) {
         await openSettings();
         assert(
-          $$('.card-link-label').some(
+          $$('.row-label').some(
             (label) => label.textContent === 'Start over with setup',
           ),
         );
@@ -161,7 +161,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     );
     await openSettings();
     assert(
-      $$('.card-link-label').some(
+      $$('.row-label').some(
         (label) => label.textContent === 'Start over with setup',
       ),
     );

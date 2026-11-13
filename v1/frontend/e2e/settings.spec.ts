@@ -1,27 +1,27 @@
-// Settings against a real engine fed by a test sender: the path as three
-// cards with one save status; the video source changed on its own page,
-// saved with one button, then tried on request and said to work.
+// Settings against a real engine fed by a test sender: one column of rows in
+// three groups under one save status; the video source changed on its own
+// page, saved with one button, then tried on request and said to work.
 import { expect, test } from './prysm';
 
-test('Settings shows the path in order, and says whether it is saved', async ({
+test('Settings lists its groups in order, and says whether it is saved', async ({
   page,
   prysm,
 }) => {
   await page.goto('/#/settings');
   await expect(page.getByRole('heading', { level: 2 })).toHaveText([
     'Settings',
-    'Video source',
-    'Prysm',
-    'Lights',
-    'More',
+    'Setup',
+    'Picture',
+    'This device',
   ]);
   const status = page.getByText('All changes saved');
   await expect(status).toBeVisible();
   // Brightness and the profile choice are on Home only.
   await expect(page.getByRole('slider', { name: 'Brightness' })).toHaveCount(0);
 
-  const prysmCard = page.getByRole('region', { name: 'Prysm' });
-  const bars = prysmCard.getByRole('checkbox', { name: 'Remove black bars' });
+  const bars = page
+    .getByRole('region', { name: 'Picture' })
+    .getByRole('checkbox', { name: 'Remove black bars' });
   const before = await bars.isChecked();
   await bars.click();
   await expect(page.getByText(/^(Saving…|Saved)$/)).toBeVisible();
@@ -31,10 +31,8 @@ test('Settings shows the path in order, and says whether it is saved', async ({
   };
   expect(state.settings.processing.remove_black_bars).toBe(!before);
 
-  await page
-    .getByRole('region', { name: 'Lights' })
-    .getByRole('button', { name: 'Change' })
-    .click();
+  // A row is the link: its label, then its value.
+  await page.getByRole('button', { name: /^Lights/ }).click();
   await expect(page).toHaveURL(/#\/settings\/lights$/);
   await expect(page.getByRole('form', { name: 'Your lights' })).toBeVisible();
 });
@@ -46,10 +44,7 @@ test('a saved video source is tried on request and said to work', async ({
 }) => {
   const sender = startSender();
   await page.goto('/#/settings');
-  await page
-    .getByRole('region', { name: 'Video source' })
-    .getByRole('button', { name: 'Change' })
-    .click();
+  await page.getByRole('button', { name: /^Video source/ }).click();
   await expect(page).toHaveURL(/#\/settings\/video$/);
 
   const editor = page.getByRole('form', { name: 'Video source' });

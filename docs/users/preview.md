@@ -4,9 +4,9 @@ Live preview shows the picture Prysm captures with the colours it sends to each
 edge of the strip. Use it to tell a capture problem from a lighting problem.
 
 1. Turn on **Screen sync** on Home.
-2. In **Settings**, choose **See the picture** on the Video source card (or
-   **Check placement** on the Lights card). The address is `#/preview` on
-   the portal.
+2. In **Settings**, open **Video source** and choose **See the picture** (or
+   open **Lights** and choose **Check placement**). The address is
+   `#/preview` on the portal.
 3. Change a [picture setting](configuration.md#processing) in Settings and
    watch the result on the lights and in the preview.
 

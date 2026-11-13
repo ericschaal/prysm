@@ -76,44 +76,47 @@ Good to know:
 
 ## 5. Change settings
 
-Open **Settings** (the icon in the header). It shows your setup in the order
-the light takes, as on Home: **Video source**, **Prysm**, **Lights**. The line
-under the title says whether everything is saved: **All changes saved**,
-**Saving…** or **Not saved**; a change that could not be saved also says so at
-its control, with **Try again**. Brightness and the colour profile in use are
-chosen on Home.
+Open **Settings** (the icon in the header). It is one list in three groups:
+**Setup** (Video source, Lights), **Picture** (Colour profiles, Fine-tuning,
+Remove black bars) and **This device** (Appearance, About this Prysm, Start
+over with setup). Each row shows its current value; choose it to open its
+page. The line under the title says whether everything is saved: **All
+changes saved**, **Saving…** or **Not saved**; a change that could not be
+saved also says so at its control, with **Try again**. Brightness and the
+colour profile in use are chosen on Home.
 
 <a id="processing"></a>
 
 ### Picture
 
 Picture changes apply while you move the control; there is no Save button.
-**Remove black bars** is on Prysm's card; the rest is under **Picture
-fine-tuning**.
+**Remove black bars** is a switch in the Picture group; the rest is under
+**Fine-tuning**.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
 | Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 | Shadow lift | 0% | Brightens dark colours; black stays off. |
 | Edge depth | 10% | How far into the picture each light looks. |
-| Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. |
-| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. |
+| Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
+| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
 
-**Colour profiles** lists your profiles: rename one in place, open
-**Fine-tune** to adjust its colours, or **Delete** it (**Undo** brings it back
-for a few seconds). **New profile (guided)** makes one with test patterns on
+**Colour profiles** lists your profiles. Choose one to rename it, switch it
+**In use**, adjust its colours or delete it; after **Delete profile** the list
+offers **Undo** for a few seconds. **New profile (guided)** makes one with test patterns on
 the TV; see [Calibrate colours](calibration.md).
 
-Use [Live preview](preview.md) (**See the picture** or **Check
-placement**) to check a change.
+Use [Live preview](preview.md) to check a change: **See the picture** on the
+Video source page, or **Check placement** on the Lights page.
 
 ### Video source and lights
 
-Choose **Change** on the **Video source** or **Lights** card to change it on a
-page of its own, with the same steps as the setup wizard. **Use this video
+Choose **Video source** or **Lights** to change it on a page of its own, with
+the same steps as the setup wizard. A part not set up yet says **Not set up
+yet** and opens the same page. **Use this video
 source** or **Use these lights** saves; **Cancel** leaves without saving. A
-problem with either shows on its card, and **Change setup** on Home opens the
-part that has the problem.
+problem with either shows in its row, in red, and **Change setup** on Home
+opens the part that has the problem.
 
 Saving restarts Screen sync if it is on, and Prysm then checks the change: it
 says when the picture arrives or the lights work, or that they don't. Until
@@ -124,10 +127,11 @@ Screen sync off nothing is tried; **Turn on screen sync to try** does that.
 If someone changed the same part in another browser, Prysm asks: **Use
 theirs** shows their settings, **Keep mine** saves yours.
 
-### More
+### This device
 
-The theme (System, Light, Dark; kept in this browser only), **About this
-Prysm** and **Start over with setup**, which reopens the wizard.
+**Appearance** chooses System, Light or Dark, kept in this browser only.
+**About this Prysm** shows what the lights are doing and the settings version.
+**Start over with setup** reopens the wizard.
 
 **Developer options**, under About this Prysm, also offer a video file and
 **No lights (test)** as a setup, for testing Prysm without a capture device or

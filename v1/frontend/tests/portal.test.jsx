@@ -60,7 +60,8 @@ import {
   openEditor,
   openPage,
   openSettings,
-  pathCard,
+  row,
+  valueOf,
   renderPortal,
   sleep,
   submit,
@@ -176,11 +177,9 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       !$('.light-card').textContent.includes('fps'),
       'no live frame rate on Home',
     );
-    await openSettings();
-    const rate = $$('.about-facts dt').find(
-      (term) => term.textContent === 'Frames per second',
-    );
-    assert.equal(rate.nextElementSibling.textContent, '30');
+    await openPage('About this Prysm');
+    assert.equal(valueOf('Frames per second'), '30');
+    await click(button('Settings'));
     await click(button('Home'));
 
     await act(async () =>
@@ -611,7 +610,7 @@ test('Settings has one save status; a refused stale change is saved again on the
   try {
     await openSettings();
     assert.equal(status(), 'All changes saved');
-    await openPage('Picture fine-tuning');
+    await openPage('Fine-tuning');
     assert.equal(window.location.hash, '#/settings/picture');
     assert.equal(status(), 'All changes saved');
     await edit(field('processing.shadow_lift_percent'), 30);
@@ -729,10 +728,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
     assert.equal(control('brightness_percent'), null);
     assert.equal(control('active_profile'), null);
     assert.equal(control('remove_black_bars').checked, false);
-    assert.equal(
-      $('.card-link-description', pathCard('Prysm')).textContent,
-      '1 profile · PS5 in use',
-    );
+    assert.equal(valueOf('Colour profiles'), '1 profile · PS5 in use');
     await click(control('remove_black_bars'));
     await settle();
     assert.equal(saves(fixture), 1);
@@ -741,7 +737,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       true,
     );
 
-    await openPage('Picture fine-tuning');
+    await openPage('Fine-tuning');
     assert.deepEqual(
       [
         'shadow_lift_percent',
@@ -752,8 +748,9 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         ['range', '0', '0', '100', '1'],
         ['range', '10', '1', '100', '1'],
-        ['number', '0', '0', '', 'any'],
-        ['number', '1', '1', '65535', '1'],
+        // Smoothing and detail as sliders over the range worth tuning.
+        ['range', '0', '0', '2', '0.05'],
+        ['range', '1', '1', '512', '1'],
       ],
     );
     assert.deepEqual(
@@ -770,27 +767,12 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
     await settle();
     assert.equal(saves(fixture), 2);
 
-    await edit(control('sample_density'), 0);
-    assert.equal(
-      control('sample_density').getAttribute('aria-invalid'),
-      'true',
-    );
-    assert.equal(
-      errorOf(control('sample_density')),
-      'Enter a whole number from 1 to 65535.',
-    );
-    assert.equal($('.save-status').textContent, 'Not saved');
-    await edit(control('smoothing_seconds'), -1);
-    assert.equal(
-      errorOf(control('smoothing_seconds')),
-      'Enter a number of at least 0.',
-    );
-    await settle();
-    assert.equal(saves(fixture), 2);
-
     await edit(control('sample_density'), 128);
     await edit(control('smoothing_seconds'), 0.5);
-    assert.equal(errorOf(control('sample_density')), undefined);
+    assert.equal(
+      $('output', control('smoothing_seconds').closest('.field')).textContent,
+      '0.5\u00a0s',
+    );
     await settle();
     assert.equal(saves(fixture), 3);
     assert.deepEqual(fixture.snapshot().settings.processing, {
@@ -1043,7 +1025,10 @@ test('a section changed on another device: use theirs, or keep mine', async () =
 });
 
 /** The live problem line of a part of the setup, on Settings. */
-const problem = (title) => $('.path-card-problem', pathCard(title)).textContent;
+const problem = (label) => {
+  const value = $('.row-value', row(label));
+  return value.dataset.problem === 'true' ? value.textContent : '';
+};
 
 test('new lights are checked after saving; failing ones can be swapped back', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
@@ -1159,9 +1144,11 @@ test('a video file and no lights are developer options; a saved one still shows'
     assert.equal(field('output.kind'), null);
     await leaveEditor();
     // On in About this Prysm, for this browser.
+    await openPage('About this Prysm');
     assert.equal(field('developer').checked, false);
     await click(field('developer'));
     assert.equal(field('developer').checked, true);
+    await click(button('Settings'));
     await openEditor('Lights');
     assert.deepEqual(kinds('output.kind'), ['wled', 'null']);
   } finally {
@@ -1244,11 +1231,7 @@ test('an unconfigured section starts from its first kind and saves only when val
   try {
     await click(button('Leave setup'));
     await openSettings();
-    assert.equal(
-      $('.path-card-name', pathCard('Video source')).textContent,
-      'Not set up yet',
-    );
-    assert(button('Set up', pathCard('Video source')));
+    assert.equal(valueOf('Video source'), 'Not set up yet');
     await openEditor('Video source');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
@@ -1385,7 +1368,7 @@ test('fields the forms do not show are preserved on every save', async () => {
     await edit(field('output.leds.right'), 6);
     await submit(form('Your lights'));
     await leaveEditor();
-    await openPage('Picture fine-tuning');
+    await openPage('Fine-tuning');
     await edit(field('processing.spatial_reach_percent'), 20);
     await settle();
     assert.deepEqual(fixture.snapshot().settings, {
@@ -1783,21 +1766,30 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal(window.location.hash, '#/settings');
     assert.equal(document.activeElement.textContent, 'Settings');
     assert.equal($$('form').length, 0, 'nothing waits for a Save here');
-    // The path in the order the light takes, then More.
+    // One column of rows in three groups; Open WLED stays on Home.
     assert.deepEqual(
-      $$('.path-card h2').map((title) => title.textContent),
-      ['Video source', 'Prysm', 'Lights'],
+      $$('.group h2').map((title) => title.textContent),
+      ['Setup', 'Picture', 'This device'],
     );
     assert.deepEqual(
-      $$('.path-card-name').map((name) => name.textContent),
-      ['Video capture device', 'Prysm', 'WLED'],
+      $$('.row-label, .row-switch label').map((label) => label.textContent),
+      [
+        'Video source',
+        'Lights',
+        'Colour profiles',
+        'Fine-tuning',
+        'Remove black bars',
+        'Appearance',
+        'About this Prysm',
+        'Start over with setup',
+      ],
     );
-    assert($('.about'));
-    assert.equal($('.path-card a'), null, 'Open WLED stays on Home');
     assert.equal(
-      $('.path-card-fact', pathCard('Lights')).textContent,
-      '14 LEDs · 192.0.2.1',
+      valueOf('Video source'),
+      'Video capture device · 640\u00a0×\u00a0360 · 30 fps',
     );
+    assert.equal(valueOf('Lights'), 'WLED · 14 LEDs');
+    assert.equal($('.settings a'), null, 'Open WLED stays on Home');
     await openEditor('Video source');
     assert.equal(window.location.hash, '#/settings/video');
     assert.equal(document.activeElement.textContent, 'Video source');
@@ -2329,16 +2321,19 @@ test('the theme choice sets data-theme, is kept in this browser and works withou
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     await openSettings();
-    const choice = (label) =>
-      $$('.theme-choice input').find(
-        (input) => input.parentElement.textContent === label,
-      );
+    assert.equal(valueOf('Appearance'), 'System');
+    await openPage('Appearance');
+    assert.equal(window.location.hash, '#/settings/appearance');
+    const choice = (label) => $('input', row(label));
     assert.equal(choice('System').checked, true);
     // An about:blank page has no storage: the choice still applies.
     await click(choice('Dark'));
     assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
     assert.equal(choice('Dark').checked, true);
     assert.equal(storedTheme(), 'system', 'nothing kept without storage');
+    await click(button('Settings'));
+    assert.equal(valueOf('Appearance'), 'Dark');
+    await openPage('Appearance');
     await click(choice('System'));
     assert.equal(document.documentElement.hasAttribute('data-theme'), false);
   } finally {
