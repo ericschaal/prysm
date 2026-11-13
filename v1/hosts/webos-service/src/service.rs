@@ -418,14 +418,20 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                         let _ = worker.send(&command);
                     }
                 }
+                // A signal that cannot be sent (the worker already exited)
+                // is logged; its exit follows either way.
                 Effect::Terminate => {
-                    if let Some(worker) = &mut self.worker {
-                        let _ = worker.terminate();
+                    if let Some(worker) = &mut self.worker
+                        && let Err(error) = worker.terminate()
+                    {
+                        eprintln!("prysm-webos-service: cannot stop the worker: {error}");
                     }
                 }
                 Effect::Kill => {
-                    if let Some(worker) = &mut self.worker {
-                        let _ = worker.kill();
+                    if let Some(worker) = &mut self.worker
+                        && let Err(error) = worker.kill()
+                    {
+                        eprintln!("prysm-webos-service: cannot kill the worker: {error}");
                     }
                 }
                 Effect::Publish => {

@@ -5,11 +5,11 @@ use crate::install::Layout;
 use crate::machine::Spec;
 use crate::service::Config;
 use crate::state::Flavor;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 /// Where the full worker serves the portal.
-pub const PORTAL: &str = "0.0.0.0:8787";
+pub const PORTAL: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8787);
 /// The TV app of both packages.
 pub const APP_ID: &str = "io.prysm.tv";
 /// The supervisor's installed file name in both packages.
@@ -97,8 +97,6 @@ impl Identity {
         self.state_dir.join("tv.json")
     }
 
-    /// # Panics
-    /// Never: [`PORTAL`] is a valid address.
     #[must_use]
     pub fn config(&self) -> Config {
         Config {
@@ -108,7 +106,7 @@ impl Identity {
             spec: match self.flavor {
                 Flavor::Full => Spec::Full {
                     settings: self.state_dir.join("settings.json"),
-                    listen: PORTAL.parse::<SocketAddr>().expect("valid portal address"),
+                    listen: PORTAL,
                 },
                 Flavor::Slim => Spec::Slim,
             },

@@ -4,7 +4,7 @@ use crate::machine::Exit;
 use prysm_webos_link::{Command, Event, LineReader, encode};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 
@@ -69,8 +69,7 @@ impl Launcher for ProcessLauncher {
             .spawn()?;
         let (sender, outputs) = mpsc::channel();
         let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-            let _ = child.kill();
-            let _ = child.wait();
+            abandon(child);
             return Err(io::Error::other("worker pipes missing"));
         };
         let events = sender.clone();
@@ -81,16 +80,26 @@ impl Launcher for ProcessLauncher {
             .name("prysm-worker-log".into())
             .spawn(move || read_log(stderr, &sender));
         if let Err(error) = reader.and(logger) {
-            let _ = child.kill();
-            let _ = child.wait();
+            abandon(child);
             return Err(error);
         }
         Ok(ProcessWorker {
             stdin: child.stdin.take(),
             child: Some(child),
             outputs,
-            program: program.to_path_buf(),
         })
+    }
+}
+
+/// Kill and reap a worker that could not be set up. Its pipes are not read
+/// yet, so it cannot block on them; a kill that fails (it already exited)
+/// leaves only the reap.
+fn abandon(mut child: Child) {
+    if let Err(error) = child.kill() {
+        eprintln!("prysm-webos-service: cannot kill the worker: {error}");
+    }
+    if let Err(error) = child.wait() {
+        eprintln!("prysm-webos-service: cannot reap the worker: {error}");
     }
 }
 
@@ -141,7 +150,6 @@ pub struct ProcessWorker {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     outputs: mpsc::Receiver<Output>,
-    program: PathBuf,
 }
 
 impl ProcessWorker {
@@ -198,15 +206,18 @@ impl Drop for ProcessWorker {
     /// reap on a thread, so a process stuck in the kernel cannot block us.
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
+            // Already exited if this fails; the reap below collects it.
             let _ = child.kill();
-            let program = self.program.clone();
-            let reaped = std::thread::Builder::new()
+            let reaper = std::thread::Builder::new()
                 .name("prysm-worker-reaper".into())
                 .spawn(move || {
-                    let _ = child.wait();
-                    drop(program);
+                    if let Err(error) = child.wait() {
+                        eprintln!("prysm-webos-service: cannot reap the worker: {error}");
+                    }
                 });
-            drop(reaped);
+            if let Err(error) = reaper {
+                eprintln!("prysm-webos-service: cannot start the worker reaper: {error}");
+            }
         }
     }
 }

@@ -1,7 +1,7 @@
 //! The engine's side of the supervisor link: commands in, status out.
 use futures::future::BoxFuture;
 use prysm_capture_webos::VideoSignal;
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
+use prysm_ports::{Error, LightingTarget, Result, SessionPhase, SessionState, Snapshot, chain};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{Backoff, Command, Event, HEARTBEAT, WorkerFailure, WorkerStatus};
@@ -58,8 +58,7 @@ impl EngineLink {
             stop,
         } = self.link;
         if self.initial != LightingTarget::Off {
-            // A failure lands in the snapshot and is retried below.
-            let _ = engine.set_target(self.initial).await;
+            apply(&engine, self.initial).await;
         }
         let mut snapshots = engine.snapshot();
         let mut portal = (self.portal_url)();
@@ -68,17 +67,14 @@ impl EngineLink {
         let mut retry = Retry::new(self.backoff);
         loop {
             let snapshot = snapshots.borrow_and_update().clone();
-            let status = status(&snapshot, portal.as_ref());
+            let status = status(&snapshot, portal.as_deref());
             if sent.as_ref() != Some(&status) {
                 events.send(&Event::Status(status.clone()));
                 sent = Some(status);
                 beat = Instant::now() + self.heartbeat;
             }
             if let SessionState::Faulted(phase) = snapshot.session {
-                let cause = snapshot.failure.as_ref().map_or_else(
-                    || Error::Faulted(phase).to_string(),
-                    |failure| format!("{}: {}", Error::Faulted(phase), chain(failure)),
-                );
+                let cause = faulted(phase, snapshot.failure.as_ref());
                 events.send(&Event::Faulted {
                     cause: cause.clone(),
                 });
@@ -96,7 +92,7 @@ impl EngineLink {
                     Some(Command::ResetVideo {}) => self.video.reset(),
                     Some(Command::Lighting { target }) => {
                         retry.cancel();
-                        let _ = engine.set_target(target).await;
+                        apply(&engine, target).await;
                     }
                 },
                 changed = snapshots.changed() => if changed.is_err() { return Ok(()) },
@@ -107,7 +103,7 @@ impl EngineLink {
                 }
                 () = wait(retry_at) => {
                     retry.cancel();
-                    let _ = engine.set_target(snapshot.target).await;
+                    apply(&engine, snapshot.target).await;
                 }
             }
         }
@@ -124,6 +120,21 @@ impl Surface for EngineLink {
     }
 }
 
+/// Ask for `target`. A failure is not returned: it lands in the snapshot,
+/// which reports it and retries it ([`Retry`]).
+async fn apply(engine: &EngineHandle, target: LightingTarget) {
+    let _ = engine.set_target(target).await;
+}
+
+/// Why the session faulted, with the failure's causes when there is one.
+fn faulted(phase: SessionPhase, failure: Option<&Error>) -> String {
+    let fault = Error::Faulted(phase);
+    match failure {
+        Some(failure) => format!("{fault}: {}", chain(failure)),
+        None => fault.to_string(),
+    }
+}
+
 async fn wait(at: Option<Instant>) {
     match at {
         Some(at) => sleep_until(at).await,
@@ -131,7 +142,7 @@ async fn wait(at: Option<Instant>) {
     }
 }
 
-fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
+fn status(snapshot: &Snapshot, portal: Option<&str>) -> WorkerStatus {
     let failure = snapshot
         .failure
         .as_ref()
@@ -142,7 +153,7 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
             && snapshot.input.is_some_and(|input| input.receiving),
         fps: snapshot.input.map(|input| whole_fps(input.fps)),
         target: Some(snapshot.target),
-        portal: portal.cloned(),
+        portal: portal.map(str::to_owned),
         failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
         encoding: None,
         paused: false,
