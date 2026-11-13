@@ -148,13 +148,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARTIFACTS: ${{ runner.temp }}/artifacts
         run: |
-          # Both flavours are named io.prysm.tv_<version>_all.ipk; add the flavour.
+          # build-ipk.sh names them io.prysm.tv-<flavour>_<version>_all.ipk.
           mkdir -p "$RUNNER_TEMP/ipk"
           for flavour in full slim; do
-            for ipk in "$ARTIFACTS/prysm-tv-ipk-$flavour"/io.prysm.tv_*_all.ipk; do
-              name=$(basename "$ipk")
-              cp "$ipk" "$RUNNER_TEMP/ipk/io.prysm.tv-${flavour}_${name#io.prysm.tv_}"
-            done
+            cp "$ARTIFACTS/prysm-tv-ipk-$flavour"/io.prysm.tv-"$flavour"_*_all.ipk "$RUNNER_TEMP/ipk/"
           done
           # A pre-release version is a GitHub pre-release. Never "Latest": that
           # stays the shipping product's release until v1 replaces it.

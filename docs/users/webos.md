@@ -38,18 +38,12 @@ it. Stop PicCap or any other capture app too.
 
 Download `io.prysm.tv-full_VERSION_all.ipk` or `io.prysm.tv-slim_VERSION_all.ipk`
 from a `v1.*` [release](https://github.com/ericschaal/prysm/releases), or
-[build it](../developers/packaging.md#webos). The install helper expects the
-package's own file name, so rename a downloaded file first, for example:
+[build it](../developers/packaging.md#webos). From the repository root,
+install it over SSH (replace `TV` with the TV's address; `--dry-run` only
+prints the steps):
 
 ```sh
-mv io.prysm.tv-full_VERSION_all.ipk io.prysm.tv_VERSION_all.ipk
-```
-
-From the repository root, install it over SSH (replace `TV` with the TV's
-address; `--dry-run` only prints the steps):
-
-```sh
-v1/packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv_VERSION_all.ipk
+v1/packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
 ```
 
 The helper copies the package to the TV, installs it through the TV's install

@@ -69,20 +69,28 @@ class MetadataTests(unittest.TestCase):
         self.assertNotIn('ares-install ', text.split('set -eu', 1)[1])
         self.assertIn('luna://com.webos.appInstallService/dev/install', text)
         with tempfile.TemporaryDirectory() as directory:
-            ipk_file = Path(directory) / 'io.prysm.tv_1.0.0_all.ipk'
-            ipk_file.write_bytes(b'')
-            run = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(ipk_file)],
-                                 capture_output=True, text=True, check=True)
-            plan = run.stderr
-            self.assertIn('/media/developer/temp/io.prysm.tv_1.0.0_all.ipk', plan)
-            # luna-send keeps its stdin: every call is fed by a sleep.
-            self.assertEqual(plan.count('luna-send'), plan.count('(sleep '))
-            self.assertLess(plan.index('appInstallService'), plan.index(INSTALLED + 'setup.sh'))
-            other = Path(directory) / 'other.ipk'
-            other.write_bytes(b'')
-            refused = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(other)],
-                                     capture_output=True, text=True)
-            self.assertEqual(refused.returncode, 2)
+            # The names build-ipk.sh writes and the release attaches.
+            self.assertIn('package="io.prysm.tv-${flavour}_${version}_all.ipk"',
+                          (HERE / 'build-ipk.sh').read_text())
+            for flavour in ('full', 'slim'):
+                ipk_file = Path(directory) / f'io.prysm.tv-{flavour}_1.0.0_all.ipk'
+                ipk_file.write_bytes(b'')
+                run = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(ipk_file)],
+                                     capture_output=True, text=True, check=True)
+                plan = run.stderr
+                self.assertIn(f'/media/developer/temp/io.prysm.tv-{flavour}_1.0.0_all.ipk', plan)
+                # Either flavour installs as the one app.
+                self.assertIn('"id":"io.prysm.tv"', plan)
+                # luna-send keeps its stdin: every call is fed by a sleep.
+                self.assertEqual(plan.count('luna-send'), plan.count('(sleep '))
+                self.assertLess(plan.index('appInstallService'), plan.index(INSTALLED + 'setup.sh'))
+            # Anything else is not a Prysm TV package, the unsuffixed name included.
+            for other in ('other.ipk', 'io.prysm.tv_1.0.0_all.ipk', 'io.prysm.tv-other_1.0.0_all.ipk'):
+                path = Path(directory) / other
+                path.write_bytes(b'')
+                refused = subprocess.run(['sh', str(script), '--dry-run', 'root@tv', str(path)],
+                                         capture_output=True, text=True)
+                self.assertEqual(refused.returncode, 2, other)
 
     def test_appinfo_version_is_the_workspace_version(self):
         # One place to bump: the source appinfo.json has no version of its own.
@@ -251,6 +259,9 @@ class SmokeProbeTests(unittest.TestCase):
         self.assertEqual(api, [smoke.SERVICE + '/' + m for m in ('getState', 'setPreferences', 'setEnabled', 'uninstall')])
         self.assertEqual(json.loads(files['probe.worker.role.json'])['exeName'], directory + '/prysm-webos-slim')
         self.assertIn(directory + '/probe.worker.role.json', json.loads(manifest)['roleFiles'])
+        # The probe's Luna manifest has the packaged app's version.
+        version = ipk.app_version(ipk.workspace_version((V1 / 'Cargo.toml').read_text()))
+        self.assertEqual(json.loads(manifest)['version'], version)
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
         status = json.loads(smoke.STATUS)
         self.assertEqual(set(status), {'type', 'capturing', 'target', 'portal', 'failure'})

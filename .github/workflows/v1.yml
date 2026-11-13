@@ -311,7 +311,7 @@ jobs:
         run: |
           v1/packaging/webos/build-ipk.sh full --out "$RUNNER_TEMP/ipk/full"
           v1/packaging/webos/build-ipk.sh slim --out "$RUNNER_TEMP/ipk/slim"
-      # Both flavours are io.prysm.tv_<version>_all.ipk: one artifact each.
+      # io.prysm.tv-full_<version>_all.ipk and io.prysm.tv-slim_…: one artifact each.
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:

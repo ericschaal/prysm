@@ -21,7 +21,7 @@ The workflow then:
   image and installs the package;
 - checks that the tag equals `v` plus the workspace version;
 - pushes `ghcr.io/<owner>/prysm-headless:<version>` (multi-arch);
-- attaches the `.deb` files and both IPKs, renamed
+- attaches the `.deb` files and both IPKs, named by `build-ipk.sh`
   `io.prysm.tv-full_<version>_all.ipk` and `io.prysm.tv-slim_<version>_all.ipk`,
   to a GitHub release.
 

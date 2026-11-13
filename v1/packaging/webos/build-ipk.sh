@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build one v1 TV package: io.prysm.tv_<version>_all.ipk for the full or slim
+# Build one v1 TV package: io.prysm.tv-<flavour>_<version>_all.ipk, full or slim
 # flavour. Both install as app io.prysm.tv with service io.prysm.tv.service,
 # so installing one replaces the other. Builds do not install or deploy.
 #
@@ -110,9 +110,12 @@ chmod 755 "$stage/service/setup.sh" "$stage/service/prysm-webos-service" "$stage
 chmod -R go-w "$stage"
 
 ares-package "$stage/app" "$stage/service" -o "$stage" >&2
-package="io.prysm.tv_${version}_all.ipk"
+built="io.prysm.tv_${version}_all.ipk"
 # Root ownership and fixed modes; reject install scripts, links and stray paths.
-python3 "$here/ipk.py" secure "$stage/$package"
-python3 "$here/ipk.py" verify "$stage/$package" >/dev/null
-mv "$stage/$package" "$output/$package"
+python3 "$here/ipk.py" secure "$stage/$built"
+python3 "$here/ipk.py" verify "$stage/$built" >/dev/null
+# Both flavours install as io.prysm.tv; the file name says which one it is,
+# and is the name the release attaches.
+package="io.prysm.tv-${flavour}_${version}_all.ipk"
+mv "$stage/$built" "$output/$package"
 printf '%s\n' "$output/$package"

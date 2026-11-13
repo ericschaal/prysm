@@ -49,6 +49,31 @@ impl Sandbox {
     }
 }
 
+/// One version to bump: the workspace's, without a pre-release suffix, as
+/// the packaged appinfo.json has it.
+#[test]
+fn manifests_carry_the_workspace_version() {
+    let workspace = env!("CARGO_PKG_VERSION");
+    let rest = workspace
+        .strip_prefix(MANIFEST_VERSION)
+        .expect("the workspace version starts with it");
+    assert!(
+        rest.is_empty() || rest.starts_with(['-', '+']),
+        "{workspace}"
+    );
+    let parts: Vec<&str> = MANIFEST_VERSION.split('.').collect();
+    assert_eq!(parts.len(), 3, "{MANIFEST_VERSION}");
+    assert!(parts.iter().all(|part| part.parse::<u32>().is_ok()));
+
+    let mut s = sandbox();
+    s.installer.install().unwrap();
+    for name in ["supervisor", "worker"] {
+        let manifest: Value =
+            serde_json::from_str(&s.read(&format!("manifests.d/io.prysm.tv.{name}.json"))).unwrap();
+        assert_eq!(manifest["version"], MANIFEST_VERSION, "{name}");
+    }
+}
+
 #[test]
 fn install_is_idempotent_and_uninstall_removes_only_ours() {
     let mut s = sandbox();

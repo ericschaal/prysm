@@ -1,7 +1,11 @@
 #!/bin/sh
 # Install a Prysm TV package (full or slim) on a rooted TV over SSH.
 #
-#   install-ipk.sh [--dry-run] root@TV v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+#   install-ipk.sh [--dry-run] root@TV io.prysm.tv-full_1.0.0_all.ipk
+#
+# The file is a release asset or build-ipk.sh's output,
+# io.prysm.tv-full_<version>_all.ipk or io.prysm.tv-slim_<version>_all.ipk;
+# both install as the app io.prysm.tv.
 #
 # `ares-install` fails with "Unable to exec" on webOS 10, so this copies the
 # IPK to /media/developer/temp/ and installs it through
@@ -26,15 +30,15 @@ if [ "${1:-}" = --dry-run ]; then
     shift
 fi
 if [ $# -ne 2 ]; then
-    echo "usage: $0 [--dry-run] root@TV path/to/$APP"'_*.ipk' >&2
+    echo "usage: $0 [--dry-run] root@TV path/to/$APP-full_VERSION_all.ipk (or -slim_)" >&2
     exit 2
 fi
 host=$1
 ipk=$2
 name=$(basename "$ipk")
 case $name in
-    "$APP"_*.ipk) ;;
-    *) echo "$0: $name is not a $APP package" >&2; exit 2 ;;
+    "$APP"-full_*_all.ipk | "$APP"-slim_*_all.ipk) ;;
+    *) echo "$0: $name is not a Prysm TV package ($APP-full_… or $APP-slim_…)" >&2; exit 2 ;;
 esac
 case $name in
     *[!A-Za-z0-9._-]*) echo "$0: unexpected characters in $name" >&2; exit 2 ;;

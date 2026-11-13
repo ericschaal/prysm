@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../v1/packaging/docker/Dockerfile) | Local image |
 | Debian package `prysm-headless` | Same Dockerfile, `deb` target | `prysm-headless_<version>_<arch>.deb` |
-| TV packages, full and slim | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) | `io.prysm.tv_<version>_all.ipk` |
+| TV packages, full and slim | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) | `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
 
 Reference: [v1 packaging](../../v1/packaging/README.md). Builds never install
 or deploy. Release builds: [releasing](releasing.md).
@@ -58,9 +58,10 @@ v1/packaging/webos/build-ipk.sh full
 v1/packaging/webos/build-ipk.sh slim
 ```
 
-Outputs: `v1/target/webos-ipk/full/` and `v1/target/webos-ipk/slim/`. Both
-are named `io.prysm.tv_<version>_all.ipk` and install as the same app; the
-binaries are ARMv7 despite `_all`.
+Outputs: `v1/target/webos-ipk/full/io.prysm.tv-full_<version>_all.ipk` and
+`v1/target/webos-ipk/slim/io.prysm.tv-slim_<version>_all.ipk`, the names the
+release attaches. Both install as the same app (`io.prysm.tv`); the binaries
+are ARMv7 despite `_all`.
 
 | Package | Supervisor | Worker | TV app |
 | --- | --- | --- | --- |
@@ -99,7 +100,7 @@ Without a TV:
 
 ```sh
 python3 -m unittest discover -s v1/packaging/webos/tests
-python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv_*_all.ipk
+python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv-full_*_all.ipk
 ```
 
 With the SDK, check the Luna and GLib bindings against its headers:

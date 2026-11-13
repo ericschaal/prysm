@@ -22,6 +22,7 @@ Refuses --capture while another Prysm process runs on the TV (the old
 io.prysm.capture app included): stop it first; this script never does.
 """
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -32,6 +33,15 @@ import time
 
 HERE = Path(__file__).resolve().parents[1]
 V1 = HERE.parents[1]
+
+
+def manifest_version():
+    """The Luna manifest version: the workspace version's major.minor.patch,
+    as ipk.py gives the packaged appinfo.json."""
+    spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
+    ipk = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ipk)
+    return ipk.app_version(ipk.workspace_version((V1 / 'Cargo.toml').read_text()))
 APP = 'io.prysm.tv.probe'
 SERVICE = APP + '.service'
 MANIFEST = f'/var/luna-service2/manifests.d/{APP}.json'
@@ -79,7 +89,7 @@ def probe_files(directory, flavour, real_worker, run_for):
                           'Type=dynamic\n'),
     }
     manifest = {
-        'id': APP, 'version': '1.0.0',
+        'id': APP, 'version': manifest_version(),
         'roleFiles': [f'{directory}/probe.role.json'],
         'serviceFiles': [f'{directory}/probe.service'],
         'clientPermissionFiles': [f'{directory}/probe.client.json'],

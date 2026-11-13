@@ -14,6 +14,17 @@ use std::time::{Duration, Instant};
 pub const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPLY: usize = 65_536;
 
+/// The Luna manifests' version: the workspace version's major.minor.patch,
+/// the same rule as the packaged appinfo.json (`ipk.py app_version`), which
+/// takes no pre-release suffix.
+pub const MANIFEST_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_PATCH"),
+);
+
 /// Why registration could not be changed.
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
@@ -108,7 +119,7 @@ impl Layout {
             self.manifests.join(format!("{}.supervisor.json", self.id)),
             json!({
                 "id": format!("{}.supervisor", self.id),
-                "version": "1.0.0",
+                "version": MANIFEST_VERSION,
                 "roleFiles": [file("supervisor.role.json")],
                 "serviceFiles": [file("supervisor.service")],
                 "clientPermissionFiles": [file("supervisor.client.json")],
@@ -122,7 +133,7 @@ impl Layout {
             self.manifests.join(format!("{}.worker.json", self.id)),
             json!({
                 "id": format!("{}.worker", self.id),
-                "version": "1.0.0",
+                "version": MANIFEST_VERSION,
                 "roleFiles": [self.service_dir.join("worker.role.json")],
             }),
         )

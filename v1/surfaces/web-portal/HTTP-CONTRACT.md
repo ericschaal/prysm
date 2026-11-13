@@ -368,8 +368,8 @@ even if the client disconnects.
 ## Access
 
 Anyone who can reach the listen address can read the state and control the
-lights, like the TV's current embedded portal. There is no token, password or
-TLS. What the portal does refuse is a *web page from another site* using the
+lights, the full TV package's portal included. There is no token, password
+or TLS. What the portal does refuse is a *web page from another site* using the
 visitor's browser to reach it.
 
 The policy applies to every `/api/` request (commands, state and the stream)

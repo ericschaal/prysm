@@ -166,8 +166,8 @@ and Node.js 24+ for the frontend.
 ```sh
 npm --prefix v1/frontend ci && npm --prefix v1/frontend run build   # or pass --frontend
 export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
-v1/packaging/webos/build-ipk.sh full    # v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
-v1/packaging/webos/build-ipk.sh slim    # v1/target/webos-ipk/slim/io.prysm.tv_1.0.0_all.ipk
+v1/packaging/webos/build-ipk.sh full    # v1/target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
+v1/packaging/webos/build-ipk.sh slim    # v1/target/webos-ipk/slim/io.prysm.tv-slim_1.0.0_all.ipk
 ```
 
 `--out DIR` changes the output folder; `CARGO_TARGET_DIR` is honoured. The
@@ -236,7 +236,7 @@ Checks without a TV:
 
 ```sh
 python3 -m unittest discover -s v1/packaging/webos/tests    # package files and ipk.py
-python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
 WEBOS_SDK=… cargo run --manifest-path v1/Cargo.toml -p prysm-webos-luna-sys \
   --features codegen --bin generate-luna-bindings -- --check   # Luna/GLib bindings vs SDK headers
 ```
@@ -259,13 +259,13 @@ Install through the TV's install service instead;
 (`--dry-run` prints them):
 
 ```sh
-v1/packaging/webos/install-ipk.sh root@TV v1/target/webos-ipk/full/io.prysm.tv_1.0.0_all.ipk
+v1/packaging/webos/install-ipk.sh root@TV v1/target/webos-ipk/full/io.prysm.tv-full_1.0.0_all.ipk
 ```
 
 By hand:
 
 ```sh
-ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.prysm.tv.ipk' < io.prysm.tv_1.0.0_all.ipk
+ssh root@TV 'mkdir -p /media/developer/temp && cat > /media/developer/temp/io.prysm.tv.ipk' < io.prysm.tv-full_1.0.0_all.ipk
 (sleep 122) | ssh root@TV "timeout 120 luna-send -i luna://com.webos.appInstallService/dev/install \
   '{\"id\":\"io.prysm.tv\",\"ipkUrl\":\"/media/developer/temp/io.prysm.tv.ipk\",\"subscribe\":true}'"
 ssh root@TV /media/developer/apps/usr/palm/services/io.prysm.tv.service/setup.sh

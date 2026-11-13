@@ -5,8 +5,8 @@ lives in [`prysm-runtime`](crates/runtime/src/lib.rs): one engine task owns
 settings and intent, one session thread owns a source, the processor and an
 output. Adapters are single-trait objects with no channels or state machines.
 Design and rationale: [simplified runtime](../docs/plans/prysm-v1-simplified-runtime.md).
-The shipping product is still the root workspace; v1 shares its `prysm-core`
-and `prysm-processor`.
+v1 is the product. It shares `prysm-core` and `prysm-processor` with the
+root workspace, the earlier implementation, which v1 replaces.
 
 ## Layout
 
@@ -162,17 +162,13 @@ members). Builds do not deploy.
 
 ## Not done yet
 
-- TV: IPK packaging for the two packages, the TV UI on the new Luna API, and every
-  check that needs the webOS SDK or a TV (the TV binaries build and are tested on
-  the development host only).
-- The calibration screens (portal wizard, TV pattern player); the
-  engine state and [route](surfaces/web-portal/HTTP-CONTRACT.md#calibration) exist.
 - Metrics on the TV: `/metrics` is opt-in on the desktop hosts only; the full
   TV worker is started by the service without a way to enable it.
-- Verification against real capture hardware, WLED devices and TVs.
+- Verification beyond the development setup: other capture hardware, WLED
+  devices and TV models.
 
 ## Packaging
 
 `prysm-headless` ships as a Docker image and a Debian package with a systemd
-service; see [packaging](packaging/README.md). Releases on `v1.*` tags:
+service, the TV as two IPKs (full and slim); see [packaging](packaging/README.md). Releases on `v1.*` tags:
 [v1-release.yml](../.github/workflows/v1-release.yml).
