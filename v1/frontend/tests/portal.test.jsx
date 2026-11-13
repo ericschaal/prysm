@@ -1025,10 +1025,7 @@ test('a section changed on another device: use theirs, or keep mine', async () =
 });
 
 /** The live problem line of a part of the setup, on Settings. */
-const problem = (label) => {
-  const value = $('.row-value', row(label));
-  return value.dataset.problem === 'true' ? value.textContent : '';
-};
+const problem = (label) => $('.row-problem', row(label))?.textContent ?? '';
 
 test('new lights are checked after saving; failing ones can be swapped back', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
@@ -1061,6 +1058,8 @@ test('new lights are checked after saving; failing ones can be swapped back', as
     // Settings shows the live problem on its row; the way back stays.
     await leaveEditor();
     assert.equal(problem('Lights'), 'The lights are not responding.');
+    // The device stays named, before the problem.
+    assert.equal(valueOf('Lights'), 'WLED · The lights are not responding.');
     assert.equal(problem('Video source'), '');
     await openEditor('Lights');
     assert.equal(status(), 'The lights are not responding.');

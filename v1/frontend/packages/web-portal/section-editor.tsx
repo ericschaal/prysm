@@ -301,9 +301,6 @@ export function SectionEditor<S extends AdapterSection>({
   if (phase.kind === 'conflict')
     actions = (
       <>
-        <button type="button" disabled={locked} onClick={takeTheirs}>
-          Use theirs
-        </button>
         <button
           type="button"
           className="primary"
@@ -312,31 +309,25 @@ export function SectionEditor<S extends AdapterSection>({
         >
           Keep mine
         </button>
+        <button type="button" disabled={locked} onClick={takeTheirs}>
+          Use theirs
+        </button>
       </>
     );
   else if (draft.dirty || draft.unconfigured || phase.kind === 'problem')
     actions = (
       <>
-        <button type="button" disabled={busy} onClick={leave}>
-          Cancel
-        </button>
         <button className="primary" type="submit" disabled={locked}>
           {busy ? 'Saving…' : copy.use}
+        </button>
+        <button type="button" disabled={busy} onClick={leave}>
+          Cancel
         </button>
       </>
     );
   else
     actions = (
       <>
-        {goBack ? (
-          <button
-            type="button"
-            disabled={locked}
-            onClick={() => previous && void store(previous, 'reverted')}
-          >
-            Go back to {copy.previous}
-          </button>
-        ) : null}
         {phase.kind === 'untried' ? (
           <button
             type="button"
@@ -356,6 +347,15 @@ export function SectionEditor<S extends AdapterSection>({
             {goBack ? copy.keep : 'Done'}
           </button>
         )}
+        {goBack ? (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => previous && void store(previous, 'reverted')}
+          >
+            Go back to {copy.previous}
+          </button>
+        ) : null}
       </>
     );
 
@@ -396,16 +396,19 @@ export function SectionEditor<S extends AdapterSection>({
           onChange={change}
         />
       </FieldScopeProvider>
-      <p
-        className="form-status"
-        data-tone={tone}
-        role="status"
-        tabIndex={-1}
-        data-form-alert
-      >
-        {line}
-      </p>
-      <div className="actions">{actions}</div>
+      {/* The page's end: its actions, and beside them what happened. */}
+      <div className="page-actions">
+        <div className="actions">{actions}</div>
+        <p
+          className="form-status"
+          data-tone={tone}
+          role="status"
+          tabIndex={-1}
+          data-form-alert
+        >
+          {line}
+        </p>
+      </div>
     </form>
   );
 }

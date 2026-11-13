@@ -417,6 +417,11 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           settingsRoute,
           'Settings',
         )}
+        {/* In the save line's place: how this page saves. */}
+        <p className="save-status" data-phase="local">
+          Saved when you choose “
+          {stepCopy[route === 'video' ? 'capture' : 'output'].use}”
+        </p>
         {offline}
         <DiscoveryContext value={discovery ?? null}>
           {route === 'video' ? (
@@ -462,13 +467,23 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     content: ReactNode,
     back = settingsRoute,
     backLabel = 'Settings',
+    /** Instead of the save status, for a page with nothing to save. */
+    note?: string,
   ) =>
     page(
       `portal-page ${className}`,
       title,
       <SaveStatusProvider>
         {pageHeading(heading, back, backLabel)}
-        <SaveStatus online={online} />
+        {/* Choices kept in this browser have nothing to save: said so, in
+            the same place, so every page starts alike. */}
+        {note !== undefined ? (
+          <p className="save-status" data-phase="local">
+            {note}
+          </p>
+        ) : (
+          <SaveStatus online={online} />
+        )}
         {content}
       </SaveStatusProvider>,
     );
@@ -532,6 +547,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       'Prysm appearance',
       'Appearance',
       <ThemeChoice />,
+      settingsRoute,
+      'Settings',
+      'Kept in this browser',
     );
   if (route === 'about')
     return livePage(
@@ -539,6 +557,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       'About this Prysm',
       'About this Prysm',
       <AboutPage snapshot={snapshot} />,
+      settingsRoute,
+      'Settings',
+      '',
     );
   if (route === 'picture')
     return livePage(
@@ -591,6 +612,10 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       'Prysm live preview',
       <>
         {pageHeading('Live preview', settingsRoute, 'Settings')}
+        {/* In the save line's place, so every page starts alike. */}
+        <p className="save-status" data-phase="local">
+          Live while this page is open
+        </p>
         <p className="page-intro">
           What Prysm captures, with the colours it sends to each edge around it.
           Check black bars and LED placement here.

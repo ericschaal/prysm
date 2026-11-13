@@ -56,8 +56,14 @@ supervisor in each of its states and play the phone's calibration part). See the
     black bars switch) and This device (Appearance, About this Prysm, Start
     over with setup). A row is a label, its value beneath and a chevron; the
     whole row is the link; a switch only for plain on/off. The pages under
-    Settings (editors, profiles, fine-tuning, appearance, about) have the
-    same width, heading, back link and save status. Appearance
+    Settings (editors, profiles, fine-tuning, appearance, about, preview)
+    have the same width, heading and back link, and one line under the
+    heading in the same place: the save status where things save live, else
+    how the page saves ("Saved when you choose …", "Kept in this browser").
+    A page that ends with actions puts them under a divider, from the left,
+    the main one first and a destructive one last and quiet; an editor's
+    status sits beside them. Sliders follow one rhythm: label, track and help
+    close together, 32 px between sliders. Appearance
     (`#/settings/appearance`) is System, Light or Dark as rows (kept per
     browser in `localStorage`, never sent to Prysm); About this Prysm
     (`#/settings/about`) shows lights, status, frames per second and settings

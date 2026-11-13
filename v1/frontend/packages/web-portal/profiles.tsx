@@ -306,24 +306,27 @@ export function ProfilePage({
             ))}
           </div>
         </fieldset>
-        <div className="actions">
-          <button
-            type="button"
-            disabled={props.disabled}
-            onClick={() =>
-              update({ correction: noCorrection }, `${path}.correction`)
-            }
-          >
-            Reset to no correction
-          </button>
-          <button
-            type="button"
-            className="danger"
-            disabled={props.disabled}
-            onClick={remove}
-          >
-            Delete profile
-          </button>
+        <div className="page-actions">
+          <div className="actions">
+            <button
+              type="button"
+              disabled={props.disabled}
+              onClick={() =>
+                update({ correction: noCorrection }, `${path}.correction`)
+              }
+            >
+              Reset to no correction
+            </button>
+            {/* Destructive, so last and quiet until pointed at. */}
+            <button
+              type="button"
+              className="danger quiet"
+              disabled={props.disabled}
+              onClick={remove}
+            >
+              Delete profile
+            </button>
+          </div>
         </div>
       </div>
     </FieldScopeProvider>

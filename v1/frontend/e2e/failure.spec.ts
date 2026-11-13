@@ -17,11 +17,15 @@ test('a refused capture is shown, and Try again starts screen sync', async ({
 }) => {
   const card = page.getByRole('region', { name: 'Your lights' });
   await expect(card.getByRole('alert')).toBeVisible();
-  await card.getByText('Details').click();
-  await expect(card.getByText(reason)).toBeVisible();
+  // Settled first: the engine holds the failure and the Power click has its
+  // answer. The line can show the state's failure before the click's own
+  // reply lands, and opening Details in between raced with that update.
   await expect
     .poll(async () => (await prysm.state()).failure?.message)
     .toContain(reason);
+  await expect(card).not.toHaveAttribute('aria-busy', 'true');
+  await card.getByText('Details').click();
+  await expect(card.getByText(reason)).toBeVisible();
 
   // The sender's next connection streams.
   await card.getByRole('button', { name: 'Try again' }).click();

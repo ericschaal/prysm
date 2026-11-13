@@ -54,10 +54,13 @@ function SetupRow<S extends AdapterSection>({
         // As on Home: whether TV menus are included is not a fact to list.
         .filter((fact) => fact.label !== 'Menus')
         .map((fact) => fact.value);
+  // Never broken at a hyphen ("WLED-Gledopto").
+  const shownName = name.split('-').join('‑');
   return (
     <RowLink
       label={section === 'capture' ? 'Video source' : 'Lights'}
-      value={[name.split('-').join('‑'), ...details].join(' · ')}
+      value={[shownName, ...details].join(' · ')}
+      lead={shownName}
       problem={problem}
       onClick={open}
     />

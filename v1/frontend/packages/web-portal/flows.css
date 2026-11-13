@@ -36,15 +36,10 @@
   letter-spacing: -0.03em;
   animation: step-in var(--duration-slow) var(--ease-out) both;
 }
+/* Focused for screen readers as a step opens; drawn like a page heading. */
 .setup h2:focus,
 .calibrate h2:focus {
   outline: none;
-}
-.setup h2:focus-visible,
-.calibrate h2:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 4px;
-  border-radius: 4px;
 }
 .setup .intro,
 .calibrate .intro {

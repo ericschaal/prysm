@@ -37,16 +37,21 @@ function ChevronIcon() {
 
 /**
  * A row that opens a page: the whole row is the link. Its value line keeps
- * its place; a live problem takes it, in the error colour, so nothing moves.
+ * its place; a live problem joins it in the error colour after `lead` (the
+ * device's name), which gives way first when the line is short, so the
+ * problem is read whole and nothing moves.
  */
 export function RowLink({
   label,
   value,
+  lead,
   problem = null,
   onClick,
 }: {
   label: string;
   value: string;
+  /** Kept before a problem: what the row is about, such as the device. */
+  lead?: string;
   /** What is wrong with this part now; `null` while it works. */
   problem?: string | null;
   onClick: () => void;
@@ -68,7 +73,14 @@ export function RowLink({
             data-problem={problem !== null}
             aria-live="polite"
           >
-            {problem ?? value}
+            {problem === null ? (
+              value
+            ) : (
+              <>
+                {lead ? <span className="row-lead">{lead} · </span> : null}
+                <span className="row-problem">{problem}</span>
+              </>
+            )}
           </span>
         </span>
         <ChevronIcon />
