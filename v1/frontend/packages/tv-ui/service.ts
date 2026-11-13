@@ -3,14 +3,15 @@
  * preferences and the commands. The subscription is the only source of
  * state; command replies only confirm (they may overtake an older push).
  */
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type {
   LunaError,
   ServiceEvent,
   State,
   TvService,
 } from '@prysm/webos-platform';
-import { completePreferences, equal, type SavedPreferences } from './model';
+import { same } from '@prysm/application-client';
+import { completePreferences, type SavedPreferences } from './model';
 
 type Saved = SavedPreferences;
 type Edits = Partial<Saved>;
@@ -40,6 +41,18 @@ type Action =
 
 const keys = (edits: Edits) => Object.keys(edits) as Key[];
 
+/** The notice for a pushed state, when it needs one. */
+function eventNotice(replaced: boolean, reconnected: boolean) {
+  if (replaced)
+    return {
+      notice:
+        'Settings were changed elsewhere; your unsaved change was replaced.',
+      error: true,
+    };
+  if (reconnected) return { notice: 'Service connected.', error: false };
+  return {};
+}
+
 function reducer(current: ServiceState, action: Action): ServiceState {
   switch (action.type) {
     case 'event': {
@@ -56,8 +69,8 @@ function reducer(current: ServiceState, action: Action): ServiceState {
       const bases: Edits = { ...current.bases };
       let replaced = false;
       for (const key of keys(edits)) {
-        if (!equal(bases[key], saved[key])) replaced = true;
-        if (!equal(bases[key], saved[key]) || equal(edits[key], saved[key])) {
+        if (!same(bases[key], saved[key])) replaced = true;
+        if (!same(bases[key], saved[key]) || same(edits[key], saved[key])) {
           delete edits[key];
           delete bases[key];
         }
@@ -70,13 +83,10 @@ function reducer(current: ServiceState, action: Action): ServiceState {
         edits,
         bases,
         pending:
-          current.pending && !equal(current.pending, saved) ? current.pending : null,
-        notice: replaced
-          ? 'Settings were changed elsewhere; your unsaved change was replaced.'
-          : reconnected
-            ? 'Service connected.'
-            : current.notice,
-        error: replaced ? true : reconnected ? false : current.error,
+          current.pending && !same(current.pending, saved)
+            ? current.pending
+            : null,
+        ...eventNotice(replaced, reconnected),
       };
     }
     case 'edit': {
@@ -86,7 +96,7 @@ function reducer(current: ServiceState, action: Action): ServiceState {
       for (const key of keys(action.patch)) {
         if (!(key in bases)) (bases as Record<Key, unknown>)[key] = saved[key];
         (edits as Record<Key, unknown>)[key] = action.patch[key];
-        if (equal(edits[key], saved[key])) {
+        if (same(edits[key], saved[key])) {
           delete edits[key];
           delete bases[key];
         }
@@ -95,8 +105,15 @@ function reducer(current: ServiceState, action: Action): ServiceState {
     }
     case 'saved': {
       // The subscription may already show what was saved.
-      const shown = current.state && equal(completePreferences(current.state.preferences), action.sent);
-      return { ...current, edits: {}, bases: {}, pending: shown ? null : action.sent };
+      const shown =
+        current.state &&
+        same(completePreferences(current.state.preferences), action.sent);
+      return {
+        ...current,
+        edits: {},
+        bases: {},
+        pending: shown ? null : action.sent,
+      };
     }
     case 'settled':
       return { ...current, pending: null };
@@ -150,8 +167,14 @@ export function useTvService(service: TvService, active: boolean) {
   const saved = completePreferences(current.state?.preferences ?? {});
   const draft: Saved = { ...(current.pending ?? saved), ...current.edits };
   const dirty = keys(current.edits).length > 0;
-  const say = (text: string, error = false) =>
-    dispatch({ type: 'notice', text, error });
+  const say = useCallback(
+    (text: string, error = false) => dispatch({ type: 'notice', text, error }),
+    [],
+  );
+  const edit = useCallback(
+    (patch: Edits) => dispatch({ type: 'edit', patch }),
+    [],
+  );
 
   /** Run one command at a time; resolves `false` when it did not run or failed. */
   async function run(work: () => Promise<unknown>, done?: string) {
@@ -183,14 +206,14 @@ export function useTvService(service: TvService, active: boolean) {
     draft,
     dirty,
     syncing: current.pending !== null,
-    edit: (patch: Edits) => dispatch({ type: 'edit', patch }),
+    edit,
     discard: () => dispatch({ type: 'discard' }),
     say,
     save: () => run(() => sendPreferences(), 'Settings saved.'),
     /** Save the draft with `patch` applied, without a separate Save. */
-    saveWith: (patch: Edits, done: string) => run(() => sendPreferences(patch), done),
-    enable: (enabled: boolean) =>
-      run(() => service.setEnabled(enabled), ''),
+    saveWith: (patch: Edits, done: string) =>
+      run(() => sendPreferences(patch), done),
+    enable: (enabled: boolean) => run(() => service.setEnabled(enabled), ''),
     saveAndEnable: () =>
       run(async () => {
         await sendPreferences();

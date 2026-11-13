@@ -93,6 +93,10 @@ jobs:
           workspaces: v1 -> target
           key: v1-frontend
       - run: npm --prefix v1/frontend ci
+      - name: Lint and formatting
+        run: |
+          npm --prefix v1/frontend run lint
+          npm --prefix v1/frontend run format:check
       # Check before building: the build regenerates the contracts.
       - name: Generated contracts are current
         run: npm --prefix v1/frontend run codegen:check

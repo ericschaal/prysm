@@ -54,10 +54,16 @@ test('schemas reject unknown targets, untagged sections and incomplete failures'
     false,
   );
   assert.equal(
-    validate('Settings')({ ...state.settings, capture: { path: '/dev/video0' } }),
+    validate('Settings')({
+      ...state.settings,
+      capture: { path: '/dev/video0' },
+    }),
     false,
   );
-  assert.equal(validate('Settings')({ ...state.settings, profiles: [] }), false);
+  assert.equal(
+    validate('Settings')({ ...state.settings, profiles: [] }),
+    false,
+  );
   assert.equal(
     validate('Settings')({
       ...state.settings,
@@ -83,7 +89,13 @@ test('webOS capture settings keep the ranges the adapter validates', () => {
     { path: '/dev/video0' },
   ])
     assert.equal(check({ ...section, ...bad }), false, JSON.stringify(bad));
-  assert.equal(validate('host-webos/CaptureSettings')({ kind: 'device', path: '/dev/video0' }), false);
+  assert.equal(
+    validate('host-webos/CaptureSettings')({
+      kind: 'device',
+      path: '/dev/video0',
+    }),
+    false,
+  );
 });
 
 test('the Luna document covers both flavors with one State', () => {
@@ -104,7 +116,9 @@ test('the Luna document covers both flavors with one State', () => {
   );
   const reply = validate('luna/StateReply');
   assert.equal(reply({ ...states[0], returnValue: false }), false);
-  assert(validate('luna/ErrorReply')({ returnValue: false, errorText: 'denied' }));
+  assert(
+    validate('luna/ErrorReply')({ returnValue: false, errorText: 'denied' }),
+  );
   assert.equal(validate('luna/SetEnabledRequest')({}), false);
   assert.equal(validate('luna/UninstallRequest')({ force: true }), false);
 });

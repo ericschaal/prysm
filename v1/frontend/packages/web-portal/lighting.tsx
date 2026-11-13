@@ -1,19 +1,14 @@
 import { useId, useState } from 'react';
 import {
+  describeLighting,
   describeOutputIssue,
+  failureOf,
   type Failure,
   type LightingTarget,
   type OutputIssue,
   type Session,
 } from '@prysm/application-client';
-import { failureOf, type OutputLighting } from './adapters';
-
-const phases = {
-  running: 'running',
-  closing_source: 'closing the capture source',
-  idling_output: 'idling the lights',
-  finishing: 'finishing',
-} as const;
+import type { OutputLighting } from './adapters';
 
 export interface LightingProps {
   target: LightingTarget;
@@ -29,33 +24,19 @@ export interface LightingProps {
   setTarget: (target: LightingTarget) => Promise<unknown>;
 }
 
-/** What the lights are doing, in words, from the requested target and the session. */
-export function describeLighting({
-  target,
-  session,
-  failure,
-  effects,
-}: {
-  target: LightingTarget;
-  session: Session;
-  failure: Failure | null;
-  effects: string;
-}) {
-  switch (session.state) {
-    case 'faulted':
-      return `Prysm stopped responding while ${phases[session.phase]}. Restart Prysm to recover.`;
-    case 'running':
-      return 'Screen sync is running.';
-    case 'native':
-      return `${effects} are on.`;
-    case 'stopped':
-      if (target === 'off') return 'Lights are off.';
-      if (failure)
-        return target === 'processed'
-          ? 'Screen sync stopped.'
-          : `${effects} could not start.`;
-      return target === 'processed' ? 'Starting screen sync…' : `Starting ${effects}…`;
-  }
+/** Why screen sync cannot start yet, or `null`. */
+function missingSetup(hasCapture: boolean, hasOutput: boolean) {
+  if (!hasCapture && !hasOutput) return 'Configure capture and lights first.';
+  if (!hasCapture) return 'Configure capture first.';
+  if (!hasOutput) return 'Configure your lights first.';
+  return null;
+}
+
+/** Why the output's own effects cannot start, or `null`. */
+function missingEffects(hasOutput: boolean, effects: string | undefined) {
+  if (!hasOutput) return 'Configure your lights first.';
+  if (!effects) return 'These lights have no effects of their own.';
+  return null;
 }
 
 /**
@@ -90,26 +71,20 @@ export function LightingControls({
       value: 'processed',
       label: 'Screen sync',
       hint: 'Colours follow the picture.',
-      unavailable:
-        !hasCapture && !hasOutput
-          ? 'Configure capture and lights first.'
-          : !hasCapture
-            ? 'Configure capture first.'
-            : !hasOutput
-              ? 'Configure your lights first.'
-              : null,
+      unavailable: missingSetup(hasCapture, hasOutput),
     },
     {
       value: 'device_native',
       label: effects,
       hint: 'The lights run their own effects.',
-      unavailable: !hasOutput
-        ? 'Configure your lights first.'
-        : !output?.effects
-          ? 'These lights have no effects of their own.'
-          : null,
+      unavailable: missingEffects(hasOutput, output?.effects),
     },
-    { value: 'off', label: 'Off', hint: 'Turn the lights off.', unavailable: null },
+    {
+      value: 'off',
+      label: 'Off',
+      hint: 'Turn the lights off.',
+      unavailable: null,
+    },
   ];
 
   async function choose(next: LightingTarget) {
@@ -132,15 +107,22 @@ export function LightingControls({
     >
       <div className="card-heading">
         <h2 id={headingId}>Lighting</h2>
-        <span
-          className={`state state-${session.state}`}
-          aria-hidden="true"
-        />
+        <span className={`state state-${session.state}`} aria-hidden="true" />
       </div>
-      <p id={statusId} className="lighting-status" role="status" aria-live="polite">
+      <p
+        id={statusId}
+        className="lighting-status"
+        role="status"
+        aria-live="polite"
+      >
         {describeLighting({ target, session, failure, effects })}
       </p>
-      <div className="modes" role="group" aria-label="Lighting mode" aria-describedby={statusId}>
+      <div
+        className="modes"
+        role="group"
+        aria-label="Lighting mode"
+        aria-describedby={statusId}
+      >
         {modes.map((mode) => {
           const reason = faulted
             ? 'Restart Prysm to change the lights.'

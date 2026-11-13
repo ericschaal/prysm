@@ -30,7 +30,10 @@ test('commands resolve with the runtime result and observed state follows the st
   assert.equal(state().connection.snapshot.session.state, 'running');
 
   const revision = await application.store.dispatch(
-    application.commands.configureOutput(0, { ...output, address: '192.0.2.2' }),
+    application.commands.configureOutput(0, {
+      ...output,
+      address: '192.0.2.2',
+    }),
   );
   assert.equal(revision, 1);
   await tick();
@@ -45,13 +48,19 @@ test('stale revisions and server failures are recorded on the latest command', a
   const fixture = fakeApplicationPort({ capture, output, revision: 3 });
   const { application, release, state } = await connected(fixture);
   await assert.rejects(
-    application.store.dispatch(application.commands.configureCapture(2, capture)),
+    application.store.dispatch(
+      application.commands.configureCapture(2, capture),
+    ),
     (error) => error instanceof ApplicationError && error.failure.current === 3,
   );
   assert.equal(state().lastCommand.failure.kind, 'stale_revision');
   assert.deepEqual(fixture.calls, ['observe']);
 
-  fixture.failNext({ kind: 'invalid', message: 'too many', field: 'output.leds' });
+  fixture.failNext({
+    kind: 'invalid',
+    message: 'too many',
+    field: 'output.leds',
+  });
   await assert.rejects(
     application.store.dispatch(application.commands.configureOutput(3, output)),
   );
@@ -73,7 +82,9 @@ test('a delayed earlier command cannot overwrite newer command feedback', async 
       finish = resolve;
     });
   const { application, release, state } = await connected(fixture);
-  const slow = application.store.dispatch(application.commands.setTarget('off'));
+  const slow = application.store.dispatch(
+    application.commands.setTarget('off'),
+  );
   await application.store.dispatch(
     application.commands.configureOutput(0, output),
   );
@@ -108,7 +119,7 @@ test('each runtime has its own store and the stream reconnects after loss', asyn
   const release = first.application.connect();
   await tick();
   assert.equal(first.state().connection.status, 'disconnected');
-  assert.equal(first.state().connection.error, 'connection refused');
+  assert.equal(first.state().connection.error.message, 'connection refused');
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(first.state().connection.status, 'connected');
   release();
@@ -127,7 +138,10 @@ test('forbidden streams stop retrying', async () => {
   const { release, state } = await connected(fixture);
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(attempts, 1);
-  assert.equal(state().connection.error, 'denied');
+  assert.deepEqual(state().connection.error, {
+    kind: 'forbidden',
+    message: 'denied',
+  });
   release();
 });
 
@@ -142,7 +156,10 @@ test('shared observation closes once after the last consumer releases it', async
   assert.equal(application.store.getState().connection.status, 'connected');
   second();
   await tick();
-  assert.equal(application.selectors.selectSnapshot(application.store.getState()), null);
+  assert.equal(
+    application.selectors.selectSnapshot(application.store.getState()),
+    null,
+  );
   assert.deepEqual(fixture.calls, ['observe', 'unsubscribe']);
 });
 

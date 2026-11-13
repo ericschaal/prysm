@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.tsx"
+    ".": "./index.ts"
   },
   "dependencies": {
     "@prysm/application-client": "1.0.0-alpha.0",

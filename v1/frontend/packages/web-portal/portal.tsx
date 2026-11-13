@@ -17,29 +17,10 @@ import { SectionForm } from './section-form';
 import { SetupWizard } from './setup';
 import './portal.css';
 
-export * from './adapters';
-export { calibrateRoute, CalibrateWizard, type CalibrateProps } from './calibrate';
-export * from './fields';
-export { describeLighting, LightingControls } from './lighting';
-export {
-  ProcessingPanel,
-  processingControls,
-  useLiveProcessing,
-  processingLimits,
-  processingDelayMs,
-  type ProcessingControls,
-} from './processing';
-export {
-  correctionLimits,
-  hueLimits,
-  profileLimits,
-  newProfileId,
-} from './profiles';
-export { drawPreview, PreviewPanel, previewLayout } from './preview';
-export { SectionFields, SectionForm, staleNotice } from './section-form';
-export { SetupWizard, type SetupWizardProps } from './setup';
-
-export interface WebPortalProps<C extends AdapterSection, O extends AdapterSection> {
+export interface WebPortalProps<
+  C extends AdapterSection,
+  O extends AdapterSection,
+> {
   application: ApplicationRuntime<C, O>;
   /** The capture kinds this host registers, in display order. */
   captures: AdapterUis<NoInfer<C>>;
@@ -98,7 +79,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   // Setup opens by itself when the first state lacks capture or lights.
   const [setup, setSetup] = useState<'pending' | 'open' | 'closed'>('pending');
   if (setup === 'pending' && snapshot)
-    setSetup(snapshot.settings.capture && snapshot.settings.output ? 'closed' : 'open');
+    setSetup(
+      snapshot.settings.capture && snapshot.settings.output ? 'closed' : 'open',
+    );
   /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
@@ -107,6 +90,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
 
+  let connectionLabel = 'Offline';
+  if (online) connectionLabel = 'Connected';
+  else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
   const header = (
     <header className="portal-header">
       <span className="brand">
@@ -116,11 +102,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         className={`connection ${online ? 'online' : 'offline'}`}
         role="status"
       >
-        {online
-          ? 'Connected'
-          : connection.status === 'connecting'
-            ? 'Connecting…'
-            : 'Offline'}
+        {connectionLabel}
       </span>
     </header>
   );
@@ -132,7 +114,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           <h1 className="visually-hidden">Prysm</h1>
           <section className="card">
             <h2>Connecting to Prysm</h2>
-            <p>{connection.error ?? 'Waiting for the current state…'}</p>
+            <p>
+              {connection.error?.message ?? 'Waiting for the current state…'}
+            </p>
           </section>
         </main>
       </div>
@@ -145,8 +129,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     : null;
   const offline = !online ? (
     <p className="notice warning" role="alert">
-      Connection lost{connection.error ? `: ${connection.error}` : ''}.
-      Reconnecting; unsaved changes are kept.
+      Connection lost
+      {connection.error ? `: ${connection.error.message}` : ''}. Reconnecting;
+      unsaved changes are kept.
     </p>
   ) : null;
   if (calibrating)
@@ -163,7 +148,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             calibration={snapshot.calibration}
             disabled={!online}
             save={(expected, processing) =>
-              dispatch(application.commands.configureProcessing(expected, processing))
+              dispatch(
+                application.commands.configureProcessing(expected, processing),
+              )
             }
             setCalibration={(calibration) =>
               dispatch(application.commands.setCalibration(calibration))
@@ -188,7 +175,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             revision={revision}
             disabled={!online}
             save={(expected, capture, value) =>
-              dispatch(application.commands.configureSetup(expected, capture, value))
+              dispatch(
+                application.commands.configureSetup(expected, capture, value),
+              )
             }
             start={() => dispatch(application.commands.setTarget('processed'))}
             close={(notice) => {
@@ -237,7 +226,9 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           disabled={!online}
           running={session.state === 'running'}
           save={(expected, processing) =>
-            dispatch(application.commands.configureProcessing(expected, processing))
+            dispatch(
+              application.commands.configureProcessing(expected, processing),
+            )
           }
         />
         <div className="setup-entry">
@@ -287,6 +278,8 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
           }
         />
         {snapshot.surface_failures.map((failure, index) => (
+          // Failures have no identity; the list is replaced whole and rows hold no state.
+          // eslint-disable-next-line @eslint-react/no-array-index-key
           <p key={index} className="notice warning">
             A Prysm surface stopped: {failure.message}. Lighting continues.
           </p>

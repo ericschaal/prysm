@@ -1,5 +1,7 @@
 /** Pure rules of the TV UI: addresses, drafts and the status card. */
 import type { Preferences, SlimEncoding, State } from '@prysm/webos-platform';
+import type { PatternPlayer } from './patterns';
+import type { PortalView } from './portal-connection';
 
 export type { SlimEncoding };
 
@@ -15,19 +17,6 @@ const encodingNames: Record<SlimEncoding, string> = {
 /** The short name of an encoding, as the status card shows it. */
 export function encodingName(encoding: SlimEncoding): string {
   return encodingNames[encoding] || encoding;
-}
-
-/** Structural equality ignoring key order and `undefined` fields. */
-export function equal(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const left = a as Record<string, unknown>;
-  const right = b as Record<string, unknown>;
-  const keys = Object.keys(left).filter((key) => left[key] !== undefined);
-  if (keys.length !== Object.keys(right).filter((key) => right[key] !== undefined).length)
-    return false;
-  return keys.every((key) => equal(left[key], right[key]));
 }
 
 /** Preferences with every field present, as the supervisor stores them. */
@@ -53,11 +42,18 @@ export function instanceAddress(
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text)
     ? text
     : `http://${text}${/:\d+$/.test(text) && !/^\[[^\]]*\]$/.test(text) ? '' : `:${PORTAL_PORT}`}`;
-  if (!/^https?:\/\/(\[[0-9a-f:.]+\]|[^\s/?#@[\]:]+)(:\d{1,5})?$/i.test(withScheme))
+  if (
+    !/^https?:\/\/(\[[0-9a-f:.]+\]|[^\s/?#@[\]:]+)(:\d{1,5})?$/i.test(
+      withScheme,
+    )
+  )
     return {
-      error: 'Enter an address such as 192.168.1.20 or http://prysm.local:8787.',
+      error:
+        'Enter an address such as 192.168.1.20 or http://prysm.local:8787.',
     };
-  return { value: withScheme.replace(/^[a-z]+/i, (scheme) => scheme.toLowerCase()) };
+  return {
+    value: withScheme.replace(/^[a-z]+/i, (scheme) => scheme.toLowerCase()),
+  };
 }
 
 /** The host of an origin, with IPv6 brackets. */
@@ -75,12 +71,11 @@ const hostName = new RegExp(`^(?=.{1,253}$)${label}(\\.${label})*$`, 'i');
  * `prysm.local` whose last label is not all digits. The TV resolves a name
  * each time it connects.
  */
-export const isReceiverHost = (host: string) =>
-  ipv4.test(host)
-    ? host !== '0.0.0.0'
-    : /^\[[0-9a-f:.]+\]$/i.test(host)
-      ? host !== '[::]'
-      : hostName.test(host) && !/(^|\.)\d+$/.test(host);
+export function isReceiverHost(host: string) {
+  if (ipv4.test(host)) return host !== '0.0.0.0';
+  if (/^\[[0-9a-f:.]+\]$/i.test(host)) return host !== '[::]';
+  return hostName.test(host) && !/(^|\.)\d+$/.test(host);
+}
 
 /** A receiver address `host:port`, checked the way the supervisor parses it. */
 export function receiverAddress(
@@ -92,7 +87,8 @@ export function receiverAddress(
   const port = match ? Number(match[2]) : 0;
   if (!match || !isReceiverHost(match[1]!) || port < 1 || port > 65535)
     return {
-      error: 'Enter an address and port, such as prysm.local:7380 or 192.168.1.20:7380.',
+      error:
+        'Enter an address and port, such as prysm.local:7380 or 192.168.1.20:7380.',
     };
   return { value: text };
 }
@@ -135,12 +131,7 @@ export function failureText(failure: string): string {
 }
 
 export type PrimaryAction =
-  | 'none'
-  | 'setup'
-  | 'disable'
-  | 'address'
-  | 'save_enable'
-  | 'enable';
+  'none' | 'setup' | 'disable' | 'address' | 'save_enable' | 'enable';
 
 export interface TvStatus {
   title: string;
@@ -184,7 +175,8 @@ export function tvStatus(
   if (!online || !state)
     return {
       title: 'TV service unavailable',
-      description: 'Set up the background service so Prysm can capture this TV.',
+      description:
+        'Set up the background service so Prysm can capture this TV.',
       label: 'Set up service',
       action: 'setup',
       attention: true,
@@ -222,13 +214,15 @@ export function tvStatus(
   } else if (full) {
     if (!enabled) {
       title = 'Lights off';
-      description = 'Start screen sync here, or use the web portal for your lights.';
+      description =
+        'Start screen sync here, or use the web portal for your lights.';
     } else if (state.lighting === 'device_native') {
       title = 'Light effects on';
       description = 'Your lights run their own effects.';
     } else if (state.capturing) {
       title = 'Screen sync is on';
-      description = 'This TV is processing the picture and sending colours to your lights.';
+      description =
+        'This TV is processing the picture and sending colours to your lights.';
     } else if (state.portal && state.worker === 'running') {
       // Lighting is on but no frames arrive: the lights are released to WLED.
       title = 'Waiting for video';
@@ -263,7 +257,12 @@ export function tvStatus(
   // Lights are set up in the portal (its first-run setup), never here.
   const linked = full || !!state.preferences.receiver;
   const noLights = !!portal && !portal.lights && linked;
-  if (noLights && (!failure || waiting) && state.worker !== 'stopping' && state.worker !== 'retrying') {
+  if (
+    noLights &&
+    (!failure || waiting) &&
+    state.worker !== 'stopping' &&
+    state.worker !== 'retrying'
+  ) {
     title = 'Set up your lights';
     description = `Open ${portal.address ?? 'Prysm’s web portal'} on your phone or computer to set up your lights.`;
     attention = true;
@@ -299,7 +298,10 @@ export function tvStatus(
     label,
     action,
     attention,
-    ready: state.capturing && state.power === 'active' && state.video !== 'unavailable',
+    ready:
+      state.capturing &&
+      state.power === 'active' &&
+      state.video !== 'unavailable',
   };
 }
 
@@ -318,6 +320,12 @@ const phaseNames = {
   retrying: 'waiting to restart after a failure',
 } as const;
 
+function capturingText(state: State) {
+  if (state.capturing) return 'yes';
+  if (state.paused) return 'no, paused by Prysm (lights off on the computer)';
+  return 'no';
+}
+
 /** The Diagnostics text. */
 export function diagnostics(state: State | null): string {
   if (!state) return 'Service unavailable.';
@@ -327,7 +335,7 @@ export function diagnostics(state: State | null): string {
     `Video: ${state.video}`,
     `Enabled: ${state.enabled ? 'yes' : 'no'}`,
     `Background process: ${phaseNames[state.worker]}`,
-    `Capturing: ${state.capturing ? 'yes' : state.paused ? 'no, paused by Prysm (lights off on the computer)' : 'no'}`,
+    `Capturing: ${capturingText(state)}`,
   ];
   if (state.flavor === 'slim')
     lines.push(
@@ -338,4 +346,33 @@ export function diagnostics(state: State | null): string {
   lines.push('', state.failure ?? 'No errors reported.');
   if (state.log.length) lines.push('', 'Recent messages:', ...state.log);
   return lines.join('\n');
+}
+
+/** The portal page the phone opens, from the portal address the TV shows. */
+export const calibrationUrl = (portal: string) =>
+  `${portal.replace(/\/+$/, '')}/#/calibrate`;
+
+/**
+ * Why the lights cannot be calibrated from this TV's picture, or `null`.
+ * `tv` is the supervisor's state; `instance` the slim package's Prysm address.
+ */
+export function calibrationBlocker(
+  flavor: 'full' | 'slim',
+  player: PatternPlayer,
+  portal: PortalView,
+  tv: State | null,
+  instance: string | null,
+): string | null {
+  if (!player.supported || !portal.supported)
+    return 'Calibration needs a newer TV';
+  if (flavor === 'slim' && !instance) return 'Add the Prysm address first';
+  if (flavor === 'slim' && !tv?.enabled) return 'Start capture first';
+  const { snapshot } = portal;
+  if (!snapshot) return 'Needs a connection to Prysm';
+  if (!snapshot.settings.capture || !snapshot.settings.output)
+    return 'Set up capture and lights first';
+  const kind = (snapshot.settings.capture as { kind?: string }).kind;
+  if (flavor === 'slim' && kind !== 'remote')
+    return 'Prysm is not using this TV’s picture';
+  return null;
 }

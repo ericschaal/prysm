@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.tsx"
+    ".": "./index.ts"
   },
   "peerDependencies": {
     "react": "19.3.0"

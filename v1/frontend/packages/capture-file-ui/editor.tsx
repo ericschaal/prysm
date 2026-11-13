@@ -1,25 +1,8 @@
 import type { FileSettings } from '@prysm/contracts/host-desktop';
-import {
-  describePicture,
-  NumberField,
-  TextField,
-  type AdapterUi,
-  type EditorProps,
-} from '@prysm/web-portal';
+import { NumberField, TextField, type EditorProps } from '@prysm/web-portal';
+import { fileDefaults, fileLimits } from './settings';
 
-/**
- * Limits from the generated `FileSettings` schema. `fps` has no schema
- * maximum; the Rust `u32` bounds it.
- */
-export const fileLimits = {
-  width: { min: 1, max: 3840, step: 1 },
-  height: { min: 1, max: 2160, step: 1 },
-  fps: { min: 1, max: 4294967295, step: 1 },
-} as const;
-/** What Rust uses for an omitted field. */
-export const fileDefaults = { width: 640, height: 360, fps: 30 } as const;
-
-function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
+export function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
   return (
     <>
       <TextField
@@ -61,12 +44,3 @@ function FileEditor({ value, onChange }: EditorProps<FileSettings>) {
     </>
   );
 }
-
-export const fileCapture: AdapterUi<FileSettings> = {
-  label: 'Video file',
-  create: () => ({ kind: 'file', path: '' }),
-  Editor: FileEditor,
-  normalize: (value) => ({ ...value, path: value.path.trim() }),
-  summary: ({ path, width, height, fps }) =>
-    `${path}, ${describePicture(width ?? fileDefaults.width, height ?? fileDefaults.height, fps ?? fileDefaults.fps)}`,
-};

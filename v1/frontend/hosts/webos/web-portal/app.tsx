@@ -5,16 +5,11 @@ import type {
 import type { PreviewClient } from '@prysm/application-client';
 import { ApplicationProvider } from '@prysm/application-react/provider';
 import type { ApplicationRuntime } from '@prysm/application-state';
-import { WebPortal, type AdapterUis } from '@prysm/web-portal';
-import { webosCapture } from '@prysm/capture-webos-ui';
-import { wledOutput } from '@prysm/output-wled-ui';
+import { WebPortal } from '@prysm/web-portal';
+import { webosCaptures, webosOutputs } from './kinds';
 
 export type WebosCapture = CaptureSettings;
 export type WebosOutput = OutputSettings;
-
-/** The kinds the `prysm-webos` worker registers. */
-export const webosCaptures: AdapterUis<WebosCapture> = { webos: webosCapture };
-export const webosOutputs: AdapterUis<WebosOutput> = { wled: wledOutput };
 
 export function WebosWebPortal({
   application,

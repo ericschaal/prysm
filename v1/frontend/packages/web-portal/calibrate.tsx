@@ -1,23 +1,28 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import type {
-  Calibration,
-  LightingTarget,
-  Pattern,
+import { useEffect, useId, useReducer, useRef, type ReactNode } from 'react';
+import {
+  failureOf,
+  type Calibration,
+  type LightingTarget,
+  type Pattern,
 } from '@prysm/application-client';
 import type {
+  ColorProfile,
   CorrectionControls,
-  HueControls,
   Processing,
 } from '@prysm/contracts/application';
-import { failureOf } from './adapters';
 import {
-  FieldScopeProvider,
-  nameProblem,
-  RangeField,
-  SelectField,
-  TextField,
-} from './fields';
-import { useLiveProcessing, withProfiles } from './processing';
+  initialWizard,
+  screens,
+  wizardReducer,
+  type Hue,
+  type Screen,
+  type Section,
+  type WizardAction,
+} from './calibrate-wizard';
+import { nameProblem } from './checks';
+import { RangeField, SelectField, TextField } from './fields';
+import { FieldScopeProvider, type FieldScope } from './form';
+import { useLiveProcessing, withProfiles } from './live-processing';
 import {
   correctionLimits,
   correctionOf,
@@ -30,7 +35,7 @@ import {
   noCorrection,
   profileLimits,
   signed,
-} from './profiles';
+} from './profile-model';
 
 /** The hash route of the Calibrate page; the TV shows a QR code of it. */
 export const calibrateRoute = '#/calibrate';
@@ -53,8 +58,10 @@ const patternLabels: Record<Pattern, string> = {
   'review-grid': 'a grid of colours',
 };
 
-type Section = 'white' | 'hues' | 'intensity' | 'mixed' | 'review';
-const sections: Record<Section, { label: string; title: string; lead: string }> = {
+const sections: Record<
+  Section,
+  { label: string; title: string; lead: string }
+> = {
   white: {
     label: 'White balance',
     title: 'Find a natural white',
@@ -83,31 +90,6 @@ const sections: Record<Section, { label: string; title: string; lead: string }> 
 };
 const sectionOrder = Object.keys(sections) as Section[];
 
-type Hue = keyof HueControls;
-interface Screen {
-  section: Section;
-  pattern: Pattern;
-  /** The hue this screen adjusts (hue screens only). */
-  hue?: Hue;
-}
-/** The wizard, one TV pattern per screen. */
-const screens: readonly Screen[] = [
-  { section: 'white', pattern: 'gray-192' },
-  { section: 'hues', pattern: 'red', hue: 'red' },
-  { section: 'hues', pattern: 'yellow', hue: 'yellow' },
-  { section: 'hues', pattern: 'green', hue: 'green' },
-  { section: 'hues', pattern: 'cyan', hue: 'cyan' },
-  { section: 'hues', pattern: 'blue-pair', hue: 'blue' },
-  { section: 'hues', pattern: 'magenta', hue: 'magenta' },
-  { section: 'intensity', pattern: 'red-pair' },
-  { section: 'intensity', pattern: 'green-pair' },
-  { section: 'intensity', pattern: 'blue-pair' },
-  { section: 'mixed', pattern: 'coast' },
-  { section: 'mixed', pattern: 'garden' },
-  { section: 'mixed', pattern: 'dusk' },
-  { section: 'review', pattern: 'review-grid' },
-];
-
 const tvInstruction = 'Open Prysm on the TV and choose Calibrate.';
 const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInstruction}`;
 
@@ -118,7 +100,8 @@ const correction = Object.fromEntries(
 /** `Red hue` and which way it turns, from the hue wheel. */
 function hueText(hue: Hue) {
   const at = hues.findIndex(([name]) => name === hue);
-  const label = (index: number) => hues[(index + hues.length) % hues.length]![1];
+  const label = (index: number) =>
+    hues[(index + hues.length) % hues.length]![1];
   return {
     label: `${label(at)} hue`,
     help: `Positive turns ${label(at).toLowerCase()} toward ${label(at + 1).toLowerCase()}, negative toward ${label(at - 1).toLowerCase()}.`,
@@ -157,89 +140,75 @@ export function CalibrateWizard({
 }: CalibrateProps) {
   const live = useLiveProcessing({ processing, revision, disabled, save });
   const profiles = live.value.profiles ?? [];
-  /** The profile being calibrated; `null` before the start. */
-  const [draftId, setDraftId] = useState<string | null>(null);
-  /** The active profile before the start, for Cancel. */
-  const [previous, setPrevious] = useState<string | undefined>(undefined);
-  const [from, setFrom] = useState('');
-  const [screen, setScreen] = useState(0);
-  const [name, setName] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState('');
-  /** How calibration ended (finished or cancelled). */
-  const [outcome, setOutcome] = useState<{ title: string; message: string } | null>(null);
-  /** The TV showed a pattern since the last request, so its absence means it ended. */
-  const [seen, setSeen] = useState(false);
-  if (calibration && !seen) setSeen(true);
+  const [state, dispatch] = useReducer(wizardReducer, initialWizard);
+  const { phase, busy, problem } = state;
+  if (calibration && !state.seen) dispatch({ type: 'patternSeen' });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
 
-  const draftIndex = profiles.findIndex((profile) => profile.id === draftId);
+  const calibrating = phase.kind === 'calibrating' ? phase : null;
+  const draftIndex = calibrating
+    ? profiles.findIndex((profile) => profile.id === calibrating.draftId)
+    : -1;
   const draft = draftIndex >= 0 ? profiles[draftIndex] : undefined;
-  const current = screens[screen] ?? screens[0]!;
-  const started = draftId !== null && !outcome;
-  const ended = started && seen && !calibration && !busy;
+  const screen = calibrating?.screen ?? 0;
+  const ended = !!calibrating && state.seen && !calibration && !busy;
   const locked = disabled || busy || live.saving;
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
-  }, [screen, started, ended, outcome]);
+  }, [phase.kind, screen, ended]);
 
-  /** Show `pattern` on the TV; resolves with whether it did. */
-  async function show(pattern: Pattern, uncorrected = false) {
-    setBusy(true);
-    setProblem('');
+  /** Show `pattern` on the TV, then `next` as the current screen; resolves with whether it did. */
+  async function show(pattern: Pattern, uncorrected = false, next?: number) {
+    dispatch({ type: 'requestSent' });
     try {
       await setCalibration({ pattern, uncorrected });
+      dispatch({ type: 'patternShown', screen: next });
       return true;
     } catch (error) {
       const reason = failureOf(error);
-      setProblem(
-        reason.kind === 'not_processed'
-          ? needsTv
-          : `The TV pattern did not change: ${reason.message}`,
-      );
+      dispatch({
+        type: 'requestFailed',
+        problem:
+          reason.kind === 'not_processed'
+            ? needsTv
+            : `The TV pattern did not change: ${reason.message}`,
+      });
       return false;
-    } finally {
-      setBusy(false);
     }
   }
-  async function start() {
-    setSeen(false);
+  async function start(from: string) {
+    dispatch({ type: 'patternRequested' });
     if (!(await show(screens[0]!.pattern))) return;
     const source = profiles.find((profile) => profile.id === from);
     const id = newProfileId(profiles.map((profile) => profile.id));
     const profile = {
       id,
-      name: freeName(source ? `${nameOf(source)} calibrated` : 'Calibrated', profiles),
+      name: freeName(
+        source ? `${nameOf(source)} calibrated` : 'Calibrated',
+        profiles,
+      ),
       correction: source ? correctionOf(source) : noCorrection,
     };
-    const before = live.value.active_profile;
-    if (await live.commit(withProfiles(live.value, [...profiles, profile], id))) {
-      setPrevious(before);
-      setDraftId(id);
-      setScreen(0);
-    }
-  }
-  async function go(next: number) {
-    if (await show(screens[next]!.pattern)) setScreen(next);
-  }
-  async function resume() {
-    setSeen(false);
-    await show(current.pattern);
+    const previous = live.value.active_profile;
+    if (await live.commit(withProfiles(live.value, [...profiles, profile], id)))
+      dispatch({ type: 'started', draftId: id, previous });
   }
   async function end(title: string, message: string) {
-    setBusy(true);
+    dispatch({ type: 'ending' });
     try {
       await setCalibration(null);
     } catch {
       // The engine ends it by itself after ten minutes.
     }
-    setOutcome({ title, message });
-    setBusy(false);
+    dispatch({ type: 'ended', title, message });
   }
   function correct(change: Partial<CorrectionControls>) {
     if (!draft) return;
-    const next = { ...draft, correction: { ...correctionOf(draft), ...change } };
+    const next = {
+      ...draft,
+      correction: { ...correctionOf(draft), ...change },
+    };
     live.replace(
       withProfiles(
         live.value,
@@ -248,12 +217,12 @@ export function CalibrateWizard({
       ),
     );
   }
-  async function finish() {
+  async function finish(typedName: string | null) {
     if (!draft) return;
-    const typed = (name ?? nameOf(draft)).trim();
+    const typed = (typedName ?? nameOf(draft)).trim();
     const invalid = nameProblem(typed, profileLimits.name);
     if (invalid) {
-      setProblem(invalid);
+      dispatch({ type: 'refused', problem: invalid });
       return;
     }
     const others = profiles.filter((profile) => profile.id !== draft.id);
@@ -262,16 +231,25 @@ export function CalibrateWizard({
       const renamed = profiles.map((profile) =>
         profile.id === draft.id ? { ...profile, name: final } : profile,
       );
-      if (!(await live.commit(withProfiles(live.value, renamed, live.value.active_profile))))
+      if (
+        !(await live.commit(
+          withProfiles(live.value, renamed, live.value.active_profile),
+        ))
+      )
         return;
     }
     await end('Calibration finished', `“${final}” is saved and active.`);
   }
-  async function cancel() {
+  async function cancel(draftId: string, previous: string | undefined) {
     const rest = profiles.filter((profile) => profile.id !== draftId);
-    const back = rest.some((profile) => profile.id === previous) ? previous : undefined;
+    const back = rest.some((profile) => profile.id === previous)
+      ? previous
+      : undefined;
     if (!(await live.commit(withProfiles(live.value, rest, back)))) return;
-    await end('Calibration cancelled', 'The draft profile was deleted; your colours are as before.');
+    await end(
+      'Calibration cancelled',
+      'The draft profile was deleted; your colours are as before.',
+    );
   }
 
   const notices = (
@@ -299,106 +277,226 @@ export function CalibrateWizard({
     </h2>
   );
 
-  if (outcome)
-    return (
-      <section className="card calibrate" aria-labelledby={headingId}>
+  let content: ReactNode;
+  if (phase.kind === 'done')
+    content = (
+      <>
         <p className="eyebrow">Calibrate colours</p>
-        {heading(outcome.title)}
+        {heading(phase.title)}
         <p className="intro" role="status">
-          {outcome.message}
+          {phase.message}
         </p>
         <div className="actions">
           <button type="button" className="primary" onClick={leave}>
             Back to Prysm
           </button>
         </div>
-      </section>
+      </>
     );
-
-  if (!started) {
-    const full = profiles.length >= profileLimits.count;
-    return (
-      <section className="card calibrate" aria-labelledby={headingId}>
-        <div className="card-heading">
-          <p className="eyebrow">Calibrate colours</p>
-          <button type="button" className="quiet" onClick={leave}>
-            Leave
-          </button>
-        </div>
-        {heading('Match the lights to your TV')}
-        <p className="intro">
-          The TV shows test patterns while you adjust a colour profile here.
-          Look at the screen and the wall, not at this phone.
-        </p>
-        <p className="help">
-          Patterns are compared in the TV’s current picture mode, so calibrate
-          in the mode you watch in.
-        </p>
-        {target !== 'processed' ? (
-          <p className="notice warning" role="status">
-            {needsTv}
-          </p>
-        ) : null}
-        {full ? (
-          <p className="notice warning">
-            You have the most profiles Prysm keeps ({profileLimits.count}).
-            Delete one to calibrate.
-          </p>
-        ) : null}
-        <FieldScopeProvider value={live.scope}>
-          {profiles.length ? (
-            <SelectField
-              path="calibration.from"
-              label="Start from"
-              help="Calibration works on a copy; the original profile stays as it is."
-              value={from}
-              options={[
-                { value: '', label: 'New profile' },
-                ...profiles.map((profile) => ({
-                  value: profile.id,
-                  label: nameOf(profile),
-                })),
-              ]}
-              onChange={setFrom}
-            />
-          ) : null}
-        </FieldScopeProvider>
-        {notices}
-        <div className="actions">
-          <button
-            type="button"
-            className="primary"
-            disabled={locked || full || target !== 'processed'}
-            onClick={() => void start()}
-          >
-            {busy || live.saving ? 'Starting…' : 'Start'}
-          </button>
-        </div>
-      </section>
+  else if (phase.kind === 'start')
+    content = (
+      <StartScreen
+        heading={heading}
+        notices={notices}
+        profiles={profiles}
+        from={phase.from}
+        choose={(from) => dispatch({ type: 'sourceChosen', from })}
+        scope={live.scope}
+        target={target}
+        locked={locked}
+        starting={busy || live.saving}
+        start={() => void start(phase.from)}
+        leave={leave}
+      />
     );
-  }
+  else
+    content = (
+      <StepScreen
+        heading={heading}
+        notices={notices}
+        current={screens[phase.screen] ?? screens[0]!}
+        screen={phase.screen}
+        draft={draft}
+        path={`processing.profiles[${draftIndex}].correction`}
+        name={phase.name}
+        ended={ended}
+        target={target}
+        uncorrected={calibration?.uncorrected ?? false}
+        locked={locked}
+        live={live}
+        dispatch={dispatch}
+        correct={correct}
+        show={(pattern, uncorrected, next) =>
+          void show(pattern, uncorrected, next)
+        }
+        resume={() => {
+          dispatch({ type: 'patternRequested' });
+          void show(screens[phase.screen]!.pattern);
+        }}
+        finish={() => void finish(phase.name)}
+        cancel={() => void cancel(phase.draftId, phase.previous)}
+        leave={leave}
+      />
+    );
+  return (
+    <section className="card calibrate" aria-labelledby={headingId}>
+      {content}
+    </section>
+  );
+}
 
+/** Before the start: what to copy, and why the start may not work yet. */
+function StartScreen({
+  heading,
+  notices,
+  profiles,
+  from,
+  choose,
+  scope,
+  target,
+  locked,
+  starting,
+  start,
+  leave,
+}: {
+  heading: (title: string) => ReactNode;
+  notices: ReactNode;
+  profiles: readonly ColorProfile[];
+  from: string;
+  choose: (from: string) => void;
+  scope: FieldScope;
+  target: LightingTarget;
+  locked: boolean;
+  starting: boolean;
+  start: () => void;
+  leave: () => void;
+}) {
+  const full = profiles.length >= profileLimits.count;
+  return (
+    <>
+      <div className="card-heading">
+        <p className="eyebrow">Calibrate colours</p>
+        <button type="button" className="quiet" onClick={leave}>
+          Leave
+        </button>
+      </div>
+      {heading('Match the lights to your TV')}
+      <p className="intro">
+        The TV shows test patterns while you adjust a colour profile here. Look
+        at the screen and the wall, not at this phone.
+      </p>
+      <p className="help">
+        Patterns are compared in the TV’s current picture mode, so calibrate in
+        the mode you watch in.
+      </p>
+      {target !== 'processed' ? (
+        <p className="notice warning" role="status">
+          {needsTv}
+        </p>
+      ) : null}
+      {full ? (
+        <p className="notice warning">
+          You have the most profiles Prysm keeps ({profileLimits.count}). Delete
+          one to calibrate.
+        </p>
+      ) : null}
+      <FieldScopeProvider value={scope}>
+        {profiles.length ? (
+          <SelectField
+            path="calibration.from"
+            label="Start from"
+            help="Calibration works on a copy; the original profile stays as it is."
+            value={from}
+            options={[
+              { value: '', label: 'New profile' },
+              ...profiles.map((profile) => ({
+                value: profile.id,
+                label: nameOf(profile),
+              })),
+            ]}
+            onChange={choose}
+          />
+        ) : null}
+      </FieldScopeProvider>
+      {notices}
+      <div className="actions">
+        <button
+          type="button"
+          className="primary"
+          disabled={locked || full || target !== 'processed'}
+          onClick={start}
+        >
+          {starting ? 'Starting…' : 'Start'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** One pattern on the TV and its controls, or the notice that calibration ended. */
+function StepScreen({
+  heading,
+  notices,
+  current,
+  screen,
+  draft,
+  path,
+  name,
+  ended,
+  target,
+  uncorrected,
+  locked,
+  live,
+  dispatch,
+  correct,
+  show,
+  resume,
+  finish,
+  cancel,
+  leave,
+}: {
+  heading: (title: string) => ReactNode;
+  notices: ReactNode;
+  current: Screen;
+  screen: number;
+  draft: ColorProfile | undefined;
+  /** The draft's correction in the processing section. */
+  path: string;
+  name: string | null;
+  ended: boolean;
+  target: LightingTarget;
+  /** The TV shows the pattern without the draft's correction. */
+  uncorrected: boolean;
+  locked: boolean;
+  live: { scope: FieldScope; generation: number };
+  dispatch: (action: WizardAction) => void;
+  correct: (change: Partial<CorrectionControls>) => void;
+  show: (pattern: Pattern, uncorrected: boolean, next?: number) => void;
+  resume: () => void;
+  finish: () => void;
+  cancel: () => void;
+  leave: () => void;
+}) {
   const section = sections[current.section];
   const sectionIndex = sectionOrder.indexOf(current.section);
   const inSection = screens.filter((item) => item.section === current.section);
   const position = inSection.indexOf(current);
-  const path = `processing.profiles[${draftIndex}].correction`;
   const values = draft ? correctionOf(draft) : noCorrection;
-  const slider = (name: keyof typeof correctionLimits) => (
+  const slider = (control: keyof typeof correctionLimits) => (
     <RangeField
-      key={name}
-      path={`${path}.${name}`}
-      label={correction[name].label}
-      help={correction[name].help}
-      value={values[name]}
-      onChange={(value) => correct({ [name]: value })}
+      key={control}
+      path={`${path}.${control}`}
+      label={correction[control].label}
+      help={correction[control].help}
+      value={values[control]}
+      onChange={(value) => correct({ [control]: value })}
       format={signed}
-      {...correctionLimits[name]}
+      {...correctionLimits[control]}
     />
   );
-  const hue = current.hue ? hueText(current.hue) : null;
+  const hue = current.hue;
   return (
-    <section className="card calibrate" aria-labelledby={headingId}>
+    <>
       <div className="card-heading">
         <p className="eyebrow">
           Calibrate colours · step {sectionIndex + 1} of {sectionOrder.length}
@@ -407,7 +505,7 @@ export function CalibrateWizard({
           type="button"
           className="quiet"
           disabled={locked}
-          onClick={() => void cancel()}
+          onClick={cancel}
         >
           Cancel calibration
         </button>
@@ -440,7 +538,7 @@ export function CalibrateWizard({
               type="button"
               className="primary"
               disabled={locked}
-              onClick={() => void resume()}
+              onClick={resume}
             >
               Resume
             </button>
@@ -451,10 +549,12 @@ export function CalibrateWizard({
           {heading(section.title)}
           <p className="calibrate-pattern" role="status">
             On your TV: {patternLabels[current.pattern]}
-            {inSection.length > 1 ? ` (${position + 1} of ${inSection.length})` : ''}
+            {inSection.length > 1
+              ? ` (${position + 1} of ${inSection.length})`
+              : ''}
           </p>
           <p className="intro">{section.lead}</p>
-          {current.hue === 'blue' ? (
+          {hue === 'blue' ? (
             <p className="help">
               If the wall blue looks purple, move toward cyan; if it looks teal,
               toward magenta.
@@ -469,17 +569,16 @@ export function CalibrateWizard({
                     {slider('tint')}
                   </>
                 ) : null}
-                {current.hue && hue ? (
+                {hue ? (
                   <RangeField
-                    path={`${path}.hue.${current.hue}`}
-                    label={hue.label}
-                    help={hue.help}
-                    value={values.hue[current.hue]}
+                    path={`${path}.hue.${hue}`}
+                    {...hueText(hue)}
+                    value={values.hue[hue]}
                     onChange={(value) =>
-                      correct({ hue: { ...values.hue, [current.hue!]: value } })
+                      correct({ hue: { ...values.hue, [hue]: value } })
                     }
                     format={signed}
-                    {...hueLimits[current.hue]}
+                    {...hueLimits[hue]}
                   />
                 ) : null}
                 {current.section === 'intensity' ? slider('intensity') : null}
@@ -490,10 +589,9 @@ export function CalibrateWizard({
                     help="A name you will recognise, such as Movie night or PS5."
                     value={name ?? nameOf(draft)}
                     required
-                    onChange={(value) => {
-                      setName(value);
-                      setProblem('');
-                    }}
+                    onChange={(value) =>
+                      dispatch({ type: 'named', name: value })
+                    }
                   />
                 ) : null}
               </div>
@@ -507,16 +605,22 @@ export function CalibrateWizard({
           <button
             type="button"
             className="compare"
-            aria-pressed={calibration?.uncorrected ?? false}
+            aria-pressed={uncorrected}
             disabled={locked}
-            onClick={() => void show(current.pattern, !calibration?.uncorrected)}
+            onClick={() => show(current.pattern, !uncorrected)}
           >
             Show without correction
           </button>
           {notices}
           <div className="actions">
             {screen > 0 ? (
-              <button type="button" disabled={locked} onClick={() => void go(screen - 1)}>
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() =>
+                  show(screens[screen - 1]!.pattern, false, screen - 1)
+                }
+              >
                 Back
               </button>
             ) : null}
@@ -525,7 +629,9 @@ export function CalibrateWizard({
                 type="button"
                 className="primary"
                 disabled={locked}
-                onClick={() => void go(screen + 1)}
+                onClick={() =>
+                  show(screens[screen + 1]!.pattern, false, screen + 1)
+                }
               >
                 Next
               </button>
@@ -534,7 +640,7 @@ export function CalibrateWizard({
                 type="button"
                 className="primary"
                 disabled={locked || !draft}
-                onClick={() => void finish()}
+                onClick={finish}
               >
                 Finish
               </button>
@@ -542,6 +648,6 @@ export function CalibrateWizard({
           </div>
         </>
       )}
-    </section>
+    </>
   );
 }

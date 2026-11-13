@@ -1,115 +1,9 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
-
-/**
- * The form a field belongs to: whether it is editable, the server's errors by
- * dotted path (`output.address`) and where fields report their own checks.
- */
-export interface FieldScope {
-  disabled: boolean;
-  /** The server's errors, shown at once. */
-  errors: Readonly<Record<string, string>>;
-  /** Fields' own checks, shown once a field is touched or a save was tried. */
-  local: Readonly<Record<string, string>>;
-  attempted: boolean;
-  /** A field's own check failed (`message`) or passes again (`null`). */
-  report: (path: string, message: string | null) => void;
-  /** The user changed a field; its server error no longer applies. */
-  edited: (path: string) => void;
-}
-
-const FieldContext = createContext<FieldScope>({
-  disabled: false,
-  errors: {},
-  local: {},
-  attempted: true,
-  report: () => {},
-  edited: () => {},
-});
-
-export const FieldScopeProvider = FieldContext.Provider;
-
-/** Errors a form collects from the server and from its fields' own checks. */
-export function useFieldErrors() {
-  const [server, setServer] = useState<Record<string, string>>({});
-  const [local, setLocal] = useState<Record<string, string>>({});
-  const report = useCallback((path: string, message: string | null) => {
-    setLocal((errors) => {
-      if ((errors[path] ?? null) === message) return errors;
-      const next = { ...errors };
-      if (message === null) delete next[path];
-      else next[path] = message;
-      return next;
-    });
-  }, []);
-  const edited = useCallback((path: string) => {
-    // An edit also answers an error on its group, e.g. `output.leds`, and
-    // replacing a group (`processing.profiles`) answers errors inside it.
-    const within = (inner: string, outer: string) =>
-      inner === outer ||
-      inner.startsWith(`${outer}.`) ||
-      inner.startsWith(`${outer}[`);
-    const covers = (key: string) => within(path, key) || within(key, path);
-    setServer((errors) => {
-      if (!Object.keys(errors).some(covers)) return errors;
-      return Object.fromEntries(
-        Object.entries(errors).filter(([key]) => !covers(key)),
-      );
-    });
-  }, []);
-  return {
-    server,
-    local,
-    setServer,
-    report,
-    edited,
-    clearServer: useCallback(() => setServer({}), []),
-  };
-}
-
-export function useFieldScope(
-  disabled: boolean,
-  errors: ReturnType<typeof useFieldErrors>,
-  attempted: boolean,
-): FieldScope {
-  const { server, local, report, edited } = errors;
-  return useMemo(
-    () => ({ disabled, errors: server, local, attempted, report, edited }),
-    [disabled, server, local, attempted, report, edited],
-  );
-}
-
-/** The error to show for `path`: the server's, else a shown local one. */
-function shownError(scope: FieldScope, path: string, touched: boolean) {
-  return (
-    scope.errors[path] ??
-    (touched || scope.attempted ? scope.local[path] : undefined)
-  );
-}
-
-export function useFieldScopeContext() {
-  return useContext(FieldContext);
-}
-
-/** Report a check that is not tied to one input, such as an LED total. */
-export function useCheck(path: string, message: string | null) {
-  const { report } = useContext(FieldContext);
-  useEffect(() => {
-    report(path, message);
-  }, [report, path, message]);
-  useEffect(() => () => report(path, null), [report, path]);
-}
+import { use, useId, useState, type ReactNode } from 'react';
+import { nameProblem, numberProblem, type NumberLimits } from './checks';
+import { FieldContext, shownError, useCheck } from './form';
 
 function useField(path: string, help?: ReactNode) {
-  const scope = useContext(FieldContext);
+  const scope = use(FieldContext);
   const id = useId();
   const [touched, setTouched] = useState(false);
   const error = shownError(scope, path, touched);
@@ -151,7 +45,7 @@ export function FieldMessage({
   /** Show the group's own check before a save is tried. */
   touched?: boolean;
 }) {
-  const error = shownError(useContext(FieldContext), path, touched);
+  const error = shownError(use(FieldContext), path, touched);
   return error ? (
     <p className="field-error" data-field-message={path}>
       {error}
@@ -205,15 +99,6 @@ export function TextField({
       {field.message}
     </div>
   );
-}
-
-/** Why `name` cannot be saved (`ColorProfile.name` rules), or `null`. */
-export function nameProblem(name: string, maxChars: number) {
-  if (!name) return 'Enter a name.';
-  if ([...name].length > maxChars) return `Use at most ${maxChars} characters.`;
-  // Rust's `char::is_control`: Unicode Cc.
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return 'Remove control characters.';
-  return null;
 }
 
 /**
@@ -283,35 +168,6 @@ export function NameField({
       {field.message}
     </div>
   );
-}
-
-export interface NumberLimits {
-  min: number;
-  /** Absent when only the number type bounds it. */
-  max?: number;
-  /** `'any'` allows fractions; an integer step also requires multiples of it from `min`. */
-  step: number | 'any';
-}
-
-/** Why `text` is not a valid number within `limits`, or `null`. */
-export function numberProblem(text: string, { min, max, step }: NumberLimits) {
-  const value = Number(text);
-  const range =
-    max === undefined ? `of at least ${min}` : `from ${min} to ${max}`;
-  const kind =
-    step === 'any'
-      ? 'a number'
-      : step === 2
-        ? 'an even number'
-        : step > 1
-          ? `a multiple of ${step}`
-          : 'a whole number';
-  const problem = `Enter ${kind} ${range}.`;
-  if (!text.trim() || !Number.isFinite(value)) return problem;
-  if (value < min || (max !== undefined && value > max)) return problem;
-  if (step !== 'any' && ((value - min) % step !== 0 || !Number.isInteger(value)))
-    return problem;
-  return null;
 }
 
 export function NumberField({

@@ -50,7 +50,7 @@ intentional difference, see §3).
 ### TV UI (extends [supervisor plan §7](prysm-v1-webos-supervisor.md#7-tv-ui-parity-checklist))
 
 Updated 2026-11-12 (beads `prysm-3jx.21.1`, `.21.3`–`.21.5`). The v1
-[TV UI](../../v1/frontend/packages/tv-ui/index.tsx) runs on the
+[TV UI](../../v1/frontend/packages/tv-ui/app.tsx) runs on the
 [Luna client](../../v1/frontend/packages/webos-platform/index.ts) of the
 supervisor and on the HTTP API of the Prysm that drives the lights. Everything
 here is tested on the development host (jsdom, desktop browser at 1920×1080);
@@ -137,7 +137,7 @@ nothing has run in a TV browser yet.
 | Host-header allowlist (TV LAN addresses, localhost) | `WebConfig.allowed_hosts` | changed | `Access::AnyOrigin`, no Host check (W11) |
 | Advertised LAN address; re-opens when addresses change (5 s check) | portal.rs `lan_addresses` | partial | Computed once at start (W10) |
 | Settings store, seeded with a webOS input | `portal-settings.json` | present | `settings.json` seeded with `capture.kind = webos` |
-| Portal capture panel (size, FPS, menus) | shared control UI | partial | [capture-webos-ui](../../v1/frontend/packages/capture-webos-ui/index.tsx) edits FPS only, allows 120 (W9) |
+| Portal capture panel (size, FPS, menus) | shared control UI | partial | [capture-webos-ui](../../v1/frontend/packages/capture-webos-ui/index.ts) edits FPS only, allows 120 (W9) |
 | WLED DDP output, idle compensation on stop | prysm-runtime | present | `Wled`, 6 s stop deadline |
 | Preview and calibration in the portal | shared portal | missing | v1 portal has neither (`prysm-3jx.11`, desktop audit) |
 | Pause without dropping HTTP (`p` → `CapturePaused`) | portal.rs | changed | Lighting Off closes the source |

@@ -25,17 +25,27 @@ export function runDemo(
     offline: flags.has('offline'),
     delayMs: 150,
     preferences:
-      flavor === 'slim' ? { instance: 'http://192.168.1.20:8787', receiver: null } : {},
+      flavor === 'slim'
+        ? { instance: 'http://192.168.1.20:8787', receiver: null }
+        : {},
   });
   const application = fakeApplicationPort<unknown, unknown>(
     flavor === 'full'
       ? {
           capture: { kind: 'webos', width: 640, height: 360, fps: 30 },
-          output: { kind: 'wled', address: '192.168.1.50', leds: { top: 96, right: 54, bottom: 96, left: 54 } },
+          output: {
+            kind: 'wled',
+            address: '192.168.1.50',
+            leds: { top: 96, right: 54, bottom: 96, left: 54 },
+          },
         }
       : {
           capture: { kind: 'remote', listen: '0.0.0.0:7380' },
-          output: { kind: 'wled', address: '192.168.1.50', leds: { top: 96, right: 54, bottom: 96, left: 54 } },
+          output: {
+            kind: 'wled',
+            address: '192.168.1.50',
+            leds: { top: 96, right: 54, bottom: 96, left: 54 },
+          },
         },
   );
   const blocked = flags.has('refused') || flags.has('unreachable');
@@ -45,7 +55,12 @@ export function runDemo(
         ? {
             ...application.client,
             observe: () =>
-              Promise.reject(new ApplicationError({ kind: 'unavailable', message: 'Cannot reach the portal.' })),
+              Promise.reject(
+                new ApplicationError({
+                  kind: 'unavailable',
+                  message: 'Cannot reach the portal.',
+                }),
+              ),
           }
         : application.client,
     probe: () => Promise.resolve(flags.has('refused')),
@@ -55,13 +70,19 @@ export function runDemo(
   let lighting = supervisor.state().lighting;
   setInterval(() => {
     const state = supervisor.state();
-    const capturing = state.enabled && state.worker === 'running' && !state.failure;
+    const capturing =
+      state.enabled && state.worker === 'running' && !state.failure;
     if (state.capturing !== capturing) supervisor.publish({ capturing });
     if (flavor !== 'full') return;
     const target = application.snapshot().target;
-    if (state.lighting !== lighting && state.lighting) void application.client.setTarget(state.lighting);
+    if (state.lighting !== lighting && state.lighting)
+      void application.client.setTarget(state.lighting);
     else if (target !== state.lighting)
-      supervisor.publish({ lighting: target, enabled: target !== 'off', capturing: target === 'processed' });
+      supervisor.publish({
+        lighting: target,
+        enabled: target !== 'off',
+        capturing: target === 'processed',
+      });
     lighting = supervisor.state().lighting;
   }, 500);
   Object.assign(window, { demo: { supervisor, application } });
@@ -70,8 +91,12 @@ export function runDemo(
   // Calibration: plays the phone's part (choose Calibrate colours on the TV first).
   const phone = document.createElement('select');
   phone.title = 'Demo: the pattern the phone shows';
-  phone.setAttribute('style', 'position:fixed;right:8px;bottom:8px;z-index:1;font:14px sans-serif');
-  for (const name of ['', ...patternNames]) phone.add(new Option(name ? `Phone: ${name}` : 'Phone: no pattern', name));
+  phone.setAttribute(
+    'style',
+    'position:fixed;right:8px;bottom:8px;z-index:1;font:14px sans-serif',
+  );
+  for (const name of ['', ...patternNames])
+    phone.add(new Option(name ? `Phone: ${name}` : 'Phone: no pattern', name));
   phone.onchange = () => {
     const pattern = patternNames.find((name) => name === phone.value);
     application.client

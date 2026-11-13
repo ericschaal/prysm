@@ -2,12 +2,32 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
-import { newProfileId, processingDelayMs, profileLimits } from '@prysm/web-portal';
-import { $, $$, button, click, edit, errorOf, field, renderPortal, sleep, text } from './dom';
+import {
+  newProfileId,
+  processingDelayMs,
+  profileLimits,
+} from '@prysm/web-portal';
+import {
+  $,
+  $$,
+  button,
+  click,
+  edit,
+  errorOf,
+  field,
+  renderPortal,
+  sleep,
+  text,
+} from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
-const output = { kind: 'wled', address: '192.0.2.1', leds: { top: 10, left: 4 } };
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const output = {
+  kind: 'wled',
+  address: '192.0.2.1',
+  leds: { top: 10, left: 4 },
+};
+const uuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const zero = {
   warmth: 0,
   tint: 0,
@@ -16,13 +36,17 @@ const zero = {
   hue: { red: 0, yellow: 0, green: 0, cyan: 0, blue: 0, magenta: 0 },
 };
 const settle = () => act(async () => sleep(processingDelayMs + 100));
-const saves = (fixture) => fixture.calls.filter((call) => call === 'replaceSettings').length;
+const saves = (fixture) =>
+  fixture.calls.filter((call) => call === 'replaceSettings').length;
 const processing = (fixture) => fixture.snapshot().settings.processing;
 const active = () => field('processing.active_profile');
 const enter = (element) =>
   act(async () =>
     element.dispatchEvent(
-      new element.ownerDocument.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      new element.ownerDocument.defaultView.KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+      }),
     ),
   );
 
@@ -31,7 +55,10 @@ test('colour profiles are created, renamed, edited, duplicated, chosen and delet
   const { fixture } = portal;
   try {
     assert.deepEqual(
-      $$('option', active()).map((option) => [option.value, option.textContent]),
+      $$('option', active()).map((option) => [
+        option.value,
+        option.textContent,
+      ]),
       [['', 'None (no correction)']],
     );
     assert.equal(button('Duplicate'), undefined);
@@ -41,7 +68,11 @@ test('colour profiles are created, renamed, edited, duplicated, chosen and delet
     assert.equal(saves(fixture), 1);
     const [created] = processing(fixture).profiles;
     assert.match(created.id, uuid);
-    assert.deepEqual(created, { id: created.id, name: 'New profile', correction: zero });
+    assert.deepEqual(created, {
+      id: created.id,
+      name: 'New profile',
+      correction: zero,
+    });
     assert.equal(processing(fixture).active_profile, created.id);
     assert.equal(active().value, created.id);
 
@@ -59,10 +90,16 @@ test('colour profiles are created, renamed, edited, duplicated, chosen and delet
     assert.equal($('option:checked', active()).textContent, 'PS5');
 
     const warmth = field('processing.profiles[0].correction.warmth');
-    assert.deepEqual([warmth.type, warmth.min, warmth.max, warmth.step], ['range', '-100', '100', '1']);
+    assert.deepEqual(
+      [warmth.type, warmth.min, warmth.max, warmth.step],
+      ['range', '-100', '100', '1'],
+    );
     await edit(warmth, 25);
     await edit(field('processing.profiles[0].correction.hue.cyan'), -10);
-    assert.equal(warmth.parentElement.querySelector('output').textContent, '+25');
+    assert.equal(
+      warmth.parentElement.querySelector('output').textContent,
+      '+25',
+    );
     await settle();
     assert.deepEqual(processing(fixture).profiles[0].correction, {
       ...zero,
@@ -75,13 +112,20 @@ test('colour profiles are created, renamed, edited, duplicated, chosen and delet
     const [, copy] = processing(fixture).profiles;
     assert.notEqual(copy.id, created.id);
     assert.equal(copy.name, 'PS5 copy');
-    assert.deepEqual(copy.correction, processing(fixture).profiles[0].correction);
+    assert.deepEqual(
+      copy.correction,
+      processing(fixture).profiles[0].correction,
+    );
     assert.equal(processing(fixture).active_profile, copy.id);
 
     await edit(active(), '');
     await settle();
     assert.equal('active_profile' in processing(fixture), false);
-    assert.equal(field('processing.profiles[0].name'), null, 'no editor without a profile');
+    assert.equal(
+      field('processing.profiles[0].name'),
+      null,
+      'no editor without a profile',
+    );
 
     await edit(active(), created.id);
     await click(button('Delete…'));
@@ -115,12 +159,20 @@ test('profile errors from the server land on their control; the list is capped',
     name: `Profile ${index}`,
     correction: zero,
   }));
-  const portal = await renderPortal(HeadlessWebPortal, { capture, output }, (snapshot) => ({
-    settings: {
-      ...snapshot.settings,
-      processing: { ...snapshot.settings.processing, profiles: many, active_profile: 'p3' },
-    },
-  }));
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({
+      settings: {
+        ...snapshot.settings,
+        processing: {
+          ...snapshot.settings.processing,
+          profiles: many,
+          active_profile: 'p3',
+        },
+      },
+    }),
+  );
   const { fixture } = portal;
   try {
     assert.equal(button('New profile').disabled, true);
@@ -136,7 +188,10 @@ test('profile errors from the server land on their control; the list is capped',
     await edit(tint, 40);
     await settle();
     assert.equal(errorOf(tint), 'must be -100 to 100');
-    assert.equal($('.processing [role="alert"]').textContent, 'Not applied: must be -100 to 100');
+    assert.equal(
+      $('.processing [role="alert"]').textContent,
+      'Not applied: must be -100 to 100',
+    );
     await settle();
     assert.equal(saves(fixture), 1, 'not retried until edited');
     await edit(tint, 30);
@@ -145,7 +200,11 @@ test('profile errors from the server land on their control; the list is capped',
     assert.equal(processing(fixture).profiles[3].correction.tint, 30);
     assert.equal(errorOf(tint), undefined);
 
-    fixture.failNext({ kind: 'invalid', field: 'processing.active_profile', message: 'no profile has id `p5`' });
+    fixture.failNext({
+      kind: 'invalid',
+      field: 'processing.active_profile',
+      message: 'no profile has id `p5`',
+    });
     await edit(active(), 'p5');
     await settle();
     assert.equal(errorOf(active()), 'no profile has id `p5`');

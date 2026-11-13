@@ -5,7 +5,8 @@ export interface Connection<C, O> {
   generation: number;
   status: 'connecting' | 'connected' | 'disconnected';
   snapshot: ApplicationSnapshot<C, O> | null;
-  error: string | null;
+  /** Why the stream was lost; kept while it reconnects. */
+  error: Failure | null;
 }
 
 export type CommandKind =
@@ -82,12 +83,12 @@ export function createApplicationSlice<C, O>() {
       },
       observationLost(
         state,
-        action: PayloadAction<{ generation: number; message: string }>,
+        action: PayloadAction<{ generation: number; failure: Failure }>,
       ) {
         if (!current(state, action.payload.generation)) return;
         state.connection.status = 'disconnected';
         state.connection.snapshot = null;
-        state.connection.error = action.payload.message;
+        state.connection.error = action.payload.failure;
       },
       commandSubmitted(
         state,

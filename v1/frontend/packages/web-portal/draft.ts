@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { same } from './adapters';
+import { same } from '@prysm/application-client';
 
 /**
  * A local draft of one settings section.

@@ -8,6 +8,8 @@ required; codegen runs the Rust contract exporter.
 npm --prefix v1/frontend ci
 npm --prefix v1/frontend run codegen:check
 npm --prefix v1/frontend test
+npm --prefix v1/frontend run lint          # ESLint, the root rule set
+npm --prefix v1/frontend run format:check  # Prettier; `format` rewrites
 ```
 
 `npm test` regenerates contracts, type-checks, builds the four entry points
@@ -32,7 +34,7 @@ their `demo.html` pages run the same UI on an
 
 ## Read the composition
 
-- [Shared portal](packages/web-portal/index.tsx): lighting modes, live picture
+- [Shared portal](packages/web-portal/portal.tsx): lighting modes, live picture
   controls, one Save form per adapter section, connection and failures. It
   imports no adapters.
   - [Lighting](packages/web-portal/lighting.tsx): Screen sync (`processed`),
@@ -74,14 +76,14 @@ their `demo.html` pages run the same UI on an
   register their kinds as `AdapterUis` maps; the types are exhaustive over the
   host's generated unions.
 - Panels, each an `AdapterUi { label, create, Editor, normalize?, lighting? }`:
-  [video device](packages/capture-device-ui/index.tsx),
-  [video file](packages/capture-file-ui/index.tsx),
-  [remote capture](packages/capture-remote-ui/index.tsx),
-  [webOS capture](packages/capture-webos-ui/index.tsx),
-  [WLED](packages/output-wled-ui/index.tsx) with the
+  [video device](packages/capture-device-ui/index.ts),
+  [video file](packages/capture-file-ui/index.ts),
+  [remote capture](packages/capture-remote-ui/index.ts),
+  [webOS capture](packages/capture-webos-ui/index.ts),
+  [WLED](packages/output-wled-ui/index.ts) with the
   [LED layout](packages/output-wled-ui/layout.tsx), and the
   [null output](packages/output-null-ui/index.tsx).
-- [TV UI](packages/tv-ui/index.tsx) (both packages): status card and primary
+- [TV UI](packages/tv-ui/app.tsx) (both packages): status card and primary
   action from the supervisor's state ([rules](packages/tv-ui/model.ts)),
   settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));

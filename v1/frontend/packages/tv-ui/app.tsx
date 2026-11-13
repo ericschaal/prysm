@@ -3,10 +3,21 @@
  * the lights belong to a Prysm reached over HTTP: the full package's own
  * portal, or the computer the slim package forwards to.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type Ref } from 'react';
-import type { Flavor, TvService } from '@prysm/webos-platform';
-import { CalibrationScreen, calibrationBlocker } from './calibration';
 import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type Ref,
+} from 'react';
+import type { Flavor, TvService } from '@prysm/webos-platform';
+import { failureOf } from '@prysm/application-client';
+import { CalibrationScreen } from './calibration';
+import {
+  calibrationBlocker,
   derivedReceiver,
   diagnostics,
   encodingName,
@@ -19,13 +30,10 @@ import {
 } from './model';
 import { useRemoteNavigation } from './navigation';
 import { msePatternPlayer, type PatternPlayer } from './patterns';
-import { LightingCard, failureOf, usePortal, type PortalOptions } from './portal';
+import { LightingCard } from './portal';
+import { usePortal, type PortalOptions } from './portal-connection';
 import { useTvService } from './service';
 import './tv.css';
-
-export type { PortalOptions } from './portal';
-export type { PatternPlayer } from './patterns';
-export { portalSupported } from './portal';
 
 type DialogId =
   | 'instance'
@@ -76,15 +84,18 @@ export function TvApp({
   onExit,
   patterns = msePatternPlayer,
 }: TvAppProps) {
-  const visible = useVisible();
-  const tv = useTvService(service, visible);
   /** The portal address while the calibration screen is open. */
   const [calibrating, setCalibrating] = useState<string | null>(null);
+  const visible = useVisible();
+  const tv = useTvService(service, visible);
   const [starting, setStarting] = useState(false);
-  const refocus = useRef(false);
+  const refocusRef = useRef(false);
+  const rootRef = useRef<HTMLElement>(null);
   const nav = useRemoteNavigation<DialogId>({
+    root: rootRef,
     parents,
-    onExitRequest: () => (calibrating ? leaveCalibration() : nav.openDialog('exit')),
+    onExitRequest: () =>
+      calibrating ? leaveCalibration() : nav.openDialog('exit'),
   });
   const slim = flavor === 'slim';
   const { state, draft, online } = tv;
@@ -99,21 +110,25 @@ export function TvApp({
     state,
     draft,
     tv.dirty,
-    portal.snapshot ? { lights: !!portal.snapshot.settings.output, address: portalAddress } : null,
+    portal.snapshot
+      ? { lights: !!portal.snapshot.settings.output, address: portalAddress }
+      : null,
   );
 
   // Slim: frames go to the Prysm's own receiver port, learned from its settings.
   const port = listenPort(portal.snapshot?.settings.capture);
   const suggestion = slim ? derivedReceiver(draft.instance, port) : null;
+  const { edit, say } = tv;
   useEffect(() => {
     if (!suggestion || suggestion === draft.receiver || !online) return;
     const instanceHost = draft.instance ? hostOf(draft.instance) : null;
     const receiverHost = draft.receiver?.replace(/:\d+$/, '') ?? null;
     if (draft.receiver && receiverHost !== instanceHost) return;
-    tv.edit({ receiver: suggestion });
-    tv.say(`Frames will go to ${suggestion}, where this Prysm receives them. Save to use it.`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `tv` changes every render.
-  }, [suggestion, draft.receiver, draft.instance, online]);
+    edit({ receiver: suggestion });
+    say(
+      `Frames will go to ${suggestion}, where this Prysm receives them. Save to use it.`,
+    );
+  }, [suggestion, draft.receiver, draft.instance, online, edit, say]);
 
   function primary() {
     switch (status.action) {
@@ -134,7 +149,8 @@ export function TvApp({
   async function startCalibration() {
     setStarting(true);
     try {
-      if (portal.snapshot?.target !== 'processed') await portal.setTarget('processed');
+      if (portal.snapshot?.target !== 'processed')
+        await portal.setTarget('processed');
       setCalibrating(portalAddress);
     } catch (reason) {
       tv.say(failureOf(reason).message, true);
@@ -145,38 +161,61 @@ export function TvApp({
   /** Back, or the app hidden: the pattern ends; lighting stays as it is. */
   function leaveCalibration() {
     setCalibrating(null);
-    refocus.current = true;
+    refocusRef.current = true;
     // Best effort: the engine also ends calibration 10 minutes after the last pattern.
     portal.endCalibration().catch(() => {});
   }
+  // Hiding the app ends calibration, like Back.
+  const hidden = useEffectEvent(() => {
+    if (calibrating) leaveCalibration();
+  });
   useEffect(() => {
-    if (!visible && calibrating) leaveCalibration();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on hiding.
+    if (!visible) hidden();
   }, [visible]);
   useLayoutEffect(() => {
-    if (calibrating || !refocus.current) return;
-    refocus.current = false;
+    if (calibrating || !refocusRef.current) return;
+    refocusRef.current = false;
     document.getElementById('calibrate')?.focus();
   });
-  const blocker = calibrationBlocker(flavor, patterns, portal, state, draft.instance);
+  const blocker = calibrationBlocker(
+    flavor,
+    patterns,
+    portal,
+    state,
+    draft.instance,
+  );
 
   const disabled = !online || tv.changing;
   const rows: { id: DialogId; label: string; value: string }[] = [];
   if (slim) {
     rows.push(
-      { id: 'instance', label: 'Prysm address', value: draft.instance ?? 'Add address' },
-      { id: 'receiver', label: 'Frames go to', value: draft.receiver ?? 'Not set' },
+      {
+        id: 'instance',
+        label: 'Prysm address',
+        value: draft.instance ?? 'Add address',
+      },
+      {
+        id: 'receiver',
+        label: 'Frames go to',
+        value: draft.receiver ?? 'Not set',
+      },
     );
   }
-  rows.push({ id: 'autostart', label: 'Start with TV', value: draft.autostart ? 'On' : 'Off' });
+  rows.push({
+    id: 'autostart',
+    label: 'Start with TV',
+    value: draft.autostart ? 'On' : 'Off',
+  });
 
   let savedLabel = 'On this TV';
-  if (state) savedLabel = tv.syncing ? 'Saving…' : tv.dirty ? 'Unsaved changes' : 'Saved';
+  if (state && tv.syncing) savedLabel = 'Saving…';
+  else if (state && tv.dirty) savedLabel = 'Unsaved changes';
+  else if (state) savedLabel = 'Saved';
 
   if (calibrating)
     return (
       <CalibrationScreen
-        root={nav.root}
+        root={rootRef}
         player={patterns}
         pattern={portal.snapshot?.calibration?.pattern}
         address={calibrating}
@@ -184,13 +223,12 @@ export function TvApp({
     );
   return (
     // The handlers only follow pointer and focus to support remote navigation.
-    // eslint-disable-next-line jsx-a11y-x/no-static-element-interactions
     <div
       className={`tv${status.ready ? ' ready' : ''}`}
       onMouseOver={nav.onMouseOver}
       onFocus={nav.onFocus}
     >
-      <main id="app" ref={nav.root as Ref<HTMLElement>} aria-hidden={nav.dialog ? true : undefined}>
+      <main id="app" ref={rootRef} aria-hidden={nav.dialog ? true : undefined}>
         <header className="header">
           <span className="brand">
             prysm<span className="brand-dot">.</span>
@@ -206,7 +244,9 @@ export function TvApp({
               <p className="section-label">Prysm on this TV</p>
               <div role="status" aria-live="polite">
                 <h1 id="status-title">
-                  {mismatch ? 'This app does not match the installed service' : status.title}
+                  {mismatch
+                    ? 'This app does not match the installed service'
+                    : status.title}
                 </h1>
               </div>
               <p id="status-description" className="description">
@@ -216,7 +256,8 @@ export function TvApp({
               </p>
               {slim && state?.encoding && !mismatch ? (
                 <p id="encoding-in-use" className="stream-info">
-                  Encoding in use: <strong>{encodingName(state.encoding)}</strong>
+                  Encoding in use:{' '}
+                  <strong>{encodingName(state.encoding)}</strong>
                 </p>
               ) : null}
               <div className="main-actions">
@@ -249,7 +290,10 @@ export function TvApp({
             <section className="card settings" aria-labelledby="settings-title">
               <div className="section-heading">
                 <h2 id="settings-title">Settings</h2>
-                <span id="saved-state" className={tv.dirty ? 'unsaved' : undefined}>
+                <span
+                  id="saved-state"
+                  className={tv.dirty ? 'unsaved' : undefined}
+                >
                   {savedLabel}
                 </span>
                 <span className="save-actions" hidden={!tv.dirty}>
@@ -287,7 +331,10 @@ export function TvApp({
                 <SettingRow
                   id="calibrate"
                   label="Calibrate colours"
-                  value={blocker ?? (starting ? 'Starting screen sync…' : 'With your phone')}
+                  value={
+                    blocker ??
+                    (starting ? 'Starting screen sync…' : 'With your phone')
+                  }
                   disabled={!!blocker || starting}
                   open={() => void startCalibration()}
                 />
@@ -296,7 +343,8 @@ export function TvApp({
                 <p className="portal-address" id="portal-address">
                   <strong>Web portal</strong>
                   <code>{portalAddress}</code>
-                  Open it on your phone or computer to set up capture and lights, and for colours, profiles and the preview.
+                  Open it on your phone or computer to set up capture and
+                  lights, and for colours, profiles and the preview.
                 </p>
               ) : null}
             </section>
@@ -535,8 +583,18 @@ function Dialogs({
         : 'Start screen sync automatically when the TV turns on.';
       content = (
         <>
-          <Choice title="Off" detail="Start it yourself." selected={!draft.autostart} action={() => choose({ autostart: false })} />
-          <Choice title="On" detail="Start when the TV turns on." selected={draft.autostart} action={() => choose({ autostart: true })} />
+          <Choice
+            title="Off"
+            detail="Start it yourself."
+            selected={!draft.autostart}
+            action={() => choose({ autostart: false })}
+          />
+          <Choice
+            title="On"
+            detail="Start when the TV turns on."
+            selected={draft.autostart}
+            action={() => choose({ autostart: true })}
+          />
         </>
       );
       break;
@@ -574,7 +632,9 @@ function Dialogs({
       description = 'Service state and the latest messages.';
       content = (
         <pre className="diagnostics" id="diagnostics-text">
-          {tv.online === false ? `Service unavailable: ${tv.notice}` : diagnostics(tv.state)}
+          {tv.online === false
+            ? `Service unavailable: ${tv.notice}`
+            : diagnostics(tv.state)}
         </pre>
       );
       break;
@@ -584,7 +644,11 @@ function Dialogs({
         'Capture stops and the service is removed with its autostart and permissions. Your settings are kept; set it up again from Service options.';
       content = (
         <>
-          <Choice id="keep-setup" title="Keep setup" action={() => openDialog('service')} />
+          <Choice
+            id="keep-setup"
+            title="Keep setup"
+            action={() => openDialog('service')}
+          />
           <Choice
             id="confirm-cleanup"
             title="Remove setup"
@@ -624,7 +688,12 @@ function Dialogs({
           {description}
         </p>
         <div id="dialog-body">{content}</div>
-        <button id="dialog-back" type="button" className="quiet dialog-back" onClick={closeDialog}>
+        <button
+          id="dialog-back"
+          type="button"
+          className="quiet dialog-back"
+          onClick={closeDialog}
+        >
           Back
         </button>
       </section>

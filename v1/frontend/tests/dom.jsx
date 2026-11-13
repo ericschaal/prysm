@@ -28,7 +28,9 @@ export async function renderPortal(Host, initial, change, props = {}) {
   if (change) fixture.publish(change(fixture.snapshot()));
   const application = createApplicationRuntime(fixture.client);
   const root = createRoot(document.getElementById('root'));
-  await act(async () => root.render(<Host application={application} {...props} />));
+  await act(async () =>
+    root.render(<Host application={application} {...props} />),
+  );
   return {
     dom,
     fixture,
@@ -59,9 +61,14 @@ export async function edit(element, value) {
       ? view.HTMLSelectElement.prototype
       : view.HTMLInputElement.prototype;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, String(value));
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(
+      element,
+      String(value),
+    );
     element.dispatchEvent(
-      new view.Event(element.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }),
+      new view.Event(element.tagName === 'SELECT' ? 'change' : 'input', {
+        bubbles: true,
+      }),
     );
   });
 }
@@ -71,7 +78,9 @@ export const click = (element) => act(async () => element.click());
 export async function submit(element) {
   const view = element.ownerDocument.defaultView;
   await act(async () =>
-    element.dispatchEvent(new view.Event('submit', { bubbles: true, cancelable: true })),
+    element.dispatchEvent(
+      new view.Event('submit', { bubbles: true, cancelable: true }),
+    ),
   );
   // Let the command resolve and the stream deliver the new state.
   await act(async () => sleep(0));

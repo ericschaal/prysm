@@ -16,4 +16,6 @@ const application = createApplicationRuntime(
 );
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing frontend root.');
-createRoot(root).render(<HeadlessWebPortal application={application} preview={httpPreviewClient()} />);
+createRoot(root).render(
+  <HeadlessWebPortal application={application} preview={httpPreviewClient()} />,
+);

@@ -6,7 +6,9 @@ import { fakeApplicationPort } from '../testkit/application';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const state = (change = {}) => ({
-  ...fakeApplicationPort({ capture: { kind: 'device', path: '/dev/video0' } }).snapshot(),
+  ...fakeApplicationPort({
+    capture: { kind: 'device', path: '/dev/video0' },
+  }).snapshot(),
   ...change,
 });
 const encode = (text) => new TextEncoder().encode(text);
@@ -46,7 +48,9 @@ test('the state stream decodes split events and comments, sends no credentials a
   assert.equal(observation.initial.settings.capture.path, '/dev/video0');
   const next = observation.updates.next();
   stream.enqueue(
-    encode(`data: ${JSON.stringify(state({ target: 'processed', revision: 4 }))}\n\n`),
+    encode(
+      `data: ${JSON.stringify(state({ target: 'processed', revision: 4 }))}\n\n`,
+    ),
   );
   const update = (await next).value;
   assert.equal(update.target, 'processed');
@@ -66,7 +70,8 @@ test('invalid events end the stream as unavailable', async () => {
   });
   await assert.rejects(
     client.observe(new AbortController().signal),
-    (error) => error instanceof ApplicationError && error.failure.kind === 'unavailable',
+    (error) =>
+      error instanceof ApplicationError && error.failure.kind === 'unavailable',
   );
 });
 
@@ -107,12 +112,27 @@ test('server failures keep their kind, field and current revision', async () => 
     assert.fail('expected a failure');
   };
   const settings = state().settings;
-  assert.equal((await failure(() => client.replaceSettings(1, settings))).current, 3);
-  assert.equal((await failure(() => client.replaceSettings(3, settings))).field, 'output.leds');
+  assert.equal(
+    (await failure(() => client.replaceSettings(1, settings))).current,
+    3,
+  );
+  assert.equal(
+    (await failure(() => client.replaceSettings(3, settings))).field,
+    'output.leds',
+  );
   assert.equal((await failure(() => client.setTarget('off'))).kind, 'faulted');
-  assert.equal((await failure(() => client.setTarget('off'))).message, 'origin denied');
-  assert.equal((await failure(() => client.setTarget('off'))).kind, 'forbidden');
-  assert.equal((await failure(() => client.setTarget('off'))).kind, 'unavailable');
+  assert.equal(
+    (await failure(() => client.setTarget('off'))).message,
+    'origin denied',
+  );
+  assert.equal(
+    (await failure(() => client.setTarget('off'))).kind,
+    'forbidden',
+  );
+  assert.equal(
+    (await failure(() => client.setTarget('off'))).kind,
+    'unavailable',
+  );
 });
 
 test('a lost reply is unavailable, not a definite rejection', async () => {

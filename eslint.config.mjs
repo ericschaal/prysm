@@ -17,7 +17,8 @@ export default defineConfig(
       '**/*.generated.*',
       'work/**',
       '.webos-sdk/**',
-      // v1 has its own dependencies and gate (v1.yml); this job does not install them.
+      // v1 has its own dependencies, lint config (v1/frontend/eslint.config.mjs)
+      // and gate (v1.yml); this job does not install them.
       'v1/**',
     ],
   },

@@ -18,37 +18,59 @@ import { fakeApplicationPort } from '../testkit/application';
 import { fakeTvSupervisor } from '../testkit/luna';
 import { mountDom, sleep } from './dom';
 
-const output = { kind: 'wled', address: '192.0.2.1', leds: { top: 10, left: 4 } };
+const output = {
+  kind: 'wled',
+  address: '192.0.2.1',
+  leds: { top: 10, left: 4 },
+};
 
 const tvProps = (flavor, fixture, supervisor) => ({
   service: lunaTvService(supervisor.bridge),
   portal: { client: () => fixture.client, supported: true },
   onExit: () => {},
 });
-const slimPreferences = { instance: 'http://192.0.2.20:8787', receiver: '192.0.2.20:7380' };
+const slimPreferences = {
+  instance: 'http://192.0.2.20:8787',
+  receiver: '192.0.2.20:7380',
+};
 
 test('TV assemblies show their package: Luna for the TV, HTTP for the lights', async () => {
   for (const flavor of ['full', 'slim']) {
     const dom = mountDom();
     // The TV app subscribes only while the page is visible.
-    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    Object.defineProperty(document, 'hidden', {
+      value: false,
+      configurable: true,
+    });
     const fixture = fakeApplicationPort(
       flavor === 'full'
         ? { capture: { kind: 'webos' }, output }
         : { capture: { kind: 'remote', listen: '0.0.0.0:7380' }, output },
     );
-    const supervisor = fakeTvSupervisor({ flavor, preferences: flavor === 'slim' ? slimPreferences : {} });
+    const supervisor = fakeTvSupervisor({
+      flavor,
+      preferences: flavor === 'slim' ? slimPreferences : {},
+    });
     const Host = flavor === 'full' ? WebosTvApp : WebosSlimTvApp;
     const root = createRoot(document.getElementById('root'));
     try {
-      await act(async () => root.render(<Host {...tvProps(flavor, fixture, supervisor)} />));
+      await act(async () =>
+        root.render(<Host {...tvProps(flavor, fixture, supervisor)} />),
+      );
       await act(async () => sleep(5));
       // Both packages point to the portal that holds capture settings.
       assert.equal(
-        document.getElementById('portal-address').querySelector('code').textContent,
-        flavor === 'full' ? 'http://192.168.1.5:8787/' : slimPreferences.instance,
+        document.getElementById('portal-address').querySelector('code')
+          .textContent,
+        flavor === 'full'
+          ? 'http://192.168.1.5:8787/'
+          : slimPreferences.instance,
       );
-      assert.equal(document.getElementById('capture'), null, 'capture is set in the portal only');
+      assert.equal(
+        document.getElementById('capture'),
+        null,
+        'capture is set in the portal only',
+      );
       assert.equal(!!document.getElementById('instance'), flavor === 'slim');
       await act(async () => document.getElementById('mode-processed').click());
       assert.equal(fixture.snapshot().target, 'processed');
@@ -65,24 +87,42 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
 
 test('embedded TV and browser portal share one application; either may close', async () => {
   const dom = mountDom('<div id="tv"></div><div id="portal"></div>');
-  Object.defineProperty(document, 'hidden', { value: false, configurable: true });
-  const fixture = fakeApplicationPort({ capture: { kind: 'webos', fps: 30 }, output });
+  Object.defineProperty(document, 'hidden', {
+    value: false,
+    configurable: true,
+  });
+  const fixture = fakeApplicationPort({
+    capture: { kind: 'webos', fps: 30 },
+    output,
+  });
   const browser = createApplicationRuntime(fixture.client);
   const tvRoot = createRoot(document.getElementById('tv'));
   const browserRoot = createRoot(document.getElementById('portal'));
   let tvClosed = false;
   try {
     await act(async () => {
-      tvRoot.render(<WebosTvApp {...tvProps('full', fixture, fakeTvSupervisor({ flavor: 'full' }))} />);
+      tvRoot.render(
+        <WebosTvApp
+          {...tvProps('full', fixture, fakeTvSupervisor({ flavor: 'full' }))}
+        />,
+      );
       browserRoot.render(<WebosWebPortal application={browser} />);
     });
     await act(async () => sleep(5));
     await act(async () => document.getElementById('mode-processed').click());
-    assert.equal(browser.selectors.selectSnapshot(browser.store.getState()).target, 'processed');
+    assert.equal(
+      browser.selectors.selectSnapshot(browser.store.getState()).target,
+      'processed',
+    );
     await act(async () => tvRoot.unmount());
     tvClosed = true;
     await act(async () =>
-      browser.store.dispatch(browser.commands.configureOutput(0, { ...output, address: '192.0.2.44' })),
+      browser.store.dispatch(
+        browser.commands.configureOutput(0, {
+          ...output,
+          address: '192.0.2.44',
+        }),
+      ),
     );
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.44');
     assert.equal(fixture.snapshot().target, 'processed');

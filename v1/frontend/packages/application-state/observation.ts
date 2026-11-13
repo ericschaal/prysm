@@ -5,7 +5,7 @@ import {
   type UnknownAction,
 } from '@reduxjs/toolkit';
 import {
-  ApplicationError,
+  failureOf,
   type ApplicationClient,
   type Observation,
 } from '@prysm/application-client';
@@ -64,22 +64,17 @@ export function registerObservation<C, O>(
             api.dispatch(
               actions.observationLost({
                 generation,
-                message: 'Connection to Prysm closed.',
+                failure: {
+                  kind: 'unavailable',
+                  message: 'Connection to Prysm closed.',
+                },
               }),
             );
         } catch (error) {
+          const failure = failureOf(error);
           if (!api.signal.aborted)
-            api.dispatch(
-              actions.observationLost({
-                generation,
-                message: error instanceof Error ? error.message : String(error),
-              }),
-            );
-          if (
-            error instanceof ApplicationError &&
-            error.failure.kind === 'forbidden'
-          )
-            return;
+            api.dispatch(actions.observationLost({ generation, failure }));
+          if (failure.kind === 'forbidden') return;
         } finally {
           api.signal.removeEventListener('abort', close);
           close();

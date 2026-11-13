@@ -1,36 +1,22 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { failureOf } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
-  failureOf,
   kindsOf,
   type AdapterSection,
   type AdapterUis,
 } from './adapters';
 import { useDraft } from './draft';
+import { SelectField } from './fields';
 import {
   FieldScopeProvider,
-  SelectField,
+  focusField,
+  staleNotice,
   useFieldErrors,
   useFieldScope,
   useFieldScopeContext,
-} from './fields';
-
-export const staleNotice =
-  'These settings were changed elsewhere, so yours were not saved. The current settings are shown; make your change again.';
-
-/** Focus the control for `field` in `form`, or the form's alert. */
-export function focusField(form: HTMLElement | null, field: string | undefined) {
-  if (!form) return;
-  // Field paths are dotted identifiers from the generated settings.
-  const path = field && /^[\w.]+$/.test(field) ? field : null;
-  const target =
-    (path &&
-      (form.querySelector<HTMLElement>(`[name="${path}"]`) ??
-        form.querySelector<HTMLElement>(`[data-field="${path}"]`))) ||
-    form.querySelector<HTMLElement>('[data-form-alert]');
-  target?.focus();
-}
+} from './form';
 
 /**
  * The kind selector (when the host registers more than one kind) and the
@@ -71,7 +57,7 @@ export function SectionFields<S extends AdapterSection>({
         <SelectField
           path={`${section}.kind`}
           label={section === 'capture' ? 'Capture from' : 'Send colours to'}
-          value={value.kind as S['kind']}
+          value={value.kind}
           options={kinds.map((kind) => ({
             value: kind,
             label: adapterFor(adapters, kind)?.label ?? kind,
@@ -129,12 +115,13 @@ export function SectionForm<S extends AdapterSection>({
   const [failure, setFailure] = useState('');
   const [notice, setNotice] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
-  /** After a refused save, focus this field (or the alert) once it renders. */
+  /**
+   * After a refused save, focus this field (or the alert) once it renders.
+   * Each request is a new object, so the effect runs once per request.
+   */
   const [focus, setFocus] = useState<{ field?: string } | null>(null);
   useEffect(() => {
-    if (!focus) return;
-    focusField(formRef.current, focus.field);
-    setFocus(null);
+    if (focus) focusField(formRef.current, focus.field);
   }, [focus]);
   const headingId = useId();
   const statusId = useId();

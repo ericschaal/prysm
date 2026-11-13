@@ -3,8 +3,10 @@ import {
   type ApplicationClient,
   type ApplicationSnapshot,
   type Failure,
+  type LightingTarget,
   type PreviewClient,
   type PreviewEvent,
+  type Session,
 } from './index';
 
 const COMMAND_TIMEOUT_MS = 20_000;
@@ -83,7 +85,9 @@ export function httpApplicationClient<C, O>({
       await command('target', { target });
     },
     setCalibration: async (calibration) => {
-      await (calibration ? command('calibration', calibration) : command('calibration'));
+      await (calibration
+        ? command('calibration', calibration)
+        : command('calibration'));
     },
     replaceSettings: async (expected, settings) => {
       const reply: unknown = await (
@@ -151,7 +155,13 @@ export function httpPreviewClient({
   const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/preview/stream`;
   return {
     preview: async (signal) => {
-      const stream = await openEvents(fetcher, url, signal, validPreview, 'preview');
+      const stream = await openEvents(
+        fetcher,
+        url,
+        signal,
+        validPreview,
+        'preview',
+      );
       return {
         events: stream.events as AsyncIterable<PreviewEvent>,
         close: stream.close,
@@ -204,16 +214,28 @@ async function openEvents(
   }
 }
 
-const targets = ['off', 'processed', 'device_native'];
-const sessions = ['stopped', 'running', 'native', 'faulted'];
+/** Keyed by every value of the generated union, so the compiler keeps them in step. */
+const targets: Record<LightingTarget, true> = {
+  off: true,
+  processed: true,
+  device_native: true,
+};
+const sessions: Record<Session['state'], true> = {
+  stopped: true,
+  running: true,
+  native: true,
+  faulted: true,
+};
+const oneOf = (values: object, value: unknown) =>
+  typeof value === 'string' && Object.keys(values).includes(value);
 
 function validState(value: unknown): boolean {
   const state = value as Partial<ApplicationSnapshot<unknown, unknown>> | null;
   return (
     !!state &&
     typeof state.revision === 'number' &&
-    targets.includes(state.target as string) &&
-    sessions.includes(state.session?.state as string) &&
+    oneOf(targets, state.target) &&
+    oneOf(sessions, state.session?.state) &&
     !!state.settings &&
     typeof state.settings.processing === 'object' &&
     Array.isArray(state.surface_failures)
@@ -240,9 +262,13 @@ function validPreview(value: unknown): boolean {
   const viewport = frame.viewport;
   const colors = frame.colors;
   return (
-    [frame.sequence, frame.width, frame.height, frame.source_width, frame.source_height].every(
-      (size) => isInt(size) && (size as number) >= 0,
-    ) &&
+    [
+      frame.sequence,
+      frame.width,
+      frame.height,
+      frame.source_width,
+      frame.source_height,
+    ].every((size) => isInt(size) && (size as number) >= 0) &&
     typeof frame.jpeg === 'string' &&
     !!viewport &&
     [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt) &&

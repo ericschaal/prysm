@@ -43,10 +43,7 @@ export const RESUBSCRIBE_MS = 3_000;
  * - `invalid_reply`: the reply is not what the contract says.
  */
 export type LunaFailureKind =
-  | 'unavailable'
-  | 'timeout'
-  | 'refused'
-  | 'invalid_reply';
+  'unavailable' | 'timeout' | 'refused' | 'invalid_reply';
 
 export class LunaError extends Error {
   constructor(
@@ -77,8 +74,7 @@ export function webosBridge(): BridgeFactory | null {
 
 /** One state from the subscription, or why it is not available. */
 export type ServiceEvent =
-  | { online: true; state: State }
-  | { online: false; error: LunaError };
+  { online: true; state: State } | { online: false; error: LunaError };
 
 export interface TvService {
   /**
@@ -98,11 +94,32 @@ export interface TvService {
   cancelAll(): void;
 }
 
-const flavors = ['full', 'slim'];
-const powers = ['unknown', 'active', 'screen_saver', 'asleep'];
-const videos = ['unknown', 'unavailable', 'available'];
-const phases = ['stopped', 'running', 'stopping', 'retrying'];
-const targets = ['off', 'processed', 'device_native'];
+/** Keyed by every value of the generated union, so the compiler keeps them in step. */
+const flavors: Record<Flavor, true> = { full: true, slim: true };
+const powers: Record<Power, true> = {
+  unknown: true,
+  active: true,
+  screen_saver: true,
+  asleep: true,
+};
+const videos: Record<Video, true> = {
+  unknown: true,
+  unavailable: true,
+  available: true,
+};
+const phases: Record<Phase, true> = {
+  stopped: true,
+  running: true,
+  stopping: true,
+  retrying: true,
+};
+const targets: Record<LightingTarget, true> = {
+  off: true,
+  processed: true,
+  device_native: true,
+};
+const oneOf = (values: object, value: unknown) =>
+  typeof value === 'string' && Object.keys(values).indexOf(value) >= 0;
 const optionalText = (value: unknown) =>
   value === undefined || value === null || typeof value === 'string';
 
@@ -111,10 +128,10 @@ export function isState(value: unknown): value is State {
   return (
     !!state &&
     typeof state === 'object' &&
-    flavors.indexOf(state.flavor as string) >= 0 &&
-    powers.indexOf(state.power as string) >= 0 &&
-    videos.indexOf(state.video as string) >= 0 &&
-    phases.indexOf(state.worker as string) >= 0 &&
+    oneOf(flavors, state.flavor) &&
+    oneOf(powers, state.power) &&
+    oneOf(videos, state.video) &&
+    oneOf(phases, state.worker) &&
     typeof state.enabled === 'boolean' &&
     typeof state.capturing === 'boolean' &&
     !!state.preferences &&
@@ -125,7 +142,7 @@ export function isState(value: unknown): value is State {
     optionalText(state.portal) &&
     (state.lighting === undefined ||
       state.lighting === null ||
-      targets.indexOf(state.lighting as string) >= 0)
+      oneOf(targets, state.lighting))
   );
 }
 
@@ -136,10 +153,16 @@ function decode(text: string): Reply {
   try {
     value = JSON.parse(text);
   } catch {
-    throw new LunaError('invalid_reply', 'The TV service sent an unreadable reply.');
+    throw new LunaError(
+      'invalid_reply',
+      'The TV service sent an unreadable reply.',
+    );
   }
   if (!value || typeof value !== 'object')
-    throw new LunaError('invalid_reply', 'The TV service sent an unreadable reply.');
+    throw new LunaError(
+      'invalid_reply',
+      'The TV service sent an unreadable reply.',
+    );
   const reply = value as Reply;
   if (reply.returnValue !== true) {
     const text =
@@ -147,7 +170,10 @@ function decode(text: string): Reply {
         ? reply.errorText
         : 'The TV service could not complete this action.';
     // LS2 itself answers this way when the service is not registered.
-    const missing = /not found|unknown service|no such service|service does not exist/i.test(text);
+    const missing =
+      /not found|unknown service|no such service|service does not exist/i.test(
+        text,
+      );
     throw new LunaError(missing ? 'unavailable' : 'refused', text);
   }
   return reply;
@@ -155,7 +181,10 @@ function decode(text: string): Reply {
 
 function stateOf(reply: Reply): State {
   if (!isState(reply))
-    throw new LunaError('invalid_reply', 'The TV service sent an unexpected state.');
+    throw new LunaError(
+      'invalid_reply',
+      'The TV service sent an unexpected state.',
+    );
   const state = { ...reply } as Reply;
   delete state.returnValue;
   delete state.subscribed;
@@ -163,7 +192,10 @@ function stateOf(reply: Reply): State {
 }
 
 const notOnTv = () =>
-  new LunaError('unavailable', 'Open Prysm on your LG TV to reach its service.');
+  new LunaError(
+    'unavailable',
+    'Open Prysm on your LG TV to reach its service.',
+  );
 
 /** The Luna client. `bridge` is `null` off the TV: every call fails `unavailable`. */
 export function lunaTvService(
@@ -234,12 +266,21 @@ export function lunaTvService(
     try {
       channel.call(uri, JSON.stringify(payload));
     } catch (error) {
-      fail(new LunaError('unavailable', error instanceof Error ? error.message : String(error)));
+      fail(
+        new LunaError(
+          'unavailable',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
     return cancel;
   }
 
-  function request<T>(uri: string, payload: object, parse: (reply: Reply) => T) {
+  function request<T>(
+    uri: string,
+    payload: object,
+    parse: (reply: Reply) => T,
+  ) {
     return new Promise<T>((resolve, reject) => {
       open(
         uri,
@@ -273,7 +314,10 @@ export function lunaTvService(
           (text) => {
             const reply = decode(text);
             if (first && reply.subscribed !== true)
-              throw new LunaError('refused', 'The TV service did not accept a subscription.');
+              throw new LunaError(
+                'refused',
+                'The TV service did not accept a subscription.',
+              );
             first = false;
             if (!stopped) listener({ online: true, state: stateOf(reply) });
             return false;
@@ -291,7 +335,8 @@ export function lunaTvService(
     },
     setPreferences: (preferences) =>
       request(method('setPreferences'), preferences, stateOf),
-    setEnabled: (enabled) => request(method('setEnabled'), { enabled }, stateOf),
+    setEnabled: (enabled) =>
+      request(method('setEnabled'), { enabled }, stateOf),
     uninstall: () => request(method('uninstall'), {}, () => undefined),
     setup: () =>
       new Promise<void>((resolve, reject) => {
@@ -303,7 +348,10 @@ export function lunaTvService(
             try {
               reply = JSON.parse(text) as Reply;
             } catch {
-              throw new LunaError('invalid_reply', 'Homebrew Channel sent an unreadable reply.');
+              throw new LunaError(
+                'invalid_reply',
+                'Homebrew Channel sent an unreadable reply.',
+              );
             }
             if (reply?.returnValue === true) {
               resolve();
@@ -312,7 +360,9 @@ export function lunaTvService(
             const detail = [reply?.errorText, reply?.stderrString].find(
               (value) => typeof value === 'string' && value,
             ) as string | undefined;
-            const missing = /not found|unknown service|no such service/i.test(detail ?? '');
+            const missing = /not found|unknown service|no such service/i.test(
+              detail ?? '',
+            );
             throw new LunaError(
               missing ? 'unavailable' : 'refused',
               missing

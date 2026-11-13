@@ -64,8 +64,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     if (options.delayMs) setTimeout(work, options.delayMs);
     else void Promise.resolve().then(work);
   }
-  const reply = (value: object) => JSON.stringify({ returnValue: true, ...value });
-  const error = (errorText: string) => JSON.stringify({ returnValue: false, errorText });
+  const reply = (value: object) =>
+    JSON.stringify({ returnValue: true, ...value });
+  const error = (errorText: string) =>
+    JSON.stringify({ returnValue: false, errorText });
 
   /** Settle what follows from the intent, as the machine would. */
   function reconcile() {
@@ -74,8 +76,10 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         ? full || (state.enabled && !!state.preferences.receiver)
         : false;
     state.worker = wanted ? 'running' : 'stopped';
-    if (full) state.lighting = state.enabled ? (state.lighting === 'off' ? 'processed' : state.lighting) : 'off';
-    state.capturing = wanted && state.enabled && state.video === 'available' && !state.failure;
+    if (full && !state.enabled) state.lighting = 'off';
+    else if (full && state.lighting === 'off') state.lighting = 'processed';
+    state.capturing =
+      wanted && state.enabled && state.video === 'available' && !state.failure;
   }
 
   function publish(change: Partial<State> = {}) {
@@ -84,7 +88,11 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       bridge.deliver(reply({ ...state, subscribed: true }));
   }
 
-  function handle(bridge: FakeBridge, uri: string, payload: Record<string, unknown>) {
+  function handle(
+    bridge: FakeBridge,
+    uri: string,
+    payload: Record<string, unknown>,
+  ) {
     const method = uri.split('/').pop() ?? '';
     calls.push({ uri, method, payload });
     const respond = (text: string) => later(() => bridge.deliver(text));
@@ -92,7 +100,14 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       if (setupWorks) {
         offline = false;
         respond(reply({ stdoutString: 'set up' }));
-      } else respond(JSON.stringify({ returnValue: false, errorText: 'exit 1', stderrString: 'setup: cannot write manifests' }));
+      } else
+        respond(
+          JSON.stringify({
+            returnValue: false,
+            errorText: 'exit 1',
+            stderrString: 'setup: cannot write manifests',
+          }),
+        );
       return;
     }
     if (offline) {
@@ -113,21 +128,42 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
       case 'setPreferences': {
         const preferences = payload as Preferences;
         if (full && (preferences.instance || preferences.receiver)) {
-          respond(error('instance, receiver: only the slim package forwards frames'));
+          respond(
+            error('instance, receiver: only the slim package forwards frames'),
+          );
           return;
         }
-        if (preferences.instance && !/^https?:\/\/[^/?#\s]+$/.test(preferences.instance)) {
-          respond(error('instance: must be an origin such as http://192.168.1.20:8787'));
+        if (
+          preferences.instance &&
+          !/^https?:\/\/[^/?#\s]+$/.test(preferences.instance)
+        ) {
+          respond(
+            error(
+              'instance: must be an origin such as http://192.168.1.20:8787',
+            ),
+          );
           return;
         }
         // host:port, the host an IP address or a name (the TV resolves it).
-        if (preferences.receiver && !/^([a-z0-9.-]+|\[[0-9a-f:]+\]):\d+$/i.test(preferences.receiver)) {
-          respond(error(`invalid setPreferences request: receiver \`${preferences.receiver}\`: not a host name or IP address`));
+        if (
+          preferences.receiver &&
+          !/^([a-z0-9.-]+|\[[0-9a-f:]+\]):\d+$/i.test(preferences.receiver)
+        ) {
+          respond(
+            error(
+              `invalid setPreferences request: receiver \`${preferences.receiver}\`: not a host name or IP address`,
+            ),
+          );
           return;
         }
         state = {
           ...state,
-          preferences: { autostart: false, instance: null, receiver: null, ...preferences },
+          preferences: {
+            autostart: false,
+            instance: null,
+            receiver: null,
+            ...preferences,
+          },
         };
         reconcile();
         respond(reply(state));
@@ -184,7 +220,8 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     },
     /** End every subscription with an error, as a stopped service does. */
     drop(errorText: string) {
-      for (const subscriber of Array.from(subscribers)) subscriber.deliver(error(errorText));
+      for (const subscriber of Array.from(subscribers))
+        subscriber.deliver(error(errorText));
       subscribers.clear();
     },
     setOffline(value: boolean) {

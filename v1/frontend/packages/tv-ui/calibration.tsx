@@ -3,38 +3,18 @@
  * patterns; the TV shows the one in `State.calibration` as full-screen video,
  * and a QR code of that page while none is chosen.
  */
-import { useEffect, useMemo, useRef, useState, type Ref } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
 import type { Pattern } from '@prysm/application-client';
-import type { State } from '@prysm/webos-platform';
-import type { PortalView } from './portal';
+import { calibrationUrl } from './model';
 import { WAITING_PATTERN, type PatternPlayer } from './patterns';
 import { qrCode } from './qr';
-
-/** The portal page the phone opens, from the portal address the TV shows. */
-export const calibrationUrl = (portal: string) => `${portal.replace(/\/+$/, '')}/#/calibrate`;
-
-/**
- * Why the lights cannot be calibrated from this TV's picture, or `null`.
- * `tv` is the supervisor's state; `instance` the slim package's Prysm address.
- */
-export function calibrationBlocker(
-  flavor: 'full' | 'slim',
-  player: PatternPlayer,
-  portal: PortalView,
-  tv: State | null,
-  instance: string | null,
-): string | null {
-  if (!player.supported || !portal.supported) return 'Calibration needs a newer TV';
-  if (flavor === 'slim' && !instance) return 'Add the Prysm address first';
-  if (flavor === 'slim' && !tv?.enabled) return 'Start capture first';
-  const { snapshot } = portal;
-  if (!snapshot) return 'Needs a connection to Prysm';
-  if (!snapshot.settings.capture || !snapshot.settings.output)
-    return 'Set up capture and lights first';
-  const kind = (snapshot.settings.capture as { kind?: string }).kind;
-  if (flavor === 'slim' && kind !== 'remote') return 'Prysm is not using this TV’s picture';
-  return null;
-}
 
 function QrCode({ modules }: { modules: boolean[][] }) {
   // A four-module quiet zone around the code.
@@ -70,19 +50,29 @@ function PatternVideo({
   pattern: Pattern;
   failed: () => void;
 }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const latest = useRef({ pattern, failed });
-  latest.current = { pattern, failed };
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const latestRef = useRef({ pattern, failed });
+  useLayoutEffect(() => {
+    latestRef.current = { pattern, failed };
+  });
   useEffect(
     () =>
       player.play(
-        video.current!,
-        () => latest.current.pattern,
-        () => latest.current.failed(),
+        videoRef.current!,
+        () => latestRef.current.pattern,
+        () => latestRef.current.failed(),
       ),
     [player],
   );
-  return <video ref={video} id="pattern-video" className="pattern-video" muted playsInline />;
+  return (
+    <video
+      ref={videoRef}
+      id="pattern-video"
+      className="pattern-video"
+      muted
+      playsInline
+    />
+  );
 }
 
 /**
@@ -107,9 +97,17 @@ export function CalibrationScreen({
   const url = calibrationUrl(address);
   const modules = useMemo(() => qrCode(url), [url]);
   return (
-    <section ref={root} className={`calibration${pattern && !failed ? ' showing' : ''}`} aria-label="Calibration">
+    <section
+      ref={root}
+      className={`calibration${pattern && !failed ? ' showing' : ''}`}
+      aria-label="Calibration"
+    >
       {failed ? null : (
-        <PatternVideo player={player} pattern={pattern ?? WAITING_PATTERN} failed={() => setFailed(true)} />
+        <PatternVideo
+          player={player}
+          pattern={pattern ?? WAITING_PATTERN}
+          failed={() => setFailed(true)}
+        />
       )}
       {pattern && !failed ? null : (
         <div className="calibration-waiting">
@@ -117,7 +115,9 @@ export function CalibrationScreen({
           {modules ? <QrCode modules={modules} /> : null}
           <code id="calibration-address">{url}</code>
           <p id="calibration-hint">
-            {modules ? 'Scan with your phone to start.' : 'Open this address on your phone to start.'}
+            {modules
+              ? 'Scan with your phone to start.'
+              : 'Open this address on your phone to start.'}
           </p>
           {failed ? (
             <p id="calibration-error" className="notice error" role="alert">

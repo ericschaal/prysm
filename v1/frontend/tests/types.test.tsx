@@ -56,7 +56,10 @@ WebPortal({
 });
 // @ts-expect-error A host must give every registered kind a panel.
 const missing: AdapterUis<DesktopOutput> = { wled: wledOutput };
-const outputs: AdapterUis<DesktopOutput> = { wled: wledOutput, null: nullOutput };
+const outputs: AdapterUis<DesktopOutput> = {
+  wled: wledOutput,
+  null: nullOutput,
+};
 void [missing, outputs];
 
 // @ts-expect-error The host's typed thunk rejects another adapter's settings.

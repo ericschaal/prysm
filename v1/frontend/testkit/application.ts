@@ -107,10 +107,15 @@ export function fakeApplicationPort<C, O>(initial: {
       calls.push(`target:${target}`);
       failIfScripted();
       const { capture, output } = snapshot.settings;
-      const missing =
-        target === 'off' ? null : !output ? 'output' : target === 'processed' && !capture ? 'capture' : null;
+      let missing: 'output' | 'capture' | null = null;
+      if (target !== 'off' && !output) missing = 'output';
+      else if (target === 'processed' && !capture) missing = 'capture';
       if (missing) {
-        const failure: Failure = { kind: 'invalid', field: missing, message: 'not configured' };
+        const failure: Failure = {
+          kind: 'invalid',
+          field: missing,
+          message: 'not configured',
+        };
         publish({ target, session: { state: 'stopped' }, failure });
         throw new ApplicationError(failure);
       }
@@ -119,8 +124,11 @@ export function fakeApplicationPort<C, O>(initial: {
         target,
         failure: null,
         session: {
-          state: { off: 'stopped', processed: 'running', device_native: 'native' }[target] as
-            'stopped' | 'running' | 'native',
+          state: {
+            off: 'stopped',
+            processed: 'running',
+            device_native: 'native',
+          }[target] as 'stopped' | 'running' | 'native',
         },
       });
     },
@@ -137,7 +145,8 @@ export function fakeApplicationPort<C, O>(initial: {
       } else if (snapshot.target !== 'processed') {
         throw new ApplicationError({
           kind: 'not_processed',
-          message: 'calibration patterns need lighting on: set the target to processed first',
+          message:
+            'calibration patterns need lighting on: set the target to processed first',
         });
       } else publish({ calibration });
     },

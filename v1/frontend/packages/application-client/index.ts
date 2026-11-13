@@ -4,12 +4,23 @@ import type {
   LightingTarget,
   OutputIssue,
   Pattern,
+  Phase,
   PreviewEvent,
+  Session,
   Settings as GeneratedSettings,
   State,
 } from '@prysm/contracts/application';
 
-export type { Calibration, Failure, LightingTarget, OutputIssue, Pattern, PreviewEvent };
+export type {
+  Calibration,
+  Failure,
+  LightingTarget,
+  OutputIssue,
+  Pattern,
+  PreviewEvent,
+  Session,
+};
+export { same } from './same';
 
 /**
  * Why the lights are not showing screen sync, for people. Prysm keeps
@@ -31,7 +42,48 @@ export function describeOutputIssue(issue: OutputIssue): string {
   }
 }
 export type { PreviewFrame } from '@prysm/contracts/application';
-export type { Session } from '@prysm/contracts/application';
+
+/** What a faulted session was doing when it stopped. */
+const phases: Record<Phase, string> = {
+  running: 'running',
+  closing_source: 'closing the capture source',
+  idling_output: 'idling the lights',
+  finishing: 'finishing',
+};
+
+/**
+ * What the lights are doing, in words, from the requested target and the
+ * session. `effects` names the output's own effects (`device_native`).
+ */
+export function describeLighting({
+  target,
+  session,
+  failure,
+  effects,
+}: {
+  target: LightingTarget;
+  session: Session;
+  failure: Failure | null;
+  effects: string;
+}): string {
+  switch (session.state) {
+    case 'faulted':
+      return `Prysm stopped responding while ${phases[session.phase]}. Restart Prysm to recover.`;
+    case 'running':
+      return 'Screen sync is running.';
+    case 'native':
+      return `${effects} are on.`;
+    case 'stopped':
+      if (target === 'off') return 'Lights are off.';
+      if (failure)
+        return target === 'processed'
+          ? 'Screen sync stopped.'
+          : `${effects} could not start.`;
+      return target === 'processed'
+        ? 'Starting screen sync…'
+        : `Starting ${effects}…`;
+  }
+}
 
 /** An adapter settings section: `{ kind, ...fields }`, typed by the host. */
 export interface AdapterSettings {
@@ -90,4 +142,14 @@ export class ApplicationError extends Error {
   constructor(readonly failure: Failure) {
     super(failure.message);
   }
+}
+
+/** The server's failure behind `error`, or an `internal` one for anything else. */
+export function failureOf(error: unknown): Failure {
+  return error instanceof ApplicationError
+    ? error.failure
+    : {
+        kind: 'internal',
+        message: error instanceof Error ? error.message : String(error),
+      };
 }

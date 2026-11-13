@@ -31,7 +31,7 @@ On the Rust side every UI is a runtime surface over one `EngineHandle`; see the
   `@prysm/contracts/host-webos`.
 - [Embedded TV](frontend/hosts/webos/tv-ui/main.tsx) and
   [capture-only TV](frontend/hosts/webos-slim/tv-ui/main.tsx): the shared
-  [TV UI](frontend/packages/tv-ui/index.tsx) with the
+  [TV UI](frontend/packages/tv-ui/app.tsx) with the
   [Luna client](frontend/packages/webos-platform/index.ts) of the supervisor
   (generated `luna` types; `getState` subscription, `setPreferences`,
   `setEnabled`, `uninstall`, and set-up through the Homebrew Channel's `exec`
@@ -68,7 +68,7 @@ no credentials.
 [application-state](frontend/STATE.md) holds the latest state and command
 feedback in one RTK store per frontend.
 
-The [shared portal](frontend/packages/web-portal/index.tsx) shows the lighting
+The [shared portal](frontend/packages/web-portal/portal.tsx) shows the lighting
 modes (Screen sync, the output's own effects such as "WLED effects", Off, and
 "Open WLED"), an on-request preview, live picture controls with colour
 profiles and one Save form each for capture and output. Both browser hosts

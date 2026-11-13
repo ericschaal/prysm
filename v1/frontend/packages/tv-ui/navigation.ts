@@ -14,6 +14,7 @@ import {
   useState,
   type FocusEvent,
   type MouseEvent,
+  type RefObject,
 } from 'react';
 
 /** Key codes, numeric for older TV remotes. */
@@ -69,7 +70,9 @@ const focusables = (scope: ParentNode | null | undefined) =>
       !element.closest('[hidden]'),
   );
 
-const usable = (element: HTMLElement | null | undefined): element is HTMLElement =>
+const usable = (
+  element: HTMLElement | null | undefined,
+): element is HTMLElement =>
   !!element &&
   element.isConnected &&
   !(element as HTMLButtonElement).disabled &&
@@ -79,22 +82,25 @@ const usable = (element: HTMLElement | null | undefined): element is HTMLElement
 function rowStop(row: Element): HTMLElement | undefined {
   const controls = focusables(row);
   return (
-    controls.find((element) => element.getAttribute('aria-pressed') === 'true') ??
-    controls[0]
+    controls.find(
+      (element) => element.getAttribute('aria-pressed') === 'true',
+    ) ?? controls[0]
   );
 }
 
 export function useRemoteNavigation<D extends string>({
+  root,
   parents,
   onExitRequest,
 }: {
+  /** The page outside dialogs. */
+  root: RefObject<HTMLElement | null>;
   /** Back from these dialogs returns to their parent dialog. */
   parents: Partial<Record<D, D>>;
   /** Back outside any dialog. */
   onExitRequest: () => void;
 }) {
   const [dialog, setDialog] = useState<D | null>(null);
-  const root = useRef<HTMLElement>(null);
   const modal = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const lastInColumn = useRef<Record<string, HTMLElement>>({});
@@ -117,8 +123,9 @@ export function useRemoteNavigation<D extends string>({
     if (dialog) {
       const controls = focusables(modal.current);
       (
-        controls.find((element) => element.getAttribute('aria-pressed') === 'true') ??
-        controls[0]
+        controls.find(
+          (element) => element.getAttribute('aria-pressed') === 'true',
+        ) ?? controls[0]
       )?.focus();
     } else if (usable(returnFocus.current)) returnFocus.current.focus();
     else focusables(root.current)[0]?.focus();
@@ -129,8 +136,11 @@ export function useRemoteNavigation<D extends string>({
   useLayoutEffect(() => {
     if (dialog) return;
     const active = activeElement();
-    const primary = root.current?.querySelector<HTMLElement>('#primary:not(:disabled)');
-    if (active && usable(active) && !(active === automatic.current && primary)) return;
+    const primary = root.current?.querySelector<HTMLElement>(
+      '#primary:not(:disabled)',
+    );
+    if (active && usable(active) && !(active === automatic.current && primary))
+      return;
     const next = primary ?? focusables(root.current)[0];
     if (next && next !== active) {
       next.focus();
@@ -138,8 +148,8 @@ export function useRemoteNavigation<D extends string>({
     }
   });
 
-  const handler = useRef<(event: KeyboardEvent) => void>(() => {});
-  handler.current = (event) => {
+  const handlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  function onKey(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
     automatic.current = null;
     if (isBack(event)) {
@@ -160,7 +170,8 @@ export function useRemoteNavigation<D extends string>({
       }
       const to = direction(event);
       if (!to) return;
-      if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right')) return;
+      if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right'))
+        return;
       event.preventDefault();
       const row = active?.closest('[data-row]');
       if (row && (to === 'left' || to === 'right')) {
@@ -172,7 +183,8 @@ export function useRemoteNavigation<D extends string>({
         // Skip the rest of a row group when leaving it vertically.
         const step = to === 'down' ? 1 : -1;
         let next = index + step;
-        while (row && controls[next] && row.contains(controls[next]!)) next += step;
+        while (row && controls[next] && row.contains(controls[next]!))
+          next += step;
         const target = controls[next];
         const targetRow = target?.closest('[data-row]');
         (targetRow && targetRow !== row ? rowStop(targetRow) : target)?.focus();
@@ -181,7 +193,8 @@ export function useRemoteNavigation<D extends string>({
     }
     const to = direction(event);
     if (!to || !root.current) return;
-    if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right')) return;
+    if (active?.tagName === 'INPUT' && (to === 'left' || to === 'right'))
+      return;
     event.preventDefault();
     const column = active?.closest('[data-column]');
     if (!column) {
@@ -198,10 +211,14 @@ export function useRemoteNavigation<D extends string>({
           return;
         }
       }
-      const columns = Array.from(root.current.querySelectorAll('[data-column]'));
-      const other = columns[columns.indexOf(column) + (to === 'right' ? 1 : -1)];
+      const columns = Array.from(
+        root.current.querySelectorAll('[data-column]'),
+      );
+      const other =
+        columns[columns.indexOf(column) + (to === 'right' ? 1 : -1)];
       if (!other) return;
-      const remembered = lastInColumn.current[other.getAttribute('data-column') ?? ''];
+      const remembered =
+        lastInColumn.current[other.getAttribute('data-column') ?? ''];
       (usable(remembered) && other.contains(remembered)
         ? remembered
         : focusables(other)[0]
@@ -220,24 +237,29 @@ export function useRemoteNavigation<D extends string>({
         if (stop) stops.push(stop);
       }
     }
-    const here = row ? stops.findIndex((stop) => row.contains(stop)) : stops.indexOf(active!);
+    const here = row
+      ? stops.findIndex((stop) => row.contains(stop))
+      : stops.indexOf(active!);
     stops[here + (to === 'down' ? 1 : -1)]?.focus();
-  };
+  }
+  // The latest render's handler, for the one document listener.
+  useLayoutEffect(() => {
+    handlerRef.current = onKey;
+  });
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => handler.current(event);
+    const listener = (event: KeyboardEvent) => handlerRef.current(event);
     document.addEventListener('keydown', listener);
     return () => document.removeEventListener('keydown', listener);
   }, []);
 
   return {
     dialog,
-    root,
     modal,
     openDialog,
     closeDialog,
     dismiss,
     /** Magic Remote pointer: hovering a control focuses it. */
-    onMouseOver(event: MouseEvent<HTMLElement>) {
+    onMouseOver: (event: MouseEvent<HTMLElement>) => {
       const target = event.target as HTMLElement;
       const control =
         typeof target.closest === 'function'
@@ -252,7 +274,7 @@ export function useRemoteNavigation<D extends string>({
       )
         control.focus();
     },
-    onFocus(event: FocusEvent<HTMLElement>) {
+    onFocus: (event: FocusEvent<HTMLElement>) => {
       const column = event.target.closest('[data-column]');
       const name = column?.getAttribute('data-column');
       if (name) lastInColumn.current[name] = event.target;

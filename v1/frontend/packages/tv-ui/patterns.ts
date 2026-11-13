@@ -31,7 +31,11 @@ export interface PatternPlayer {
    * returned stop is called; `failed` is called at most once, after which the
    * stream has stopped.
    */
-  play(video: HTMLVideoElement, pattern: () => Pattern, failed: () => void): () => void;
+  play(
+    video: HTMLVideoElement,
+    pattern: () => Pattern,
+    failed: () => void,
+  ): () => void;
 }
 
 interface MediaWindow {
@@ -123,7 +127,8 @@ export function streamPatterns(
   const playing = video.play() as Promise<void> | undefined;
   // Stopping while play() is pending rejects it with AbortError: not a failure.
   playing?.catch((reason: unknown) => {
-    if ((reason as { name?: string } | undefined)?.name !== 'AbortError') fail();
+    if ((reason as { name?: string } | undefined)?.name !== 'AbortError')
+      fail();
   });
   return stop;
 }

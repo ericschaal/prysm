@@ -1,26 +1,8 @@
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
-import {
-  describePicture,
-  NumberField,
-  TextField,
-  type AdapterUi,
-  type EditorProps,
-} from '@prysm/web-portal';
+import { NumberField, TextField, type EditorProps } from '@prysm/web-portal';
+import { deviceDefaults, deviceLimits } from './settings';
 
-/**
- * Defaults and limits from the generated `DeviceSettings` schema. `fps` has no
- * schema maximum; it is bounded here by AVFoundation's `i32` timescale, the
- * stricter of the two platforms (the Rust check on macOS).
- */
-export const deviceLimits = {
-  width: { min: 1, max: 3840, step: 1 },
-  height: { min: 1, max: 2160, step: 1 },
-  fps: { min: 1, max: 2147483647, step: 1 },
-} as const;
-/** What Rust uses for an omitted field. */
-export const deviceDefaults = { width: 640, height: 360, fps: 30 } as const;
-
-function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
+export function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
   const { width, height, fps } = deviceLimits;
   return (
     <>
@@ -66,12 +48,3 @@ function DeviceEditor({ value, onChange }: EditorProps<DeviceSettings>) {
     </>
   );
 }
-
-export const deviceCapture: AdapterUi<DeviceSettings> = {
-  label: 'Video capture device',
-  create: () => ({ kind: 'device', path: '' }),
-  Editor: DeviceEditor,
-  normalize: (value) => ({ ...value, path: value.path.trim() }),
-  summary: ({ path, width, height, fps }) =>
-    `${path}, ${describePicture(width ?? deviceDefaults.width, height ?? deviceDefaults.height, fps ?? deviceDefaults.fps)}`,
-};

@@ -4,10 +4,19 @@ import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import { calibrateRoute, processingDelayMs } from '@prysm/web-portal';
+import {
+  initialWizard,
+  screens,
+  wizardReducer,
+} from '../packages/web-portal/calibrate-wizard';
 import { $, button, edit, field, renderPortal, sleep, text } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
-const output = { kind: 'wled', address: '192.0.2.1', leds: { top: 10, left: 4 } };
+const output = {
+  kind: 'wled',
+  address: '192.0.2.1',
+  leds: { top: 10, left: 4 },
+};
 const zero = {
   warmth: 0,
   tint: 0,
@@ -24,11 +33,16 @@ const press = (element) =>
     await sleep(5);
   });
 const processing = (fixture) => fixture.snapshot().settings.processing;
-const patterns = (fixture) => fixture.calls.filter((call) => call.startsWith('calibration:'));
+const patterns = (fixture) =>
+  fixture.calls.filter((call) => call.startsWith('calibration:'));
 const heading = () => $('.calibrate h2').textContent;
 
 /** Screen sync running, optionally with saved profiles; opens the Calibrate page. */
-async function openCalibrate({ target = 'processed', profiles, Host = HeadlessWebPortal } = {}) {
+async function openCalibrate({
+  target = 'processed',
+  profiles,
+  Host = HeadlessWebPortal,
+} = {}) {
   const portal = await renderPortal(Host, { capture, output }, (snapshot) => ({
     target,
     session: { state: target === 'processed' ? 'running' : 'stopped' },
@@ -52,7 +66,11 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       assert.equal(heading(), 'Match the lights to your TV');
       assert.equal(document.activeElement, $('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
-      assert.equal(field('calibration.from'), null, 'no question without profiles');
+      assert.equal(
+        field('calibration.from'),
+        null,
+        'no question without profiles',
+      );
       await press(button('Leave'));
       assert.equal($('.calibrate'), null);
       assert(button('Calibrate colours'));
@@ -69,10 +87,17 @@ test('a new profile is calibrated step by step and finished under its name', asy
   try {
     await press(button('Start'));
     const [draft] = processing(fixture).profiles;
-    assert.deepEqual(draft, { id: draft.id, name: 'Calibrated', correction: zero });
+    assert.deepEqual(draft, {
+      id: draft.id,
+      name: 'Calibrated',
+      correction: zero,
+    });
     assert.equal(processing(fixture).active_profile, draft.id);
     assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
-    assert.deepEqual(fixture.snapshot().calibration, { pattern: 'gray-192', uncorrected: false });
+    assert.deepEqual(fixture.snapshot().calibration, {
+      pattern: 'gray-192',
+      uncorrected: false,
+    });
     assert.equal(heading(), 'Find a natural white');
     assert.equal($('.calibrate-pattern').textContent, 'On your TV: light gray');
 
@@ -80,7 +105,11 @@ test('a new profile is calibrated step by step and finished under its name', asy
     await edit(field('processing.profiles[0].correction.warmth'), 20);
     await edit(field('processing.profiles[0].correction.tint'), -5);
     await settle();
-    assert.deepEqual(processing(fixture).profiles[0].correction, { ...zero, warmth: 20, tint: -5 });
+    assert.deepEqual(processing(fixture).profiles[0].correction, {
+      ...zero,
+      warmth: 20,
+      tint: -5,
+    });
 
     // Compare without correction, and back.
     const compare = button('Show without correction');
@@ -96,7 +125,10 @@ test('a new profile is calibrated step by step and finished under its name', asy
     fixture.calls.length = 0;
     await press(button('Next'));
     assert.equal(heading(), 'Fine-tune each colour');
-    assert.equal($('.calibrate-pattern').textContent, 'On your TV: red (1 of 6)');
+    assert.equal(
+      $('.calibrate-pattern').textContent,
+      'On your TV: red (1 of 6)',
+    );
     await edit(field('processing.profiles[0].correction.hue.red'), 8);
     await settle();
     assert.equal(processing(fixture).profiles[0].correction.hue.red, 8);
@@ -130,7 +162,16 @@ test('a new profile is calibrated step by step and finished under its name', asy
     await press(button('Finish'));
     await act(async () => sleep(5));
     assert.deepEqual(processing(fixture).profiles, [
-      { id: draft.id, name: 'Movie night', correction: { ...zero, warmth: 20, tint: -5, hue: { ...zero.hue, red: 8 } } },
+      {
+        id: draft.id,
+        name: 'Movie night',
+        correction: {
+          ...zero,
+          warmth: 20,
+          tint: -5,
+          hue: { ...zero.hue, red: 8 },
+        },
+      },
     ]);
     assert.equal(processing(fixture).active_profile, draft.id);
     assert.equal(patterns(fixture).at(-1), 'calibration:end');
@@ -152,7 +193,11 @@ test('starting from a profile calibrates a copy; Cancel deletes it and restores 
     await press(button('Start'));
     const [, copy] = processing(fixture).profiles;
     assert.notEqual(copy.id, 'ps5');
-    assert.deepEqual(copy, { id: copy.id, name: 'PS5 calibrated', correction: ps5.correction });
+    assert.deepEqual(copy, {
+      id: copy.id,
+      name: 'PS5 calibrated',
+      correction: ps5.correction,
+    });
     assert.equal(processing(fixture).active_profile, copy.id);
     assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
 
@@ -183,9 +228,17 @@ test('without screen sync on the TV the page says what to do and shows no patter
   // The engine refuses a pattern without screen sync: nothing is created.
   const refused = await openCalibrate();
   try {
-    refused.fixture.failNext({ kind: 'not_processed', message: 'set the target to processed first' });
+    refused.fixture.failNext({
+      kind: 'not_processed',
+      message: 'set the target to processed first',
+    });
     await press(button('Start'));
-    assert.equal($('.calibrate [role="alert"]').textContent.includes('Open Prysm on the TV and choose Calibrate.'), true);
+    assert.equal(
+      $('.calibrate [role="alert"]').textContent.includes(
+        'Open Prysm on the TV and choose Calibrate.',
+      ),
+      true,
+    );
     assert.equal(processing(refused.fixture).profiles, undefined);
     assert.equal(heading(), 'Match the lights to your TV');
   } finally {
@@ -227,4 +280,71 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
   } finally {
     await portal.unmount();
   }
+});
+
+test('the wizard moves only on what the TV confirms and ends once', () => {
+  const run = (...actions) => actions.reduce(wizardReducer, initialWizard);
+  // Before the start, a pattern does not move any screen.
+  let state = run(
+    { type: 'sourceChosen', from: 'p1' },
+    { type: 'requestSent' },
+    { type: 'patternShown', screen: 3 },
+  );
+  assert.deepEqual(state.phase, { kind: 'start', from: 'p1' });
+  assert.equal(state.busy, false);
+
+  state = run(
+    { type: 'patternRequested' },
+    { type: 'requestSent' },
+    { type: 'patternShown' },
+    { type: 'started', draftId: 'd', previous: 'p1' },
+  );
+  assert.deepEqual(state.phase, {
+    kind: 'calibrating',
+    draftId: 'd',
+    previous: 'p1',
+    screen: 0,
+    name: null,
+  });
+  assert.equal(state.seen, false, 'waits for the TV to show the pattern');
+  state = wizardReducer(state, { type: 'patternSeen' });
+
+  // Next: busy while the TV changes, the screen moves when it did.
+  state = wizardReducer(state, { type: 'requestSent' });
+  assert.equal(state.busy, true);
+  assert.equal(state.phase.screen, 0);
+  state = wizardReducer(state, { type: 'patternShown', screen: 1 });
+  assert.equal(state.busy, false);
+  assert.equal(state.phase.screen, 1);
+
+  // A refused pattern keeps the screen and says why; the next request clears it.
+  state = [
+    { type: 'started', draftId: 'd', previous: undefined },
+    { type: 'requestSent' },
+    { type: 'requestFailed', problem: 'no' },
+  ].reduce(wizardReducer, initialWizard);
+  assert.equal(state.phase.screen, 0);
+  assert.equal(state.problem, 'no');
+  assert.equal(wizardReducer(state, { type: 'requestSent' }).problem, '');
+
+  // Typing a name clears a name problem; the last screen is the review.
+  state = [
+    { type: 'refused', problem: 'Enter a name.' },
+    { type: 'named', name: 'Movie night' },
+  ].reduce(wizardReducer, state);
+  assert.equal(state.problem, '');
+  assert.equal(state.phase.name, 'Movie night');
+  assert.equal(screens.at(-1).section, 'review');
+
+  state = [
+    { type: 'ending' },
+    { type: 'ended', title: 'Calibration finished', message: 'Saved.' },
+  ].reduce(wizardReducer, state);
+  assert.deepEqual(state.phase, {
+    kind: 'done',
+    title: 'Calibration finished',
+    message: 'Saved.',
+  });
+  assert.equal(state.busy, false);
+  assert.equal(wizardReducer(state, { type: 'named', name: 'x' }), state);
 });

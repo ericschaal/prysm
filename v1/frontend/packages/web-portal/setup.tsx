@@ -1,15 +1,27 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
+import { failureOf, same } from '@prysm/application-client';
 import {
   adapterFor,
   createSection,
-  failureOf,
   kindsOf,
-  same,
   type AdapterSection,
   type AdapterUis,
 } from './adapters';
-import { FieldScopeProvider, useFieldErrors, useFieldScope } from './fields';
-import { focusField, SectionFields, staleNotice } from './section-form';
+import {
+  FieldScopeProvider,
+  focusField,
+  staleNotice,
+  useFieldErrors,
+  useFieldScope,
+} from './form';
+import { SectionFields } from './section-form';
 
 const steps = [
   {
@@ -18,25 +30,39 @@ const steps = [
   },
   {
     title: 'Your lights',
-    intro: 'Tell Prysm where the colours go and how your LEDs run around the screen.',
+    intro:
+      'Tell Prysm where the colours go and how your LEDs run around the screen.',
   },
   {
     title: 'Review and start',
-    intro: 'Check your setup. Nothing is saved until you finish, and you can finish while your devices are offline.',
+    intro:
+      'Check your setup. Nothing is saved until you finish, and you can finish while your devices are offline.',
   },
 ] as const;
 
 /** The step that shows the control for a server error's `field`. */
 function stepOf(field: string | undefined) {
-  const section = field?.split('.')[0];
-  return section === 'capture' ? 0 : section === 'output' ? 1 : 2;
+  switch (field?.split('.')[0]) {
+    case 'capture':
+      return 0;
+    case 'output':
+      return 1;
+    default:
+      return 2;
+  }
 }
 
-function initial<S extends AdapterSection>(adapters: AdapterUis<S>, saved: S | null) {
+function initial<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  saved: S | null,
+) {
   return saved ?? createSection(adapters, kindsOf(adapters)[0] ?? '');
 }
 
-function normalized<S extends AdapterSection>(adapters: AdapterUis<S>, value: S) {
+function normalized<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  value: S,
+) {
   return adapterFor(adapters, value.kind)?.normalize?.(value) ?? value;
 }
 
@@ -63,14 +89,21 @@ function Summary<S extends AdapterSection>({
           </span>
         ) : null}
       </p>
-      <button type="button" onClick={edit} aria-label={`Change ${title.toLowerCase()}`}>
+      <button
+        type="button"
+        onClick={edit}
+        aria-label={`Change ${title.toLowerCase()}`}
+      >
         Change
       </button>
     </div>
   );
 }
 
-export interface SetupWizardProps<C extends AdapterSection, O extends AdapterSection> {
+export interface SetupWizardProps<
+  C extends AdapterSection,
+  O extends AdapterSection,
+> {
   captures: AdapterUis<C>;
   outputs: AdapterUis<O>;
   /** The observed sections; `null` while unconfigured. */
@@ -90,7 +123,10 @@ export interface SetupWizardProps<C extends AdapterSection, O extends AdapterSec
  * Guided setup: video source, lights, review. It edits local drafts with the
  * hosts' own editors and saves capture and output together, once, at the end.
  */
-export function SetupWizard<C extends AdapterSection, O extends AdapterSection>({
+export function SetupWizard<
+  C extends AdapterSection,
+  O extends AdapterSection,
+>({
   captures,
   outputs,
   capture: savedCapture,
@@ -102,7 +138,10 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
   close,
 }: SetupWizardProps<C, O>) {
   /** What the drafts started from; saving over a change elsewhere reloads. */
-  const [base, setBase] = useState({ capture: savedCapture, output: savedOutput });
+  const [base, setBase] = useState({
+    capture: savedCapture,
+    output: savedOutput,
+  });
   const [capture, setCapture] = useState(() => initial(captures, savedCapture));
   const [output, setOutput] = useState(() => initial(outputs, savedOutput));
   /** Changes when the drafts are replaced, to remount their inputs. */
@@ -115,12 +154,16 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
   const [notice, setNotice] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  /** Once rendered: the step heading, or a field (else the alert) after an error. */
-  const [focus, setFocus] = useState<'heading' | { field?: string } | null>('heading');
+  /**
+   * Once rendered: the step heading, or a field (else the alert) after an
+   * error. Each request is a new object, so the effect runs once per request.
+   */
+  const [focus, setFocus] = useState<
+    { heading: true } | { field: string | undefined }
+  >({ heading: true });
   useEffect(() => {
-    if (focus === 'heading') headingRef.current?.focus();
-    else if (focus) focusField(formRef.current, focus.field);
-    if (focus) setFocus(null);
+    if ('heading' in focus) headingRef.current?.focus();
+    else focusField(formRef.current, focus.field);
   }, [focus]);
   const headingId = useId();
   const locked = disabled || busy;
@@ -132,7 +175,7 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
     setAttempted(false);
     setFailure('');
     setNotice('');
-    setFocus('heading');
+    setFocus({ heading: true });
   }
   function reload() {
     setBase({ capture: savedCapture, output: savedOutput });
@@ -153,7 +196,11 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
     setFailure('');
     setNotice('');
     try {
-      await save(revision, normalized(captures, capture), normalized(outputs, output));
+      await save(
+        revision,
+        normalized(captures, capture),
+        normalized(outputs, output),
+      );
     } catch (error) {
       setBusy(false);
       const reason = failureOf(error);
@@ -173,7 +220,9 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
       await start();
       close('Setup saved. Screen sync is starting.');
     } catch (error) {
-      close(`Setup saved, but screen sync did not start: ${failureOf(error).message}`);
+      close(
+        `Setup saved, but screen sync did not start: ${failureOf(error).message}`,
+      );
     }
   }
   function submit(event: FormEvent) {
@@ -199,6 +248,50 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
     };
   }
 
+  let body: ReactNode;
+  if (step === 0)
+    body = (
+      <SectionFields
+        key={generation}
+        section="capture"
+        adapters={captures}
+        value={capture}
+        base={base.capture}
+        onChange={change(setCapture)}
+      />
+    );
+  else if (step === 1)
+    body = (
+      <SectionFields
+        key={generation}
+        section="output"
+        adapters={outputs}
+        value={output}
+        base={base.output}
+        onChange={change(setOutput)}
+      />
+    );
+  else
+    body = (
+      <div className="setup-review">
+        <Summary
+          title="Video source"
+          adapters={captures}
+          value={capture}
+          edit={() => goTo(0)}
+        />
+        <Summary
+          title="Lights"
+          adapters={outputs}
+          value={output}
+          edit={() => goTo(1)}
+        />
+      </div>
+    );
+  let submitLabel = 'Save and start screen sync';
+  if (step < 2) submitLabel = 'Next';
+  else if (busy) submitLabel = 'Saving…';
+
   return (
     <form
       ref={formRef}
@@ -212,7 +305,11 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
         <p className="eyebrow">
           Set up Prysm · step {step + 1} of {steps.length}
         </p>
-        <button type="button" className="quiet" onClick={() => close('Setup closed; nothing was saved.')}>
+        <button
+          type="button"
+          className="quiet"
+          onClick={() => close('Setup closed; nothing was saved.')}
+        >
           Leave setup
         </button>
       </div>
@@ -231,32 +328,7 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
         {current.title}
       </h2>
       <p className="intro">{current.intro}</p>
-      <FieldScopeProvider value={scope}>
-        {step === 0 ? (
-          <SectionFields
-            key={generation}
-            section="capture"
-            adapters={captures}
-            value={capture}
-            base={base.capture}
-            onChange={change(setCapture)}
-          />
-        ) : step === 1 ? (
-          <SectionFields
-            key={generation}
-            section="output"
-            adapters={outputs}
-            value={output}
-            base={base.output}
-            onChange={change(setOutput)}
-          />
-        ) : (
-          <div className="setup-review">
-            <Summary title="Video source" adapters={captures} value={capture} edit={() => goTo(0)} />
-            <Summary title="Lights" adapters={outputs} value={output} edit={() => goTo(1)} />
-          </div>
-        )}
-      </FieldScopeProvider>
+      <FieldScopeProvider value={scope}>{body}</FieldScopeProvider>
       {notice ? (
         <p className="notice warning" role="status">
           {notice}
@@ -274,12 +346,16 @@ export function SetupWizard<C extends AdapterSection, O extends AdapterSection>(
           </button>
         ) : null}
         {step === 2 ? (
-          <button type="button" disabled={locked} onClick={() => void finish(false)}>
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => void finish(false)}
+          >
             Save only
           </button>
         ) : null}
         <button className="primary" type="submit" disabled={locked}>
-          {step < 2 ? 'Next' : busy ? 'Saving…' : 'Save and start screen sync'}
+          {submitLabel}
         </button>
       </div>
     </form>

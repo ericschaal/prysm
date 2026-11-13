@@ -17,11 +17,11 @@ export function fakePreviewClient() {
   let closed = 0;
   let refusal: Failure | null = null;
   const client: PreviewClient = {
-    preview: async (signal) => {
+    preview: (signal) => {
       if (refusal) {
         const failure = refusal;
         refusal = null;
-        throw new ApplicationError(failure);
+        return Promise.reject(new ApplicationError(failure));
       }
       opened++;
       const queue: (PreviewEvent | null)[] = [];
@@ -42,7 +42,7 @@ export function fakePreviewClient() {
       }
       signal.addEventListener('abort', close, { once: true });
       streams.add(stream);
-      return {
+      return Promise.resolve({
         close,
         events: (async function* () {
           while (!done) {
@@ -58,7 +58,7 @@ export function fakePreviewClient() {
             }
           }
         })(),
-      };
+      });
     },
   };
   return {
@@ -67,7 +67,8 @@ export function fakePreviewClient() {
     open: () => streams.size,
     opened: () => opened,
     closed: () => closed,
-    send: (event: PreviewEvent) => streams.forEach((stream) => stream.push(event)),
+    send: (event: PreviewEvent) =>
+      streams.forEach((stream) => stream.push(event)),
     /** End every open stream from the server side. */
     end: () => streams.forEach((stream) => stream.push(null)),
     refuseNext: (failure: Failure) => {

@@ -31,7 +31,8 @@ function errorCorrection(data: readonly number[], degree: number): number[] {
   let root = 1;
   for (let i = 0; i < degree; i++) {
     for (let j = 0; j < degree; j++) {
-      divisor[j] = multiply(divisor[j]!, root) ^ (j + 1 < degree ? divisor[j + 1]! : 0);
+      divisor[j] =
+        multiply(divisor[j]!, root) ^ (j + 1 < degree ? divisor[j + 1]! : 0);
     }
     root = multiply(root, 2);
   }
@@ -39,7 +40,8 @@ function errorCorrection(data: readonly number[], degree: number): number[] {
   for (const byte of data) {
     const factor = byte ^ result.shift()!;
     result.push(0);
-    for (let i = 0; i < degree; i++) result[i] = result[i]! ^ multiply(divisor[i]!, factor);
+    for (let i = 0; i < degree; i++)
+      result[i] = result[i]! ^ multiply(divisor[i]!, factor);
   }
   return result;
 }
@@ -97,7 +99,9 @@ function penalty(modules: readonly boolean[][]): number {
  */
 export function qrCode(text: string, mask?: number): boolean[][] | null {
   const bytes = Array.from(new TextEncoder().encode(text));
-  const version = blocksM.findIndex(([, blocks, data]) => bytes.length + 2 <= blocks * data) + 1;
+  const version =
+    blocksM.findIndex(([, blocks, data]) => bytes.length + 2 <= blocks * data) +
+    1;
   if (!version) return null;
   const [ecPerBlock, blocks, dataPerBlock] = blocksM[version - 1]!;
 
@@ -118,7 +122,8 @@ export function qrCode(text: string, mask?: number): boolean[][] | null {
     for (let j = 0; j < 8; j++) byte = (byte << 1) | bits[i + j]!;
     data.push(byte);
   }
-  for (let pad = 0xec; data.length < capacity; pad ^= 0xec ^ 0x11) data.push(pad);
+  for (let pad = 0xec; data.length < capacity; pad ^= 0xec ^ 0x11)
+    data.push(pad);
 
   // Split into blocks and interleave the data, then the error correction.
   const dataBlocks: number[][] = [];
@@ -129,11 +134,16 @@ export function qrCode(text: string, mask?: number): boolean[][] | null {
     ecBlocks.push(errorCorrection(part, ecPerBlock));
   }
   const codewords: number[] = [];
-  for (let i = 0; i < dataPerBlock; i++) for (const part of dataBlocks) codewords.push(part[i]!);
-  for (let i = 0; i < ecPerBlock; i++) for (const part of ecBlocks) codewords.push(part[i]!);
+  for (let i = 0; i < dataPerBlock; i++)
+    for (const part of dataBlocks) codewords.push(part[i]!);
+  for (let i = 0; i < ecPerBlock; i++)
+    for (const part of ecBlocks) codewords.push(part[i]!);
 
   const size = 17 + 4 * version;
-  const grid = () => Array.from({ length: size }, () => Array.from({ length: size }, () => false));
+  const grid = () =>
+    Array.from({ length: size }, () =>
+      Array.from({ length: size }, () => false),
+    );
   const modules = grid();
   const reserved = grid();
   const set = (x: number, y: number, dark: boolean) => {
@@ -154,16 +164,22 @@ export function qrCode(text: string, mask?: number): boolean[][] | null {
         const x = cx + dx;
         const y = cy + dy;
         const ring = Math.max(Math.abs(dx), Math.abs(dy));
-        if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, ring !== 2 && ring !== 4);
+        if (x >= 0 && x < size && y >= 0 && y < size)
+          set(x, y, ring !== 2 && ring !== 4);
       }
   if (version > 1)
     for (let dy = -2; dy <= 2; dy++)
       for (let dx = -2; dx <= 2; dx++)
-        set(size - 7 + dx, size - 7 + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+        set(
+          size - 7 + dx,
+          size - 7 + dy,
+          Math.max(Math.abs(dx), Math.abs(dy)) !== 1,
+        );
   /** Format information of level M (00) and `chosen` into `target`, twice. */
   const drawFormat = (target: boolean[][], chosen: number) => {
     let remainder = chosen;
-    for (let i = 0; i < 10; i++) remainder = (remainder << 1) ^ ((remainder >>> 9) * 0x537);
+    for (let i = 0; i < 10; i++)
+      remainder = (remainder << 1) ^ ((remainder >>> 9) * 0x537);
     const format = ((chosen << 10) | remainder) ^ 0x5412;
     const put = (x: number, y: number, i: number) => {
       target[y]![x] = ((format >>> i) & 1) === 1;
@@ -190,14 +206,17 @@ export function qrCode(text: string, mask?: number): boolean[][] | null {
         const x = right - j;
         const y = upward ? size - 1 - step : step;
         if (reserved[y]![x] || index >= codewords.length * 8) continue;
-        modules[y]![x] = ((codewords[index >>> 3]! >>> (7 - (index & 7))) & 1) === 1;
+        modules[y]![x] =
+          ((codewords[index >>> 3]! >>> (7 - (index & 7))) & 1) === 1;
         index++;
       }
   }
 
   const masked = (chosen: number) => {
     const result = modules.map((row, y) =>
-      row.map((dark, x) => (reserved[y]![x] ? dark : dark !== masks[chosen]!(x, y))),
+      row.map((dark, x) =>
+        reserved[y]![x] ? dark : dark !== masks[chosen]!(x, y),
+      ),
     );
     drawFormat(result, chosen);
     return result;
