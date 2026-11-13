@@ -22,5 +22,7 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Nightly only (e2e-nightly.yml); `npm run e2e` runs the two above.
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
   ],
 });

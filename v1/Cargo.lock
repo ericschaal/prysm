@@ -1954,12 +1954,14 @@ dependencies = [
  "prysm-capture-device",
  "prysm-capture-file",
  "prysm-capture-remote",
+ "prysm-core",
  "prysm-host",
  "prysm-output-wled",
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",
  "prysm-web-portal",
+ "serde_json",
  "tempfile",
 ]
 

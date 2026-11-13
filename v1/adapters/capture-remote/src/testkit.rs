@@ -1,10 +1,15 @@
 //! Feature `testkit`: what the web portal does for the remote source, on
 //! loopback, for tests: accept, answer the WebSocket upgrade at the capture
-//! stream path, and hand the connection over. Every wait is bounded.
+//! stream path, and hand the connection over. Every wait is bounded. Also a
+//! TLS-terminating proxy with a test certificate, for `wss://`.
 use crate::{RemoteSender, RemoteSource, StreamRequest};
 use prysm_ports::{Accepted, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, Handoff, Result};
-use std::io::{Read, Write};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tungstenite::WebSocket;
@@ -157,4 +162,123 @@ pub fn accept(stream: TcpStream) -> WebSocket<TcpStream> {
         Ok(response)
     }
     tungstenite::accept_hdr(stream, agree).unwrap()
+}
+
+fn tls_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/tls")
+        .join(name)
+}
+
+/// The certificate authority that signed [`tls_proxy`]'s certificate for
+/// `localhost`. A sender trusts it only with `SSL_CERT_FILE` pointing here,
+/// set when the process starts: see [`in_test_ca_process`].
+#[must_use]
+pub fn test_ca() -> PathBuf {
+    tls_fixture("ca.pem")
+}
+
+/// Set in the process [`in_test_ca_process`] starts.
+const TEST_CA_PROCESS: &str = "PRYSM_TEST_CA_PROCESS";
+
+/// Whether this is the process that trusts only [`test_ca`]. If not, runs
+/// the test named `test` again in such a process (this test binary with
+/// `SSL_CERT_FILE` set to the test CA and `SSL_CERT_DIR` removed), asserts
+/// it passed and returns `false`.
+///
+/// A test cannot change its own environment safely, and the presence of
+/// `SSL_CERT_FILE` says nothing: Cargo on Linux sets it (and `SSL_CERT_DIR`)
+/// to the system's bundle for every process it starts, tests included.
+///
+/// # Panics
+/// The run in the test CA's process failed.
+#[must_use]
+pub fn in_test_ca_process(test: &str) -> bool {
+    if std::env::var_os(TEST_CA_PROCESS).is_some() {
+        return true;
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(TEST_CA_PROCESS, "1")
+        .env("SSL_CERT_FILE", test_ca())
+        .env_remove("SSL_CERT_DIR")
+        .status()
+        .unwrap();
+    assert!(status.success(), "{test} failed with the test CA");
+    false
+}
+
+/// A TLS terminator for `localhost` in front of `upstream`, on an ephemeral
+/// loopback port, for the test's life: one thread per connection pumps both
+/// directions until either side ends.
+///
+/// # Panics
+/// The test certificate cannot be loaded or loopback cannot be bound.
+#[must_use]
+pub fn tls_proxy(upstream: SocketAddr) -> SocketAddr {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let certificates = CertificateDer::pem_file_iter(tls_fixture("server.pem"))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    let key = PrivateKeyDer::from_pem_file(tls_fixture("server.key")).unwrap();
+    let config = Arc::new(
+        rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certificates, key)
+            .unwrap(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        for client in listener.incoming().flatten() {
+            let config = config.clone();
+            thread::spawn(move || pump(client, upstream, config));
+        }
+    });
+    addr
+}
+
+/// Copy decrypted bytes to `upstream` and back until either side ends.
+fn pump(client: TcpStream, upstream: SocketAddr, config: Arc<rustls::ServerConfig>) {
+    let tick = Some(Duration::from_millis(2));
+    let Ok(connection) = rustls::ServerConnection::new(config) else {
+        return;
+    };
+    if client.set_read_timeout(tick).is_err() {
+        return;
+    }
+    let mut tls = rustls::StreamOwned::new(connection, client);
+    let Ok(mut plain) = TcpStream::connect(upstream) else {
+        return;
+    };
+    if plain.set_read_timeout(tick).is_err() {
+        return;
+    }
+    let mut buffer = [0; 64 * 1024];
+    let pending = |error: &std::io::Error| {
+        matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+    };
+    loop {
+        match tls.read(&mut buffer) {
+            Ok(0) => return,
+            Ok(n) => {
+                if plain.write_all(&buffer[..n]).is_err() {
+                    return;
+                }
+            }
+            Err(error) if pending(&error) => {}
+            Err(_) => return,
+        }
+        match plain.read(&mut buffer) {
+            Ok(0) => return,
+            Ok(n) => {
+                if tls.write_all(&buffer[..n]).is_err() {
+                    return;
+                }
+            }
+            Err(error) if pending(&error) => {}
+            Err(_) => return,
+        }
+    }
 }

@@ -18,7 +18,7 @@
     "codegen:check": "node scripts/codegen.mjs --check",
     "dev:webos-slim": "npm run codegen && vite hosts/webos-slim/tv-ui --host 127.0.0.1",
     "dev:webos-portal": "npm run codegen && vite hosts/webos/web-portal --config dev.config.mjs --host 127.0.0.1",
-    "e2e": "playwright test -c e2e",
+    "e2e": "playwright test -c e2e --project chromium --project webkit",
     "e2e:install": "playwright install chromium webkit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}\"",

@@ -16,8 +16,12 @@ prysm-capture-remote.workspace = true
 prysm-output-wled.workspace = true
 
 [dev-dependencies]
+# The system tests stream as the TV does, also through the testkit's TLS proxy.
+prysm-capture-remote = { workspace = true, features = ["testkit"] }
+prysm-core.workspace = true
 prysm-ports.workspace = true
 prysm-settings-file.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

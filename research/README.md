@@ -24,6 +24,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | [Readiness](webos-capture/2026-11-01-readiness/README.md) | Readiness-driven recovery and dated validation evidence |
 | [Supervisor validation](webos-capture/supervisor-validation.md) | Staged and installed checks across earlier versions |
 | [Deployment history](webos-capture/deployment-history.md) | Version-specific installations and observations; not installation instructions |
+| [TV acceptance records](tv-acceptance/README.md) | One record per `tv-acceptance.sh` run (smoke, install, manual checks); none yet |
 
 ## Encoding and latency
 

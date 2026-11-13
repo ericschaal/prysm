@@ -83,8 +83,11 @@ Nothing leaves loopback.
 cargo build --manifest-path v1/Cargo.toml -p prysm-headless
 cargo build --manifest-path v1/Cargo.toml -p prysm-capture-remote --example test_sender
 npm --prefix v1/frontend run e2e:install   # Chromium and WebKit, once per Playwright version
-npm --prefix v1/frontend run e2e           # add -- --project webkit, -- --headed, -- -g brightness
+npm --prefix v1/frontend run e2e           # Chromium and WebKit; add -- --headed, -- -g brightness
 ```
+
+One engine, or Firefox (installed with `npx playwright install firefox`), from
+`v1/frontend`: `npx playwright test -c e2e --project firefox`.
 
 The binary embeds the portal bundle at compile time: rebuild the frontend,
 then `prysm-headless`, before testing a frontend change. The tests take the
@@ -96,9 +99,36 @@ accessible name, not by class names.
 Playwright's WebKit is not Safari, but it shares Safari's engine bugs: the
 brightness drag fails in it when the slider captures the pointer
 ([WebKit bug 219636](https://bugs.webkit.org/show_bug.cgi?id=219636)), which
-Chromium never showed. Touch drags and iOS are not covered; check them on a
-phone.
+Chromium never showed. Touch drags and iOS are not covered: see
+[manual browser checks](#manual-browser-checks).
 
-CI (`e2e` in `.github/workflows/v1.yml`) runs the suite on Linux with the
-binaries built by the `rust` job, one retry per test and traces on retry; the
-report, traces and videos are uploaded when it fails.
+CI (`e2e` in `.github/workflows/v1.yml`) runs Chromium and WebKit on Linux
+for every push, with the binaries built by the `rust` job, one retry per test
+and traces on retry; the report, traces and videos are uploaded when it
+fails. `.github/workflows/e2e-nightly.yml` runs WebKit (closest to Safari on
+macOS) and Firefox on a macOS runner every night and on demand.
+
+The system behind the portal (the TV stream over `ws://` and `wss://`, a fake
+WLED on 127.0.0.1, settings files across restarts) is tested without a
+browser in [`v1/hosts/headless/tests/system.rs`](../../v1/hosts/headless/tests/system.rs).
+
+### Manual browser checks
+
+Before a release, and after changing a control's pointer or touch handling,
+on an iPhone (Safari) and on a Mac (Safari), against a Prysm on the LAN:
+
+- [ ] Home: Power turns screen sync on and off; the state words follow.
+- [ ] Home: drag the brightness thumb with a finger (iPhone) and the mouse
+      (Mac); the lights follow while dragging and the value stays after
+      letting go, also when the finger leaves the slider.
+- [ ] Home: tap the brightness track; the thumb jumps there and stays.
+- [ ] A failed start (unplug the source or stop the TV): the problem shows,
+      Try again works, and changing brightness does not leave the card busy.
+- [ ] Setup: complete the wizard once with the on-screen keyboard; nothing is
+      hidden behind it.
+- [ ] Settings: change a value, reload, and it is still there.
+- [ ] Rotate the phone on Home and in Settings: nothing is cut off.
+
+Note the device, iOS or macOS version and Prysm version with the result. A
+simulator check with [Maestro](https://maestro.dev/) could automate the iPhone
+steps later.

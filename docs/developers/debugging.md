@@ -75,6 +75,15 @@ None of these have been run against Prysm 1.x yet; results belong in
 - **TV acceptance:** install, set up, capture with video and without,
   standby and wake, cold boot with **Start with TV**, a hung capture being
   killed, reconnecting the slim stream, calibration, and removal.
+  `tv-acceptance.sh` runs the three smoke levels and the install, then asks
+  for each manual check and writes the record to
+  [research/tv-acceptance](../../research/tv-acceptance/README.md). Read its
+  plan first:
+
+  ```sh
+  v1/packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
+  v1/packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.prysm.tv-slim_VERSION_all.ipk
+  ```
 
 Compare release builds with the same content, size, rate and encoding.
 Include the actual output rate and failures. Prysm's latency figures stop at

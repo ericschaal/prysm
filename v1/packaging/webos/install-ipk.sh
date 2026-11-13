@@ -99,7 +99,8 @@ held() {
         result=0
         ssh "$host" "$*" < "$pipe" || result=$?
         kill "$holder" 2>/dev/null
-        wait "$holder" 2>/dev/null
+        # Killed: 143, which `set -e` would take for a failure.
+        wait "$holder" 2>/dev/null || true
         rm -f "$pipe"
         return "$result"
     fi

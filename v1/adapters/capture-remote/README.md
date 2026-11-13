@@ -171,3 +171,15 @@ network can send frames while the remote source receives, or take over its
 connection. Browser pages from other sites cannot open it (the portal's
 origin policy refuses their `Origin`); the TV's worker sends none. Behind an
 HTTPS reverse proxy the stream is encrypted (`wss://`) up to the proxy.
+
+**Certificates:** for `wss://` the sender trusts the system's authorities,
+loaded at every connection by tungstenite through `rustls-native-certs`.
+`SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` replace them when set. On
+Linux they are otherwise the first bundle found of
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt` and
+the other usual paths, plus the files in `/etc/ssl/certs` and
+`/etc/pki/tls/certs`; on macOS, the keychains. Finding none fails the
+connection with "no native root CA certificates found". Where webOS keeps its
+authorities has not been checked on a TV. Tests trust the test CA through
+`testkit::in_test_ca_process`; note that Cargo on Linux sets `SSL_CERT_FILE`
+and `SSL_CERT_DIR` to the system bundle for the processes it starts.

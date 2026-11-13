@@ -1,0 +1,65 @@
+# The portal end-to-end tests (v1/frontend/e2e) where pull requests do not run
+# them: WebKit on macOS, the closest to Safari that Playwright gets, and
+# Firefox. v1.yml's `e2e` job runs Chromium and WebKit on Linux for every push.
+#
+# GitHub runs schedules only from the default branch's copy of this file.
+name: V1 end-to-end nightly
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v1-e2e-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  e2e-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: v1/frontend/package-lock.json
+      - name: Update Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: v1 -> target
+          key: v1-e2e-nightly
+      - run: npm --prefix v1/frontend ci
+      # The binary embeds the portal bundle: build the frontend first.
+      - name: Frontend bundles
+        run: npm --prefix v1/frontend run build
+      - name: prysm-headless and the test sender
+        run: |
+          cargo build --manifest-path v1/Cargo.toml --locked -p prysm-headless
+          cargo build --manifest-path v1/Cargo.toml --locked -p prysm-capture-remote --example test_sender
+      - name: Browsers
+        working-directory: v1/frontend
+        run: npx playwright install webkit firefox
+      - name: Portal end-to-end tests
+        working-directory: v1/frontend
+        env:
+          PRYSM_HEADLESS_BIN: ${{ github.workspace }}/v1/target/debug/prysm-headless
+          PRYSM_TEST_SENDER_BIN: ${{ github.workspace }}/v1/target/debug/examples/test_sender
+        run: npx playwright test -c e2e --project webkit --project firefox
+      # The HTML report, and traces and videos of failed or retried tests.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: v1-e2e-nightly-report
+          path: v1/frontend/.e2e
+          include-hidden-files: true
+          retention-days: 7
