@@ -30,6 +30,8 @@ interface ServiceState {
   changing: boolean;
   notice: string;
   error: boolean;
+  /** The last failure as the service gave it, for Diagnostics only. */
+  problem: string;
 }
 
 type Action =
@@ -39,7 +41,8 @@ type Action =
   | { type: 'settled' }
   | { type: 'discard' }
   | { type: 'changing'; value: boolean }
-  | { type: 'notice'; text: string; error: boolean };
+  | { type: 'notice'; text: string; error: boolean }
+  | { type: 'problem'; text: string };
 
 const keys = (edits: Edits) => Object.keys(edits) as Key[];
 
@@ -59,12 +62,14 @@ function reducer(current: ServiceState, action: Action): ServiceState {
   switch (action.type) {
     case 'event': {
       const { event } = action;
+      // The status card says it; the service's words go to Diagnostics.
       if (!event.online)
         return {
           ...current,
           online: false,
-          notice: event.error.message,
-          error: true,
+          notice: '',
+          error: false,
+          problem: event.error.message,
         };
       const saved = completePreferences(event.state.preferences);
       const edits: Edits = { ...current.edits };
@@ -126,6 +131,8 @@ function reducer(current: ServiceState, action: Action): ServiceState {
       return { ...current, changing: action.value };
     case 'notice':
       return { ...current, notice: action.text, error: action.error };
+    case 'problem':
+      return { ...current, problem: action.text };
   }
 }
 
@@ -139,7 +146,11 @@ const initial: ServiceState = {
   changing: false,
   notice: '',
   error: false,
+  problem: '',
 };
+
+const NOT_SAVED = 'Couldn’t save your settings.';
+const DETAILS = 'Service options › Diagnostics has the details.';
 
 const messageOf = (error: unknown) =>
   (error as LunaError | Error | undefined)?.message ?? String(error);
@@ -182,8 +193,16 @@ export function useTvService(service: TvService, active: boolean) {
     [],
   );
 
-  /** Run one command at a time; resolves `false` when it did not run or failed. */
-  async function run(work: () => Promise<unknown>, done?: string) {
+  /**
+   * Run one command at a time; resolves `false` when it did not run or
+   * failed. A failure says `failed` in plain words; the service's own
+   * message goes to Diagnostics.
+   */
+  async function run(
+    work: () => Promise<unknown>,
+    done: string | undefined,
+    failed: string,
+  ) {
     if (busy.current) return false;
     busy.current = true;
     dispatch({ type: 'changing', value: true });
@@ -192,7 +211,10 @@ export function useTvService(service: TvService, active: boolean) {
       if (done !== undefined && mounted.current) say(done);
       return true;
     } catch (error) {
-      if (mounted.current) say(messageOf(error), true);
+      if (mounted.current) {
+        dispatch({ type: 'problem', text: messageOf(error) });
+        say(`${failed} ${DETAILS}`, true);
+      }
       return false;
     } finally {
       busy.current = false;
@@ -215,27 +237,41 @@ export function useTvService(service: TvService, active: boolean) {
     edit,
     discard: () => dispatch({ type: 'discard' }),
     say,
-    save: () => run(() => sendPreferences(), 'Settings saved.'),
+    save: () => run(() => sendPreferences(), 'Settings saved.', NOT_SAVED),
     /** Save the draft with `patch` applied, without a separate Save. */
     saveWith: (patch: Edits, done: string) =>
-      run(() => sendPreferences(patch), done),
-    enable: (enabled: boolean) => run(() => service.setEnabled(enabled), ''),
+      run(() => sendPreferences(patch), done, NOT_SAVED),
+    enable: (enabled: boolean) =>
+      run(
+        () => service.setEnabled(enabled),
+        '',
+        enabled ? 'Couldn’t start.' : 'Couldn’t stop.',
+      ),
     saveAndEnable: () =>
-      run(async () => {
-        await sendPreferences();
-        await service.setEnabled(true);
-      }, 'Settings saved.'),
+      run(
+        async () => {
+          await sendPreferences();
+          await service.setEnabled(true);
+        },
+        'Settings saved.',
+        'Couldn’t save and start.',
+      ),
     setup: () => {
       say('Setting up the service. This may take a moment.');
-      return run(async () => {
-        await service.setup();
-        setGeneration((count) => count + 1);
-      }, 'Service setup complete.');
+      return run(
+        async () => {
+          await service.setup();
+          setGeneration((count) => count + 1);
+        },
+        'Service setup complete.',
+        'Setup didn’t finish.',
+      );
     },
     uninstall: () =>
       run(
         () => service.uninstall(),
         'Service setup removed. Your settings are kept.',
+        'Couldn’t remove the setup.',
       ),
   };
 }

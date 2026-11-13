@@ -4,6 +4,7 @@ import {
   describeLighting,
   describeOutputIssue,
   failureOf,
+  plainFailure,
   type ApplicationSnapshot,
   type LightingTarget,
 } from '@prysm/application-client';
@@ -16,29 +17,23 @@ const outputKind = (snapshot: Snapshot) =>
 const effectsOf = (snapshot: Snapshot) =>
   outputKind(snapshot) === 'wled' ? 'WLED effects' : null;
 
-const captureNames: Record<string, string> = {
-  remote: 'a TV (Remote capture)',
-  device: 'a video device',
-  file: 'a video file',
-  webos: 'this TV',
-};
-
-/** The lighting card: what the lights do and the three modes. */
+/**
+ * The lighting card: the three modes, always in the same place, and one
+ * message under them (at most two short lines) when the chosen mode does not
+ * say it all: starting, a problem, or why the buttons cannot work.
+ */
 export function LightingCard({
   flavor,
   portal,
-  address,
 }: {
   flavor: 'full' | 'slim';
   portal: PortalView;
-  /** The portal's address for people on other devices (slim: as typed). */
-  address: string | null;
 }) {
   const [pending, setPending] = useState<LightingTarget | null>(null);
   const [error, setError] = useState('');
   const { snapshot, connection } = portal;
-  const where =
-    flavor === 'full' ? 'the Prysm on this TV' : `Prysm at ${address ?? ''}`;
+  const full = flavor === 'full';
+  const effects = snapshot ? effectsOf(snapshot) : null;
 
   async function choose(target: LightingTarget) {
     setPending(target);
@@ -46,79 +41,81 @@ export function LightingCard({
     try {
       await portal.setTarget(target);
     } catch (reason) {
-      setError(failureOf(reason).message);
+      setError(
+        plainFailure(failureOf(reason), target, effects ?? 'Device effects'),
+      );
     } finally {
       setPending(null);
     }
   }
 
-  let status: string;
-  let detail: string | null = null;
+  /** Shown under the modes; `null` when the chosen mode says it all. */
+  let message: string | null = null;
   let attention = false;
-  /**
-   * The status only repeats the chosen mode and the detail only repeats the
-   * capture rate: kept for screen readers, not shown.
-   */
-  let quietStatus = false;
-  let quietDetail = false;
+  /** For screen readers when nothing is shown: what the lights do. */
+  let said = '';
   if (!portal.baseUrl) {
-    status =
-      flavor === 'full'
-        ? 'Waiting for the web portal on this TV…'
-        : 'Add the Prysm address to control its lights from here.';
+    message = full
+      ? 'Waiting for Prysm on this TV…'
+      : 'Add the Prysm address to control the lights here.';
   } else if (!portal.supported) {
-    status = 'This TV’s browser is too old to control Prysm from the app.';
-    detail = `Open ${address ?? portal.baseUrl} on your phone or computer instead.`;
+    message =
+      'This TV is too old to control the lights. Use the web portal on your phone.';
     attention = true;
   } else if (snapshot) {
-    status = describeLighting({
+    const { session, target } = snapshot;
+    said = describeLighting({
       ...snapshot,
-      effects: effectsOf(snapshot) ?? 'Device effects',
+      effects: effects ?? 'Device effects',
     });
-    const { state } = snapshot.session;
-    quietStatus =
-      state === 'running' ||
-      state === 'native' ||
-      (state === 'stopped' && snapshot.target === 'off');
-    if (snapshot.input && state === 'running') {
-      detail = snapshot.input.receiving
-        ? `Picture arriving at ${snapshot.input.fps.toFixed(1)} frames per second.`
-        : 'No picture arriving yet.';
-      quietDetail = snapshot.input.receiving;
-    }
-    if (snapshot.output_issue && snapshot.session.state === 'running') {
-      detail = describeOutputIssue(snapshot.output_issue);
+    const kind = (snapshot.settings.capture as { kind?: string } | undefined)
+      ?.kind;
+    if (session.state === 'faulted') {
+      message = said;
       attention = true;
-      quietDetail = false;
-    }
-    if (flavor === 'slim') {
-      const kind = (snapshot.settings.capture as { kind?: string } | undefined)
-        ?.kind;
-      if (kind !== 'remote') {
-        detail = `This Prysm takes its picture from ${kind ? (captureNames[kind] ?? kind) : 'nothing yet'}. Choose Remote capture in its portal to use this TV.`;
-        attention = true;
-        quietDetail = false;
-      }
+    } else if (!snapshot.settings.output) {
+      message = 'Set up your lights in the web portal first.';
+    } else if (snapshot.failure) {
+      message = plainFailure(
+        snapshot.failure,
+        target,
+        effects ?? 'Device effects',
+      );
+      attention = true;
+    } else if (snapshot.output_issue && session.state === 'running') {
+      message = describeOutputIssue(snapshot.output_issue);
+      attention = true;
+    } else if (!full && kind !== 'remote') {
+      message =
+        'This Prysm uses another picture. Choose Capture-only TV in its web portal.';
+      attention = true;
+    } else if (session.state === 'stopped' && target !== 'off') {
+      message = said;
+    } else if (
+      session.state === 'running' &&
+      snapshot.input &&
+      !snapshot.input.receiving
+    ) {
+      message = 'No picture arriving yet.';
     }
   } else if (portal.reach === 'refused') {
-    status = `${capitalize(where)} does not allow control from the TV.`;
-    detail =
-      flavor === 'slim'
-        ? 'Start Prysm on your computer with --allow-origin null to use these buttons. Capture works without it.'
-        : 'Restart the TV app; if this persists, check the Prysm service.';
+    message = full
+      ? 'Prysm on this TV doesn’t answer the app. Close and open the app again.'
+      : 'Prysm on your computer doesn’t take commands from the TV. The TV guide shows how to allow it.';
     attention = true;
   } else if (connection?.error) {
-    status = `Cannot reach ${where}.`;
-    detail =
-      portal.reach === 'unreachable'
-        ? 'Check that Prysm is running and that the address is right.'
-        : connection.error.message;
+    message = full
+      ? 'Can’t reach Prysm on this TV. Service options can repair it.'
+      : 'Can’t reach Prysm on your computer. Check that it’s running.';
     attention = true;
-  } else status = `Connecting to ${where}…`;
+  } else message = 'Connecting to Prysm…';
+  if (error) {
+    message = error;
+    attention = true;
+  }
 
   const offline = !snapshot || pending !== null;
   const faulted = snapshot?.session.state === 'faulted';
-  const effects = snapshot ? effectsOf(snapshot) : null;
   const hasOutput = !!snapshot?.settings.output;
   const hasCapture = !!snapshot?.settings.capture;
   const modes: { value: LightingTarget; label: string; disabled: boolean }[] = [
@@ -129,7 +126,7 @@ export function LightingCard({
     },
     {
       value: 'device_native',
-      label: effects ?? 'Device effects',
+      label: effects ?? 'Effects',
       disabled: !effects,
     },
     { value: 'off', label: 'Off', disabled: false },
@@ -142,20 +139,11 @@ export function LightingCard({
       <h2 id="lighting-title" className="card-title">
         Your lights
       </h2>
-      <p
-        id="lighting-status"
-        className={`lighting-status${quietStatus ? ' visually-hidden' : ''}`}
-        role="status"
-        aria-live="polite"
-      >
-        {status}
-      </p>
       <div
         className="modes"
         data-row="lighting"
         role="group"
         aria-label="Lighting mode"
-        hidden={!snapshot}
       >
         {modes.map((mode) => (
           <button
@@ -163,7 +151,7 @@ export function LightingCard({
             type="button"
             id={`mode-${mode.value}`}
             className="mode"
-            aria-pressed={snapshot?.target === mode.value}
+            aria-pressed={snapshot ? snapshot.target === mode.value : undefined}
             disabled={offline || faulted || mode.disabled}
             onClick={() => void choose(mode.value)}
           >
@@ -171,32 +159,15 @@ export function LightingCard({
           </button>
         ))}
       </div>
-      {detail ? (
-        <p
-          id="lighting-detail"
-          className={`lighting-detail${quietDetail ? ' visually-hidden' : ''}`}
-        >
-          {detail}
-        </p>
-      ) : null}
-      {snapshot && !hasOutput ? (
-        <p className="lighting-detail">
-          Set up your lights in the web portal first.
-        </p>
-      ) : null}
-      {snapshot?.failure ? (
-        <p className="notice error" role="alert">
-          {snapshot.failure.message}
-        </p>
-      ) : null}
-      {error && error !== snapshot?.failure?.message ? (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {/* Two lines are always kept, so nothing moves when a message comes. */}
+      <p
+        id="lighting-status"
+        className="lighting-status"
+        role="status"
+        aria-live="polite"
+      >
+        {message ?? <span className="visually-hidden">{said}</span>}
+      </p>
     </section>
   );
 }
-
-const capitalize = (text: string) =>
-  text.charAt(0).toUpperCase() + text.slice(1);

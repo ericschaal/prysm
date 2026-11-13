@@ -93,6 +93,36 @@ export function describeLighting({
   }
 }
 
+/**
+ * A failure in plain words, from its typed parts only: `section` (the side
+ * of the path it came from), `field` (the setting it concerns) and `kind`.
+ * Without a side it is said by what stopped; the message is under Details.
+ */
+export function plainFailure(
+  failure: Failure,
+  target: LightingTarget,
+  effects: string,
+) {
+  const section = failure.section ?? failure.field?.split('.')[0];
+  if (section === 'capture') return 'The video source is not working.';
+  if (section === 'output') return 'The lights are not responding.';
+  switch (failure.kind) {
+    case 'timeout':
+      return 'A device took too long to answer.';
+    case 'unavailable':
+      return 'A device is not available right now.';
+    case 'busy':
+      return 'Prysm is busy. Try again in a moment.';
+    case 'adapter':
+    case 'invalid':
+      return target === 'device_native'
+        ? `${effects} could not start.`
+        : 'Screen sync could not start.';
+    default:
+      return 'Something went wrong.';
+  }
+}
+
 /** An adapter settings section: `{ kind, ...fields }`, typed by the host. */
 export interface AdapterSettings {
   kind: string;

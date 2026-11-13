@@ -61,7 +61,7 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
         document.getElementById('portal-address').querySelector('code')
           .textContent,
         flavor === 'full'
-          ? 'http://192.168.1.5:8787/'
+          ? 'http://192.168.1.5:8787'
           : slimPreferences.instance,
       );
       assert.equal(

@@ -447,7 +447,11 @@ test('status card covers the supervisor states for both packages', () => {
   assert.equal(tvStatus(false, null, draft(), false).label, 'Set up service');
   assert.equal(title(true, slim({ capturing: true })), 'Sending the picture');
   assert(tvStatus(true, slim({ capturing: true }), draft(), false).ready);
-  assert.equal(title(true, slim({ power: 'asleep' })), 'Waiting for TV');
+  assert.equal(title(true, slim({ power: 'asleep' })), 'TV is asleep');
+  assert.equal(
+    title(true, slim({ power: 'screen_saver' })),
+    'Screen saver is on',
+  );
   assert.equal(
     title(true, slim({ video: 'unavailable' })),
     'Waiting for video',
@@ -475,18 +479,35 @@ test('status card covers the supervisor states for both packages', () => {
     draft(),
     false,
   );
-  assert.equal(retrying.title, 'Capture needs attention');
-  assert.match(retrying.description, /worker exited 1\. Retrying in 4 s\./);
-  assert.equal(
-    title(
+  assert.deepEqual(
+    [retrying.title, retrying.description, retrying.attention],
+    [
+      'Capture stopped',
+      'Something went wrong. Prysm tries again by itself.',
       true,
-      slim({ failure: { kind: 'other', message: 'capture failed' } }),
-    ),
-    'Capture needs attention',
+    ],
+    'plain words: the message is for Diagnostics',
   );
-  assert.equal(
-    title(true, slim({ worker: { phase: 'stopping' } })),
-    'Stopping capture…',
+  assert.doesNotMatch(retrying.description, /worker/);
+  const failedSlim = tvStatus(
+    true,
+    slim({ failure: { kind: 'other', message: 'capture failed' } }),
+    draft(),
+    false,
+  );
+  assert.deepEqual(
+    [failedSlim.title, failedSlim.description],
+    ['Capture stopped', 'Stop and start capture again to retry.'],
+  );
+  const stopping = tvStatus(
+    true,
+    slim({ worker: { phase: 'stopping' } }),
+    draft(),
+    false,
+  );
+  assert.deepEqual(
+    [stopping.title, stopping.label, stopping.action],
+    ['Stopping capture…', 'Please wait…', 'none'],
   );
   const notSet = tvStatus(
     true,
@@ -496,7 +517,7 @@ test('status card covers the supervisor states for both packages', () => {
   );
   assert.deepEqual(
     [notSet.title, notSet.label, notSet.action],
-    ['Not set up', 'Set Prysm address', 'address'],
+    ['Set up this TV', 'Add Prysm address', 'address'],
   );
   assert.equal(
     tvStatus(true, slim({ enabled: false }), draft({ autostart: true }), true)
@@ -529,7 +550,7 @@ test('status card covers the supervisor states for both packages', () => {
       true,
       full({ enabled: true, lighting: 'processed', capturing: true }),
     ),
-    'Screen sync is on',
+    'Screen sync on',
   );
   assert.equal(
     title(true, full({ enabled: true, lighting: 'device_native' })),
@@ -546,7 +567,10 @@ test('status card covers the supervisor states for both packages', () => {
     'Waiting for video',
     'lighting on without frames',
   );
-  assert.match(noFrames.description, /own WLED effects/);
+  assert.equal(
+    noFrames.description,
+    'Screen sync starts when a picture arrives.',
+  );
   assert.equal(noFrames.attention, false);
   assert.equal(
     title(
@@ -558,17 +582,43 @@ test('status card covers the supervisor states for both packages', () => {
         portal: null,
       }),
     ),
-    'Starting Prysm…',
+    'Starting screen sync…',
   );
-  assert.match(
+  assert.equal(
     tvStatus(
       true,
       full({ enabled: true, video: 'unavailable' }),
       draft(),
       false,
     ).description,
-    /own WLED effects/,
+    'Choose an input or play something on the TV.',
   );
+  // Every headline and detail fits its one line (about 52 characters).
+  const all = [
+    tvStatus(null, null, draft(), false),
+    tvStatus(false, null, draft(), false),
+    ...[
+      slim(),
+      slim({ capturing: true }),
+      slim({ paused: true }),
+      slim({ enabled: false }),
+      slim({ power: 'asleep' }),
+      slim({ video: 'unavailable' }),
+      slim({ failure: { kind: 'receiver', message: 'x' } }),
+      slim({ failure: { kind: 'encoder', message: 'x' } }),
+      slim({ failure: { kind: 'other', message: 'x' } }),
+      full({ enabled: false }),
+      full({ enabled: true, capturing: true, lighting: 'processed' }),
+      full({ enabled: true, lighting: 'device_native' }),
+      full({ failure: { kind: 'other', message: 'x' } }),
+    ].map((value) => tvStatus(true, value, draft(), false)),
+    tvStatus(true, full({}), draft(), false, { lights: false, address: null }),
+  ];
+  for (const { title: heading, description } of all) {
+    assert(heading.length <= 24, heading);
+    assert(description.length <= 52, description);
+    assert.doesNotMatch(`${heading} ${description}`, /https?:|\d+ s\b/);
+  }
   assert.equal(
     tvStatus(true, full({ enabled: true }), draft(), false).label,
     'Turn lights off',
@@ -593,8 +643,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   });
   const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
   const status = (value) => tvStatus(true, value, draft, false);
-  const hint =
-    'Choose another stream encoding under Capture in Prysm’s web portal.';
+  const hint = 'Choose another encoding in Prysm’s web portal.';
   assert.deepEqual(
     ['h264_hardware', 'h264_software', 'raw'].map(encodingName),
     ['Hardware H.264', 'Software H.264', 'Uncompressed'],
@@ -613,20 +662,16 @@ test('slim encoder failures point to the portal; waits, other failures and the f
       },
     }),
   );
-  assert.equal(retrying.title, 'Capture needs attention');
-  assert.equal(
-    retrying.description,
-    `worker failed: hardware H.264 encoder cannot start. Retrying in 4 s. ${hint}`,
+  assert.deepEqual(
+    [retrying.title, retrying.description],
+    ['Encoding not supported', hint],
   );
   const failed = status(
     slim({
       failure: { kind: 'encoder', message: 'worker failed: encoder lost' },
     }),
   );
-  assert.equal(
-    failed.description,
-    `worker failed: encoder lost. ${hint} Open Service options for diagnostics.`,
-  );
+  assert.equal(failed.description, hint);
   assert(failed.attention);
   const other = status(
     slim({
@@ -636,10 +681,9 @@ test('slim encoder failures point to the portal; waits, other failures and the f
       },
     }),
   );
-  assert.equal(other.title, 'Capture needs attention');
-  assert.equal(
-    other.description,
-    'worker failed: the encoder of capture lost. Open Service options for diagnostics.',
+  assert.deepEqual(
+    [other.title, other.description],
+    ['Capture stopped', 'Stop and start capture again to retry.'],
     'only the structured kind counts, not the text',
   );
   const otherRetrying = status(
@@ -654,7 +698,10 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     [paused.title, paused.attention, paused.ready],
     ['Paused by Prysm', false, false],
   );
-  assert.match(paused.description, /lights are off on your computer/);
+  assert.equal(
+    paused.description,
+    'It continues when Prysm turns the lights on.',
+  );
   assert.match(
     diagnostics(slim({ paused: true })),
     /Capturing: no, paused by Prysm \(lights off on the computer\)/,
@@ -677,7 +724,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.equal(
     unknownWait.title,
-    'Capture needs attention',
+    'Capture stopped',
     'the text prefix no longer decides',
   );
   const full = {
@@ -703,20 +750,6 @@ test('a pending restart counts down from the published seconds', () => {
     [4, 4, 3, 1, 0, 0],
   );
   assert.equal(retrySeconds({ phase: 'running' }, 0), null);
-  const value = {
-    ...state(),
-    worker: phase,
-    failure: { kind: 'other', message: 'worker failed' },
-  };
-  const draft = completePreferences({});
-  assert.equal(
-    tvStatus(true, value, draft, false, null, 1500).description,
-    'worker failed. Retrying in 3 s.',
-  );
-  assert.equal(
-    tvStatus(true, value, draft, false, null, 4000).description,
-    'worker failed. Retrying now…',
-  );
 });
 
 test('the TV counts a restart down by itself', async (t) => {
@@ -733,20 +766,23 @@ test('the TV counts a restart down by itself', async (t) => {
   });
   assert.equal(
     tv.text('status-description'),
-    'worker exited 1. Retrying in 4 s.',
+    'Something went wrong. Prysm tries again by itself.',
   );
+  assert.equal(tv.text('status-meta'), 'Trying again in 4 s');
   await act(async () => t.mock.timers.tick(2_000));
-  assert.equal(
-    tv.text('status-description'),
-    'worker exited 1. Retrying in 2 s.',
-  );
+  assert.equal(tv.text('status-meta'), 'Trying again in 2 s');
+  await act(async () => t.mock.timers.tick(2_000));
+  assert.equal(tv.text('status-meta'), 'Trying again now…');
 });
 
 test('the capture rate is shown while the worker measures it', async (t) => {
-  assert.equal(captureRate(state({ fps: 30 })), '30 frames/s');
-  assert.equal(captureRate(state({ fps: 0 })), 'waiting for frames');
+  assert.equal(captureRate(state({ fps: 30 })), '30 frames per second');
+  assert.equal(captureRate(state({ fps: 0 })), 'No frames yet');
   assert.equal(captureRate(state({ fps: null })), null);
-  assert.match(diagnostics(state({ fps: 30 })), /Capture rate: 30 frames\/s/);
+  assert.match(
+    diagnostics(state({ fps: 30 })),
+    /Capture rate: 30 frames per second/,
+  );
   assert.match(diagnostics(state({ fps: null })), /Capture rate: not measured/);
   const tv = await mountTv(t, {
     supervisor: {
@@ -759,10 +795,11 @@ test('the capture rate is shown while the worker measures it', async (t) => {
       },
     },
   });
-  assert.equal(tv.text('capture-rate'), 'Capture rate: 30 frames/s');
+  assert.equal(tv.text('status-meta'), '30 frames per second');
   await act(async () => tv.supervisor.publish({ capturing: false, fps: null }));
   await settle();
-  assert.equal(tv.el('capture-rate'), null);
+  // The line stays (nothing moves), empty.
+  assert.equal(tv.text('status-meta'), '\u00a0');
 });
 
 test('preferences are completed with their defaults', () => {
@@ -776,9 +813,10 @@ test('preferences are completed with their defaults', () => {
 
 test('an unavailable service offers setup, keeps the error visible and connects after setup', async (t) => {
   const tv = await mountTv(t, { supervisor: { offline: true } });
-  assert.equal(tv.text('status-title'), 'TV service unavailable');
+  assert.equal(tv.text('status-title'), 'Prysm needs setting up');
   assert.equal(tv.text('primary'), 'Set up service');
-  assert.match(tv.text('notice'), /Unknown service name/);
+  // The service's own words are for Diagnostics, not the screen.
+  assert.equal(tv.text('notice'), '');
   assert.equal(tv.focus(), 'primary');
   await tv.click('primary');
   await settle();
@@ -786,7 +824,111 @@ test('an unavailable service offers setup, keeps the error visible and connects 
     call.uri.startsWith('luna://org.webosbrew'),
   );
   assert.deepEqual(exec.payload, { command: SETUP_SCRIPT });
-  assert.equal(tv.text('status-title'), 'Not set up');
+  assert.equal(tv.text('status-title'), 'Set up this TV');
+});
+
+test('every state keeps the same slots, plain words and focus on a control', async (t) => {
+  for (const flavor of ['full', 'slim']) {
+    const tv = await mountTv(t, {
+      flavor,
+      supervisor: flavor === 'slim' ? { preferences: linked } : {},
+    });
+    const running = { worker: { phase: 'running' }, enabled: true };
+    const states = [
+      [
+        'off',
+        {
+          enabled: false,
+          worker: { phase: flavor === 'full' ? 'running' : 'stopped' },
+        },
+      ],
+      ['on', { ...running, capturing: true, fps: 30, lighting: 'processed' }],
+      [
+        'waiting for video',
+        { ...running, capturing: false, fps: null, video: 'unavailable' },
+      ],
+      ['asleep', { ...running, video: 'available', power: 'asleep' }],
+      ['screen saver', { ...running, power: 'screen_saver' }],
+      [
+        'failed',
+        {
+          ...running,
+          power: 'active',
+          failure: {
+            kind: 'other',
+            message: 'worker failed: stderr: panic at src/main.rs',
+          },
+        },
+      ],
+      [
+        'retrying',
+        {
+          worker: { phase: 'retrying', seconds: 9 },
+          failure: { kind: 'other', message: 'worker exited 101' },
+        },
+      ],
+      ...(flavor === 'slim'
+        ? [
+            [
+              'receiver',
+              {
+                ...running,
+                failure: {
+                  kind: 'receiver',
+                  message: 'Connection refused (os error 111)',
+                },
+              },
+            ],
+            ['paused', { ...running, failure: null, paused: true }],
+            [
+              'encoder',
+              {
+                ...running,
+                paused: false,
+                failure: { kind: 'encoder', message: 'v4l2: EBUSY' },
+              },
+            ],
+          ]
+        : []),
+      ['stopping', { worker: { phase: 'stopping' }, failure: null }],
+      ['back', { ...running, failure: null, capturing: true, fps: 30 }],
+    ];
+    for (const [name, change] of states) {
+      await act(async () => tv.supervisor.publish(change));
+      await settle();
+      const label = `${flavor} ${name}`;
+      // The slots are always there, so nothing moves between states.
+      for (const id of [
+        'status-title',
+        'status-description',
+        'status-meta',
+        'lighting-status',
+      ])
+        assert(tv.el(id), `${label}: #${id}`);
+      assert(tv.text('status-title'), `${label}: a headline`);
+      assert(tv.text('status-description'), `${label}: one line of detail`);
+      assert(tv.text('status-description').length <= 52, label);
+      // No programmer words outside Diagnostics.
+      assert.doesNotMatch(
+        tv.el('app').textContent,
+        /worker|stderr|panic|os error|EBUSY|v4l2|exited|null|origin|Luna/i,
+        label,
+      );
+      // Focus is always on a usable control.
+      const active = document.activeElement;
+      assert(
+        active && active !== document.body && !active.disabled,
+        `${label}: focus`,
+      );
+      if (name === 'stopping') {
+        assert(tv.el('primary').disabled, 'nothing to press while it stops');
+        assert.equal(tv.focus(), 'service-options');
+      }
+      if (name === 'back')
+        assert.equal(tv.focus(), 'primary', 'focus returns once it can');
+    }
+    await tv.unmount();
+  }
 });
 
 test('remote arrows move focus through rows and columns without changing settings', async (t) => {
@@ -872,7 +1014,7 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
 
 test('the Prysm address is explicit: invalid text is explained and Back keeps the old one', async (t) => {
   const tv = await mountTv(t);
-  assert.equal(tv.text('primary'), 'Set Prysm address');
+  assert.equal(tv.text('primary'), 'Add Prysm address');
   await tv.click('primary');
   assert.equal(tv.text('dialog-title'), 'Prysm address');
   assert.equal(tv.focus(), 'instance-input');
@@ -880,7 +1022,15 @@ test('the Prysm address is explicit: invalid text is explained and Back keeps th
   assert.equal(tv.focus(), 'instance-input', 'left and right move the caret');
   await tv.type('instance-input', 'http://prysm.local/x');
   await tv.submit('instance-input');
-  assert.match(tv.text('instance-input-error'), /Enter an address/);
+  assert.equal(
+    tv.text('instance-input-error'),
+    'That doesn’t look like an address. Try one like 192.168.1.20.',
+  );
+  assert.equal(
+    tv.el('instance-input').getAttribute('aria-describedby'),
+    'instance-input-error',
+  );
+  assert.match(tv.el('modal').className, /\btop\b/, 'clear of the keyboard');
   await tv.type('instance-input', ' 192.168.1.30 ');
   await tv.key(BACK);
   assert.equal(tv.text('instance-value'), 'Add address');
@@ -913,10 +1063,10 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
   };
   assert.equal(
     await save({ block: true }),
-    'Saved. No Prysm answers at http://192.168.1.30:8787. Check that Prysm is running and that the address is right.',
+    'Saved. No Prysm answers at that address yet. Check that Prysm is running and the address is right.',
   );
   const refused =
-    'Saved. http://192.168.1.30:8787 answers, but Prysm there does not allow control from the TV: start it with --allow-origin null. Capture works without it.';
+    'Saved. Prysm answers there but doesn’t take commands from the TV; capture still works. The TV guide shows how to allow it.';
   assert.equal(
     await save({
       block: { kind: 'forbidden', message: 'origin denied' },
@@ -970,8 +1120,18 @@ test('a failed save keeps the draft and never enables', async (t) => {
   await tv.click('primary');
   assert.equal(
     tv.text('notice'),
-    'invalid setPreferences request: Prysm address `x`: needs http:// or https://',
+    'Couldn’t save and start. Service options › Diagnostics has the details.',
   );
+  // The service's own words are in Diagnostics.
+  tv.el('service-options').focus();
+  await tv.click('service-options');
+  await tv.click('diagnostics');
+  assert.match(
+    tv.text('diagnostics-text'),
+    /Last command failed: invalid setPreferences request: Prysm address `x`/,
+  );
+  await tv.key(BACK);
+  await tv.key(BACK);
   assert(!tv.methods().includes('setEnabled'));
   assert.equal(tv.text('autostart-value'), 'On');
   assert.equal(tv.text('saved-state'), 'Unsaved changes');
@@ -1033,7 +1193,7 @@ test('removing the setup is tucked away, needs confirmation, and Back returns on
   await tv.click('confirm-cleanup');
   await settle();
   assert(tv.methods().includes('uninstall'));
-  assert.equal(tv.text('status-title'), 'TV service unavailable');
+  assert.equal(tv.text('status-title'), 'Prysm needs setting up');
 });
 
 test('Back on the main screen asks before closing; Tab stays inside the dialog', async (t) => {
@@ -1108,8 +1268,8 @@ test('a lost subscription recovers after 3 s without losing the draft', async (t
   assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => tv.supervisor.drop('Service stopped'));
   await settle();
-  assert.equal(tv.text('status-title'), 'TV service unavailable');
-  assert.equal(tv.text('notice'), 'Service stopped');
+  assert.equal(tv.text('status-title'), 'Prysm needs setting up');
+  assert.equal(tv.text('notice'), '');
   assert.equal(tv.text('autostart-value'), 'On');
   await act(async () => t.mock.timers.tick(RESUBSCRIBE_MS));
   await settle();
@@ -1137,7 +1297,14 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
     },
   });
   assert.equal(tv.text('status-title'), 'Waiting for Prysm');
-  assert.match(tv.text('status-description'), /http:\/\/192\.168\.1\.20:8787/);
+  assert.equal(
+    tv.text('status-description'),
+    'Check that Prysm is running on your computer.',
+  );
+  assert.doesNotMatch(
+    tv.el('app').querySelector('.overview').className,
+    /attention/,
+  );
   assert.equal(tv.text('primary'), 'Stop capture');
 });
 
@@ -1153,9 +1320,8 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
   await tv.click('mode-processed');
   assert.equal(tv.application.snapshot().target, 'processed');
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
-  assert.match(
-    tv.el('lighting-status').className,
-    /visually-hidden/,
+  assert(
+    tv.el('lighting-status').querySelector('.visually-hidden'),
     'the chosen mode says it; the sentence is only read out',
   );
   assert.equal(tv.el('mode-processed').getAttribute('aria-pressed'), 'true');
@@ -1165,9 +1331,10 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
     message: 'WLED cannot be reached',
   });
   await tv.click('mode-device_native');
-  assert.match(
-    tv.text('lighting-title') + document.querySelector('.lighting').textContent,
-    /WLED cannot be reached/,
+  assert.equal(
+    tv.text('lighting-status'),
+    'WLED effects could not start.',
+    'in plain words, from the failure’s kind',
   );
   await tv.unmount();
   assert(tv.application.calls.includes('unsubscribe'));
@@ -1186,14 +1353,14 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     },
   });
   await settle();
-  assert.match(
+  assert.equal(
     refused.text('lighting-status'),
-    /does not allow control from the TV/,
+    'Prysm on your computer doesn’t take commands from the TV. The TV guide shows how to allow it.',
   );
-  assert.match(refused.text('lighting-detail'), /--allow-origin null/);
+  assert.doesNotMatch(document.body.textContent, /--allow-origin|null/);
   assert(
-    refused.el('mode-processed').closest('[hidden]'),
-    'no modes without a state',
+    refused.el('mode-processed').disabled,
+    'the modes stay in place, unavailable without a state',
   );
   await refused.unmount();
   const unreachable = await mountTv(t, {
@@ -1206,9 +1373,9 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     },
   });
   await settle();
-  assert.match(
+  assert.equal(
     unreachable.text('lighting-status'),
-    /Cannot reach Prysm at http:\/\/192\.168\.1\.20:8787/,
+    'Can’t reach Prysm on your computer. Check that it’s running.',
   );
   await unreachable.unmount();
   // The portal's own `forbidden` answer needs no probe, whatever its wording.
@@ -1228,7 +1395,7 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
   await settle();
   assert.match(
     forbidden.text('lighting-status'),
-    /does not allow control from the TV/,
+    /doesn’t take commands from the TV/,
   );
   assert.equal(probes, 0);
 });
@@ -1242,9 +1409,9 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
       },
     },
   });
-  assert.match(
-    tv.text('lighting-detail'),
-    /takes its picture from a video device/,
+  assert.equal(
+    tv.text('lighting-status'),
+    'This Prysm uses another picture. Choose Capture-only TV in its web portal.',
   );
   await tv.unmount();
   const old = await mountTv(t, {
@@ -1258,7 +1425,7 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
 test('full: the TV portal is used over loopback and its address is shown', async (t) => {
   const tv = await mountTv(t, { flavor: 'full' });
   assert.deepEqual(tv.urls, ['http://127.0.0.1:8787']);
-  assert.match(tv.text('portal-address'), /http:\/\/192\.168\.1\.5:8787\//);
+  assert.equal(tv.text('portal-address-text'), 'http://192.168.1.5:8787');
   assert.equal(tv.text('status-title'), 'Lights off');
   assert.equal(tv.el('instance'), null, 'no slim rows');
   assert.equal(tv.el('capture'), null, 'capture is set in the portal only');
@@ -1267,7 +1434,7 @@ test('full: the TV portal is used over loopback and its address is shown', async
     tv.methods().filter((m) => m !== 'getState'),
     ['setEnabled'],
   );
-  assert.equal(tv.text('status-title'), 'Screen sync is on');
+  assert.equal(tv.text('status-title'), 'Screen sync on');
   assert.equal(tv.text('primary'), 'Turn lights off');
 });
 
@@ -1281,19 +1448,20 @@ test('full: the lights card says why the lights do not follow the picture', asyn
       output_issue: 'other_sender',
     }),
   );
-  assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
-  assert.match(
-    tv.text('lighting-detail'),
-    /Another program is sending colours/,
+  assert.equal(
+    tv.text('lighting-status'),
+    'Another program is sending colours to the lights. Stop it to see screen sync alone.',
   );
-  assert.doesNotMatch(tv.el('lighting-detail').className, /visually-hidden/);
+  assert.equal(
+    tv.el('lighting-status').querySelector('.visually-hidden'),
+    null,
+  );
   assert.match(document.querySelector('.card.lighting').className, /attention/);
   await act(async () => tv.application.publish({ output_issue: undefined }));
-  assert.match(tv.text('lighting-detail'), /Picture arriving at 30\.0/);
-  assert.match(
-    tv.el('lighting-detail').className,
-    /visually-hidden/,
-    'the capture rate above already says it',
+  assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
+  assert(
+    tv.el('lighting-status').querySelector('.visually-hidden'),
+    'the chosen mode says it; read out only',
   );
   assert.doesNotMatch(
     document.querySelector('.card.lighting').className,
@@ -1321,7 +1489,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       document.body.textContent,
       /fps|× 360|Video only|WLED address|LEDs/,
     );
-    assert.match(tv.text('portal-address'), /set up capture and lights/);
+    assert.match(tv.text('portal-address'), /on your phone/);
     assert.equal(
       tv.el('autostart').querySelector('.setting-label').textContent,
       'Start with TV',
@@ -1332,12 +1500,12 @@ test('neither package sets up capture, lights or the stream on the TV; both show
     );
     assert.equal(
       document.querySelector('.section-label').textContent,
-      'Prysm on this TV',
+      flavor === 'full' ? 'Prysm on this TV' : 'Capture on this TV',
     );
     assert.equal(tv.text('lighting-title'), 'Your lights');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
-      flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance,
+      flavor === 'full' ? 'http://192.168.1.5:8787' : linked.instance,
     );
     await tv.unmount();
   }
@@ -1351,12 +1519,13 @@ test('lights without a setup are named plainly with the portal address, in both 
       portal: { capture: portals[flavor].capture },
     });
     const address =
-      flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance;
+      flavor === 'full' ? 'http://192.168.1.5:8787' : linked.instance;
     assert.equal(tv.text('status-title'), 'Set up your lights');
     assert.equal(
       tv.text('status-description'),
-      `Open ${address} on your phone or computer to set up your lights.`,
+      'Open the web portal on your phone to add them.',
     );
+    assert.equal(tv.text('portal-address-text'), address, 'shown beside it');
     assert.match(
       tv.el('status-title').closest('.overview').className,
       /attention/,
@@ -1421,7 +1590,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
       flavor: 'full',
       failure: { kind: 'other', message: 'worker exited 1' },
     }).title,
-    'Capture needs attention',
+    'Screen sync stopped',
   );
   assert.equal(
     status({
@@ -1430,11 +1599,11 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
       worker: { phase: 'retrying', seconds: 4 },
       failure: { kind: 'other', message: 'x' },
     }).title,
-    'Capture needs attention',
+    'Screen sync stopped',
   );
   assert.equal(
     status({ ...base, flavor: 'slim', preferences: {} }).title,
-    'Not set up',
+    'Set up this TV',
   );
   assert.equal(
     status({
@@ -1496,24 +1665,28 @@ test('slim: the status card shows the encoding in use while streaming', async (t
     },
   });
   assert.equal(
-    tv.el('encoding-in-use'),
-    null,
+    tv.text('status-meta'),
+    '\u00a0',
     'nothing is in use before the receiver is connected',
   );
   await act(async () =>
-    tv.supervisor.publish({ capturing: true, encoding: 'h264_hardware' }),
+    tv.supervisor.publish({
+      capturing: true,
+      fps: 30,
+      encoding: 'h264_hardware',
+    }),
   );
   await settle();
   assert.equal(tv.text('status-title'), 'Sending the picture');
-  assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Hardware H.264');
+  assert.equal(tv.text('status-meta'), '30 frames per second · Hardware H.264');
   await act(async () => tv.supervisor.publish({ encoding: 'raw' }));
   await settle();
-  assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Uncompressed');
+  assert.equal(tv.text('status-meta'), '30 frames per second · Uncompressed');
   await act(async () =>
-    tv.supervisor.publish({ capturing: false, encoding: null }),
+    tv.supervisor.publish({ capturing: false, fps: null, encoding: null }),
   );
   await settle();
-  assert.equal(tv.el('encoding-in-use'), null);
+  assert.equal(tv.text('status-meta'), '\u00a0');
 });
 
 test('slim: an encoder failure shows the error and sends the user to the portal shown below', async (t) => {
@@ -1530,12 +1703,12 @@ test('slim: an encoder failure shows the error and sends the user to the portal 
       },
     },
   });
-  assert.equal(tv.text('status-title'), 'Capture needs attention');
+  assert.equal(tv.text('status-title'), 'Encoding not supported');
   assert.equal(
     tv.text('status-description'),
-    `${failure}. Choose another stream encoding under Capture in Prysm’s web portal. Open Service options for diagnostics.`,
+    'Choose another encoding in Prysm’s web portal.',
   );
-  assert.equal(tv.text('encoding-in-use'), 'Encoding in use: Hardware H.264');
+  assert.doesNotMatch(document.body.textContent, /no device/);
   assert.equal(
     tv.el('portal-address').querySelector('code').textContent,
     linked.instance,
@@ -1570,11 +1743,12 @@ test('slim: a receiver wait or another failure does not mention the encoding', a
       },
     },
   });
-  assert.equal(tv.text('status-title'), 'Capture needs attention');
+  assert.equal(tv.text('status-title'), 'Capture stopped');
   assert.equal(
     tv.text('status-description'),
-    'worker exited 1: capture failed. Retrying in 4 s.',
+    'Something went wrong. Prysm tries again by itself.',
   );
+  assert.equal(tv.text('status-meta'), 'Trying again in 4 s');
   await tv.key(DOWN);
   assert.equal(tv.focus(), 'service-options');
 });
@@ -1590,9 +1764,8 @@ test('full: no encoding setting, encoding in use or encoding switch', async (t) 
       },
     },
   });
-  assert.equal(tv.text('status-title'), 'Capture needs attention');
+  assert.equal(tv.text('status-title'), 'Screen sync stopped');
   assert.equal(tv.el('encoding'), null);
-  assert.equal(tv.el('encoding-in-use'), null);
   assert.doesNotMatch(document.body.textContent, /encoding/i);
 });
 
@@ -1633,7 +1806,7 @@ test('calibration needs MSE: without it the row says so and is disabled', async 
   for (const patterns of [undefined, fakePlayer(false)]) {
     const tv = await mountTv(t, { flavor: 'full', patterns });
     assert(tv.el('calibrate').disabled);
-    assert.equal(tv.text('calibrate-value'), 'Calibration needs a newer TV');
+    assert.equal(tv.text('calibrate-value'), 'Needs a newer TV');
     await tv.unmount();
   }
   const old = await mountTv(t, {
@@ -1641,17 +1814,17 @@ test('calibration needs MSE: without it the row says so and is disabled', async 
     patterns: fakePlayer(),
     supported: false,
   });
-  assert.equal(old.text('calibrate-value'), 'Calibration needs a newer TV');
+  assert.equal(old.text('calibrate-value'), 'Needs a newer TV');
 });
 
 test('calibration is disabled with a reason while the lights are not driven from this TV', async (t) => {
   const cases = [
-    [{}, 'Add the Prysm address first'],
+    [{}, 'Add the address first'],
     [
       { supervisor: { preferences: slimReady.preferences } },
       'Start capture first',
     ],
-    [{ supervisor: slimReady, block: true }, 'Needs a connection to Prysm'],
+    [{ supervisor: slimReady, block: true }, 'Waiting for Prysm'],
     [
       {
         supervisor: slimReady,
@@ -1660,11 +1833,11 @@ test('calibration is disabled with a reason while the lights are not driven from
           output: wled,
         },
       },
-      'Prysm is not using this TV’s picture',
+      'Uses another picture',
     ],
     [
       { flavor: 'full', portal: { capture: portals.full.capture } },
-      'Set up capture and lights first',
+      'Set up lights first',
     ],
   ];
   for (const [options, reason] of cases) {
@@ -1780,7 +1953,7 @@ test('calibration stays closed when screen sync cannot start; a failed video say
   });
   await tv.click('calibrate');
   assert(tv.el('app'));
-  assert.equal(tv.text('notice'), 'Capture could not open');
+  assert.equal(tv.text('notice'), 'Screen sync could not start.');
   assert.equal(player.plays, 0);
 
   await tv.click('calibrate');

@@ -15,7 +15,7 @@ import {
   type Ref,
 } from 'react';
 import type { Flavor, TvService } from '@prysm/webos-platform';
-import { failureOf } from '@prysm/application-client';
+import { failureOf, plainFailure } from '@prysm/application-client';
 import { CalibrationScreen, QrCode } from './calibration';
 import {
   calibrationBlocker,
@@ -24,6 +24,7 @@ import {
   encodingName,
   instanceAddress,
   localPortal,
+  retrySeconds,
   tvStatus,
 } from './model';
 import { qrCode } from './qr';
@@ -86,11 +87,14 @@ function useElapsed(since: number | null) {
 }
 
 /** The warning when no portal that allows this app answers at a saved address. */
-function instanceWarning(instance: string, reach: 'refused' | 'unreachable') {
+function instanceWarning(reach: 'refused' | 'unreachable') {
   return reach === 'refused'
-    ? `Saved. ${instance} answers, but Prysm there does not allow control from the TV: start it with --allow-origin null. Capture works without it.`
-    : `Saved. No Prysm answers at ${instance}. Check that Prysm is running and that the address is right.`;
+    ? 'Saved. Prysm answers there but doesn’t take commands from the TV; capture still works. The TV guide shows how to allow it.'
+    : 'Saved. No Prysm answers at that address yet. Check that Prysm is running and the address is right.';
 }
+
+/** An address as people read it: no trailing slash. */
+const shown = (address: string) => address.replace(/\/+$/, '');
 
 export function TvApp({
   flavor,
@@ -131,10 +135,20 @@ export function TvApp({
     portal.snapshot
       ? { lights: !!portal.snapshot.settings.output, address: portalAddress }
       : null,
-    elapsed,
   );
-  const rate = captureRate(state);
   const retry = state?.worker.phase === 'retrying' ? state.worker : null;
+  // One quiet line under the detail, always kept: the countdown to a
+  // restart, or while frames flow their rate (and the slim encoding).
+  let meta = '';
+  if (retry) {
+    const left = retrySeconds(retry, elapsed);
+    meta = left ? `Trying again in ${left} s` : 'Trying again now…';
+  } else if (state?.capturing && !mismatch) {
+    const rate = captureRate(state);
+    meta = [rate, slim && state.encoding ? encodingName(state.encoding) : null]
+      .filter(Boolean)
+      .join(' · ');
+  }
   const portalQr = useMemo(
     () => (portalAddress ? qrCode(portalAddress) : null),
     [portalAddress],
@@ -151,7 +165,7 @@ export function TvApp({
       slim && draft.instance !== tv.saved.instance ? draft.instance : null;
     if (!(await save()) || !instance) return;
     const reach = await checkPortal(instance, portalOptions);
-    if (reach !== 'ok') say(instanceWarning(instance, reach), true);
+    if (reach !== 'ok') say(instanceWarning(reach), true);
   }
 
   function primary() {
@@ -177,7 +191,10 @@ export function TvApp({
         await portal.setTarget('processed');
       setCalibrating(portalAddress);
     } catch (reason) {
-      tv.say(failureOf(reason).message, true);
+      tv.say(
+        plainFailure(failureOf(reason), 'processed', 'WLED effects'),
+        true,
+      );
     } finally {
       setStarting(false);
     }
@@ -215,7 +232,7 @@ export function TvApp({
     rows.push({
       id: 'instance',
       label: 'Prysm address',
-      value: draft.instance ?? 'Add address',
+      value: draft.instance ? shown(draft.instance) : 'Add address',
     });
   }
   rows.push({
@@ -259,47 +276,38 @@ export function TvApp({
         <div className="layout">
           <div className="column" data-column="status">
             <section
-              className={`card overview${status.attention || mismatch ? ' attention' : ''}${retry ? ' retrying' : ''}`}
+              className={`card overview${status.attention || mismatch ? ' attention' : ''}`}
               aria-labelledby="status-title"
             >
               <p className="section-label">
                 <span className="status-dot" aria-hidden="true" />
-                Prysm on this TV
+                {slim ? 'Capture on this TV' : 'Prysm on this TV'}
               </p>
               <div role="status" aria-live="polite">
                 <h1
                   id="status-title"
                   key={mismatch ? 'mismatch' : status.title}
                 >
-                  {mismatch
-                    ? 'This app does not match the installed service'
-                    : status.title}
+                  {mismatch ? 'Reinstall Prysm' : status.title}
                 </h1>
               </div>
               <p id="status-description" className="description">
                 {mismatch
-                  ? 'Install the Prysm package again so the app and its service come from the same package.'
+                  ? 'The app and its TV service don’t match.'
                   : status.description}
               </p>
-              {rate && !mismatch ? (
-                <p id="capture-rate" className="stream-info">
-                  Capture rate: <strong>{rate}</strong>
-                </p>
-              ) : null}
-              {slim && state?.encoding && !mismatch ? (
-                <p id="encoding-in-use" className="stream-info">
-                  Encoding in use:{' '}
-                  <strong>{encodingName(state.encoding)}</strong>
-                </p>
-              ) : null}
-              {retry ? (
-                <span
-                  key={tv.stateAt}
-                  className="retry-bar"
-                  style={{ animationDuration: `${retry.seconds}s` }}
-                  aria-hidden="true"
-                />
-              ) : null}
+              {/* Always a line, so the buttons never move. */}
+              <p id="status-meta" className="meta">
+                {retry ? (
+                  <span
+                    key={tv.stateAt}
+                    className="retry-bar"
+                    style={{ animationDuration: `${retry.seconds}s` }}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {meta || '\u00a0'}
+              </p>
               <div className="main-actions">
                 <button
                   id="primary"
@@ -320,11 +328,7 @@ export function TvApp({
                 </button>
               </div>
             </section>
-            <LightingCard
-              flavor={flavor}
-              portal={portal}
-              address={portalAddress}
-            />
+            <LightingCard flavor={flavor} portal={portal} />
           </div>
           <div className="column" data-column="settings">
             {portalAddress ? (
@@ -334,9 +338,8 @@ export function TvApp({
                 ) : null}
                 <p className="portal-text">
                   <strong>Web portal</strong>
-                  <code>{portalAddress}</code>
-                  Open it on your phone or computer to set up capture and
-                  lights, and for colour profiles and the live preview.
+                  <code id="portal-address-text">{shown(portalAddress)}</code>
+                  Scan or type it on your phone for lights, colours and more.
                 </p>
               </section>
             ) : null}
@@ -546,8 +549,8 @@ function AddressForm({
           {error}
         </p>
       ) : null}
-      <button id={`${id}-apply`} type="submit" className="choice">
-        <span className="choice-name">{button}</span>
+      <button id={`${id}-apply`} type="submit" className="choice apply">
+        {button}
       </button>
     </form>
   );
@@ -584,13 +587,13 @@ function Dialogs({
     case 'instance':
       title = 'Prysm address';
       description =
-        'The computer running Prysm: this TV sends its picture there. A host name or IP uses port 8787; you can also enter the full address you open Prysm with, such as https://prysm.example.com behind a reverse proxy.';
+        'The address you open Prysm’s web portal with on your computer, such as 192.168.1.20.';
       content = (
         <AddressForm
           id="instance-input"
           label="Address"
           initial={draft.instance ?? ''}
-          placeholder="192.168.1.20 or http://prysm.local:8787"
+          placeholder="192.168.1.20"
           button="Use this address"
           apply={(text) => {
             const result = instanceAddress(text);
@@ -657,9 +660,7 @@ function Dialogs({
       description = 'Service state and the latest messages.';
       content = (
         <pre className="diagnostics" id="diagnostics-text">
-          {tv.online === false
-            ? `Service unavailable: ${tv.notice}`
-            : diagnostics(tv.state)}
+          {diagnostics(tv.online === false ? null : tv.state, tv.problem)}
         </pre>
       );
       break;
@@ -700,7 +701,11 @@ function Dialogs({
       break;
   }
   return (
-    <div ref={modal} id="modal" className="modal">
+    <div
+      ref={modal}
+      id="modal"
+      className={`modal${dialog === 'instance' ? ' top' : ''}`}
+    >
       <section
         className="dialog"
         role="dialog"

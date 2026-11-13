@@ -45,14 +45,14 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 
 | Message or problem | Fix |
 | --- | --- |
-| TV service unavailable | Choose **Set up service**. After every install or update the service must be set up again. |
-| Waiting for TV | The TV is asleep or in standby. Capture resumes when it wakes. |
+| Prysm needs setting up | Choose **Set up service**. After every install or update the service must be set up again. |
+| TV is asleep, Screen saver is on | Capture continues when the TV wakes. |
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
-| Capture needs attention, retrying | The TV shows the reason and a countdown. If it repeats, see **Service options → View diagnostics**. Stop other capture apps. |
+| Screen sync stopped, Capture stopped | The TV tries again by itself and counts down. If it repeats, the reason is under **Service options → View diagnostics**. Stop other capture apps. |
 | Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **Capture-only TV (remote)** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. "Versions differ": update Prysm and the TV app together. |
 | Slim: Paused by Prysm | Normal while the computer's lights are off. Turn on Screen sync. |
-| Slim: the TV app cannot reach or control Prysm | Check **Prysm address**. Start the computer's Prysm with `--allow-origin null`. |
-| Slim: Screen sync stops with an encoder error | Choose **Software H.264** or **Uncompressed** for the video source in the portal. |
+| Slim: the TV app cannot reach or control Prysm ("doesn't take commands from the TV") | Check **Prysm address**. Start the computer's Prysm with `--allow-origin null`. |
+| Slim: Encoding not supported | Choose **Software H.264** or **Uncompressed** for the video source in the portal. |
 | Full: no portal address on the TV | The TV has no network address yet. Check its network connection. |
 
 ## Report a problem

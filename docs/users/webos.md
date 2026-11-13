@@ -58,7 +58,7 @@ does this. If you installed another way, open **Prysm** on the TV and choose
 
 ## 2a. Full package: the TV drives the lights
 
-1. Open **Prysm** on the TV. If it says **TV service unavailable**, choose
+1. Open **Prysm** on the TV. If it says **Prysm needs setting up**, choose
    **Set up service**.
 2. The TV shows the address of its web portal and a QR code. Open it on your
    phone or computer and run the [setup wizard](configuration.md). The video

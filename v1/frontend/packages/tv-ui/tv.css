@@ -12,9 +12,12 @@
  * No grid, :focus-visible, :is(), clamp(), inset, aspect-ratio or rgb(… / a).
  *
  * Motion: only opacity and transform. Focus moves in 120 ms; screens and
- * dialogs arrive in 260 ms; the lights coming on bloom in 520 ms. The one
- * repeating animation is the small live dot. Nothing is drawn or animated
- * over a calibration pattern.
+ * dialogs arrive in 260 ms; the lights coming on fade the glow in over
+ * 520 ms. The one repeating animation is the small live dot. Nothing is
+ * drawn or animated over a calibration pattern; reduced motion stops all.
+ *
+ * Nothing moves between states: the headline, its one line of detail, the
+ * quiet line under it and the lights' message each keep their space.
  *
  * Colour roles share their names and dark values with the web portal
  * (packages/web-portal/tokens.css). Glow appears only where light is the
@@ -173,15 +176,12 @@ button:disabled {
       rgba(62, 195, 235, 0) 45%
     );
   opacity: 0;
-  transform: scale(0.92);
   pointer-events: none;
-  transition:
-    opacity var(--duration-bloom) var(--ease-out),
-    transform var(--duration-bloom) var(--ease-out);
+  /* Opacity only: a scaled full-screen layer shows its edges while it fades. */
+  transition: opacity var(--duration-bloom) var(--ease-out);
 }
 .tv.ready::before {
   opacity: 1;
-  transform: none;
 }
 /* Above the glow. */
 #app {
@@ -275,46 +275,51 @@ button:disabled {
   background: var(--success);
   animation: live 2.8s ease-out infinite;
 }
+/* One line each: the copy is written to fit; the ellipsis is only a guard. */
+.overview h1,
+.description,
+.meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .overview h1 {
-  max-width: 14em;
   margin-top: var(--space-3);
   font-size: var(--text-display);
   font-weight: var(--weight-bold);
-  line-height: 1.08;
+  line-height: 1.2;
   letter-spacing: -0.03em;
   animation: rise var(--duration) var(--ease-out) backwards;
 }
 .description {
-  max-width: 26em;
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
   color: var(--text-2);
   font-size: var(--text-body);
   line-height: 1.45;
 }
-.stream-info {
-  display: inline-block;
-  margin: var(--space-3) var(--space-6) 0 0;
+/* The quiet line: a countdown or the frame rate, else empty but kept. */
+.meta {
+  margin-top: var(--space-2);
   color: var(--text-3);
   font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
 }
-.stream-info strong {
-  color: var(--text-2);
-  font-weight: var(--weight-regular);
-}
-/* The time left until the restart. */
+/* The time left until the restart, before its words. */
 .retry-bar {
-  display: block;
-  width: 16rem;
+  display: inline-block;
+  width: 6rem;
   height: 0.12rem;
-  margin-top: var(--space-4);
+  margin-right: var(--space-3);
   border-radius: 0.06rem;
   background: var(--warning);
+  vertical-align: middle;
   transform-origin: 0 50%;
   animation: countdown linear forwards;
 }
 .main-actions {
   width: 24rem;
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
 }
 .primary {
   width: 100%;
@@ -346,22 +351,30 @@ button:disabled {
   color: var(--text-3);
   font-size: var(--text-small);
 }
-/* Only what the chosen mode does not say: starting, stopped, unreachable. */
+/* Only what the chosen mode does not say; two lines kept, at most two used. */
 .lighting-status {
-  margin-top: var(--space-1);
-  color: var(--text-2);
-  font-size: var(--text-body);
-}
-.lighting-detail {
-  max-width: 24rem;
+  position: relative;
+  width: 24rem;
+  height: 2.8em;
   margin-top: var(--space-3);
-  color: var(--text-3);
+  overflow: hidden;
+  color: var(--text-2);
   font-size: var(--text-small);
   line-height: 1.4;
 }
-.lighting.attention .lighting-status,
-.lighting.attention .lighting-detail {
-  color: var(--warning);
+/* A problem: calm, a small amber mark beside plain words. */
+.lighting.attention .lighting-status {
+  padding-left: var(--space-4);
+}
+.lighting.attention .lighting-status::before {
+  content: '';
+  position: absolute;
+  top: 0.5em;
+  left: 0;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--warning);
 }
 /* One track, three equal segments. */
 .modes {
@@ -523,9 +536,11 @@ button:disabled {
 }
 .setting-value {
   min-width: 0;
+  overflow: hidden;
   color: var(--text-3);
   text-align: right;
-  word-wrap: break-word;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .chevron {
   margin-left: var(--space-3);
@@ -576,6 +591,10 @@ button:disabled {
 }
 
 /* ---- Dialogs ---- */
+/* Typing: the dialog sits high, clear of the TV's on-screen keyboard. */
+.modal.top {
+  align-items: flex-start;
+}
 .modal {
   position: fixed;
   top: 0;
@@ -620,9 +639,18 @@ button:disabled {
   width: 100%;
   min-height: 3rem;
 }
-.choice + .choice,
-form .choice {
+.choice + .choice {
   margin-top: var(--space-1);
+}
+/* The form's one action: a real button, not a line of text. */
+.apply {
+  width: auto;
+  min-width: 14rem;
+  margin: var(--space-4) var(--space-4) 0;
+  justify-content: center;
+  background: var(--accent-fill);
+  color: var(--text-on-accent);
+  font-weight: var(--weight-bold);
 }
 .choice:focus {
   transform: scale(1.02);
@@ -681,6 +709,7 @@ form .choice {
 .dialog input:focus {
   outline: none;
   border-color: var(--focus-ring);
+  box-shadow: 0 0 0 0.12rem var(--focus-ring);
 }
 .dialog input[aria-invalid='true'] {
   border-color: var(--danger);
