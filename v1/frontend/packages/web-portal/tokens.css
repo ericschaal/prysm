@@ -50,8 +50,8 @@
    */
   --hero-bg: #101119;
   --hero-sheen: rgb(255 255 255 / 0.05);
-  --hero-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.07) inset, 0 30px 70px -36px rgb(0 0 0 / 0.8);
+  /* The card's own edge; its lift is the shared --shadow. */
+  --hero-shadow: 0 0 0 1px rgb(255 255 255 / 0.07) inset;
   --aurora-1: #e0479e;
   --aurora-2: #22c3ee;
   --aurora-3: #6b4dff;
@@ -158,9 +158,7 @@
   --shadow-stage: 0 20px 50px rgb(23 24 31 / 0.22);
   --ring: 0 0 0 3px rgb(90 71 212 / 0.22);
   --hero-bg: #11121b;
-  --hero-shadow:
-    0 1px 0 rgb(255 255 255 / 0.06) inset,
-    0 30px 60px -30px rgb(23 24 31 / 0.45);
+  --hero-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset;
 }
 
 /* Light, from the system, unless the viewer chose dark. Same values as above. */
@@ -193,9 +191,7 @@
     --shadow-stage: 0 20px 50px rgb(23 24 31 / 0.22);
     --ring: 0 0 0 3px rgb(90 71 212 / 0.22);
     --hero-bg: #11121b;
-    --hero-shadow:
-      0 1px 0 rgb(255 255 255 / 0.06) inset,
-      0 30px 60px -30px rgb(23 24 31 / 0.45);
+    --hero-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset;
   }
 }
 

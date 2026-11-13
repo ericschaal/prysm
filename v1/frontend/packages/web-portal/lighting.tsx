@@ -377,7 +377,7 @@ export function LightCard({
   const shownReasons = new Set<string>();
 
   return (
-    // The frame carries the light's colours to the glow under the card.
+    // The frame carries the light's colours, for the card and the LED drawing.
     <div
       className="light-frame"
       data-lit={lit}
@@ -596,7 +596,6 @@ export function LightCard({
           </>
         ) : null}
       </section>
-      <span className="light-spill" aria-hidden="true" />
     </div>
   );
 }

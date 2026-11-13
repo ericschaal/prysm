@@ -83,9 +83,6 @@ small {
 }
 
 /* ── Layout: one centred column, phone first ──────────────────────────── */
-.page {
-  overflow-x: clip;
-}
 .portal {
   width: min(100% - 40px, 600px);
   margin: 0 auto;
@@ -667,15 +664,12 @@ fieldset > .help {
   inherits: true;
   initial-value: #ff8a4c;
 }
+/* The frame holds the light's colours for the card and the LED drawing. */
 .light-frame {
-  /* Under every other card: its light shows only on the page. */
-  z-index: 0;
   --light-a: var(--aurora-1);
   --light-b: var(--aurora-2);
   --light-c: var(--aurora-3);
   --light-d: var(--aurora-4);
-  position: relative;
-  isolation: isolate;
   display: grid;
   /* Switching modes cross-fades the colours; turning on starts in them. */
   transition:
@@ -690,65 +684,6 @@ fieldset > .help {
   --light-c: var(--effects-3);
   --light-d: var(--effects-4);
 }
-/* Lit, the card throws its light onto the page beneath it (opacity only). */
-.light-spill {
-  position: absolute;
-  z-index: -1;
-  inset: 45% 4% -5%;
-  background:
-    radial-gradient(closest-side at 25% 60%, var(--light-a), transparent),
-    radial-gradient(closest-side at 75% 60%, var(--light-b), transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--duration-light-off) var(--ease-in-out);
-}
-.light-frame[data-lit='true'] .light-spill {
-  opacity: 0.45;
-  /* The page catches the light just after the card does. */
-  transition: opacity var(--duration-light-on) var(--ease-in-out) 150ms;
-}
-/* One breath out onto the page as the light arrives. */
-.light-spill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: inherit;
-  opacity: 0;
-}
-.light-frame[data-ignite='a'] .light-spill::after {
-  animation: breath-a var(--duration-light-on) var(--ease-in-out) 150ms both;
-}
-.light-frame[data-ignite='b'] .light-spill::after {
-  animation: breath-b var(--duration-light-on) var(--ease-in-out) 150ms both;
-}
-.light-frame:not([data-lit='true']) .light-spill::after {
-  animation: none;
-}
-@keyframes breath-a {
-  0%,
-  100% {
-    opacity: 0;
-    transform: scale(1);
-  }
-  45% {
-    opacity: 0.6;
-    transform: scale(1.06);
-  }
-}
-@keyframes breath-b {
-  0%,
-  100% {
-    opacity: 0;
-    transform: scale(1);
-  }
-  45% {
-    opacity: 0.6;
-    transform: scale(1.06);
-  }
-}
-.light-frame[data-lit='true'][data-palette='effects'] .light-spill {
-  opacity: 0.3;
-}
 /*
  * A failed or faulted session: a calm warning lamp, not an alarm. The same
  * aurora in deep red and rose, low and still drifting slowly; no ignition.
@@ -759,10 +694,6 @@ fieldset > .help {
   --light-b: var(--error-2);
   --light-c: var(--error-3);
   --light-d: var(--error-4);
-}
-.light-frame[data-palette='error'] .light-spill {
-  opacity: 0.18;
-  transition: opacity var(--duration-light-on) var(--ease-in-out);
 }
 /*
  * Screen sync with the LEDs' colours streaming: the card's four fields take
@@ -790,7 +721,10 @@ fieldset > .help {
   background:
     radial-gradient(120% 70% at 50% -10%, var(--hero-sheen), transparent 70%),
     var(--hero-bg);
-  box-shadow: var(--hero-shadow);
+  /* All its colour stays inside: outside, the same neutral lift as the setup card. */
+  box-shadow:
+    var(--hero-shadow),
+    var(--shadow);
   color: var(--text);
 }
 @media (min-width: 900px) {
@@ -1783,9 +1717,6 @@ fieldset > .help {
 }
 /* Your setup: where the picture comes from, where the colours go. */
 .setup-card {
-  /* An opaque surface in front of the light card's glow. */
-  position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
   padding: var(--space-6);

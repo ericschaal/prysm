@@ -273,15 +273,12 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     content: ReactNode,
     wide = false,
   ) => (
-    // Full width, clipping sideways: the light spills to the page's edge, never past it.
-    <div className="page">
-      <div className={wide ? 'portal wide' : 'portal'}>
-        {header}
-        <main id="content" className={className}>
-          <h1 className="visually-hidden">{title}</h1>
-          {content}
-        </main>
-      </div>
+    <div className={wide ? 'portal wide' : 'portal'}>
+      {header}
+      <main id="content" className={className}>
+        <h1 className="visually-hidden">{title}</h1>
+        {content}
+      </main>
     </div>
   );
   /** A page under Settings: its title and the way back. */

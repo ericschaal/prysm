@@ -63,8 +63,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     apply to screen sync only, so the effects tile shows a note and
     "Open WLED" in their place. The card's light (CSS only, transform and
     opacity) drifts while the session runs; it grows out of the power button
-    when the session lights up and draws back in when it stops, and the card
-    casts a soft coloured drop shadow while lit. While screen sync runs and a
+    when the session lights up and draws back in when it stops. All colour
+    stays inside the card; outside it has the same neutral shadow as the
+    other cards. While screen sync runs and a
     `colors` client is given, the LEDs' colours (`/api/v1/colors/stream`,
     opened only while Home is shown, visible and online) become the card's
     four light fields: written as CSS custom properties on the Home grid,
