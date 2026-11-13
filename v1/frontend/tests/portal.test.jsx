@@ -81,14 +81,11 @@ const word = () => $('.light-word [data-shown="true"]').textContent;
 /** The card's one informative line, while it is shown. */
 const info = () =>
   $('.light-info').dataset.shown === 'true'
-    ? $('.light-info p').textContent
+    ? $('.light-info > div > p').textContent
     : null;
 const chip = (id) => $(`[data-profile="${id}"]`);
-/** The pause named beside the eyebrow, while it shows. */
-const note = () =>
-  $('.overline-note').dataset.shown === 'true'
-    ? $('.overline-note').textContent
-    : null;
+/** The card's calm line: what Power will do, a pause that lasts, what runs. */
+const note = () => $('.light-calm').textContent || null;
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
 /** The editor's one status line. */
@@ -134,7 +131,7 @@ test('the lighting card says why the lights are not showing screen sync', async 
     await act(async () => fixture.publish({ output_issue: undefined }));
     assert.equal(info(), null, 'cleared once the lights follow');
     // It folds away with its last words, out of the tab order.
-    assert.equal($('.light-info').hasAttribute('inert'), true);
+    assert.equal($('.light-info > div').hasAttribute('inert'), true);
   } finally {
     await portal.unmount();
   }
@@ -155,13 +152,12 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       $('.lighting-status').textContent,
       'Lights follow your screen',
     );
-    // Not a line under the word (the card keeps its size): the eyebrow says it,
-    // once it lasts.
+    // The calm line says it, in the card's kept space, once it lasts.
     assert.equal(info(), null);
     assert.equal(note(), null, 'not at once');
     await act(async () => sleep(slowStartMs + 50));
-    assert.equal(info(), null, 'the info line stays closed');
-    assert.equal(note(), ' · Waiting for video');
+    assert.equal(info(), null, 'not a problem');
+    assert.equal(note(), 'Waiting for the picture.');
     assert.equal(
       $$('.path-fact')[0].textContent,
       'Waiting for picture',
@@ -172,7 +168,7 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       fixture.publish({ input: { fps: 29.9, receiving: true } }),
     );
     assert.equal(info(), null);
-    assert.equal(note(), null);
+    assert.equal(note(), 'Following the screen.');
     assert(
       !$('.light-card').textContent.includes('fps'),
       'no live frame rate on Home',
@@ -329,8 +325,8 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal(info(), null, 'a quick start says nothing');
     assert.equal($('.light-card').dataset.ignite, undefined, 'not yet lit');
     await act(async () => sleep(slowStartMs + 50));
-    assert.equal(info(), null, 'no line: the card keeps its size');
-    assert.equal(note(), ' · Starting');
+    assert.equal(info(), null, 'not a problem');
+    assert.equal(note(), 'Starting Screen sync…');
 
     await act(async () => fixture.publish({ session: { state: 'running' } }));
     assert.equal(word(), 'On');
@@ -481,7 +477,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     await act(async () => fixture.publish({ failure: null }));
     assert.equal($('.light-card').dataset.mood, 'starting');
     await act(async () => sleep(slowStartMs + 100));
-    assert.equal(note(), ' · Starting');
+    assert.equal(note(), 'Starting Screen sync…');
     assert(!text().includes('WLED effects are on'));
 
     // Off with a failure left over: no failure sentence under "Off".
@@ -1733,6 +1729,10 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
   const { fixture } = portal;
   try {
     assert.equal($$('form').length, 0, 'no forms on Home');
+    // One headline, the lights' state; off, it says what Power will do.
+    assert.equal($('.display'), null);
+    assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
+    assert.equal($('.header-link').textContent, 'Settings');
     assert.equal($('.diagnostics'), null);
     assert.equal($('.preview'), null, 'no preview on Home');
     assert.deepEqual(
@@ -1758,7 +1758,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     await settle();
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 55);
 
-    await click(button('Change setup'));
+    await click($('.row-link', row('Change setup')));
     assert.equal(window.location.hash, '#/settings');
     await click(button('Home'));
     await openSettings();
@@ -1809,7 +1809,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
         failure: { kind: 'adapter', section: 'output', message: 'no answer' },
       }),
     );
-    await click(button('Change setup'));
+    await click($('.row-link', row('Change setup')));
     assert.equal(window.location.hash, '#/settings/lights');
   } finally {
     await portal.unmount();

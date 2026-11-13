@@ -3,6 +3,7 @@ import type { DiscoveryClient } from '@prysm/application-client';
 import type { AdapterFact, LedEdges, Transport } from './adapters';
 import { useDeviceName, type SetupPart } from './device-name';
 import { LightsIcon, PrysmIcon, VideoIcon } from './path-icons';
+import { RowLink } from './rows';
 
 const sides = ['top', 'right', 'bottom', 'left'] as const;
 
@@ -145,6 +146,8 @@ function Stop({
   behind?: boolean;
 }) {
   const tooltip = instead ? fact : undefined;
+  // A kind's qualifier ("(development only)") stays in the tooltip.
+  const short = name.replace(/\s*\([^)]*\)$/, '');
   // The fact moved off the line, said once for screen readers.
   const hidden = figure !== undefined ? tooltip : undefined;
   const line = hidden ? undefined : fact;
@@ -154,7 +157,9 @@ function Stop({
       <span className="path-text" title={tooltip}>
         <span className="visually-hidden">{title}: </span>
         {/* Never broken at a hyphen ("WLED-Gledopto"). */}
-        <strong className="path-name">{name.split('-').join('\u2011')}</strong>
+        <strong className="path-name" title={short === name ? undefined : name}>
+          {short.split('-').join('\u2011')}
+        </strong>
         {hidden ? <span className="visually-hidden"> {hidden},</span> : null}
         {/* Always a line, so the stops stay aligned when one has no fact. */}
         <span className="path-fact">
@@ -384,7 +389,8 @@ export function SetupCard({
           icon={<PrysmIcon />}
           name="Prysm"
           // Only a positive fact: the active profile. Nothing when none.
-          fact={profile ? `${profile} profile` : undefined}
+          // The profile by its name: the fps figure beside it must not cut it.
+          fact={profile ?? undefined}
           figure={processed}
           failed={path.kind === 'failed' && failedAt === null}
           behind={behind === 'processing'}
@@ -421,11 +427,14 @@ export function SetupCard({
         </Named>
       </ol>
       {edges ? <LedMap edges={edges} /> : null}
-      <div className="setup-links">
-        <button type="button" className="quiet" onClick={openSettings}>
-          Change setup
-        </button>
-      </div>
+      {/* A row as in Settings, at the card's foot. */}
+      <ul className="rows setup-change">
+        <RowLink
+          label="Change setup"
+          value="Video source, lights and picture"
+          onClick={openSettings}
+        />
+      </ul>
     </section>
   );
 }

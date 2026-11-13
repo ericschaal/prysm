@@ -41,12 +41,20 @@ supervisor in each of its states and play the phone's calibration part). See the
 
 - [Shared portal](packages/web-portal/portal.tsx): three pages and two
   flows. It imports no adapters.
-  - Home: the light card (the state in one word, the power button, the two
-    modes, brightness and the colour profiles as chips) and
-    [Your setup](packages/web-portal/setup-card.tsx) (the video source and
-    lights from the adapters' `summary`, and the LEDs per edge from an
-    output's `edges`). Problems show in the light card in plain words with
-    the action that fixes them ("Set up Prysm").
+  - Home: two cards of one width, 960 px at most (Settings is 640): the
+    light card (the state in one word as the only headline, the power button,
+    one kept line for a problem with its fix, else what is happening: off,
+    what Power turns on; on, "Following the screen." or "WLED effects are
+    showing."; a start or a wait for the picture once it lasts, the two modes as a light segmented control, brightness and the
+    colour profiles as chips) and [Your setup](packages/web-portal/setup-card.tsx)
+    (the video source and lights from the adapters' `summary`, a kind named
+    without its qualifier such as "(development only)", Prysm by its active
+    profile's name beside the frame rate, the LEDs per edge
+    from an output's `edges` in a drawing that fills the card, and a
+    "Change setup" row at its foot). Problems show in the light card in plain
+    words with the action that fixes them ("Set up Prysm"); the card keeps
+    their space in every state, so nothing moves. The header names
+    "Settings" beside its icon.
   - [Settings](packages/web-portal/settings-page.tsx) (`#/settings`, the
     icon in the header): one save status under the title
     ([save status](packages/web-portal/save-status.tsx)), then one column
@@ -76,7 +84,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     for the page). Tests turn it on with `saveDeveloper(true)` or that key.
   - [Lighting](packages/web-portal/lighting.tsx): the power button turns the
     lights `off`, or back on in the last mode (kept per browser in
-    `localStorage`; screen sync without one); the tiles choose Screen sync
+    `localStorage`; screen sync without one); the modes choose Screen sync
     (`processed`) or the output's own effects (`device_native`, named by the
     output's `lighting().effects`, e.g. "WLED effects"), and a tile chosen
     while off turns that mode on; after a failure a tile retries. Modes that

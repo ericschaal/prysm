@@ -42,9 +42,10 @@ test('setup saves a TV source and no lights, on disk and on Home', async ({
 
   const setup = page.getByRole('region', { name: 'Your setup' });
   // Device names never break at a hyphen: it is a non-breaking one.
-  await expect(setup).toContainText(/Capture.only TV \(remote\)/);
+  // Home's diagram names a kind without its qualifier, e.g. “(remote)”.
+  await expect(setup).toContainText(/Capture.only TV/);
   await expect(setup).toContainText(/320\s×\s180/);
-  await expect(setup).toContainText('No lights (test)');
+  await expect(setup).toContainText('No lights');
 });
 
 test('a step with a missing value says so at its field', async ({ page }) => {

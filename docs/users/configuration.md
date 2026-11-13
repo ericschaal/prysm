@@ -56,14 +56,18 @@ counts.
 
 Home has two cards.
 
-- **The light card**: the power button, the two modes **Screen sync** (the
-  lights follow the picture) and **WLED effects** (WLED runs its own effects),
-  brightness, and your colour profiles. Choosing a mode while the lights are
+- **The light card**: whether the lights are **Off**, **On** or **Stopped**,
+  the power button, the two modes **Screen sync** (the lights follow the
+  picture) and **WLED effects** (WLED runs its own effects), brightness, and
+  your colour profiles. A line under **Off** / **On** says what is happening,
+  for example what Power turns on, or that the lights follow the screen.
+  While the lights are off the chosen mode is only outlined; choosing a mode while
   off turns them on in that mode. Problems show here in plain words, with the
   action that fixes them. **Open WLED** opens WLED's own page.
 - **Your setup**: the path from the video source through Prysm to the lights,
-  with what each step is and whether pictures are flowing. A step that failed
-  is marked.
+  with what each step is and whether pictures are flowing, and your LEDs
+  around the TV. A step that failed is marked. **Change setup** opens
+  Settings, or the part that has a problem.
 
 Good to know:
 
@@ -76,7 +80,7 @@ Good to know:
 
 ## 5. Change settings
 
-Open **Settings** (the icon in the header). It is one list in three groups:
+Open **Settings** (top right on Home). It is one list in three groups:
 **Setup** (Video source, Lights), **Picture** (Colour profiles, Fine-tuning,
 Remove black bars) and **This device** (Appearance, About this Prysm, Start
 over with setup). Each row shows its current value; choose it to open its

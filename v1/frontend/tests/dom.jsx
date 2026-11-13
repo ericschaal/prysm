@@ -85,7 +85,7 @@ export const click = (element) => act(async () => element.click());
 /** Open Settings from Home, the way a user would. */
 export const openSettings = () =>
   act(async () => {
-    $('[aria-label="Settings"]').click();
+    $('.header-link').click();
     await sleep(0);
   });
 

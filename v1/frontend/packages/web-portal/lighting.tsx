@@ -310,9 +310,6 @@ export function LightCard({
     };
   }, [pause]);
   const note = lasting === pause ? pause : null;
-  // Kept while it fades out, so it leaves as it came.
-  const [keptNote, setKeptNote] = useState(note);
-  if (note && note !== keptNote) setKeptNote(note);
   const status = headline({ target, session, failure, effects });
   let palette = mode === 'device_native' ? 'effects' : 'sync';
   if (mood === 'problem') palette = 'error';
@@ -334,6 +331,19 @@ export function LightCard({
   else if (faulted) info = { tone: 'problem', text: status, retry: false };
   else if (outputIssue && session.state === 'running')
     info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
+
+  // The calm line, said for sighted people (the status says it for screen
+  // readers): what Power will do, a pause once it lasts, or what runs.
+  const modeName = mode === 'processed' ? 'Screen sync' : effects;
+  let calm = '';
+  if (info) calm = '';
+  else if (!on) calm = powerReason ? '' : `Power turns on ${modeName}.`;
+  else if (note === 'waiting') calm = 'Waiting for the picture.';
+  else if (note === 'starting') calm = `Starting ${modeName}…`;
+  else if (lit && target === 'processed' && input?.receiving)
+    calm = 'Following the screen.';
+  else if (target === 'device_native' && session.state === 'native')
+    calm = `${effects} are showing.`;
 
   // Kept while the line folds away, so it leaves as it came.
   const [kept, setKept] = useState(info);
@@ -377,15 +387,6 @@ export function LightCard({
         </div>
         <h2 id={headingId} className="overline">
           Your lights
-          {/* Said by the status for screen readers; shown here, not twice. */}
-          <span
-            className="overline-note"
-            data-shown={!!note}
-            aria-hidden="true"
-          >
-            {' · '}
-            {keptNote === 'waiting' ? 'Waiting for video' : 'Starting'}
-          </span>
         </h2>
         <div className="light-head">
           {/* The three words share one cell and cross-fade. */}
@@ -441,14 +442,17 @@ export function LightCard({
           </small>
         )}
         {configured ? (
-          // Opens and closes its own space, so nothing below jumps.
+          // Its space is kept in every state: a problem, a warning or the
+          // calm line cross-fade in it, so nothing below ever moves.
           <div
             className="light-info"
             data-shown={!!info}
             data-tone={shown?.tone}
-            inert={!info}
           >
-            <div>
+            <p className="light-calm" aria-hidden="true" data-shown={!info}>
+              {calm}
+            </p>
+            <div inert={!info}>
               {shown ? (
                 <p role={shown.tone === 'problem' ? 'alert' : 'status'}>
                   {shown.text}

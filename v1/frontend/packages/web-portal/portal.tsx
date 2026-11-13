@@ -261,11 +261,11 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         {route === 'home' && snapshot && setup !== 'open' ? (
           <button
             type="button"
-            className="icon-button"
-            aria-label="Settings"
+            className="header-link"
             onClick={() => go(settingsRoute)}
           >
             <SettingsIcon />
+            Settings
           </button>
         ) : null}
       </span>
@@ -641,9 +641,6 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     'portal-page home',
     'Prysm',
     <>
-      <p className="display">
-        Light, in sync<span aria-hidden="true">.</span>
-      </p>
       {notices}
       {/* Whether this host streams the LEDs' colours at all. */}
       <div
