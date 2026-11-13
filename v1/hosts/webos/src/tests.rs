@@ -1,5 +1,5 @@
 use crate::link::EngineLink;
-use crate::video::VideoFeed;
+use prysm_capture_webos::VideoSignal;
 use prysm_ports::{AdapterSettings, Error, LightingTarget, Result, SessionPhase, Settings};
 use prysm_runtime::Prysm;
 use prysm_runtime::fakes::{
@@ -7,35 +7,7 @@ use prysm_runtime::fakes::{
 };
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, Video, WorkerStatus};
-use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
-
-#[derive(Clone, Default)]
-struct Feed(Arc<Mutex<Vec<String>>>);
-
-impl Feed {
-    fn seen(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-}
-
-impl VideoFeed for Feed {
-    fn set(&self, video: Video) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(format!("{video:?}"));
-    }
-    fn reset(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push("reset".into());
-    }
-}
 
 fn source(settings: &FakeSourceSettings) -> Settings {
     Settings {
@@ -48,9 +20,9 @@ fn source(settings: &FakeSourceSettings) -> Settings {
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
 
 /// Run a fake engine with the link surface until the link stops.
-fn start(settings: Settings, initial: LightingTarget) -> (Peer, Feed, CallLog, Running) {
+fn start(settings: Settings, initial: LightingTarget) -> (Peer, VideoSignal, CallLog, Running) {
     let (link, peer) = Link::memory();
-    let feed = Feed::default();
+    let feed = VideoSignal::default();
     let log = CallLog::new();
     let stop = link.stop.clone();
     let surface = EngineLink::new(
@@ -92,7 +64,6 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
             target: Some(LightingTarget::Off),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
-            failure_kind: None,
             encoding: None,
             paused: false,
         }
@@ -113,7 +84,7 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         status(&running).unwrap().target,
         Some(LightingTarget::Processed)
     );
-    assert_eq!(feed.seen(), ["Available", "reset"]);
+    assert_eq!(feed.current(), (Video::Available, 1), "set, then one reset");
     assert!(log.wait_for("output.write:", 1).await);
 
     peer.send(Command::Lighting {
@@ -164,6 +135,7 @@ async fn a_failed_session_is_retried_until_lighting_is_turned_off() {
             .failure
             .as_ref()
             .unwrap()
+            .message
             .contains("fake source failed")
     );
 
@@ -197,6 +169,7 @@ async fn missing_settings_are_not_retried() {
             .failure
             .as_ref()
             .unwrap()
+            .message
             .contains("output")
     );
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -241,14 +214,15 @@ async fn an_unconfirmed_release_faults_the_worker() {
 }
 
 #[test]
-fn portal_url_uses_a_concrete_address() {
+fn the_portal_url_is_a_concrete_lan_address() {
     assert_eq!(
-        crate::portal_url("127.0.0.1:8787".parse().unwrap()).as_deref(),
-        Some("http://127.0.0.1:8787/")
+        prysm_web_portal::lan_url("192.168.1.5:8787".parse().unwrap()).as_deref(),
+        Some("http://192.168.1.5:8787/")
     );
-    // A wildcard resolves to some interface address, never to 0.0.0.0.
-    if let Some(url) = crate::portal_url("0.0.0.0:8787".parse().unwrap()) {
-        assert!(!url.contains("0.0.0.0"), "{url}");
+    // A wildcard resolves to the default route's interface address: never
+    // 0.0.0.0, and never loopback, which a phone could not open.
+    if let Some(url) = prysm_web_portal::lan_url("0.0.0.0:8787".parse().unwrap()) {
+        assert!(!url.contains("0.0.0.0") && !url.contains("127."), "{url}");
     }
 }
 

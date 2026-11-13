@@ -2,6 +2,7 @@
 use crate::identity::Identity;
 use crate::install::{FsInstaller, Installer};
 use crate::state::Flavor;
+use prysm_ports::chain;
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -137,12 +138,14 @@ fn run(flavor: Flavor, cli: &Cli) -> Result<(), String> {
     let mut installer = FsInstaller::new(identity.layout.clone());
     match cli.action {
         Action::Setup => {
-            installer.install()?;
-            installer.activate(&identity.service)?;
+            installer.install().map_err(|error| chain(&error))?;
+            installer
+                .activate(&identity.service)
+                .map_err(|error| chain(&error))?;
             println!("{} is registered and running", identity.service);
             Ok(())
         }
-        Action::Uninstall => installer.uninstall(),
+        Action::Uninstall => installer.uninstall().map_err(|error| chain(&error)),
         Action::Run => {
             private_dir(&identity.state_dir, cli.sandbox.is_none())?;
             let stop = Arc::new(AtomicBool::new(false));
@@ -151,7 +154,7 @@ fn run(flavor: Flavor, cli: &Cli) -> Result<(), String> {
                     .map_err(|error| format!("cannot install signal handlers: {error}"))?;
             }
             let deadline = cli.run_for.map(|lifetime| Instant::now() + lifetime);
-            crate::luna::serve(&identity, stop, deadline)
+            crate::luna::serve(&identity, stop, deadline).map_err(|error| chain(&error))
         }
     }
 }

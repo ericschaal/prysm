@@ -1746,6 +1746,7 @@ dependencies = [
  "prysm-capture-webos-sys",
  "prysm-core",
  "prysm-ports",
+ "prysm-webos-link",
  "serde",
  "serde_json",
  "tempfile",
@@ -1864,6 +1865,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tracing",
  "utoipa",
 ]
 
@@ -2038,12 +2040,14 @@ name = "prysm-webos-service"
 version = "1.0.0-alpha.0"
 dependencies = [
  "nix",
+ "prysm-ports",
  "prysm-webos-link",
  "prysm-webos-luna-sys",
  "serde",
  "serde_json",
  "signal-hook",
  "tempfile",
+ "thiserror 2.0.21",
  "utoipa",
 ]
 

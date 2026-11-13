@@ -28,10 +28,10 @@ ends are blocking adapters on `std::net`:
 - `RemoteSender::connect(peer)` is a `FrameSink`. It learns the request in
   the handshake (`request()`), and `send` encodes each frame with exactly the
   requested encoder from [`prysm-h264`](../h264/src/lib.rs), opened at the
-  first frame. Any error is final for that connection; one whose cause is a
-  `prysm_h264::H264Error` is the encoder's (it cannot start or failed), and
-  the sender then refuses the encoding to the receiver before closing
-  (`refuse_encoding`). `refuse(reason)` refuses the request for any other
+  first frame. Any error is final for that connection. `deliver` (what `send`
+  calls) returns a `SendError`: `Encoder` when the requested encoder cannot
+  start or failed, after the sender refused the encoding to the receiver
+  (`refuse_encoding`), else `Connection`. `refuse(reason)` refuses the request for any other
   reason. Nothing switches
   encoder or encoding on its own.
 

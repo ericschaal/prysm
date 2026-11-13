@@ -75,16 +75,39 @@ fn origin(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Why preferences or the intent could not be read or saved.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("cannot read {}", path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("invalid {}", path.display())]
+    Invalid {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("cannot save {}", path.display())]
+    Save {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
 /// Loads and saves preferences.
 pub trait PreferencesStore {
     /// `Ok(None)`: nothing saved yet.
     ///
     /// # Errors
     /// Unreadable, oversized or invalid content.
-    fn load(&mut self) -> Result<Option<Preferences>, String>;
+    fn load(&mut self) -> Result<Option<Preferences>, StoreError>;
     /// # Errors
     /// The file could not be replaced.
-    fn save(&mut self, preferences: &Preferences) -> Result<(), String>;
+    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError>;
     /// The intent remembered earlier in this boot (`Machine::intent`), so a
     /// restart of the service (an update, a crash) resumes it; `None` after
     /// a reboot, where `autostart` decides.
@@ -93,7 +116,7 @@ pub trait PreferencesStore {
     ///
     /// # Errors
     /// The file could not be replaced.
-    fn remember(&mut self, intent: LightingTarget) -> Result<(), String>;
+    fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError>;
 }
 
 /// In memory, for tests and probes: preferences and the remembered intent.
@@ -101,17 +124,17 @@ pub trait PreferencesStore {
 pub struct MemoryStore(pub Option<Preferences>, pub Option<LightingTarget>);
 
 impl PreferencesStore for MemoryStore {
-    fn load(&mut self) -> Result<Option<Preferences>, String> {
+    fn load(&mut self) -> Result<Option<Preferences>, StoreError> {
         Ok(self.0.clone())
     }
-    fn save(&mut self, preferences: &Preferences) -> Result<(), String> {
+    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError> {
         self.0 = Some(preferences.clone());
         Ok(())
     }
     fn resume(&mut self) -> Option<LightingTarget> {
         self.1
     }
-    fn remember(&mut self, intent: LightingTarget) -> Result<(), String> {
+    fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError> {
         self.1 = Some(intent);
         Ok(())
     }
@@ -169,8 +192,11 @@ impl FileStore {
 }
 
 /// Write `bytes` to `path` atomically, private (0600), and sync the directory.
-fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let failed = |error: io::Error| format!("cannot save {}: {error}", path.display());
+fn replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+    let failed = |source: io::Error| StoreError::Save {
+        path: path.to_owned(),
+        source,
+    };
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut file = tempfile::NamedTempFile::new_in(directory).map_err(failed)?;
     file.as_file()
@@ -185,18 +211,29 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 impl PreferencesStore for FileStore {
-    fn load(&mut self) -> Result<Option<Preferences>, String> {
-        let failed = |error: io::Error| format!("cannot read {}: {error}", self.path.display());
-        let Some(bytes) = read_private(&self.path, MAX_BYTES).map_err(failed)? else {
+    fn load(&mut self) -> Result<Option<Preferences>, StoreError> {
+        let path = &self.path;
+        let Some(bytes) = read_private(path, MAX_BYTES).map_err(|source| StoreError::Read {
+            path: path.clone(),
+            source,
+        })?
+        else {
             return Ok(None);
         };
         serde_json::from_slice(&bytes)
             .map(Some)
-            .map_err(|error| format!("invalid {}: {error}", self.path.display()))
+            .map_err(|source| StoreError::Invalid {
+                path: path.clone(),
+                source,
+            })
     }
 
-    fn save(&mut self, preferences: &Preferences) -> Result<(), String> {
-        let mut bytes = serde_json::to_vec_pretty(preferences).map_err(|e| e.to_string())?;
+    fn save(&mut self, preferences: &Preferences) -> Result<(), StoreError> {
+        let mut bytes =
+            serde_json::to_vec_pretty(preferences).map_err(|error| StoreError::Save {
+                path: self.path.clone(),
+                source: error.into(),
+            })?;
         bytes.push(b'\n');
         replace(&self.path, &bytes)
     }
@@ -208,12 +245,17 @@ impl PreferencesStore for FileStore {
         (resume.boot == boot).then_some(resume.intent)
     }
 
-    fn remember(&mut self, intent: LightingTarget) -> Result<(), String> {
+    fn remember(&mut self, intent: LightingTarget) -> Result<(), StoreError> {
         let Some(boot) = self.boot() else {
             return Ok(());
         };
-        let bytes = serde_json::to_vec(&Resume { boot, intent }).map_err(|e| e.to_string())?;
-        replace(&self.resume_path(), &bytes)
+        let path = self.resume_path();
+        let bytes =
+            serde_json::to_vec(&Resume { boot, intent }).map_err(|error| StoreError::Save {
+                path: path.clone(),
+                source: error.into(),
+            })?;
+        replace(&path, &bytes)
     }
 }
 
@@ -367,14 +409,15 @@ mod tests {
         );
 
         fs::write(&path, vec![b' '; MAX_BYTES + 1]).unwrap();
-        assert!(store.load().unwrap_err().contains("larger"));
+        let error = |store: &mut FileStore| prysm_ports::chain(&store.load().unwrap_err());
+        assert!(error(&mut store).contains("larger"));
         fs::write(&path, "{\"autostart\":1}").unwrap();
-        assert!(store.load().unwrap_err().contains("invalid"));
+        assert!(error(&mut store).contains("invalid"));
         fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(dir.path().join("elsewhere"), &path).unwrap();
         assert!(store.load().is_err(), "links are never followed");
         fs::remove_file(&path).unwrap();
         nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRUSR).unwrap();
-        assert!(store.load().unwrap_err().contains("regular"));
+        assert!(error(&mut store).contains("regular"));
     }
 }

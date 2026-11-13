@@ -1,6 +1,7 @@
 //! The driver against a fake bus, fake workers, memory preferences and a
 //! fake installer: requests, subscriptions, worker I/O and uninstall.
 use super::*;
+use crate::install::InstallError;
 use crate::launcher::Output;
 use crate::machine::Exit;
 use crate::preferences::MemoryStore;
@@ -66,15 +67,15 @@ impl Worker for FakeWorker {
 pub(crate) struct FakeInstaller(pub Rc<RefCell<Vec<String>>>);
 
 impl Installer for FakeInstaller {
-    fn install(&mut self) -> Result<(), String> {
+    fn install(&mut self) -> Result<(), InstallError> {
         self.0.borrow_mut().push("install".into());
         Ok(())
     }
-    fn activate(&mut self, service: &str) -> Result<(), String> {
+    fn activate(&mut self, service: &str) -> Result<(), InstallError> {
         self.0.borrow_mut().push(format!("activate {service}"));
         Ok(())
     }
-    fn uninstall(&mut self) -> Result<(), String> {
+    fn uninstall(&mut self) -> Result<(), InstallError> {
         self.0.borrow_mut().push("uninstall".into());
         Ok(())
     }

@@ -34,8 +34,10 @@ fn events_round_trip() {
         capturing: true,
         target: Some(LightingTarget::Processed),
         portal: Some("http://192.168.1.5:8787/".into()),
-        failure: Some("waiting for the receiver: refused".into()),
-        failure_kind: Some(FailureKind::Receiver),
+        failure: Some(WorkerFailure::new(
+            FailureKind::Receiver,
+            "waiting for the receiver: refused",
+        )),
         encoding: None,
         paused: false,
     });
@@ -47,6 +49,24 @@ fn events_round_trip() {
     );
     assert!(text.starts_with(br#"{"type":"status","capturing":true"#));
     assert_eq!(decode::<Event>(&text).unwrap(), status);
+    // The wire form is unchanged: the failure as `failure` and `failure_kind`.
+    assert_eq!(
+        String::from_utf8(encode(&Event::Status(WorkerStatus::default())).unwrap()).unwrap(),
+        "{\"type\":\"status\",\"capturing\":false,\"target\":null,\"portal\":null,\
+         \"failure\":null,\"failure_kind\":null,\"encoding\":null,\"paused\":false}\n"
+    );
+    // A failure without a kind (an older worker) is `other`.
+    let untyped = decode::<Event>(
+        br#"{"type":"status","capturing":false,"target":null,"portal":null,"failure":"x"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        untyped,
+        Event::Status(WorkerStatus {
+            failure: Some(WorkerFailure::other("x")),
+            ..WorkerStatus::default()
+        })
+    );
     let paused = Event::Status(WorkerStatus {
         paused: true,
         ..WorkerStatus::default()
@@ -82,6 +102,8 @@ fn unknown_types_and_fields_are_rejected() {
     for text in [
         r#"{"type":"status","capturing":true,"target":null,"portal":null,"failure":null,"pid":1}"#,
         r#"{"type":"faulted","cause":"x","code":3}"#,
+        // A kind without a failure.
+        r#"{"type":"status","capturing":false,"target":null,"portal":null,"failure":null,"failure_kind":"other"}"#,
     ] {
         assert!(decode::<Event>(text.as_bytes()).is_err(), "{text}");
     }
@@ -300,6 +322,20 @@ fn slim_encodings_have_their_serde_names() {
         );
     }
     assert!("h265".parse::<SlimEncoding>().is_err());
+}
+
+#[test]
+fn backoff_doubles_to_the_cap_and_resets() {
+    let mut backoff = Backoff::default();
+    let delays: Vec<u64> = (0..7).map(|_| backoff.delay().as_secs()).collect();
+    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
+    backoff.reset();
+    assert_eq!(backoff.delay(), Backoff::MIN);
+    let mut short = Backoff::starting_at(std::time::Duration::from_millis(20));
+    assert_eq!(short.delay().as_millis(), 20);
+    assert_eq!(short.delay().as_millis(), 40);
+    short.reset();
+    assert_eq!(short.delay().as_millis(), 20);
 }
 
 #[test]

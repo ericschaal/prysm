@@ -3,7 +3,7 @@ use crate::source::{Deadlines, DeviceFrames, Native};
 use futures::FutureExt;
 use prysm_capture::{CaptureError, CaptureExit};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Registry, Settings};
+use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::error::Error as _;
 use std::sync::mpsc;
 use std::thread;
@@ -24,12 +24,16 @@ fn frame(value: u8) -> Frame {
 
 /// Run `work` on its own thread; fail the test instead of hanging.
 fn within<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    within_for(LIMIT, work)
+}
+
+fn within_for<T: Send + 'static>(limit: Duration, work: impl FnOnce() -> T + Send + 'static) -> T {
     let (done, result) = mpsc::channel();
     thread::spawn(move || {
         let _ = done.send(work());
     });
     result
-        .recv_timeout(LIMIT)
+        .recv_timeout(limit)
         .expect("capture made no progress")
 }
 
@@ -93,17 +97,6 @@ fn disconnected() -> CaptureError {
     CaptureError::Disconnected {
         details: "cable unplugged".into(),
     }
-}
-
-fn chain(error: &Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// An opened source plus the worker driving it.
@@ -364,13 +357,13 @@ fn settings_validation_names_the_field() {
         change(&mut settings);
         DeviceSource.validate(&settings).unwrap_err().field
     };
-    assert_eq!(field(|s| s.path = " ".into()), "capture.path");
-    assert_eq!(field(|s| s.path = "a\0b".into()), "capture.path");
-    assert_eq!(field(|s| s.width = 0), "capture.width");
-    assert_eq!(field(|s| s.width = 3841), "capture.width");
-    assert_eq!(field(|s| s.height = 0), "capture.height");
-    assert_eq!(field(|s| s.height = 2161), "capture.height");
-    assert_eq!(field(|s| s.fps = 0), "capture.fps");
+    assert_eq!(field(|s| s.path = " ".into()), "path");
+    assert_eq!(field(|s| s.path = "a\0b".into()), "path");
+    assert_eq!(field(|s| s.width = 0), "width");
+    assert_eq!(field(|s| s.width = 3841), "width");
+    assert_eq!(field(|s| s.height = 0), "height");
+    assert_eq!(field(|s| s.height = 2161), "height");
+    assert_eq!(field(|s| s.fps = 0), "fps");
 
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
@@ -387,7 +380,12 @@ fn settings_validation_names_the_field() {
 #[test]
 fn real_backend_missing_device_fails_without_hanging() {
     let settings = DeviceSettings::new("/dev/prysm-test-missing-device");
-    let Err(error) = within(move || DeviceSource.open(&settings)) else {
+    // A backend that does not fail at once is bounded by the adapter's own
+    // deadlines: waiting for activation, then for release.
+    let Deadlines { ready, release } = Deadlines::DEVICE;
+    let Err(error) = within_for(ready + release + LIMIT, move || {
+        DeviceSource.open(&settings)
+    }) else {
         panic!("a missing device must not open");
     };
     assert!(!chain(&error).is_empty());

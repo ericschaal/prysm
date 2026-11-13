@@ -45,7 +45,7 @@ impl WebosSettings {
     /// Rejects settings the driver can never negotiate, without touching it.
     ///
     /// # Errors
-    /// The first invalid field, as `capture.<field>`.
+    /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
         // NV12 needs even dimensions; the driver takes 16-bit sizes up to full HD.
         let even = |field: &str, value: u32, max: u32| {
@@ -53,7 +53,7 @@ impl WebosSettings {
                 Ok(())
             } else {
                 Err(ValidationError::new(
-                    format!("capture.{field}"),
+                    field,
                     format!("must be an even number from 2 to {max}"),
                 ))
             }
@@ -61,7 +61,7 @@ impl WebosSettings {
         even("width", self.width, 1920)?;
         even("height", self.height, 1080)?;
         if !(1..=60).contains(&self.fps) {
-            return Err(ValidationError::new("capture.fps", "must be 1 to 60"));
+            return Err(ValidationError::new("fps", "must be 1 to 60"));
         }
         Ok(())
     }

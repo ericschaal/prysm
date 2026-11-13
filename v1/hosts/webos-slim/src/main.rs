@@ -4,8 +4,6 @@ mod capture;
 mod check;
 mod link;
 mod resolve;
-#[path = "../../webos/src/video.rs"]
-mod video;
 
 use capture::RequestedCapture;
 use link::{ForwarderLink, Uplink};

@@ -101,7 +101,7 @@ fn read_events(stdout: impl Read, outputs: &mpsc::Sender<Output>) {
             Ok(Some(event)) => Output::Event(event),
             // EOF: the worker is exiting; its exit status says why.
             Ok(None) => return,
-            Err(error) => Output::Broken(prysm_webos_link::chain(&error)),
+            Err(error) => Output::Broken(prysm_ports::chain(&error)),
         };
         let broken = matches!(output, Output::Broken(_));
         if outputs.send(output).is_err() || broken {

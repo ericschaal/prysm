@@ -12,11 +12,11 @@ pub(crate) const HELLO_LEN: usize = 8;
 pub(crate) const REPLY_LEN: usize = 16;
 pub(crate) const HEADER_LEN: usize = 16;
 /// Largest accepted width or height.
-pub const MAX_DIMENSION: u32 = 4096;
+pub(crate) const MAX_DIMENSION: u32 = 4096;
 /// Largest accepted payload: one 1080p RGB frame.
-pub const MAX_PAYLOAD_BYTES: usize = 1920 * 1080 * 3;
+pub(crate) const MAX_PAYLOAD_BYTES: usize = 1920 * 1080 * 3;
 /// Longest refusal reason, in bytes of UTF-8.
-pub const MAX_REASON_BYTES: usize = 1024;
+pub(crate) const MAX_REASON_BYTES: usize = 1024;
 
 /// How a stream's frame payloads are encoded, fixed per connection by the
 /// request.
@@ -74,7 +74,6 @@ pub(crate) const KEYFRAME: u8 = 1;
 
 /// Why a stream or frame cannot be encoded, or was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum WireError {
     #[error("not a Prysm frame stream")]
     Magic,
@@ -204,21 +203,32 @@ pub(crate) fn request(bytes: &[u8; HELLO_LEN]) -> Result<StreamRequest, WireErro
     Ok(request)
 }
 
-/// Refusal flag: the requested encoding is what cannot be produced (its
-/// encoder cannot start or failed); without it, the request as a whole.
-pub(crate) const REFUSED_ENCODING: u8 = 1;
+/// What a sender's refusal names as the cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// The request as a whole.
+    Request,
+    /// The requested encoding: its encoder cannot start or failed.
+    Encoding,
+}
+
+/// Refusal header flag for [`Refused::Encoding`]; without it, [`Refused::Request`].
+const REFUSED_ENCODING: u8 = 1;
 
 /// A refusal: a header with format `0`, flags (`REFUSED_ENCODING` or 0),
 /// zeros, and the reason's length, followed by the reason (UTF-8, cut to
 /// [`MAX_REASON_BYTES`]).
-pub(crate) fn refusal(reason: &str, flags: u8) -> Vec<u8> {
+pub(crate) fn refusal(reason: &str, refused: Refused) -> Vec<u8> {
     let mut end = reason.len().min(MAX_REASON_BYTES);
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
     let reason = if end == 0 { "refused" } else { &reason[..end] };
     let mut bytes = vec![0; HEADER_LEN];
-    bytes[3] = flags;
+    bytes[3] = match refused {
+        Refused::Request => 0,
+        Refused::Encoding => REFUSED_ENCODING,
+    };
     // At most MAX_REASON_BYTES.
     let len = u32::try_from(reason.len()).unwrap_or(0);
     bytes[12..16].copy_from_slice(&len.to_be_bytes());
@@ -226,14 +236,16 @@ pub(crate) fn refusal(reason: &str, flags: u8) -> Vec<u8> {
     bytes
 }
 
-/// `Some` for a refusal header (format `0`): the reason's length and flags.
-pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<(usize, u8), WireError>> {
+/// `Some` for a refusal header (format `0`): the reason's length and cause.
+pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<(usize, Refused), WireError>> {
     if bytes[0] != 0 {
         return None;
     }
-    if bytes[3] & !REFUSED_ENCODING != 0 {
-        return Some(Err(WireError::Flags(bytes[3])));
-    }
+    let refused = match bytes[3] {
+        0 => Refused::Request,
+        REFUSED_ENCODING => Refused::Encoding,
+        flags => return Some(Err(WireError::Flags(flags))),
+    };
     if bytes[1..3]
         .iter()
         .chain(&bytes[4..12])
@@ -248,7 +260,7 @@ pub(crate) fn refusal_len(bytes: &[u8; HEADER_LEN]) -> Option<Result<(usize, u8)
     let len = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
     let len = usize::try_from(len).unwrap_or(usize::MAX);
     Some(if (1..=MAX_REASON_BYTES).contains(&len) {
-        Ok((len, bytes[3]))
+        Ok((len, refused))
     } else {
         Err(WireError::ReasonLength(len))
     })
@@ -645,20 +657,23 @@ mod tests {
 
     #[test]
     fn refusals_carry_a_bounded_reason() {
-        let bytes = refusal("hardware H.264 encoder cannot start", REFUSED_ENCODING);
+        let bytes = refusal("hardware H.264 encoder cannot start", Refused::Encoding);
         let mut header = [0; HEADER_LEN];
         header.copy_from_slice(&bytes[..HEADER_LEN]);
-        assert_eq!(refusal_len(&header), Some(Ok((35, REFUSED_ENCODING))));
+        assert_eq!(refusal_len(&header), Some(Ok((35, Refused::Encoding))));
         let mut whole = [0; HEADER_LEN];
-        whole.copy_from_slice(&refusal("busy", 0)[..HEADER_LEN]);
-        assert_eq!(refusal_len(&whole), Some(Ok((4, 0))));
+        whole.copy_from_slice(&refusal("busy", Refused::Request)[..HEADER_LEN]);
+        assert_eq!(refusal_len(&whole), Some(Ok((4, Refused::Request))));
         assert_eq!(&bytes[HEADER_LEN..], b"hardware H.264 encoder cannot start");
         // Long reasons are cut on a character boundary.
         let long = "é".repeat(MAX_REASON_BYTES);
-        let bytes = refusal(&long, 0);
+        let bytes = refusal(&long, Refused::Request);
         assert_eq!(bytes.len(), HEADER_LEN + MAX_REASON_BYTES);
         assert!(std::str::from_utf8(&bytes[HEADER_LEN..]).is_ok());
-        assert_eq!(refusal("", 0).len(), HEADER_LEN + "refused".len());
+        assert_eq!(
+            refusal("", Refused::Request).len(),
+            HEADER_LEN + "refused".len()
+        );
         // Frames are not refusals; bad refusal headers are errors.
         let frame = header_bytes();
         assert_eq!(refusal_len(&frame), None);

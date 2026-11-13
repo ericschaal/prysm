@@ -1,7 +1,6 @@
 //! prysm-webos: the full TV worker. webOS capture into WLED with the web
 //! portal on the LAN, controlled by `prysm-webos-service` over its stdio.
 mod link;
-mod video;
 
 use link::EngineLink;
 use prysm_capture_webos::{VideoSignal, WebosCapture, WebosSettings};
@@ -10,10 +9,10 @@ use prysm_ports::{AdapterSettings, Error, Result, Settings, SettingsStore, Sourc
 use prysm_runtime::Prysm;
 use prysm_runtime::logging::{self, Logs};
 use prysm_settings_file::SettingsFile;
-use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use prysm_web_portal::{Access, FrontendAsset, WebPortal, lan_url};
 use prysm_webos_link::FullArgs;
 use prysm_webos_link::worker::{self, Link};
-use std::net::{SocketAddr, TcpListener, UdpSocket};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -41,7 +40,8 @@ async fn run(args: FullArgs, link: Link) -> Result<()> {
     let address = listener
         .local_addr()
         .map_err(|error| Error::adapter("cannot read the portal address", error))?;
-    let portal = portal_url(address);
+    // The URL a phone on the LAN opens; none rather than a loopback address.
+    let portal = lan_url(address);
     eprintln!(
         "prysm-webos: portal {}",
         portal.as_deref().unwrap_or("(no LAN address)")
@@ -77,20 +77,6 @@ fn seed(path: &Path) -> Result<()> {
         })?;
     }
     Ok(())
-}
-
-/// The URL a phone on the LAN opens. For a wildcard listener this is the
-/// address of the interface the default route uses (a connected UDP socket
-/// sends nothing).
-fn portal_url(address: SocketAddr) -> Option<String> {
-    let ip = if address.ip().is_unspecified() {
-        let probe = UdpSocket::bind("0.0.0.0:0").ok()?;
-        probe.connect("192.0.2.1:9").ok()?;
-        probe.local_addr().ok()?.ip()
-    } else {
-        address.ip()
-    };
-    (!ip.is_unspecified()).then(|| format!("http://{}/", SocketAddr::new(ip, address.port())))
 }
 
 #[cfg(test)]

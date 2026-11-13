@@ -1,49 +1,49 @@
 //! The engine's side of the supervisor link: commands in, status out.
-use crate::video::VideoFeed;
 use futures::future::BoxFuture;
-use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot};
+use prysm_capture_webos::VideoSignal;
+use prysm_ports::{Error, LightingTarget, Result, SessionState, Snapshot, chain};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
-use prysm_webos_link::worker::{Link, Stop, chain};
-use prysm_webos_link::{Command, Event, FailureKind, HEARTBEAT, WorkerStatus};
+use prysm_webos_link::worker::{Link, Stop};
+use prysm_webos_link::{Backoff, Command, Event, HEARTBEAT, WorkerFailure, WorkerStatus};
 use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 
-/// Retry after a failed (not faulted) session: doubling from `RETRY_MIN`.
-const RETRY_MIN: Duration = Duration::from_secs(1);
-const RETRY_MAX: Duration = Duration::from_secs(30);
-/// A session that ran this long resets the retry delay.
-const HEALTHY: Duration = Duration::from_secs(60);
-
 /// `Surface<EngineHandle>`: applies the initial target, then turns link
 /// commands into video signals and targets, reports every snapshot change
-/// (and a heartbeat) as status (the last one before a fault too), re-applies a non-Off target after a session
-/// failure with backoff, and stops the worker on a faulted session.
-pub struct EngineLink<V> {
+/// (and a heartbeat) as status (the last one before a fault too),
+/// re-applies a non-Off target after a session failure with [`Backoff`], and
+/// stops the worker on a faulted session.
+pub struct EngineLink {
     link: Link,
-    video: V,
+    video: VideoSignal,
     initial: LightingTarget,
     portal: Option<String>,
     heartbeat: Duration,
-    retry_min: Duration,
+    backoff: Backoff,
 }
 
-impl<V: VideoFeed> EngineLink<V> {
-    pub fn new(link: Link, video: V, initial: LightingTarget, portal: Option<String>) -> Self {
+impl EngineLink {
+    pub fn new(
+        link: Link,
+        video: VideoSignal,
+        initial: LightingTarget,
+        portal: Option<String>,
+    ) -> Self {
         Self {
             link,
             video,
             initial,
             portal,
             heartbeat: HEARTBEAT,
-            retry_min: RETRY_MIN,
+            backoff: Backoff::default(),
         }
     }
 
     /// Shorter timings for tests.
     #[cfg(test)]
-    pub fn with_timing(mut self, heartbeat: Duration, retry_min: Duration) -> Self {
+    pub fn with_timing(mut self, heartbeat: Duration, first_retry: Duration) -> Self {
         self.heartbeat = heartbeat;
-        self.retry_min = retry_min;
+        self.backoff = Backoff::starting_at(first_retry);
         self
     }
 
@@ -60,7 +60,7 @@ impl<V: VideoFeed> EngineLink<V> {
         let mut snapshots = engine.snapshot();
         let mut sent: Option<WorkerStatus> = None;
         let mut beat = Instant::now() + self.heartbeat;
-        let mut retry = Retry::new(self.retry_min);
+        let mut retry = Retry::new(self.backoff);
         loop {
             let snapshot = snapshots.borrow_and_update().clone();
             let status = status(&snapshot, self.portal.as_ref());
@@ -110,7 +110,7 @@ impl<V: VideoFeed> EngineLink<V> {
     }
 }
 
-impl<V: VideoFeed> Surface for EngineLink<V> {
+impl Surface for EngineLink {
     fn run(
         self: Box<Self>,
         engine: EngineHandle,
@@ -138,8 +138,7 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
             && snapshot.input.is_some_and(|input| input.receiving),
         target: Some(snapshot.target),
         portal: portal.cloned(),
-        failure: failure.map(|failure| chain(failure)),
-        failure_kind: failure.map(|_| FailureKind::Other),
+        failure: failure.map(|failure| WorkerFailure::other(chain(failure))),
         encoding: None,
         paused: false,
     }
@@ -147,17 +146,15 @@ fn status(snapshot: &Snapshot, portal: Option<&String>) -> WorkerStatus {
 
 /// When to re-apply the target after a session failure.
 struct Retry {
-    min: Duration,
-    delay: Duration,
+    backoff: Backoff,
     at: Option<Instant>,
     running_since: Option<Instant>,
 }
 
 impl Retry {
-    fn new(min: Duration) -> Self {
+    fn new(backoff: Backoff) -> Self {
         Self {
-            min,
-            delay: min,
+            backoff,
             at: None,
             running_since: None,
         }
@@ -177,12 +174,11 @@ impl Retry {
         if self
             .running_since
             .take()
-            .is_some_and(|since| now.duration_since(since) >= HEALTHY)
+            .is_some_and(|since| now.duration_since(since) >= Backoff::HEALTHY)
         {
-            self.delay = self.min;
+            self.backoff.reset();
         }
-        self.at = Some(now + self.delay);
-        self.delay = (self.delay * 2).min(RETRY_MAX);
+        self.at = Some(now + self.backoff.delay());
     }
 
     fn cancel(&mut self) {

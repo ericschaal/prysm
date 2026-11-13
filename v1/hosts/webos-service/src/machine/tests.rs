@@ -1,7 +1,7 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
 use crate::state::Phase as P;
-use prysm_webos_link::{FailureKind, ReceiverAddress, SlimEncoding};
+use prysm_webos_link::{FailureKind, ReceiverAddress, SlimEncoding, WorkerFailure};
 use serde_json::Value;
 
 fn full() -> Machine {
@@ -489,7 +489,7 @@ fn an_exit_keeps_the_workers_last_failure() {
             (
                 1,
                 Input::Worker(Event::Status(WorkerStatus {
-                    failure: Some("cannot listen on 0.0.0.0:8787".into()),
+                    failure: Some(WorkerFailure::other("cannot listen on 0.0.0.0:8787")),
                     ..WorkerStatus::default()
                 })),
                 vec![],
@@ -595,7 +595,6 @@ fn published_state_reflects_the_worker() {
             target: Some(LightingTarget::Processed),
             portal: Some("http://10.0.0.2:8787/".into()),
             failure: None,
-            failure_kind: None,
             encoding: None,
             paused: false,
         })),
@@ -710,8 +709,10 @@ fn failures_carry_their_kind() {
             (
                 1,
                 reported(WorkerStatus {
-                    failure: Some("waiting for the receiver: refused".into()),
-                    failure_kind: Some(FailureKind::Receiver),
+                    failure: Some(WorkerFailure::new(
+                        FailureKind::Receiver,
+                        "waiting for the receiver: refused",
+                    )),
                     ..WorkerStatus::default()
                 }),
                 vec![],
@@ -733,8 +734,10 @@ fn failures_carry_their_kind() {
             (
                 2,
                 reported(WorkerStatus {
-                    failure: Some("hardware H.264 cannot start".into()),
-                    failure_kind: Some(FailureKind::Encoder),
+                    failure: Some(WorkerFailure::new(
+                        FailureKind::Encoder,
+                        "hardware H.264 cannot start",
+                    )),
                     ..WorkerStatus::default()
                 }),
                 vec![],
@@ -749,7 +752,8 @@ fn failures_carry_their_kind() {
     );
     assert_eq!(state.failure_kind, Some(FailureKind::Encoder));
 
-    // The supervisor's own failures, and unkinded reports, are `other`.
+    // The supervisor's own failures are `other`; a worker's keep their kind.
+    // (A report without a kind is `other` already on the wire.)
     script(
         &mut m,
         t0,
@@ -767,7 +771,7 @@ fn failures_carry_their_kind() {
     full.handle(Pw(Active), t0);
     full.handle(
         reported(WorkerStatus {
-            failure: Some("x".into()),
+            failure: Some(WorkerFailure::other("x")),
             ..WorkerStatus::default()
         }),
         t0,

@@ -13,6 +13,8 @@ schema = ["dep:utoipa"]
 [dependencies]
 prysm-core.workspace = true
 prysm-ports.workspace = true
+# `Video`, the readiness the supervisor sends (protocol types only).
+prysm-webos-link.workspace = true
 serde.workspace = true
 tracing.workspace = true
 nix = { version = "0.31", features = ["fs", "signal", "user"] }

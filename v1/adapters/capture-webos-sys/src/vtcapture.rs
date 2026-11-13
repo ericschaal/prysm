@@ -34,7 +34,6 @@ pub enum Acquired {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum Error {
     #[error("cannot load {library}")]
     Load {
@@ -77,14 +76,18 @@ macro_rules! api {
         impl $name {
             fn load(names: &[&str]) -> Result<Self, Error> {
                 let library = library(names)?;
-                let symbol = |source| Error::Load { library: names.join(" or "), source };
-                // SAFETY: signatures and layouts match tv-native-apis. Function
-                // pointers are never used after the owning library is dropped.
-                unsafe { Ok(Self {
-                    $($field: *library.get::<$ty>(concat!($symbol, "\0").as_bytes())
-                        .map_err(symbol)?,)*
+                let missing = |source| Error::Load { library: names.join(" or "), source };
+                Ok(Self {
+                    $($field: {
+                        // SAFETY: signatures and layouts match tv-native-apis. Function
+                        // pointers are never used after the owning library is dropped.
+                        let symbol = unsafe {
+                            library.get::<$ty>(concat!($symbol, "\0").as_bytes())
+                        };
+                        *symbol.map_err(missing)?
+                    },)*
                     _library: library,
-                }) }
+                })
             }
         }
     };

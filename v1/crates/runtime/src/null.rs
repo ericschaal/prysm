@@ -47,7 +47,7 @@ impl OutputFactory for NullOutput {
         match settings.0.keys().next() {
             None => Ok(()),
             Some(field) => Err(ValidationError::new(
-                format!("output.{field}"),
+                field.as_str(),
                 "the null output takes no settings",
             )),
         }
@@ -92,7 +92,7 @@ mod tests {
 
         let extra = NullSettings(BTreeMap::from([("host".into(), ())]));
         let error = NullOutput.validate(&extra).unwrap_err();
-        assert_eq!(error.field, "output.host");
+        assert_eq!(error.field, "host");
         let extra = AdapterSettings::new(NullOutput::KIND, &extra);
         assert!(registry.open_output(&extra).is_err());
     }

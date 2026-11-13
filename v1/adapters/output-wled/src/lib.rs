@@ -14,7 +14,8 @@
 //!   live override on, not in live mode, another sender, or no answer. Prysm
 //!   does not switch WLED back; the colours show again once WLED takes them.
 //!
-//! No threads or timers beyond a bounded resolver thread at open: the runtime
+//! No threads or timers beyond a lookup thread for a host name (open waits for
+//! it within a deadline; a lookup still running is kept for the next open): the runtime
 //! rewrites the last colours while the source is briefly quiet, which keeps
 //! WLED in live mode, and after a few seconds without frames idles the output
 //! `Native` (WLED's own state) and opens it again at the next frame.

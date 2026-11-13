@@ -3,9 +3,8 @@
 use super::*;
 use crate::source::{Acquired, Backend, Fault, Limits, Tap};
 use prysm_core::{Frame, FramePool, PixelFormat};
-use prysm_ports::{AdapterSettings, Error, Registry, Settings};
+use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::collections::VecDeque;
-use std::error::Error as _;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
@@ -47,17 +46,6 @@ fn eventually(condition: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "condition not reached");
         thread::sleep(Duration::from_millis(1));
     }
-}
-
-fn chain(error: &Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 // ---- Scripted driver ----------------------------------------------------
@@ -863,14 +851,14 @@ fn settings_validation_names_the_field() {
             .unwrap_err()
             .field
     };
-    assert_eq!(field(|s| s.width = 0), "capture.width");
-    assert_eq!(field(|s| s.width = 641), "capture.width");
-    assert_eq!(field(|s| s.width = 1922), "capture.width");
-    assert_eq!(field(|s| s.height = 0), "capture.height");
-    assert_eq!(field(|s| s.height = 361), "capture.height");
-    assert_eq!(field(|s| s.height = 1082), "capture.height");
-    assert_eq!(field(|s| s.fps = 0), "capture.fps");
-    assert_eq!(field(|s| s.fps = 61), "capture.fps");
+    assert_eq!(field(|s| s.width = 0), "width");
+    assert_eq!(field(|s| s.width = 641), "width");
+    assert_eq!(field(|s| s.width = 1922), "width");
+    assert_eq!(field(|s| s.height = 0), "height");
+    assert_eq!(field(|s| s.height = 361), "height");
+    assert_eq!(field(|s| s.height = 1082), "height");
+    assert_eq!(field(|s| s.fps = 0), "fps");
+    assert_eq!(field(|s| s.fps = 61), "fps");
     let full_hd = WebosSettings {
         width: 1920,
         height: 1080,

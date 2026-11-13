@@ -1,9 +1,9 @@
-use crate::address::Host;
+use crate::address::{Host, Names};
 use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError,
+    Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError, system_lookup,
 };
 use prysm_renderer_wled::WledRenderer;
 use serde_json::{Value, json};
@@ -11,11 +11,12 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 /// Opens WLED outputs. Enable DDP reception in WLED's Sync Interfaces settings.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Wled {
     ddp_port: u16,
     /// How often an open output checks WLED's state.
     check_every: Duration,
+    names: Names,
 }
 
 impl Default for Wled {
@@ -23,6 +24,7 @@ impl Default for Wled {
         Self {
             ddp_port: 4048,
             check_every: observe::EVERY,
+            names: Names::new(system_lookup),
         }
     }
 }
@@ -34,7 +36,15 @@ impl Wled {
         Self {
             ddp_port,
             check_every: Duration::ZERO,
+            names: Names::new(system_lookup),
         }
+    }
+
+    /// Resolves names with `lookup` instead of the system resolver.
+    #[cfg(test)]
+    pub(crate) fn with_lookup(mut self, lookup: prysm_ports::Lookup) -> Self {
+        self.names = Names::new(lookup);
+        self
     }
 }
 
@@ -52,7 +62,7 @@ impl OutputFactory for Wled {
     fn open(&self, settings: &WledSettings) -> Result<Box<dyn LedOutput>> {
         settings.validate()?;
         let address = settings.device()?;
-        let ip = address.resolve(http::TIMEOUT)?;
+        let ip = self.names.resolve(&address, http::TIMEOUT)?;
         let ddp = SocketAddr::new(ip, self.ddp_port);
         let renderer = WledRenderer::new(ddp)
             .map_err(|source| Error::adapter(format!("cannot open DDP socket to {ddp}"), source))?;

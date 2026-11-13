@@ -105,12 +105,14 @@ fn unrelated_files_are_never_replaced_or_removed() {
         s.installer
             .install()
             .unwrap_err()
+            .to_string()
             .contains("unrelated Luna manifest")
     );
     assert!(
         s.installer
             .uninstall()
             .unwrap_err()
+            .to_string()
             .contains("unrelated Luna manifest")
     );
     assert_eq!(
@@ -125,12 +127,14 @@ fn unrelated_files_are_never_replaced_or_removed() {
         s.installer
             .install()
             .unwrap_err()
+            .to_string()
             .contains("unrelated boot hook")
     );
     assert!(
         s.installer
             .uninstall()
             .unwrap_err()
+            .to_string()
             .contains("unrelated boot hook")
     );
     assert_eq!(s.read("init.d/io.prysm.tv"), "#!/bin/sh\nother\n");
@@ -147,7 +151,13 @@ fn unrelated_files_are_never_replaced_or_removed() {
 fn rescan_failures_and_hangs_are_errors() {
     let mut s = sandbox();
     script(&s.path("ls-control"), "exit 4");
-    assert!(s.installer.install().unwrap_err().contains("rescan failed"));
+    assert!(
+        s.installer
+            .install()
+            .unwrap_err()
+            .to_string()
+            .contains("rescan failed")
+    );
     script(&s.path("ls-control"), "sleep 5");
     s.installer.timeout = Duration::from_millis(200);
     let started = Instant::now();
@@ -155,6 +165,7 @@ fn rescan_failures_and_hangs_are_errors() {
         s.installer
             .install()
             .unwrap_err()
+            .to_string()
             .contains("did not finish")
     );
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -172,7 +183,13 @@ fn activation_asks_for_state_and_checks_the_reply() {
         &s.path("luna-send"),
         "echo '{\"returnValue\":false,\"errorText\":\"denied\"}'",
     );
-    assert!(s.installer.activate("x").unwrap_err().contains("denied"));
+    assert!(
+        s.installer
+            .activate("x")
+            .unwrap_err()
+            .to_string()
+            .contains("denied")
+    );
     script(&s.path("luna-send"), "exit 1");
     assert!(s.installer.activate("x").is_err());
 }

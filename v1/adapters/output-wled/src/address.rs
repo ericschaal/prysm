@@ -1,10 +1,8 @@
 //! The device address: `host[:port]`, parsed at validation and resolved at open.
-use prysm_ports::{Error, Result};
+use prysm_ports::{Error, Lookup, Resolver, Result};
 use std::fmt;
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::mpsc;
-use std::thread;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 /// WLED's HTTP API port when the address names none.
@@ -80,41 +78,6 @@ impl DeviceAddress {
         }
         Ok(Self { host, port })
     }
-
-    /// The device's IP for this output's lifetime: the literal, or the name
-    /// resolved within `timeout`, preferring IPv4.
-    ///
-    /// # Errors
-    /// [`Error::Adapter`] when the name does not resolve in time or resolves
-    /// only to a non-unicast address.
-    pub fn resolve(&self, timeout: Duration) -> Result<IpAddr> {
-        let name = match &self.host {
-            Host::Ip(ip) => return Ok(*ip),
-            Host::Name(name) => name.clone(),
-        };
-        let port = self.port;
-        let lookup = move || {
-            (name.as_str(), port)
-                .to_socket_addrs()
-                .map(Iterator::collect)
-        };
-        let addresses = resolve_within(lookup, timeout).map_err(|source| {
-            Error::adapter(format!("cannot resolve WLED host {}", self.host), source)
-        })?;
-        let ip = prefer_ipv4(&addresses).ok_or_else(|| {
-            Error::adapter(
-                format!("cannot resolve WLED host {}", self.host),
-                io::Error::new(io::ErrorKind::NotFound, "no addresses"),
-            )
-        })?;
-        if !is_unicast(ip) {
-            return Err(Error::other(format!(
-                "WLED host {} resolved to {ip}, which is not a unicast address",
-                self.host
-            )));
-        }
-        Ok(ip)
-    }
 }
 
 /// `host[:port]` as configured, for the HTTP `Host` header and messages.
@@ -136,16 +99,6 @@ impl fmt::Display for Host {
             Self::Name(name) => f.write_str(name),
         }
     }
-}
-
-/// The first IPv4 address, else the first address: many WLED networks route
-/// IPv4 only even when a name also has an IPv6 record.
-pub(crate) fn prefer_ipv4(addresses: &[SocketAddr]) -> Option<IpAddr> {
-    addresses
-        .iter()
-        .find(|address| address.is_ipv4())
-        .or_else(|| addresses.first())
-        .map(SocketAddr::ip)
 }
 
 /// Splits off `:port`. A bare IPv6 literal has colons but no port.
@@ -209,27 +162,49 @@ fn is_unicast(ip: IpAddr) -> bool {
     !(ip.is_unspecified() || ip.is_multicast() || broadcast)
 }
 
-/// Runs a blocking `lookup` on a helper thread and waits at most `timeout`.
-/// The system resolver cannot be cancelled: a lookup that outlives the deadline
-/// finishes on its own thread and its result is dropped.
-pub(crate) fn resolve_within<F>(lookup: F, timeout: Duration) -> io::Result<Vec<SocketAddr>>
-where
-    F: FnOnce() -> io::Result<Vec<SocketAddr>> + Send + 'static,
-{
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::Builder::new()
-        .name("wled-resolve".into())
-        .spawn(move || {
-            let _ = sender.send(lookup());
-        })?;
-    match receiver.recv_timeout(timeout) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("no answer within {} ms", timeout.as_millis()),
-        )),
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err(io::Error::other("resolver thread ended without an answer"))
+/// Resolves device names for every output a factory opens. The pending
+/// lookup of a slow name is kept across opens, so a hanging resolver holds at
+/// most one thread rather than one per reopen.
+#[derive(Debug)]
+pub(crate) struct Names {
+    lookup: Lookup,
+    resolver: Mutex<Option<Resolver>>,
+}
+
+impl Names {
+    pub(crate) fn new(lookup: Lookup) -> Self {
+        Self {
+            lookup,
+            resolver: Mutex::new(None),
         }
+    }
+
+    /// The device's IP for an output's lifetime: the literal, or the name
+    /// resolved within `wait`, preferring IPv4.
+    ///
+    /// # Errors
+    /// [`Error::Adapter`] when the name does not resolve in time or resolves
+    /// only to a non-unicast address.
+    pub(crate) fn resolve(&self, address: &DeviceAddress, wait: Duration) -> Result<IpAddr> {
+        let name = match &address.host {
+            Host::Ip(ip) => return Ok(*ip),
+            Host::Name(name) => name,
+        };
+        let mut resolver = self.resolver.lock().unwrap_or_else(PoisonError::into_inner);
+        resolver.take_if(|resolver| resolver.host() != name || resolver.port() != address.port);
+        let ip = resolver
+            .get_or_insert_with(|| Resolver::new(name, address.port).with_lookup(self.lookup))
+            .resolve(wait)
+            .map_err(|source| {
+                Error::adapter(format!("cannot resolve WLED host {}", address.host), source)
+            })?
+            .ip();
+        if !is_unicast(ip) {
+            return Err(Error::other(format!(
+                "WLED host {} resolved to {ip}, which is not a unicast address",
+                address.host
+            )));
+        }
+        Ok(ip)
     }
 }

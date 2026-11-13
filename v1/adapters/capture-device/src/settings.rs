@@ -50,32 +50,29 @@ impl DeviceSettings {
     /// Rejects settings that can never open, without touching hardware.
     ///
     /// # Errors
-    /// The first invalid field, as `capture.<field>`.
+    /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.path.trim().is_empty() || self.path.contains('\0') {
             return Err(ValidationError::new(
-                "capture.path",
+                "path",
                 "a device path or identifier is required",
             ));
         }
         if let Err(reason) = CaptureResolution::new(self.width, self.height) {
             let field = if self.width == 0 || self.width > 3840 {
-                "capture.width"
+                "width"
             } else {
-                "capture.height"
+                "height"
             };
             return Err(ValidationError::new(field, reason));
         }
         // AVFoundation expresses frame durations with an i32 timescale.
         if self.fps == 0 || (cfg!(target_os = "macos") && i32::try_from(self.fps).is_err()) {
-            return Err(ValidationError::new(
-                "capture.fps",
-                "must be a positive frame rate",
-            ));
+            return Err(ValidationError::new("fps", "must be a positive frame rate"));
         }
         if !cfg!(any(target_os = "linux", target_os = "macos")) {
             return Err(ValidationError::new(
-                "capture.kind",
+                "kind",
                 "video device capture is unsupported on this platform",
             ));
         }

@@ -1,8 +1,7 @@
 use super::*;
 use crate::source::{Deadlines, FileFrames, STDERR_TAIL, ffmpeg};
 use prysm_core::{Frame, PixelFormat};
-use prysm_ports::{AdapterSettings, Pull, Registry, Settings};
-use std::error::Error as _;
+use prysm_ports::{AdapterSettings, Pull, Registry, Settings, chain};
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -61,17 +60,6 @@ fn pull(frames: &mut FileFrames) -> prysm_ports::Result<Option<Frame>> {
 /// The next frame, waiting past any `Idle`.
 fn next(frames: &mut FileFrames) -> prysm_ports::Result<Frame> {
     Ok(pull(frames)?.expect("playback ended"))
-}
-
-fn chain(error: &Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// The adapter error's preserved cause, downcast.
@@ -352,13 +340,13 @@ fn settings_validation_names_the_field() {
         change(&mut settings);
         FileSource.validate(&settings).unwrap_err().field
     };
-    assert_eq!(field(|s| s.path = " ".into()), "capture.path");
-    assert_eq!(field(|s| s.path = "a\0b".into()), "capture.path");
-    assert_eq!(field(|s| s.width = 0), "capture.width");
-    assert_eq!(field(|s| s.width = 3841), "capture.width");
-    assert_eq!(field(|s| s.height = 0), "capture.height");
-    assert_eq!(field(|s| s.height = 2161), "capture.height");
-    assert_eq!(field(|s| s.fps = 0), "capture.fps");
+    assert_eq!(field(|s| s.path = " ".into()), "path");
+    assert_eq!(field(|s| s.path = "a\0b".into()), "path");
+    assert_eq!(field(|s| s.width = 0), "width");
+    assert_eq!(field(|s| s.width = 3841), "width");
+    assert_eq!(field(|s| s.height = 0), "height");
+    assert_eq!(field(|s| s.height = 2161), "height");
+    assert_eq!(field(|s| s.fps = 0), "fps");
     FileSource
         .validate(&FileSettings::new("/videos/clip.mkv"))
         .unwrap();

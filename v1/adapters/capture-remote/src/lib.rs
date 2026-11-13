@@ -14,7 +14,7 @@ mod request;
 mod sender;
 mod wire;
 
-pub use receiver::{POLL_INTERVAL, RemoteReceiver, RemoteReceiverSettings, RemoteSource};
+pub use receiver::{RemoteReceiver, RemoteReceiverSettings, RemoteSource};
 pub use request::{StreamEncoding, StreamRequest};
-pub use sender::{CONNECT_TIMEOUT, RemoteSender, WRITE_TIMEOUT};
-pub use wire::{MAX_DIMENSION, MAX_PAYLOAD_BYTES, MAX_REASON_BYTES, VERSION, WireError};
+pub use sender::{RemoteSender, SendError};
+pub use wire::{VERSION, WireError};

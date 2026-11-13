@@ -79,6 +79,8 @@ impl SourceFactory for Camera {
 // Frames: next_frame(timeout) -> Ok(Pull::Frame(f)), Ok(Pull::Idle) on timeout,
 // Ok(Pull::Ended) when finished (lighting stops cleanly); close(self: Box<Self>) releases.
 // A push-style backend stores frames in a LatestSlot and takes them in next_frame.
+// ValidationError fields are relative to the section ("fps"); the registry reports
+// them as "capture.fps".
 ```
 
 An **output** is the same shape with `OutputFactory` and `LedOutput`

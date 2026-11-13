@@ -6,6 +6,7 @@
 //! - Supervisor → worker: [`Command`] lines on the worker's stdin.
 //! - Worker → supervisor: [`Event`] lines on the worker's original stdout.
 //! - End: the worker's [`exit`] code.
+//! - Shared policy: the retry [`Backoff`] of both sides.
 //!
 //! Framing ([`encode`], [`LineReader`]): one JSON object per line, at most
 //! [`MAX_LINE`] bytes including the newline, unknown fields rejected. A bad
@@ -41,13 +42,19 @@ pub enum Command {
     Lighting { target: LightingTarget },
 }
 
-/// The TV's main video output. Maps 1:1 to `prysm_capture_webos::Video`.
+/// The TV's main video output, as Luna `videooutput/getStatus` reports the
+/// `MAIN` sink. Also the webOS capture adapter's readiness input
+/// (`prysm_capture_webos::VideoSignal`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Video {
+    /// No report yet. Capture is attempted, bounded by the adapter's
+    /// preparation limit.
     #[default]
     Unknown,
+    /// Disconnected or zero-sized. The native tap is released and frames stop.
     Unavailable,
+    /// Connected with a size and frame rate. Muted video still counts.
     Available,
 }
 
@@ -63,7 +70,7 @@ pub enum Event {
 
 /// What a worker is doing.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(into = "StatusLine", try_from = "StatusLine")]
 pub struct WorkerStatus {
     /// Frames are flowing. Full: a lighting session is running and frames
     /// arrived in the last second (false while it waits for video). Slim:
@@ -73,20 +80,138 @@ pub struct WorkerStatus {
     pub target: Option<LightingTarget>,
     /// Full only: the portal's LAN address, such as `http://192.168.1.5:8787/`.
     pub portal: Option<String>,
-    /// The last failure with its cause chain.
-    pub failure: Option<String>,
-    /// What `failure` is; set exactly when `failure` is.
-    #[serde(default)]
-    pub failure_kind: Option<FailureKind>,
+    /// The last failure.
+    pub failure: Option<WorkerFailure>,
     /// Slim only: the encoding of the frames being sent, while connected to
     /// the receiver (always the one it requested).
-    #[serde(default)]
     pub encoding: Option<SlimEncoding>,
     /// Slim only: the receiver paused the stream (its lighting is off), and
     /// the TV capture is stopped until it asks for frames again. Not a
     /// failure: `failure` is unset meanwhile.
-    #[serde(default)]
     pub paused: bool,
+}
+
+/// A failure a worker or the supervisor reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerFailure {
+    pub kind: FailureKind,
+    /// What failed, with its cause chain.
+    pub message: String,
+}
+
+impl WorkerFailure {
+    #[must_use]
+    pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// A failure of kind [`FailureKind::Other`].
+    #[must_use]
+    pub fn other(message: impl Into<String>) -> Self {
+        Self::new(FailureKind::Other, message)
+    }
+}
+
+/// The wire form of [`WorkerStatus`]: the failure as two fields, `failure`
+/// (the message) and `failure_kind`, set together.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatusLine {
+    capturing: bool,
+    target: Option<LightingTarget>,
+    portal: Option<String>,
+    failure: Option<String>,
+    #[serde(default)]
+    failure_kind: Option<FailureKind>,
+    #[serde(default)]
+    encoding: Option<SlimEncoding>,
+    #[serde(default)]
+    paused: bool,
+}
+
+impl From<WorkerStatus> for StatusLine {
+    fn from(status: WorkerStatus) -> Self {
+        let (failure, failure_kind) = status.failure.map_or((None, None), |failure| {
+            (Some(failure.message), Some(failure.kind))
+        });
+        Self {
+            capturing: status.capturing,
+            target: status.target,
+            portal: status.portal,
+            failure,
+            failure_kind,
+            encoding: status.encoding,
+            paused: status.paused,
+        }
+    }
+}
+
+impl TryFrom<StatusLine> for WorkerStatus {
+    type Error = &'static str;
+
+    fn try_from(line: StatusLine) -> Result<Self, Self::Error> {
+        let failure = match (line.failure, line.failure_kind) {
+            (Some(message), kind) => Some(WorkerFailure::new(
+                kind.unwrap_or(FailureKind::Other),
+                message,
+            )),
+            (None, None) => None,
+            (None, Some(_)) => return Err("`failure_kind` without `failure`"),
+        };
+        Ok(Self {
+            capturing: line.capturing,
+            target: line.target,
+            portal: line.portal,
+            failure,
+            encoding: line.encoding,
+            paused: line.paused,
+        })
+    }
+}
+
+/// Delays between attempts after failures: [`Backoff::MIN`] doubling to
+/// [`Backoff::MAX`], back to the start after [`Backoff::HEALTHY`]. The full
+/// worker uses it to re-apply a failed session, the supervisor to restart a
+/// failed worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Backoff {
+    first: Duration,
+    next: Duration,
+}
+
+impl Backoff {
+    pub const MIN: Duration = Duration::from_secs(1);
+    pub const MAX: Duration = Duration::from_secs(30);
+    /// Running this long without a failure resets the delay.
+    pub const HEALTHY: Duration = Duration::from_secs(60);
+
+    /// Starting at `first` instead of [`Backoff::MIN`] (tests).
+    #[must_use]
+    pub const fn starting_at(first: Duration) -> Self {
+        Self { first, next: first }
+    }
+
+    /// The delay before the next attempt; the one after it doubles, up to
+    /// [`Backoff::MAX`].
+    pub fn delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = (delay * 2).min(Self::MAX);
+        delay
+    }
+
+    /// Start over at the first delay.
+    pub fn reset(&mut self) {
+        self.next = self.first;
+    }
+}
+
+impl Default for Backoff {
+    fn default() -> Self {
+        Self::starting_at(Self::MIN)
+    }
 }
 
 /// What a reported failure is, so the TV app can offer the matching fix.
@@ -128,8 +253,6 @@ pub mod exit {
         }
     }
 }
-
-pub use prysm_ports::chain;
 
 #[cfg(test)]
 mod tests;

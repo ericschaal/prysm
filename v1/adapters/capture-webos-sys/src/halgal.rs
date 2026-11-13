@@ -75,13 +75,15 @@ fn hal() -> Result<&'static HalApi, Error> {
         return Ok(api);
     }
     let names = ["libhalgal.so.1", "libhalgal.so"];
-    let library = library(&names)?;
+    // Never unloaded, not even when a symbol is missing: unloading libhalgal
+    // leaks file descriptors.
+    let library = &*Box::leak(Box::new(library(&names)?));
     let symbol = |source| Error::Load {
         library: names.join(" or "),
         source,
     };
-    // SAFETY: the signatures match halgal.h. The library is leaked below, so
-    // the function pointers stay valid for the life of the process.
+    // SAFETY: the signatures match halgal.h. The library is leaked, so the
+    // function pointers stay valid for the life of the process.
     let api = unsafe {
         HalApi {
             init: *library.get::<HalInit>(b"HAL_GAL_Init\0").map_err(symbol)?,
@@ -96,8 +98,6 @@ fn hal() -> Result<&'static HalApi, Error> {
                 .map_err(symbol)?,
         }
     };
-    // Never unloaded: unloading libhalgal leaks file descriptors.
-    std::mem::forget(library);
     let api: &'static HalApi = Box::leak(Box::new(api));
     *slot = Some(api);
     Ok(api)

@@ -107,14 +107,14 @@ impl Default for StreamRequest {
 
 impl StreamRequest {
     /// # Errors
-    /// The first invalid field, as `capture.<field>`.
+    /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
         let even = |field: &str, value: u32, max: u32| {
             if (2..=max).contains(&value) && value.is_multiple_of(2) {
                 Ok(())
             } else {
                 Err(ValidationError::new(
-                    format!("capture.{field}"),
+                    field,
                     format!("must be an even number from 2 to {max}"),
                 ))
             }
@@ -122,11 +122,11 @@ impl StreamRequest {
         even("width", self.width, 1920)?;
         even("height", self.height, 1080)?;
         if !(1..=60).contains(&self.fps) {
-            return Err(ValidationError::new("capture.fps", "must be 1 to 60"));
+            return Err(ValidationError::new("fps", "must be 1 to 60"));
         }
         if self.encoding != StreamEncoding::Raw && (self.width < 16 || self.height < 16) {
             return Err(ValidationError::new(
-                "capture.encoding",
+                "encoding",
                 "H.264 needs at least 16x16; use raw for smaller pictures",
             ));
         }
@@ -174,29 +174,29 @@ mod tests {
                     width: 321,
                     ..request
                 },
-                "capture.width",
+                "width",
             ),
             (
                 StreamRequest {
                     width: 1922,
                     ..request
                 },
-                "capture.width",
+                "width",
             ),
             (
                 StreamRequest {
                     height: 0,
                     ..request
                 },
-                "capture.height",
+                "height",
             ),
-            (StreamRequest { fps: 61, ..request }, "capture.fps"),
+            (StreamRequest { fps: 61, ..request }, "fps"),
             (
                 StreamRequest {
                     width: 8,
                     ..request
                 },
-                "capture.encoding",
+                "encoding",
             ),
         ] {
             assert_eq!(bad.validate().unwrap_err().field, field, "{bad:?}");

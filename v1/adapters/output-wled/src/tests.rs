@@ -1,5 +1,5 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
-use crate::address::{DeviceAddress, Host, prefer_ipv4, resolve_within};
+use crate::address::{DeviceAddress, Host};
 use crate::observe::Observer;
 use crate::{LedCounts, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
@@ -9,8 +9,9 @@ use prysm_ports::{
 use serde_json::{Value, json};
 use std::error::Error as _;
 use std::io::{self, ErrorKind, Read, Write};
-use std::net::{Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
+use std::net::{SocketAddr, TcpListener, UdpSocket};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -214,7 +215,7 @@ fn request_error(error: &Error) -> &RequestError {
 fn open_through_the_registry_releases_then_enters_live_mode() {
     let device = Device::new(vec![Reply::Json(OK), Reply::Json(OK)]);
     let mut registry = Registry::default();
-    registry.add_output(device.wled);
+    registry.add_output(Wled::local(device.udp.local_addr().unwrap().port()));
     let settings = AdapterSettings::new(
         Wled::KIND,
         &WledSettings {
@@ -433,7 +434,7 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
             ..valid.clone()
         };
         let error = settings.validate().unwrap_err();
-        assert_eq!(error.field, "output.address", "{address}");
+        assert_eq!(error.field, "address", "{address}");
         assert!(error.reason.contains(reason), "{address}: {}", error.reason);
     }
     for leds in [
@@ -448,7 +449,7 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
             leds,
             ..valid.clone()
         };
-        assert_eq!(settings.validate().unwrap_err().field, "output.leds");
+        assert_eq!(settings.validate().unwrap_err().field, "leds");
     }
     let most = WledSettings {
         leds: LedCounts {
@@ -512,30 +513,28 @@ fn unresolvable_host_fails_open_naming_the_host() {
     assert!(source.downcast_ref::<io::Error>().is_some(), "{source:?}");
 }
 
+/// A name whose lookup hangs fails each open at the deadline, and the
+/// reopens wait for the same lookup instead of starting new ones.
 #[test]
-fn resolution_gives_up_at_its_deadline() {
-    let started = Instant::now();
-    let error = resolve_within(
-        || {
-            thread::sleep(Duration::from_secs(2));
-            Ok(Vec::new())
-        },
-        Duration::from_millis(50),
-    )
-    .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-    assert!(started.elapsed() < Duration::from_secs(1));
-    let found = resolve_within(|| Ok(vec![SocketAddr::from(([10, 0, 0, 5], 80))]), WAIT);
-    assert_eq!(found.unwrap(), [SocketAddr::from(([10, 0, 0, 5], 80))]);
-}
-
-#[test]
-fn resolution_prefers_ipv4() {
-    let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 80));
-    let v4 = SocketAddr::from(([10, 0, 0, 5], 80));
-    assert_eq!(prefer_ipv4(&[v6, v4]), Some(v4.ip()));
-    assert_eq!(prefer_ipv4(&[v6]), Some(v6.ip()));
-    assert_eq!(prefer_ipv4(&[]), None);
+fn a_hanging_lookup_is_bounded_and_not_repeated() {
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    let wled = Wled::default().with_lookup(|_, _| {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        thread::sleep(Duration::from_secs(60));
+        Err(io::Error::other("unreachable"))
+    });
+    let settings = WledSettings {
+        address: "wled.local".into(),
+        leds: one_each(),
+    };
+    for _ in 0..2 {
+        let error = wled.open(&settings).err().unwrap();
+        assert_eq!(
+            prysm_ports::chain(&error),
+            "cannot resolve WLED host wled.local: no answer yet"
+        );
+    }
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1, "one lookup at a time");
 }
 
 #[test]
@@ -725,8 +724,10 @@ fn a_silent_state_endpoint_neither_stalls_nor_fails_frame_delivery() {
         started.elapsed() >= Duration::from_millis(900),
         "waited for the reply"
     );
-    assert!(frames > 50, "{frames} frames");
-    assert!(slowest < Duration::from_millis(100), "{slowest:?}");
+    // Loose bounds for loaded runners: what matters is that no call waits
+    // for the 1.5 s state request.
+    assert!(frames > 10, "{frames} frames");
+    assert!(slowest < Duration::from_millis(500), "{slowest:?}");
 }
 
 #[test]

@@ -65,7 +65,7 @@ impl WledSettings {
         self.device()?;
         if !(1..=u32::from(u16::MAX)).contains(&self.leds.total()) {
             return Err(ValidationError::new(
-                "output.leds",
+                "leds",
                 "total LED count must be between 1 and 65535",
             ));
         }
@@ -74,7 +74,7 @@ impl WledSettings {
 
     pub(crate) fn device(&self) -> Result<DeviceAddress, ValidationError> {
         DeviceAddress::parse(&self.address)
-            .map_err(|reason| ValidationError::new("output.address", reason))
+            .map_err(|reason| ValidationError::new("address", reason))
     }
 }
 

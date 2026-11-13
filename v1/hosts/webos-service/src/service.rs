@@ -8,6 +8,7 @@ use crate::machine::{Effect, Input, Machine, Spec};
 use crate::observe;
 use crate::preferences::{Preferences, PreferencesStore};
 use crate::state::{Flavor, Power, State};
+use prysm_ports::chain;
 use prysm_webos_link::{LightingTarget, Video};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -62,11 +63,28 @@ pub const METHODS: [&str; 4] = [
 /// Subscription key of `getState`.
 pub const STATE_KEY: &str = "/getState";
 
-/// The two subscriptions the service keeps, in call order.
+/// The two subscriptions the service keeps, in call order: the
+/// discriminant is the call's index in [`WATCHES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Watch {
     Power = 0,
     Video = 1,
+}
+
+/// When each subscription is renewed, unless a good reply came first.
+#[derive(Debug, Clone, Copy)]
+struct Renewals {
+    power: Option<Instant>,
+    video: Option<Instant>,
+}
+
+impl Renewals {
+    fn of(&mut self, watch: Watch) -> &mut Option<Instant> {
+        match watch {
+            Watch::Power => &mut self.power,
+            Watch::Video => &mut self.video,
+        }
+    }
 }
 
 /// `(uri, payload)` of each [`Watch`], in order.
@@ -133,7 +151,7 @@ pub struct Service<L: Launcher, S: PreferencesStore, I: Installer> {
     store: S,
     installer: I,
     worker: Option<L::Worker>,
-    retry: [Option<Instant>; 2],
+    renew: Renewals,
     video_context: Option<Value>,
     published: Option<String>,
     /// The intent last given to the store.
@@ -155,7 +173,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             },
             Ok(None) => defaults,
             Err(error) => {
-                eprintln!("prysm-webos-service: ignoring saved preferences: {error}");
+                eprintln!(
+                    "prysm-webos-service: ignoring saved preferences: {}",
+                    chain(&error)
+                );
                 defaults
             }
         };
@@ -172,7 +193,10 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             store,
             installer,
             worker: None,
-            retry: [Some(now + RESUBSCRIBE); 2],
+            renew: Renewals {
+                power: Some(now + RESUBSCRIBE),
+                video: Some(now + RESUBSCRIBE),
+            },
             video_context: None,
             published: None,
             remembered: resumed,
@@ -242,7 +266,9 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
                 let preferences: Preferences =
                     serde_json::from_value(payload).map_err(parse_error)?;
                 preferences.validate(self.config.flavor)?;
-                self.store.save(&preferences)?;
+                self.store
+                    .save(&preferences)
+                    .map_err(|error| chain(&error))?;
                 self.input(bus, Input::Preferences(preferences), now);
                 Ok(self.state_reply())
             }
@@ -269,7 +295,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         let reading = serde_json::from_str(payload)
             .ok()
             .and_then(|value: Value| observe::power(&value));
-        let slot = &mut self.retry[Watch::Power as usize];
+        let slot = self.renew.of(Watch::Power);
         if reading.is_some() {
             *slot = None;
         } else {
@@ -282,7 +308,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
     pub fn video(&mut self, bus: &mut impl Bus, payload: &str, now: Instant) {
         let value = serde_json::from_str(payload).unwrap_or(Value::Null);
         let reading = observe::video(&value);
-        let slot = &mut self.retry[Watch::Video as usize];
+        let slot = self.renew.of(Watch::Video);
         if reading.settled {
             *slot = None;
         } else {
@@ -311,7 +337,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         self.poll_worker(bus, now);
         self.input(bus, Input::Tick, now);
         for watch in [Watch::Power, Watch::Video] {
-            let slot = &mut self.retry[watch as usize];
+            let slot = self.renew.of(watch);
             if slot.is_some_and(|at| now >= at) {
                 *slot = Some(now + RESUBSCRIBE);
                 bus.resubscribe(watch);
@@ -327,7 +353,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
         if self.uninstall == Uninstall::Requested
             && let Err(error) = self.installer.uninstall()
         {
-            eprintln!("prysm-webos-service: uninstall failed: {error}");
+            eprintln!("prysm-webos-service: uninstall failed: {}", chain(&error));
         }
         false
     }
@@ -370,7 +396,7 @@ impl<L: Launcher, S: PreferencesStore, I: Installer> Service<L, S, I> {
             // Best effort, reported once per change.
             self.remembered = Some(intent);
             if let Err(error) = self.store.remember(intent) {
-                eprintln!("prysm-webos-service: {error}");
+                eprintln!("prysm-webos-service: {}", chain(&error));
             }
         }
     }

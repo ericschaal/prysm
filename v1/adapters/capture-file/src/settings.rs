@@ -60,27 +60,24 @@ impl FileSettings {
     /// Rejects settings that can never open, without touching the file.
     ///
     /// # Errors
-    /// The first invalid field, as `capture.<field>`.
+    /// The first invalid field, relative to the `capture` section.
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.path.trim().is_empty() || self.path.contains('\0') {
             return Err(ValidationError::new(
-                "capture.path",
+                "path",
                 "a video file path is required",
             ));
         }
         if let Err(reason) = CaptureResolution::new(self.width, self.height) {
             let field = if self.width == 0 || self.width > 3840 {
-                "capture.width"
+                "width"
             } else {
-                "capture.height"
+                "height"
             };
             return Err(ValidationError::new(field, reason));
         }
         if self.fps == 0 {
-            return Err(ValidationError::new(
-                "capture.fps",
-                "must be a positive frame rate",
-            ));
+            return Err(ValidationError::new("fps", "must be a positive frame rate"));
         }
         Ok(())
     }

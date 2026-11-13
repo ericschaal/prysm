@@ -493,10 +493,10 @@ fn factory_decodes_validates_and_opens() {
                 width: 321,
                 ..settings
             },
-            "capture.width",
+            "width",
         ),
-        (RemoteReceiverSettings { fps: 0, ..settings }, "capture.fps"),
-        (RemoteReceiverSettings::new(any_port()), "capture.listen"),
+        (RemoteReceiverSettings { fps: 0, ..settings }, "fps"),
+        (RemoteReceiverSettings::new(any_port()), "listen"),
     ] {
         assert_eq!(RemoteReceiver.validate(&bad).unwrap_err().field, field);
     }

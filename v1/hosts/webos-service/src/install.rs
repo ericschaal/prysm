@@ -14,22 +14,69 @@ use std::time::{Duration, Instant};
 pub const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPLY: usize = 65_536;
 
+/// Why registration could not be changed.
+#[derive(Debug, thiserror::Error)]
+pub enum InstallError {
+    #[error("boot hook {}", path.display())]
+    Hook {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("refusing to change an unrelated boot hook: {}", .0.display())]
+    UnrelatedHook(PathBuf),
+    #[error("manifest {}", path.display())]
+    Manifest {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("refusing to change an unrelated Luna manifest: {}", .0.display())]
+    UnrelatedManifest(PathBuf),
+    #[error("cannot run {program}")]
+    Spawn {
+        program: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cannot wait for {program}")]
+    Wait {
+        program: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("{program} did not finish within {timeout:?}")]
+    Timeout { program: String, timeout: Duration },
+    #[error("Luna service rescan failed: {0}")]
+    Rescan(ExitStatus),
+    #[error("Luna service activation failed: {0}")]
+    Activation(ExitStatus),
+    #[error("Luna service activation failed: {0}")]
+    ActivationRefused(Value),
+    #[error("invalid Luna activation reply")]
+    InvalidReply(#[source] serde_json::Error),
+    #[error("oversized Luna activation reply")]
+    OversizedReply,
+}
+
+type Result<T> = std::result::Result<T, InstallError>;
+
 pub trait Installer {
     /// Write both manifests and the boot hook, then rescan. Idempotent.
     ///
     /// # Errors
     /// An unrelated file is in the way, a write failed, or the rescan failed.
-    fn install(&mut self) -> Result<(), String>;
+    fn install(&mut self) -> Result<()>;
     /// Ask the bus to start the service and check its reply.
     ///
     /// # Errors
     /// No successful reply within the bound.
-    fn activate(&mut self, service: &str) -> Result<(), String>;
+    fn activate(&mut self, service: &str) -> Result<()>;
     /// Remove the hook and both manifests, then rescan. Settings stay.
     ///
     /// # Errors
     /// An unrelated file is in the way, a removal failed, or the rescan failed.
-    fn uninstall(&mut self) -> Result<(), String>;
+    fn uninstall(&mut self) -> Result<()>;
 }
 
 /// Where registration lives. Production paths come from the package identity;
@@ -111,35 +158,37 @@ impl FsInstaller {
         }
     }
 
-    fn rescan(&self) -> Result<(), String> {
+    fn rescan(&self) -> Result<()> {
         let (status, _) = run_bounded(
             Command::new(&self.layout.scanner).arg("scan-services"),
             self.timeout,
             false,
         )?;
         if !status.success() {
-            return Err(format!("Luna service rescan failed: {status}"));
+            return Err(InstallError::Rescan(status));
         }
         Ok(())
     }
 
-    fn hook(&self, install: bool) -> Result<(), String> {
+    fn hook(&self, install: bool) -> Result<()> {
         let path = &self.layout.hook;
         let script = self.layout.hook_script();
-        let failed = |error: io::Error| format!("boot hook {}: {error}", path.display());
+        let failed = |source: io::Error| InstallError::Hook {
+            path: path.clone(),
+            source,
+        };
         let existing = read_private(path, MAX_REPLY).map_err(failed)?;
         if existing
             .as_deref()
             .is_some_and(|bytes| bytes != script.as_bytes())
         {
-            return Err(format!(
-                "refusing to change an unrelated boot hook: {}",
-                path.display()
-            ));
+            return Err(InstallError::UnrelatedHook(path.clone()));
         }
         match (install, existing.is_some()) {
             (true, false) => {
-                let parent = path.parent().ok_or("boot hook has no directory")?;
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| failed(io::Error::other("no directory")))?;
                 fs::create_dir_all(parent).map_err(failed)?;
                 let mut file = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
                 file.write_all(script.as_bytes()).map_err(failed)?;
@@ -162,7 +211,7 @@ impl FsInstaller {
 }
 
 impl Installer for FsInstaller {
-    fn install(&mut self) -> Result<(), String> {
+    fn install(&mut self) -> Result<()> {
         let (path, value) = self.layout.supervisor_manifest();
         manifest(&path, &value, true)?;
         let (path, value) = self.layout.worker_manifest();
@@ -171,7 +220,7 @@ impl Installer for FsInstaller {
         self.rescan()
     }
 
-    fn activate(&mut self, service: &str) -> Result<(), String> {
+    fn activate(&mut self, service: &str) -> Result<()> {
         let (status, stdout) = run_bounded(
             Command::new(&self.layout.luna_send)
                 .args(["-w", "5000", "-n", "1"])
@@ -181,12 +230,12 @@ impl Installer for FsInstaller {
             true,
         )?;
         if !status.success() {
-            return Err(format!("Luna service activation failed: {status}"));
+            return Err(InstallError::Activation(status));
         }
         activation_reply(&stdout)
     }
 
-    fn uninstall(&mut self) -> Result<(), String> {
+    fn uninstall(&mut self) -> Result<()> {
         self.hook(false)?;
         let (path, value) = self.layout.worker_manifest();
         manifest(&path, &value, false)?;
@@ -197,15 +246,15 @@ impl Installer for FsInstaller {
 }
 
 /// Install (create if missing) or remove (if ours) one manifest.
-fn manifest(path: &Path, value: &Value, install: bool) -> Result<(), String> {
-    let failed = |error: io::Error| format!("manifest {}: {error}", path.display());
+fn manifest(path: &Path, value: &Value, install: bool) -> Result<()> {
+    let failed = |source: io::Error| InstallError::Manifest {
+        path: path.to_owned(),
+        source,
+    };
     match read_private(path, MAX_REPLY).map_err(failed)? {
         Some(bytes) => {
             if serde_json::from_slice::<Value>(&bytes).ok().as_ref() != Some(value) {
-                return Err(format!(
-                    "refusing to change an unrelated Luna manifest: {}",
-                    path.display()
-                ));
+                return Err(InstallError::UnrelatedManifest(path.to_owned()));
             }
             if !install {
                 fs::remove_file(path).map_err(failed)?;
@@ -218,7 +267,9 @@ fn manifest(path: &Path, value: &Value, install: bool) -> Result<(), String> {
                 .mode(0o644)
                 .open(path)
                 .map_err(failed)?;
-            let mut bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+            let mut bytes = serde_json::to_vec(value)
+                .map_err(io::Error::from)
+                .map_err(failed)?;
             bytes.push(b'\n');
             file.write_all(&bytes)
                 .and_then(|()| file.sync_all())
@@ -239,8 +290,8 @@ fn run_bounded(
     command: &mut Command,
     timeout: Duration,
     keep_stdout: bool,
-) -> Result<(ExitStatus, Vec<u8>), String> {
-    let name = command.get_program().to_string_lossy().into_owned();
+) -> Result<(ExitStatus, Vec<u8>)> {
+    let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(if keep_stdout {
@@ -250,7 +301,10 @@ fn run_bounded(
         })
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|error| format!("cannot run {name}: {error}"))?;
+        .map_err(|source| InstallError::Spawn {
+            program: program.clone(),
+            source,
+        })?;
     let stdin = child.stdin.take();
     let reader = child.stdout.take().map(|stdout| {
         std::thread::spawn(move || {
@@ -269,9 +323,9 @@ fn run_bounded(
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("{name} did not finish within {timeout:?}"));
+                return Err(InstallError::Timeout { program, timeout });
             }
-            Err(error) => return Err(format!("cannot wait for {name}: {error}")),
+            Err(source) => return Err(InstallError::Wait { program, source }),
         }
     };
     drop(stdin);
@@ -281,14 +335,13 @@ fn run_bounded(
     Ok((status, stdout))
 }
 
-fn activation_reply(bytes: &[u8]) -> Result<(), String> {
+fn activation_reply(bytes: &[u8]) -> Result<()> {
     if bytes.len() > MAX_REPLY {
-        return Err("oversized Luna activation reply".into());
+        return Err(InstallError::OversizedReply);
     }
-    let value: Value = serde_json::from_slice(bytes)
-        .map_err(|error| format!("invalid Luna activation reply: {error}"))?;
+    let value: Value = serde_json::from_slice(bytes).map_err(InstallError::InvalidReply)?;
     if value["returnValue"] != true {
-        return Err(format!("Luna service activation failed: {value}"));
+        return Err(InstallError::ActivationRefused(value));
     }
     Ok(())
 }

@@ -105,7 +105,7 @@ impl SourceFactory for FakeSources {
 
     fn validate(&self, settings: &FakeSourceSettings) -> Result<(), ValidationError> {
         if settings.invalid {
-            return Err(ValidationError::new("capture.invalid", "fake rejects it"));
+            return Err(ValidationError::new("invalid", "fake rejects it"));
         }
         Ok(())
     }
@@ -205,7 +205,7 @@ impl OutputFactory for FakeOutputs {
 
     fn validate(&self, settings: &FakeOutputSettings) -> Result<(), ValidationError> {
         if settings.invalid {
-            return Err(ValidationError::new("output.invalid", "fake rejects it"));
+            return Err(ValidationError::new("invalid", "fake rejects it"));
         }
         Ok(())
     }

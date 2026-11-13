@@ -1,7 +1,7 @@
 //! The service with the real process launcher and a shell script as the
 //! worker: spawn, commands, status, TERM, reap, restart, and the binaries'
 //! argument handling. Time-bounded throughout.
-use prysm_webos_service::install::Installer;
+use prysm_webos_service::install::{InstallError, Installer};
 use prysm_webos_service::launcher::ProcessLauncher;
 use prysm_webos_service::machine::Spec;
 use prysm_webos_service::preferences::MemoryStore;
@@ -26,13 +26,13 @@ impl Bus for Published {
 struct NoInstaller;
 
 impl Installer for NoInstaller {
-    fn install(&mut self) -> Result<(), String> {
+    fn install(&mut self) -> Result<(), InstallError> {
         Ok(())
     }
-    fn activate(&mut self, _: &str) -> Result<(), String> {
+    fn activate(&mut self, _: &str) -> Result<(), InstallError> {
         Ok(())
     }
-    fn uninstall(&mut self) -> Result<(), String> {
+    fn uninstall(&mut self) -> Result<(), InstallError> {
         Ok(())
     }
 }

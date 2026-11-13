@@ -27,7 +27,6 @@ pub use layout::{MAX_OUTPUT_BYTES, PITCH, copy_nv12, pitch};
 
 /// Why the hardware encoder cannot start or encode.
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum Error {
     /// Not a webOS TV build.
     #[error("hardware H.264 is only built for the webOS TV (32-bit ARM Linux)")]

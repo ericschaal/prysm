@@ -11,18 +11,38 @@ use std::time::Duration;
 
 /// How long `connect` waits for the receiver to accept, and then for its
 /// reply to the hello.
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long one `send` may block on a receiver that stopped reading.
-pub const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Why [`RemoteSender::deliver`] failed. Either way the sender is finished:
+/// the caller drops it and connects a new one.
+#[derive(Debug, thiserror::Error)]
+pub enum SendError {
+    /// The requested encoder could not start or failed. The receiver was
+    /// told (see [`RemoteSender::refuse_encoding`]).
+    #[error(transparent)]
+    Encoder(Error),
+    /// The connection to the receiver failed.
+    #[error(transparent)]
+    Connection(#[from] Error),
+}
+
+impl From<SendError> for Error {
+    fn from(error: SendError) -> Self {
+        match error {
+            SendError::Encoder(error) | SendError::Connection(error) => error,
+        }
+    }
+}
 
 /// Sends frames to a [`RemoteSource`](crate::RemoteSource), as its
 /// [`StreamRequest`] says. Any failure is final: the caller drops the sender
-/// and connects a new one. A failure whose cause is a
-/// [`prysm_h264::H264Error`] is the encoder's (the receiver was told, see
-/// [`RemoteSender::refuse_encoding`]); anything else is the connection's.
+/// and connects a new one. [`RemoteSender::deliver`] tells an encoder
+/// failure from a connection failure; [`FrameSink::send`] does not.
 ///
 /// The receiver can pause the stream (frames are dropped unencoded until it
-/// resumes) and ask for a keyframe; each `send` and `idle` reads those
+/// resumes) and ask for a keyframe; each `send` and `tick` reads those
 /// requests without blocking. A paused or resumed H.264 stream restarts its encoder
 /// session, so the first picture after it is a keyframe, and a paused
 /// hardware encoder is released.
@@ -88,11 +108,6 @@ impl RemoteSender {
         })
     }
 
-    #[must_use]
-    pub fn peer(&self) -> SocketAddr {
-        self.peer
-    }
-
     /// What the receiver asked for; frames should match its size.
     #[must_use]
     pub fn request(&self) -> StreamRequest {
@@ -109,18 +124,18 @@ impl RemoteSender {
     /// (`reason`, shown to its user), and end the connection. Best effort:
     /// a receiver that is gone learns nothing.
     pub fn refuse(&mut self, reason: &str) {
-        self.refuse_with(reason, 0);
+        self.refuse_with(reason, wire::Refused::Request);
     }
 
     /// Like [`Self::refuse`], naming the requested encoding as the cause:
     /// its encoder cannot start or failed. `send` does this on an encoder
     /// failure.
     pub fn refuse_encoding(&mut self, reason: &str) {
-        self.refuse_with(reason, wire::REFUSED_ENCODING);
+        self.refuse_with(reason, wire::Refused::Encoding);
     }
 
-    fn refuse_with(&mut self, reason: &str, flags: u8) {
-        let _ = self.stream.write_all(&wire::refusal(reason, flags));
+    fn refuse_with(&mut self, reason: &str, refused: wire::Refused) {
+        let _ = self.stream.write_all(&wire::refusal(reason, refused));
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 
@@ -209,8 +224,13 @@ impl RemoteSender {
     }
 }
 
-impl FrameSink for RemoteSender {
-    fn send(&mut self, frame: &Frame) -> Result<()> {
+impl RemoteSender {
+    /// Send one frame, encoded as requested; dropped while paused.
+    ///
+    /// # Errors
+    /// [`SendError::Encoder`] when the requested encoder cannot start or
+    /// failed (the receiver is told), else [`SendError::Connection`].
+    pub fn deliver(&mut self, frame: &Frame) -> std::result::Result<(), SendError> {
         self.poll_control()?;
         if self.paused {
             return Ok(());
@@ -226,7 +246,7 @@ impl FrameSink for RemoteSender {
         self.buffer.resize(HEADER_LEN, 0);
         if Encoding::from(self.request.encoding) == Encoding::Raw {
             self.buffer.extend_from_slice(frame.as_slice());
-            return self.write(&header, 0);
+            return Ok(self.write(&header, 0)?);
         }
         let keyframe = match self.encode(frame) {
             Ok(Some(keyframe)) => keyframe,
@@ -235,11 +255,17 @@ impl FrameSink for RemoteSender {
             Err(error) => {
                 let error = Error::adapter("cannot encode frame", error);
                 self.refuse_encoding(&chain(&error));
-                return Err(error);
+                return Err(SendError::Encoder(error));
             }
         };
         let len = self.buffer.len() - HEADER_LEN;
-        self.write(&Header { keyframe, ..header }, len)
+        Ok(self.write(&Header { keyframe, ..header }, len)?)
+    }
+}
+
+impl FrameSink for RemoteSender {
+    fn send(&mut self, frame: &Frame) -> Result<()> {
+        Ok(self.deliver(frame)?)
     }
 
     /// No frame to send: apply the receiver's pending control messages, so

@@ -137,7 +137,7 @@ fn cpu_ticks() -> Option<u64> {
 }
 
 fn chain(error: &dyn std::error::Error) -> String {
-    prysm_webos_link::chain(error)
+    prysm_ports::chain(error)
 }
 
 fn run(options: Options) -> Result<(), String> {
@@ -259,7 +259,7 @@ fn stream(
 ) -> Result<(), String> {
     let address = match receiver.socket_addr() {
         Some(address) => address,
-        None => crate::resolve::system_lookup(receiver.host(), receiver.port())
+        None => prysm_ports::system_lookup(receiver.host(), receiver.port())
             .map_err(|error| format!("cannot resolve {receiver}: {error}"))?,
     };
     let mut sender = RemoteSender::connect(address).map_err(|error| chain(&error))?;

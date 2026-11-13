@@ -7,9 +7,9 @@
 //! WLED's state: Prysm reports, keeps sending, and the LEDs follow again once
 //! WLED takes the colours.
 use crate::http::{self, RequestError};
-use prysm_ports::OutputIssue;
+use prysm_ports::{OutputIssue, chain};
 use serde::Deserialize;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
@@ -67,15 +67,18 @@ impl Observer {
         match self.pending.take() {
             Some(mut pending) => match pending.read() {
                 Ok(None) if now < pending.deadline => self.pending = Some(pending),
-                Ok(None) | Err(_) => self.finish(now, None),
+                Ok(None) => self.finish(now, Err(io::Error::from(ErrorKind::TimedOut).into())),
+                Err(error) => self.finish(now, Err(error)),
                 Ok(Some(body)) => {
-                    let status = serde_json::from_slice(&body).ok();
-                    self.finish(now, status.map(|status| (status, pending.local)));
+                    let answer = serde_json::from_slice(&body)
+                        .map(|status| (status, pending.local))
+                        .map_err(RequestError::from);
+                    self.finish(now, answer);
                 }
             },
             None if now >= self.next => match self.send(now) {
                 Ok(pending) => self.pending = Some(pending),
-                Err(_) => self.finish(now, None),
+                Err(error) => self.finish(now, Err(error)),
             },
             None => {}
         }
@@ -106,16 +109,26 @@ impl Observer {
         })
     }
 
-    fn finish(&mut self, now: Instant, answer: Option<(Status, IpAddr)>) {
+    /// Records a check's outcome. Any failure, a reply that is not WLED's
+    /// state included, reports [`OutputIssue::Unreachable`]; its cause is
+    /// logged at debug level.
+    fn finish(&mut self, now: Instant, answer: Result<(Status, IpAddr), RequestError>) {
         self.next = now
-            + if answer.is_some() {
+            + if answer.is_ok() {
                 self.every
             } else {
                 self.every * 5
             };
         self.issue = match answer {
-            Some((status, local)) => self.judge(&status, local),
-            None => Some(OutputIssue::Unreachable),
+            Ok((status, local)) => self.judge(&status, local),
+            Err(error) => {
+                tracing::debug!(
+                    device = %self.device,
+                    error = %chain(&error),
+                    "WLED state check got no usable answer"
+                );
+                Some(OutputIssue::Unreachable)
+            }
         };
     }
 

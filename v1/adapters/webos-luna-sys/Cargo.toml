@@ -12,7 +12,7 @@ thiserror.workspace = true
 # Only for the binding generator (`--features codegen`); needs libclang.
 bindgen = { version = "0.73.2", default-features = false, features = ["runtime"], optional = true }
 
-# One of the two v1 crates allowed to use `unsafe`. Every block carries a SAFETY note.
+# One of the three v1 crates allowed to use `unsafe` (with capture-webos-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

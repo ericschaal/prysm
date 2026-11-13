@@ -5,9 +5,8 @@
 //! [`Event`]s and points fd 1 at stderr, so vendor libraries that print
 //! cannot corrupt the stream. A reader thread decodes [`Command`]s from stdin;
 //! stdin EOF or a bad line stops the worker.
-pub use crate::chain;
-use crate::{Command, Event, FailureKind, LineReader, WorkerStatus, encode, exit};
-use prysm_ports::Error;
+use crate::{Command, Event, LineReader, WorkerFailure, WorkerStatus, encode, exit};
+use prysm_ports::{Error, chain};
 use std::future::Future;
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -107,7 +106,10 @@ fn fit(event: Event) -> Event {
     match event {
         Event::Status(status) => Event::Status(WorkerStatus {
             portal: status.portal.map(short),
-            failure: status.failure.map(short),
+            failure: status.failure.map(|failure| WorkerFailure {
+                message: short(failure.message),
+                ..failure
+            }),
             ..status
         }),
         Event::Faulted { cause } => Event::Faulted {
@@ -345,8 +347,7 @@ where
         let failure = chain(error);
         eprintln!("{name}: {failure}");
         events.send(&Event::Status(WorkerStatus {
-            failure: Some(failure),
-            failure_kind: Some(FailureKind::Other),
+            failure: Some(WorkerFailure::other(failure)),
             ..WorkerStatus::default()
         }));
     }

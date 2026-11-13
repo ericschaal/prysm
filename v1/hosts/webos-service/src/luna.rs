@@ -19,7 +19,7 @@ pub fn serve(
     identity: &Identity,
     stop: Arc<AtomicBool>,
     deadline: Option<Instant>,
-) -> Result<(), String> {
+) -> Result<(), sys::Error> {
     let service = Service::new(
         identity.config(),
         ProcessLauncher,
@@ -36,7 +36,6 @@ pub fn serve(
     };
     eprintln!("prysm-webos-service: registering {}", identity.service);
     sys::run(&config, Box::new(Glue::new(service, stop, deadline)))
-        .map_err(|error| prysm_webos_link::chain(&error))
 }
 
 /// Adapts the service to the sys crate's handler.

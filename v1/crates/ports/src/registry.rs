@@ -12,7 +12,9 @@ pub trait SourceFactory: Send + Sync + 'static {
     const KIND: &'static str;
     type Settings: DeserializeOwned + Serialize;
     /// # Errors
-    /// Rejects settings that can never open, without touching hardware.
+    /// Rejects settings that can never open, without touching hardware. The
+    /// field is relative to the section, such as `fps`: the registry names
+    /// the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
     /// # Errors
     /// Device or I/O failure.
@@ -24,7 +26,9 @@ pub trait OutputFactory: Send + Sync + 'static {
     const KIND: &'static str;
     type Settings: DeserializeOwned + Serialize;
     /// # Errors
-    /// Rejects settings that can never open, without touching hardware.
+    /// Rejects settings that can never open, without touching hardware. The
+    /// field is relative to the section, such as `address`: the registry
+    /// names the section.
     fn validate(&self, settings: &Self::Settings) -> Result<(), ValidationError>;
     /// # Errors
     /// Device or I/O failure.
@@ -62,10 +66,16 @@ impl Registry {
     pub fn validate(&self, settings: &Settings) -> Result<()> {
         settings.processing.validate()?;
         if let Some(capture) = &settings.capture {
-            find(&self.sources, Section::Capture, capture)?.validate(capture)?;
+            let section = Section::Capture;
+            find(&self.sources, section, capture)?
+                .validate(capture)
+                .map_err(|error| within(section, error))?;
         }
         if let Some(output) = &settings.output {
-            find(&self.outputs, Section::Output, output)?.validate(output)?;
+            let section = Section::Output;
+            find(&self.outputs, section, output)?
+                .validate(output)
+                .map_err(|error| within(section, error))?;
         }
         Ok(())
     }
@@ -73,13 +83,30 @@ impl Registry {
     /// # Errors
     /// Unknown kind, invalid settings or the factory's open failure.
     pub fn open_source(&self, settings: &AdapterSettings) -> Result<Box<dyn FrameSource>> {
-        find(&self.sources, Section::Capture, settings)?.open(settings)
+        let section = Section::Capture;
+        find(&self.sources, section, settings)?
+            .open(settings)
+            .map_err(|error| within(section, error))
     }
 
     /// # Errors
     /// Unknown kind, invalid settings or the factory's open failure.
     pub fn open_output(&self, settings: &AdapterSettings) -> Result<Box<dyn LedOutput>> {
-        find(&self.outputs, Section::Output, settings)?.open(settings)
+        let section = Section::Output;
+        find(&self.outputs, section, settings)?
+            .open(settings)
+            .map_err(|error| within(section, error))
+    }
+}
+
+/// A factory's invalid field, relative to its section, as a full path.
+fn within(section: Section, error: Error) -> Error {
+    match error {
+        Error::Invalid(ValidationError { field, reason }) => Error::Invalid(ValidationError {
+            field: format!("{section}.{field}"),
+            reason,
+        }),
+        other => other,
     }
 }
 

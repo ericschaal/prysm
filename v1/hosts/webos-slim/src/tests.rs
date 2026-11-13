@@ -1,38 +1,19 @@
 use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
-use crate::video::VideoFeed;
-use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest};
-use prysm_capture_webos::WebosSettings;
+use prysm_capture_remote::{RemoteSender, RemoteSource, SendError, StreamEncoding, StreamRequest};
+use prysm_capture_webos::{VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
-use prysm_ports::{Error, FrameSink, FrameSource, Pull, Result};
+use prysm_ports::{Error, FrameSource, Pull, Result};
 use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use prysm_webos_link::worker::{Link, Peer, Stop};
 use prysm_webos_link::{Command, Event, LightingTarget, Video, WorkerStatus};
 use prysm_webos_link::{FailureKind, SlimEncoding};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-#[derive(Clone, Default)]
-struct Feed(Arc<Mutex<Vec<String>>>);
-
-impl VideoFeed for Feed {
-    fn set(&self, video: Video) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(format!("{video:?}"));
-    }
-    fn reset(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push("reset".into());
-    }
-}
 
 /// The host task: its result and the stop reason.
 type Running = tokio::task::JoinHandle<(Result<()>, Option<Stop>)>;
@@ -110,9 +91,9 @@ impl Opened {
 fn start<S: Upstream + 'static>(
     opened: &Opened,
     connect: impl FnMut() -> Result<S> + Send + 'static,
-) -> (Peer, Feed, Running) {
+) -> (Peer, VideoSignal, Running) {
     let (link, peer) = Link::memory();
-    let feed = Feed::default();
+    let feed = VideoSignal::default();
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
     let sink = sink.retry_every(Duration::from_millis(20));
@@ -133,7 +114,7 @@ fn start<S: Upstream + 'static>(
 }
 
 /// A worker whose receiver always accepts a raw stream.
-fn start_fake(fake: FakeSourceSettings) -> (Peer, Feed, Running) {
+fn start_fake(fake: FakeSourceSettings) -> (Peer, VideoSignal, Running) {
     let log = CallLog::new();
     let sink = log.clone();
     start(&Opened::fake(&log, fake), move || {
@@ -159,14 +140,17 @@ fn paused(event: &Event) -> bool {
 
 fn waiting(event: &Event) -> Option<&str> {
     status(event)
-        .filter(|status| !status.capturing && status.failure_kind == Some(FailureKind::Receiver))
-        .and_then(|status| status.failure.as_deref())
+        .filter(|status| !status.capturing)
+        .and_then(|status| status.failure.as_ref())
+        .filter(|failure| failure.kind == FailureKind::Receiver)
+        .map(|failure| failure.message.as_str())
 }
 
 fn encoder_failure(event: &Event) -> Option<&str> {
     status(event)
-        .filter(|status| status.failure_kind == Some(FailureKind::Encoder))
-        .and_then(|status| status.failure.as_deref())
+        .and_then(|status| status.failure.as_ref())
+        .filter(|failure| failure.kind == FailureKind::Encoder)
+        .map(|failure| failure.message.as_str())
 }
 
 fn encoding(event: &Event) -> Option<SlimEncoding> {
@@ -204,21 +188,21 @@ impl Upstream for Fake {
     fn refuse_encoding(&mut self, reason: &str) {
         self.log.record(format!("sink.refuse:{reason}"));
     }
-}
-
-impl FrameSink for Fake {
-    fn send(&mut self, _frame: &Frame) -> Result<()> {
+    fn deliver(&mut self, _frame: &Frame) -> std::result::Result<(), SendError> {
         if self.left == 0 {
             if self.encoder {
-                return Err(Error::adapter(
+                return Err(SendError::Encoder(Error::adapter(
                     "cannot encode frame",
                     H264Error::Settings("no encoder here"),
-                ));
+                )));
             }
-            return Err(Error::other("receiver closed the connection"));
+            return Err(Error::other("receiver closed the connection").into());
         }
         self.left -= 1;
         self.log.record("sink.send");
+        Ok(())
+    }
+    fn tick(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -421,8 +405,9 @@ async fn reports_frame_flow_and_forwards_video_commands() {
     result.unwrap();
     assert_eq!(stop, Some(Stop::Requested("stdin closed")));
     assert_eq!(
-        feed.0.lock().unwrap().clone(),
-        ["Unavailable".to_owned(), "reset".to_owned()]
+        feed.current(),
+        (Video::Unavailable, 1),
+        "set, then one reset"
     );
 }
 

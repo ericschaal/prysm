@@ -12,7 +12,7 @@
 //! sender's refusal. `--pause-at N` pauses the sender at second N and resumes
 //! it three seconds later. Exits after SECONDS (default 30).
 use prysm_capture_remote::{RemoteSource, StreamRequest};
-use prysm_ports::FrameSource;
+use prysm_ports::{FrameSource, chain};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,15 +94,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Box::new(source).close()?;
     Ok(())
-}
-
-fn chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }

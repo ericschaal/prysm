@@ -359,6 +359,7 @@ impl Callbacks {
         }
         for index in bus.recalls {
             if index >= self.calls.len() {
+                log(&format!("cannot renew call {index}: there is no such call"));
                 continue;
             }
             if let Err(error) = self.cancel(index).and_then(|()| self.call(index)) {
@@ -422,6 +423,10 @@ impl Callbacks {
         let payload = message.payload().unwrap_or_default();
         let mut bus = Bus::default();
         let Ok(mut handler) = self.handler.try_borrow_mut() else {
+            log(&format!(
+                "dropped a reply to {:?}: the service is busy",
+                self.calls[index].uri
+            ));
             return Ok(());
         };
         handler.reply(&mut bus, index, &payload);
