@@ -1,20 +1,18 @@
-//! One opened webOS source. A private native thread owns the backend and its
-//! tap (LG requires load, capture and release on one thread). It follows the
+//! One opened webOS source. Its [`OwnerThread`] owns the backend and its tap
+//! (LG requires load, capture and release on one thread). It follows the
 //! [`VideoSignal`] to pick the tap kind (video, or the TV UI plane when there
 //! is no video and `include_ui` is on; never both), paces acquisition,
-//! retries recoverable interruptions and publishes the newest frame, a terminal failure and the release result into
-//! [`Shared`]. The session thread only waits on a condvar with a deadline and
-//! enforces the native-operation watchdog, so a hung driver call surfaces as
-//! an error instead of a hang.
+//! retries recoverable interruptions and publishes the newest frame, a
+//! terminal failure and the release result. The session thread only waits
+//! with a deadline and enforces the native-operation watchdog, so a hung
+//! driver call surfaces as an error instead of a hang.
 mod native;
 
 use crate::{VideoSignal, WebosSettings};
 use native::Native;
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Pull, Result};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result};
+use std::time::Duration;
 
 /// One acquisition attempt.
 pub(crate) enum Acquired {
@@ -78,75 +76,11 @@ impl Limits {
     };
 }
 
-#[derive(Default)]
-struct State {
-    cancelled: bool,
-    frame: Option<Frame>,
-    /// The native call in progress and when it started.
-    busy: Option<(&'static str, Instant)>,
-    /// Terminal failure; published before native teardown.
-    failure: Option<Error>,
-    /// The native thread's final release result; its last act.
-    released: Option<Result<()>>,
-}
-
-#[derive(Default)]
-struct Shared {
-    state: Mutex<State>,
-    changed: Condvar,
-}
-
-impl Shared {
-    fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn update<T>(&self, change: impl FnOnce(&mut State) -> T) -> T {
-        let result = change(&mut self.lock());
-        self.changed.notify_all();
-        result
-    }
-
-    fn wait(&self, timeout: Duration, until: impl Fn(&State) -> bool) -> MutexGuard<'_, State> {
-        self.changed
-            .wait_timeout_while(self.lock(), timeout, |state| !until(state))
-            .unwrap_or_else(PoisonError::into_inner)
-            .0
-    }
-
-    fn stopping(&self) -> bool {
-        let state = self.lock();
-        state.cancelled || state.failure.is_some()
-    }
-
-    /// Sleep, waking early when the source stops.
-    fn sleep(&self, duration: Duration) {
-        drop(self.wait(duration, |state| state.cancelled || state.failure.is_some()));
-    }
-
-    /// Run one native call under the watchdog.
-    fn watch<T>(&self, operation: &'static str, call: impl FnOnce() -> T) -> T {
-        self.update(|state| state.busy = Some((operation, Instant::now())));
-        let result = call();
-        self.update(|state| state.busy = None);
-        result
-    }
-
-    /// Record the first terminal failure.
-    fn fail(&self, error: Error) {
-        self.update(|state| {
-            state.failure.get_or_insert(error);
-        });
-    }
-}
-
 /// The TV's video as a [`FrameSource`]: the newest frame, `Ok(None)` while
 /// video is unavailable or the driver is preparing, and `Err` on a terminal
 /// native failure or a native call that exceeds its watchdog.
 pub struct WebosFrames {
-    shared: Arc<Shared>,
-    thread: Option<JoinHandle<()>>,
-    limits: Limits,
+    thread: OwnerThread,
 }
 
 impl std::fmt::Debug for WebosFrames {
@@ -163,98 +97,32 @@ impl WebosFrames {
         video: VideoSignal,
         limits: Limits,
     ) -> Result<Self> {
-        let shared = Arc::new(Shared::default());
-        let thread = std::thread::Builder::new()
-            .name("prysm-webos-capture".into())
-            .spawn({
-                let shared = shared.clone();
-                // Taps are not `Send`; they only ever exist on this thread.
-                move || Native::new(backend, settings, video, limits, shared).run()
-            })
-            // Nothing native was opened; the backend dropped with the closure.
-            .map_err(|error| Error::adapter("cannot start webOS capture thread", error))?;
-        Ok(Self {
-            shared,
-            thread: Some(thread),
-            limits,
-        })
-    }
-
-    fn cancel(&self) {
-        self.shared.update(|state| state.cancelled = true);
-    }
-
-    /// A native call past its watchdog becomes the terminal failure.
-    fn check_watchdog(&self, state: &mut State) {
-        if state.failure.is_none()
-            && let Some((operation, started)) = state.busy
-            && started.elapsed() >= self.limits.watchdog
-        {
-            state.failure = Some(Error::other(format!(
-                "native webOS {operation} exceeded its {:?} watchdog",
-                self.limits.watchdog
-            )));
-            self.shared.changed.notify_all();
-        }
+        // Taps are not `Send`; they only ever exist on this thread. If it
+        // cannot start, nothing native was opened.
+        let thread = OwnerThread::spawn(
+            "prysm-webos-capture",
+            "webOS capture thread",
+            limits.release,
+            move |worker| Native::new(backend, settings, video, limits, worker.clone()).run(),
+        )?
+        .with_watchdog(limits.watchdog);
+        Ok(Self { thread })
     }
 
     /// The frame published and not yet taken.
     #[cfg(test)]
     pub(crate) fn pending_frame(&self) -> Option<Frame> {
-        self.shared.lock().frame.clone()
-    }
-
-    fn release(mut self) -> Result<()> {
-        self.cancel();
-        let state = self
-            .shared
-            .wait(self.limits.release, |state| state.released.is_some());
-        let Some(released) = state.released.clone() else {
-            let busy = state.busy.map_or_else(String::new, |(operation, started)| {
-                format!("; native {operation} has run for {:?}", started.elapsed())
-            });
-            return Err(Error::other(format!(
-                "webOS video release is unconfirmed: capture thread did not stop within {:?}{busy}",
-                self.limits.release
-            )));
-        };
-        drop(state);
-        // Publishing the release is the thread's last act, so this is immediate.
-        if let Some(thread) = self.thread.take() {
-            thread
-                .join()
-                .map_err(|_| Error::Panicked("webOS capture thread"))?;
-        }
-        released
+        self.thread.peek()
     }
 }
 
 impl FrameSource for WebosFrames {
     fn next_frame(&mut self, timeout: Duration) -> Result<Pull> {
-        let mut state = self.shared.wait(timeout, |state| {
-            state.frame.is_some() || state.failure.is_some() || state.released.is_some()
-        });
-        self.check_watchdog(&mut state);
-        if let Some(failure) = &state.failure {
-            return Err(failure.clone());
-        }
-        if state.released.is_some() {
-            return Err(Error::other("webOS capture ended unexpectedly"));
-        }
-        if self.thread.as_ref().is_some_and(JoinHandle::is_finished) {
-            return Err(Error::Panicked("webOS capture thread"));
-        }
-        Ok(state.frame.take().into())
+        self.thread.next_frame(timeout)
     }
 
+    /// Stop the thread and wait for certified release, within [`Limits::release`].
     fn close(self: Box<Self>) -> Result<()> {
-        self.release()
-    }
-}
-
-impl Drop for WebosFrames {
-    /// Without `close` the tap is still released, but not awaited.
-    fn drop(&mut self) {
-        self.cancel();
+        self.thread.close()
     }
 }

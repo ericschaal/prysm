@@ -1723,15 +1723,12 @@ dependencies = [
  "core-media",
  "core-video",
  "dispatch2",
- "futures",
  "libc",
  "objc2",
  "objc2-foundation",
  "prysm-core",
  "prysm-metrics",
  "thiserror 2.0.21",
- "tokio",
- "tokio-util",
  "tracing",
  "v4l",
 ]
@@ -1741,14 +1738,11 @@ name = "prysm-capture-device"
 version = "1.0.0-alpha.0"
 dependencies = [
  "anyhow",
- "futures",
  "prysm-capture",
  "prysm-core",
  "prysm-ports",
  "serde",
  "serde_json",
- "tokio",
- "tokio-util",
  "utoipa",
 ]
 

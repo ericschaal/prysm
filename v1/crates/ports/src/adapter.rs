@@ -30,8 +30,8 @@ impl Pull {
     }
 }
 
-/// A frame, or `Idle` without one: what a push-style source's
-/// [`LatestSlot`](crate::LatestSlot) yields.
+/// A frame, or `Idle` without one: what a push-style source's newest-frame
+/// hand-off yields.
 impl From<Option<Frame>> for Pull {
     fn from(frame: Option<Frame>) -> Self {
         frame.map_or(Self::Idle, Self::Frame)

@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 /// A bounded single-value handoff: a new value replaces an untaken one.
 ///
-/// Push-style sources keep their newest frame here and take it in `next_frame`;
-/// the session offers previews here. Nothing queues, so a slow consumer only
-/// ever sees the latest value.
+/// The session offers previews and configuration here. Nothing queues, so a
+/// slow consumer only ever sees the latest value. (Push-style sources use
+/// [`OwnerThread`](crate::OwnerThread), which hands frames over the same way.)
 #[derive(Debug, Default)]
 pub struct LatestSlot<T> {
     value: Mutex<Option<T>>,

@@ -509,7 +509,7 @@ fn watchdog_reports_a_hung_native_call() {
     assert!(
         error
             .to_string()
-            .contains("native webOS acquire exceeded its"),
+            .contains("native acquire in the webOS capture thread exceeded its"),
         "{error}"
     );
     let error = close(frames).recv_timeout(LIMIT).unwrap().unwrap_err();

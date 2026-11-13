@@ -1,15 +1,12 @@
 use super::*;
-use crate::source::{Deadlines, DeviceFrames, Native};
-use futures::FutureExt;
-use prysm_capture::{CaptureError, CaptureExit};
+use crate::source::{Capture, CaptureResult, Deadlines, DeviceFrames};
+use prysm_capture::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::error::Error as _;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::{oneshot, watch};
-use tokio_util::sync::CancellationToken;
 
 const LIMIT: Duration = Duration::from_secs(5);
 const SHORT: Duration = Duration::from_millis(50);
@@ -45,52 +42,56 @@ fn eventually(condition: impl Fn() -> bool) {
     }
 }
 
-/// The native worker's side of the seam.
-struct Worker {
-    ready: Option<oneshot::Sender<()>>,
-    frames: watch::Sender<Option<Frame>>,
-    cancel: CancellationToken,
-    exit: oneshot::Sender<Result<CaptureExit, CaptureError>>,
+/// The native capture's side of the seam: the test drives its sink and
+/// decides how it returns. Dropping it ends capture cleanly.
+struct Native {
+    sink: Arc<Mutex<Option<Arc<dyn CaptureSink>>>>,
+    exit: mpsc::Sender<CaptureResult>,
 }
 
-impl Worker {
-    fn ready(&mut self) {
-        self.ready.take().unwrap().send(()).unwrap();
+impl Native {
+    fn sink(&self) -> Arc<dyn CaptureSink> {
+        eventually(|| self.sink.lock().unwrap().is_some());
+        self.sink.lock().unwrap().clone().unwrap()
     }
 
-    /// The worker returns: frames and readiness close, then the join resolves.
-    fn exit(self, joined: Result<CaptureExit, CaptureError>) {
-        let Self { exit, .. } = self;
-        let _ = exit.send(joined);
+    fn ready(&self) {
+        self.sink().ready();
     }
 
-    fn released(self) {
-        self.exit(Ok(CaptureExit { failure: None }));
+    fn frame(&self, value: u8) {
+        self.sink().frame(frame(value));
     }
 
-    fn wait_cancelled(&self) {
-        eventually(|| self.cancel.is_cancelled());
+    fn stop_requested(&self) -> bool {
+        self.sink().should_stop(Duration::ZERO)
+    }
+
+    fn wait_stopped(&self) {
+        eventually(|| self.stop_requested());
+    }
+
+    /// Capture returns `result`.
+    fn exit(&self, result: CaptureResult) {
+        self.exit.send(result).unwrap();
+    }
+
+    fn released(&self) {
+        self.exit(Ok(()));
     }
 }
 
-fn native() -> (Native, Worker) {
-    let (ready, ready_rx) = oneshot::channel();
-    let (frames, frames_rx) = watch::channel(None);
-    let (exit, exit_rx) = oneshot::channel();
-    let cancel = CancellationToken::new();
-    let native = Native {
-        ready: ready_rx,
-        frames: frames_rx,
-        cancel: cancel.clone(),
-        join: async move { exit_rx.await.expect("worker exit was reported") }.boxed(),
-    };
-    let worker = Worker {
-        ready: Some(ready),
-        frames,
-        cancel,
-        exit,
-    };
-    (native, worker)
+fn native() -> (Capture, Native) {
+    let sink = Arc::new(Mutex::new(None));
+    let (exit, exited) = mpsc::channel();
+    let capture: Capture = Box::new({
+        let sink = sink.clone();
+        move |given: &Arc<dyn CaptureSink>| {
+            *sink.lock().unwrap() = Some(given.clone());
+            exited.recv().unwrap_or(Ok(()))
+        }
+    });
+    (capture, Native { sink, exit })
 }
 
 fn disconnected() -> CaptureError {
@@ -99,12 +100,20 @@ fn disconnected() -> CaptureError {
     }
 }
 
-/// An opened source plus the worker driving it.
-fn opened() -> (DeviceFrames, Worker) {
-    let (native, mut worker) = native();
-    worker.ready();
-    let frames = within(move || DeviceFrames::start(native, TEST)).unwrap();
-    (frames, worker)
+fn start(capture: Capture, deadlines: Deadlines) -> mpsc::Receiver<Result<DeviceFrames>> {
+    let (done, started) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(DeviceFrames::start(capture, deadlines));
+    });
+    started
+}
+
+/// An opened source plus the native capture driving it.
+fn opened() -> (DeviceFrames, Native) {
+    let (capture, native) = native();
+    let started = start(capture, TEST);
+    native.ready();
+    (started.recv_timeout(LIMIT).unwrap().unwrap(), native)
 }
 
 fn close(frames: DeviceFrames) -> mpsc::Receiver<Result<()>> {
@@ -115,36 +124,30 @@ fn close(frames: DeviceFrames) -> mpsc::Receiver<Result<()>> {
     closed
 }
 
-#[test]
-fn open_waits_for_readiness_not_frames() {
-    let (native, mut worker) = native();
-    let (done, opened) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = done.send(DeviceFrames::start(native, TEST));
-    });
-    assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
-    worker.ready();
-    let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
-    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+/// Close, let the capture stop, and expect certified release.
+fn closes_cleanly(frames: DeviceFrames, native: &Native) {
     let closed = close(frames);
-    worker.wait_cancelled();
-    worker.released();
+    native.wait_stopped();
+    native.released();
     closed.recv_timeout(LIMIT).unwrap().unwrap();
 }
 
 #[test]
+fn open_waits_for_readiness_not_frames() {
+    let (capture, native) = native();
+    let opened = start(capture, TEST);
+    assert!(opened.recv_timeout(SHORT).is_err(), "open returned early");
+    native.ready();
+    let mut frames = opened.recv_timeout(LIMIT).unwrap().unwrap();
+    assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
+    closes_cleanly(frames, &native);
+}
+
+#[test]
 fn open_failure_reports_the_native_cause_after_release() {
-    let (native, worker) = native();
-    let opening = within(move || {
-        let (done, result) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = done.send(DeviceFrames::start(native, TEST));
-        });
-        result
-    });
-    worker.exit(Ok(CaptureExit {
-        failure: Some(disconnected()),
-    }));
+    let (capture, native) = native();
+    let opening = start(capture, TEST);
+    native.exit(Err(disconnected()));
     let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
         panic!("open must fail");
     };
@@ -155,18 +158,15 @@ fn open_failure_reports_the_native_cause_after_release() {
 }
 
 #[test]
-fn open_timeout_cancels_and_releases() {
-    let (native, worker) = native();
+fn open_timeout_stops_and_releases() {
+    let (capture, native) = native();
     let deadlines = Deadlines {
         ready: SHORT,
         release: LIMIT,
     };
-    let (done, opening) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = done.send(DeviceFrames::start(native, deadlines));
-    });
-    worker.wait_cancelled();
-    worker.released();
+    let opening = start(capture, deadlines);
+    native.wait_stopped();
+    native.released();
     let Err(error) = opening.recv_timeout(LIMIT).unwrap() else {
         panic!("open must time out");
     };
@@ -176,15 +176,15 @@ fn open_timeout_cancels_and_releases() {
 
 #[test]
 fn open_timeout_reports_unconfirmed_release() {
-    let (native, worker) = native();
+    let (capture, native) = native();
     let deadlines = Deadlines {
         ready: SHORT,
         release: SHORT,
     };
-    let Err(error) = within(move || DeviceFrames::start(native, deadlines)) else {
+    let Err(error) = within(move || DeviceFrames::start(capture, deadlines)) else {
         panic!("open must time out");
     };
-    assert!(worker.cancel.is_cancelled());
+    assert!(native.stop_requested());
     let text = chain(&error);
     assert!(text.contains("not ready within"), "{text}");
     assert!(text.contains("release is unconfirmed"), "{text}");
@@ -192,13 +192,14 @@ fn open_timeout_reports_unconfirmed_release() {
 
 #[test]
 fn newest_frame_wins() {
-    // Frames before readiness are already replaced natively.
-    let (native, mut worker) = native();
+    // Frames before readiness are already replaced.
+    let (capture, native) = native();
+    let opening = start(capture, TEST);
     for value in 0..100 {
-        worker.frames.send_replace(Some(frame(value)));
+        native.frame(value);
     }
-    worker.ready();
-    let mut frames = within(move || DeviceFrames::start(native, TEST)).unwrap();
+    native.ready();
+    let mut frames = opening.recv_timeout(LIMIT).unwrap().unwrap();
     assert_eq!(
         frames
             .next_frame(LIMIT)
@@ -211,47 +212,33 @@ fn newest_frame_wins() {
     assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
 
     // An untaken frame is replaced, never queued.
-    let pending = |frames: &DeviceFrames, value: u8| {
-        frames
-            .pending_frame()
-            .is_some_and(|frame| frame.as_slice() == [value; 96])
-    };
-    worker.frames.send_replace(Some(frame(1)));
-    eventually(|| pending(&frames, 1));
-    worker.frames.send_replace(Some(frame(2)));
-    eventually(|| pending(&frames, 2));
+    native.frame(1);
+    assert_eq!(frames.pending_frame().unwrap().as_slice(), &[1; 96]);
+    native.frame(2);
     let newest = frames.next_frame(LIMIT).unwrap().into_frame().unwrap();
     assert_eq!(newest.as_slice(), &[2; 96]);
     assert!(frames.next_frame(Duration::ZERO).unwrap().is_idle());
 
-    let closed = close(frames);
-    worker.wait_cancelled();
-    worker.released();
-    closed.recv_timeout(LIMIT).unwrap().unwrap();
+    closes_cleanly(frames, &native);
 }
 
 #[test]
 fn timeout_returns_none() {
-    let (mut frames, worker) = opened();
+    let (mut frames, native) = opened();
     let started = Instant::now();
     assert!(frames.next_frame(SHORT).unwrap().is_idle());
     assert!(started.elapsed() >= SHORT);
-    let closed = close(frames);
-    worker.wait_cancelled();
-    worker.released();
-    closed.recv_timeout(LIMIT).unwrap().unwrap();
+    closes_cleanly(frames, &native);
 }
 
 #[test]
 fn native_failure_propagates_and_release_is_still_certified() {
-    let (mut frames, worker) = opened();
-    worker.frames.send_replace(Some(frame(1)));
-    eventually(|| frames.pending_frame().is_some());
-    worker.exit(Ok(CaptureExit {
-        failure: Some(disconnected()),
-    }));
-    eventually(|| frames.exited());
-    // The exit fences the frame that was never taken.
+    let (mut frames, native) = opened();
+    native.frame(1);
+    native.exit(Err(disconnected()));
+    // A published failure also stops the sink.
+    native.wait_stopped();
+    // The failure fences the frame that was never taken.
     let error = frames.next_frame(Duration::ZERO).unwrap_err();
     assert_eq!(
         chain(&error),
@@ -266,8 +253,8 @@ fn native_failure_propagates_and_release_is_still_certified() {
 
 #[test]
 fn unexpected_clean_exit_is_a_failure() {
-    let (mut frames, worker) = opened();
-    worker.released();
+    let (mut frames, native) = opened();
+    native.released();
     let error = frames.next_frame(LIMIT).unwrap_err();
     assert!(error.to_string().contains("ended unexpectedly"), "{error}");
     close(frames).recv_timeout(LIMIT).unwrap().unwrap();
@@ -275,23 +262,23 @@ fn unexpected_clean_exit_is_a_failure() {
 
 #[test]
 fn close_waits_for_and_certifies_release() {
-    let (frames, worker) = opened();
+    let (frames, native) = opened();
     let closed = close(frames);
-    worker.wait_cancelled();
+    native.wait_stopped();
     assert!(
         closed.recv_timeout(SHORT).is_err(),
         "close returned before release"
     );
-    worker.released();
+    native.released();
     closed.recv_timeout(LIMIT).unwrap().unwrap();
 }
 
 #[test]
 fn close_reports_failed_release() {
-    let (frames, worker) = opened();
+    let (frames, native) = opened();
     let closed = close(frames);
-    worker.wait_cancelled();
-    worker.exit(Err(CaptureError::Cleanup(anyhow::anyhow!(
+    native.wait_stopped();
+    native.exit(Err(CaptureError::Cleanup(anyhow::anyhow!(
         "buffer release failed"
     ))));
     let error = closed.recv_timeout(LIMIT).unwrap().unwrap_err();
@@ -302,30 +289,36 @@ fn close_reports_failed_release() {
 }
 
 #[test]
-fn close_reports_a_worker_that_does_not_stop() {
-    let (native, mut worker) = native();
-    worker.ready();
+fn close_reports_a_capture_that_does_not_stop() {
+    let (capture, native) = native();
     let deadlines = Deadlines {
         ready: LIMIT,
         release: SHORT,
     };
-    let frames = within(move || DeviceFrames::start(native, deadlines)).unwrap();
+    let opening = start(capture, deadlines);
+    native.ready();
+    let frames = opening.recv_timeout(LIMIT).unwrap().unwrap();
     let error = close(frames).recv_timeout(LIMIT).unwrap().unwrap_err();
-    assert!(worker.cancel.is_cancelled());
+    assert!(native.stop_requested());
     assert!(
         error
             .to_string()
-            .contains("native capture worker did not stop"),
+            .contains("video device capture thread did not stop"),
         "{error}"
     );
 }
 
 #[test]
-fn drop_without_close_cancels() {
-    let (frames, worker) = opened();
-    drop(frames);
-    assert!(worker.cancel.is_cancelled());
-    worker.released();
+fn drop_without_close_stops_and_waits() {
+    let (frames, native) = opened();
+    let (done, dropped) = mpsc::channel();
+    thread::spawn(move || {
+        drop(frames);
+        let _ = done.send(());
+    });
+    native.wait_stopped();
+    native.released();
+    dropped.recv_timeout(LIMIT).unwrap();
 }
 
 #[test]

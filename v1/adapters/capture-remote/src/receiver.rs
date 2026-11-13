@@ -1,22 +1,24 @@
 //! The lighting-host end: a listener thread that keeps only the newest frame.
 use crate::request::{StreamEncoding, StreamRequest};
 use crate::wire::{self, Control, Encoding, HEADER_LEN, HELLO_LEN, Header, Refused, WireError};
-use prysm_core::{Frame, FramePool};
+use prysm_core::FramePool;
 use prysm_h264::Decoder;
 use prysm_ports::{
-    Error, FrameSource, LatestSlot, Pull, Result, Section, SourceFactory, ValidationError, chain,
+    Error, FrameSource, OwnerThread, Pull, Result, Section, SourceFactory, ValidationError, Worker,
+    chain,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// How often the receive thread checks for `close` and for a newer sender.
 /// `close` returns within about one tick.
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// How long `close` waits for the receive thread, which stops within a tick.
+const RELEASE: Duration = Duration::from_secs(1);
 
 /// Settings for kind `"remote"`: where to listen and the stream to ask the
 /// sender for, `{ "kind": "remote", "listen": "0.0.0.0:7380", "width": 320,
@@ -154,10 +156,8 @@ impl SourceFactory for RemoteReceiver {
 pub struct RemoteSource {
     local_addr: SocketAddr,
     request: StreamRequest,
-    frames: Arc<LatestSlot<Frame>>,
     refused: Arc<Mutex<Option<Refusal>>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    thread: OwnerThread,
 }
 
 impl RemoteSource {
@@ -175,32 +175,31 @@ impl RemoteSource {
             .map_err(|error| {
                 Error::adapter(format!("cannot configure listener {listen}"), error)
             })?;
-        let frames = Arc::new(LatestSlot::new());
         let refused = Arc::new(Mutex::new(None));
-        let stop = Arc::new(AtomicBool::new(false));
-        let receiver = Receiver {
-            wake: Wake {
-                listener,
-                stop: stop.clone(),
-            },
-            request,
-            frames: frames.clone(),
-            refused: refused.clone(),
-            pool: FramePool::default(),
-            rejected: None,
-            payload: Vec::new(),
-        };
-        let thread = thread::Builder::new()
-            .name("prysm-remote-receiver".into())
-            .spawn(move || receiver.run())
-            .map_err(|error| Error::adapter("cannot start the remote receive thread", error))?;
+        let thread =
+            OwnerThread::spawn("prysm-remote-receiver", "remote receive thread", RELEASE, {
+                let refused = refused.clone();
+                move |worker| {
+                    Receiver {
+                        wake: Wake {
+                            listener,
+                            worker: worker.clone(),
+                        },
+                        request,
+                        refused,
+                        pool: FramePool::default(),
+                        rejected: None,
+                        payload: Vec::new(),
+                    }
+                    .run();
+                    Ok(())
+                }
+            })?;
         Ok(Self {
             local_addr,
             request,
-            frames,
             refused,
-            stop,
-            thread: Some(thread),
+            thread,
         })
     }
 
@@ -214,14 +213,6 @@ impl RemoteSource {
     #[must_use]
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
-    }
-
-    fn shutdown(&mut self) -> Result<()> {
-        self.stop.store(true, Ordering::Release);
-        match self.thread.take().map(JoinHandle::join) {
-            Some(Err(_)) => Err(Error::Panicked("remote receive thread")),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -249,25 +240,11 @@ impl FrameSource for RemoteSource {
                 Refused::Request => Error::adapter(context, WireError::Refused(reason)),
             });
         }
-        if let Some(frame) = self.frames.take_timeout(timeout) {
-            return Ok(Pull::Frame(frame));
-        }
-        // The thread only exits early by panicking.
-        if self.thread.as_ref().is_none_or(JoinHandle::is_finished) {
-            return Err(Error::Panicked("remote receive thread"));
-        }
-        Ok(Pull::Idle)
+        self.thread.next_frame(timeout)
     }
 
-    fn close(mut self: Box<Self>) -> Result<()> {
-        self.shutdown()
-    }
-}
-
-impl Drop for RemoteSource {
-    fn drop(&mut self) {
-        // Already reported by `close` when it was called.
-        let _ = self.shutdown();
+    fn close(self: Box<Self>) -> Result<()> {
+        self.thread.close()
     }
 }
 
@@ -278,15 +255,15 @@ enum Next {
     Switch(TcpStream),
 }
 
-/// The listener and stop flag, checked whenever a read would block.
+/// The listener and the owner's stop request, checked whenever a read would block.
 struct Wake {
     listener: TcpListener,
-    stop: Arc<AtomicBool>,
+    worker: Worker,
 }
 
 impl Wake {
     fn stopped(&self) -> bool {
-        self.stop.load(Ordering::Acquire)
+        self.worker.stopped()
     }
 
     /// The newest pending connection, if any.
@@ -316,7 +293,7 @@ impl Wake {
             if let Some(stream) = self.accept() {
                 return Some(stream);
             }
-            thread::sleep(POLL_INTERVAL);
+            self.worker.sleep(POLL_INTERVAL);
         }
     }
 
@@ -350,7 +327,6 @@ impl Wake {
 struct Receiver {
     wake: Wake,
     request: StreamRequest,
-    frames: Arc<LatestSlot<Frame>>,
     /// The sender's refusal of the request, until `next_frame` reports it.
     refused: Arc<Mutex<Option<Refusal>>>,
     pool: FramePool,
@@ -465,7 +441,7 @@ impl Receiver {
                 if let Err(next) = self.wake.read_full(stream, writer.as_mut_slice()) {
                     break next;
                 }
-                self.frames.offer(writer.finish());
+                self.wake.worker.offer(writer.finish());
                 continue;
             }
             self.payload.resize(len, 0);
@@ -477,7 +453,7 @@ impl Receiver {
             match decoded {
                 Err(next) => break next,
                 Ok(Ok(true)) => {
-                    self.frames.offer(writer.finish());
+                    self.wake.worker.offer(writer.finish());
                 }
                 Ok(Ok(false)) => {}
                 // A keyframe that does not decode: start over on a new connection.

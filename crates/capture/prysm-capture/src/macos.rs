@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use av_foundation::capture_device::{AVCaptureDevice, AVCaptureDeviceWasDisconnectedNotification};
@@ -35,19 +36,24 @@ use objc2_foundation::{
     NSDictionary, NSError, NSNotification, NSNotificationCenter, NSNumber, NSObject,
     NSObjectProtocol, NSString,
 };
-use tokio_util::sync::CancellationToken;
 
-use crate::{CaptureError, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix};
+use crate::{
+    CaptureError, CaptureSink, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
+};
+
+/// How often the capture thread checks for a failure notification while it
+/// waits for a stop request.
+const FAILURE_POLL: Duration = Duration::from_millis(50);
 
 struct CaptureState {
-    sender: tokio::sync::watch::Sender<Option<Frame>>,
+    sink: Arc<dyn CaptureSink>,
     pool: FramePool,
     stats: prysm_metrics::TraceStats,
 }
 
 struct DelegateIvars {
     capture: Mutex<Option<CaptureState>>,
-    failure: CancellationToken,
+    /// A runtime error or disconnection; capture stops once it is set.
     error: Mutex<Option<CaptureError>>,
 }
 
@@ -80,7 +86,7 @@ define_class!(
                 let started = capture.stats.start();
                 if let Some(frame) = frame_from_pixel_buffer(&pixel_buffer, &mut capture.pool) {
                     capture.stats.record(started, frame.len(), Some(capture.pool.stats()));
-                    let _ = capture.sender.send(Some(frame));
+                    capture.sink.frame(frame);
                 } else {
                     capture.stats.failure();
                 }
@@ -106,14 +112,12 @@ define_class!(
                 })
             };
             *self.ivars().error.lock().expect("capture error mutex poisoned") = Some(error);
-            self.ivars().failure.cancel();
         }
 
         #[unsafe(method_id(init))]
         fn init(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(DelegateIvars {
                 capture: Mutex::new(None),
-                failure: CancellationToken::new(),
                 error: Mutex::new(None),
             });
             unsafe { msg_send![super(this), init] }
@@ -122,14 +126,22 @@ define_class!(
 );
 
 impl Delegate {
-    fn new(sender: tokio::sync::watch::Sender<Option<Frame>>) -> Retained<Self> {
+    fn new(sink: Arc<dyn CaptureSink>) -> Retained<Self> {
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
         *this.ivars().capture.lock().expect("capture mutex poisoned") = Some(CaptureState {
-            sender,
+            sink,
             pool: FramePool::default(),
             stats: prysm_metrics::TraceStats::new("avfoundation_copy"),
         });
         this
+    }
+
+    fn failed(&self) -> bool {
+        self.ivars()
+            .error
+            .lock()
+            .expect("capture error mutex poisoned")
+            .is_some()
     }
 
     fn observe_failure(&self, name: &NSString, object: &AnyObject) {
@@ -332,13 +344,12 @@ fn configure_capture(
 
 fn start_session(
     device_uid: Option<&str>,
-    sender: tokio::sync::watch::Sender<Option<Frame>>,
+    sink: &Arc<dyn CaptureSink>,
     width: u32,
     height: u32,
     refresh_rate_hz: NonZeroU32,
-    shutdown: &CancellationToken,
 ) -> Result<Option<RunningSession>> {
-    if shutdown.is_cancelled() {
+    if sink.should_stop(Duration::ZERO) {
         return Ok(None);
     }
     let device = match device_uid {
@@ -356,7 +367,7 @@ fn start_session(
     let input =
         AVCaptureDeviceInput::from_device(&device).context("failed to open device input")?;
     let output = AVCaptureVideoDataOutput::new();
-    let delegate = Delegate::new(sender);
+    let delegate = Delegate::new(sink.clone());
     let queue = DispatchQueue::new("prysm.capture.video", DispatchQueueAttr::SERIAL);
 
     // SAFETY: These notification names are process-lifetime Foundation strings.
@@ -390,7 +401,7 @@ fn start_session(
         delegate,
         queue,
     };
-    if shutdown.is_cancelled() {
+    if sink.should_stop(Duration::ZERO) {
         return Ok(None);
     }
     running.session.start_running();
@@ -419,23 +430,11 @@ fn start_session(
     {
         return Err(error);
     }
-    if !running.session.is_running() || running.delegate.ivars().failure.is_cancelled() {
+    if !running.session.is_running() || running.delegate.failed() {
         return Err(anyhow!("capture session failed to start").into());
     }
     tracing::info!("Video format set to: YUYV {width}x{height}");
     Ok(Some(running))
-}
-
-async fn stop_when_capture_closes(
-    sender: tokio::sync::watch::Sender<Option<Frame>>,
-    shutdown: CancellationToken,
-    failure: CancellationToken,
-) {
-    tokio::select! {
-        () = shutdown.cancelled() => {},
-        () = sender.closed() => {},
-        () = failure.cancelled() => {},
-    }
 }
 
 pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
@@ -453,24 +452,17 @@ pub(crate) fn run(
     width: u32,
     height: u32,
     rate: NonZeroU32,
-    frames: tokio::sync::watch::Sender<Option<Frame>>,
-    ready: tokio::sync::oneshot::Sender<()>,
-    shutdown: CancellationToken,
+    sink: &Arc<dyn CaptureSink>,
 ) -> Result<()> {
-    let Some(session) = start_session(device_uid, frames.clone(), width, height, rate, &shutdown)?
-    else {
+    let Some(session) = start_session(device_uid, sink, width, height, rate)? else {
         return Ok(());
     };
-    if shutdown.is_cancelled() {
+    if sink.should_stop(Duration::ZERO) {
         return Ok(());
     }
-    let _ = ready.send(());
-    // The native thread itself waits; there is no detached monitor or nested runtime.
-    futures::executor::block_on(stop_when_capture_closes(
-        frames,
-        shutdown,
-        session.delegate.ivars().failure.clone(),
-    ));
+    sink.ready();
+    // The capture thread itself waits; frames arrive on the session's queue.
+    while !session.delegate.failed() && !sink.should_stop(FAILURE_POLL) {}
     let error = session
         .delegate
         .ivars()
@@ -489,8 +481,7 @@ mod tests {
     #[test]
     fn runtime_notification_preserves_native_error() {
         let object = NSObject::new();
-        let (sender, _receiver) = tokio::sync::watch::channel(None::<Frame>);
-        let delegate = Delegate::new(sender);
+        let delegate = Delegate::new(Arc::new(crate::device::Discard));
         // SAFETY: Foundation keys/names are static; all notification objects are live.
         unsafe {
             delegate.observe_failure(AVCaptureSessionRuntimeErrorNotification, &object);
@@ -516,8 +507,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn capture_failure_notifications_stop_capture_and_close_the_stream() {
+    #[test]
+    fn capture_failure_notifications_stop_capture_and_release_the_sink() {
         // SAFETY: These are process-lifetime notification names.
         let names = unsafe {
             [
@@ -528,30 +519,20 @@ mod tests {
         for name in names {
             let object = NSObject::new();
             let unrelated = NSObject::new();
-            let (sender, mut receiver) = tokio::sync::watch::channel(None::<Frame>);
-            let delegate = Delegate::new(sender.clone());
+            let sink: Arc<dyn CaptureSink> = Arc::new(crate::device::Discard);
+            let delegate = Delegate::new(sink.clone());
             delegate.observe_failure(name, &object);
-            let failure = delegate.ivars().failure.clone();
-            let bridge =
-                stop_when_capture_closes(sender, CancellationToken::new(), failure.clone());
-            futures::pin_mut!(bridge);
-            assert!(futures::poll!(&mut bridge).is_pending());
 
             // SAFETY: These live NSObject instances identify the notification source;
             // the observer only reads the notification name, not its object.
             unsafe {
                 NSNotificationCenter::defaultCenter()
                     .postNotificationName_object(name, Some(&unrelated));
-                assert!(
-                    !failure.is_cancelled(),
-                    "another capture must not stop this one"
-                );
+                assert!(!delegate.failed(), "another capture must not stop this one");
                 NSNotificationCenter::defaultCenter()
                     .postNotificationName_object(name, Some(&object));
             }
-            tokio::time::timeout(std::time::Duration::from_secs(1), bridge)
-                .await
-                .unwrap();
+            assert!(delegate.failed());
             let error = delegate.ivars().error.lock().unwrap().take().unwrap();
             assert!(error.to_string().contains(&name.to_string()));
             assert_eq!(
@@ -559,50 +540,24 @@ mod tests {
                 name == unsafe { AVCaptureDeviceWasDisconnectedNotification },
             );
             drop(delegate);
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_secs(1), receiver.changed())
-                    .await
-                    .unwrap()
-                    .is_err()
+            assert_eq!(
+                Arc::strong_count(&sink),
+                1,
+                "the delegate released the sink"
             );
         }
     }
 
-    #[tokio::test]
-    async fn failed_startup_preserves_capture_error() {
-        let mut capture = crate::DeviceCapture::open(
+    #[test]
+    fn failed_startup_preserves_capture_error() {
+        let result = crate::capture(
             Some("prysm-test-missing-device"),
             640,
             360,
             30.try_into().unwrap(),
-        )
-        .unwrap();
-        assert!((&mut capture.ready).await.is_err());
-        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), capture.worker.join())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(matches!(
-            exit.failure,
-            Some(CaptureError::DeviceNotFound { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn capture_stops_on_cancellation_or_consumer_drop() {
-        for cancel in [false, true] {
-            let (sender, receiver) = tokio::sync::watch::channel(None::<Frame>);
-            let shutdown = CancellationToken::new();
-            let stop = stop_when_capture_closes(sender, shutdown.clone(), CancellationToken::new());
-            futures::pin_mut!(stop);
-            assert!(futures::poll!(&mut stop).is_pending());
-            if cancel {
-                shutdown.cancel();
-            } else {
-                drop(receiver);
-            }
-            stop.await;
-        }
+            &(Arc::new(crate::device::Discard) as Arc<dyn CaptureSink>),
+        );
+        assert!(matches!(result, Err(CaptureError::DeviceNotFound { .. })));
     }
 
     #[test]

@@ -9,14 +9,15 @@ mod webos;
 #[cfg(feature = "remote")]
 pub use receiver::WebosReceiver;
 mod device;
-pub use device::{CaptureExit, CaptureWorker, DeviceCapture, DeviceInfo, list_devices};
+#[cfg(feature = "async")]
+pub use device::{CaptureExit, CaptureWorker, DeviceCapture};
+pub use device::{CaptureSink, DeviceInfo, capture, list_devices};
 
-#[cfg(any(feature = "remote", test))]
+#[cfg(feature = "remote")]
 use futures::{Stream, StreamExt};
-use tokio::sync::oneshot;
-#[cfg(any(feature = "remote", test))]
-use tokio::sync::watch;
-#[cfg(any(feature = "remote", test))]
+#[cfg(feature = "remote")]
+use tokio::sync::{oneshot, watch};
+#[cfg(feature = "remote")]
 use tokio_util::sync::CancellationToken;
 
 /// Terminal capture failures. Cancellation closes the stream successfully.
@@ -37,6 +38,7 @@ pub enum CaptureError {
         #[source]
         source: Option<std::io::Error>,
     },
+    #[cfg(feature = "remote")]
     #[error("capture thread ended unexpectedly")]
     WorkerStopped(#[source] oneshot::error::RecvError),
     #[error("native capture cleanup failed: {0}")]
@@ -59,7 +61,7 @@ fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
 }
 
 // Keep the terminal result separate so a final frame cannot overwrite a failure.
-#[cfg(any(feature = "remote", test))]
+#[cfg(feature = "remote")]
 fn capture_channel(
     shutdown: CancellationToken,
 ) -> (
@@ -92,7 +94,6 @@ fn capture_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn format_negotiation_only_falls_back_for_invalid_input() {
@@ -151,6 +152,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "remote")]
     #[tokio::test]
     async fn slow_consumer_gets_latest_frame_before_terminal_error() {
         let (sender, finished, frames) = capture_channel(CancellationToken::new());
@@ -175,6 +177,7 @@ mod tests {
         assert!(frames.next().await.is_none());
     }
 
+    #[cfg(feature = "remote")]
     #[tokio::test]
     async fn cancellation_and_consumer_drop_stop_capture() {
         let shutdown = CancellationToken::new();
@@ -188,6 +191,7 @@ mod tests {
         assert!(sender.send(Some(Frame::dummy(2, 1).unwrap())).is_err());
     }
 
+    #[cfg(feature = "remote")]
     #[tokio::test]
     async fn unexpected_capture_thread_exit_is_an_error() {
         let (sender, finished, frames) = capture_channel(CancellationToken::new());

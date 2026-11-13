@@ -14,10 +14,7 @@ schema = ["dep:utoipa"]
 prysm-capture = { path = "../../../crates/capture/prysm-capture", default-features = false }
 prysm-core.workspace = true
 prysm-ports.workspace = true
-futures.workspace = true
 serde.workspace = true
-tokio.workspace = true
-tokio-util = "0.7"
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]

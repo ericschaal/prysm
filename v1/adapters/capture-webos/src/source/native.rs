@@ -1,10 +1,9 @@
 //! The native thread: owns the backend and its tap, follows the video signal,
-//! paces acquisition, retries recoverable interruptions and publishes into
-//! [`Shared`].
-use super::{Acquired, Backend, Fault, Limits, Shared, Tap};
+//! paces acquisition, retries recoverable interruptions and publishes through
+//! its [`Worker`].
+use super::{Acquired, Backend, Fault, Limits, Tap};
 use crate::{Video, VideoSignal, WebosSettings};
-use prysm_ports::{Error, Result, chain};
-use std::sync::Arc;
+use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
 /// Which tap the native thread holds. The two never run together.
@@ -28,7 +27,7 @@ pub(super) struct Native<B> {
     settings: WebosSettings,
     video: VideoSignal,
     limits: Limits,
-    shared: Arc<Shared>,
+    worker: Worker,
     /// The tap kind the video state asks for; `None`: idle.
     kind: Option<Kind>,
     tap: Option<(Kind, Box<dyn Tap>)>,
@@ -45,14 +44,14 @@ impl<B: Backend> Native<B> {
         settings: WebosSettings,
         video: VideoSignal,
         limits: Limits,
-        shared: Arc<Shared>,
+        worker: Worker,
     ) -> Self {
         Self {
             backend,
             settings,
             video,
             limits,
-            shared,
+            worker,
             kind: None,
             tap: None,
             ui: UiSupport::Untried,
@@ -62,30 +61,24 @@ impl<B: Backend> Native<B> {
         }
     }
 
-    /// Capture until cancelled or failed, release the tap, drop the backend,
-    /// and publish the release result as the last act.
-    pub(super) fn run(mut self) {
-        let released = match self.capture() {
-            Ok(()) => self.release_tap(),
-            Err(error) => {
-                // Publish the failure before potentially blocking teardown.
-                self.shared.fail(error);
-                self.release_tap()
-            }
-        };
-        let Self {
-            backend, shared, ..
-        } = self;
-        drop(backend);
-        shared.update(|state| state.released = Some(released));
+    /// Capture until stopped or failed, release the tap and drop the
+    /// backend; the release result is the thread's last act.
+    pub(super) fn run(mut self) -> Result<()> {
+        if let Err(error) = self.capture() {
+            // Publish the failure before potentially blocking teardown.
+            self.worker.fail(error);
+        }
+        let released = self.release_tap();
+        drop(self);
+        released
     }
 
-    /// Capture until cancelled or failed.
+    /// Capture until stopped or failed.
     fn capture(&mut self) -> Result<()> {
         let period = Duration::from_secs(1) / self.settings.fps.max(1);
         let mut generation = self.video.current().1;
         let mut next = Instant::now();
-        while !self.shared.stopping() {
+        while !self.worker.stopped() {
             let (video, current) = self.video.current();
             let kind = self.wanted(video);
             // A change of tap kind or video context releases the current tap;
@@ -104,7 +97,7 @@ impl<B: Backend> Native<B> {
                     None => self.limits.poll,
                     Some(_) => self.retry_at.saturating_duration_since(now),
                 };
-                self.shared
+                self.worker
                     .sleep(wake.clamp(Duration::from_millis(1), self.limits.poll));
                 continue;
             };
@@ -115,7 +108,7 @@ impl<B: Backend> Native<B> {
             if now > next {
                 next = now;
             }
-            self.shared.sleep(next - now);
+            self.worker.sleep(next - now);
         }
         Ok(())
     }
@@ -134,11 +127,11 @@ impl<B: Backend> Native<B> {
 
     /// Open if needed, then acquire once.
     fn step(&mut self, kind: Kind) -> Result<()> {
-        let shared = self.shared.clone();
+        let worker = self.worker.clone();
         if self.tap.is_none() {
             let opened = match kind {
-                Kind::Video => shared.watch("open", || self.backend.open(&self.settings)),
-                Kind::Ui => shared.watch("UI open", || self.backend.open_ui(&self.settings)),
+                Kind::Video => worker.watch("open", || self.backend.open(&self.settings)),
+                Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
             };
             match opened {
                 Ok(tap) => self.tap = Some((kind, tap)),
@@ -152,7 +145,7 @@ impl<B: Backend> Native<B> {
             Kind::Video => "acquire",
             Kind::Ui => "UI acquire",
         };
-        match shared.watch(operation, || tap.acquire()) {
+        match worker.watch(operation, || tap.acquire()) {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
                 self.pending_since = None;
@@ -164,7 +157,7 @@ impl<B: Backend> Native<B> {
                         "capturing the TV UI while there is no video"
                     );
                 }
-                shared.update(|state| state.frame = Some(frame));
+                worker.offer(frame);
             }
             Ok(Acquired::Pending) => {
                 let since = *self.pending_since.get_or_insert_with(Instant::now);
@@ -225,7 +218,7 @@ impl<B: Backend> Native<B> {
             Kind::Video => ("release", "webOS video release is unconfirmed"),
             Kind::Ui => ("UI release", "webOS UI capture release is unconfirmed"),
         };
-        self.shared
+        self.worker
             .watch(operation, || tap.release())
             .map_err(|error| Error::adapter(unconfirmed, error))
     }

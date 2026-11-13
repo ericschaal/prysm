@@ -1,7 +1,9 @@
-use crate::{CaptureError, Frame, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix};
+use crate::{
+    CaptureError, CaptureSink, FramePool, PixelFormat, Result, YuvRange, YuvStandardMatrix,
+};
 use anyhow::Context;
 use std::num::NonZeroU32;
-use tokio_util::sync::CancellationToken;
+use std::time::Duration;
 use v4l::buffer::Type;
 mod stream;
 use stream::Stream;
@@ -220,11 +222,10 @@ pub(crate) fn run(
     width: u32,
     height: u32,
     rate: NonZeroU32,
-    frames: &tokio::sync::watch::Sender<Option<Frame>>,
-    ready: tokio::sync::oneshot::Sender<()>,
-    shutdown: &CancellationToken,
+    sink: &dyn CaptureSink,
 ) -> Result<()> {
-    if shutdown.is_cancelled() {
+    let stopped = || sink.should_stop(Duration::ZERO);
+    if stopped() {
         return Ok(());
     }
     let path = device_path.unwrap_or("/dev/video0");
@@ -247,19 +248,18 @@ pub(crate) fn run(
         Ok("BGR3") => PixelFormat::BGR24,
         _ => unreachable!("validated capture format"),
     };
-    let timeout =
-        std::time::Duration::from_secs(1) + std::time::Duration::from_secs(1) / rate.get();
+    let timeout = Duration::from_secs(1) + Duration::from_secs(1) / rate.get();
     let mut stream = Stream::new(&device, timeout)?;
     let result = (|| -> Result<()> {
-        if shutdown.is_cancelled() {
+        if stopped() {
             return Ok(());
         }
         stream.start().context("failed to start capture stream")?;
-        let _ = ready.send(());
+        sink.ready();
         let mut pool = FramePool::default();
         let mut stats = prysm_metrics::TraceStats::new("v4l_capture");
         loop {
-            if shutdown.is_cancelled() || frames.is_closed() {
+            if stopped() {
                 return Ok(());
             }
             let started = stats.start();
@@ -275,9 +275,7 @@ pub(crate) fn run(
             }) {
                 Ok(Some(frame)) => {
                     stats.record(started, frame.len(), Some(pool.stats()));
-                    if frames.send(Some(frame)).is_err() {
-                        return Ok(());
-                    }
+                    sink.frame(frame);
                 }
                 Ok(None) => {
                     stats.failure();
@@ -287,7 +285,7 @@ pub(crate) fn run(
                     stream
                         .stop()
                         .context("failed to stop stalled capture stream")?;
-                    if !shutdown.is_cancelled() {
+                    if !stopped() {
                         stream
                             .start()
                             .context("failed to restart stalled capture stream")?;
@@ -312,21 +310,19 @@ mod tests {
     use super::*;
     use v4l::v4l_sys::*;
 
-    #[tokio::test]
-    async fn missing_device_preserves_its_io_cause() {
-        let mut capture = crate::DeviceCapture::open(
+    #[test]
+    fn missing_device_preserves_its_io_cause() {
+        let result = crate::capture(
             Some("/dev/prysm-test-missing-device"),
             640,
             360,
             30.try_into().unwrap(),
-        )
-        .unwrap();
-        assert!((&mut capture.ready).await.is_err());
-        let exit = capture.worker.join().await.unwrap();
-        let Some(CaptureError::DeviceNotFound {
+            &(std::sync::Arc::new(crate::device::Discard) as std::sync::Arc<dyn CaptureSink>),
+        );
+        let Err(CaptureError::DeviceNotFound {
             source: Some(source),
             ..
-        }) = exit.failure
+        }) = result
         else {
             panic!("expected missing device error")
         };
