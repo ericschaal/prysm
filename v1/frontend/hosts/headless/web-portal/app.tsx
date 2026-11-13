@@ -2,7 +2,11 @@ import type {
   CaptureSettings,
   OutputSettings,
 } from '@prysm/contracts/host-desktop';
-import type { DiscoveryClient, PreviewClient } from '@prysm/application-client';
+import type {
+  ColorsClient,
+  DiscoveryClient,
+  PreviewClient,
+} from '@prysm/application-client';
 import { ApplicationProvider } from '@prysm/application-react/provider';
 import type { ApplicationRuntime } from '@prysm/application-state';
 import { WebPortal } from '@prysm/web-portal';
@@ -14,10 +18,12 @@ export type HeadlessOutput = OutputSettings;
 export function HeadlessWebPortal({
   application,
   preview,
+  colors,
   discovery,
 }: {
   application: ApplicationRuntime<HeadlessCapture, HeadlessOutput>;
   preview?: PreviewClient;
+  colors?: ColorsClient;
   discovery?: DiscoveryClient;
 }) {
   return (
@@ -26,6 +32,7 @@ export function HeadlessWebPortal({
         application={application}
         captures={headlessCaptures}
         preview={preview}
+        colors={colors}
         discovery={discovery}
         outputs={headlessOutputs}
       />

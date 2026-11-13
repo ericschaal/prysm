@@ -1,5 +1,5 @@
 import type { RemoteReceiverSettings } from '@prysm/contracts/host-desktop';
-import { describeTvPicture } from '@prysm/capture-webos-ui';
+import { describeTvPicture, tvPictureFacts } from '@prysm/capture-webos-ui';
 import type { AdapterUi } from '@prysm/web-portal';
 import { RemoteEditor } from './editor';
 import { remoteDefaults } from './settings';
@@ -13,4 +13,5 @@ export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   normalize: (value) => ({ ...value, listen: value.listen.trim() }),
   summary: (value) =>
     `Listens on ${value.listen}, ${describeTvPicture(value, remoteDefaults)}`,
+  facts: (value) => tvPictureFacts(value, remoteDefaults),
 };

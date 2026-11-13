@@ -83,6 +83,9 @@ small {
 }
 
 /* ── Layout: one centred column, phone first ──────────────────────────── */
+.page {
+  overflow-x: clip;
+}
 .portal {
   width: min(100% - 40px, 600px);
   margin: 0 auto;
@@ -665,6 +668,8 @@ fieldset > .help {
   initial-value: #ff8a4c;
 }
 .light-frame {
+  /* Under every other card: its light shows only on the page. */
+  z-index: 0;
   --light-a: var(--aurora-1);
   --light-b: var(--aurora-2);
   --light-c: var(--aurora-3);
@@ -743,6 +748,36 @@ fieldset > .help {
 }
 .light-frame[data-lit='true'][data-palette='effects'] .light-spill {
   opacity: 0.3;
+}
+/*
+ * A failed or faulted session: a calm warning lamp, not an alarm. The same
+ * aurora in deep red and rose, low and still drifting slowly; no ignition.
+ * The colours cross-fade from whatever was showing.
+ */
+.light-frame[data-palette='error'] {
+  --light-a: var(--error-1);
+  --light-b: var(--error-2);
+  --light-c: var(--error-3);
+  --light-d: var(--error-4);
+}
+.light-frame[data-palette='error'] .light-spill {
+  opacity: 0.18;
+  transition: opacity var(--duration-light-on) var(--ease-in-out);
+}
+/*
+ * Screen sync with the LEDs' colours streaming: the card's four fields take
+ * them (see live-colors.ts), easing from one update to the next.
+ */
+.home-grid[data-live='colors'] .light-frame[data-palette='sync'] {
+  --light-a: var(--live-a);
+  --light-b: var(--live-b);
+  --light-c: var(--live-c);
+  --light-d: var(--live-d);
+  transition:
+    --light-a var(--duration-led) var(--ease-out),
+    --light-b var(--duration-led) var(--ease-out),
+    --light-c var(--duration-led) var(--ease-out),
+    --light-d var(--duration-led) var(--ease-out);
 }
 .light-card {
   --pad: var(--space-6);
@@ -839,6 +874,14 @@ fieldset > .help {
     color-mix(in srgb, var(--hero-bg) 62%, transparent) 62%,
     color-mix(in srgb, var(--hero-bg) 80%, transparent)
   );
+}
+/* Failed or faulted: the warning lamp, low. */
+.light-card[data-mood='problem'] .aurora-light {
+  transform: none;
+  opacity: 0.55;
+  transition:
+    transform var(--duration-light-on) var(--ease-light),
+    opacity var(--duration-mix) var(--ease-in-out);
 }
 /* Starting: a small glow gathers at the button while Prysm gets ready. */
 .light-card[data-mood='starting']:not([data-lit='true']) .aurora-light {
@@ -1116,10 +1159,12 @@ fieldset > .help {
   grid-area: 1 / 1;
   color: var(--word-dim);
   opacity: 0;
-  transition: opacity var(--duration-slow) var(--ease-in-out);
+  /* The old word leaves quickly; the new one comes after: never two at once. */
+  transition: opacity var(--duration-fast) var(--ease-in-out);
 }
 .light-word span[data-shown='true'] {
   opacity: 1;
+  transition: opacity var(--duration-slow) var(--ease-out) var(--duration-fast);
 }
 .light-word [data-word='On'] {
   color: var(--text);
@@ -1129,11 +1174,13 @@ fieldset > .help {
   /* A longer word, said calmly: smaller than On and Off, same baseline. */
   font-size: var(--text-hero);
   letter-spacing: -0.03em;
-  color: var(--danger);
+  /* Near-white, faintly rose: it must stand apart from the red lamp. */
+  color: var(--word-stopped);
 }
 /* "On" arrives with the light, at the light's pace. */
 .light-card[data-lit='true'] .light-word [data-word='On'] {
-  transition: opacity var(--duration-light-on) var(--ease-light);
+  transition: opacity var(--duration-light-on) var(--ease-light)
+    var(--duration-fast);
 }
 
 /*
@@ -1279,12 +1326,33 @@ fieldset > .help {
   border-top-color: var(--focus);
   border-radius: 50%;
   opacity: 0;
-  transition: opacity var(--duration) var(--ease-out);
-}
-.power-wrap .power[aria-busy='true']::after,
-.light-card[data-mood='starting']:not([data-lit='true']) .power::after {
-  opacity: 1;
+  /* Turning while it fades out too, so it never freezes mid-turn. */
   animation: spin 0.9s linear infinite;
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+/* Shown only for a slow operation, and held: it fades, never flickers. */
+.power[data-ring='true']::after {
+  opacity: 1;
+}
+/* The technical message behind a failure, for whoever wants it. */
+.light-details {
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+.light-details summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  cursor: pointer;
+  color: var(--text-2);
+}
+.light-details summary:hover {
+  color: var(--text);
+}
+.light-details p {
+  padding-top: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
 }
 /* What is missing, with the one fix. */
 .light-setup {
@@ -1360,9 +1428,10 @@ fieldset > .help {
     opacity var(--duration-slow) var(--ease-in-out),
     transform var(--duration-fast) var(--ease-out);
 }
+/* Hover only hints: it must never look like the selection. */
 .mode:hover:enabled {
-  background: rgb(255 255 255 / 0.04);
-  color: var(--text);
+  background: rgb(255 255 255 / 0.03);
+  color: var(--text-2);
 }
 .mode:active:enabled {
   transform: scale(0.97);
@@ -1624,14 +1693,15 @@ fieldset > .help {
   color: #1d1934;
 }
 .chip.add {
+  /* An action, not a name: never cut short. */
+  max-width: none;
   border-style: dashed;
   color: var(--text-3);
 }
 .light-card .quick-picture > .notice {
   margin-top: var(--space-4);
 }
-.device-link,
-.setup-links a {
+.device-link {
   display: inline-flex;
   align-items: center;
   min-height: var(--hit);
@@ -1639,18 +1709,64 @@ fieldset > .help {
   font-weight: 500;
   text-decoration: none;
 }
-.device-link:hover,
-.setup-links a:hover {
+.device-link:hover {
   color: var(--text);
 }
-.device-link::after,
-.setup-links a::after {
+.device-link::after {
   content: '↗';
   margin-left: 6px;
 }
 
+/*
+ * Live light: the LEDs' colours arrive (at most 10 a second) as custom
+ * properties on the Home grid, written by useLiveColors; nothing re-renders.
+ * The card's fields and the LED drawing in Your setup read them.
+ */
+@property --live-a {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #e0479e;
+}
+@property --live-b {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #22c3ee;
+}
+@property --live-c {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #6b4dff;
+}
+@property --live-d {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff8a4c;
+}
+@property --led-t {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-r {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-b {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
+@property --led-l {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgb(0 0 0 / 0);
+}
 /* Your setup: where the picture comes from, where the colours go. */
 .setup-card {
+  /* An opaque surface in front of the light card's glow. */
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   padding: var(--space-6);
@@ -1665,33 +1781,18 @@ fieldset > .help {
     padding: var(--space-8);
   }
 }
-.setup-card h2 {
-  margin-top: var(--space-2);
-  font-size: 1.375rem;
-  letter-spacing: -0.02em;
-}
 .setup-flow {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
   margin: var(--space-5) 0 0;
   padding: 0;
   list-style: none;
 }
 .setup-flow li {
-  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: var(--space-3);
+  gap: var(--space-4);
   min-width: 0;
-}
-/* A dotted line from the source down to the lights. */
-.setup-flow li + li::before {
-  content: '';
-  position: absolute;
-  top: calc(-1 * var(--space-4) - 2px);
-  left: 19px;
-  height: calc(var(--space-4) + 4px);
-  border-left: 2px dotted var(--line-strong);
 }
 .setup-icon {
   display: grid;
@@ -1714,6 +1815,7 @@ fieldset > .help {
 }
 .setup-text {
   display: grid;
+  gap: 2px;
   min-width: 0;
 }
 .setup-name {
@@ -1721,13 +1823,41 @@ fieldset > .help {
   font-size: var(--text-small);
 }
 .setup-text strong {
+  overflow-wrap: anywhere;
   font-weight: var(--weight-strong);
 }
-.setup-summary {
+/* A tiny spec: label above value, evenly set, tabular figures. */
+.setup-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: var(--space-2) 0 0;
+}
+.setup-facts div {
+  display: grid;
+  min-width: 0;
+}
+.setup-facts dt {
+  color: var(--text-3);
+  font-size: 0.6875rem;
+  font-weight: var(--weight-strong);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.setup-facts dd {
+  margin: 0;
   overflow-wrap: anywhere;
   color: var(--text-2);
   font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
 }
+
+/*
+ * The TV seen from the front, on its stand, with the LED band around it as
+ * the light: the designed colours when screen sync is idle, the LEDs' own
+ * while they stream, the warm effects palette for the lights' own effects,
+ * a dim neutral band when off or stopped.
+ */
 .led-map {
   display: grid;
   flex: 1;
@@ -1747,60 +1877,85 @@ fieldset > .help {
   stroke: var(--line-strong);
   stroke-width: 1;
 }
+.led-map-stand {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
 .led-map-total {
   fill: #fff;
-  font-variant-numeric: tabular-nums;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: var(--weight-strong);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.4px;
+  font-variant-numeric: tabular-nums;
 }
-.led-map-note {
-  fill: var(--stage-text);
+.led-map-count {
+  fill: var(--text-3);
   font-size: 11px;
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
 }
 .led-map-edge line {
-  stroke: var(--aurora-3);
-  stroke-width: 5;
+  stroke: var(--band, var(--line-strong));
+  stroke-width: 4;
   stroke-linecap: round;
-  stroke-dasharray: 0 8.5;
+  transition: stroke var(--duration-led) var(--ease-out);
 }
-.edge-left line {
-  stroke: var(--aurora-1);
-}
-.edge-right line {
-  stroke: var(--aurora-2);
-}
-.edge-bottom line {
-  stroke: #9a8cff;
+.led-map-edge line.halo {
+  stroke-width: 10;
+  opacity: 0.55;
 }
 .led-map-edge.empty line {
-  stroke: var(--line-strong);
-  stroke-width: 2;
+  --band: var(--line);
   stroke-dasharray: 2 6;
 }
-.led-map-edge text {
-  fill: var(--text-2);
-  font-size: 13px;
-  font-weight: var(--weight-strong);
-  font-variant-numeric: tabular-nums;
+.led-map-edge.empty line.halo {
+  opacity: 0;
+}
+/* The band's colours follow the light card. */
+.home-grid:has(.light-frame[data-lit='true'][data-palette='sync']) .led-map {
+  --band-top: var(--aurora-3);
+  --band-right: var(--aurora-2);
+  --band-bottom: #9a8cff;
+  --band-left: var(--aurora-1);
+}
+.home-grid:has(.light-frame[data-lit='true'][data-palette='effects'])
+  .led-map {
+  --band-top: var(--effects-4);
+  --band-right: var(--effects-2);
+  --band-bottom: var(--effects-3);
+  --band-left: var(--effects-1);
+}
+.home-grid[data-live='colors']:has(.light-frame[data-lit='true'][data-palette='sync'])
+  .led-map {
+  --band-top: var(--led-t);
+  --band-right: var(--led-r);
+  --band-bottom: var(--led-b);
+  --band-left: var(--led-l);
+}
+.edge-top {
+  --band: var(--band-top);
+}
+.edge-right {
+  --band: var(--band-right);
+}
+.edge-bottom {
+  --band: var(--band-bottom);
+}
+.edge-left {
+  --band: var(--band-left);
 }
 .setup-links {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
   margin: var(--space-4) calc(-1 * var(--space-3)) calc(-1 * var(--space-2));
 }
-.setup-links a,
 .setup-links .quiet {
   padding-inline: var(--space-3);
   color: var(--accent-text);
   font-size: var(--text-small);
   font-weight: 500;
-  line-height: 1.2;
 }
-.setup-links a:hover,
 .setup-links .quiet:hover:enabled {
   color: var(--text);
 }

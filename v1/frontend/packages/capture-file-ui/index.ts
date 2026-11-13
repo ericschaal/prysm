@@ -1,5 +1,9 @@
 import type { FileSettings } from '@prysm/contracts/host-desktop';
-import { describePicture, type AdapterUi } from '@prysm/web-portal';
+import {
+  describePicture,
+  pictureSize,
+  type AdapterUi,
+} from '@prysm/web-portal';
 import { FileEditor } from './editor';
 import { fileDefaults } from './settings';
 
@@ -12,4 +16,14 @@ export const fileCapture: AdapterUi<FileSettings> = {
   normalize: (value) => ({ ...value, path: value.path.trim() }),
   summary: ({ path, width, height, fps }) =>
     `${path}, ${describePicture(width ?? fileDefaults.width, height ?? fileDefaults.height, fps ?? fileDefaults.fps)}`,
+  facts: ({ width, height, fps }) => [
+    {
+      label: 'Picture',
+      value: pictureSize(
+        width ?? fileDefaults.width,
+        height ?? fileDefaults.height,
+      ),
+    },
+    { label: 'Rate', value: `${fps ?? fileDefaults.fps} fps` },
+  ],
 };

@@ -1,5 +1,9 @@
 import type { DeviceSettings } from '@prysm/contracts/host-desktop';
-import { describePicture, type AdapterUi } from '@prysm/web-portal';
+import {
+  describePicture,
+  pictureSize,
+  type AdapterUi,
+} from '@prysm/web-portal';
 import { DeviceEditor } from './editor';
 import { deviceDefaults } from './settings';
 
@@ -12,4 +16,14 @@ export const deviceCapture: AdapterUi<DeviceSettings> = {
   normalize: (value) => ({ ...value, path: value.path.trim() }),
   summary: ({ path, width, height, fps }) =>
     `${path}, ${describePicture(width ?? deviceDefaults.width, height ?? deviceDefaults.height, fps ?? deviceDefaults.fps)}`,
+  facts: ({ width, height, fps }) => [
+    {
+      label: 'Picture',
+      value: pictureSize(
+        width ?? deviceDefaults.width,
+        height ?? deviceDefaults.height,
+      ),
+    },
+    { label: 'Rate', value: `${fps ?? deviceDefaults.fps} fps` },
+  ],
 };

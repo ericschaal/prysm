@@ -924,3 +924,60 @@ async fn colors_follow_the_lights_and_only_while_watched() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_failure() {
+    within(async {
+        let log = CallLog::new();
+        let failing = settings(
+            FakeSourceSettings {
+                name: "a".into(),
+                fail_open: true,
+                ..Default::default()
+            },
+            FakeOutputSettings {
+                name: "a".into(),
+                ..Default::default()
+            },
+        );
+        let (handle, engine, _) = start(&log, failing.clone(), DEADLINE).await;
+        // The lights run their own effects, then screen sync is asked for and
+        // the source cannot open: the session stays native, the failure set.
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert!(handle.set_target(LightingTarget::Processed).await.is_err());
+        let failed = handle.snapshot().borrow().clone();
+        assert_eq!(failed.target, LightingTarget::Processed);
+        assert_eq!(failed.session, SessionState::Native);
+        assert!(failed.failure.is_some());
+        assert_eq!(log.count("source.open_failed:a"), 1);
+
+        // A processing-only save (brightness) is the next attempt, not a
+        // silent success: the failure stays while the source still fails.
+        let mut brighter = failing.clone();
+        brighter.processing.brightness_percent = 75;
+        handle
+            .replace_settings(revision(&handle), brighter)
+            .await
+            .unwrap();
+        assert_eq!(log.count("source.open_failed:a"), 2, "retried");
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.target, LightingTarget::Processed);
+        assert!(snapshot.failure.is_some(), "the failure is not cleared");
+
+        // Once the source works, the next save starts screen sync.
+        let mut fixed = named("a", "a");
+        fixed.processing.brightness_percent = 75;
+        handle
+            .replace_settings(revision(&handle), fixed)
+            .await
+            .unwrap();
+        let snapshot = handle.snapshot().borrow().clone();
+        assert_eq!(snapshot.session, SessionState::Running);
+        assert!(snapshot.failure.is_none());
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}

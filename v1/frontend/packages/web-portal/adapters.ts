@@ -31,6 +31,16 @@ export interface LedEdges {
   left: number;
 }
 
+/** One fact about a configured section, for Home: `Picture` `640 × 360`. */
+export interface AdapterFact {
+  label: string;
+  value: string;
+}
+
+/** A picture size for facts: `640 × 360`. */
+export const pictureSize = (width: number, height: number) =>
+  `${width}\u00a0×\u00a0${height}`;
+
 /** One registered adapter kind: how the portal names, creates and edits it. */
 export interface AdapterUi<S extends AdapterSection> {
   label: string;
@@ -41,6 +51,8 @@ export interface AdapterUi<S extends AdapterSection> {
   normalize?: (value: S) => S;
   /** One line for the setup review, e.g. the device path and picture size. */
   summary?: (value: S) => string;
+  /** The few facts Home shows about the saved section, as typed data. */
+  facts?: (saved: S) => AdapterFact[];
   /** Outputs only: lighting actions for the saved section. */
   lighting?: (saved: S) => OutputLighting;
   /** Outputs only: the LEDs around the screen, for the drawing on Home. */

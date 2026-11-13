@@ -1,6 +1,7 @@
 import {
   httpApplicationClient,
   httpDiscoveryClient,
+  httpColorsClient,
   httpPreviewClient,
 } from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
@@ -21,6 +22,7 @@ createRoot(root).render(
   <HeadlessWebPortal
     application={application}
     preview={httpPreviewClient()}
+    colors={httpColorsClient()}
     discovery={httpDiscoveryClient()}
   />,
 );

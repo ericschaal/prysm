@@ -1,6 +1,7 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
 import type {
   ApplicationSnapshot,
+  ColorsClient,
   DiscoveryClient,
   PreviewClient,
 } from '@prysm/application-client';
@@ -13,6 +14,7 @@ import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { calibrateRoute, CalibrateWizard } from './calibrate';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
+import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel, QuickPicture } from './processing';
 import { SectionForm } from './section-form';
@@ -34,6 +36,11 @@ export interface WebPortalProps<
   outputs: AdapterUis<NoInfer<O>>;
   /** The live preview; without one the portal shows no preview. */
   preview?: PreviewClient;
+  /**
+   * The LEDs' colours, for the glow Home casts while screen sync runs;
+   * without one the glow is the designed one.
+   */
+  colors?: ColorsClient;
   /**
    * Finds devices to choose from in the capture and lights editors; without
    * one they offer only typed fields.
@@ -139,6 +146,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   captures,
   outputs,
   preview,
+  colors,
   discovery,
 }: WebPortalProps<C, O>) {
   const connection = useApplication(application);
@@ -172,6 +180,17 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     if (route === 'settings' || route === 'preview')
       pageHeadingRef.current?.focus({ preventScroll: true });
   }, [route]);
+
+  // Home's glow takes the LEDs' colours while screen sync runs and is seen.
+  const homeGridRef = useRef<HTMLDivElement>(null);
+  const visible = usePageVisible();
+  const syncing =
+    snapshot?.target === 'processed' && snapshot.session.state === 'running';
+  useLiveColors(
+    colors,
+    route === 'home' && setup === 'closed' && online && visible && syncing,
+    homeGridRef,
+  );
 
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
@@ -220,12 +239,15 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     content: ReactNode,
     wide = false,
   ) => (
-    <div className={wide ? 'portal wide' : 'portal'}>
-      {header}
-      <main id="content" className={className}>
-        <h1 className="visually-hidden">{title}</h1>
-        {content}
-      </main>
+    // Full width, clipping sideways: the light spills to the page's edge, never past it.
+    <div className="page">
+      <div className={wide ? 'portal wide' : 'portal'}>
+        {header}
+        <main id="content" className={className}>
+          <h1 className="visually-hidden">{title}</h1>
+          {content}
+        </main>
+      </div>
     </div>
   );
   /** A page under Settings: its title and the way back. */
@@ -491,7 +513,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         Light, in sync<span aria-hidden="true">.</span>
       </p>
       {notices}
-      <div className="home-grid">
+      <div className="home-grid" ref={homeGridRef}>
         <LightCard
           target={snapshot.target}
           session={session}
@@ -519,15 +541,19 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         {capture && output ? (
           <SetupCard
             capture={{
+              section: 'capture',
+              saved: capture,
               label: captureUi?.label ?? capture.kind,
-              summary: captureUi?.summary?.(capture),
+              facts: captureUi?.facts?.(capture) ?? [],
             }}
             output={{
+              section: 'output',
+              saved: output,
               label: outputUi?.label ?? output.kind,
-              summary: outputUi?.summary?.(output),
+              facts: outputUi?.facts?.(output) ?? [],
             }}
             edges={outputUi?.edges?.(output)}
-            link={outputLighting?.link}
+            discovery={discovery ?? null}
             openSettings={() => go(settingsRoute)}
           />
         ) : null}

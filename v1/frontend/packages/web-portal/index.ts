@@ -11,6 +11,8 @@ export * from './form';
 export {
   LightCard,
   modeStorageKey,
+  ringDelayMs,
+  ringHoldMs,
   slowStartMs,
   type LightingMode,
 } from './lighting';
@@ -29,6 +31,7 @@ export {
   profileLimits,
 } from './profile-model';
 export { PreviewPanel } from './preview';
+export { colorsRetryMs, ledProperties, ledValues } from './live-colors';
 export { drawPreview, previewLayout } from './preview-canvas';
 export { SectionFields, SectionForm } from './section-form';
 export { SetupWizard, type SetupWizardProps } from './setup';

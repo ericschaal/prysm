@@ -7,6 +7,7 @@ import type {
   Session,
 } from '@prysm/application-client';
 import { failureOf, same } from '@prysm/application-client';
+import { usePageVisible } from './live-colors';
 import { drawPreview } from './preview-canvas';
 
 /** The JPEG as an image the canvas can draw; `null` if the browser cannot. */
@@ -34,18 +35,6 @@ type View =
   | { kind: 'lost'; message: string };
 
 const size = (width: number, height: number) => `${width} × ${height}`;
-
-function usePageVisible() {
-  const [visible, setVisible] = useState(
-    () => document.visibilityState !== 'hidden',
-  );
-  useEffect(() => {
-    const changed = () => setVisible(document.visibilityState !== 'hidden');
-    document.addEventListener('visibilitychange', changed);
-    return () => document.removeEventListener('visibilitychange', changed);
-  }, []);
-  return visible;
-}
 
 /**
  * Stream previews into `canvasRef` while `active`. Decoding takes the newest

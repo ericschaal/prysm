@@ -11,6 +11,8 @@ import {
   processingDelayMs,
   processingLimits,
   profileLimits,
+  ringDelayMs,
+  ringHoldMs,
   saveTheme,
   slowStartMs,
   staleNotice,
@@ -38,6 +40,7 @@ import {
   remoteDefaults,
 } from '@prysm/capture-remote-ui';
 import { defaultProcessing } from '../testkit/application';
+import { fakeDiscoveryClient } from '../testkit/discovery';
 import {
   $,
   $$,
@@ -244,10 +247,15 @@ test('the power button and the mode tiles set the target and show what the sessi
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert($('.lighting-status').classList.contains('visually-hidden'));
     assert.equal($$('.light-card .notice').length, 0, 'one sentence, no box');
-    assert.equal(info(), 'WLED at 192.0.2.1 did not switch to live mode');
+    // Plain words from the typed failure; the message under Details.
+    assert.equal(info(), 'Screen sync could not start.');
     assert.equal(word(), 'Stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
+      'Screen sync could not start.',
+    );
+    assert.equal(
+      $('.light-details p').textContent,
       'WLED at 192.0.2.1 did not switch to live mode',
     );
     assert.equal(power().getAttribute('aria-pressed'), 'true', 'still on');
@@ -338,6 +346,175 @@ test('the word follows the light; starting is said only when it lasts', async ()
   }
 });
 
+test('a start that fails after switching from effects shows Stopped, unlit, in the error light', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    // The lights run their own effects.
+    await act(async () =>
+      fixture.publish({
+        target: 'device_native',
+        session: { state: 'native' },
+      }),
+    );
+    assert.equal(word(), 'On');
+    assert.equal($('.light-frame').dataset.palette, 'effects');
+    // As the engine does (`set_target` then a failed `start`): first the
+    // target changes while the session stays native …
+    await act(async () => fixture.publish({ target: 'processed' }));
+    assert.equal($('.light-card').dataset.mood, 'starting');
+    // … then the failure is recorded; the session is still native.
+    await act(async () =>
+      fixture.publish({
+        failure: {
+          kind: 'adapter',
+          message:
+            'video device capture failed: capture device does not support 640x360 at 30 Hz',
+        },
+      }),
+    );
+    assert.equal(fixture.snapshot().session.state, 'native');
+    assert.equal(word(), 'Stopped');
+    assert.equal($('.light-card').dataset.lit, 'false');
+    assert.equal($('.light-card').dataset.mood, 'problem');
+    assert.equal(
+      $('.light-frame').dataset.palette,
+      'error',
+      'the warning lamp',
+    );
+    assert.equal(info(), 'Screen sync could not start.');
+    assert.match($('.light-details p').textContent, /does not support 640x360/);
+    assert(button('Try again'));
+    // A field names the section: said as the video source.
+    await act(async () =>
+      fixture.publish({
+        failure: {
+          kind: 'invalid',
+          field: 'capture.width',
+          message: 'unsupported size',
+        },
+      }),
+    );
+    assert.equal(info(), 'The video source is not working.');
+    // Off clears it.
+    await act(async () =>
+      fixture.publish({
+        target: 'off',
+        session: { state: 'stopped' },
+        failure: null,
+      }),
+    );
+    assert.equal(word(), 'Off');
+    assert.notEqual($('.light-frame').dataset.palette, 'error');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('a brightness save while stopped keeps Stopped, the red light and Try again', async () => {
+  const capture = { kind: 'device', path: '/dev/video0' };
+  const failure = {
+    kind: 'adapter',
+    message:
+      'video device capture failed: capture device does not support 640x360 at 30 Hz',
+  };
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const stopped = () => {
+    assert.equal(word(), 'Stopped');
+    assert.equal($('.light-card').dataset.lit, 'false');
+    assert.equal($('.light-frame').dataset.palette, 'error');
+    assert.equal(power().getAttribute('aria-busy'), 'false', 'no busy ring');
+    assert.equal(info(), 'Screen sync could not start.');
+    assert(button('Try again'));
+  };
+  try {
+    await act(async () =>
+      fixture.publish({
+        target: 'device_native',
+        session: { state: 'native' },
+      }),
+    );
+    await act(async () => fixture.publish({ target: 'processed' }));
+    await act(async () => fixture.publish({ failure }));
+    stopped();
+    // The save (as the engine now does it): new settings and revision, then
+    // the retry's result. The failure is never cleared in between.
+    await edit(field('processing.brightness_percent'), 75);
+    await settle();
+    assert.equal(fixture.snapshot().settings.processing.brightness_percent, 75);
+    await act(async () => fixture.publish({ failure: { ...failure } }));
+    await act(async () => sleep(slowStartMs + 100));
+    stopped();
+    assert(!text().includes('are on'), 'no session sentence');
+
+    // Starting from effects that takes a while says what is starting.
+    await act(async () => fixture.publish({ failure: null }));
+    assert.equal($('.light-card').dataset.mood, 'starting');
+    await act(async () => sleep(slowStartMs + 100));
+    assert.equal(info(), 'Starting screen sync…');
+    assert(!text().includes('WLED effects are on'));
+
+    // Off with a failure left over: no failure sentence under "Off".
+    await act(async () =>
+      fixture.publish({
+        target: 'off',
+        session: { state: 'stopped' },
+        failure,
+      }),
+    );
+    assert.equal(word(), 'Off');
+    assert.equal(info(), null);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the busy ring shows only for a slow operation, after a delay, and is held', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const ring = () => power().dataset.ring;
+  const seen = [];
+  const watch = (ms) =>
+    act(async () => {
+      const until = Date.now() + ms;
+      while (Date.now() < until) {
+        seen.push(ring());
+        await sleep(20);
+      }
+    });
+  try {
+    // A quick operation: no ring at all.
+    await act(async () => power().click());
+    await watch(ringDelayMs + ringHoldMs + 100);
+    assert(!seen.includes('true'), 'never shown for a quick operation');
+    assert.equal(word(), 'On');
+
+    // A slow one (500 ms): shown after the delay, held past its end.
+    const setTarget = fixture.client.setTarget;
+    fixture.client.setTarget = async (target) => {
+      await sleep(500);
+      return setTarget(target);
+    };
+    const started = Date.now();
+    await act(async () => power().click());
+    await act(async () => sleep(ringDelayMs - 150));
+    assert.equal(ring(), 'false', 'not before the delay');
+    await act(async () => sleep(250));
+    assert.equal(ring(), 'true', 'shown once slow');
+    // The operation ends at 500 ms; the ring stays to delay + hold.
+    await act(async () =>
+      sleep(Math.max(0, started + ringDelayMs + ringHoldMs - 120 - Date.now())),
+    );
+    assert.equal(word(), 'Off', 'the operation is done');
+    assert.equal(ring(), 'true', 'held for the minimum');
+    await act(async () => sleep(300));
+    assert.equal(ring(), 'false', 'then it goes');
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('modes that cannot work are disabled and say why; before setup only the prompt shows', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
     capture,
@@ -352,7 +529,7 @@ test('modes that cannot work are disabled and say why; before setup only the pro
     );
     assert.equal(mode('device_native').textContent, 'Device effects');
     assert.equal(power().disabled, false);
-    assert.equal($('.setup-links a'), null, 'no device to open');
+    assert.equal($('.effects-panel .device-link'), null, 'no device to open');
   } finally {
     await portal.unmount();
   }
@@ -778,7 +955,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     });
     // Home: no WLED link, and these lights have no effects of their own.
     await click(button('Home'));
-    assert.equal($('.setup-links a'), null);
+    assert.equal($('.effects-panel .device-link'), null);
     assert.equal(mode('device_native').disabled, true);
   } finally {
     await portal.unmount();
@@ -874,7 +1051,10 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     });
     assert.equal(field('output.address').value, 'wled.local:8080');
     await click(button('Home'));
-    assert.equal($('.setup-links a').href, 'http://wled.local:8080/');
+    assert.equal(
+      $('.effects-panel .device-link').href,
+      'http://wled.local:8080/',
+    );
   } finally {
     await portal.unmount();
   }
@@ -1183,9 +1363,9 @@ test('the sender refusing the requested stream is shown in full with the lightin
     assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert.equal(
       $('.light-card [role="alert"]').textContent,
-      refusal,
-      'not shortened',
+      'Screen sync could not start.',
     );
+    assert.equal($('.light-details p').textContent, refusal, 'not shortened');
     // The capture form, in Settings, says where the fix is.
     await openSettings();
     assert.match(
@@ -1292,8 +1472,14 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     );
     assert.equal(
       $('.led-map figcaption').textContent,
-      '14 LEDs: 10 along the top, 0 on the right, 0 along the bottom and 4 on the left.',
+      'Seen from the front: 10 LEDs along the top, 0 on the right, 0 along the bottom and 4 on the left, 14 in all.',
     );
+    assert.equal(
+      $$('.setup-card a').length,
+      0,
+      'Open WLED lives in the light card',
+    );
+    assert.equal($$('.setup-card button').length, 1);
     await edit(field('processing.brightness_percent'), 55);
     await settle();
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 55);
@@ -1309,6 +1495,54 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     await click(button('Home'));
     assert.equal(window.location.hash, '');
     assert($('.light-card'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the setup card names devices and sets their facts neatly, never a raw id', async () => {
+  const id = '6C707041-05AC-0011-0008-000000000001';
+  const discovery = fakeDiscoveryClient({
+    'capture/device': [
+      { label: 'Elgato Cam Link 4K', fields: { path: id } },
+      { label: 'FaceTime HD Camera', fields: { path: 'other' } },
+    ],
+    'output/wled': [{ label: 'Living room', fields: { address: '192.0.2.1' } }],
+  });
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    {
+      capture: { kind: 'device', path: id, width: 640, height: 360, fps: 30 },
+      output: { ...output, leds: { top: 96, right: 54, bottom: 96, left: 54 } },
+    },
+    undefined,
+    { discovery: discovery.client },
+  );
+  try {
+    await act(async () => sleep(0));
+    assert.deepEqual(
+      $$('.setup-flow strong').map((item) => item.textContent),
+      ['Elgato Cam Link 4K', 'Living room'],
+    );
+    const facts = $$('.setup-facts').map((list) =>
+      $$('div', list).map((fact) => [
+        $('dt', fact).textContent,
+        $('dd', fact).textContent,
+      ]),
+    );
+    assert.deepEqual(facts, [
+      [
+        ['Picture', '640 × 360'],
+        ['Rate', '30 fps'],
+      ],
+      [
+        ['LEDs', '300'],
+        ['Address', '192.0.2.1'],
+      ],
+    ]);
+    assert(!$('.setup-card').textContent.includes(id), 'no raw device id');
+    assert.equal($('.led-map-total').textContent, '300 LEDs');
+    assert.deepEqual(discovery.calls.sort(), ['capture/device', 'output/wled']);
   } finally {
     await portal.unmount();
   }

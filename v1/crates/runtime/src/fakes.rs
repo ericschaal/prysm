@@ -112,6 +112,8 @@ impl SourceFactory for FakeSources {
 
     fn open(&self, settings: &FakeSourceSettings) -> Result<Box<dyn FrameSource>> {
         if settings.fail_open {
+            self.0
+                .record(format!("source.open_failed:{}", settings.name));
             return Err(Error::other("fake source cannot open"));
         }
         Ok(Box::new(FakeSource::new(&self.0, settings.clone())))

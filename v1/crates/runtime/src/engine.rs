@@ -479,8 +479,14 @@ impl Core {
         let adapters_changed = output_changed || previous.capture != settings.capture;
         let applied = match session {
             // Processed was requested but failed to start or ended in a
-            // failure: the new settings get the next attempt.
-            SessionState::Stopped if target == LightingTarget::Processed => self.start().await,
+            // failure: the new settings get the next attempt. A start that
+            // failed from the device's own effects leaves the session
+            // `Native` (the lights keep them); that is the same request.
+            // Doing nothing there would clear the failure below while the
+            // target still says `Processed`: an unexplained state.
+            SessionState::Stopped | SessionState::Native if target == LightingTarget::Processed => {
+                self.start().await
+            }
             SessionState::Running if adapters_changed => {
                 // Same path as Off followed by Processed.
                 match self.stop(IdleMode::Off).await {

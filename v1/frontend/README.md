@@ -63,10 +63,22 @@ supervisor in each of its states and play the phone's calibration part). See the
     apply to screen sync only, so the effects tile shows a note and
     "Open WLED" in their place. The card's light (CSS only, transform and
     opacity) drifts while the session runs; it grows out of the power button
-    when the session lights up and draws back in when it stops. The state
-    word follows the session, not the request. Words appear only when they
-    inform (a failure, faulted, waiting for video, an output issue, or
-    starting after a second).
+    when the session lights up and draws back in when it stops, and the card
+    casts a soft coloured drop shadow while lit. While screen sync runs and a
+    `colors` client is given, the LEDs' colours (`/api/v1/colors/stream`,
+    opened only while Home is shown, visible and online) become the card's
+    four light fields: written as CSS custom properties on the Home grid,
+    eased, kept in an OKLCH window and blended with the designed palette for
+    dull content. WLED effects keep the designed effects palette and open no
+    stream. A failed or faulted session shows "Stopped" in a calm red light,
+    whatever the session still reports (after a failed start from effects
+    the engine leaves it `native`), with the failure said plainly from its
+    typed `kind` and `field` and the message under Details. The state word
+    follows the session, not the request. Words appear only when they inform
+    (a failure, faulted, waiting for video, an output issue, or starting
+    after a second). Your setup names the devices (via discovery, when it
+    finds the saved one) and shows the adapters' typed `facts`, with the LED
+    band around the TV in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue

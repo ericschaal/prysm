@@ -1,62 +1,144 @@
-import { useId } from 'react';
-import type { LedEdges } from './adapters';
+import { useEffect, useId, useState, type ReactNode } from 'react';
+import type { DiscoveryClient } from '@prysm/application-client';
+import type { AdapterFact, AdapterSection, LedEdges } from './adapters';
 
-/** A configured section in words: its kind and the adapter's summary. */
+/** A configured section for Home: what it is, and a few facts about it. */
 export interface SetupPart {
+  section: 'capture' | 'output';
+  saved: AdapterSection;
+  /** The kind's name, used until (or unless) the device's own is found. */
   label: string;
-  summary?: string;
+  facts: AdapterFact[];
 }
 
-/** Where each edge's LEDs are drawn, and its count. */
-const edgeLines: Record<
-  keyof LedEdges,
-  { line: [number, number, number, number]; count: [number, number] }
-> = {
-  top: { line: [70, 22, 250, 22], count: [160, 11] },
-  right: { line: [284, 52, 284, 142], count: [306, 101] },
-  bottom: { line: [250, 172, 70, 172], count: [160, 192] },
-  left: { line: [36, 142, 36, 52], count: [14, 101] },
-};
+/** Whether every field the candidate fills has the saved value. */
+function picks(fields: Record<string, unknown>, saved: AdapterSection) {
+  const values = saved as unknown as Record<string, unknown>;
+  const keys = Object.keys(fields);
+  return keys.length > 0 && keys.every((key) => fields[key] === values[key]);
+}
 
-/** The screen seen from the front with the LEDs on each edge. */
+/**
+ * The device's own name, such as the capture card's, when discovery finds
+ * the saved device: looked up once per saved section, quietly; the kind's
+ * name until then or when it is not found.
+ */
+function useDeviceName(discovery: DiscoveryClient | null, part: SetupPart) {
+  const [found, setFound] = useState<{ key: string; name: string } | null>(
+    null,
+  );
+  const key = JSON.stringify(part.saved);
+  const { section } = part;
+  useEffect(() => {
+    if (!discovery) return;
+    // By value: a new object with the same values is the same device.
+    const saved = JSON.parse(key) as AdapterSection;
+    const abort = new AbortController();
+    discovery
+      .candidates(section, saved.kind, abort.signal)
+      .then((candidates) => {
+        const match = candidates.find((candidate) =>
+          picks(candidate.fields, saved),
+        );
+        if (match && !abort.signal.aborted)
+          setFound({ key, name: match.label });
+      })
+      .catch(() => {
+        // Not found or not available: the kind's name stays.
+      });
+    return () => abort.abort();
+  }, [discovery, section, key]);
+  return found?.key === key ? found.name : part.label;
+}
+
+const sides = ['top', 'right', 'bottom', 'left'] as const;
+
+/**
+ * The TV seen from the front on its stand, with the LED band around it:
+ * each edge's run of light and, a little further out, its count.
+ */
 function LedMap({ edges }: { edges: LedEdges }) {
-  const sides = Object.keys(edgeLines) as (keyof LedEdges)[];
+  const blurId = useId();
   const total = sides.reduce((sum, edge) => sum + edges[edge], 0);
+  // Screen 200 × 112 at (60, 34); the band 9 out; the counts 22 out (the
+  // bottom one past the stand).
+  const band = {
+    top: [66, 25, 254, 25],
+    right: [269, 40, 269, 140],
+    bottom: [254, 155, 66, 155],
+    left: [51, 140, 51, 40],
+  } as const;
+  const count = {
+    top: [160, 13],
+    right: [289, 94],
+    bottom: [160, 190],
+    left: [31, 94],
+  } as const;
   return (
     <figure className="led-map">
       <svg viewBox="0 0 320 200" aria-hidden="true" focusable="false">
+        <defs>
+          {/* The light the band throws on the wall: soft, not an outline. */}
+          <filter
+            id={blurId}
+            filterUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width="320"
+            height="200"
+          >
+            <feGaussianBlur stdDeviation="5" />
+          </filter>
+        </defs>
+        <g className="led-map-band">
+          {sides.map((edge) => {
+            const [x1, y1, x2, y2] = band[edge];
+            return (
+              <g
+                key={edge}
+                className={`led-map-edge edge-${edge}${edges[edge] ? '' : ' empty'}`}
+              >
+                <line
+                  className="halo"
+                  filter={`url(#${blurId})`}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                />
+                <line x1={x1} y1={y1} x2={x2} y2={y2} />
+              </g>
+            );
+          })}
+        </g>
+        <path className="led-map-stand" d="M160 160v10M138 172h44" />
         <rect
           className="led-map-screen"
-          x="56"
-          y="38"
-          width="208"
-          height="118"
-          rx="8"
+          x="60"
+          y="34"
+          width="200"
+          height="112"
+          rx="7"
         />
-        <text className="led-map-total" x="160" y="98" textAnchor="middle">
+        <text className="led-map-total" x="160" y="97" textAnchor="middle">
           {total} LEDs
         </text>
-        <text className="led-map-note" x="160" y="118" textAnchor="middle">
-          seen from the front
-        </text>
-        {sides.map((edge) => {
-          const { line, count } = edgeLines[edge];
-          return (
-            <g
-              key={edge}
-              className={`led-map-edge edge-${edge}${edges[edge] ? '' : ' empty'}`}
-            >
-              <line x1={line[0]} y1={line[1]} x2={line[2]} y2={line[3]} />
-              <text x={count[0]} y={count[1] + 4} textAnchor="middle">
-                {edges[edge]}
-              </text>
-            </g>
-          );
-        })}
+        {sides.map((edge) => (
+          <text
+            key={edge}
+            className="led-map-count"
+            x={count[edge][0]}
+            y={count[edge][1] + 4}
+            textAnchor="middle"
+          >
+            {edges[edge]}
+          </text>
+        ))}
       </svg>
       <figcaption className="visually-hidden">
-        {total} LEDs: {edges.top} along the top, {edges.right} on the right,{' '}
-        {edges.bottom} along the bottom and {edges.left} on the left.
+        Seen from the front: {edges.top} LEDs along the top, {edges.right} on
+        the right, {edges.bottom} along the bottom and {edges.left} on the left,{' '}
+        {total} in all.
       </figcaption>
     </figure>
   );
@@ -79,60 +161,83 @@ function LightsIcon() {
   );
 }
 
+/** One section: its role, its name, and its facts set as a small spec. */
+function Part({
+  title,
+  icon,
+  part,
+  discovery,
+}: {
+  title: string;
+  icon: ReactNode;
+  part: SetupPart;
+  discovery: DiscoveryClient | null;
+}) {
+  const name = useDeviceName(discovery, part);
+  return (
+    <li>
+      <span className="setup-icon">{icon}</span>
+      <div className="setup-text">
+        <span className="setup-name">{title}</span>
+        <strong>{name}</strong>
+        {part.facts.length ? (
+          <dl className="setup-facts">
+            {part.facts.map((fact) => (
+              <div key={fact.label}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 /**
- * Your setup: where the picture comes from, where the colours go, and the
- * LEDs around the screen when the output says how many. Only what Prysm's
- * settings say; the forms are in Settings.
+ * Your setup: where the picture comes from and where the colours go, by
+ * name with a few facts, and the LEDs around the TV. Only what Prysm's
+ * settings (and discovery, for names) say; the forms are in Settings.
  */
 export function SetupCard({
   capture,
   output,
   edges,
-  link,
+  discovery,
   openSettings,
 }: {
   capture: SetupPart;
   output: SetupPart;
   edges?: LedEdges;
-  link?: { label: string; href: string };
+  discovery: DiscoveryClient | null;
   openSettings: () => void;
 }) {
   const headingId = useId();
-  const parts = [
-    { name: 'Video source', part: capture, icon: <SourceIcon /> },
-    { name: 'Lights', part: output, icon: <LightsIcon /> },
-  ];
   return (
     <section className="setup-card" aria-labelledby={headingId}>
-      <p className="overline" aria-hidden="true">
+      <h2 id={headingId} className="overline">
         Your setup
-      </p>
-      <h2 id={headingId}>Screen &amp; lights</h2>
+      </h2>
       <ol className="setup-flow">
-        {parts.map(({ name, part, icon }) => (
-          <li key={name}>
-            <span className="setup-icon">{icon}</span>
-            <span className="setup-text">
-              <span className="setup-name">{name}</span>
-              <strong>{part.label}</strong>
-              {part.summary ? (
-                <span className="setup-summary">{part.summary}</span>
-              ) : null}
-            </span>
-          </li>
-        ))}
+        <Part
+          title="Video source"
+          icon={<SourceIcon />}
+          part={capture}
+          discovery={discovery}
+        />
+        <Part
+          title="Lights"
+          icon={<LightsIcon />}
+          part={output}
+          discovery={discovery}
+        />
       </ol>
       {edges ? <LedMap edges={edges} /> : null}
       <div className="setup-links">
         <button type="button" className="quiet" onClick={openSettings}>
           Change setup
         </button>
-        {link ? (
-          <a href={link.href} target="_blank" rel="noopener noreferrer">
-            {link.label}
-            <span className="visually-hidden"> (opens in a new tab)</span>
-          </a>
-        ) : null}
       </div>
     </section>
   );

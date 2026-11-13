@@ -60,6 +60,14 @@
   --effects-2: #f2557f;
   --effects-3: #8d55f0;
   --effects-4: #ffc46b;
+  /* A failed session: a calm warning lamp, deep red to rose. */
+  --error-1: #b0163f;
+  --error-2: #e0516e;
+  --error-3: #7a1434;
+  --error-4: #c43a52;
+  --word-stopped: #ffe9ec;
+  /* Live LED colours ease between updates (they arrive up to 10 a second). */
+  --duration-led: 320ms;
 
   /* Type: four sizes and two Home display sizes, two weights. */
   --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

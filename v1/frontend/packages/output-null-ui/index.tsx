@@ -11,6 +11,7 @@ export const nullOutput: AdapterUi<NullSettings> = {
       processing. There is nothing to configure.
     </p>
   ),
+  facts: () => [{ label: 'LEDs', value: 'None' }],
   // No device: no effects of its own and nothing to open.
   lighting: () => ({}),
 };

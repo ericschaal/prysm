@@ -23,6 +23,10 @@ export const wledOutput: AdapterUi<WledSettings> = {
     address: normalizeWledAddress(value.address),
   }),
   summary: ({ address, leds }) => `${address}, ${ledTotal(leds)} LEDs`,
+  facts: ({ address, leds }) => [
+    { label: 'LEDs', value: String(ledTotal(leds)) },
+    { label: 'Address', value: address },
+  ],
   lighting: (saved) => {
     const href = wledUrl(saved.address);
     return {
