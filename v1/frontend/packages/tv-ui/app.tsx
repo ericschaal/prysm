@@ -20,14 +20,10 @@ import { CalibrationScreen, QrCode } from './calibration';
 import {
   calibrationBlocker,
   captureRate,
-  derivedReceiver,
   diagnostics,
   encodingName,
-  hostOf,
   instanceAddress,
-  listenPort,
   localPortal,
-  receiverAddress,
   tvStatus,
 } from './model';
 import { qrCode } from './qr';
@@ -43,13 +39,7 @@ import { useTvService } from './service';
 import './tv.css';
 
 type DialogId =
-  | 'instance'
-  | 'receiver'
-  | 'autostart'
-  | 'service'
-  | 'diagnostics'
-  | 'cleanup'
-  | 'exit';
+  'instance' | 'autostart' | 'service' | 'diagnostics' | 'cleanup' | 'exit';
 const parents: Partial<Record<DialogId, DialogId>> = {
   diagnostics: 'service',
   cleanup: 'service',
@@ -150,20 +140,7 @@ export function TvApp({
     [portalAddress],
   );
 
-  // Slim: frames go to the Prysm's own receiver port, learned from its settings.
-  const port = listenPort(portal.snapshot?.settings.capture);
-  const suggestion = slim ? derivedReceiver(draft.instance, port) : null;
-  const { edit, say } = tv;
-  useEffect(() => {
-    if (!suggestion || suggestion === draft.receiver || !online) return;
-    const instanceHost = draft.instance ? hostOf(draft.instance) : null;
-    const receiverHost = draft.receiver?.replace(/:\d+$/, '') ?? null;
-    if (draft.receiver && receiverHost !== instanceHost) return;
-    edit({ receiver: suggestion });
-    say(
-      `Frames will go to ${suggestion}, where this Prysm receives them. Save to use it.`,
-    );
-  }, [suggestion, draft.receiver, draft.instance, online, edit, say]);
+  const { say } = tv;
 
   /**
    * Save; a newly saved Prysm address (slim) is checked, and a warning
@@ -235,18 +212,11 @@ export function TvApp({
   const disabled = !online || tv.changing;
   const rows: { id: DialogId; label: string; value: string }[] = [];
   if (slim) {
-    rows.push(
-      {
-        id: 'instance',
-        label: 'Prysm address',
-        value: draft.instance ?? 'Add address',
-      },
-      {
-        id: 'receiver',
-        label: 'Frames go to',
-        value: draft.receiver ?? 'Not set',
-      },
-    );
+    rows.push({
+      id: 'instance',
+      label: 'Prysm address',
+      value: draft.instance ?? 'Add address',
+    });
   }
   rows.push({
     id: 'autostart',
@@ -614,7 +584,7 @@ function Dialogs({
     case 'instance':
       title = 'Prysm address';
       description =
-        'The computer running Prysm. A host name or IP uses port 8787; you can also enter the full address you open Prysm with.';
+        'The computer running Prysm: this TV sends its picture there. A host name or IP uses port 8787; you can also enter the full address you open Prysm with, such as https://prysm.example.com behind a reverse proxy.';
       content = (
         <AddressForm
           id="instance-input"
@@ -626,26 +596,6 @@ function Dialogs({
             const result = instanceAddress(text);
             if ('error' in result) return result.error;
             choose({ instance: result.value });
-            return null;
-          }}
-        />
-      );
-      break;
-    case 'receiver':
-      title = 'Frames go to';
-      description =
-        'The address (a name such as prysm.local, or an IP address) and port where Prysm receives this TV’s picture (its Remote capture “listen” port). Filled in for you when Prysm can be reached.';
-      content = (
-        <AddressForm
-          id="receiver-input"
-          label="Address and port"
-          initial={draft.receiver ?? ''}
-          placeholder="prysm.local:7380"
-          button="Use this address"
-          apply={(text) => {
-            const result = receiverAddress(text);
-            if ('error' in result) return result.error;
-            choose({ receiver: result.value });
             return null;
           }}
         />

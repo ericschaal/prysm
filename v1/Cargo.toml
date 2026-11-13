@@ -68,6 +68,12 @@ tempfile = "3.27"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "sync"] }
 tracing = "0.1"
+# The capture stream: a blocking WebSocket; rustls with ring (no C toolchain
+# beyond what ring needs) and the system's certificate authorities for wss.
+tungstenite = { version = "0.30", default-features = false }
+http = "1"
+bytes = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 utoipa = "6"
 

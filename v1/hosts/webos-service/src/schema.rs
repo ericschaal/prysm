@@ -224,15 +224,13 @@ mod tests {
         // Picture settings are the receiver's or the portal's, not the TV's.
         assert_eq!(preferences["properties"].get("capture"), None);
         assert_eq!(schemas.get("SlimCapture"), None);
-        for field in ["instance", "receiver"] {
-            let described = &preferences["properties"][field];
-            let text = described["description"]
-                .as_str()
-                .or_else(|| described["oneOf"][0]["description"].as_str())
-                .or_else(|| described["oneOf"][1]["description"].as_str())
-                .unwrap_or_default();
-            assert!(text.starts_with("Slim only"), "{field}: {described}");
-        }
+        let described = &preferences["properties"]["instance"];
+        let text = described["description"]
+            .as_str()
+            .or_else(|| described["oneOf"][0]["description"].as_str())
+            .or_else(|| described["oneOf"][1]["description"].as_str())
+            .unwrap_or_default();
+        assert!(text.starts_with("Slim only"), "{described}");
         assert_eq!(
             schemas["SlimEncoding"]["enum"],
             json!(["h264_hardware", "h264_software", "raw"])

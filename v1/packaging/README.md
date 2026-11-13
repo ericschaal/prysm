@@ -62,8 +62,8 @@ or `docker compose -f v1/packaging/docker/compose.yaml up -d`
   `--allow-origin http://192.168.1.30:3000`.
 - A bind mount instead of the `prysm-data` volume must be writable by UID
   10001 (`chown 10001:10001 DIR`).
-- The `remote` source listens on the port in its settings (suggested 7380);
-  publish it too (`-p 7380:7380`).
+- A slim TV (`remote` source) streams to the portal's port; nothing else to
+  publish.
 - A bridge network cannot resolve mDNS names such as `wled.local`; use the
   WLED's IP address or `--network host`.
 - The image's `HEALTHCHECK` reads `GET /api/v1/state` on port 8787; it reports
@@ -302,10 +302,10 @@ and the first after a session restart half way, must be keyframes of the
 current picture), and prints `check-encoder: ok encoder=… bytes=… mbit_s=…
 encode_ms_mean=… encode_ms_max=… cpu_percent=…`, then how long releasing the
 encoder took. Exit 0 means every check passed; `check-encoder: FAILED: …`
-gives the cause chain. `--receiver HOST:7380` (an IP address or a name) then streams `--frames` more of
-the same pictures (use `--frames 600` for 20 s) through the real sender, at
-the default bitrate, to a desktop running
-`cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60 --pause-at 10 --width 640 --height 280 --encoding h264_hardware`,
-which requests that stream, prints the decoded frames per second and pauses
-and resumes the TV. The check refuses a receiver whose request differs from
-its own flags.
+gives the cause chain. `--prysm http://HOST:8787` (or an `https://`
+address) then streams `--frames` more of the same pictures (use `--frames
+600` for 20 s) through the real sender, at the default bitrate, to a desktop
+Prysm whose `remote` capture requests that stream (for example 640 × 280,
+Hardware H.264, with the `null` output) and whose lights are on; its portal
+shows the received rate. The check refuses a Prysm whose request differs
+from its own flags.

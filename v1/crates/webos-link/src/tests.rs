@@ -227,92 +227,36 @@ fn full_args_round_trip_and_reject_mistakes() {
         ]),
         strings(&["--settings", "s", "--listen", "0.0.0.0:1", "--lighting"]),
         strings(&["full", "--settings", "s"]),
-        strings(&["--receiver", "1.2.3.4:5"]),
+        strings(&["--prysm", "http://1.2.3.4:5"]),
     ] {
         assert!(parse::<FullArgs>(&bad).is_err(), "{bad:?}");
     }
 }
 
 #[test]
-fn slim_args_carry_only_the_receiver() {
+fn slim_args_carry_only_the_prysm_address() {
     let args = SlimArgs {
-        receiver: "192.168.1.20:7380".parse().unwrap(),
+        prysm: "http://192.168.1.20:8787".parse().unwrap(),
     };
     let argv = args.to_args();
-    assert_eq!(argv, strings(&["--receiver", "192.168.1.20:7380"]));
+    assert_eq!(argv, strings(&["--prysm", "http://192.168.1.20:8787"]));
     assert_eq!(parse::<SlimArgs>(&argv).unwrap(), args);
-    // Capture and encoding are the receiver's request, not arguments.
+    // Capture and encoding are Prysm's request, not arguments.
     let mut old = argv.clone();
     old.extend(strings(&["--width", "320"]));
     let error = parse::<SlimArgs>(&old).unwrap_err().to_string();
     assert!(error.contains("--width"), "{error}");
-    assert!(parse::<SlimArgs>(&strings(&["--receiver", "nope"])).is_err());
+    assert!(parse::<SlimArgs>(&strings(&["--prysm", "prysm.local:8787"])).is_err());
+    assert!(parse::<SlimArgs>(&strings(&["--receiver", "192.168.1.20:7380"])).is_err());
     let error = parse::<SlimArgs>(&[]).unwrap_err().to_string();
-    assert!(error.contains("--receiver"), "{error}");
+    assert!(error.contains("--prysm"), "{error}");
     // A host name is resolved by the worker, not here.
-    let named = parse::<SlimArgs>(&strings(&["--receiver", "prysm.local:7380"])).unwrap();
-    assert_eq!(named.receiver.host(), "prysm.local");
+    let named = parse::<SlimArgs>(&strings(&["--prysm", "https://prysm.example.com"])).unwrap();
+    assert_eq!(named.prysm.host(), "prysm.example.com");
     assert_eq!(
         named.to_args(),
-        strings(&["--receiver", "prysm.local:7380"])
+        strings(&["--prysm", "https://prysm.example.com"])
     );
-}
-
-#[test]
-fn receiver_addresses_are_ip_addresses_or_host_names_with_a_fixed_port() {
-    for (text, host, ip) in [
-        ("192.168.1.20:7380", "192.168.1.20", true),
-        ("[fe80::1]:7380", "fe80::1", true),
-        ("prysm.local:7380", "prysm.local", false),
-        ("Prysm-Desktop:7380", "Prysm-Desktop", false),
-        ("lights.example.com:1", "lights.example.com", false),
-        ("localhost:65535", "localhost", false),
-    ] {
-        let address: ReceiverAddress = text.parse().unwrap();
-        assert_eq!(address.host(), host, "{text}");
-        assert_eq!(address.to_string(), text, "round trip");
-        assert_eq!(address.socket_addr().is_some(), ip, "{text}");
-        assert_eq!(
-            serde_json::to_value(&address).unwrap(),
-            serde_json::Value::String(text.into())
-        );
-    }
-    assert_eq!(
-        "192.168.1.20:7380"
-            .parse::<ReceiverAddress>()
-            .unwrap()
-            .socket_addr(),
-        Some("192.168.1.20:7380".parse().unwrap())
-    );
-    for (bad, reason) in [
-        ("192.168.1.20", "host:port"),
-        ("prysm.local", "host:port"),
-        ("prysm.local:0", "fixed port"),
-        ("prysm.local:70000", "fixed port"),
-        ("prysm.local:", "fixed port"),
-        (":7380", "not a host name"),
-        ("0.0.0.0:7380", "not 0.0.0.0"),
-        ("[::]:7380", "not ::"),
-        ("fe80::1:7380", "not a host name"),
-        ("[nope]:7380", "not an IPv6 address"),
-        ("192.168.1:7380", "not a host name"),
-        ("300.1.1.1:7380", "not a host name"),
-        ("prysm.local.:7380", "not a host name"),
-        ("-prysm:7380", "not a host name"),
-        ("prysm_tv:7380", "not a host name"),
-        ("http://prysm.local:7380", "not a host name"),
-        ("prysm local:7380", "not a host name"),
-    ] {
-        let error = bad.parse::<ReceiverAddress>().unwrap_err();
-        assert!(error.contains(reason), "{bad}: {error}");
-    }
-    let long = format!("{}.local:7380", "a".repeat(250));
-    assert!(long.parse::<ReceiverAddress>().is_err());
-    // serde names the field's value, for the Luna error text.
-    let error = serde_json::from_value::<ReceiverAddress>(serde_json::json!("0.0.0.0:7380"))
-        .unwrap_err()
-        .to_string();
-    assert!(error.starts_with("receiver `0.0.0.0:7380`: "), "{error}");
 }
 
 #[test]

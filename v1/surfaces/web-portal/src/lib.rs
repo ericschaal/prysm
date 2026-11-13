@@ -12,6 +12,7 @@
 //!     .await
 //! ```
 mod access;
+mod capture;
 mod colors;
 mod metrics;
 mod preview;
@@ -23,7 +24,7 @@ mod timed_io;
 pub use access::Access;
 
 use futures::future::BoxFuture;
-use prysm_ports::Result;
+use prysm_ports::{Handoff, Result};
 use prysm_runtime::{EngineHandle, Shutdown, Surface};
 use std::net::{IpAddr, SocketAddr, TcpListener, UdpSocket};
 
@@ -43,6 +44,7 @@ pub struct WebPortal {
     pub(crate) assets: &'static [FrontendAsset],
     pub(crate) access: Access,
     pub(crate) metrics: bool,
+    pub(crate) capture: Option<Handoff>,
 }
 
 impl WebPortal {
@@ -63,6 +65,7 @@ impl WebPortal {
             assets,
             access: access.validated()?,
             metrics: false,
+            capture: None,
         })
     }
 
@@ -71,6 +74,17 @@ impl WebPortal {
     #[must_use]
     pub fn metrics(mut self, enabled: bool) -> Self {
         self.metrics = enabled;
+        self
+    }
+}
+
+impl WebPortal {
+    /// Serve the capture stream path: a capture-only host's WebSocket
+    /// connections go to the remote source holding the same `handoff`
+    /// (without this the path is `404`).
+    #[must_use]
+    pub fn capture_stream(mut self, handoff: Handoff) -> Self {
+        self.capture = Some(handoff);
         self
     }
 }

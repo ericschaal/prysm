@@ -37,13 +37,15 @@ do not include FFmpeg, so `file` does not work there; use `device` or `remote`.
 
 A `file` source plays once (`"repeat": true` loops it); at its end lighting
 stops without a failure and the target becomes `off`. The `remote` source
-listens only while lighting runs and asks the sender for the stream its
-settings describe (size, rate, menus, encoding; see
+receives the TV's WebSocket on the portal (`/api/v1/capture/stream`), only
+while lighting runs, and asks the sender for the stream its settings describe
+(size, rate, menus, encoding; see
 [capture-remote](adapters/capture-remote/README.md)); the TV's slim worker
-reconnects every second (to an IP address or a host name it resolves at each
+takes the one Prysm address (`http://host:8787`, or `https://` behind a
+reverse proxy), reconnects every second (resolving a host name at each
 attempt), reports that it is waiting meanwhile, captures and encodes as
 requested, and stops capturing while lighting is off (the receiver paused the
-stream). A sender that cannot produce the request (its
+stream). It needs the portal: under `--no-portal` nothing receives. A sender that cannot produce the request (its
 encoder failed) refuses it, and lighting stops with its reason. While lighting runs, the state's
 `input` gives the measured frame rate and whether frames are arriving; while
 none arrive lighting is waiting for video and the output is left to its own

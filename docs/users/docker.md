@@ -45,11 +45,12 @@ In Prysm, choose **Video capture device** and enter `/dev/video0`. See
 
 ## Receive the picture from a TV (slim package)
 
-Publish the receiver port and allow the TV app to control this Prysm:
+The TV sends its picture to the portal's port; allow the TV app to control
+this Prysm:
 
 ```sh
 docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
-  -p 8787:8787 -p 7380:7380 -v prysm-data:/data \
+  -p 8787:8787 -v prysm-data:/data \
   ghcr.io/ericschaal/prysm-headless:VERSION --allow-origin null
 ```
 

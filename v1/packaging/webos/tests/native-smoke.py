@@ -15,7 +15,7 @@ manifest, removed afterwards only if it is still exactly ours.
                    app-only mutations, a fake worker that ignores SIGTERM
                    (TERM, KILL after 8 s, reap) and `uninstall`.
   --capture        the real worker with its worker role instead of the fake:
-                   full serves the portal; slim streams to --receiver.
+                   full serves the portal; slim streams to --prysm.
 
 --dry-run writes nothing remotely: it prints the probe files and the plan.
 Refuses --capture while another Prysm process runs on the TV (the old
@@ -245,9 +245,9 @@ def exercise_worker(args, remote, state, directory, worker):
     """Start a worker through the app-only API and watch it run."""
     app = {'app': APP}
     if args.flavour == 'slim':
-        receiver = args.receiver if args.capture else '127.0.0.1:9'
-        value = remote.luna('setPreferences', {'autostart': False, 'receiver': receiver}, **app)
-        assert value['returnValue'] is True and value['preferences']['receiver'] == receiver, value
+        prysm = args.prysm if args.capture else 'http://127.0.0.1:9'
+        value = remote.luna('setPreferences', {'autostart': False, 'instance': prysm}, **app)
+        assert value['returnValue'] is True and value['preferences']['instance'] == prysm, value
         passed('setPreferences persisted')
         remote.run(f'test -f {directory}/state/tv.json')
     value = remote.luna('setEnabled', {'enabled': True}, **app)
@@ -263,8 +263,8 @@ def exercise_worker(args, remote, state, directory, worker):
         time.sleep(5)
         print('Full worker state after enabling:', json.dumps(state()), flush=True)
     else:
-        value = eventually(state, lambda v: v['capturing'], 'frames to ' + args.receiver, 20)
-        passed('slim worker streams to ' + args.receiver)
+        value = eventually(state, lambda v: v['capturing'], 'frames to ' + args.prysm, 20)
+        passed('slim worker streams to ' + args.prysm)
 
 
 def cleanup(remote, directory, supervisor, worker, manifest):
@@ -303,7 +303,7 @@ def main():
     parser.add_argument('--flavour', choices=sorted(BINARIES), default='full')
     parser.add_argument('--supervisor', action='store_true', help='setup, app-only API, fake worker, uninstall')
     parser.add_argument('--capture', action='store_true', help='the real worker (implies --supervisor)')
-    parser.add_argument('--receiver', help='slim --capture: a running Prysm remote source, HOST:PORT')
+    parser.add_argument('--prysm', help='slim --capture: a running Prysm with the remote source and lighting on, http://HOST:8787')
     parser.add_argument('--build-dir', type=Path, default=V1 / 'target', help='Cargo target directory')
     parser.add_argument('--run-for', type=int, help='probe lifetime in seconds, 10 to 300 (30; 120 with --supervisor)')
     parser.add_argument('--dry-run', action='store_true', help='print the probe files; touch no TV')
@@ -313,8 +313,8 @@ def main():
         args.run_for = 120 if args.supervisor else 30
     if not 10 <= args.run_for <= 300:
         parser.error('--run-for must be 10 to 300 seconds')
-    if args.capture and args.flavour == 'slim' and not args.receiver:
-        parser.error('slim --capture needs --receiver')
+    if args.capture and args.flavour == 'slim' and not args.prysm:
+        parser.error('slim --capture needs --prysm')
     if args.dry_run:
         dry_run(args)
         return 0

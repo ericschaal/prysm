@@ -81,19 +81,24 @@ other sites, so keep the TV on a trusted network.
 
 <a id="slim-package-the-tv-sends-the-picture"></a>
 
-1. On the computer, start Prysm with `--allow-origin null` and make port 7380
-   reachable ([Debian](debian.md#manage-the-service),
+1. On the computer, start Prysm with `--allow-origin null`, so the TV app may
+   use its portal ([Debian](debian.md#manage-the-service),
    [Docker](docker.md#receive-the-picture-from-a-tv-slim-package),
    [TrueNAS](truenas.md)). Without this option the TV app says how to allow it.
 2. In the computer's portal, choose the video source
-   **Capture-only TV (remote)** with **Listen address** `0.0.0.0:7380`. Keep
-   **Hardware H.264 (recommended)** and 320 × 180 at 30 fps to start.
+   **Capture-only TV (remote)**. Keep **Hardware H.264 (recommended)** and
+   320 × 180 at 30 fps to start.
 3. On the TV, open **Prysm**. Set **Prysm address** to the computer's portal,
-   for example `http://192.168.1.20:8787`. The TV fills in **Frames go to**
-   (`192.168.1.20:7380`) from the portal; change it only if the TV must use
-   another address or name.
+   for example `http://192.168.1.20:8787`. The TV sends its picture to that
+   same address; nothing else needs to be reachable.
 4. Choose **Start capture**, then turn on Screen sync in the portal or on the
    TV.
+
+Behind an HTTPS reverse proxy, give the TV the proxy's address, such as
+`https://prysm.example.com`: the picture then travels encrypted. The proxy
+must pass WebSockets on `/api/v1/capture/stream` and must not put that path
+behind a login, which the TV cannot do. The computer's LAN address is the
+lowest-delay choice.
 
 The TV captures only while the computer's lights are on; otherwise it shows
 **Paused by Prysm**. Picture size, rate, menus and encoding are set in the

@@ -27,6 +27,17 @@ const PROGRAM: Program = Program {
 };
 
 fn main() -> ExitCode {
+    // A capture-only TV streams to the portal, which hands it to this source.
+    let remote = RemoteReceiver::default();
+    let tv_stream = remote.incoming();
+    let adapters = |prysm: Builder| {
+        prysm
+            .source(DeviceSource)
+            .source(FileSource)
+            .source(remote)
+            .output(Wled::default())
+            .output(NullOutput)
+    };
     prysm_host::main(PROGRAM, adapters, |host, prysm| async move {
         let tui = Tui::new();
         let quit = tui.quit();
@@ -34,7 +45,7 @@ fn main() -> ExitCode {
         prysm
             .surface(host.status())
             .surface(host.start())
-            .surface(host.portal(ASSETS)?)
+            .surface(host.portal(ASSETS)?.capture_stream(tv_stream))
             .surface(tui)
             .run(async {
                 tokio::select! {
@@ -44,14 +55,4 @@ fn main() -> ExitCode {
             })
             .await
     })
-}
-
-/// The capture sources and outputs this host can use.
-fn adapters(prysm: Builder) -> Builder {
-    prysm
-        .source(DeviceSource)
-        .source(FileSource)
-        .source(RemoteReceiver)
-        .output(Wled::default())
-        .output(NullOutput)
 }

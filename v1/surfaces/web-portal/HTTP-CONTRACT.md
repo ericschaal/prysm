@@ -32,6 +32,9 @@ Prysm::builder(store).source(..).output(..).surface(portal).run(shutdown).await
   or `AnyOrigin`. See [Access](#access).
 - `.metrics(true)` also serves [`GET /metrics`](#metrics); hosts set it
   from `--metrics`. Off by default.
+- `.capture_stream(remote.incoming())` serves the [capture stream](#capture-stream)
+  and hands its connections to that `remote` source through its
+  [`Handoff`](../../crates/ports/src/handoff.rs). Without it the path is `404`.
 - Construction validates and returns `Error::Invalid` with field
   `portal.access` (an entry that is neither `scheme://host[:port]` nor exactly
   `null`; `*` needs `AnyOrigin`) or `portal.assets` (not absolute, under
@@ -60,6 +63,7 @@ into `@prysm/contracts/application`.
 | `DELETE /api/v1/calibration` | — | `204` once cleared (also when none was set) |
 | `GET /api/v1/candidates/{section}/{kind}` | — | `200 Candidate[]`: what the adapter finds to choose from; see [Candidates](#candidates) |
 | `GET /metrics` (only when enabled) | — | `200` Prometheus text; see [Metrics](#metrics). Disabled: `404` like any unknown path |
+| `GET /api/v1/capture/stream` (only with a capture handoff) | WebSocket upgrade, subprotocol `prysm-capture.v4` | `101`: a capture-only TV's frame stream; see [Capture stream](#capture-stream) |
 
 `State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
@@ -294,6 +298,40 @@ metrics and no histograms.
 Frames dropped inside a source (a newer frame replacing an untaken one) are
 not counted: adapters keep no metrics. Received minus sent is what the session
 did not deliver.
+
+## Capture stream
+
+`GET /api/v1/capture/stream` is the WebSocket a capture-only TV (the slim
+webOS worker) streams its picture on, on the portal's own listener: the TV
+needs one address, and the stream passes an HTTPS reverse proxy as `wss://`.
+The wire protocol is the
+[capture-remote adapter's](../../adapters/capture-remote/README.md#wire-protocol-version-4);
+the portal only answers the upgrade and hands the connection, as a plain
+blocking socket, to the `remote` source:
+
+- `101 Switching Protocols` with `Sec-WebSocket-Protocol: prysm-capture.v4`
+  when the request is a version-13 WebSocket upgrade offering that
+  subprotocol and the `remote` source runs (lighting on with that capture).
+  The newest connection replaces the one the source reads.
+- `426 Upgrade Required` (`bad_request`), naming `prysm-capture.v4` in
+  `Sec-WebSocket-Protocol`, when the sender offers another version or none.
+- `503 unavailable` while no `remote` source runs: lighting is off or another
+  capture is set. The TV retries every second.
+- `400 bad_request` for a request that is not an upgrade; `405` for other
+  methods.
+
+The [origin policy](#access) applies as to every `/api/` path: the TV's
+worker sends no `Origin`, so it needs no `--allow-origin`; a browser page of
+another site is refused (`403`). Like the rest of the API there is no
+password: anyone on the LAN can stream frames while the remote source runs.
+
+Behind a reverse proxy, the proxy must pass WebSocket upgrades on this path,
+including `Sec-WebSocket-Protocol` (standard proxies such as Caddy, nginx
+with `proxy_set_header Upgrade/Connection` and Traefik do), and it must not
+put this path behind a login page, since the TV cannot sign in. The TV's
+picture then travels encrypted to the proxy (`https://` address on the TV).
+Giving the TV Prysm's LAN address (`http://host:8787`) is the lowest-delay
+option.
 
 ## Failures
 

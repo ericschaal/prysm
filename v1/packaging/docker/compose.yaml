@@ -16,9 +16,8 @@ services:
     # Extra host options, appended after the settings path.
     # command: ["--start"]
     ports:
+      # The portal; a slim TV ("remote" source) streams to it too.
       - "8787:8787"
-      # Only for the "remote" source; match its "listen" port.
-      # - "7380:7380"
     devices:
       - /dev/video0:/dev/video0
     # The device's group on the host; replace 44 when `getent group video`

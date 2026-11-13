@@ -30,7 +30,6 @@ export function completePreferences(value: Preferences): SavedPreferences {
   return {
     autostart: value.autostart ?? false,
     instance: value.instance ?? null,
-    receiver: value.receiver ?? null,
   };
 }
 
@@ -59,62 +58,6 @@ export function instanceAddress(
   return {
     value: withScheme.replace(/^[a-z]+/i, (scheme) => scheme.toLowerCase()),
   };
-}
-
-/** The host of an origin, with IPv6 brackets. */
-export function hostOf(origin: string): string | null {
-  const match = /^https?:\/\/(\[[^\]]+\]|[^/:]+)/i.exec(origin);
-  return match ? match[1]! : null;
-}
-
-const ipv4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
-const label = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?';
-const hostName = new RegExp(`^(?=.{1,253}$)${label}(\\.${label})*$`, 'i');
-/**
- * A receiver host as the supervisor accepts it: an IP address (IPv6 in
- * brackets) other than `0.0.0.0` or `::`, or a host name such as
- * `prysm.local` whose last label is not all digits. The TV resolves a name
- * each time it connects.
- */
-export function isReceiverHost(host: string) {
-  if (ipv4.test(host)) return host !== '0.0.0.0';
-  if (/^\[[0-9a-f:.]+\]$/i.test(host)) return host !== '[::]';
-  return hostName.test(host) && !/(^|\.)\d+$/.test(host);
-}
-
-/** A receiver address `host:port`, checked the way the supervisor parses it. */
-export function receiverAddress(
-  input: string,
-): { value: string | null } | { error: string } {
-  const text = input.trim();
-  if (!text) return { value: null };
-  const match = /^(.+):(\d{1,5})$/.exec(text);
-  const port = match ? Number(match[2]) : 0;
-  if (!match || !isReceiverHost(match[1]!) || port < 1 || port > 65535)
-    return {
-      error:
-        'Enter an address and port, such as prysm.local:7380 or 192.168.1.20:7380.',
-    };
-  return { value: text };
-}
-
-/** The port a remote Prysm receives TV frames on, from its capture section. */
-export function listenPort(capture: unknown): number | null {
-  const section = capture as { kind?: unknown; listen?: unknown } | undefined;
-  if (section?.kind !== 'remote' || typeof section.listen !== 'string')
-    return null;
-  const match = /:(\d{1,5})$/.exec(section.listen);
-  const port = match ? Number(match[1]) : 0;
-  return port >= 1 && port <= 65535 ? port : null;
-}
-
-/** Where frames should go for a Prysm at `instance` that listens on `port`. */
-export function derivedReceiver(
-  instance: string | null | undefined,
-  port: number | null,
-): string | null {
-  const host = instance ? hostOf(instance) : null;
-  return host && port && isReceiverHost(host) ? `${host}:${port}` : null;
 }
 
 /**
@@ -210,7 +153,7 @@ export function tvStatus(
   const failure = state.failure?.message ?? null;
   const kind = state.failure?.kind ?? null;
   const phase = state.worker.phase;
-  // Slim: the receiver is unavailable; the worker keeps trying, not a failure.
+  // Slim: Prysm is not receiving; the worker keeps trying, not a failure.
   const waiting = kind === 'receiver';
   let title: string;
   let description: string;
@@ -255,10 +198,10 @@ export function tvStatus(
       title = 'Starting Prysm…';
       description = 'This takes a few seconds.';
     }
-  } else if (!state.preferences.receiver) {
+  } else if (!state.preferences.instance) {
     title = 'Not set up';
-    description = draft.receiver
-      ? `Save to send this TV’s picture to ${draft.receiver}.`
+    description = draft.instance
+      ? `Save to send this TV’s picture to ${draft.instance}.`
       : 'Add the address of the Prysm on your computer.';
   } else if (!enabled) {
     title = 'Capture off';
@@ -270,7 +213,7 @@ export function tvStatus(
       'The lights are off on your computer, so this TV is not capturing. It starts again when Prysm turns them on.';
   } else if (waiting) {
     title = 'Waiting for Prysm';
-    description = `This TV connects to ${state.preferences.receiver} again every second. Check that Prysm is running with Remote capture.`;
+    description = `This TV connects to ${state.preferences.instance} again every second. Check that Prysm is running with Remote capture and its lights on.`;
   } else if (state.capturing) {
     title = 'Sending the picture';
     description = 'Prysm on your computer gets the picture.';
@@ -279,7 +222,7 @@ export function tvStatus(
     description = 'Waiting for the first picture.';
   }
   // Lights are set up in the portal (its first-run setup), never here.
-  const linked = full || !!state.preferences.receiver;
+  const linked = full || !!state.preferences.instance;
   const noLights = !!portal && !portal.lights && linked;
   if (
     noLights &&
@@ -306,7 +249,7 @@ export function tvStatus(
     label = 'Start screen sync';
     // Screen sync cannot start without lights.
     action = noLights ? 'none' : 'enable';
-  } else if (!draft.receiver) {
+  } else if (!draft.instance) {
     label = 'Set Prysm address';
     action = 'address';
   } else if (dirty) {
@@ -364,7 +307,7 @@ export function diagnostics(state: State | null): string {
   ];
   if (state.flavor === 'slim')
     lines.push(
-      `Frames go to: ${state.preferences.receiver ?? 'not set'}`,
+      `Prysm address: ${state.preferences.instance ?? 'not set'}`,
       `Stream encoding: ${state.encoding ? `${encodingName(state.encoding)} in use` : 'none in use'}`,
     );
   else lines.push(`Web portal: ${state.portal ?? 'not open'}`);

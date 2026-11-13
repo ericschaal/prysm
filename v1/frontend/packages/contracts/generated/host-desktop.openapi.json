@@ -823,7 +823,7 @@
       },
       "RemoteReceiverSettings": {
         "additionalProperties": false,
-        "description": "Settings for kind `\"remote\"`: where to listen and the stream to ask the\nsender for, `{ \"kind\": \"remote\", \"listen\": \"0.0.0.0:7380\", \"width\": 320,\n\"height\": 180, \"fps\": 30, \"include_ui\": true, \"encoding\": \"h264_hardware\" }`.\nEvery field but `listen` is optional.",
+        "description": "The stream a receiver asks for, and the settings of kind `\"remote\"`:\n`{ \"kind\": \"remote\", \"width\": 320, \"height\": 180, \"fps\": 30,\n\"include_ui\": true, \"encoding\": \"h264_hardware\" }`, every field optional.\nThe sender captures at this size, rate and menu blending and encodes with\nexactly this encoding.",
         "properties": {
           "encoding": {
             "$ref": "#/components/schemas/StreamEncoding",
@@ -858,11 +858,6 @@
             ],
             "type": "string"
           },
-          "listen": {
-            "description": "Address and fixed port the capture host connects to.",
-            "example": "0.0.0.0:7380",
-            "type": "string"
-          },
           "width": {
             "default": 320,
             "description": "Requested picture width: even, 2 to 1920 (H.264: at least 16).",
@@ -874,8 +869,7 @@
           }
         },
         "required": [
-          "kind",
-          "listen"
+          "kind"
         ],
         "type": "object"
       },

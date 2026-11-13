@@ -73,8 +73,8 @@ WORKDIR /data
 # A missing settings file means "unconfigured"; the portal creates it on the
 # first save. /data must be writable by UID 10001.
 VOLUME ["/data"]
-# 8787: portal. 7380: suggested listen port for the "remote" source (a TV).
-EXPOSE 8787/tcp 7380/tcp
+# 8787: the portal, which also receives a slim TV's picture ("remote" source).
+EXPOSE 8787/tcp
 # The host stops on SIGTERM itself (session 10 s, portal 5 s); give it time
 # with `docker stop -t 30` / compose `stop_grace_period`.
 STOPSIGNAL SIGTERM

@@ -1,7 +1,8 @@
 //! The built `prysm-webos-slim` binary on the development host, where the LG
-//! backend refuses to start: argv, the wait for a receiver and the failure
-//! exit code with a final status.
-use prysm_capture_remote::{RemoteSource, StreamRequest};
+//! backend refuses to start: argv, the wait for Prysm and the failure exit
+//! code with a final status.
+use prysm_capture_remote::StreamRequest;
+use prysm_capture_remote::testkit::Portal;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -11,18 +12,27 @@ const BINARY: &str = env!("CARGO_BIN_EXE_prysm-webos-slim");
 
 #[test]
 fn bad_arguments_exit_with_usage() {
-    let old = ["--receiver", "127.0.0.1:7380", "--width", "320"].map(str::to_owned);
-    for argv in [vec![], old.to_vec(), vec!["slim".to_owned()]] {
+    let old = ["--receiver", "127.0.0.1:7380"].map(str::to_owned);
+    let extra = ["--prysm", "http://127.0.0.1:8787", "--width", "320"].map(str::to_owned);
+    let bare = ["--prysm", "127.0.0.1:8787"].map(str::to_owned);
+    for argv in [
+        vec![],
+        old.to_vec(),
+        extra.to_vec(),
+        bare.to_vec(),
+        vec!["slim".to_owned()],
+    ] {
         let output = Command::new(BINARY).args(&argv).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{argv:?}");
         assert!(output.stdout.is_empty());
     }
 }
 
-/// The worker for `receiver`, with stdin kept open as the supervisor does.
-fn spawn(receiver: &str) -> Child {
+/// The worker for the Prysm at `address`, with stdin kept open as the
+/// supervisor does.
+fn spawn(address: &str) -> Child {
     Command::new(BINARY)
-        .args(["--receiver", receiver])
+        .args(["--prysm", address])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -69,7 +79,7 @@ fn an_unreachable_receiver_is_a_reported_wait() {
         .local_addr()
         .unwrap()
         .port();
-    let mut child = spawn(&format!("127.0.0.1:{port}"));
+    let mut child = spawn(&format!("http://127.0.0.1:{port}"));
     let status = statuses(&mut child, |event| !event["failure"].is_null());
     assert_eq!(status["failure"]["kind"], "receiver", "{status}");
     assert!(
@@ -87,9 +97,9 @@ fn an_unreachable_receiver_is_a_reported_wait() {
 /// fails the worker with its cause.
 #[test]
 fn capture_off_the_tv_fails_with_its_cause() {
-    let receiver =
-        RemoteSource::bind("127.0.0.1:0".parse().unwrap(), StreamRequest::default()).unwrap();
-    let mut child = spawn(&receiver.local_addr().to_string());
+    let portal = Portal::start();
+    let receiver = portal.source(StreamRequest::default());
+    let mut child = spawn(&format!("http://{}", portal.addr));
     let stdin = child.stdin.take();
     let status = statuses(&mut child, |event| event["failure"]["kind"] == "other");
     assert!(

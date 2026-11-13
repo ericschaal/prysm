@@ -23,6 +23,11 @@ pub(super) struct TimedIo {
     lingering: Option<Pin<Box<Sleep>>>,
 }
 impl TimedIo {
+    /// The socket, for a connection upgraded away from HTTP.
+    pub fn into_socket(self) -> TcpStream {
+        self.socket
+    }
+
     pub fn new(socket: TcpStream) -> Self {
         Self {
             socket,

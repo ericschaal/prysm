@@ -44,20 +44,6 @@ impl StreamEncoding {
             Self::Raw => None,
         }
     }
-
-    pub(crate) const fn code(self) -> u8 {
-        match self {
-            Self::Raw => 0,
-            Self::H264Hardware => 1,
-            Self::H264Software => 2,
-        }
-    }
-
-    pub(crate) fn from_code(code: u8) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|encoding| encoding.code() == code)
-    }
 }
 
 impl fmt::Display for StreamEncoding {
@@ -77,19 +63,38 @@ impl FromStr for StreamEncoding {
     }
 }
 
-/// The stream a receiver asks for. The sender captures at this size, rate and
-/// menu blending and encodes with exactly this encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The stream a receiver asks for, and the settings of kind `"remote"`:
+/// `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
+/// "include_ui": true, "encoding": "h264_hardware" }`, every field optional.
+/// The sender captures at this size, rate and menu blending and encodes with
+/// exactly this encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "schema", schema(as = RemoteReceiverSettings))]
 pub struct StreamRequest {
-    /// Even, 2 to 1920 (H.264: at least 16).
+    /// Requested picture width: even, 2 to 1920 (H.264: at least 16).
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 2, maximum = 1920, multiple_of = 2, default = 320)
+    )]
     pub width: u32,
-    /// Even, 2 to 1080 (H.264: at least 16).
+    /// Requested picture height: even, 2 to 1080 (H.264: at least 16).
+    #[cfg_attr(
+        feature = "schema",
+        schema(minimum = 2, maximum = 1080, multiple_of = 2, default = 180)
+    )]
     pub height: u32,
-    /// 1 to 60.
+    /// Requested frames per second.
+    #[cfg_attr(feature = "schema", schema(minimum = 1, maximum = 60, default = 30))]
     pub fps: u32,
     /// Capture on-screen menus over the video and, when nothing is playing
     /// (such as the Home screen), the TV's own screens; false: video only.
+    #[cfg_attr(feature = "schema", schema(default = true))]
     pub include_ui: bool,
+    /// How the sender encodes the stream. It uses exactly this encoder; if
+    /// that fails, lighting stops with the sender's reason.
+    #[cfg_attr(feature = "schema", schema(default = "h264_hardware"))]
     pub encoding: StreamEncoding,
 }
 
@@ -215,13 +220,11 @@ mod tests {
     fn encodings_name_their_encoder() {
         for encoding in StreamEncoding::ALL {
             assert_eq!(encoding.name().parse(), Ok(encoding));
-            assert_eq!(StreamEncoding::from_code(encoding.code()), Some(encoding));
             assert_eq!(
                 serde_json::to_value(encoding).unwrap(),
                 serde_json::Value::String(encoding.name().into())
             );
         }
-        assert_eq!(StreamEncoding::from_code(3), None);
         assert!("lz4".parse::<StreamEncoding>().is_err());
         let request = |encoding| StreamRequest {
             encoding,
@@ -236,5 +239,70 @@ mod tests {
             Some(EncoderSettings::new(Backend::Software, 30))
         );
         assert_eq!(request(StreamEncoding::Raw).encoder(), None);
+    }
+}
+
+#[cfg(all(test, feature = "schema"))]
+mod schema_tests {
+    use super::*;
+    use serde::de::DeserializeOwned;
+    use serde_json::{Map, Value, json};
+    use std::collections::BTreeSet;
+    use utoipa::ToSchema;
+
+    /// The schema lists exactly the serialized fields, requires exactly those
+    /// serde cannot default, and rejects unknown fields as serde does.
+    fn same_shape<T: ToSchema + Serialize + DeserializeOwned>(full: &T) -> Value {
+        let schema = serde_json::to_value(T::schema()).unwrap();
+        let properties = schema["properties"].as_object().unwrap();
+        let required: Vec<String> =
+            serde_json::from_value(schema["required"].clone()).unwrap_or_default();
+        let Value::Object(fields) = serde_json::to_value(full).unwrap() else {
+            panic!("settings serialize as an object");
+        };
+        let keys = |map: &Map<String, Value>| map.keys().cloned().collect::<BTreeSet<_>>();
+        assert_eq!(keys(&fields), keys(properties));
+        let minimal: Map<String, Value> = fields
+            .iter()
+            .filter(|(key, _)| required.contains(key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        serde_json::from_value::<T>(minimal.clone().into()).unwrap();
+        for key in &required {
+            let mut missing = minimal.clone();
+            missing.remove(key);
+            assert!(
+                serde_json::from_value::<T>(missing.into()).is_err(),
+                "{key}"
+            );
+        }
+        assert_eq!(schema["additionalProperties"], json!(false));
+        let mut unknown = fields;
+        unknown.insert("unknown".into(), json!(1));
+        assert!(serde_json::from_value::<T>(unknown.into()).is_err());
+        schema
+    }
+
+    #[test]
+    fn schema_matches_serde_shape() {
+        let settings = StreamRequest::default();
+        let schema = same_shape(&settings);
+        assert!(
+            schema
+                .get("required")
+                .is_none_or(|required| required == &json!([]))
+        );
+        assert!(schema["properties"].get("listen").is_none());
+        for (field, default) in [
+            ("width", json!(320)),
+            ("height", json!(180)),
+            ("fps", json!(30)),
+            ("include_ui", json!(true)),
+            ("encoding", json!("h264_hardware")),
+        ] {
+            assert_eq!(schema["properties"][field]["default"], default, "{field}");
+            assert_eq!(serde_json::to_value(settings).unwrap()[field], default);
+        }
+        assert_eq!(schema["properties"]["fps"]["maximum"], json!(60));
     }
 }

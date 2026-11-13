@@ -57,8 +57,8 @@ Then run `sudo systemctl restart prysm-headless`. See all options with
 `prysm-headless --help`.
 
 The service can open video devices (`/dev/video*`) and the network, nothing
-else. The `remote` source for the slim TV listens on the port in its settings
-(suggested 7380); allow it in your firewall if you use one.
+else. The slim TV sends its picture to the portal's port (8787), so that is
+the only port to allow in a firewall.
 
 ## Remove
 

@@ -89,7 +89,7 @@ device.commands.configureProcessing(0, {
 // The supervisor's state is one type for both packages.
 const tvState: TvState = {
   flavor: 'slim',
-  preferences: { receiver: '192.168.1.20:7380' },
+  preferences: { instance: 'http://192.168.1.20:8787' },
   enabled: true,
   lighting: null,
   power: 'active',

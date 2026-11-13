@@ -1,12 +1,12 @@
 //! `prysm-webos-slim check-encoder`: a bounded on-TV check of the configured
 //! H.264 encoder with synthetic pictures, and optionally a stream of them to
-//! a desktop receiver. Not used by the supervisor.
+//! a Prysm. Not used by the supervisor.
 use clap::{Parser, ValueEnum};
 use prysm_capture_remote::RemoteSender;
 use prysm_core::Frame;
 use prysm_h264::{Backend, Decoder, Encoder, EncoderSettings, FORMAT};
 use prysm_ports::FrameSink;
-use prysm_webos_link::ReceiverAddress;
+use prysm_webos_link::PrysmAddress;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -16,10 +16,9 @@ const TOLERANCE: f64 = 8.0;
 const AFTER_HELP: &str = "\
 Encodes synthetic NV12 pictures with exactly that encoder, decodes each one and
 compares it with its input, restarts the session half way (as on resume), and
-prints timings and sizes. With --receiver, then streams the same pictures to a
-Prysm frame receiver for --frames more frames, at the default bitrate; the
-receiver must request this encoding, size and rate. Exit 0 when every check
-passed.";
+prints timings and sizes. With --prysm, then streams the same pictures to that
+Prysm for --frames more frames, at the default bitrate; its remote capture must
+request this encoding, size and rate. Exit 0 when every check passed.";
 
 #[derive(Debug, Clone, Parser)]
 #[command(after_help = AFTER_HELP)]
@@ -42,9 +41,9 @@ pub struct Options {
     /// Encoder bitrate in bit/s
     #[arg(long, default_value_t = prysm_h264::DEFAULT_BITRATE)]
     bitrate: u32,
-    /// Then stream the pictures to this Prysm frame receiver
-    #[arg(long, value_name = "HOST:PORT")]
-    receiver: Option<ReceiverAddress>,
+    /// Then stream the pictures to this Prysm (http:// or https://)
+    #[arg(long, value_name = "URL")]
+    prysm: Option<PrysmAddress>,
 }
 
 /// The encoders `check-encoder` can check: the slim encodings except raw.
@@ -130,7 +129,7 @@ fn run(options: Options) -> Result<(), String> {
         fps,
         frames,
         bitrate,
-        receiver,
+        prysm,
     } = options;
     let backend = encoding.backend();
     let settings = EncoderSettings {
@@ -225,27 +224,28 @@ fn run(options: Options) -> Result<(), String> {
         "check-encoder: released in {} ms",
         started.elapsed().as_millis()
     );
-    if let Some(receiver) = receiver {
-        stream(receiver, settings, width, height, frames)?;
+    if let Some(prysm) = prysm {
+        stream(&prysm, settings, width, height, frames)?;
     }
     Ok(())
 }
 
-/// The real sending path: the same encoder inside a `RemoteSender`, if the
-/// receiver requests it.
+/// The real sending path: the same encoder inside a `RemoteSender`, if
+/// Prysm requests it.
 fn stream(
-    receiver: ReceiverAddress,
+    prysm: &PrysmAddress,
     settings: EncoderSettings,
     width: u32,
     height: u32,
     frames: u32,
 ) -> Result<(), String> {
-    let address = match receiver.socket_addr() {
+    let address = match prysm.socket_addr() {
         Some(address) => address,
-        None => prysm_ports::system_lookup(receiver.host(), receiver.port())
-            .map_err(|error| format!("cannot resolve {receiver}: {error}"))?,
+        None => prysm_ports::system_lookup(prysm.host(), prysm.port())
+            .map_err(|error| format!("cannot resolve {prysm}: {error}"))?,
     };
-    let mut sender = RemoteSender::connect(address).map_err(|error| chain(&error))?;
+    let mut sender =
+        RemoteSender::connect(&prysm.capture_stream(), address).map_err(|error| chain(&error))?;
     let request = sender.request();
     let checked = (Some(settings.backend), width, height, settings.fps);
     if (
@@ -257,7 +257,7 @@ fn stream(
     {
         sender.refuse("check-encoder streams only what its flags say");
         return Err(format!(
-            "the receiver requests {request}; give check-encoder the same \
+            "Prysm requests {request}; give check-encoder the same \
              --encoding, --width, --height and --fps"
         ));
     }
@@ -271,9 +271,7 @@ fn stream(
         paused += u32::from(sender.paused());
         std::thread::sleep(interval.saturating_sub(tick.elapsed()));
     }
-    println!(
-        "check-encoder: streamed {frames} frames to {receiver} ({paused} dropped while paused)"
-    );
+    println!("check-encoder: streamed {frames} frames to {prysm} ({paused} dropped while paused)");
     Ok(())
 }
 
@@ -298,8 +296,9 @@ mod tests {
             &["--width", "641"],
             &["--height", "1082"],
             &["--frames", "0"],
-            &["--receiver", "nope"],
-            &["--receiver", "0.0.0.0:7380"],
+            &["--prysm", "nope"],
+            &["--prysm", "http://0.0.0.0:8787"],
+            &["--receiver", "192.168.1.20:7380"],
             &["--fps"],
             &["--colour", "red"],
         ] {

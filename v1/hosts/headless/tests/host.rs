@@ -138,7 +138,7 @@ fn example_settings_load_and_validate() {
     let mut registry = Registry::default();
     registry.add_source(DeviceSource);
     registry.add_source(FileSource);
-    registry.add_source(RemoteReceiver);
+    registry.add_source(RemoteReceiver::default());
     registry.add_output(Wled::default());
     registry.add_output(NullOutput);
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/settings.example.json");

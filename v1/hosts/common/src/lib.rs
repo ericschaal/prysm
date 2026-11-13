@@ -27,7 +27,10 @@ mod args;
 
 pub use args::{Options, parse};
 
-use prysm_ports::{Error, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain};
+use futures::future::BoxFuture;
+use prysm_ports::{
+    Error, Handoff, LightingTarget, OutputIssue, Result, SessionState, Snapshot, chain,
+};
 use prysm_runtime::logging::{self, Logs};
 use prysm_runtime::{Builder, EngineHandle, Prysm, Shutdown, Surface};
 use prysm_settings_file::SettingsFile;
@@ -204,19 +207,12 @@ impl Host {
     ///
     /// # Errors
     /// Bind failure, or an origin `WebPortal` rejects.
-    pub fn portal(&self, assets: &'static [FrontendAsset]) -> Result<impl Surface + use<>> {
-        let portal = if self.options.no_portal {
+    pub fn portal(&self, assets: &'static [FrontendAsset]) -> Result<Portal> {
+        if self.options.no_portal {
             eprintln!("{}: portal disabled", self.name);
-            None
-        } else {
-            Some(self.open_portal(assets)?)
-        };
-        Ok(move |engine: EngineHandle, shutdown: Shutdown| async move {
-            match portal {
-                Some(portal) => Box::new(portal).run(engine, shutdown).await,
-                None => Ok(()),
-            }
-        })
+            return Ok(Portal(None));
+        }
+        Ok(Portal(Some(self.open_portal(assets)?)))
     }
 
     fn open_portal(&self, assets: &'static [FrontendAsset]) -> Result<WebPortal> {
@@ -242,6 +238,31 @@ impl Host {
             }
         );
         Ok(portal)
+    }
+}
+
+/// The host's web portal, or nothing under `--no-portal`.
+pub struct Portal(Option<WebPortal>);
+
+impl Portal {
+    /// Also serve the capture stream a capture-only TV streams to, handing
+    /// its connections to the remote source (`remote.incoming()`).
+    #[must_use]
+    pub fn capture_stream(self, incoming: Handoff) -> Self {
+        Self(self.0.map(|portal| portal.capture_stream(incoming)))
+    }
+}
+
+impl Surface for Portal {
+    fn run(
+        self: Box<Self>,
+        engine: EngineHandle,
+        shutdown: Shutdown,
+    ) -> BoxFuture<'static, Result<()>> {
+        match self.0 {
+            Some(portal) => Box::new(portal).run(engine, shutdown),
+            None => Box::pin(async { Ok(()) }),
+        }
     }
 }
 

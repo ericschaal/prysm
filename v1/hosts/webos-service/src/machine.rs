@@ -289,7 +289,7 @@ impl Machine {
         match self.package {
             // The portal stays up while awake, whatever the lighting.
             Package::Full { .. } => true,
-            Package::Slim { enabled } => enabled && self.preferences.receiver.is_some(),
+            Package::Slim { enabled } => enabled && self.preferences.instance.is_some(),
         }
     }
 
@@ -309,9 +309,9 @@ impl Machine {
             ),
             Package::Slim { .. } => self
                 .preferences
-                .receiver
+                .instance
                 .clone()
-                .map(|receiver| SlimArgs { receiver }.to_args()),
+                .map(|prysm| SlimArgs { prysm }.to_args()),
         }
     }
 
@@ -377,7 +377,7 @@ impl Machine {
         effects: &mut Vec<Effect>,
     ) {
         let relaunch = matches!(self.package, Package::Slim { .. })
-            && self.preferences.receiver != preferences.receiver;
+            && self.preferences.instance != preferences.instance;
         self.preferences = preferences;
         if !relaunch {
             return;

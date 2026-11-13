@@ -231,17 +231,23 @@ fn only_the_app_may_change_anything() {
 #[test]
 fn preferences_are_validated_persisted_and_applied() {
     let mut h = Harness::new(slim_config(), None);
-    let bad = h.app("setPreferences", r#"{"receiver":"0.0.0.0:7380"}"#);
+    let bad = h.app("setPreferences", r#"{"instance":"http://0.0.0.0:8787"}"#);
     assert_eq!(
         bad["errorText"],
-        "invalid setPreferences request: receiver `0.0.0.0:7380`: needs the receiver's address, not 0.0.0.0"
+        "invalid setPreferences request: Prysm address `http://0.0.0.0:8787`: needs Prysm's address, not 0.0.0.0"
     );
     // A host name is saved as typed; the TV resolves it when it connects.
-    let named = h.app("setPreferences", r#"{"receiver":"prysm.local:7380"}"#);
-    assert_eq!(named["preferences"]["receiver"], "prysm.local:7380");
+    let named = h.app(
+        "setPreferences",
+        r#"{"instance":"https://prysm.example.com"}"#,
+    );
     assert_eq!(
-        h.service.store.0.as_ref().unwrap().receiver,
-        Some("prysm.local:7380".parse().unwrap())
+        named["preferences"]["instance"],
+        "https://prysm.example.com"
+    );
+    assert_eq!(
+        h.service.store.0.as_ref().unwrap().instance,
+        Some("https://prysm.example.com".parse().unwrap())
     );
     assert_eq!(
         h.app("setPreferences", r#"{"mode":"full"}"#)["returnValue"],
@@ -249,18 +255,19 @@ fn preferences_are_validated_persisted_and_applied() {
     );
     let reply = h.app(
         "setPreferences",
-        r#"{"autostart":true,"instance":"http://192.168.1.20:8787","receiver":"192.168.1.20:7380"}"#,
+        r#"{"autostart":true,"instance":"http://192.168.1.20:8787"}"#,
     );
     assert_eq!(reply["returnValue"], true);
-    assert_eq!(reply["preferences"]["receiver"], "192.168.1.20:7380");
+    assert_eq!(reply["preferences"]["instance"], "http://192.168.1.20:8787");
+    // The separate stream address is gone.
     assert_eq!(
-        h.service.store.0.as_ref().unwrap().instance.as_deref(),
-        Some("http://192.168.1.20:8787")
+        h.app("setPreferences", r#"{"receiver":"192.168.1.20:7380"}"#)["returnValue"],
+        false
     );
     // Full rejects slim-only fields.
     let mut full = Harness::new(config(), None);
     assert_eq!(
-        full.app("setPreferences", r#"{"receiver":"10.0.0.1:7380"}"#)["returnValue"],
+        full.app("setPreferences", r#"{"instance":"http://10.0.0.1:8787"}"#)["returnValue"],
         false
     );
 }
@@ -268,7 +275,7 @@ fn preferences_are_validated_persisted_and_applied() {
 #[test]
 fn invalid_saved_preferences_fall_back_to_defaults() {
     let saved = Preferences {
-        receiver: Some("10.0.0.1:7380".parse().unwrap()),
+        instance: Some("http://10.0.0.1:8787".parse().unwrap()),
         ..Preferences::default()
     };
     let h = Harness::new(config(), Some(saved));
@@ -488,8 +495,11 @@ fn neither_package_has_a_capture_preference() {
         );
     }
     let mut slim = Harness::new(slim_config(), None);
-    let reply = slim.app("setPreferences", r#"{"receiver":"192.168.1.20:7380"}"#);
-    assert_eq!(reply["preferences"]["receiver"], "192.168.1.20:7380");
+    let reply = slim.app(
+        "setPreferences",
+        r#"{"instance":"http://192.168.1.20:8787"}"#,
+    );
+    assert_eq!(reply["preferences"]["instance"], "http://192.168.1.20:8787");
 }
 
 #[test]

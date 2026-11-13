@@ -1,9 +1,10 @@
 //! Worker argv. The supervisor builds it with `to_args`; the worker parses it
 //! with clap ([`crate::worker::args`]); a rejection is a packaging bug (exit `USAGE`).
+use crate::PrysmAddress;
 use clap::Parser;
 use prysm_ports::LightingTarget;
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -21,122 +22,13 @@ pub struct FullArgs {
     pub lighting: LightingTarget,
 }
 
-/// `prysm-webos-slim --receiver HOST:PORT`. What to capture and how to
-/// encode it comes from the receiver (its stream request), not from the TV.
+/// `prysm-webos-slim --prysm URL`. What to capture and how to encode it
+/// comes from Prysm (the remote source's stream request), not from the TV.
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
 pub struct SlimArgs {
-    /// The headless host's frame receiver
-    #[arg(long, value_name = "HOST:PORT")]
-    pub receiver: ReceiverAddress,
-}
-
-/// Where a slim worker sends frames: `host:port`, the host an IP address
-/// (IPv6 in brackets) or a DNS name such as `prysm.local`, the port fixed.
-/// Only the syntax is checked here; the worker resolves a name at every
-/// connection attempt, so a changed address is picked up on reconnect.
-/// Serialized as the `host:port` string.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct ReceiverAddress {
-    /// An IP address or a host name, without brackets.
-    host: String,
-    port: u16,
-}
-
-impl ReceiverAddress {
-    /// The IP address or host name, without IPv6 brackets.
-    #[must_use]
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    #[must_use]
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    /// The address itself when the host is an IP address: nothing to resolve.
-    #[must_use]
-    pub fn socket_addr(&self) -> Option<SocketAddr> {
-        let ip: IpAddr = self.host.parse().ok()?;
-        Some(SocketAddr::new(ip, self.port))
-    }
-}
-
-impl std::fmt::Display for ReceiverAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.host.contains(':') {
-            write!(f, "[{}]:{}", self.host, self.port)
-        } else {
-            write!(f, "{}:{}", self.host, self.port)
-        }
-    }
-}
-
-impl FromStr for ReceiverAddress {
-    type Err = String;
-
-    fn from_str(text: &str) -> Result<Self, String> {
-        const EXAMPLE: &str = "such as 192.168.1.20:7380 or prysm.local:7380";
-        let (host, port) = text
-            .rsplit_once(':')
-            .ok_or_else(|| format!("needs host:port, {EXAMPLE}"))?;
-        let port = match port.parse::<u16>() {
-            Ok(port) if port != 0 => port,
-            _ => return Err(format!("needs a fixed port, {EXAMPLE}")),
-        };
-        let ip = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
-            Some(v6) => Some(IpAddr::V6(
-                v6.parse::<Ipv6Addr>()
-                    .map_err(|_| format!("`{v6}` is not an IPv6 address"))?,
-            )),
-            None => host.parse::<Ipv4Addr>().ok().map(IpAddr::V4),
-        };
-        let host = match ip {
-            Some(ip) if ip.is_unspecified() => {
-                return Err(format!("needs the receiver's address, not {ip}"));
-            }
-            Some(ip) => ip.to_string(),
-            None if is_host_name(host) => host.to_owned(),
-            None => return Err(format!("`{host}` is not a host name or IP address")),
-        };
-        Ok(Self { host, port })
-    }
-}
-
-/// A DNS name: dot-separated labels of letters, digits and inner hyphens,
-/// at most 253 characters; the last label not all digits (that would be a
-/// malformed IPv4 address).
-fn is_host_name(host: &str) -> bool {
-    let label = |label: &str| {
-        (1..=63).contains(&label.len())
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-    };
-    host.len() <= 253
-        && host.split('.').all(label)
-        && host
-            .rsplit('.')
-            .next()
-            .is_some_and(|last| !last.bytes().all(|b| b.is_ascii_digit()))
-}
-
-impl TryFrom<String> for ReceiverAddress {
-    type Error = String;
-
-    fn try_from(text: String) -> Result<Self, String> {
-        text.parse()
-            .map_err(|reason| format!("receiver `{text}`: {reason}"))
-    }
-}
-
-impl From<ReceiverAddress> for String {
-    fn from(address: ReceiverAddress) -> Self {
-        address.to_string()
-    }
+    /// The Prysm to stream to: its portal address, http:// or https://
+    #[arg(long, value_name = "URL")]
+    pub prysm: PrysmAddress,
 }
 
 /// The encoding of the frames a slim worker sends: the one its receiver
@@ -201,7 +93,7 @@ impl FullArgs {
 impl SlimArgs {
     #[must_use]
     pub fn to_args(&self) -> Vec<String> {
-        vec!["--receiver".into(), self.receiver.to_string()]
+        vec!["--prysm".into(), self.prysm.to_string()]
     }
 }
 

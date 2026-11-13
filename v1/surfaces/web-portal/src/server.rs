@@ -34,6 +34,7 @@ pub(crate) async fn serve(
         portal.assets,
         portal.access,
         portal.metrics,
+        portal.capture,
         shutdown.clone(),
     ));
     let mut connections = JoinSet::new();
@@ -83,7 +84,8 @@ async fn connection(socket: TcpStream, context: Arc<Context>) {
     let connection = http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(BODY_DEADLINE)
-        .serve_connection(TokioIo::new(TimedIo::new(socket)), service);
+        .serve_connection(TokioIo::new(TimedIo::new(socket)), service)
+        .with_upgrades();
     tokio::pin!(connection);
     tokio::select! {
         _ = connection.as_mut() => {}

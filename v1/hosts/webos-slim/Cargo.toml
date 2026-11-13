@@ -21,6 +21,8 @@ futures.workspace = true
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+tungstenite.workspace = true
+prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-runtime = { workspace = true, features = ["testkit"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "macros"] }

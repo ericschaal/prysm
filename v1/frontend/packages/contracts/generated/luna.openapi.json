@@ -162,19 +162,9 @@
           },
           "instance": {
             "default": null,
-            "description": "Slim only: the headless Prysm's portal origin, such as\n`http://192.168.1.20:8787`. Only the TV app uses it.",
+            "description": "Slim only: the headless Prysm's address, such as\n`http://192.168.1.20:8787` or `https://prysm.example.com` (through a\nreverse proxy). The TV streams its picture there, and the TV app\nlinks to its portal. Only the syntax is checked when saved; the TV\nresolves a host name at every connection attempt, and one that does\nnot resolve is reported as the receiver wait.",
             "example": "http://192.168.1.20:8787",
             "maxLength": 256,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "receiver": {
-            "default": null,
-            "description": "Slim only: where frames go, `host:port`: an IP address (IPv6 in\nbrackets) or a host name, such as `192.168.1.20:7380` or\n`prysm.local:7380`, with a fixed port. Only the syntax is checked when\nsaved; the TV resolves a name at every connection attempt, and one\nthat does not resolve is reported as the receiver wait.",
-            "example": "prysm.local:7380",
-            "maxLength": 259,
             "type": [
               "string",
               "null"

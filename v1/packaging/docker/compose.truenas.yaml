@@ -24,10 +24,8 @@ services:
     # TV uses this NAS. Add "--start" to start screen sync with the app.
     command: ["--allow-origin", "null"]
     ports:
+      # The portal; the slim TV package streams its picture to it too.
       - "8787:8787"
-      # Receiver for the slim TV package; match the "listen" port of the
-      # remote video source in Prysm's settings.
-      - "7380:7380"
     volumes:
       - type: bind
         source: /mnt/tank/apps/prysm

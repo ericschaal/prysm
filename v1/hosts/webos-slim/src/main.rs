@@ -1,5 +1,5 @@
-//! prysm-webos-slim: the slim TV worker. webOS capture forwarded to a
-//! headless Prysm's frame receiver, controlled by `prysm-webos-service`.
+//! prysm-webos-slim: the slim TV worker. webOS capture streamed to a
+//! headless Prysm's portal, controlled by `prysm-webos-service`.
 mod capture;
 mod check;
 mod link;
@@ -22,8 +22,8 @@ use std::time::Duration;
 const NAME: &str = "prysm-webos-slim";
 
 const ABOUT: &str = "The slim TV worker. Started by prysm-webos-slim-service: commands on stdin,
-events on stdout, logs on stderr. The receiver's request sets what is captured
-and how it is encoded.";
+events on stdout, logs on stderr. Prysm's request sets what is captured and how
+it is encoded.";
 
 /// The worker's arguments, or the encoder check.
 #[derive(Debug, Parser)]
@@ -56,12 +56,14 @@ fn main() -> ExitCode {
     let cli: Cli = worker::args(NAME, ABOUT);
     match cli.check {
         Some(Check::CheckEncoder(options)) => check::main(options),
-        // Without a subcommand clap requires --receiver.
-        None => worker::main(NAME, cli.worker.expect("--receiver is required"), run),
+        // Without a subcommand clap requires --prysm.
+        None => worker::main(NAME, cli.worker.expect("--prysm is required"), run),
     }
 }
 
-/// The receiver listens only while its host is lighting, so the uplink
+/// Prysm receives the stream (at its portal's capture stream path, `ws://`
+/// or, for an `https://` address, `wss://`) only while it is lighting with
+/// the remote capture, so the uplink
 /// reconnects on its own and an unavailable receiver is reported in the
 /// status rather than ending the worker (which would back off and show a
 /// failure). Each connection brings the receiver's request: the capture
@@ -72,8 +74,9 @@ fn main() -> ExitCode {
 /// wait like a receiver that is not listening. While the receiver has
 /// paused the stream the TV capture is closed.
 async fn run(args: SlimArgs, link: Link) -> Result<()> {
-    let mut receiver = Resolver::new(args.receiver);
-    let (sink, flow) = Uplink::new(move || RemoteSender::connect(receiver.resolve()?));
+    let url = args.prysm.capture_stream();
+    let mut prysm = Resolver::new(args.prysm);
+    let (sink, flow) = Uplink::new(move || RemoteSender::connect(&url, prysm.resolve()?));
     let video = VideoSignal::default();
     let capture = WebosCapture::new(video.clone());
     let source = RequestedCapture::new(flow.clone(), move |settings| {

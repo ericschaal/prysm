@@ -2,7 +2,7 @@
 //! schemas by the frontend contract tests.
 use prysm_capture_device::{DeviceSettings, DeviceSource};
 use prysm_capture_file::{FileSettings, FileSource};
-use prysm_capture_remote::{RemoteReceiver, RemoteReceiverSettings, StreamEncoding, StreamRequest};
+use prysm_capture_remote::{RemoteReceiver, StreamEncoding, StreamRequest};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
@@ -23,7 +23,6 @@ use prysm_webos_service::service::{
 };
 use prysm_webos_service::state::{Flavor, Phase, Power, State as TvState};
 use serde_json::{Value, json};
-use std::net::SocketAddr;
 
 /// A fixture key `module/Name` names a schema of one document; a plain
 /// `Name` is looked up in every document.
@@ -42,8 +41,7 @@ pub fn serialized() -> Value {
 fn luna() -> Value {
     let slim_preferences = Preferences {
         autostart: true,
-        instance: Some("http://192.168.1.20:8787".into()),
-        receiver: Some("prysm.local:7380".parse().expect("a receiver address")),
+        instance: Some("http://192.168.1.20:8787".parse().expect("a Prysm address")),
     };
     let full = TvState {
         flavor: Flavor::Full,
@@ -300,22 +298,16 @@ fn adapter_sections() -> Value {
             ),
         ],
         "RemoteReceiverSettings": [
+            AdapterSettings::new(RemoteReceiver::KIND, &StreamRequest::default()),
             AdapterSettings::new(
                 RemoteReceiver::KIND,
-                &RemoteReceiverSettings::new(SocketAddr::from(([0, 0, 0, 0], 7380))),
-            ),
-            AdapterSettings::new(
-                RemoteReceiver::KIND,
-                &RemoteReceiverSettings::with_request(
-                    SocketAddr::from(([0, 0, 0, 0], 7380)),
-                    StreamRequest {
-                        width: 640,
-                        height: 280,
-                        fps: 25,
-                        include_ui: false,
-                        encoding: StreamEncoding::H264Software,
-                    },
-                ),
+                &StreamRequest {
+                    width: 640,
+                    height: 280,
+                    fps: 25,
+                    include_ui: false,
+                    encoding: StreamEncoding::H264Software,
+                },
             ),
         ],
         "WledSettings": [AdapterSettings::new(

@@ -76,22 +76,16 @@ export interface components {
              */
             autostart?: boolean;
             /**
-             * @description Slim only: the headless Prysm's portal origin, such as
-             *     `http://192.168.1.20:8787`. Only the TV app uses it.
+             * @description Slim only: the headless Prysm's address, such as
+             *     `http://192.168.1.20:8787` or `https://prysm.example.com` (through a
+             *     reverse proxy). The TV streams its picture there, and the TV app
+             *     links to its portal. Only the syntax is checked when saved; the TV
+             *     resolves a host name at every connection attempt, and one that does
+             *     not resolve is reported as the receiver wait.
              * @default null
              * @example http://192.168.1.20:8787
              */
             instance?: string | null;
-            /**
-             * @description Slim only: where frames go, `host:port`: an IP address (IPv6 in
-             *     brackets) or a host name, such as `192.168.1.20:7380` or
-             *     `prysm.local:7380`, with a fixed port. Only the syntax is checked when
-             *     saved; the TV resolves a name at every connection attempt, and one
-             *     that does not resolve is reported as the receiver wait.
-             * @default null
-             * @example prysm.local:7380
-             */
-            receiver?: string | null;
         };
         /** @description `setEnabled` request. */
         SetEnabledRequest: {

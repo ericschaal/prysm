@@ -26,12 +26,11 @@
   colours without any LEDs.
 - **Capture hardware?** Replace the device with a known video file (`file`
   source, FFmpeg 9+; see [play a video file](README.md#play-a-video-file)).
-- **TV stream?** Watch a slim TV's stream on a desktop without lighting
-  anything:
-
-  ```sh
-  cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60
-  ```
+- **TV stream?** Watch a slim TV's stream on a desktop without lights: run
+  `prysm-headless` (or `prysm-tui`) with the `remote` capture and the `null`
+  output, turn lighting on and give the TV the desktop's portal address. The
+  portal shows the received rate and the preview; a TV of another stream
+  version shows "versions differ" as its waiting reason.
 
 ## Logs
 

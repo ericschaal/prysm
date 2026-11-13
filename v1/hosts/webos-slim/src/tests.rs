@@ -1,7 +1,8 @@
 use crate::capture::{RequestedCapture, settings};
 use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
 use crate::resolve::Resolver;
-use prysm_capture_remote::{RemoteSender, RemoteSource, SendError, StreamEncoding, StreamRequest};
+use prysm_capture_remote::testkit::Portal;
+use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest};
 use prysm_capture_webos::{VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
@@ -246,22 +247,27 @@ async fn an_unavailable_receiver_is_a_reported_wait_not_a_failure() {
     result.unwrap();
 }
 
-/// A real receiver that binds after the sender started, as when lighting is
-/// switched on at the headless host while the TV is already forwarding.
+/// A sender that connects to Prysm through a portal stand-in.
+fn connect(portal: &Portal) -> impl FnMut() -> Result<RemoteSender> + Send + 'static {
+    let (url, address) = (portal.url(), portal.addr);
+    move || RemoteSender::connect(&url, address)
+}
+
+/// A real receiver that starts after the sender, as when lighting is switched
+/// on at the headless host while the TV is already forwarding: until then
+/// the portal answers `503` and the sender waits.
 #[tokio::test]
-async fn frames_reach_a_receiver_that_starts_listening_later() {
-    let address = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap()
-    };
+async fn frames_reach_a_receiver_that_starts_later() {
+    let portal = Portal::start();
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(address),
+        connect(&portal),
     );
-    peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
+    assert!(waiting(&event).unwrap().contains("503"), "{event:?}");
 
-    let mut receiver = RemoteSource::bind(address, RAW).unwrap();
+    let mut receiver = portal.source(RAW);
     let (frame, receiver) = tokio::task::spawn_blocking(move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -289,10 +295,10 @@ async fn frames_reach_a_receiver_that_starts_listening_later() {
 /// at the new shape.
 #[tokio::test]
 async fn a_new_request_reaches_the_tv_on_the_next_connection() {
-    let mut receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), SOFTWARE).unwrap();
-    let address = receiver.local_addr();
+    let portal = Portal::start();
+    let mut receiver = portal.source(SOFTWARE);
     let opened = Opened::nv12();
-    let (mut peer, _feed, task) = start(&opened, move || RemoteSender::connect(address));
+    let (mut peer, _feed, task) = start(&opened, connect(&portal));
     peer.wait_for(|e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
@@ -318,7 +324,7 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
         include_ui: false,
         encoding: StreamEncoding::Raw,
     };
-    let mut receiver = RemoteSource::bind(address, changed).unwrap();
+    let mut receiver = portal.source(changed);
     let frame = tokio::task::spawn_blocking(move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -342,33 +348,38 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
     result.unwrap();
 }
 
-/// A receiver of another wire version refuses the stream: the worker keeps
-/// running and its status names the mismatch.
+/// A Prysm of another capture stream version refuses the upgrade: the
+/// worker keeps running and its status names both versions.
 #[tokio::test]
-async fn a_receiver_of_another_wire_version_is_reported_as_the_wait() {
+async fn a_prysm_of_another_version_is_reported_as_the_wait() {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
-            let mut hello = [0; 8];
-            if stream.read_exact(&mut hello).is_ok() {
-                let _ = stream.write_all(b"PRSM\x02\x01\x00\x00");
+            let mut head = [0; 1024];
+            if stream.read(&mut head).is_ok() {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
+                );
             }
         }
     });
+    let url: tungstenite::http::Uri = format!("ws://{address}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(address),
+        move || RemoteSender::connect(&url, address),
     );
     let event = peer
-        .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("version 2")))
+        .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("versions differ")))
         .await
         .unwrap();
     let reason = waiting(&event).unwrap();
     assert!(
-        reason.contains("refused the stream") && reason.contains("this end version 3"),
+        reason.contains("Prysm: 9") && reason.contains("update both"),
         "{reason}"
     );
     assert!(!task.is_finished(), "the worker keeps running");
@@ -463,10 +474,10 @@ impl FrameSource for Nv12Source {
 /// status names the encoder while connected.
 #[tokio::test]
 async fn software_h264_reaches_a_receiver_and_is_reported() {
-    let mut receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), SOFTWARE).unwrap();
-    let address = receiver.local_addr();
+    let portal = Portal::start();
+    let mut receiver = portal.source(SOFTWARE);
     let opened = Opened::nv12();
-    let (mut peer, _feed, task) = start(&opened, move || RemoteSender::connect(address));
+    let (mut peer, _feed, task) = start(&opened, connect(&portal));
     peer.wait_for(|e| {
         capturing(e) == Some(true) && encoding(e) == Some(SlimEncoding::H264Software)
     })
@@ -503,7 +514,7 @@ async fn software_h264_reaches_a_receiver_and_is_reported() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(opened.shapes().len(), 1, "no capture while lighting is off");
     // Lighting on again: a new connection resumes the capture.
-    let receiver = RemoteSource::bind(address, SOFTWARE).unwrap();
+    let receiver = portal.source(SOFTWARE);
     peer.wait_for(|e| capturing(e) == Some(true) && !status(e).unwrap().paused)
         .await
         .unwrap();
@@ -549,9 +560,12 @@ async fn a_receiver_lost_without_a_pause_keeps_the_capture() {
 async fn a_receiver_host_name_is_resolved_at_each_attempt() {
     static RESOLVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     static PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
-    let receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), RAW).unwrap();
-    PORT.store(receiver.local_addr().port(), Ordering::SeqCst);
-    let mut resolver = Resolver::new("prysm.local:7380".parse().unwrap()).with_lookup(
+    let portal = Portal::start();
+    let receiver = portal.source(RAW);
+    PORT.store(portal.addr.port(), Ordering::SeqCst);
+    let prysm: prysm_webos_link::PrysmAddress = "http://prysm.local:8787".parse().unwrap();
+    let url = prysm.capture_stream();
+    let mut resolver = Resolver::new(prysm).with_lookup(
         |host, _| {
             assert_eq!(host, "prysm.local");
             if RESOLVES.load(Ordering::SeqCst) {
@@ -568,12 +582,12 @@ async fn a_receiver_host_name_is_resolved_at_each_attempt() {
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(resolver.resolve()?),
+        move || RemoteSender::connect(&url, resolver.resolve()?),
     );
     let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
     assert_eq!(
         waiting(&event),
-        Some("waiting for the receiver: cannot resolve prysm.local:7380: no such host")
+        Some("waiting for the receiver: cannot resolve http://prysm.local:8787: no such host")
     );
     RESOLVES.store(true, Ordering::SeqCst);
     peer.wait_for(|e| capturing(e) == Some(true)).await.unwrap();
@@ -587,7 +601,9 @@ async fn a_receiver_host_name_is_resolved_at_each_attempt() {
 /// stop: each attempt waits at most its bound.
 #[tokio::test]
 async fn a_hanging_lookup_does_not_hold_up_the_stop() {
-    let mut resolver = Resolver::new("prysm.local:7380".parse().unwrap()).with_lookup(
+    let prysm: prysm_webos_link::PrysmAddress = "http://prysm.local:8787".parse().unwrap();
+    let url = prysm.capture_stream();
+    let mut resolver = Resolver::new(prysm).with_lookup(
         |_, _| {
             std::thread::sleep(Duration::from_secs(60));
             Err(std::io::Error::other("too late"))
@@ -597,7 +613,7 @@ async fn a_hanging_lookup_does_not_hold_up_the_stop() {
     let log = CallLog::new();
     let (mut peer, _feed, task) = start(
         &Opened::fake(&log, FakeSourceSettings::default()),
-        move || RemoteSender::connect(resolver.resolve()?),
+        move || RemoteSender::connect(&url, resolver.resolve()?),
     );
     let event = peer.wait_for(|e| waiting(e).is_some()).await.unwrap();
     assert!(waiting(&event).unwrap().ends_with("no answer yet"));
@@ -621,9 +637,9 @@ async fn an_unavailable_hardware_encoder_is_reported_on_both_ends() {
         encoding: StreamEncoding::H264Hardware,
         ..SOFTWARE
     };
-    let mut receiver = RemoteSource::bind("127.0.0.1:0".parse().unwrap(), hardware).unwrap();
-    let address = receiver.local_addr();
-    let (mut peer, _feed, task) = start(&Opened::nv12(), move || RemoteSender::connect(address));
+    let portal = Portal::start();
+    let mut receiver = portal.source(hardware);
+    let (mut peer, _feed, task) = start(&Opened::nv12(), connect(&portal));
     let event = peer
         .wait_for(|e| encoder_failure(e).is_some())
         .await

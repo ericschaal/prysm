@@ -377,10 +377,11 @@ export interface components {
             spatial_reach_percent: number;
         };
         /**
-         * @description Settings for kind `"remote"`: where to listen and the stream to ask the
-         *     sender for, `{ "kind": "remote", "listen": "0.0.0.0:7380", "width": 320,
-         *     "height": 180, "fps": 30, "include_ui": true, "encoding": "h264_hardware" }`.
-         *     Every field but `listen` is optional.
+         * @description The stream a receiver asks for, and the settings of kind `"remote"`:
+         *     `{ "kind": "remote", "width": 320, "height": 180, "fps": 30,
+         *     "include_ui": true, "encoding": "h264_hardware" }`, every field optional.
+         *     The sender captures at this size, rate and menu blending and encodes with
+         *     exactly this encoding.
          */
         RemoteReceiverSettings: {
             /**
@@ -409,11 +410,6 @@ export interface components {
             include_ui?: boolean;
             /** @enum {string} */
             kind: "remote";
-            /**
-             * @description Address and fixed port the capture host connects to.
-             * @example 0.0.0.0:7380
-             */
-            listen: string;
             /**
              * Format: int32
              * @description Requested picture width: even, 2 to 1920 (H.264: at least 16).

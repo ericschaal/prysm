@@ -1,15 +1,16 @@
-//! H.264 streams on loopback with the software encoder: round trip, recovery,
-//! pause/resume and refusal. Every wait is bounded.
+//! H.264 streams on loopback over WebSocket with the software encoder: round
+//! trip, recovery, pause/resume and refusal. Every wait is bounded.
+use prysm_capture_remote::testkit::{BOUND, Portal};
 use prysm_capture_remote::{RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError};
 use prysm_core::Frame;
 use prysm_h264::{Backend, Encoder, EncoderSettings, FORMAT, H264Error};
 use prysm_ports::{FrameSink, FrameSource};
-use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
 
-const BOUND: Duration = Duration::from_secs(5);
 /// Software H.264; frames carry their own size, so the tests use several.
 const SOFTWARE: StreamRequest = StreamRequest {
     width: 640,
@@ -18,15 +19,46 @@ const SOFTWARE: StreamRequest = StreamRequest {
     include_ui: true,
     encoding: StreamEncoding::H264Software,
 };
-/// The reply a fake receiver sends for [`SOFTWARE`].
-const SOFTWARE_REPLY: &[u8; 16] = b"PRSM\x03\x00\x00\x00\x02\x01\x02\x80\x01\x18\x1e\x00";
+/// The request a receiver sends for [`SOFTWARE`].
+const SOFTWARE_REQUEST: &str = r#"{"type":"request","width":640,"height":280,"fps":30,"include_ui":true,"encoding":"h264_software"}"#;
 
-fn bind(request: StreamRequest) -> RemoteSource {
-    RemoteSource::bind(any_port(), request).unwrap()
+/// A frame message by hand: NV12 (limited, BT.709), the keyframe flag,
+/// width, height, then `payload`.
+fn nv12_message(keyframe: bool, width: u16, height: u16, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![4, 1, 2, u8::from(keyframe)];
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
 }
 
-fn any_port() -> SocketAddr {
-    "127.0.0.1:0".parse().unwrap()
+/// A portal with a source receiving `request`.
+fn open(request: StreamRequest) -> (Portal, RemoteSource) {
+    let portal = Portal::start();
+    let source = portal.source(request);
+    (portal, source)
+}
+
+/// A fake receiver: one upgraded connection that sent the [`SOFTWARE`]
+/// request.
+fn fake_receiver() -> (SocketAddr, thread::JoinHandle<WebSocket<TcpStream>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let receiver = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(BOUND)).unwrap();
+        let mut socket = prysm_capture_remote::testkit::accept(stream);
+        socket.send(Message::text(SOFTWARE_REQUEST)).unwrap();
+        socket
+    });
+    (addr, receiver)
+}
+
+fn connect(addr: SocketAddr) -> RemoteSender {
+    let url = format!("ws://{addr}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    RemoteSender::connect(&url, addr).unwrap()
 }
 
 /// Limited-range NV12: a horizontal luma ramp moved by `shift`, plus four
@@ -105,8 +137,8 @@ fn cause<T: std::error::Error + 'static>(error: &prysm_ports::Error) -> Option<&
 
 #[test]
 fn software_h264_round_trips_within_tolerance_and_reports_its_bitrate() {
-    let mut source = bind(SOFTWARE);
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open(SOFTWARE);
+    let mut sender = portal.connect().unwrap();
     let (width, height) = (640, 280);
     let mut worst: f64 = 0.0;
     for i in 0..30 {
@@ -124,19 +156,18 @@ fn software_h264_round_trips_within_tolerance_and_reports_its_bitrate() {
 
 /// Bytes a receiver sees for one second of 640x280 at 30 fps, the
 /// qualified size and target bitrate (printed; `--nocapture` shows them).
+/// (Message bytes; WebSocket framing adds 6 to 14 more per message.)
 fn wire_bytes(frames: impl Iterator<Item = Frame>) -> usize {
-    let listener = TcpListener::bind(any_port()).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (addr, receiver) = fake_receiver();
+    let mut sender = connect(addr);
+    let mut socket = receiver.join().unwrap();
     let counter = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut hello = [0; 8];
-        stream.read_exact(&mut hello).unwrap();
-        stream.write_all(SOFTWARE_REPLY).unwrap();
-        let mut total = Vec::new();
-        stream.read_to_end(&mut total).unwrap();
-        total.len()
+        let mut total = 0;
+        while let Ok(message) = socket.read() {
+            total += message.len();
+        }
+        total
     });
-    let mut sender = RemoteSender::connect(addr).unwrap();
     for frame in frames {
         sender.send(&frame).unwrap();
     }
@@ -146,7 +177,7 @@ fn wire_bytes(frames: impl Iterator<Item = Frame>) -> usize {
 
 #[test]
 fn h264_needs_a_small_fraction_of_raw() {
-    let raw = 30 * (16 + 640 * 280 * 3 / 2);
+    let raw = 30 * (8 + 640 * 280 * 3 / 2);
     let moving = wire_bytes((0..30).map(|i| picture(640, 280, i * 7)));
     // Worst case: new noise every frame, held to the target by rate control.
     let mut seed = 1_u32;
@@ -172,47 +203,49 @@ fn h264_needs_a_small_fraction_of_raw() {
 
 /// A raw client speaking H.264 with its own encoder, to drop pictures.
 struct Client {
-    stream: TcpStream,
+    socket: WebSocket<MaybeTlsStream<TcpStream>>,
     encoder: Encoder,
 }
 
 impl Client {
-    fn connect(addr: SocketAddr) -> Self {
-        let mut stream = TcpStream::connect(addr).unwrap();
-        stream.set_read_timeout(Some(BOUND)).unwrap();
-        stream.write_all(b"PRSM\x03\x00\x00\x00").unwrap();
-        let mut reply = [0; 16];
-        stream.read_exact(&mut reply).unwrap();
-        assert_eq!(&reply, SOFTWARE_REPLY);
+    fn connect(portal: &Portal) -> Self {
+        let mut socket = portal.client();
+        let Message::Text(request) = socket.read().unwrap() else {
+            panic!("no request");
+        };
+        assert_eq!(request.as_str(), SOFTWARE_REQUEST);
         let encoder = Encoder::new(EncoderSettings::new(Backend::Software, 30)).unwrap();
-        Self { stream, encoder }
+        Self { socket, encoder }
     }
 
     /// Encode `frame`; send it unless `drop` (a lost picture). Returns the keyframe flag.
     fn encode(&mut self, frame: &Frame, drop: bool) -> bool {
         let picture = self.encoder.encode(frame).unwrap().unwrap();
         if !drop {
-            let mut header = vec![4, 1, 2, u8::from(picture.keyframe)];
-            header.extend_from_slice(&frame.width().to_be_bytes());
-            header.extend_from_slice(&frame.height().to_be_bytes());
-            header.extend_from_slice(&(picture.data.len() as u32).to_be_bytes());
-            header.extend_from_slice(picture.data);
-            self.stream.write_all(&header).unwrap();
+            let message = nv12_message(
+                picture.keyframe,
+                frame.width() as u16,
+                frame.height() as u16,
+                picture.data,
+            );
+            self.socket.send(Message::binary(message)).unwrap();
         }
         picture.keyframe
     }
 
-    fn control(&mut self) -> u8 {
-        let mut byte = [0];
-        self.stream.read_exact(&mut byte).unwrap();
-        byte[0]
+    /// The next command the receiver sent.
+    fn command(&mut self) -> String {
+        let Message::Text(command) = self.socket.read().unwrap() else {
+            panic!("no command");
+        };
+        command.as_str().to_owned()
     }
 }
 
 #[test]
 fn a_lost_picture_requests_a_keyframe_and_the_stream_recovers() {
-    let mut source = bind(SOFTWARE);
-    let mut client = Client::connect(source.local_addr());
+    let (portal, mut source) = open(SOFTWARE);
+    let mut client = Client::connect(&portal);
     let frames: Vec<Frame> = (0..6).map(|i| picture(64, 32, i * 9)).collect();
 
     assert!(client.encode(&frames[0], false));
@@ -222,7 +255,11 @@ fn a_lost_picture_requests_a_keyframe_and_the_stream_recovers() {
     // Picture 2 is lost; picture 3 references it.
     client.encode(&frames[2], true);
     client.encode(&frames[3], false);
-    assert_eq!(client.control(), 3, "a keyframe request");
+    assert_eq!(
+        client.command(),
+        r#"{"type":"keyframe"}"#,
+        "a keyframe request"
+    );
     assert!(try_receive(&mut source, Duration::from_millis(200)).is_none());
     // Later pictures of the broken session are skipped, not misdecoded.
     client.encode(&frames[4], false);
@@ -236,11 +273,11 @@ fn a_lost_picture_requests_a_keyframe_and_the_stream_recovers() {
 
 #[test]
 fn a_stream_must_start_with_a_keyframe() {
-    let mut source = bind(SOFTWARE);
-    let mut client = Client::connect(source.local_addr());
+    let (portal, mut source) = open(SOFTWARE);
+    let mut client = Client::connect(&portal);
     client.encode(&picture(64, 32, 0), true);
     client.encode(&picture(64, 32, 5), false);
-    assert_eq!(client.control(), 3);
+    assert_eq!(client.command(), r#"{"type":"keyframe"}"#);
     assert!(try_receive(&mut source, Duration::from_millis(200)).is_none());
     client.encoder.restart();
     client.encode(&picture(64, 32, 10), false);
@@ -252,20 +289,25 @@ fn a_stream_must_start_with_a_keyframe() {
 /// listening for the sender's next one.
 #[test]
 fn a_broken_keyframe_drops_the_connection() {
-    let mut source = bind(SOFTWARE);
-    let mut client = Client::connect(source.local_addr());
-    let mut header = vec![4, 1, 2, 1];
-    header.extend_from_slice(&64u32.to_be_bytes());
-    header.extend_from_slice(&32u32.to_be_bytes());
-    header.extend_from_slice(&5u32.to_be_bytes());
-    header.extend_from_slice(b"\x00\x00\x01\x65\x00");
-    client.stream.write_all(&header).unwrap();
-    let mut rest = Vec::new();
-    assert!(
-        client.stream.read_to_end(&mut rest).is_ok(),
-        "dropped, not stalled"
-    );
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open(SOFTWARE);
+    let mut client = Client::connect(&portal);
+    let broken = nv12_message(true, 64, 32, b"\x00\x00\x01\x65\x00");
+    client.socket.send(Message::binary(broken)).unwrap();
+    loop {
+        match client.socket.read() {
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(error)) => {
+                assert!(
+                    error.kind() != std::io::ErrorKind::WouldBlock
+                        && error.kind() != std::io::ErrorKind::TimedOut,
+                    "dropped, not stalled"
+                );
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    let mut sender = portal.connect().unwrap();
     round_trip(&mut sender, &mut source, &picture(64, 32, 0));
     Box::new(source).close().unwrap();
 }
@@ -273,38 +315,28 @@ fn a_broken_keyframe_drops_the_connection() {
 /// A fake receiver that records frame headers' keyframe flags and sends
 /// control bytes on request.
 struct Recorder {
-    stream: TcpStream,
+    socket: WebSocket<TcpStream>,
 }
 
 impl Recorder {
-    fn accept(listener: &TcpListener) -> Self {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(BOUND)).unwrap();
-        let mut hello = [0; 8];
-        stream.read_exact(&mut hello).unwrap();
-        stream.write_all(SOFTWARE_REPLY).unwrap();
-        Self { stream }
-    }
-
-    /// The next frame's keyframe flag.
+    /// The next frame's keyframe flag; its payload is as long as it says.
     fn frame(&mut self) -> bool {
-        let mut header = [0; 16];
-        self.stream.read_exact(&mut header).unwrap();
-        let len = u32::from_be_bytes(header[12..16].try_into().unwrap());
-        let mut payload = vec![0; len as usize];
-        self.stream.read_exact(&mut payload).unwrap();
-        header[3] == 1
+        let Message::Binary(frame) = self.socket.read().unwrap() else {
+            panic!("no frame");
+        };
+        assert!(frame.len() > 8, "a header and a picture");
+        frame[3] == 1
     }
 
     fn nothing_for(&mut self, wait: Duration) -> bool {
-        self.stream.set_read_timeout(Some(wait)).unwrap();
-        let quiet = self.stream.read(&mut [0; 1]).is_err();
-        self.stream.set_read_timeout(Some(BOUND)).unwrap();
+        self.socket.get_ref().set_read_timeout(Some(wait)).unwrap();
+        let quiet = self.socket.read().is_err();
+        self.socket.get_ref().set_read_timeout(Some(BOUND)).unwrap();
         quiet
     }
 
-    fn control(&mut self, code: u8) {
-        self.stream.write_all(&[code]).unwrap();
+    fn command(&mut self, command: &str) {
+        self.socket.send(Message::text(command)).unwrap();
         // Let it arrive before the sender's next poll.
         thread::sleep(Duration::from_millis(50));
     }
@@ -312,11 +344,11 @@ impl Recorder {
 
 #[test]
 fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
-    let listener = TcpListener::bind(any_port()).unwrap();
-    let addr = listener.local_addr().unwrap();
-    let receiver = thread::spawn(move || Recorder::accept(&listener));
-    let mut sender = RemoteSender::connect(addr).unwrap();
-    let mut recorder = receiver.join().unwrap();
+    let (addr, receiver) = fake_receiver();
+    let mut sender = connect(addr);
+    let mut recorder = Recorder {
+        socket: receiver.join().unwrap(),
+    };
     let mut next = (0..).map(|i| picture(64, 32, i * 11));
 
     sender.send(&next.next().unwrap()).unwrap();
@@ -324,35 +356,38 @@ fn pause_stops_sending_and_resume_starts_with_a_keyframe() {
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    recorder.control(1); // pause
+    recorder.command(r#"{"type":"pause"}"#);
     for _ in 0..3 {
         sender.send(&next.next().unwrap()).unwrap();
         assert!(sender.paused());
     }
     assert!(recorder.nothing_for(Duration::from_millis(150)));
 
-    recorder.control(2); // resume
+    recorder.command(r#"{"type":"resume"}"#);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!sender.paused());
     assert!(recorder.frame(), "resume starts a new session");
     sender.send(&next.next().unwrap()).unwrap();
     assert!(!recorder.frame());
 
-    recorder.control(3); // keyframe request
+    recorder.command(r#"{"type":"keyframe"}"#);
     sender.send(&next.next().unwrap()).unwrap();
     assert!(recorder.frame());
 
     // An unknown control byte fails the connection.
-    recorder.control(9);
+    recorder.command(r#"{"type":"jump"}"#);
     let error = sender.send(&next.next().unwrap()).unwrap_err();
-    assert_eq!(cause::<WireError>(&error), Some(&WireError::Control(9)));
+    assert!(
+        matches!(cause::<WireError>(&error), Some(WireError::Json(_))),
+        "{error}"
+    );
 }
 
 /// Closing the source (lighting off) pauses the sender, then ends the stream.
 #[test]
 fn close_pauses_the_sender_before_ending_the_stream() {
-    let mut source = bind(SOFTWARE);
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open(SOFTWARE);
+    let mut sender = portal.connect().unwrap();
     round_trip(&mut sender, &mut source, &picture(64, 32, 0));
     Box::new(source).close().unwrap();
     let deadline = Instant::now() + BOUND;
@@ -372,11 +407,11 @@ fn close_pauses_the_sender_before_ending_the_stream() {
 /// receiver's source fails with the sender's reason.
 #[test]
 fn an_unavailable_hardware_encoder_is_refused_without_switching() {
-    let mut source = bind(StreamRequest {
+    let (portal, mut source) = open(StreamRequest {
         encoding: StreamEncoding::H264Hardware,
         ..SOFTWARE
     });
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = portal.connect().unwrap();
     assert_eq!(sender.request().encoding, StreamEncoding::H264Hardware);
     let error = sender.send(&picture(64, 32, 0)).unwrap_err();
     assert!(cause::<H264Error>(&error).is_some(), "{error}");
@@ -407,8 +442,8 @@ fn an_unavailable_hardware_encoder_is_refused_without_switching() {
 /// H.264 needs the capture's NV12: other pixels are an encoder failure.
 #[test]
 fn h264_of_other_pixels_is_refused() {
-    let mut source = bind(SOFTWARE);
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open(SOFTWARE);
+    let mut sender = portal.connect().unwrap();
     let error = sender.send(&Frame::dummy(16, 16).unwrap()).unwrap_err();
     assert!(cause::<H264Error>(&error).is_some(), "{error}");
     let deadline = Instant::now() + BOUND;

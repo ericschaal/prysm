@@ -73,7 +73,8 @@
 
   /* Type: four sizes and two Home display sizes, two weights. */
   --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
   --text-display: clamp(2rem, 1.6rem + 1.8vw, 2.75rem);
   /* Home only: the headline and the lights' state word. */
   --text-hero: clamp(1.875rem, 1.2rem + 2.9vw, 3.75rem);
@@ -106,7 +107,8 @@
   --radius-pill: 999px;
 
   /* Elevation: one level for the few surfaces that earn it. */
-  --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px rgb(0 0 0 / 0.35);
+  --shadow:
+    0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px rgb(0 0 0 / 0.35);
   --shadow-stage: 0 20px 60px rgb(0 0 0 / 0.5);
   --ring: 0 0 0 3px rgb(155 141 255 / 0.32);
 

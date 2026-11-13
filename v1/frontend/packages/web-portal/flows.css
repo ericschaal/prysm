@@ -329,7 +329,8 @@ button.compare[aria-pressed='true'] {
     bottom: 0;
     z-index: 1;
     margin: var(--space-8) -20px 0;
-    padding: var(--space-3) 20px max(var(--space-4), env(safe-area-inset-bottom));
+    padding: var(--space-3) 20px
+      max(var(--space-4), env(safe-area-inset-bottom));
     background: linear-gradient(transparent, var(--bg) 30%);
   }
   .setup .actions > button,

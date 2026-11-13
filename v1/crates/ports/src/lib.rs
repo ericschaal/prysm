@@ -6,6 +6,7 @@
 mod adapter;
 mod calibration;
 mod error;
+mod handoff;
 mod owner;
 mod profiles;
 mod registry;
@@ -17,6 +18,9 @@ mod snapshot;
 pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore};
 pub use calibration::{Calibration, Pattern};
 pub use error::{Error, Result, ValidationError, chain};
+pub use handoff::{
+    Accepted, CAPTURE_PROTOCOL, CAPTURE_STREAM_PATH, CAPTURE_VERSION, Handoff, Receiving,
+};
 pub use owner::{OwnerThread, Worker};
 pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,

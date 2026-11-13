@@ -22,8 +22,11 @@ bytes = "1"
 # The preview's JPEG encoder, as the shipping portal uses it; decoding is for tests.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 base64 = "0.23"
+# The upgrade's accept key; the remote source speaks the WebSocket itself.
+tungstenite = { workspace = true, features = ["handshake"] }
 
 [dev-dependencies]
+prysm-capture-remote.workspace = true
 prysm-runtime = { workspace = true, features = ["testkit"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util"] }

@@ -1,6 +1,6 @@
 //! TV-local preferences (`tv.json`): one writer, the supervisor.
 use crate::state::Flavor;
-use prysm_webos_link::{LightingTarget, ReceiverAddress};
+use prysm_webos_link::{LightingTarget, PrysmAddress};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -19,60 +19,29 @@ pub const MAX_BYTES: usize = 65_536;
 pub struct Preferences {
     /// Start enabled (full: processed lighting) when the service starts.
     pub autostart: bool,
-    /// Slim only: the headless Prysm's portal origin, such as
-    /// `http://192.168.1.20:8787`. Only the TV app uses it.
+    /// Slim only: the headless Prysm's address, such as
+    /// `http://192.168.1.20:8787` or `https://prysm.example.com` (through a
+    /// reverse proxy). The TV streams its picture there, and the TV app
+    /// links to its portal. Only the syntax is checked when saved; the TV
+    /// resolves a host name at every connection attempt, and one that does
+    /// not resolve is reported as the receiver wait.
     #[cfg_attr(
         feature = "schema",
-        schema(max_length = 256, example = "http://192.168.1.20:8787")
+        schema(value_type = Option<String>, max_length = 256, example = "http://192.168.1.20:8787")
     )]
-    pub instance: Option<String>,
-    /// Slim only: where frames go, `host:port`: an IP address (IPv6 in
-    /// brackets) or a host name, such as `192.168.1.20:7380` or
-    /// `prysm.local:7380`, with a fixed port. Only the syntax is checked when
-    /// saved; the TV resolves a name at every connection attempt, and one
-    /// that does not resolve is reported as the receiver wait.
-    #[cfg_attr(
-        feature = "schema",
-        schema(value_type = Option<String>, max_length = 259, example = "prysm.local:7380")
-    )]
-    pub receiver: Option<ReceiverAddress>,
+    pub instance: Option<PrysmAddress>,
 }
 
 impl Preferences {
     /// # Errors
-    /// The first invalid field, as `field: reason`.
+    /// A slim-only field in the full package, as `field: reason`.
     pub fn validate(&self, flavor: Flavor) -> Result<(), String> {
-        if flavor == Flavor::Full {
-            if self.instance.is_some() || self.receiver.is_some() {
-                return Err("instance, receiver: only the slim package forwards frames".into());
-            }
-            return Ok(());
-        }
-        // `receiver` was checked when it was parsed.
-        if let Some(instance) = &self.instance {
-            origin(instance).map_err(|reason| format!("instance: {reason}"))?;
+        // `instance` was checked when it was parsed.
+        if flavor == Flavor::Full && self.instance.is_some() {
+            return Err("instance: only the slim package forwards frames".into());
         }
         Ok(())
     }
-}
-
-/// `http(s)://host[:port]` with nothing after it.
-fn origin(text: &str) -> Result<(), String> {
-    let rest = text
-        .strip_prefix("http://")
-        .or_else(|| text.strip_prefix("https://"))
-        .ok_or("must start with http:// or https://")?;
-    if text.len() > 256 {
-        return Err("too long".into());
-    }
-    if rest.is_empty()
-        || rest
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || "/?#@\\".contains(c))
-    {
-        return Err("must be an origin such as http://192.168.1.20:8787".into());
-    }
-    Ok(())
 }
 
 /// Why preferences or the intent could not be read or saved.
@@ -294,48 +263,16 @@ mod tests {
     fn full_rejects_slim_fields_and_slim_validates_them() {
         let slim = Preferences {
             autostart: true,
-            instance: Some("http://192.168.1.20:8787".into()),
-            receiver: Some("192.168.1.20:7380".parse().unwrap()),
+            instance: Some("http://192.168.1.20:8787".parse().unwrap()),
         };
         slim.validate(Flavor::Slim).unwrap();
-        Preferences {
-            receiver: Some("prysm.local:7380".parse().unwrap()),
-            ..slim.clone()
-        }
-        .validate(Flavor::Slim)
-        .unwrap();
-        assert!(slim.validate(Flavor::Full).is_err());
+        assert!(
+            slim.validate(Flavor::Full)
+                .unwrap_err()
+                .starts_with("instance")
+        );
         Preferences::default().validate(Flavor::Full).unwrap();
         Preferences::default().validate(Flavor::Slim).unwrap();
-
-        for (bad, field) in [
-            (
-                Preferences {
-                    instance: Some("ftp://x".into()),
-                    ..slim.clone()
-                },
-                "instance",
-            ),
-            (
-                Preferences {
-                    instance: Some("http://x/path".into()),
-                    ..slim.clone()
-                },
-                "instance",
-            ),
-            (
-                Preferences {
-                    instance: Some("http://".into()),
-                    ..slim.clone()
-                },
-                "instance",
-            ),
-        ] {
-            assert!(
-                bad.validate(Flavor::Slim).unwrap_err().starts_with(field),
-                "{bad:?}"
-            );
-        }
     }
 
     #[test]
@@ -366,20 +303,25 @@ mod tests {
     }
 
     #[test]
-    fn receivers_are_checked_when_read() {
+    fn the_address_is_checked_when_read() {
         let parsed: Preferences =
-            serde_json::from_str(r#"{"receiver":"prysm.local:7380"}"#).unwrap();
+            serde_json::from_str(r#"{"instance":"https://prysm.example.com/"}"#).unwrap();
         assert_eq!(
-            serde_json::to_value(&parsed).unwrap()["receiver"],
-            "prysm.local:7380"
+            serde_json::to_value(&parsed).unwrap()["instance"],
+            "https://prysm.example.com"
         );
-        for bad in ["0.0.0.0:7380", "10.0.0.1:0", "prysm.local", "http://x:1"] {
+        for bad in ["prysm.local:7380", "http://0.0.0.0:8787", "http://x/path"] {
             let error =
-                serde_json::from_value::<Preferences>(serde_json::json!({ "receiver": bad }))
+                serde_json::from_value::<Preferences>(serde_json::json!({ "instance": bad }))
                     .unwrap_err()
                     .to_string();
-            assert!(error.starts_with(&format!("receiver `{bad}`: ")), "{error}");
+            assert!(
+                error.starts_with(&format!("Prysm address `{bad}`: ")),
+                "{error}"
+            );
         }
+        // The previous separate stream address is gone.
+        assert!(serde_json::from_str::<Preferences>(r#"{"receiver":"prysm.local:7380"}"#).is_err());
     }
 
     #[test]

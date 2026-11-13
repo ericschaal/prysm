@@ -8,11 +8,10 @@ export * from './settings';
 
 export const remoteCapture: AdapterUi<RemoteReceiverSettings> = {
   label: 'Capture-only TV (remote)',
-  create: () => ({ kind: 'remote', listen: '' }),
+  create: () => ({ kind: 'remote' }),
   Editor: RemoteEditor,
-  normalize: (value) => ({ ...value, listen: value.listen.trim() }),
   summary: (value) =>
-    `Listens on ${value.listen}, ${describeTvPicture(value, remoteDefaults)}`,
+    `From the TV, ${describeTvPicture(value, remoteDefaults)}`,
   facts: (value) => tvPictureFacts(value, remoteDefaults),
   // How the picture travels: H.264 (either encoder) or raw frames.
   transport: (value) =>

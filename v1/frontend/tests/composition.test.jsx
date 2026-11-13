@@ -30,10 +30,7 @@ const tvProps = (flavor, fixture, supervisor) => ({
   portal: { client: () => fixture.client, supported: true },
   onExit: () => {},
 });
-const slimPreferences = {
-  instance: 'http://192.0.2.20:8787',
-  receiver: '192.0.2.20:7380',
-};
+const slimPreferences = { instance: 'http://192.0.2.20:8787' };
 
 test('TV assemblies show their package: Luna for the TV, HTTP for the lights', async () => {
   for (const flavor of ['full', 'slim']) {
@@ -46,7 +43,7 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
     const fixture = fakeApplicationPort(
       flavor === 'full'
         ? { capture: { kind: 'webos' }, output }
-        : { capture: { kind: 'remote', listen: '0.0.0.0:7380' }, output },
+        : { capture: { kind: 'remote' }, output },
     );
     const supervisor = fakeTvSupervisor({
       flavor,

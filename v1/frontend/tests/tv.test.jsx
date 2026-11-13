@@ -22,13 +22,10 @@ import {
 import { TvApp } from '@prysm/tv-ui';
 import {
   captureRate,
-  derivedReceiver,
   diagnostics,
   encodingName,
   instanceAddress,
-  listenPort,
   localPortal,
-  receiverAddress,
   retrySeconds,
   tvStatus,
   completePreferences,
@@ -69,7 +66,7 @@ const portals = {
     capture: { kind: 'webos', width: 640, height: 360, fps: 30 },
     output: wled,
   },
-  slim: { capture: { kind: 'remote', listen: '0.0.0.0:7380' }, output: wled },
+  slim: { capture: { kind: 'remote' }, output: wled },
 };
 
 async function mountTv(t, options = {}) {
@@ -398,7 +395,7 @@ test('setup runs setup.sh through the Homebrew Channel and reports its stderr', 
 
 /* ---- Rules ---- */
 
-test('addresses: instance origins, receivers and the derived receiver port', () => {
+test('addresses: Prysm addresses from what a user types', () => {
   assert.deepEqual(instanceAddress('192.168.1.20'), {
     value: 'http://192.168.1.20:8787',
   });
@@ -417,51 +414,6 @@ test('addresses: instance origins, receivers and the derived receiver port', () 
   assert.deepEqual(instanceAddress(''), { value: null });
   assert('error' in instanceAddress('http://prysm.local/portal'));
   assert('error' in instanceAddress('ftp://prysm'));
-  assert.deepEqual(receiverAddress('192.168.1.20:7380'), {
-    value: '192.168.1.20:7380',
-  });
-  assert.deepEqual(
-    receiverAddress(' prysm.local:7380 '),
-    { value: 'prysm.local:7380' },
-    'the TV resolves names',
-  );
-  assert.deepEqual(receiverAddress('[fd00::2]:7380'), {
-    value: '[fd00::2]:7380',
-  });
-  assert.deepEqual(receiverAddress('Prysm-Desktop:7380'), {
-    value: 'Prysm-Desktop:7380',
-  });
-  for (const bad of [
-    '192.168.1.20',
-    'prysm.local',
-    'prysm.local:0',
-    'prysm.local:70000',
-    '0.0.0.0:7380',
-    '[::]:7380',
-    '192.168.1:7380',
-    '300.1.1.1:7380',
-    'prysm_tv:7380',
-    '-prysm:7380',
-    'prysm.local.:7380',
-    'http://prysm.local:7380',
-    'fd00::2:7380',
-  ])
-    assert('error' in receiverAddress(bad), bad);
-  assert.equal(listenPort({ kind: 'remote', listen: '0.0.0.0:7380' }), 7380);
-  assert.equal(listenPort({ kind: 'device', path: '/dev/video0' }), null);
-  assert.equal(
-    derivedReceiver('http://192.168.1.20:8787', 7380),
-    '192.168.1.20:7380',
-  );
-  assert.equal(
-    derivedReceiver('http://prysm.local:8787', 7380),
-    'prysm.local:7380',
-  );
-  assert.equal(
-    derivedReceiver('http://[fd00::2]:8787', 7380),
-    '[fd00::2]:7380',
-  );
-  assert.equal(derivedReceiver('http://prysm.local:8787', null), null);
   assert.equal(
     localPortal('http://192.168.1.5:8787/'),
     'http://127.0.0.1:8787',
@@ -470,7 +422,10 @@ test('addresses: instance origins, receivers and the derived receiver port', () 
 });
 
 test('status card covers the supervisor states for both packages', () => {
-  const slim = (change = {}, prefs = { receiver: '192.168.1.20:7380' }) => ({
+  const slim = (
+    change = {},
+    prefs = { instance: 'http://192.168.1.20:8787' },
+  ) => ({
     ...state(),
     flavor: 'slim',
     lighting: null,
@@ -485,7 +440,7 @@ test('status card covers the supervisor states for both packages', () => {
     ...change,
   });
   const draft = (value = {}) =>
-    completePreferences({ receiver: '192.168.1.20:7380', ...value });
+    completePreferences({ instance: 'http://192.168.1.20:8787', ...value });
   const title = (online, value, d = draft(), dirty = false) =>
     tvStatus(online, value, d, dirty).title;
   assert.equal(title(null, null), 'Connecting…');
@@ -626,7 +581,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     flavor: 'slim',
     lighting: null,
     portal: null,
-    preferences: { receiver: '192.168.1.20:7380' },
+    preferences: { instance: 'http://192.168.1.20:8787' },
     enabled: true,
     worker: { phase: 'running' },
     power: 'active',
@@ -636,7 +591,7 @@ test('slim encoder failures point to the portal; waits, other failures and the f
     encoding: null,
     ...change,
   });
-  const draft = completePreferences({ receiver: '192.168.1.20:7380' });
+  const draft = completePreferences({ instance: 'http://192.168.1.20:8787' });
   const status = (value) => tvStatus(true, value, draft, false);
   const hint =
     'Choose another stream encoding under Capture in Prysm’s web portal.';
@@ -768,7 +723,7 @@ test('the TV counts a restart down by itself', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { receiver: '192.168.1.20:7380' },
+      preferences: { instance: 'http://192.168.1.20:8787' },
       state: {
         enabled: true,
         worker: { phase: 'retrying', seconds: 4 },
@@ -795,7 +750,7 @@ test('the capture rate is shown while the worker measures it', async (t) => {
   assert.match(diagnostics(state({ fps: null })), /Capture rate: not measured/);
   const tv = await mountTv(t, {
     supervisor: {
-      preferences: { receiver: '192.168.1.20:7380' },
+      preferences: { instance: 'http://192.168.1.20:8787' },
       state: {
         enabled: true,
         worker: { phase: 'running' },
@@ -814,7 +769,6 @@ test('preferences are completed with their defaults', () => {
   assert.deepEqual(completePreferences({ autostart: true }), {
     autostart: true,
     instance: null,
-    receiver: null,
   });
 });
 
@@ -840,7 +794,6 @@ test('remote arrows move focus through rows and columns without changing setting
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -886,7 +839,6 @@ test('OK opens choices, arrows only focus, Back cancels, and Save alone persists
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -979,15 +931,14 @@ test('saving a Prysm address checks that a portal answers there, and only warns'
   assert.equal(await save({}), 'Settings saved.', 'a portal answers');
 });
 
-test('the receiver is derived from the remote capture port, then Save and start capture sends it first', async (t) => {
+test('a Prysm address is all the slim TV needs; Save and start capture sends it first', async (t) => {
   const tv = await mountTv(t);
   await tv.click('primary');
   await tv.type('instance-input', '192.168.1.20');
   await tv.submit('instance-input');
   await settle();
   assert.deepEqual(tv.urls, ['http://192.168.1.20:8787']);
-  assert.equal(tv.text('receiver-value'), '192.168.1.20:7380');
-  assert.match(tv.text('notice'), /Frames will go to 192\.168\.1\.20:7380/);
+  assert.equal(tv.el('receiver'), null, 'no second address');
   assert.equal(tv.text('primary'), 'Save and start capture');
   await tv.click('primary');
   await settle();
@@ -995,35 +946,11 @@ test('the receiver is derived from the remote capture port, then Save and start 
     tv.methods().filter((m) => m !== 'getState'),
     ['setPreferences', 'setEnabled'],
   );
-  assert.deepEqual(
-    [
-      tv.supervisor.state().preferences.instance,
-      tv.supervisor.state().preferences.receiver,
-    ],
-    ['http://192.168.1.20:8787', '192.168.1.20:7380'],
+  assert.equal(
+    tv.supervisor.state().preferences.instance,
+    'http://192.168.1.20:8787',
   );
   assert.equal(tv.text('primary'), 'Stop capture');
-});
-
-test('a Prysm addressed by name gets a receiver by name, and the receiver form accepts names', async (t) => {
-  const tv = await mountTv(t);
-  await tv.click('primary');
-  await tv.type('instance-input', 'prysm.local');
-  await tv.submit('instance-input');
-  await settle();
-  assert.deepEqual(tv.urls, ['http://prysm.local:8787']);
-  assert.equal(tv.text('receiver-value'), 'prysm.local:7380');
-  await tv.click('receiver');
-  await tv.type('receiver-input', '0.0.0.0:7380');
-  await tv.submit('receiver-input');
-  assert.match(
-    tv.text('receiver-input-error'),
-    /prysm\.local:7380 or 192\.168\.1\.20:7380/,
-  );
-  await tv.type('receiver-input', 'lights.home.arpa:7380');
-  await tv.submit('receiver-input');
-  assert.equal(tv.el('modal'), null);
-  assert.equal(tv.text('receiver-value'), 'lights.home.arpa:7380');
 });
 
 test('a failed save keeps the draft and never enables', async (t) => {
@@ -1031,20 +958,19 @@ test('a failed save keeps the draft and never enables', async (t) => {
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
   tv.supervisor.failNext(
     'setPreferences',
-    'invalid setPreferences request: receiver `x`: needs a fixed port',
+    'invalid setPreferences request: Prysm address `x`: needs http:// or https://',
   );
   await tv.click('autostart');
   await tv.choose('On');
   await tv.click('primary');
   assert.equal(
     tv.text('notice'),
-    'invalid setPreferences request: receiver `x`: needs a fixed port',
+    'invalid setPreferences request: Prysm address `x`: needs http:// or https://',
   );
   assert(!tv.methods().includes('setEnabled'));
   assert.equal(tv.text('autostart-value'), 'On');
@@ -1056,13 +982,12 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
   await tv.click('autostart');
   await tv.choose('On');
-  tv.el('receiver').focus();
+  tv.el('instance').focus();
   await act(async () =>
     tv.supervisor.publish({
       capturing: true,
@@ -1072,7 +997,7 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
   );
   await settle();
   assert.equal(tv.text('autostart-value'), 'On');
-  assert.equal(tv.focus(), 'receiver');
+  assert.equal(tv.focus(), 'instance');
   const prefs = tv.supervisor.state().preferences;
   await act(async () =>
     tv.supervisor.publish({ preferences: { ...prefs, autostart: true } }),
@@ -1085,7 +1010,7 @@ test('status updates keep unsaved choices and focus; a change made elsewhere rep
 
 test('removing the setup is tucked away, needs confirmation, and Back returns one level', async (t) => {
   const tv = await mountTv(t, {
-    supervisor: { preferences: { receiver: '192.168.1.20:7380' } },
+    supervisor: { preferences: { instance: 'http://192.168.1.20:8787' } },
   });
   tv.el('service-options').focus();
   await tv.click('service-options');
@@ -1096,7 +1021,7 @@ test('removing the setup is tucked away, needs confirmation, and Back returns on
   await tv.click('diagnostics');
   assert.match(
     tv.text('diagnostics-text'),
-    /Frames go to: 192\.168\.1\.20:7380/,
+    /Prysm address: http:\/\/192\.168\.1\.20:8787/,
   );
   await tv.key(BACK);
   await tv.key(BACK);
@@ -1139,7 +1064,6 @@ test('hiding the page releases the subscriptions; showing it subscribes again', 
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1176,7 +1100,6 @@ test('a lost subscription recovers after 3 s without losing the draft', async (t
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1201,7 +1124,6 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
       state: {
         enabled: true,
@@ -1215,7 +1137,7 @@ test('a waiting slim worker is described as waiting for Prysm, not as a failure'
     },
   });
   assert.equal(tv.text('status-title'), 'Waiting for Prysm');
-  assert.match(tv.text('status-description'), /192\.168\.1\.20:7380/);
+  assert.match(tv.text('status-description'), /http:\/\/192\.168\.1\.20:8787/);
   assert.equal(tv.text('primary'), 'Stop capture');
 });
 
@@ -1224,7 +1146,6 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1261,7 +1182,6 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1282,7 +1202,6 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1303,7 +1222,6 @@ test('a Prysm that refuses the TV origin says how to allow it; an unreachable on
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1321,7 +1239,6 @@ test('a remote Prysm without Remote capture is explained; an old browser gets th
     supervisor: {
       preferences: {
         instance: 'http://192.168.1.20:8787',
-        receiver: '192.168.1.20:7380',
       },
     },
   });
@@ -1398,7 +1315,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       rows,
       flavor === 'full'
         ? ['autostart', 'calibrate']
-        : ['instance', 'receiver', 'autostart', 'calibrate'],
+        : ['instance', 'autostart', 'calibrate'],
     );
     assert.doesNotMatch(
       document.body.textContent,
@@ -1485,7 +1402,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     ...base,
     flavor: 'slim',
     enabled: false,
-    preferences: { receiver: '192.168.1.20:7380' },
+    preferences: { instance: 'http://192.168.1.20:8787' },
   };
   assert.equal(
     tvStatus(
@@ -1523,7 +1440,7 @@ test('the lights setup hint gives way to failures and to a missing receiver', ()
     status({
       ...base,
       flavor: 'slim',
-      preferences: { receiver: '192.168.1.20:7380' },
+      preferences: { instance: 'http://192.168.1.20:8787' },
     }).title,
     'Set up your lights',
   );
@@ -1569,7 +1486,6 @@ test('TV bundles are classic deferred scripts with relative URLs and no demo cod
 
 const linked = {
   instance: 'http://192.168.1.20:8787',
-  receiver: '192.168.1.20:7380',
 };
 
 test('slim: the status card shows the encoding in use while streaming', async (t) => {
@@ -1702,7 +1618,6 @@ function fakePlayer(supported = true) {
 const slimReady = {
   preferences: {
     instance: 'http://192.168.1.20:8787',
-    receiver: '192.168.1.20:7380',
   },
   state: { enabled: true },
 };

@@ -32,9 +32,7 @@ export function runDemo(
     offline: flags.has('offline'),
     delayMs: 150,
     preferences:
-      flavor === 'slim'
-        ? { instance: 'http://192.168.1.20:8787', receiver: null }
-        : {},
+      flavor === 'slim' ? { instance: 'http://192.168.1.20:8787' } : {},
   });
   const application = fakeApplicationPort<unknown, unknown>(
     flavor === 'full'
@@ -47,7 +45,7 @@ export function runDemo(
           },
         }
       : {
-          capture: { kind: 'remote', listen: '0.0.0.0:7380' },
+          capture: { kind: 'remote' },
           output: {
             kind: 'wled',
             address: '192.168.1.50',

@@ -25,16 +25,15 @@ to create and replace files there; it writes `settings.json` on the first save.
    - `user`, if your dataset belongs to another user and group.
 4. Install. Open `http://NAS_IP:8787`.
 
-The example publishes port 8787 (portal) and 7380 (TV receiver) and starts
-Prysm with `--allow-origin null`, which the slim TV app needs. It does not
-use host networking.
+The example publishes port 8787 (the portal, which also receives the TV's
+picture) and starts Prysm with `--allow-origin null`, which the slim TV app
+needs. It does not use host networking.
 
 [TrueNAS custom app reference](https://apps.truenas.com/managing-apps/installing-custom-apps/).
 
 ## 3. Connect the TV and lights
 
-1. In the portal's setup wizard, choose **Capture-only TV (remote)** and set
-   **Listen address** to `0.0.0.0:7380`.
+1. In the portal's setup wizard, choose **Capture-only TV (remote)**.
 2. Enter WLED by its **IP address**. Names such as `wled.local` and
    **Find lights** do not work on the app's network.
 3. Follow the [slim TV steps](webos.md#slim-package-the-tv-sends-the-picture),

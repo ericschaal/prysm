@@ -944,8 +944,8 @@ test('kind selectors swap panels without losing drafts or the other section', as
     await edit(field('output.address'), 'wled.local');
     await edit(field('capture.kind'), 'remote');
     assert.equal(field('capture.path'), null);
-    assert.equal(field('capture.listen').value, '');
-    await edit(field('capture.listen'), '0.0.0.0:7380');
+    // The TV reaches this computer at the portal's address: no address field.
+    assert.equal(field('capture.listen'), null);
     await edit(field('capture.kind'), 'device');
     assert.equal(field('capture.path').value, '/dev/video0');
     await edit(field('capture.kind'), 'file');
@@ -957,14 +957,10 @@ test('kind selectors swap panels without losing drafts or the other section', as
       /Plays a video file through FFmpeg 9 or newer, which must be installed on this machine\. The Docker image and Debian package do not include FFmpeg, so this source does not work there\./,
     );
     await edit(field('capture.kind'), 'remote');
-    assert.equal(field('capture.listen').value, '0.0.0.0:7380');
     assert.equal(field('output.address').value, 'wled.local');
 
     await submit(form('Video source'));
-    assert.deepEqual(fixture.snapshot().settings.capture, {
-      kind: 'remote',
-      listen: '0.0.0.0:7380',
-    });
+    assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'remote' });
     assert.deepEqual(fixture.snapshot().settings.output, output);
     assert.equal(field('output.address').value, 'wled.local');
     assert.equal(badge('Lights'), 'Unsaved changes');
@@ -976,7 +972,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     );
     await submit(form('Lights'));
     assert.deepEqual(fixture.snapshot().settings, {
-      capture: { kind: 'remote', listen: '0.0.0.0:7380' },
+      capture: { kind: 'remote' },
       output: { kind: 'null' },
       processing: defaultProcessing,
     });
@@ -1147,7 +1143,7 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
     [WebosWebPortal, { kind: 'webos' }, largeSizeHint, /processor without/],
     [
       HeadlessWebPortal,
-      { kind: 'remote', listen: '0.0.0.0:7380' },
+      { kind: 'remote' },
       largeStreamHint,
       /processor and more network without/,
     ],
@@ -1253,9 +1249,8 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
 });
 
 test('the remote capture form asks the TV for a stream with the same picture fields as the webOS form', async () => {
-  const listen = '0.0.0.0:7380';
   const portal = await renderPortal(HeadlessWebPortal, {
-    capture: { kind: 'remote', listen },
+    capture: { kind: 'remote' },
     output,
   });
   const { fixture } = portal;
@@ -1344,7 +1339,6 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'remote',
-      listen,
       width: 256,
       height: 144,
       fps: 25,
@@ -1373,7 +1367,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
 
 test('the sender refusing the requested stream is shown in full with the lighting state', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
-    capture: { kind: 'remote', listen: '0.0.0.0:7380' },
+    capture: { kind: 'remote' },
     output,
   });
   const { fixture } = portal;
@@ -1804,7 +1798,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
 
 test('a remote capture names its encoding above the first link', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
-    capture: { kind: 'remote', listen: '0.0.0.0:7380', encoding: 'raw' },
+    capture: { kind: 'remote', encoding: 'raw' },
     output,
   });
   try {

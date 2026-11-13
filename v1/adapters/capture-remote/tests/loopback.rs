@@ -1,7 +1,8 @@
-//! Both ends on loopback with ephemeral ports. Every wait is bounded.
+//! Both ends on loopback over WebSocket, through a stand-in for the portal's
+//! upgrade and hand-over. Every wait is bounded.
+use prysm_capture_remote::testkit::{BOUND, Portal};
 use prysm_capture_remote::{
-    RemoteReceiver, RemoteReceiverSettings, RemoteSender, RemoteSource, StreamEncoding,
-    StreamRequest, VERSION, WireError,
+    RemoteReceiver, RemoteSender, RemoteSource, StreamEncoding, StreamRequest, WireError,
 };
 use prysm_core::{Frame, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{FrameSink, FrameSource, SourceFactory};
@@ -9,15 +10,12 @@ use prysm_runtime::Forwarder;
 use prysm_runtime::fakes::{CallLog, FakeSource, FakeSourceSettings};
 use std::error::Error as _;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
-
-const BOUND: Duration = Duration::from_secs(5);
-
-fn any_port() -> SocketAddr {
-    "127.0.0.1:0".parse().unwrap()
-}
+use tungstenite::client::IntoClientRequest;
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
 
 /// Uncompressed frames of any size and format.
 const RAW: StreamRequest = StreamRequest {
@@ -28,8 +26,11 @@ const RAW: StreamRequest = StreamRequest {
     encoding: StreamEncoding::Raw,
 };
 
-fn bind() -> RemoteSource {
-    RemoteSource::bind(any_port(), RAW).unwrap()
+/// A portal with a raw source receiving.
+fn open() -> (Portal, RemoteSource) {
+    let portal = Portal::start();
+    let source = portal.source(RAW);
+    (portal, source)
 }
 
 /// An RGB frame whose first byte is `seed` and whose pixels are all distinct-ish.
@@ -53,17 +54,17 @@ fn receive(source: &mut RemoteSource) -> Frame {
     panic!("no frame within {BOUND:?}");
 }
 
-/// Wait for the receiver to drop a raw client: EOF or reset, never a timeout.
-/// Returns what it answered first (at most the 16-byte hello reply).
-fn assert_dropped(mut client: TcpStream) -> Vec<u8> {
-    client.set_read_timeout(Some(BOUND)).unwrap();
-    let mut answer = Vec::new();
-    let mut buf = [0; 16];
+type Client = WebSocket<MaybeTlsStream<TcpStream>>;
+
+/// Wait for the receiver to drop a raw client: a close or reset, never a
+/// timeout. Returns the messages it sent first.
+fn assert_dropped(mut client: Client) -> Vec<Message> {
+    let mut answers = Vec::new();
     loop {
-        match client.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => answer.extend_from_slice(&buf[..n]),
-            Err(error) => {
+        match client.read() {
+            Ok(Message::Close(_)) => {}
+            Ok(message) => answers.push(message),
+            Err(tungstenite::Error::Io(error)) => {
                 assert!(
                     !matches!(
                         error.kind(),
@@ -73,28 +74,37 @@ fn assert_dropped(mut client: TcpStream) -> Vec<u8> {
                 );
                 break;
             }
+            Err(_) => break,
         }
     }
-    assert!(answer.len() <= 16, "receiver answered {answer:?}");
-    answer
+    answers
 }
 
-/// A raw client that has completed the version-3 hello and read the request.
-fn greeted(addr: SocketAddr) -> TcpStream {
-    let mut client = TcpStream::connect(addr).unwrap();
-    client.set_read_timeout(Some(BOUND)).unwrap();
-    client.write_all(b"PRSM\x03\x00\x00\x00").unwrap();
-    let mut reply = [0; 16];
-    client.read_exact(&mut reply).unwrap();
-    // Accepted; raw, with menus, 320x180 at 30 fps.
-    assert_eq!(
-        &reply,
-        b"PRSM\x03\x00\x00\x00\x00\x01\x01\x40\x00\xb4\x1e\x00"
-    );
+/// The request a raw client reads first: raw, with menus, 320x180 at 30 fps.
+const REQUEST: &str =
+    r#"{"type":"request","width":320,"height":180,"fps":30,"include_ui":true,"encoding":"raw"}"#;
+
+/// A raw client that has read the request.
+fn greeted(portal: &Portal) -> Client {
+    let mut client = portal.client();
+    let Message::Text(request) = client.read().unwrap() else {
+        panic!("no request");
+    };
+    assert_eq!(request.as_str(), REQUEST);
     client
 }
 
-/// The typed wire cause of a sender error.
+/// A frame message by hand: format, range, matrix, flags, width, height
+/// (`u16` each), then `payload`.
+fn raw_frame(format: [u8; 4], width: u16, height: u16, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = format.to_vec();
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+/// The typed wire cause of an adapter error.
 fn wire_cause(error: &prysm_ports::Error) -> WireError {
     let prysm_ports::Error::Adapter {
         source: Some(cause),
@@ -103,16 +113,21 @@ fn wire_cause(error: &prysm_ports::Error) -> WireError {
     else {
         panic!("no cause: {error}");
     };
-    cause
-        .downcast_ref::<WireError>()
-        .unwrap_or_else(|| panic!("no wire cause: {error}"))
-        .clone()
+    let mut cause: &(dyn std::error::Error + 'static) = &**cause;
+    loop {
+        if let Some(wire) = cause.downcast_ref::<WireError>() {
+            return wire.clone();
+        }
+        cause = cause
+            .source()
+            .unwrap_or_else(|| panic!("no wire cause: {error}"));
+    }
 }
 
 #[test]
 fn round_trip_preserves_dimensions_format_and_pixels() {
-    let mut source = bind();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open();
+    let mut sender = portal.connect().unwrap();
 
     let rgb = frame(7, 7, 5);
     sender.send(&rgb).unwrap();
@@ -131,15 +146,24 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
     assert_eq!((got.width(), got.height(), got.format()), (4, 2, format));
     assert_eq!(got.as_slice(), yuyv.as_slice());
 
-    // NV12: 1.5 bytes per pixel, both planes intact.
+    // NV12: 1.5 bytes per pixel, both planes intact; a full-size frame.
     let format = PixelFormat::NV12 {
         range: YuvRange::Limited,
         matrix: YuvStandardMatrix::Bt709,
     };
-    let nv12 = Frame::new((0..36).collect(), 6, 4, format).unwrap();
+    let nv12 = Frame::new(
+        (0..1920 * 1080 * 3 / 2).map(|i| i as u8).collect(),
+        1920,
+        1080,
+        format,
+    )
+    .unwrap();
     sender.send(&nv12).unwrap();
     let got = receive(&mut source);
-    assert_eq!((got.width(), got.height(), got.format()), (6, 4, format));
+    assert_eq!(
+        (got.width(), got.height(), got.format()),
+        (1920, 1080, format)
+    );
     assert_eq!(got.as_slice(), nv12.as_slice());
 
     Box::new(source).close().unwrap();
@@ -147,7 +171,7 @@ fn round_trip_preserves_dimensions_format_and_pixels() {
 
 #[test]
 fn next_frame_times_out_idle() {
-    let mut source = bind();
+    let (_portal, mut source) = open();
     let started = Instant::now();
     assert!(
         source
@@ -161,8 +185,8 @@ fn next_frame_times_out_idle() {
 
 #[test]
 fn a_slow_consumer_sees_only_the_newest_frame() {
-    let mut source = bind();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open();
+    let mut sender = portal.connect().unwrap();
     for seed in 1..=20 {
         sender.send(&frame(seed, 8, 4)).unwrap();
     }
@@ -185,8 +209,8 @@ fn a_slow_consumer_sees_only_the_newest_frame() {
 
 #[test]
 fn receiver_survives_disconnect_and_accepts_a_new_sender() {
-    let mut source = bind();
-    let mut first = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open();
+    let mut first = portal.connect().unwrap();
     first.send(&frame(1, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 1);
     drop(first);
@@ -199,46 +223,67 @@ fn receiver_survives_disconnect_and_accepts_a_new_sender() {
             .is_idle()
     );
 
-    let mut second = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut second = portal.connect().unwrap();
     second.send(&frame(2, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 2);
     Box::new(source).close().unwrap();
 }
 
+/// One sender at a time: a second one replaces the first, whose connection
+/// ends (a TV that crashed without closing, or a second TV).
 #[test]
-fn a_new_sender_replaces_a_stalled_one() {
-    let mut source = bind();
-    // Half a header, then silence: a crashed TV whose socket never closed.
-    let mut stalled = TcpStream::connect(source.local_addr()).unwrap();
-    stalled.write_all(b"PRSM\x03").unwrap();
+fn a_second_sender_replaces_the_first() {
+    let (portal, mut source) = open();
+    // Upgraded, then silence: a crashed TV whose socket never closed.
+    let stalled = portal.client();
     thread::sleep(Duration::from_millis(100));
 
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = portal.connect().unwrap();
     sender.send(&frame(3, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 3);
     assert_dropped(stalled);
+
+    // A second working sender takes over; the first one's stream ends.
+    let mut second = portal.connect().unwrap();
+    second.send(&frame(4, 4, 4)).unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 4);
+    let deadline = Instant::now() + BOUND;
+    while sender.tick().is_ok() {
+        assert!(Instant::now() < deadline, "the replaced sender kept going");
+        thread::sleep(Duration::from_millis(10));
+    }
     Box::new(source).close().unwrap();
 }
 
 #[test]
-fn malformed_and_oversized_headers_drop_only_that_connection() {
-    let mut source = bind();
+fn malformed_and_oversized_messages_drop_only_that_connection() {
+    let (portal, mut source) = open();
 
-    let mut garbage = TcpStream::connect(source.local_addr()).unwrap();
-    garbage
-        .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+    // Text that is not a refusal.
+    let mut garbage = greeted(&portal);
+    garbage.send(Message::text("GET / HTTP/1.1")).unwrap();
+    assert!(assert_dropped(garbage).is_empty());
+
+    // 4096x4096 RGB: over the payload limit from the header alone.
+    let mut oversized = greeted(&portal);
+    oversized
+        .send(Message::binary(raw_frame([1, 0, 0, 0], 4096, 4096, &[])))
         .unwrap();
-    assert_dropped(garbage);
-
-    // A valid hello, then 4096x4096 RGB and a 4 GiB payload: rejected from
-    // the header alone, before anything is allocated.
-    let mut header = vec![1, 0, 0, 0];
-    header.extend_from_slice(&4096u32.to_be_bytes());
-    header.extend_from_slice(&4096u32.to_be_bytes());
-    header.extend_from_slice(&u32::MAX.to_be_bytes());
-    let mut oversized = greeted(source.local_addr());
-    oversized.write_all(&header).unwrap();
-    assert_eq!(assert_dropped(oversized), b"");
+    assert!(assert_dropped(oversized).is_empty());
+    // A payload one byte shorter than the header's frame.
+    let mut short = greeted(&portal);
+    short
+        .send(Message::binary(raw_frame([1, 0, 0, 0], 4, 4, &[0; 47])))
+        .unwrap();
+    assert!(assert_dropped(short).is_empty());
+    // A refusal with a field the protocol does not have.
+    let mut unknown = greeted(&portal);
+    unknown
+        .send(Message::text(
+            r#"{"refused":"request","reason":"x","why":1}"#,
+        ))
+        .unwrap();
+    assert!(assert_dropped(unknown).is_empty());
     assert!(
         source
             .next_frame(Duration::from_millis(50))
@@ -246,72 +291,126 @@ fn malformed_and_oversized_headers_drop_only_that_connection() {
             .is_idle()
     );
 
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let mut sender = portal.connect().unwrap();
     sender.send(&frame(4, 4, 4)).unwrap();
     assert_eq!(receive(&mut source).as_slice()[0], 4);
     Box::new(source).close().unwrap();
 }
 
+/// The version is the WebSocket subprotocol: a sender of another version is
+/// refused at the upgrade, and either end says which versions differ.
 #[test]
 fn version_mismatches_are_typed_errors_on_both_ends() {
-    // A version-2 sender's hello is refused with this receiver's version
-    // (and no request), then dropped.
-    let mut source = bind();
-    let mut old = TcpStream::connect(source.local_addr()).unwrap();
-    old.write_all(b"PRSM\x02\x01\x00\x00").unwrap();
-    let mut refused = vec![b'P', b'R', b'S', b'M', VERSION, 1];
-    refused.resize(16, 0);
-    assert_eq!(assert_dropped(old), refused);
-    // The receiver keeps serving current senders.
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
-    sender.send(&frame(9, 4, 4)).unwrap();
-    assert_eq!(receive(&mut source).as_slice()[0], 9);
+    let (portal, source) = open();
+    // An older sender: the portal answers 426 with the version it speaks.
+    for offered in [Some("prysm-capture.v3"), None] {
+        let socket = TcpStream::connect(portal.addr).unwrap();
+        let mut request = portal.url().into_client_request().unwrap();
+        if let Some(offered) = offered {
+            request
+                .headers_mut()
+                .insert("sec-websocket-protocol", offered.parse().unwrap());
+        }
+        let Err(tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response))) =
+            tungstenite::client(request, socket)
+        else {
+            panic!("{offered:?} was upgraded");
+        };
+        assert_eq!(response.status(), 426);
+        assert_eq!(
+            response.headers()["sec-websocket-protocol"],
+            prysm_ports::CAPTURE_PROTOCOL
+        );
+    }
     Box::new(source).close().unwrap();
 
-    // Receivers that answer with another version (a version-2 receiver
-    // replies 8 bytes and closes), or not at all.
+    // A newer Prysm: this sender is told both versions.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let newer = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut head = [0; 1024];
+        let _ = stream.read(&mut head).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 426 Upgrade Required\r\nsec-websocket-protocol: prysm-capture.v9\r\ncontent-length: 0\r\n\r\n",
+            )
+            .unwrap();
+    });
+    let url = format!("ws://{addr}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let error = RemoteSender::connect(&url, addr).unwrap_err();
+    assert_eq!(
+        wire_cause(&error),
+        WireError::Version {
+            ours: prysm_ports::CAPTURE_VERSION,
+            theirs: Some(9)
+        },
+        "{error}"
+    );
+    newer.join().unwrap();
+
+    // Receivers that upgrade but send no request, or one this sender cannot
+    // understand.
     for (answer, expected) in [
+        (None, WireError::NoRequest),
         (
-            Some(&b"PRSM\x02\x01\x00\x00"[..]),
-            WireError::Version {
-                ours: VERSION,
-                theirs: 2,
-            },
-        ),
-        (None, WireError::NoReply),
-        // A request this sender cannot understand.
-        (
-            Some(&b"PRSM\x03\x00\x00\x00\x00\x09\x01\x40\x00\xb4\x1e\x00"[..]),
-            WireError::Request("include_ui 9".into()),
+            Some(r#"{"type":"request","include_ui":9}"#),
+            WireError::Json("invalid type: integer `9`, expected a boolean".into()),
         ),
     ] {
-        let listener = TcpListener::bind(any_port()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let peer = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut hello = [0; 8];
-            stream.read_exact(&mut hello).unwrap();
-            assert_eq!(&hello, b"PRSM\x03\x00\x00\x00");
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = prysm_capture_remote::testkit::accept(stream);
             match answer {
-                Some(answer) => stream.write_all(answer).unwrap(),
-                None => drop(stream),
+                Some(answer) => socket.send(Message::text(answer)).unwrap(),
+                None => socket.close(None).unwrap(),
             }
+            let _ = socket.flush();
+            // Hold the connection until the sender has read the answer.
+            let _ = socket.read();
         });
-        let error = RemoteSender::connect(addr).unwrap_err();
-        assert_eq!(wire_cause(&error), expected, "{error}");
+        let url = format!("ws://{addr}/api/v1/capture/stream")
+            .parse()
+            .unwrap();
+        let error = RemoteSender::connect(&url, addr).unwrap_err();
+        let cause = wire_cause(&error);
+        match (&cause, &expected) {
+            (WireError::Json(got), WireError::Json(want)) => {
+                assert!(got.starts_with(want.as_str()), "{got}");
+            }
+            _ => assert_eq!(cause, expected, "{error}"),
+        }
         assert!(error.to_string().contains(&addr.to_string()), "{error}");
         peer.join().unwrap();
     }
+}
+
+/// A sender that connects while lighting is off (no source receives) is
+/// told so with a typed cause and retries; a source opened later gets it.
+#[test]
+fn a_sender_before_the_source_waits_for_it() {
+    let portal = Portal::start();
+    let error = portal.connect().unwrap_err();
+    assert_eq!(wire_cause(&error), WireError::Unavailable(503), "{error}");
+
+    let mut source = portal.source(RAW);
+    let mut sender = portal.connect().unwrap();
+    sender.send(&frame(5, 4, 4)).unwrap();
+    assert_eq!(receive(&mut source).as_slice()[0], 5);
+    Box::new(source).close().unwrap();
 }
 
 /// The sender learns the receiver's request at connect; a new request takes
 /// a new source, and the sender's next connection gets it.
 #[test]
 fn the_sender_receives_the_request_and_a_new_source_changes_it() {
-    let source = bind();
-    let addr = source.local_addr();
+    let (portal, source) = open();
     assert_eq!(source.request(), RAW);
-    let sender = RemoteSender::connect(addr).unwrap();
+    let sender = portal.connect().unwrap();
     assert_eq!(sender.request(), RAW);
     Box::new(source).close().unwrap();
     drop(sender);
@@ -323,26 +422,39 @@ fn the_sender_receives_the_request_and_a_new_source_changes_it() {
         include_ui: false,
         encoding: StreamEncoding::H264Software,
     };
-    let source = RemoteSource::bind(addr, changed).unwrap();
-    assert_eq!(RemoteSender::connect(addr).unwrap().request(), changed);
+    let source = portal.source(changed);
+    assert_eq!(portal.connect().unwrap().request(), changed);
     Box::new(source).close().unwrap();
 }
 
 /// A sender that cannot produce the request says why; the source fails with
-/// that reason once, then keeps listening.
+/// that reason and stops.
 #[test]
 fn a_refusal_fails_the_source_with_the_senders_reason() {
-    let mut source = bind();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
-    sender.refuse("the TV's capture is busy");
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the refusal never arrived");
-        match source.next_frame(Duration::from_millis(50)) {
-            Err(error) => break error,
-            Ok(pull) => assert!(pull.is_idle()),
-        }
+    let refused = |refuse: fn(&mut RemoteSender)| {
+        let (portal, mut source) = open();
+        let mut sender = portal.connect().unwrap();
+        refuse(&mut sender);
+        let deadline = Instant::now() + BOUND;
+        let error = loop {
+            assert!(Instant::now() < deadline, "the refusal never arrived");
+            match source.next_frame(Duration::from_millis(50)) {
+                Err(error) => break error,
+                Ok(pull) => assert!(pull.is_idle()),
+            }
+        };
+        assert!(
+            source.next_frame(Duration::ZERO).is_err(),
+            "the failure stays"
+        );
+        // The receive thread stopped with the failure: closing is prompt.
+        let started = Instant::now();
+        Box::new(source).close().unwrap();
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(!portal.handoff.is_receiving());
+        error
     };
+    let error = refused(|sender| sender.refuse("the TV's capture is busy"));
     assert_eq!(
         wire_cause(&error),
         WireError::Refused("the TV's capture is busy".into())
@@ -351,26 +463,9 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         prysm_ports::Error::to_string(&error),
         "the sender cannot stream 320x180 at 30 fps with menus as raw"
     );
-    assert!(
-        source
-            .next_frame(Duration::from_millis(50))
-            .unwrap()
-            .is_idle()
-    );
-    let mut again = RemoteSender::connect(source.local_addr()).unwrap();
-    again.send(&frame(8, 4, 4)).unwrap();
-    assert_eq!(receive(&mut source).as_slice()[0], 8);
 
     // A refused encoding names the setting, with the sender's reason.
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
-    sender.refuse_encoding("no encoder here");
-    let deadline = Instant::now() + BOUND;
-    let error = loop {
-        assert!(Instant::now() < deadline, "the refusal never arrived");
-        if let Err(error) = source.next_frame(Duration::from_millis(50)) {
-            break error;
-        }
-    };
+    let error = refused(|sender| sender.refuse_encoding("no encoder here"));
     let prysm_ports::Error::Invalid(invalid) = &error else {
         panic!("{error:?}");
     };
@@ -379,14 +474,12 @@ fn a_refusal_fails_the_source_with_the_senders_reason() {
         invalid.reason,
         "the sender cannot stream 320x180 at 30 fps with menus as raw: no encoder here"
     );
-    Box::new(source).close().unwrap();
 }
 
 #[test]
-fn close_is_prompt_frees_the_port_and_fails_the_sender() {
-    let mut source = bind();
-    let addr = source.local_addr();
-    let mut sender = RemoteSender::connect(addr).unwrap();
+fn close_is_prompt_stops_receiving_and_fails_the_sender() {
+    let (portal, mut source) = open();
+    let mut sender = portal.connect().unwrap();
     sender.send(&frame(5, 4, 4)).unwrap();
     receive(&mut source);
 
@@ -397,6 +490,7 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
         "{:?}",
         started.elapsed()
     );
+    assert!(!portal.handoff.is_receiving());
 
     let deadline = Instant::now() + BOUND;
     let error = loop {
@@ -407,9 +501,6 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
         thread::sleep(Duration::from_millis(10));
     };
     assert!(error.source().is_some(), "{error}");
-
-    let rebound = RemoteSource::bind(addr, RAW).unwrap();
-    Box::new(rebound).close().unwrap();
 }
 
 /// A sender with nothing to send (the slim TV stops capturing while paused)
@@ -417,8 +508,8 @@ fn close_is_prompt_frees_the_port_and_fails_the_sender() {
 /// (lighting stops) pauses it before the connection ends.
 #[test]
 fn idle_reads_the_pause_of_a_closing_receiver() {
-    let mut source = bind();
-    let mut sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, mut source) = open();
+    let mut sender = portal.connect().unwrap();
     sender.send(&frame(1, 4, 4)).unwrap();
     receive(&mut source);
     sender.tick().unwrap();
@@ -435,27 +526,30 @@ fn idle_reads_the_pause_of_a_closing_receiver() {
 
 #[test]
 fn connecting_to_a_dead_peer_fails_with_a_source() {
-    let addr = TcpListener::bind(any_port()).unwrap().local_addr().unwrap();
-    let error = RemoteSender::connect(addr).unwrap_err();
+    let addr = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let url = format!("ws://{addr}/api/v1/capture/stream")
+        .parse()
+        .unwrap();
+    let error = RemoteSender::connect(&url, addr).unwrap_err();
     assert!(error.to_string().contains(&addr.to_string()), "{error}");
     assert!(error.source().is_some(), "{error}");
 }
 
 #[test]
 fn factory_decodes_validates_and_opens() {
-    let settings: RemoteReceiverSettings =
-        serde_json::from_str(r#"{ "listen": "0.0.0.0:7380" }"#).unwrap();
-    assert_eq!(settings.listen, "0.0.0.0:7380".parse().unwrap());
-    assert_eq!(settings.request(), StreamRequest::default());
-    assert_eq!(settings, RemoteReceiverSettings::new(settings.listen));
-    assert!(RemoteReceiver.validate(&settings).is_ok());
-    let full: RemoteReceiverSettings = serde_json::from_str(
-        r#"{ "listen": "0.0.0.0:7380", "width": 640, "height": 280, "fps": 25,
-             "include_ui": false, "encoding": "raw" }"#,
+    let factory = RemoteReceiver::default();
+    let defaults: StreamRequest = serde_json::from_str("{}").unwrap();
+    assert_eq!(defaults, StreamRequest::default());
+    assert!(factory.validate(&defaults).is_ok());
+    let full: StreamRequest = serde_json::from_str(
+        r#"{ "width": 640, "height": 280, "fps": 25, "include_ui": false, "encoding": "raw" }"#,
     )
     .unwrap();
     assert_eq!(
-        full.request(),
+        full,
         StreamRequest {
             width: 640,
             height: 280,
@@ -465,32 +559,26 @@ fn factory_decodes_validates_and_opens() {
         }
     );
     for bad in [
-        r#"{ "listen": "nope" }"#,
-        r#"{ "listen": "0.0.0.0:1", "x": 1 }"#,
-        r#"{ "listen": "0.0.0.0:1", "encoding": "lz4" }"#,
+        r#"{ "listen": "0.0.0.0:7380" }"#,
+        r#"{ "x": 1 }"#,
+        r#"{ "encoding": "lz4" }"#,
     ] {
-        assert!(
-            serde_json::from_str::<RemoteReceiverSettings>(bad).is_err(),
-            "{bad}"
-        );
+        assert!(serde_json::from_str::<StreamRequest>(bad).is_err(), "{bad}");
     }
     for (bad, field) in [
         (
-            RemoteReceiverSettings {
+            StreamRequest {
                 width: 321,
-                ..settings
+                ..defaults
             },
             "width",
         ),
-        (RemoteReceiverSettings { fps: 0, ..settings }, "fps"),
-        (RemoteReceiverSettings::new(any_port()), "listen"),
+        (StreamRequest { fps: 0, ..defaults }, "fps"),
     ] {
-        assert_eq!(RemoteReceiver.validate(&bad).unwrap_err().field, field);
+        assert_eq!(factory.validate(&bad).unwrap_err().field, field);
     }
 
-    // `open` itself does not re-validate; port 0 keeps the test hermetic.
-    let ephemeral = RemoteReceiverSettings::with_request(any_port(), RAW);
-    let mut source = RemoteReceiver.open(&ephemeral).unwrap();
+    let mut source = factory.open(&RAW).unwrap();
     assert!(
         source
             .next_frame(Duration::from_millis(10))
@@ -502,8 +590,8 @@ fn factory_decodes_validates_and_opens() {
 
 #[tokio::test]
 async fn forwarder_delivers_frames_end_to_end() {
-    let source = bind();
-    let sender = RemoteSender::connect(source.local_addr()).unwrap();
+    let (portal, source) = open();
+    let sender = portal.connect().unwrap();
     let log = CallLog::new();
     let fake = FakeSource::new(&log, FakeSourceSettings::default());
 

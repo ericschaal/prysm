@@ -11,12 +11,14 @@
 //! Framing ([`encode`], [`LineReader`]): one JSON object per line, at most
 //! [`MAX_LINE`] bytes including the newline, unknown fields rejected. A bad
 //! line is a protocol failure, never skipped.
+mod address;
 mod args;
 mod codec;
 #[cfg(feature = "worker")]
 pub mod worker;
 
-pub use args::{FullArgs, ReceiverAddress, SlimArgs, SlimEncoding};
+pub use address::{PrysmAddress, Scheme};
+pub use args::{FullArgs, SlimArgs, SlimEncoding};
 pub use codec::{LineReader, LinkError, MAX_LINE, decode, encode};
 pub use prysm_ports::LightingTarget;
 

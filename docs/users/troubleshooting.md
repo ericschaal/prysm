@@ -49,7 +49,7 @@ Moving picture but wrong LEDs: check WLED and the LED counts.
 | Waiting for TV | The TV is asleep or in standby. Capture resumes when it wakes. |
 | Waiting for video | Play video or use an active HDMI input. The Home screen may give no picture. |
 | Capture needs attention, retrying | The TV shows the reason and a countdown. If it repeats, see **Service options → View diagnostics**. Stop other capture apps. |
-| Slim: Waiting for Prysm | Check **Frames go to** (address and port), that Prysm on the computer has the **Capture-only TV (remote)** source with that port, and that the port is reachable. |
+| Slim: Waiting for Prysm | Check the **Prysm address** (the one you open the portal with), that Prysm on the computer has the **Capture-only TV (remote)** source with its lights on, and, behind a reverse proxy, that it passes WebSockets on `/api/v1/capture/stream` without a login. "Versions differ": update Prysm and the TV app together. |
 | Slim: Paused by Prysm | Normal while the computer's lights are off. Turn on Screen sync. |
 | Slim: the TV app cannot reach or control Prysm | Check **Prysm address**. Start the computer's Prysm with `--allow-origin null`. |
 | Slim: Screen sync stops with an encoder error | Choose **Software H.264** or **Uncompressed** for the video source in the portal. |

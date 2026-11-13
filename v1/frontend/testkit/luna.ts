@@ -36,7 +36,6 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
     preferences: {
       autostart: false,
       instance: null,
-      receiver: null,
       ...options.preferences,
     },
     enabled: false,
@@ -74,7 +73,7 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
   function reconcile() {
     const wanted =
       state.power === 'active' || state.power === 'screen_saver'
-        ? full || (state.enabled && !!state.preferences.receiver)
+        ? full || (state.enabled && !!state.preferences.instance)
         : false;
     state.worker = { phase: wanted ? 'running' : 'stopped' };
     if (full && !state.enabled) state.lighting = 'off';
@@ -129,31 +128,18 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
         return;
       case 'setPreferences': {
         const preferences = payload as Preferences;
-        if (full && (preferences.instance || preferences.receiver)) {
-          respond(
-            error('instance, receiver: only the slim package forwards frames'),
-          );
+        if (full && preferences.instance) {
+          respond(error('instance: only the slim package forwards frames'));
           return;
         }
+        // http(s)://host[:port], nothing after it (the TV resolves a name).
         if (
           preferences.instance &&
-          !/^https?:\/\/[^/?#\s]+$/.test(preferences.instance)
+          !/^https?:\/\/[^/?#\s@]+\/?$/.test(preferences.instance)
         ) {
           respond(
             error(
-              'instance: must be an origin such as http://192.168.1.20:8787',
-            ),
-          );
-          return;
-        }
-        // host:port, the host an IP address or a name (the TV resolves it).
-        if (
-          preferences.receiver &&
-          !/^([a-z0-9.-]+|\[[0-9a-f:]+\]):\d+$/i.test(preferences.receiver)
-        ) {
-          respond(
-            error(
-              `invalid setPreferences request: receiver \`${preferences.receiver}\`: not a host name or IP address`,
+              `invalid setPreferences request: Prysm address \`${preferences.instance}\`: needs only the address, without a path`,
             ),
           );
           return;
@@ -163,7 +149,6 @@ export function fakeTvSupervisor(options: FakeSupervisorOptions) {
           preferences: {
             autostart: false,
             instance: null,
-            receiver: null,
             ...preferences,
           },
         };

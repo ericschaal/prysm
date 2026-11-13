@@ -1,7 +1,7 @@
 //! Every machine rule, as scripted inputs at explicit times.
 use super::*;
 use crate::state::Phase as P;
-use prysm_webos_link::{FailureKind, ReceiverAddress, SlimEncoding, WorkerFailure};
+use prysm_webos_link::{FailureKind, PrysmAddress, SlimEncoding, WorkerFailure};
 use serde_json::Value;
 
 fn full() -> Machine {
@@ -18,13 +18,13 @@ fn full_with(preferences: Preferences) -> Machine {
     )
 }
 
-fn receiver() -> ReceiverAddress {
-    "192.168.1.20:7380".parse().unwrap()
+fn receiver() -> PrysmAddress {
+    "http://192.168.1.20:8787".parse().unwrap()
 }
 
 fn slim_prefs() -> Preferences {
     Preferences {
-        receiver: Some(receiver()),
+        instance: Some(receiver()),
         ..Preferences::default()
     }
 }
@@ -44,18 +44,18 @@ fn spawn_full(lighting: LightingTarget) -> Effect {
     )
 }
 
-fn spawn_slim(receiver: &ReceiverAddress) -> Effect {
+fn spawn_slim(receiver: &PrysmAddress) -> Effect {
     Effect::Spawn(
         SlimArgs {
-            receiver: receiver.clone(),
+            prysm: receiver.clone(),
         }
         .to_args(),
     )
 }
 
 /// Another receiver, for preference changes.
-fn other_receiver() -> ReceiverAddress {
-    "prysm.local:7380".parse().unwrap()
+fn other_receiver() -> PrysmAddress {
+    "https://prysm.example.com".parse().unwrap()
 }
 
 fn video(video: Video) -> Effect {
@@ -285,7 +285,7 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             (
                 1,
                 Input::Preferences(Preferences {
-                    receiver: Some(fast.clone()),
+                    instance: Some(fast.clone()),
                     ..slim_prefs()
                 }),
                 vec![Effect::Terminate],
@@ -303,9 +303,8 @@ fn slim_receiver_change_restarts_without_backoff_after_reaping() {
             (
                 6,
                 Input::Preferences(Preferences {
-                    receiver: Some(fast.clone()),
+                    instance: Some(fast.clone()),
                     autostart: false,
-                    ..slim_prefs()
                 }),
                 vec![],
             ),
@@ -995,8 +994,7 @@ fn a_preferences_change_during_backoff_retries_at_once_with_a_fresh_delay() {
             now + 2,
             Input::Preferences(Preferences {
                 autostart: true,
-                receiver: Some(raw.clone()),
-                ..slim_prefs()
+                instance: Some(raw.clone()),
             }),
             vec![spawn_slim(&raw), video(Video::Unknown)],
         )],
@@ -1043,8 +1041,7 @@ fn a_preferences_change_while_a_failed_worker_stops_restarts_on_reaping() {
                 2,
                 Input::Preferences(Preferences {
                     autostart: true,
-                    receiver: Some(raw.clone()),
-                    ..slim_prefs()
+                    instance: Some(raw.clone()),
                 }),
                 vec![],
             ),

@@ -1,11 +1,6 @@
 import type { RemoteReceiverSettings } from '@prysm/contracts/host-desktop';
 import { TvPictureFields } from '@prysm/capture-webos-ui';
-import {
-  SelectField,
-  TextField,
-  useCheck,
-  type EditorProps,
-} from '@prysm/web-portal';
+import { SelectField, useCheck, type EditorProps } from '@prysm/web-portal';
 import {
   encodingChoices,
   encodingProblem,
@@ -21,15 +16,6 @@ export function RemoteEditor({
   useCheck('capture.encoding', encodingProblem(value));
   return (
     <>
-      <TextField
-        path="capture.listen"
-        label="Listen address"
-        required
-        placeholder="0.0.0.0:7380"
-        value={value.listen}
-        onChange={(listen) => onChange({ ...value, listen })}
-        help="Address and fixed port this computer listens on for frames from a capture-only TV, such as 0.0.0.0:7380."
-      />
       <TvPictureFields
         value={value}
         defaults={remoteDefaults}
@@ -45,10 +31,10 @@ export function RemoteEditor({
         help={encodingChoices.find((choice) => choice.value === encoding)?.help}
       />
       <p className="help">
-        The TV sends this picture to this computer. {'320\u00a0×\u00a0180'} at
-        30 fps is plenty for lighting. If the TV cannot send it, lighting stops
-        and says why; change the encoding or size here and start screen sync
-        again.
+        The TV sends this picture to this computer, at the address you open this
+        page with: give the TV that address. {'320\u00a0×\u00a0180'} at 30 fps
+        is plenty for lighting. If the TV cannot send it, lighting stops and
+        says why; change the encoding or size here and start screen sync again.
       </p>
     </>
   );

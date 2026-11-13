@@ -1,6 +1,7 @@
 //! Routing, request decoding and the state stream.
 use crate::FrontendAsset;
 use crate::access::{self, Access};
+use crate::capture;
 use crate::colors::Colors;
 use crate::metrics;
 use crate::preview::Previews;
@@ -9,7 +10,7 @@ use bytes::Bytes;
 use futures::{StreamExt, stream};
 use http_body_util::{BodyExt, Limited, StreamBody};
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{Calibration, Processing, Result, Section};
+use prysm_ports::{CAPTURE_STREAM_PATH, Calibration, Handoff, Processing, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -39,6 +40,8 @@ pub(crate) struct Context {
     pub access: Access,
     /// `GET /metrics` is served.
     pub metrics: bool,
+    /// Where capture stream connections go; `None`: the path is not served.
+    pub capture: Option<Handoff>,
     pub shutdown: Shutdown,
     streams: Arc<Semaphore>,
     previews: Previews,
@@ -51,6 +54,7 @@ impl Context {
         assets: &'static [FrontendAsset],
         access: Access,
         metrics: bool,
+        capture: Option<Handoff>,
         shutdown: Shutdown,
     ) -> Self {
         Self {
@@ -58,6 +62,7 @@ impl Context {
             assets,
             access,
             metrics,
+            capture,
             shutdown,
             streams: Arc::new(Semaphore::new(STREAMS)),
             previews: Previews::new(),
@@ -127,6 +132,15 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
         ("/api/v1/colors/stream", Method::GET) => {
             context.colors.stream(&context.engine, &context.shutdown)
         }
+        (CAPTURE_STREAM_PATH, method) => match (&context.capture, method) {
+            (Some(handoff), Method::GET) => capture::upgrade(handoff, request),
+            (Some(_), _) => failure(
+                StatusCode::METHOD_NOT_ALLOWED,
+                FailureKind::MethodNotAllowed,
+                "method not allowed",
+            ),
+            (None, _) => failure(StatusCode::NOT_FOUND, FailureKind::NotFound, "not found"),
+        },
         ("/api/v1/target", Method::PUT) => match decode::<TargetRequest>(request).await {
             Ok(body) => applied(command(context.engine.set_target(body.target)).await),
             Err(response) => *response,

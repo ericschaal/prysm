@@ -246,7 +246,6 @@
       "height": 180,
       "include_ui": true,
       "kind": "remote",
-      "listen": "0.0.0.0:7380",
       "width": 320
     },
     {
@@ -255,7 +254,6 @@
       "height": 280,
       "include_ui": false,
       "kind": "remote",
-      "listen": "0.0.0.0:7380",
       "width": 640
     }
   ],
@@ -658,13 +656,11 @@
   "luna/Preferences": [
     {
       "autostart": false,
-      "instance": null,
-      "receiver": null
+      "instance": null
     },
     {
       "autostart": true,
-      "instance": "http://192.168.1.20:8787",
-      "receiver": "prysm.local:7380"
+      "instance": "http://192.168.1.20:8787"
     }
   ],
   "luna/SetEnabledRequest": [
@@ -689,8 +685,7 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "instance": null,
-        "receiver": null
+        "instance": null
       },
       "video": "available",
       "worker": {
@@ -714,8 +709,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787",
-        "receiver": "prysm.local:7380"
+        "instance": "http://192.168.1.20:8787"
       },
       "video": "unknown",
       "worker": {
@@ -741,8 +735,7 @@
       "power": "active",
       "preferences": {
         "autostart": false,
-        "instance": null,
-        "receiver": null
+        "instance": null
       },
       "returnValue": true,
       "subscribed": true,
@@ -768,8 +761,7 @@
       "power": "screen_saver",
       "preferences": {
         "autostart": true,
-        "instance": "http://192.168.1.20:8787",
-        "receiver": "prysm.local:7380"
+        "instance": "http://192.168.1.20:8787"
       },
       "returnValue": true,
       "video": "unknown",

@@ -17,8 +17,8 @@ v1/packaging/docker/smoke.sh prysm-headless:local
 ```
 
 Add `--platform linux/arm64` for a Raspberry Pi. The image runs as user 10001
-(in group `video`), keeps settings in `/data`, exposes 8787 (portal) and 7380
-(slim TV receiver), and has no FFmpeg. The smoke test starts the image with a
+(in group `video`), keeps settings in `/data`, exposes 8787 (the portal, which
+also receives a slim TV's picture), and has no FFmpeg. The smoke test starts the image with a
 `null` output, waits for the health check, reads the state and checks a clean
 SIGTERM exit; it needs no hardware. Examples:
 [compose.yaml](../../v1/packaging/docker/compose.yaml),
