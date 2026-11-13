@@ -1,102 +1,138 @@
-# Settings and daily use
+# Set up your lights and use Prysm
 
 ## 1. Prepare WLED
 
-Open WLED in a browser. Check that it lights the strip, then set:
+Open WLED in a browser and check that it lights the whole strip. Then set:
 
 | WLED page | Setting |
 | --- | --- |
-| **Config → LED Preferences** | Physical LED count; **Use Gamma for color** enabled. |
-| **Config → Sync Interfaces** | DDP input enabled; **Disable realtime gamma correction** unchecked. |
+| **Config → LED Preferences** | The physical LED count; **Use Gamma for color** on. |
+| **Config → Sync Interfaces** | DDP input allowed; **Disable realtime gamma correction** off. |
 
-## 2. Complete setup in Prysm
+Prysm sends colours to WLED over UDP port 4048 (DDP) and switches WLED into
+live mode over HTTP. Both must be allowed between Prysm and WLED.
 
-Open `http://localhost:8787` on the Prysm host. From your phone, use the
-[host's LAN address](#access-from-your-phone).
+## 2. Open the web portal
 
-1. **Video source:** choose **USB capture device** or **webOS capturer**.
-   Enter the [card](quickstart.md) or [TV](webos.md) capture settings.
-2. **Your lights:** enter WLED's base address, such as `http://192.168.1.30/`,
-   and the LED count for each edge. Use zero for an absent edge.
-3. **Review & finish:** keep the picture defaults, select **Screen sync**,
-   and choose **Finish setup**.
+| Where Prysm runs | Portal address |
+| --- | --- |
+| This computer | `http://localhost:8787` |
+| Another computer, Raspberry Pi, Docker or NAS | `http://COMPUTER_IP:8787`, for example `http://192.168.1.20:8787` |
+| LG TV, full package | The address the Prysm app shows on the TV |
 
-Viewed from the front, the strip must run:
-**bottom-left → up left → across top → down right → along bottom**.
+The portal works from a phone on the same network; no extra setting is
+needed. When Prysm starts it prints the address in its log.
 
-## 3. Turn on Screen sync
+## 3. Run the setup wizard
 
-In **Overview**, select **Screen sync** and turn the lights on.
-The LEDs should follow the picture. If they do not, see [troubleshooting](troubleshooting.md).
+The portal opens the wizard until a video source and lights are saved.
+Nothing is saved until the last step.
 
-- **WLED effects** returns control to WLED. **Open WLED** opens its settings.
-- Choosing a source while the lights are off keeps them off.
-- Prysm starts idle after every restart. Turn Screen sync on again to resume.
+1. **Video source.** Choose where the picture comes from:
+   **Video capture device** ([capture card](quickstart.md)),
+   **Capture-only TV (remote)** ([slim TV package](webos.md#slim-package-the-tv-sends-the-picture)),
+   or **This TV** on the full TV package.
+2. **Your lights.** Choose **WLED**. Select **Find lights** to list WLED
+   devices on your network, or type the address: a name such as `wled.local`
+   or an IP address such as `192.168.1.30`, with `:PORT` only if WLED's web
+   page is not on port 80. Do not type `http://`.
+   Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
+3. **Review and start.** Check the summary, then choose
+   **Save and start screen sync**, or **Save only** to start later.
+
+**Find lights** only finds WLED devices on the same network segment. In
+Docker it needs host networking, so in a normal container type the IP address.
+
+Wire the strip so that, seen from the front, it starts at the **bottom-left
+corner** and runs **up the left edge, across the top, down the right edge and
+back along the bottom** (clockwise). The wizard draws this layout with your
+counts.
+
+**No lights (test)** runs Prysm without LEDs, for trying a video source.
+
+## 4. Daily use
+
+Home has two cards.
+
+- **The light card**: the power button, the two modes **Screen sync** (the
+  lights follow the picture) and **WLED effects** (WLED runs its own effects),
+  brightness, and your colour profiles. Choosing a mode while the lights are
+  off turns them on in that mode. Problems show here in plain words, with the
+  action that fixes them. **Open WLED** opens WLED's own page.
+- **Your setup**: the path from the video source through Prysm to the lights,
+  with what each step is and whether pictures are flowing. A step that failed
+  is marked.
+
+Good to know:
+
+- Prysm starts with the lights off after every restart. Turn Screen sync on
+  again, or start Prysm with `--start` (see your install guide).
+- Stopping Prysm turns the lights off.
+- When no picture arrives for about 3 seconds, WLED goes back to what it was
+  showing before. Screen sync takes over again when the picture returns.
 - Closing the browser leaves Prysm running.
 
-## Change settings
+## 5. Change settings
 
-Open **Settings**, edit, then **Save & apply**. **Discard** cancels unsaved edits.
-Picture changes apply live. Capture and WLED changes restart active capture.
+Open **Settings** (the icon in the header).
 
-### Processing
+<a id="processing"></a>
+
+### Picture
+
+Picture changes apply while you move the control; there is no Save button.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| Brightness | 100% | Overall LED brightness. |
-| Shadow lift | 0% | Brightens dark colors; black stays off. |
-| Smoothing duration | 0.1 s | Softens transitions. Use 0 for immediate changes. |
-| Sample density | 128 | More samples use more CPU and memory. Leave at 128 to start. |
-| Spatial reach | 10% | How far into the picture colors influence each edge. |
-| Remove black bars | On | Ignores letterbox/pillarbox bars. Needs at least 5 fps and about 1.5 s to settle (up to 3 s in dark scenes). |
+| Brightness | 100% | Overall LED brightness. Also on Home. |
+| Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
+| Colour profile | No correction | A saved colour correction; see [Calibrate colours](calibration.md). |
+| Shadow lift (Advanced) | 0% | Brightens dark colours; black stays off. |
+| Spatial reach (Advanced) | 10% | How far into the picture colours affect each edge. |
+| Smoothing (Advanced) | 0.1 s | Softens changes. 0 reacts at once. |
+| Sample density (Advanced) | 128 | More samples use more CPU. Leave it at 128 to start. |
 
-Use [Preview](preview.md) to check changes.
+Use [Live preview](preview.md) to check a change.
 
-### Video files
+### Video source and lights
 
-Install FFmpeg 9+, choose **Video file**, and enter the full file path,
-resolution, and frame rate. Playback runs once; restart Screen sync to replay.
-WLED is still required.
+Each has its own form. Edit it and choose **Save**; **Reset** discards your
+edits. Saving while the lights are on restarts Screen sync with the new
+settings. **Run setup again** reopens the wizard.
 
-The Docker image does not include FFmpeg. A custom image must include it and
-mount the video file.
+If someone changed the same settings in another browser, or Prysm restarted,
+the form shows the current values and says so. Make your change again.
 
-## Access from your phone
+Settings also has the theme (System, Light, Dark; kept in this browser only)
+and **Technical details**.
 
-For a service, follow the [Debian commands](debian.md#2-open-the-control-panel)
-or [Docker port mapping](docker.md#network-and-deployment-options).
+## Settings file
 
-For a direct run, stop Prysm and restart with your host's LAN IP instead of
-`192.168.1.20`:
-
-```sh
-PRYSM_ALLOWED_HOSTS=localhost:8787,127.0.0.1:8787,192.168.1.20:8787 prysm
-```
-
-Open `http://192.168.1.20:8787` on your phone.
-Keep Prysm on your trusted LAN; it has no login.
-
-## Color calibration
-
-Start with WLED gamma near 2.2. Check WLED brightness and power limits if the
-lights are too dark. With the webOS capturer, use [Calibrate Colors](calibration.md)
-to match the wall light's tint to the TV.
-
-## Settings and storage
+Prysm keeps all of the above in one JSON file:
 
 | Installation | Settings file |
 | --- | --- |
-| Direct run | `settings.json` in the working directory |
-| Debian | `/etc/prysm/settings.json` |
-| Docker / TrueNAS | `/config/settings.json` in the volume/dataset |
+| Debian package | `/var/lib/prysm/settings.json` |
+| Docker | `/data/settings.json` in the container's volume |
+| TrueNAS | `settings.json` in the app's dataset |
+| LG TV, full package | `/var/lib/io.prysm.tv/settings.json` on the TV |
+| From source | The path you pass on the command line |
 
-Back up the settings file. Prysm needs write access to the directory, not just the
-file. Use one instance per settings file; stop Prysm before manual edits.
+The portal creates the file on the first save. Back it up before upgrades.
+Stop Prysm before editing it by hand. The format is described in the
+[settings-file reference](../../v1/adapters/settings-file/README.md).
 
-For startup options, run `prysm --help`. To validate saved settings:
+To check a file without starting the lights:
 
 ```sh
-prysm --config settings.json check
+prysm-headless --check-settings /var/lib/prysm/settings.json
 ```
 
-This checks values, not device connections.
+It prints `settings OK` or the field that is wrong. It does not contact the
+capture device or WLED.
+
+## Video files
+
+Playing a video file instead of a live source is a developer feature. It needs
+FFmpeg 9 or newer and does not work in the Debian package or the Docker image.
+See [Develop Prysm](../developers/README.md#play-a-video-file).

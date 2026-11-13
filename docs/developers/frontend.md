@@ -1,51 +1,69 @@
 # Frontend development
 
-Requires Node.js 24+/npm. Host panel: React/TypeScript/Vite embedded by
-`prysm-web/build.rs`. TV UI: separate bundle in the IPK.
+`v1/frontend` is one npm workspace (Node.js 24+) with four bundles: the
+desktop portal (served by `prysm-headless` and `prysm-tui`), the TV's own
+portal (full package), and the TV app for each package. The Rust hosts embed
+the browser bundles at compile time; the TV bundles go into the IPKs.
+Reference: [frontend README](../../v1/frontend/README.md) (screens, saving
+rules, limits) and [UI and host assemblies](../../v1/UI-ASSEMBLIES.md).
 
-## Host panel
+## Portal with hot reload
+
+Start a host, then the dev server in a second terminal:
 
 ```sh
-cargo xtask setup host
-cargo run -p prysm -- --config settings.json --allowed-host localhost:8787,127.0.0.1:8787,localhost:5173
+npm --prefix v1/frontend ci
+npm --prefix v1/frontend run build
+cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.example.json
 ```
-
-Second terminal:
 
 ```sh
-npm run dev --prefix crates/web/prysm-web/control-ui
+npm --prefix v1/frontend run dev:headless
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api/`, preserving Host/Origin.
-Use disposable settings; capture/WLED remain real unless using a fixture.
+The dev server forwards `/api` to `http://127.0.0.1:8787`, or to the Prysm
+named by `PRYSM`. Use disposable settings: capture and WLED are real unless the
+settings use the `null` output.
 
 ## API generation
 
-Rust owns HTTP/Luna types; generate schemas, TypeScript and TV runtime validators:
+Rust owns every value the frontend exchanges with Prysm. The exporter writes
+OpenAPI documents and serialisation fixtures; codegen turns them into
+TypeScript under `packages/contracts/generated`, which is checked in. Never
+edit generated files.
 
 ```sh
-cargo xtask setup
-cargo xtask codegen
-cargo xtask check frontend
+npm --prefix v1/frontend run codegen        # after a Rust contract change
+npm --prefix v1/frontend run codegen:check  # fail on drift without writing
 ```
 
-Use `codegen api`/`codegen webos` for one contract; `--check` verifies without writing.
-Both need the host UI's tooling. Never hand-edit generated files. WebSocket/Luna
-payloads still need runtime validation.
+Codegen runs Rust, so it needs a Rust toolchain (and `libclang` on Linux).
+Details: [contract ownership](../../v1/CONTRACTS.md).
 
 ## webOS TV app
 
 ```sh
-cargo xtask setup webos
-npm run dev --prefix crates/web/prysm-webos
+npm --prefix v1/frontend run dev:webos        # full package's TV app
+npm --prefix v1/frontend run dev:webos-slim   # slim package's TV app
 ```
 
-Open `http://127.0.0.1:5174`. The development Luna simulation resets on reload;
-it never contacts TV hardware. Production targets Chromium 53 syntax with a classic
-script for `file:` loading. See [TV source](../../crates/web/prysm-webos/README.md).
+Open `/demo.html` on the dev server. It runs the TV app on an in-memory
+supervisor and portal and never contacts a TV; selects at the bottom right
+switch the supervisor's states. `dev:webos-portal` serves the TV's portal
+against a running TV (`PRYSM=http://TV_IP:8787`).
+
+TV bundles target Chromium 53 (one classic script, relative URLs for
+`file://`). Controlling a portal over HTTP needs webOS 5 or newer. Real webOS
+browsers and remote-control navigation have not yet been verified on a TV.
 
 ## Tests and formatting
 
-`cargo xtask check frontend` checks generation, both UI test suites, ESLint,
-Prettier and TV packaging helpers. Use `npm run lint:fix`/`npm run format` to fix.
-[Calibration](calibration.md#local-checks) has the browser/demo commands.
+```sh
+npm --prefix v1/frontend test           # codegen, typecheck, build, contract and DOM tests
+npm --prefix v1/frontend run lint
+npm --prefix v1/frontend run format:check
+npm --prefix v1/frontend run format     # rewrite with Prettier
+```
+
+The DOM tests use jsdom. Mobile browsers (iOS Safari, Firefox) have not been
+checked against the portal.

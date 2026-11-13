@@ -1,38 +1,80 @@
 # Debugging
 
-1. Record commit, settings, input/output, firmware/OS, resolution and FPS.
-2. Run `prysm --config PATH check` for settings validation.
-3. Keep foreground stderr, or `journalctl -u prysm -f` on Debian.
-4. Inspect pipeline/errors and saved settings:
+1. Record the version (`prysm-headless --version`), OS, video source, size,
+   frame rate and the settings file.
+2. Validate the settings without opening devices:
+
+   ```sh
+   prysm-headless --check-settings PATH
+   ```
+
+3. Read the log: stderr in the foreground, `journalctl -u prysm-headless -f`
+   for the Debian package, `docker logs -f prysm` for Docker.
+4. Read the state. `failure` has the last lighting failure with its `kind`,
+   `section` and `field`; `input` has the measured rate, whether frames arrive
+   and the latency; `output_issue` says why WLED is not showing the colours.
+
+   ```sh
+   curl http://127.0.0.1:8787/api/v1/state
+   curl -N http://127.0.0.1:8787/api/v1/state/stream
+   ```
+
+## Isolate the problem
+
+- **Capture or lights?** Use the [live preview](../users/preview.md), or run
+  `prysm-tui` with the `null` output: its terminal shows the picture and edge
+  colours without any LEDs.
+- **Capture hardware?** Replace the device with a known video file (`file`
+  source, FFmpeg 9+; see [play a video file](README.md#play-a-video-file)).
+- **TV stream?** Watch a slim TV's stream on a desktop without lighting
+  anything:
+
+  ```sh
+  cargo run --manifest-path v1/Cargo.toml -p prysm-capture-remote --example receive -- 0.0.0.0:7380 60
+  ```
+
+## Logs
+
+Log lines are `tracing` events, including those of the shared capture and
+processing crates, filtered by `RUST_LOG` (default `warn,prysm=info`):
 
 ```sh
-curl http://127.0.0.1:8787/api/state
-curl http://127.0.0.1:8787/api/settings
+RUST_LOG=debug cargo run --manifest-path v1/Cargo.toml -p prysm-headless -- settings.json
 ```
 
-Use a known video file to isolate capture hardware; use browser preview to isolate
-WLED. EOF/cancellation succeed; capture failure leaves HTTP available.
+While `prysm-tui` shows its preview, logs go only to `--log-file PATH`. The TV
+workers log to stderr, which the supervisor keeps (the last 20 lines show in
+the TV app's **View diagnostics**).
 
-## Runtime logs
-
-```sh
-RUST_LOG=info,prysm::preview=debug prysm --config PATH
-RUST_LOG=info,prysm::stats=off prysm --config PATH
-```
-
-`prysm::stats` reports active-stage windows about every 30 seconds and on exit.
-`total_*` fields are lifetime counters. Timing includes input waits, not just CPU.
-Pool `exhausted` means readers held every slot, requiring replacement storage.
-Disabling stats skips per-frame timing. See [metrics](monitoring.md) for more.
+For rates and timing over time, enable [metrics](monitoring.md).
 
 ## Hardware checks
 
-- Capture card: `cargo run -p prysm-capture --example capture_smoke` checks three
-  frames at 800×600/30 Hz; adjust the example to a supported device mode.
-- Preview: check start/stop, EOF/replay and matching picture/edge colors.
-- TV: run the [isolated smoke test](../../apps/prysm-webos-service/README.md#isolated-hardware-test),
-  then test reconnect, absent video, standby/wake, cold boot/autostart and uninstall.
+None of these have been run against Prysm 1.x yet; results belong in
+[research](../../research/README.md).
 
-Compare release builds with identical content, dimensions, FPS and codec. Include
-actual output rate and failures. Host fixtures do not qualify native drivers;
-local sends and receiver gaps do not measure physical screen-to-light latency.
+- **Capture card:** start `prysm-tui` with the `device` source and the `null`
+  output; check the picture, `input.fps` and the colours. Then the same with
+  WLED: on, off, WLED effects, unplugging the card, and stopping Prysm (the
+  lights must go off).
+- **Docker:** the same with the device mapped into the container.
+- **TV, without capture:** the on-TV smoke test runs the built binaries under
+  a separate probe identity in a private temporary directory and removes only
+  what it created. Read its plan first with `--dry-run`:
+
+  ```sh
+  python3 v1/packaging/webos/tests/native-smoke.py --host root@TV --flavour full --dry-run
+  ```
+
+  `--supervisor` adds setup, the app-only API and uninstall; `--capture` runs
+  the real worker.
+- **TV, slim encoder:** with the Prysm service disabled, the installed slim
+  worker can check one encoder without capture or a receiver
+  (`check-encoder`; see [v1 packaging](../../v1/packaging/README.md#checking-the-slim-h264-encoder-on-a-tv)).
+- **TV acceptance:** install, set up, capture with video and without,
+  standby and wake, cold boot with **Start with TV**, a hung capture being
+  killed, reconnecting the slim stream, calibration, and removal.
+
+Compare release builds with the same content, size, rate and encoding.
+Include the actual output rate and failures. Prysm's latency figures stop at
+the output write; they do not include the lights or the screen.

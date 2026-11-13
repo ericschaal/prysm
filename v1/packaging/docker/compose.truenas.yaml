@@ -1,0 +1,39 @@
+# prysm-headless on TrueNAS SCALE (Apps → Discover Apps → Install via YAML).
+# Guide: docs/users/truenas.md. Before installing, change:
+#   1. VERSION in `image` to a v1.* release version.
+#   2. /mnt/tank/apps/prysm to your dataset. The `user` below must be able to
+#      create and replace files in it (568:568 is TrueNAS's "apps" user).
+# The portal (port 8787) has no password: anyone who can reach the NAS on that
+# port controls the lights. Publish it on a trusted LAN only.
+# The default bridge network is enough. WLED must then be entered by IP
+# address: a bridge network cannot resolve names such as wled.local, and the
+# portal's "Find lights" finds nothing.
+services:
+  prysm:
+    image: ghcr.io/ericschaal/prysm-headless:VERSION
+    restart: unless-stopped
+    user: "568:568"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    environment:
+      RUST_LOG: warn,prysm=info
+    # Options after the settings path. `--allow-origin null` lets the slim
+    # TV app (io.prysm.tv, slim package) control this Prysm; remove it if no
+    # TV uses this NAS. Add "--start" to start screen sync with the app.
+    command: ["--allow-origin", "null"]
+    ports:
+      - "8787:8787"
+      # Receiver for the slim TV package; match the "listen" port of the
+      # remote video source in Prysm's settings.
+      - "7380:7380"
+    volumes:
+      - type: bind
+        source: /mnt/tank/apps/prysm
+        target: /data
+    # A USB capture card on the NAS: uncomment, and set the group to the
+    # device's group ID (`stat -c '%g' /dev/video0` in the TrueNAS shell).
+    # devices:
+    #   - /dev/video0:/dev/video0
+    # group_add: ["44"]

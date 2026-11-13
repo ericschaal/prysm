@@ -1,80 +1,112 @@
 # Build packages
 
-[Published releases](https://github.com/ericschaal/prysm/releases) contain Docker
-images, a Debian arm64 package, and the matching webOS IPK. For development, build
-locally or use [CI artifacts](../../.github/workflows/check.yml).
-Local builds do not install/deploy. [Release automation](releasing.md).
+| Package | Built by | Output |
+| --- | --- | --- |
+| Docker image `prysm-headless` (amd64, arm64) | [Dockerfile](../../v1/packaging/docker/Dockerfile) | Local image |
+| Debian package `prysm-headless` | Same Dockerfile, `deb` target | `prysm-headless_<version>_<arch>.deb` |
+| TV packages, full and slim | [build-ipk.sh](../../v1/packaging/webos/build-ipk.sh) | `io.prysm.tv_<version>_all.ipk` |
+
+Reference: [v1 packaging](../../v1/packaging/README.md). Builds never install
+or deploy. Release builds: [releasing](releasing.md).
 
 ## Docker
 
 ```sh
-docker build -t prysm:local .
-python3 packaging/docker/smoke.py prysm:local
+docker buildx build -f v1/packaging/docker/Dockerfile -t prysm-headless:local --load .
+v1/packaging/docker/smoke.sh prysm-headless:local
 ```
 
-Docker supplies Rust/Node and dependencies. Runtime is non-root with empty
-`/config` storage; it never changes mount ownership. Smoke tests cover setup,
-assets, persistence, permissions and shutdown without hardware.
-Update pinned base tags/digests together; rebuild with `--pull --no-cache` to
-refresh runtime packages. See [Docker setup](../users/docker.md).
+Add `--platform linux/arm64` for a Raspberry Pi. The image runs as user 10001
+(in group `video`), keeps settings in `/data`, exposes 8787 (portal) and 7380
+(slim TV receiver), and has no FFmpeg. The smoke test starts the image with a
+`null` output, waits for the health check, reads the state and checks a clean
+SIGTERM exit; it needs no hardware. Examples:
+[compose.yaml](../../v1/packaging/docker/compose.yaml),
+[compose.truenas.yaml](../../v1/packaging/docker/compose.truenas.yaml).
+User guides: [Docker](../users/docker.md), [TrueNAS](../users/truenas.md).
 
-## Debian arm64
+<a id="debian-arm64"></a>
 
-On Debian arm64, with Rust and Node.js 24+/npm:
+## Debian package
 
 ```sh
-sudo apt install build-essential pkg-config clang libclang-dev libudev-dev dpkg-dev
-cargo install cargo-deb --version 3.8.0 --locked
-cargo xtask setup host
-cargo xtask package deb
-python3 -m unittest discover -s packaging/debian/tests
+docker buildx build -f v1/packaging/docker/Dockerfile --target deb --output type=local,dest=dist .
 ```
 
-Output: `target/debian/`. [Package metadata](../../apps/prysm/Cargo.toml) and
-[maintainer scripts](../../packaging/debian/) define installation. The service
-starts disabled; browser saves create `/etc/prysm/settings.json` atomically.
-The [included handout](../../packaging/debian/README.md) must stay self-contained.
+This builds for the build machine's architecture; add `--platform linux/arm64`
+for a Pi. [build-deb.sh](../../v1/packaging/debian/build-deb.sh) does the
+assembly with `dpkg-deb` and also runs on any Debian or Ubuntu with
+`dpkg-dev`. The binary is built on Debian 12 and needs glibc 2.34+ and systemd.
+
+The package installs `/usr/bin/prysm-headless`, a sandboxed
+[systemd unit](../../v1/packaging/debian/prysm-headless.service) and a
+sysusers entry. Installing enables and starts the service; settings live in
+`/var/lib/prysm`. User guide: [Debian](../users/debian.md).
 
 ## webOS
 
-Requires Node.js 24+/npm, Python 3.9+, `ar` and a relocated
-[buildroot-nc4 SDK](https://github.com/openlgtv/buildroot-nc4).
+Requirements: the relocated webOS SDK
+([buildroot-nc4](https://github.com/openlgtv/buildroot-nc4)),
+`rustup target add armv7-unknown-linux-gnueabi`, `ares-package` from
+`npm install --global @webos-tools/cli@3.2.6`, Python 3.9+ and Node.js 24+.
 
 ```sh
-npm install --global @webos-tools/cli@3.2.6
-rustup target add armv7-unknown-linux-gnueabi
-cargo xtask setup
-WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot \
-  cargo xtask package webos
+npm --prefix v1/frontend ci
+npm --prefix v1/frontend run build
+export WEBOS_SDK=/path/to/arm-webos-linux-gnueabi_sdk-buildroot
+v1/packaging/webos/build-ipk.sh full
+v1/packaging/webos/build-ipk.sh slim
 ```
 
-Output: `target/webos-ipk/io.prysm.capture_VERSION_all.ipk`; both binaries are
-ARMv7 soft-float despite `_all`. The task checks contracts, bundles the TV UI and
-packages both binaries/notices. Keep archive path/permission validation enabled.
-[Worker ABI requirements](../../apps/prysm-webos-capture/README.md#build-for-webos).
+Outputs: `v1/target/webos-ipk/full/` and `v1/target/webos-ipk/slim/`. Both
+are named `io.prysm.tv_<version>_all.ipk` and install as the same app; the
+binaries are ARMv7 despite `_all`.
 
-IPK builds include the experimental hardware H.264 encoder in both binaries by
-default. This requires SDK development files and TV runtime libraries for
-GStreamer/GLib, even when software encoding is selected.
-[Encoder details](hardware-h264.md).
+| Package | Supervisor | Worker | TV app |
+| --- | --- | --- | --- |
+| `full` | `prysm-webos-service` | `prysm-webos` | `dist/webos/tv-ui` |
+| `slim` | `prysm-webos-slim-service` | `prysm-webos-slim` | `dist/webos-slim/tv-ui` |
 
-Install the portal frontend dependencies with `cargo xtask setup host` before building the embedded variant. Add `--embedded-prysm` to include the shared web portal, experimental local processor and its
-executable-specific Luna role. The embedded package is written under
-`target/webos-ipk/embedded/` and has the same app ID as the standard package.
-Hardware H.264 applies only to remote capture.
-The embedded executable uses the hardware-float ARMv7 build from the [TV
-experiment](../../apps/prysm-webos-capture/local/README.md).
+What the script enforces:
 
-Push/manual CI artifacts last seven days; PR builds do not upload. Install using
-[TV setup](../users/webos.md).
+- Binaries are built with `--profile webos` for Cortex-A9 with hardware
+  floating point and NEON, keeping the TV libraries' soft-float calling
+  convention. Without these flags the full worker managed 3 fps at 640 × 360.
+- [`ipk.py elf`](../../v1/packaging/webos/ipk.py) refuses binaries that are
+  not ARM EABI5 soft-float, are unstripped, or need a library outside the
+  TV's base set or a symbol newer than glibc 2.12 or `CXXABI_1.3.9`. Only the
+  slim worker may link the TV's GStreamer and GLib (hardware H.264).
+- The archive is rewritten with root ownership and fixed permissions, and no
+  install scripts, links, absolute or `..` paths, or files outside the app and
+  service directories.
 
-## TV package verification
+**Version.** The only source is `version` under `[workspace.package]` in
+[`v1/Cargo.toml`](../../v1/Cargo.toml). Binaries report it in full (for
+example `1.0.0-alpha.0`); `appinfo.json`, the IPK file name and its control
+file carry only `major.minor.patch`, because `ares-package` accepts nothing
+else.
+
+**Licences.** Each package carries Prysm's, hyperion-webos's and the TV
+native API notices, plus `javascript.txt`, which the frontend build writes
+from the packages that end up in that host's bundles; the build fails if one
+has no licence file. The slim package adds OpenH264, gstreamer-rs and gtk-rs.
+
+Install on a TV: [LG TV](../users/webos.md#1-install).
+
+## TV package checks
+
+Without a TV:
 
 ```sh
-npm test --prefix crates/web/prysm-webos
-python3 -m unittest discover -s packaging/webos/tests
-cargo test --locked -p prysm-webos-service --all-features
-cargo test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-capture
+python3 -m unittest discover -s v1/packaging/webos/tests
+python3 v1/packaging/webos/ipk.py verify v1/target/webos-ipk/full/io.prysm.tv_*_all.ipk
 ```
 
-Then run [hardware checks](debugging.md#hardware-checks) on the target TV.
+With the SDK, check the Luna and GLib bindings against its headers:
+
+```sh
+WEBOS_SDK=/path/to/sdk cargo run --manifest-path v1/Cargo.toml -p prysm-webos-luna-sys \
+  --features codegen --bin generate-luna-bindings -- --check
+```
+
+On a TV: [hardware checks](debugging.md#hardware-checks).

@@ -1,40 +1,56 @@
 # TrueNAS
 
-Requires Docker-based TrueNAS Apps.
+Runs the `prysm-headless` image as a TrueNAS SCALE custom app (Docker-based
+Apps). A NAS usually has no capture card, so this setup is mostly used with
+the [slim TV package](webos.md#slim-package-the-tv-sends-the-picture): the TV
+sends the picture, the NAS works out the colours and drives WLED.
 
-## 1. Choose the image
+*Not yet verified on hardware:* this app definition has been checked for
+syntax only, not installed on TrueNAS.
 
-Use the published `ghcr.io/ericschaal/prysm` image. The
-[Compose example](../../packaging/docker/compose.truenas.yaml) pins a release and
-selects amd64 or arm64 automatically. TrueNAS pulls it during installation.
+## 1. Create storage
 
-## 2. Create storage
+Create a dataset, for example `/mnt/tank/apps/prysm`. Give the `apps` user and
+group (568:568) read, write and traverse permission on it. Prysm must be able
+to create and replace files there; it writes `settings.json` on the first save.
 
-Create a dataset such as `/mnt/tank/apps/prysm`. Give the app's numeric user/group
-read, write, and traversal permission. The example uses `568:568` (`apps`).
-Prysm must be able to create and replace files in the directory.
+## 2. Install
 
-## 3. Install
+1. Open **Apps → Discover Apps → Install via YAML**.
+2. Paste [compose.truenas.yaml](../../v1/packaging/docker/compose.truenas.yaml).
+3. Change:
+   - `VERSION` in `image` to a version from a `v1.*`
+     [release](https://github.com/ericschaal/prysm/releases).
+   - `/mnt/tank/apps/prysm` to your dataset.
+   - `user`, if your dataset belongs to another user and group.
+4. Install. Open `http://NAS_IP:8787`.
 
-In **Apps → Discover Apps → Install via YAML**, paste the
-[Compose example](../../packaging/docker/compose.truenas.yaml). Change:
+The example publishes port 8787 (portal) and 7380 (TV receiver) and starts
+Prysm with `--allow-origin null`, which the slim TV app needs. It does not
+use host networking.
 
-- The dataset path.
-- `user` to the numeric user/group with dataset access.
-- `192.168.1.20` in `ports` and `PRYSM_ALLOWED_HOSTS` to the NAS's LAN IP.
-- `truenas.local:8787` to your browser hostname, or remove it.
+[TrueNAS custom app reference](https://apps.truenas.com/managing-apps/installing-custom-apps/).
 
-Install and open `http://YOUR_NAS_IP:8787`. Keep it on a trusted LAN; Prysm has
-no login. [TrueNAS screen reference](https://apps.truenas.com/managing-apps/installing-custom-apps/).
+## 3. Connect the TV and lights
 
-Connect the [webOS capturer](webos.md), or add the [USB mapping](docker.md#tv-and-usb-capture).
-Then [set up WLED and Screen sync](configuration.md).
+1. In the portal's setup wizard, choose **Capture-only TV (remote)** and set
+   **Listen address** to `0.0.0.0:7380`.
+2. Enter WLED by its **IP address**. Names such as `wled.local` and
+   **Find lights** do not work on the app's network.
+3. Follow the [slim TV steps](webos.md#slim-package-the-tv-sends-the-picture),
+   using `http://NAS_IP:8787` as the Prysm address.
+
+For a USB capture card on the NAS, uncomment `devices` and `group_add` in the
+YAML and set the group ID it describes.
+
+Keep the portal on a trusted network; it has no password.
 
 ## Maintenance
 
-Settings are in the dataset's `settings.json`. Snapshot the dataset before
-replacing the image. Update the image version in the app YAML and redeploy;
-Screen sync starts off.
-
-If settings will not save, check the dataset permissions for the app's numeric
-user/group. Change ports and device mappings in the app YAML, then redeploy.
+- Settings: `settings.json` in the dataset. Snapshot the dataset before an
+  upgrade.
+- Upgrade: change the image version in the app's YAML and redeploy. The lights
+  start off.
+- Settings will not save: check the dataset permissions for the `user` in the
+  YAML.
+- Logs: the app's log view in TrueNAS.

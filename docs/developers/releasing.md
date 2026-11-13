@@ -1,76 +1,45 @@
 # Release Prysm
 
-Merge the Release Please PR to release a new version. Review its changelog and
-version first; there is no second publication approval.
+Prysm 1.x is released by [v1-release.yml](../../.github/workflows/v1-release.yml)
+when a `v1.*` tag is pushed.
 
-## Automation
+## Cut a release
 
-- Pull requests and pushes to `main` run checks and package builds without publishing.
-- Pushes to `main` run Release Please, which maintains the release PR.
-- Merging that PR creates a `vMAJOR.MINOR.PATCH` tag and draft GitHub Release.
-- The tag runs all checks and packaging jobs at that exact commit. Once they pass,
-  the publisher uploads the Debian arm64 package, webOS IPK, pinned Compose file,
-  Docker digest, and checksums; pushes amd64/arm64 images to GHCR; and publishes
-  the release. Only the newest stable release updates the Docker `latest` tag.
+1. Set `version` under `[workspace.package]` in
+   [`v1/Cargo.toml`](../../v1/Cargo.toml) and update `v1/Cargo.lock`
+   in the same change. It is the only version source: binaries, the Debian
+   package and the IPKs all derive from it.
+2. Merge to `main`.
+3. Tag that commit with `v` plus the version, for example `v1.0.0-alpha.0`,
+   and push the tag.
 
-`VERSION` is the product version. Release Please updates it, the host manifest
-and lockfile, webOS app metadata, Compose image pins, and its own manifest
-together. Internal crates are not separately released. While on `0.x`, breaking
-changes bump the minor version; compatible fixes bump the patch version.
-Only stable three-part versions are supported.
+The workflow then:
 
-The IPK always includes hardware H.264 support in both binaries. Runtime encoder
-selection is separate. Packages from one release form the supported host/TV pair.
+- runs the v1 gate ([v1.yml](../../.github/workflows/v1.yml)), which also
+  builds both IPKs with the pinned webOS SDK;
+- builds the image and Debian package on amd64 and arm64, smoke-tests the
+  image and installs the package;
+- checks that the tag equals `v` plus the workspace version;
+- pushes `ghcr.io/<owner>/prysm-headless:<version>` (multi-arch);
+- attaches the `.deb` files and both IPKs, renamed
+  `io.prysm.tv-full_<version>_all.ipk` and `io.prysm.tv-slim_<version>_all.ipk`,
+  to a GitHub release.
 
-## Repository setup
+A version with a suffix (`-alpha.0`) becomes a pre-release. v1 releases are
+never marked "Latest". A manual run (`workflow_dispatch`) builds and tests
+everything and keeps the artifacts for seven days, without publishing.
 
-Register a private GitHub App, disable its webhook, and grant repository
-**Contents**, **Issues**, and **Pull requests** read/write permissions. Install it
-only on this repository. Store its numeric App ID and downloaded private key:
+Packages from one release form a supported desktop/TV pair: the slim TV and
+the desktop receiver speak one wire version.
 
-```sh
-gh variable set RELEASE_APP_ID --body YOUR_APP_ID
-gh secret set RELEASE_APP_PRIVATE_KEY < /path/to/private-key.pem
-```
+## Commit conventions
 
-The App creates PRs and tags so their events trigger CI. Publication uses the
-job-scoped `GITHUB_TOKEN` with contents/packages write permissions.
-Make the GHCR package public after its first push. Enable immutable GitHub
-Releases so published tags and assets cannot be replaced.
+PR titles follow [Conventional Commits](guidelines.md#commits-and-pull-requests)
+and are checked in CI.
 
-Allow only squash merges in repository settings and the `main` ruleset, with the
-PR title as the commit title. PR titles are checked
-against the [Conventional Commit rules](guidelines.md#commits-and-pull-requests).
-Actions are pinned to upstream commits; Dependabot proposes weekly updates.
-Workspace Rust dependencies use exact versions; update the manifest and lockfile
-together.
+## Pre-v1 release automation
 
-Package builds use Rust 1.99.1. Keep the webOS toolchain in `check.yml` and the
-Rust Bookworm image version/digest in that workflow and `Dockerfile` in sync.
-
-## Recover a release
-
-Rerun failed jobs in the Release workflow to reuse its tested artifacts. Artifacts
-are retained for seven days. To retry an existing tag from scratch:
-
-```sh
-gh workflow run release.yml --ref main -f tag=v0.2.0
-```
-
-Manual recovery uses publication tooling and workflows from the workflow
-revision, while product source comes from the original release tag. Merge a
-publisher fix before dispatching recovery; the release tag stays in place.
-Recovery rebuilds the same source, but does not guarantee identical binaries:
-runner images and system packages can change, and newer workflows can use newer
-toolchains. Rerun failed jobs while artifacts remain available to reuse the
-original tested packages.
-
-The workflow rejects tag/version mismatches and commits outside `main`. Existing
-versioned images must identify the same source commit. Draft assets may be
-replaced during recovery; published assets are preserved. A published release
-retry only verifies its images and recovers stable-channel promotion.
-
-GHCR and GitHub Releases cannot publish atomically. If either publication fails,
-leave the tag in place and rerun; never move it to another commit. After
-publication, fixes require a new version. Back up settings before upgrading;
-restoring an older binary may also require restoring its settings backup.
+Release Please ([release-please.yml](../../.github/workflows/release-please.yml),
+[release.yml](../../.github/workflows/release.yml)) and the root `VERSION` file
+still release the earlier implementation on other `v*` tags and ignore
+`v1.*` tags. They do not build anything in `v1/`.
