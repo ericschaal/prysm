@@ -164,6 +164,46 @@ function PowerIcon() {
   );
 }
 
+/** Screen sync: a screen with light at its sides. */
+function SyncIcon() {
+  return (
+    <svg
+      className="mode-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="5.5" y="5" width="13" height="9.5" rx="1.5" />
+      <path d="M9.5 19h5M12 14.5V19M2.5 7.5v5M21.5 7.5v5" />
+    </svg>
+  );
+}
+
+/** The lights' own effects: light moving by itself. */
+function EffectsIcon() {
+  return (
+    <svg
+      className="mode-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 9.5c3-4 6 3 9 0s6-4 9 0M3 15.5c3-4 6 3 9 0s6-4 9 0" />
+    </svg>
+  );
+}
+
+/**
+ * What a mode does, in a few words that fit one line in a half-width card on
+ * a phone: never cut, so a long device name gets the general line.
+ */
+function effectsLine(effects: string | undefined) {
+  const device = effects?.replace(/ effects$/, '');
+  return device && device !== effects && device.length <= 8
+    ? `Patterns from ${device}`
+    : 'Its own patterns';
+}
+
 /**
  * Your lights: the state as one word and the power button, then three
  * labelled controls (what the lights follow, brightness, colour profile),
@@ -307,7 +347,7 @@ export function LightCard({
   else if (!on)
     calm =
       mode === 'processed'
-        ? 'Power makes the lights follow the screen.'
+        ? 'Power turns on Screen sync.'
         : `Power turns on ${effects}.`;
   else if (note === 'waiting') calm = 'Waiting for the picture.';
   else if (note === 'starting') calm = 'Starting…';
@@ -326,8 +366,19 @@ export function LightCard({
   const shown = info ?? kept;
 
   const tiles = [
-    { value: 'processed', label: 'The screen' },
-    { value: 'device_native', label: effects },
+    {
+      value: 'processed',
+      label: 'Screen sync',
+      line: 'Follows the screen',
+      icon: <SyncIcon />,
+    },
+    {
+      value: 'device_native',
+      label: effects,
+      // Named by the output when it can be: "Patterns from WLED".
+      line: effectsLine(output?.effects),
+      icon: <EffectsIcon />,
+    },
   ] as const;
   /** Arrow keys move the choice, as in any radio group. */
   function arrow(event: KeyboardEvent<HTMLButtonElement>) {
@@ -506,46 +557,44 @@ export function LightCard({
         )}
         {configured ? (
           <>
-            <div className="follow">
-              <span id={`${headingId}-follow`} className="follow-label">
-                Lights follow
-              </span>
-              <div
-                className="modes"
-                role="radiogroup"
-                aria-labelledby={`${headingId}-follow`}
-                data-mode={mode}
-                data-on={on}
-              >
-                {tiles.map((tile) => (
-                  <button
-                    type="button"
-                    role="radio"
-                    key={tile.value}
-                    className="mode"
-                    data-target={tile.value}
-                    aria-checked={mode === tile.value}
-                    tabIndex={mode === tile.value ? 0 : -1}
-                    onKeyDown={arrow}
-                    aria-busy={pending === tile.value}
-                    aria-describedby={
-                      reasons[tile.value]
-                        ? `${headingId}-${tile.value}`
-                        : undefined
-                    }
-                    disabled={locked || reasons[tile.value] !== null}
-                    // Only a mode that cannot run looks disabled; a click in flight does not.
-                    data-unavailable={reasons[tile.value] !== null}
-                    onClick={() => {
-                      // Already on and fine: nothing to restart. After a failure it retries.
-                      if (target !== tile.value || failure)
-                        void choose(tile.value);
-                    }}
-                  >
-                    {tile.label}
-                  </button>
-                ))}
-              </div>
+            {/* The mode: two option cards, each saying what it does. */}
+            <div
+              className="modes"
+              role="radiogroup"
+              aria-label="Mode"
+              data-mode={mode}
+              data-on={on}
+            >
+              {tiles.map((tile) => (
+                <button
+                  type="button"
+                  role="radio"
+                  key={tile.value}
+                  className="mode"
+                  data-target={tile.value}
+                  aria-checked={mode === tile.value}
+                  tabIndex={mode === tile.value ? 0 : -1}
+                  onKeyDown={arrow}
+                  aria-busy={pending === tile.value}
+                  aria-describedby={
+                    reasons[tile.value]
+                      ? `${headingId}-${tile.value}`
+                      : undefined
+                  }
+                  disabled={locked || reasons[tile.value] !== null}
+                  // Only a mode that cannot run looks disabled; a click in flight does not.
+                  data-unavailable={reasons[tile.value] !== null}
+                  onClick={() => {
+                    // Already on and fine: nothing to restart. After a failure it retries.
+                    if (target !== tile.value || failure)
+                      void choose(tile.value);
+                  }}
+                >
+                  {tile.icon}
+                  <span className="mode-name">{tile.label}</span>
+                  <span className="mode-line">{tile.line}</span>
+                </button>
+              ))}
             </div>
             {tiles.map(({ value }) => {
               const reason = reasons[value];

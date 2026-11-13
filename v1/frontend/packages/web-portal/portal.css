@@ -1351,103 +1351,123 @@ fieldset > .help {
   color: var(--text-2);
 }
 
-/* The two modes: illustrated tiles, a selection that slides between them. */
 /*
- * What the lights follow: a labelled control of two words, as tall as a
- * profile chip. The chosen side is a segment that slides across; off, it is
- * only outlined (nothing runs), lit, it is filled.
+ * The mode: two option cards side by side, each an icon, its name and one
+ * line on what it does. Selected speaks the colour-profile chips' language:
+ * a light fill with dark ink; lit, the fill takes the light's own colours.
+ * Off, the chosen card is only outlined: what Power will turn on, nothing
+ * that runs. The other card is quiet but plainly a button.
  */
-.follow {
+.modes {
   display: grid;
-  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
   margin-top: var(--space-6);
   margin-bottom: var(--space-8);
 }
-.follow-label {
-  font-weight: var(--weight-strong);
-}
-.modes {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: rgb(0 0 0 / 0.2);
-  box-shadow: 0 0 0 1px var(--line) inset;
-}
-.modes::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  top: 3px;
-  bottom: 3px;
-  left: 3px;
-  width: calc(50% - 5px);
-  border-radius: var(--radius-pill);
-  /* Off: an outline only, the mode power will start. */
-  background: transparent;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.22) inset;
-  transition:
-    transform var(--duration-slow) var(--ease-out),
-    background-color var(--duration-light-off) var(--ease-in-out);
-}
-/* Lit: filled, the mode that runs. */
-.light-card[data-lit='true'] .modes::before {
-  background: rgb(255 255 255 / 0.16);
-  transition:
-    transform var(--duration-slow) var(--ease-out),
-    background-color var(--duration-light-on) var(--ease-light);
-}
-.modes[data-mode='device_native']::before {
-  transform: translateX(calc(100% + 4px));
-}
 .mode {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-content: stretch;
+  justify-items: start;
+  column-gap: var(--space-2);
+  row-gap: 2px;
   min-width: 0;
-  min-height: calc(var(--hit) - 6px);
-  padding: 0 var(--space-3);
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-3);
+  min-height: 72px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.04);
+  color: var(--text-2);
+  text-align: left;
+  transition:
+    background var(--duration) var(--ease-out),
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out),
+    color var(--duration) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.mode-icon {
+  grid-row: 1;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mode-name {
+  grid-row: 1;
   font-size: 0.9375rem;
   font-weight: var(--weight-strong);
   white-space: nowrap;
-  transition:
-    background-color var(--duration) var(--ease-out),
-    color var(--duration-slow) var(--ease-in-out),
-    opacity var(--duration-slow) var(--ease-in-out),
-    transform var(--duration-fast) var(--ease-out);
 }
-@media (prefers-reduced-motion: reduce) {
-  .modes::before,
-  .mode {
-    transition: none;
-  }
+/* One short line, written to fit: never cut with an ellipsis. */
+.mode-line {
+  grid-column: 1 / -1;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+  white-space: nowrap;
 }
-/* Hover only hints: it must never look like the selection. */
 .mode:hover:enabled {
-  background: rgb(255 255 255 / 0.03);
-  color: var(--text-2);
+  border-color: rgb(255 255 255 / 0.36);
+  background: rgb(255 255 255 / 0.08);
+  color: var(--text);
 }
 .mode:active:enabled {
-  transform: scale(0.97);
+  transform: scale(0.98);
 }
-.mode:focus-visible {
-  outline-offset: -2px;
-}
+/* Off, the chosen card is outlined: the mode Power will turn on. */
 .modes[data-mode='processed'] [data-target='processed'],
 .modes[data-mode='device_native'] [data-target='device_native'] {
-  color: var(--text-2);
+  border-color: rgb(255 255 255 / 0.72);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.72) inset;
+  color: var(--text);
 }
+/* Lit, it is filled, as a chosen profile is, in the light's colours. */
 .light-card[data-lit='true']
   .modes[data-mode='processed']
   [data-target='processed'],
 .light-card[data-lit='true']
   .modes[data-mode='device_native']
   [data-target='device_native'] {
-  color: var(--text);
+  border-color: transparent;
+  box-shadow: none;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--light-a) 32%, #f4f2ff),
+    color-mix(in srgb, var(--light-c) 26%, #f4f2ff) 55%,
+    color-mix(in srgb, var(--light-b) 32%, #f4f2ff)
+  );
+  color: #1d1934;
+}
+.light-card[data-lit='true'] .modes [aria-checked='true'] .mode-line {
+  color: rgb(29 25 52 / 0.72);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode {
+    transition: none;
+  }
+}
+/* A phone's half card: a little tighter, so name and line fit whole. */
+@media (max-width: 480px) {
+  .mode {
+    column-gap: 6px;
+    padding: 10px 12px;
+  }
+  .mode-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .mode-name {
+    font-size: 0.875rem;
+  }
+  .mode-line {
+    font-size: 0.75rem;
+  }
 }
 /* Only a mode that cannot run looks disabled; a click in flight does not. */
 .mode:disabled {
@@ -1456,6 +1476,9 @@ fieldset > .help {
 }
 .mode[data-unavailable='true'] {
   opacity: 0.38;
+}
+.mode[aria-busy='true'] .mode-icon {
+  animation: breathe 1.1s var(--ease-in-out) infinite;
 }
 .mode-reason {
   margin-top: calc(-1 * var(--space-6));

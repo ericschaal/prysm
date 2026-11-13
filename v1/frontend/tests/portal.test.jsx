@@ -197,22 +197,18 @@ test('the power button and the mode tiles set the target and show what the sessi
   const targets = () =>
     fixture.calls.filter((call) => call.startsWith('target:'));
   try {
-    // What the lights follow: a labelled radio group of two words.
-    const group = $('[role="radiogroup"]');
-    assert.equal(
-      document.getElementById(group.getAttribute('aria-labelledby'))
-        .textContent,
-      'Lights follow',
-    );
+    // The mode: a radio group of two option cards, each saying what it does.
+    assert.equal($('[role="radiogroup"]').getAttribute('aria-label'), 'Mode');
     assert.deepEqual(
       $$('[role="radio"]').map((item) => [
-        item.textContent,
+        $('.mode-name', item).textContent,
+        $('.mode-line', item).textContent,
         item.getAttribute('aria-checked'),
         item.tabIndex,
       ]),
       [
-        ['The screen', 'true', 0],
-        ['WLED effects', 'false', -1],
+        ['Screen sync', 'Follows the screen', 'true', 0],
+        ['WLED effects', 'Patterns from WLED', 'false', -1],
       ],
     );
     assert.equal(power().getAttribute('aria-pressed'), 'false');
@@ -573,7 +569,14 @@ test('modes that cannot work are disabled and say why; before setup only the pro
       hint(mode('device_native')),
       'These lights have no effects of their own.',
     );
-    assert.equal(mode('device_native').textContent, 'Device effects');
+    assert.equal(
+      $('.mode-name', mode('device_native')).textContent,
+      'Device effects',
+    );
+    assert.equal(
+      $('.mode-line', mode('device_native')).textContent,
+      'Its own patterns',
+    );
     assert.equal(power().disabled, false);
     assert.equal($('.device-link'), null, 'no device to open');
   } finally {
@@ -1775,10 +1778,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     assert.equal($$('form').length, 0, 'no forms on Home');
     // One headline, the lights' state; off, it says what Power will do.
     assert.equal($('.display'), null);
-    assert.equal(
-      $('.light-calm').textContent,
-      'Power makes the lights follow the screen.',
-    );
+    assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
     assert.equal($('.header-link').textContent, 'Settings');
     assert.equal($('.diagnostics'), null);
     assert.equal($('.preview'), null, 'no preview on Home');
