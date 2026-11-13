@@ -1,7 +1,7 @@
 //! The dedicated thread shared by `Session` and `Forwarder`: a stop flag, a
 //! reported phase, and a completion the async side can await with a deadline.
 use prysm_core::Frame;
-use prysm_ports::{Error, FrameSource, Pull, Result, SessionPhase};
+use prysm_ports::{Error, FrameSource, Pull, Result, Section, SessionPhase};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
@@ -34,7 +34,11 @@ impl Flags {
         self.set_phase(SessionPhase::Running);
         let pumped = catch_unwind(AssertUnwindSafe(|| {
             while !self.stop.load(Ordering::Acquire) {
-                match source.next_frame(TICK)? {
+                // A failing source is the capture's failure.
+                match source
+                    .next_frame(TICK)
+                    .map_err(|error| error.in_section(Section::Capture))?
+                {
                     Pull::Frame(frame) => each(Some(frame))?,
                     Pull::Idle => each(None)?,
                     Pull::Ended => return Ok(Pumped::Ended),

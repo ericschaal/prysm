@@ -520,7 +520,9 @@ impl Core {
             (capture, output, effective(&snapshot))
         };
         let registry = self.registry.clone();
-        let source = blocking(move || registry.open_source(&capture)).await??;
+        let source = blocking(move || registry.open_source(&capture))
+            .await?
+            .map_err(|error| error.in_section(Section::Capture))?;
         self.stats.source_opened();
         let registry = self.registry.clone();
         let open_output: OpenOutput = Box::new(move || registry.open_output(&output));
@@ -581,7 +583,9 @@ impl Core {
         );
         let registry = self.registry.clone();
         let result = match output {
-            Ok(output) => blocking(move || registry.open_output(&output)?.idle(mode)).await?,
+            Ok(output) => blocking(move || registry.open_output(&output)?.idle(mode))
+                .await?
+                .map_err(|error| error.in_section(Section::Output)),
             Err(error) => Err(error),
         };
         let state = match (&result, mode) {

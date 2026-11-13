@@ -1,5 +1,5 @@
 use prysm_ports::{
-    AdapterSettings, Error, LightingTarget, OutputIssue, Processing, Registry, Revision,
+    AdapterSettings, Error, LightingTarget, OutputIssue, Processing, Registry, Revision, Section,
     SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
@@ -119,6 +119,11 @@ async fn output_idles_when_the_source_fails() {
         assert_eq!(snapshot.target, LightingTarget::Processed);
         assert_eq!(log.count("output.write:a"), 3);
         assert!(before(&log, "source.close:a", "output.idle:a:Off"));
+        // The failure says it was the capture's.
+        assert_eq!(
+            snapshot.failure.as_ref().and_then(Error::section),
+            Some(Section::Capture)
+        );
         engine.shutdown().await.unwrap();
     })
     .await;
@@ -144,6 +149,11 @@ async fn output_idles_when_a_write_fails() {
 
         let snapshot = snapshot_until(&handle, |s| s.failure.is_some()).await;
         assert!(matches!(snapshot.failure, Some(Error::Adapter { .. })));
+        assert_eq!(
+            snapshot.failure.as_ref().and_then(Error::section),
+            Some(Section::Output),
+            "the lights' failure"
+        );
         assert_eq!(log.count("source.close:a"), 1);
         assert_eq!(log.count("output.idle:a:Off"), 1);
         engine.shutdown().await.unwrap();
@@ -947,7 +957,15 @@ async fn a_settings_save_after_a_failed_start_from_native_retries_and_keeps_the_
             .set_target(LightingTarget::DeviceNative)
             .await
             .unwrap();
-        assert!(handle.set_target(LightingTarget::Processed).await.is_err());
+        let refused = handle
+            .set_target(LightingTarget::Processed)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused.section(),
+            Some(Section::Capture),
+            "opening the source"
+        );
         let failed = handle.snapshot().borrow().clone();
         assert_eq!(failed.target, LightingTarget::Processed);
         assert_eq!(failed.session, SessionState::Native);

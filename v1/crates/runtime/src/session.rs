@@ -2,7 +2,7 @@ use crate::stats::Stats;
 use crate::worker::{Flags, Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame, Viewport};
 use prysm_ports::{
-    Error, FrameSource, IdleMode, LatestSlot, LedOutput, OutputIssue, Result, SessionPhase,
+    Error, FrameSource, IdleMode, LatestSlot, LedOutput, OutputIssue, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -271,8 +271,10 @@ impl SessionLoop {
         }
         let shown = self.feeds.preview.watched().then(|| frame.clone());
         let colors = self.stats.process(|| self.processor.process_frame(frame));
+        // Opening or writing the output is the lights' failure.
         self.leds
-            .write(&colors, &mut self.open_output, &self.stats)?;
+            .write(&colors, &mut self.open_output, &self.stats)
+            .map_err(|error| error.in_section(Section::Output))?;
         self.stats.frame_sent();
         self.control.report(self.leds.observe());
         self.last = Some((colors.clone(), Instant::now()));
@@ -303,12 +305,17 @@ impl SessionLoop {
             self.control.report(None);
             // The device shows its own state now, not these colors.
             self.feeds.colors.clear();
-            return self.leds.release(RELEASE);
+            return self
+                .leds
+                .release(RELEASE)
+                .map_err(|error| error.in_section(Section::Output));
         }
         if let Some((colors, written)) = &mut self.last
             && written.elapsed() >= REFRESH
         {
-            self.stats.write(output, colors)?;
+            self.stats
+                .write(output, colors)
+                .map_err(|error| error.in_section(Section::Output))?;
             *written = Instant::now();
             self.control.report(output.observe());
         }
@@ -328,7 +335,10 @@ impl SessionLoop {
             .idle
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let idled = self.leds.finish(mode, &mut self.open_output);
+        let idled = self
+            .leds
+            .finish(mode, &mut self.open_output)
+            .map_err(|error| error.in_section(Section::Output));
         SessionEnd {
             failure,
             ended,

@@ -7,8 +7,8 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Calibration, Candidate, ColorProfile, CorrectionControls, Error, HueControls,
-    LightingTarget, OutputIssue, Pattern, Processing, Revision, SessionPhase, SessionState,
-    Settings, Snapshot, ValidationError,
+    LightingTarget, OutputIssue, Pattern, Processing, Revision, Section, SessionPhase,
+    SessionState, Settings, Snapshot, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -166,6 +166,15 @@ fn states() -> Vec<State> {
             session: SessionState::Native,
             ..Snapshot::default()
         },
+        // A start that failed from the lights' own effects: the session is
+        // still native, the failure says the capture's side.
+        Snapshot {
+            target: LightingTarget::Processed,
+            session: SessionState::Native,
+            settings: configured(),
+            failure: Some(Error::other("video device capture failed").in_section(Section::Capture)),
+            ..Snapshot::default()
+        },
         Snapshot {
             target: LightingTarget::Off,
             session: SessionState::Faulted(SessionPhase::IdlingOutput),
@@ -188,6 +197,9 @@ fn failures() -> Vec<Failure> {
         },
         Error::NotProcessed,
         Error::other("device unplugged"),
+        Error::other("capture device does not support 640x400 at 30 Hz")
+            .in_section(Section::Capture),
+        Error::other("WLED did not answer").in_section(Section::Output),
         Error::Closed,
     ];
     errors.iter().map(Failure::from).collect()

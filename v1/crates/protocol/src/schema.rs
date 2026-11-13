@@ -23,8 +23,9 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    ColorsEvent, Failure, FailureKind, LedColor, LedColors, PreviewEvent, PreviewFrame,
-    PreviewViewport, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
+    ColorsEvent, Failure, FailureKind, FailureSection, LedColor, LedColors, PreviewEvent,
+    PreviewFrame, PreviewViewport, Session, SettingsReplaced, SettingsRequest, State,
+    TargetRequest,
 };
 use prysm_ports::{
     MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS, MAX_PROFILES, OutputFactory, SourceFactory,
@@ -312,6 +313,7 @@ impl ToSchema for OutputSettings {}
     PhaseSchema,
     Failure,
     FailureKind,
+    FailureSection,
     TargetRequest,
     SettingsRequest,
     SettingsReplaced,

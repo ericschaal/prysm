@@ -1127,6 +1127,14 @@ fieldset > .help {
   /* The overline sits above both; the button centres on the word's capitals. */
   margin-top: calc(var(--space-1) * -1);
 }
+/* A pause worth naming, on the eyebrow's own line: it fades, nothing moves. */
+.overline-note {
+  opacity: 0;
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+.overline-note[data-shown='true'] {
+  opacity: 1;
+}
 .light-card .overline {
   color: var(--text-2);
   transition: color var(--duration-light-off) var(--ease-in-out);
@@ -1333,6 +1341,17 @@ fieldset > .help {
 /* Shown only for a slow operation, and held: it fades, never flickers. */
 .power[data-ring='true']::after {
   opacity: 1;
+}
+/* Try again and Details on one row; open, the details take the full width. */
+.light-info-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+.light-info-actions .light-details[open] {
+  flex-basis: 100%;
+  order: 1;
 }
 /* The technical message behind a failure, for whoever wants it. */
 .light-details {
@@ -1778,78 +1797,226 @@ fieldset > .help {
 }
 @media (min-width: 900px) {
   .setup-card {
-    padding: var(--space-8);
+    /* A little less at the sides: room for a device name on one line. */
+    padding: var(--space-8) var(--space-6);
   }
 }
-.setup-flow {
+/*
+ * The signal path: Video, Prysm, Lights, joined by hairlines. A column when
+ * the card is narrow, a row when wide. Icons and hairlines sit in one fixed
+ * row; every label is placed beside or above its hairline, never in a row of
+ * its own, so no state change moves anything.
+ */
+.setup-card {
+  container-type: inline-size;
+}
+.path {
   display: grid;
-  gap: var(--space-5);
+  grid-template-columns: 40px minmax(0, 1fr);
+  column-gap: var(--space-4);
   margin: var(--space-5) 0 0;
   padding: 0;
   list-style: none;
 }
-.setup-flow li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  min-width: 0;
+.path-stop {
+  display: contents;
 }
-.setup-icon {
+.path-icon {
   display: grid;
-  flex: none;
+  grid-column: 1;
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  color: var(--text-3);
+  transition:
+    color var(--duration-slow) var(--ease-out),
+    box-shadow var(--duration-slow) var(--ease-out);
 }
-.setup-icon svg {
-  width: 22px;
-  height: 22px;
+.path-icon svg {
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.setup-text {
+.path-icon .ray {
+  stroke-width: 1.2;
+  opacity: 0.7;
+}
+.path-text {
   display: grid;
-  gap: 2px;
+  grid-column: 2;
+  align-content: center;
   min-width: 0;
 }
-.setup-name {
-  color: var(--text-3);
-  font-size: var(--text-small);
-}
-.setup-text strong {
+.path-name {
   overflow-wrap: anywhere;
+  font-size: 0.8125rem;
   font-weight: var(--weight-strong);
+  line-height: 1.3;
+  text-wrap: balance;
 }
-/* A tiny spec: label above value, evenly set, tabular figures. */
-.setup-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-6);
-  margin: var(--space-2) 0 0;
-}
-.setup-facts div {
-  display: grid;
-  min-width: 0;
-}
-.setup-facts dt {
+.path-fact {
+  overflow: hidden;
   color: var(--text-3);
-  font-size: 0.6875rem;
-  font-weight: var(--weight-strong);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.setup-facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-2);
-  font-size: var(--text-small);
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A link: the hairline between two icons, and what it carries beside it. */
+.path-link {
+  position: relative;
+  grid-column: 1 / -1;
+  height: 32px;
+}
+.path-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 19.5px;
+  width: 1px;
+  overflow: hidden;
+  background: var(--line-strong);
+  transition: background-color var(--duration-slow) var(--ease-out);
+}
+/* The light travelling the hairline while frames flow (transform only). */
+.path-pulse {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 45%;
+  background: linear-gradient(transparent, var(--accent), transparent);
+  opacity: 0;
+  transform: translateY(-100%);
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.path-label {
+  position: absolute;
+  top: 50%;
+  left: calc(40px + var(--space-4));
+  color: var(--text-3);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  transition: color var(--duration-slow) var(--ease-out);
+}
+.path-link[data-state='flowing'] .path-line {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.path-link[data-state='flowing'] .path-pulse {
+  opacity: 1;
+  animation: travel-down 1.6s linear infinite;
+}
+.path-link[data-state='flowing'] .path-label {
+  color: var(--text-2);
+}
+.path-link[data-state='failed'] .path-line {
+  background: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+/* Lit stops: what the light passes through. */
+.setup-card[data-path='flowing'] .path-icon {
+  color: var(--accent-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent)
+    inset;
+}
+.setup-card[data-path='effects'] .path-stop:last-child .path-icon {
+  color: var(--effects-1);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--effects-1) 55%, transparent)
+    inset;
+}
+.path-stop[data-failed='true'] .path-icon {
+  color: var(--danger);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent)
+    inset;
+}
+@keyframes travel-down {
+  to {
+    transform: translateY(240%);
+  }
+}
+@keyframes travel-across {
+  to {
+    transform: translateX(240%);
+  }
+}
+/*
+ * Wide: one row, left to right. Row one holds the icons and hairlines at a
+ * fixed height; row two the names and facts. Narrow link columns leave the
+ * names room to sit on one line.
+ */
+@container (min-width: 400px) {
+  .path {
+    --link: 16px;
+    /* Each stop's column, and how far its hairline reaches to the icons. */
+    --stop: calc((100cqw - 2 * var(--link)) / 3);
+    --reach: calc((var(--stop) - 40px) / 2 - 8px);
+    grid-template-columns:
+      minmax(0, 1fr) var(--link) minmax(0, 1fr) var(--link)
+      minmax(0, 1fr);
+    grid-template-rows: 40px auto;
+    column-gap: 0;
+    row-gap: var(--space-3);
+  }
+  .path-icon {
+    grid-row: 1;
+    grid-column: auto;
+    justify-self: center;
+  }
+  .path-stop:nth-child(1) > * {
+    grid-column: 1;
+  }
+  .path-stop:nth-child(3) > * {
+    grid-column: 3;
+  }
+  .path-stop:nth-child(5) > * {
+    grid-column: 5;
+  }
+  .path-text {
+    grid-row: 2;
+    align-content: start;
+    text-align: center;
+  }
+  .path-link {
+    grid-row: 1;
+    grid-column: auto;
+    height: auto;
+  }
+  .path-line {
+    top: 50%;
+    bottom: auto;
+    left: calc(-1 * var(--reach));
+    right: calc(-1 * var(--reach));
+    width: auto;
+    height: 1px;
+  }
+  .path-pulse {
+    inset: 0 auto 0 0;
+    width: 45%;
+    height: auto;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    transform: translateX(-100%);
+  }
+  .path-link[data-state='flowing'] .path-pulse {
+    animation-name: travel-across;
+  }
+  .path-label {
+    top: auto;
+    bottom: calc(50% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+/* The drawing is for room to spare: on a phone the path says enough. */
+@container (max-width: 399px) {
+  .setup-card .led-map {
+    display: none;
+  }
 }
 
 /*
@@ -1883,13 +2050,6 @@ fieldset > .help {
   stroke-width: 3;
   stroke-linecap: round;
 }
-.led-map-total {
-  fill: #fff;
-  font-size: 20px;
-  font-weight: var(--weight-strong);
-  letter-spacing: -0.4px;
-  font-variant-numeric: tabular-nums;
-}
 .led-map-count {
   fill: var(--text-3);
   font-size: 11px;
@@ -1914,7 +2074,13 @@ fieldset > .help {
   opacity: 0;
 }
 /* The band's colours follow the light card. */
-.home-grid:has(.light-frame[data-lit='true'][data-palette='sync']) .led-map {
+/*
+ * Screen sync: the band is a readout, so it shows only real colours. With a
+ * colours stream it stays neutral until the first ones arrive (and again on
+ * idle or a lost stream); the designed colours only for a host without one.
+ */
+.home-grid[data-colors='none']:has(.light-frame[data-lit='true'][data-palette='sync'])
+  .led-map {
   --band-top: var(--aurora-3);
   --band-right: var(--aurora-2);
   --band-bottom: #9a8cff;

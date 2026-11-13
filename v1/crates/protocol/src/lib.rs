@@ -5,8 +5,8 @@
 //! ports cannot carry: a tagged session state, a failure body, and the
 //! request/response bodies. It has no HTTP or runtime dependencies.
 use prysm_ports::{
-    Calibration, Error, Input, LightingTarget, OutputIssue, Revision, SessionPhase, SessionState,
-    Settings, Snapshot,
+    Calibration, Error, Input, LightingTarget, OutputIssue, Revision, Section, SessionPhase,
+    SessionState, Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +127,22 @@ pub struct Failure {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schema(value_type = Option<u64>, nullable = false))]
     pub current: Option<Revision>,
+    /// Which side an `adapter` failure came from, when the engine knows:
+    /// the capture source or the output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schema(nullable = false))]
+    pub section: Option<FailureSection>,
+}
+
+/// The side of the signal path a failure came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+pub enum FailureSection {
+    /// The video source: opening it or reading frames.
+    Capture,
+    /// The lights: opening, writing or idling the output.
+    Output,
 }
 
 impl Failure {
@@ -137,6 +153,7 @@ impl Failure {
             message: message.into(),
             field: None,
             current: None,
+            section: None,
         }
     }
 }
@@ -184,7 +201,14 @@ impl From<&Error> for Failure {
             Error::Decode { source, .. } => {
                 Self::new(FailureKind::Invalid, format!("{message}: {source}"))
             }
-            Error::Adapter { .. } => Self::new(FailureKind::Adapter, prysm_ports::chain(error)),
+            Error::Adapter { .. } => Self {
+                section: match error.section() {
+                    Some(Section::Capture) => Some(FailureSection::Capture),
+                    Some(Section::Output) => Some(FailureSection::Output),
+                    Some(Section::Processing) | None => None,
+                },
+                ..Self::new(FailureKind::Adapter, prysm_ports::chain(error))
+            },
             Error::StaleRevision { current, .. } => Self {
                 current: Some(*current),
                 ..Self::new(FailureKind::StaleRevision, message)
@@ -327,6 +351,33 @@ mod tests {
                 .message
                 .starts_with("cannot decode `wled` settings: invalid type")
         );
+    }
+
+    /// The side an adapter failure came from is typed, for the portal to say
+    /// which part of the path stopped; without one the field is absent.
+    #[test]
+    fn adapter_failures_carry_their_section() {
+        let capture = Failure::from(&Error::other("no 640x400").in_section(Section::Capture));
+        assert_eq!(capture.section, Some(FailureSection::Capture));
+        assert_eq!(
+            serde_json::to_value(&capture).unwrap()["section"],
+            "capture"
+        );
+        let output = Failure::from(&Error::other("gone").in_section(Section::Output));
+        assert_eq!(output.section, Some(FailureSection::Output));
+        let unknown = Failure::from(&Error::other("?"));
+        assert_eq!(unknown.section, None);
+        assert!(
+            serde_json::to_value(&unknown)
+                .unwrap()
+                .get("section")
+                .is_none()
+        );
+        // Set once, where it happens: an outer tag does not overwrite it.
+        let first = Error::other("x")
+            .in_section(Section::Capture)
+            .in_section(Section::Output);
+        assert_eq!(first.section(), Some(Section::Capture));
     }
 
     /// The portal shows what went wrong, not only where: an adapter failure

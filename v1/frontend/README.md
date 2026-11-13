@@ -76,9 +76,12 @@ supervisor in each of its states and play the phone's calibration part). See the
     typed `kind` and `field` and the message under Details. The state word
     follows the session, not the request. Words appear only when they inform
     (a failure, faulted, waiting for video, an output issue, or starting
-    after a second). Your setup names the devices (via discovery, when it
-    finds the saved one) and shows the adapters' typed `facts`, with the LED
-    band around the TV in the light's colours.
+    after a second). Your setup is the signal path: Video, Prysm, Lights,
+    named (via discovery, when it finds the saved device) with one fact each
+    from the adapters' typed `facts`, joined by hairlines that light up while
+    frames flow and carry the measured input rate; a failure marks its stop
+    (by the failure's `field`) in red. On a wide card the TV drawing with the
+    LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue

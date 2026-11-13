@@ -1,4 +1,5 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
+import type { Processing } from '@prysm/contracts/application';
 import type {
   ApplicationSnapshot,
   ColorsClient,
@@ -19,7 +20,8 @@ import { PreviewPanel } from './preview';
 import { ProcessingPanel, QuickPicture } from './processing';
 import { SectionForm } from './section-form';
 import { SetupWizard } from './setup';
-import { SetupCard } from './setup-card';
+import { nameOf } from './profile-model';
+import { SetupCard, type PathState } from './setup-card';
 import { ThemeChoice } from './theme-choice';
 import './tokens.css';
 import './portal.css';
@@ -131,6 +133,33 @@ function Entry({
       </span>
     </li>
   );
+}
+
+/** What the signal path is doing, from the state alone. */
+function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
+  const { target, session, failure, input } = snapshot;
+  if (session.state === 'faulted') return { kind: 'failed', at: null };
+  if (target !== 'off' && failure) {
+    // Which side failed: typed for adapter failures, else the setting named.
+    const field = failure.field?.split('.')[0];
+    const named = field === 'capture' || field === 'output' ? field : null;
+    return { kind: 'failed', at: failure.section ?? named };
+  }
+  if (target === 'processed' && session.state === 'running')
+    return input?.receiving
+      ? { kind: 'flowing', fps: input.fps }
+      : { kind: 'waiting' };
+  if (target === 'device_native' && session.state === 'native')
+    return { kind: 'effects' };
+  return { kind: 'off' };
+}
+
+/** The active colour profile's name, or `null` without one. */
+function activeProfile(processing: Processing) {
+  const active = processing.profiles?.find(
+    (profile) => profile.id === processing.active_profile,
+  );
+  return active ? nameOf(active) : null;
 }
 
 /**
@@ -513,7 +542,12 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         Light, in sync<span aria-hidden="true">.</span>
       </p>
       {notices}
-      <div className="home-grid" ref={homeGridRef}>
+      {/* Whether this host streams the LEDs' colours at all. */}
+      <div
+        className="home-grid"
+        ref={homeGridRef}
+        data-colors={colors ? 'stream' : 'none'}
+      >
         <LightCard
           target={snapshot.target}
           session={session}
@@ -554,6 +588,8 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             }}
             edges={outputUi?.edges?.(output)}
             discovery={discovery ?? null}
+            path={pathOf(snapshot)}
+            profile={activeProfile(settings.processing)}
             openSettings={() => go(settingsRoute)}
           />
         ) : null}

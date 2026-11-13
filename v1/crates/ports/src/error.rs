@@ -1,4 +1,4 @@
-use crate::{Revision, SessionPhase};
+use crate::{Revision, Section, SessionPhase};
 use std::error::Error as StdError;
 use std::sync::Arc;
 
@@ -34,6 +34,9 @@ pub enum Error {
         context: String,
         #[source]
         source: Option<Arc<dyn StdError + Send + Sync>>,
+        /// Which side failed, when the engine knows: the capture source or
+        /// the output. Set where the error happens ([`Error::in_section`]).
+        section: Option<Section>,
     },
     #[error("settings revision {expected} is stale; current is {current}")]
     StaleRevision {
@@ -62,6 +65,7 @@ impl Error {
         Self::Adapter {
             context: context.into(),
             source: Some(Arc::new(source)),
+            section: None,
         }
     }
 
@@ -70,6 +74,34 @@ impl Error {
         Self::Adapter {
             context: context.into(),
             source: None,
+            section: None,
+        }
+    }
+
+    /// This error as one of `section`'s: an adapter failure that does not
+    /// already say whose it is now does. Other errors are unchanged.
+    #[must_use]
+    pub fn in_section(self, section: Section) -> Self {
+        match self {
+            Self::Adapter {
+                context,
+                source,
+                section: None,
+            } => Self::Adapter {
+                context,
+                source,
+                section: Some(section),
+            },
+            other => other,
+        }
+    }
+
+    /// Which side an adapter failure came from, when known.
+    #[must_use]
+    pub fn section(&self) -> Option<Section> {
+        match self {
+            Self::Adapter { section, .. } => *section,
+            _ => None,
         }
     }
 }

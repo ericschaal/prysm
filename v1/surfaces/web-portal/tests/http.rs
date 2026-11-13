@@ -637,9 +637,15 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(
             body,
-            json!({ "kind": "adapter", "message": "fake source cannot open" })
+            json!({
+                "kind": "adapter",
+                "message": "fake source cannot open",
+                "section": "capture",
+            })
         );
         assert_eq!(portal.state().await["failure"]["kind"], "adapter");
+        // The state says the same side, for the portal's Video stop.
+        assert_eq!(portal.state().await["failure"]["section"], "capture");
         portal.shutdown().await.unwrap();
 
         // The output opens at the first frame: its failure ends the session
@@ -658,6 +664,7 @@ async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
         }
         assert_eq!(state["failure"]["kind"], "adapter");
         assert_eq!(state["failure"]["message"], "fake output cannot open");
+        assert_eq!(state["failure"]["section"], "output");
         portal.shutdown().await.unwrap();
 
         let portal = start(Settings::default(), Duration::from_secs(5)).await;

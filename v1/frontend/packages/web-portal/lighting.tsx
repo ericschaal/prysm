@@ -103,16 +103,16 @@ interface Info {
 }
 
 /**
- * A failure in plain words, from its typed parts only (`kind`, and `field`,
- * the setting it concerns). An adapter failure does not say which device
- * failed, so it is said by what stopped; the message is under Details.
+ * A failure in plain words, from its typed parts only: `section` (the side
+ * of the path it came from), `field` (the setting it concerns) and `kind`.
+ * Without a side it is said by what stopped; the message is under Details.
  */
 function plainFailure(
   failure: Failure,
   target: LightingTarget,
   effects: string,
 ) {
-  const section = failure.field?.split('.')[0];
+  const section = failure.section ?? failure.field?.split('.')[0];
   if (section === 'capture') return 'The video source is not working.';
   if (section === 'output') return 'The lights are not responding.';
   switch (failure.kind) {
@@ -322,16 +322,26 @@ export function LightCard({
   // A failure belongs to the lights being on; off, only a refused click counts.
   const problem = faulted ? null : (error ?? (on ? failure : null));
 
-  // Starting is said only when it lasts.
-  const [slowStart, setSlowStart] = useState(false);
+  // A pause worth naming, beside the eyebrow (never a line of its own, so
+  // the card keeps its size): only once it lasts, so a normal start says
+  // nothing.
+  let pause: 'waiting' | 'starting' | null = null;
+  if (input && session.state === 'running' && !input.receiving)
+    pause = 'waiting';
+  else if (mood === 'starting' && !lit) pause = 'starting';
+  const [lasting, setLasting] = useState<typeof pause>(null);
   useEffect(() => {
-    if (mood !== 'starting') return;
-    const timer = setTimeout(() => setSlowStart(true), slowStartMs);
+    if (!pause) return;
+    const timer = setTimeout(() => setLasting(pause), slowStartMs);
     return () => {
       clearTimeout(timer);
-      setSlowStart(false);
+      setLasting(null);
     };
-  }, [mood]);
+  }, [pause]);
+  const note = lasting === pause ? pause : null;
+  // Kept while it fades out, so it leaves as it came.
+  const [keptNote, setKeptNote] = useState(note);
+  if (note && note !== keptNote) setKeptNote(note);
   const status = headline({ target, session, failure, effects });
   let palette = mode === 'device_native' ? 'effects' : 'sync';
   if (mood === 'problem') palette = 'error';
@@ -353,17 +363,7 @@ export function LightCard({
   else if (faulted) info = { tone: 'problem', text: status, retry: false };
   else if (outputIssue && session.state === 'running')
     info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
-  else if (input && session.state === 'running' && !input.receiving)
-    info = { tone: 'note', text: 'Waiting for video.' };
-  else if (mood === 'starting' && slowStart && !lit)
-    // Said from the request: the session may still show the previous mode.
-    info = {
-      tone: 'note',
-      text:
-        target === 'device_native'
-          ? `Starting ${effects}…`
-          : 'Starting screen sync…',
-    };
+
   // Kept while the line folds away, so it leaves as it came.
   const [kept, setKept] = useState(info);
   if (info && !same(info, kept)) setKept(info);
@@ -406,6 +406,15 @@ export function LightCard({
         </div>
         <h2 id={headingId} className="overline">
           Your lights
+          {/* Said by the status for screen readers; shown here, not twice. */}
+          <span
+            className="overline-note"
+            data-shown={!!note}
+            aria-hidden="true"
+          >
+            {' · '}
+            {keptNote === 'waiting' ? 'Waiting for video' : 'Starting'}
+          </span>
         </h2>
         <div className="light-head">
           {/* The three words share one cell and cross-fade. */}
@@ -474,20 +483,25 @@ export function LightCard({
                   {shown.text}
                 </p>
               ) : null}
-              {shown?.details ? (
-                <details className="light-details">
-                  <summary>Details</summary>
-                  <p>{shown.details}</p>
-                </details>
-              ) : null}
-              {shown?.retry ? (
-                <button
-                  type="button"
-                  disabled={locked}
-                  onClick={() => void choose(target)}
-                >
-                  Try again
-                </button>
+              {shown?.details || shown?.retry ? (
+                // The fix and the details share one row.
+                <div className="light-info-actions">
+                  {shown.retry ? (
+                    <button
+                      type="button"
+                      disabled={locked}
+                      onClick={() => void choose(target)}
+                    >
+                      Try again
+                    </button>
+                  ) : null}
+                  {shown.details ? (
+                    <details className="light-details">
+                      <summary>Details</summary>
+                      <p>{shown.details}</p>
+                    </details>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>

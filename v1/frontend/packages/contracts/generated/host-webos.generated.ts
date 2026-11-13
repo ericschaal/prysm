@@ -82,9 +82,19 @@ export interface components {
             field?: string;
             kind: components["schemas"]["FailureKind"];
             message: string;
+            /**
+             * @description Which side an `adapter` failure came from, when the engine knows:
+             *     the capture source or the output.
+             */
+            section?: components["schemas"]["FailureSection"];
         };
         /** @enum {string} */
         FailureKind: "invalid" | "stale_revision" | "not_processed" | "faulted" | "adapter" | "unavailable" | "timeout" | "internal" | "forbidden" | "not_found" | "method_not_allowed" | "bad_request" | "payload_too_large" | "unsupported_media_type" | "busy";
+        /**
+         * @description The side of the signal path a failure came from.
+         * @enum {string}
+         */
+        FailureSection: "capture" | "output";
         /** @description Hue shift per wheel anchor, each -100 to 100. */
         HueControls: {
             /** Format: int32 */
@@ -391,6 +401,7 @@ export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
+export type FailureSection = components['schemas']['FailureSection'];
 export type HueControls = components['schemas']['HueControls'];
 export type Input = components['schemas']['Input'];
 export type LedColor = components['schemas']['LedColor'];

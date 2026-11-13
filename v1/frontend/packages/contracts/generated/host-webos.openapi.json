@@ -183,6 +183,10 @@
           },
           "message": {
             "type": "string"
+          },
+          "section": {
+            "$ref": "#/components/schemas/FailureSection",
+            "description": "Which side an `adapter` failure came from, when the engine knows:\nthe capture source or the output."
           }
         },
         "required": [
@@ -208,6 +212,14 @@
           "payload_too_large",
           "unsupported_media_type",
           "busy"
+        ],
+        "type": "string"
+      },
+      "FailureSection": {
+        "description": "The side of the signal path a failure came from.",
+        "enum": [
+          "capture",
+          "output"
         ],
         "type": "string"
       },

@@ -283,10 +283,14 @@ Source chains stay in the process; `message` is what the user can act on.
 | 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
 | 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
-| 502 | `adapter` | A device or adapter failed to open, write or idle |
+| 502 | `adapter` | A device or adapter failed to open, write or idle; `section` (`capture` or `output`) says which side, when the engine knows |
 | 503 | `faulted` | The engine is faulted; only a restart recovers |
 | 503 | `unavailable` | The engine has stopped |
 | 504 | `timeout` | The command took over 15 s; its outcome shows in the state |
+
+An `adapter` failure in the state carries the same `section`: `capture` when
+opening or reading the source failed, `output` when opening, writing or
+idling the lights failed. It is absent when the side is unknown.
 
 A client that loses a command reply cannot know whether it ran; it reads the
 state rather than resubmitting blindly. The engine finishes a received command

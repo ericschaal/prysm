@@ -137,6 +137,10 @@ test('Home streams the LEDs’ colours only while screen sync runs and is seen',
     await publish(fixture, running);
     assert.equal(fake.open(), 1);
     assert.equal(live(), null, 'the designed glow until colours arrive');
+    // The LED band is a readout: no colours (neutral) before the first event,
+    // as the CSS keys the designed band to hosts without a stream only.
+    assert.equal(grid().dataset.colors, 'stream');
+    assert.equal(grid().style.getPropertyValue('--led-t'), '');
 
     await act(async () => fake.send(colors));
     await flush();
@@ -267,6 +271,8 @@ test('without a colors client Home is unchanged', async () => {
   try {
     assert.equal(live(), null);
     assert.equal(grid().getAttribute('style'), null);
+    // Only here may the band show the designed colours.
+    assert.equal(grid().dataset.colors, 'none');
   } finally {
     await portal.unmount();
   }

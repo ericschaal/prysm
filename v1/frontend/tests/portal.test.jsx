@@ -7,6 +7,7 @@ import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import {
   correctionLimits,
+  deviceNamesKey,
   hueLimits,
   processingDelayMs,
   processingLimits,
@@ -73,6 +74,11 @@ const info = () =>
     ? $('.light-info p').textContent
     : null;
 const chip = (id) => $(`[data-profile="${id}"]`);
+/** The pause named beside the eyebrow, while it shows. */
+const note = () =>
+  $('.overline-note').dataset.shown === 'true'
+    ? $('.overline-note').textContent
+    : null;
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
 const badge = (title) => $('.badge', form(title)).textContent;
@@ -138,12 +144,24 @@ test('Home says when video is awaited; the capture rate is in the technical deta
       $('.lighting-status').textContent,
       'Lights follow your screen',
     );
-    assert.equal(info(), 'Waiting for video.');
+    // Not a line under the word (the card keeps its size): the eyebrow says it,
+    // once it lasts.
+    assert.equal(info(), null);
+    assert.equal(note(), null, 'not at once');
+    await act(async () => sleep(slowStartMs + 50));
+    assert.equal(info(), null, 'the info line stays closed');
+    assert.equal(note(), ' · Waiting for video');
+    assert.equal(
+      $$('.path-fact')[0].textContent,
+      'Waiting for picture',
+      'in place of the Video fact',
+    );
 
     await act(async () =>
       fixture.publish({ input: { fps: 29.9, receiving: true } }),
     );
     assert.equal(info(), null);
+    assert.equal(note(), null);
     assert(
       !$('.light-card').textContent.includes('fps'),
       'no live frame rate on Home',
@@ -302,7 +320,8 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal(info(), null, 'a quick start says nothing');
     assert.equal($('.light-card').dataset.ignite, undefined, 'not yet lit');
     await act(async () => sleep(slowStartMs + 50));
-    assert.equal(info(), 'Starting screen sync…');
+    assert.equal(info(), null, 'no line: the card keeps its size');
+    assert.equal(note(), ' · Starting');
 
     await act(async () => fixture.publish({ session: { state: 'running' } }));
     assert.equal(word(), 'On');
@@ -321,6 +340,7 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal(word(), 'On');
     await act(async () => sleep(slowStartMs + 50));
     assert.equal(info(), null, 'still lit: nothing to say');
+    assert.equal(note(), null);
     await act(async () => fixture.publish({ session: { state: 'native' } }));
     assert.equal($('.light-frame').dataset.palette, 'effects');
 
@@ -452,7 +472,7 @@ test('a brightness save while stopped keeps Stopped, the red light and Try again
     await act(async () => fixture.publish({ failure: null }));
     assert.equal($('.light-card').dataset.mood, 'starting');
     await act(async () => sleep(slowStartMs + 100));
-    assert.equal(info(), 'Starting screen sync…');
+    assert.equal(note(), ' · Starting');
     assert(!text().includes('WLED effects are on'));
 
     // Off with a failure left over: no failure sentence under "Off".
@@ -1465,10 +1485,10 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
       $$('.light-card input').map((control) => control.name),
       ['processing.brightness_percent'],
     );
-    // The setup card: what sends the picture, what shows it, the LEDs.
+    // The setup card: the path from the picture through Prysm to the LEDs.
     assert.deepEqual(
-      $$('.setup-flow strong').map((item) => item.textContent),
-      ['Video capture device', 'WLED'],
+      $$('.path-name').map((item) => item.textContent),
+      ['Video capture device', 'Prysm', 'WLED'],
     );
     assert.equal(
       $('.led-map figcaption').textContent,
@@ -1507,7 +1527,9 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       { label: 'Elgato Cam Link 4K', fields: { path: id } },
       { label: 'FaceTime HD Camera', fields: { path: 'other' } },
     ],
-    'output/wled': [{ label: 'Living room', fields: { address: '192.0.2.1' } }],
+    'output/wled': [
+      { label: 'WLED-Gledopto', fields: { address: '192.0.2.1' } },
+    ],
   });
   const portal = await renderPortal(
     HeadlessWebPortal,
@@ -1520,29 +1542,191 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
   );
   try {
     await act(async () => sleep(0));
-    assert.deepEqual(
-      $$('.setup-flow strong').map((item) => item.textContent),
-      ['Elgato Cam Link 4K', 'Living room'],
-    );
-    const facts = $$('.setup-facts').map((list) =>
-      $$('div', list).map((fact) => [
-        $('dt', fact).textContent,
-        $('dd', fact).textContent,
-      ]),
-    );
-    assert.deepEqual(facts, [
-      [
-        ['Picture', '640 × 360'],
-        ['Rate', '30 fps'],
-      ],
-      [
-        ['LEDs', '300'],
-        ['Address', '192.0.2.1'],
-      ],
+    const stops = () =>
+      $$('.path-stop').map((stop) => [
+        $('.path-name', stop).textContent,
+        $('.path-fact', stop)?.textContent,
+      ]);
+    // Names, not ids; one quiet fact each; the LED count said once.
+    assert.deepEqual(stops(), [
+      ['Elgato Cam Link 4K', '640 × 360'],
+      // Nothing negative: without a profile the line stays empty.
+      ['Prysm', '\u00a0'],
+      // A non-breaking hyphen: never split at it.
+      ['WLED\u2011Gledopto', '300 LEDs'],
     ]);
     assert(!$('.setup-card').textContent.includes(id), 'no raw device id');
-    assert.equal($('.led-map-total').textContent, '300 LEDs');
+    assert.equal($('.led-map-total'), null, 'the count is not repeated');
+    const links = () =>
+      $$('.path-link').map((link) => [
+        link.dataset.state,
+        $('.path-label', link).textContent || undefined,
+      ]);
+    assert.equal($('.setup-card').dataset.path, 'off');
+    assert.deepEqual(links(), [
+      ['still', undefined],
+      ['still', undefined],
+    ]);
+
+    // Frames flowing: the links light up; the first carries the measured rate.
+    await act(async () =>
+      portal.fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        input: { fps: 29.97, receiving: true },
+      }),
+    );
+    assert.equal($('.setup-card').dataset.path, 'flowing');
+    assert.deepEqual(links(), [
+      ['flowing', '30 fps'],
+      ['flowing', undefined],
+    ]);
+    await act(async () =>
+      portal.fixture.publish({ input: { fps: 0, receiving: false } }),
+    );
+    assert.deepEqual(links()[0], ['still', undefined]);
+    assert.equal(stops()[0][1], 'Waiting for picture');
+
+    // The lights' own effects: Prysm is out of the path.
+    await act(async () =>
+      portal.fixture.publish({
+        target: 'device_native',
+        session: { state: 'native' },
+        input: undefined,
+      }),
+    );
+    assert.deepEqual(links(), [
+      ['still', undefined],
+      ['still', undefined],
+    ]);
+    assert.equal($('.setup-card').dataset.path, 'effects');
+
+    // A failure naming the capture marks the video stop and its link.
+    await act(async () =>
+      portal.fixture.publish({
+        target: 'processed',
+        failure: { kind: 'invalid', field: 'capture.width', message: 'x' },
+      }),
+    );
+    assert.equal($('.setup-card').dataset.path, 'failed');
+    assert.deepEqual(
+      $$('.path-stop').map((stop) => stop.dataset.failed),
+      ['true', 'false', 'false'],
+    );
+    assert.deepEqual(links(), [
+      ['failed', undefined],
+      ['still', undefined],
+    ]);
+    // An adapter failure says its side: the capture, as on the owner's Mac.
+    await act(async () =>
+      portal.fixture.publish({
+        failure: {
+          kind: 'adapter',
+          section: 'capture',
+          message:
+            'video device capture failed: capture device does not support 640x400 at 30 Hz',
+        },
+      }),
+    );
+    assert.deepEqual(
+      $$('.path-stop').map((stop) => stop.dataset.failed),
+      ['true', 'false', 'false'],
+    );
+    assert.equal(info(), 'The video source is not working.');
+    // The lights' side.
+    await act(async () =>
+      portal.fixture.publish({
+        failure: { kind: 'adapter', section: 'output', message: 'x' },
+      }),
+    );
+    assert.deepEqual(
+      $$('.path-stop').map((stop) => stop.dataset.failed),
+      ['false', 'false', 'true'],
+    );
+    assert.deepEqual(links(), [
+      ['still', undefined],
+      ['failed', undefined],
+    ]);
+    assert.equal(info(), 'The lights are not responding.');
+    // One without a side: the path is broken at Prysm.
+    await act(async () =>
+      portal.fixture.publish({ failure: { kind: 'adapter', message: 'x' } }),
+    );
+    assert.deepEqual(
+      $$('.path-stop').map((stop) => stop.dataset.failed),
+      ['false', 'true', 'false'],
+    );
     assert.deepEqual(discovery.calls.sort(), ['capture/device', 'output/wled']);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('discovered names are kept in this browser: shown at once next time, dropped for another device', async () => {
+  const memory = {};
+  // A storage the portal reads before discovery answers.
+  const withStorage = (snapshot) => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key) => memory[key] ?? null,
+        setItem: (key, value) => {
+          memory[key] = String(value);
+        },
+        removeItem: (key) => {
+          delete memory[key];
+        },
+      },
+    });
+    return snapshot;
+  };
+  const lights = { ...output, address: '192.0.2.7' };
+  const name = () => $$('.path-name')[2].textContent;
+  // First visit: the kind's name until discovery finds the device.
+  const found = fakeDiscoveryClient({
+    'output/wled': [
+      { label: 'WLED-Gledopto', fields: { address: '192.0.2.7' } },
+    ],
+  });
+  let portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output: lights },
+    withStorage,
+    { discovery: found.client },
+  );
+  try {
+    await act(async () => sleep(0));
+    assert.equal(name(), 'WLED‑Gledopto');
+    assert.deepEqual(JSON.parse(memory[deviceNamesKey])['output:wled'], {
+      fields: { address: '192.0.2.7' },
+      name: 'WLED-Gledopto',
+    });
+  } finally {
+    await portal.unmount();
+  }
+  // Next visit: discovery is slow; the kept name shows at once.
+  const slow = { candidates: () => new Promise(() => {}) };
+  portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output: lights },
+    withStorage,
+    { discovery: slow },
+  );
+  try {
+    assert.equal(name(), 'WLED‑Gledopto', 'before discovery answers');
+  } finally {
+    await portal.unmount();
+  }
+  // Another device saved: not its name; the old entry goes.
+  portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output: { ...output, address: '192.0.2.99' } },
+    withStorage,
+    { discovery: slow },
+  );
+  try {
+    assert.equal(name(), 'WLED');
+    assert.equal(JSON.parse(memory[deviceNamesKey])['output:wled'], undefined);
   } finally {
     await portal.unmount();
   }
