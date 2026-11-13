@@ -77,6 +77,10 @@
       <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/tui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264-rvenc-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/v1/target" />
     </content>
