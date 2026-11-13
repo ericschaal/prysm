@@ -16,6 +16,7 @@ export default defineConfig(
       '**/node_modules/**',
       'dist/**',
       '.test/**',
+      '.e2e/**',
       'packages/contracts/generated/**',
     ],
   },
@@ -59,6 +60,11 @@ export default defineConfig(
     // DOM tests run under node with jsdom globals.
     files: ['tests/**/*.{js,jsx,mjs}'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
+  },
+  {
+    // Playwright specs and fixtures run under node.
+    files: ['e2e/**/*.ts'],
+    languageOptions: { globals: globals.node },
   },
   prettier,
 );

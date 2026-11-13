@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
     "build": "npm run codegen && npm run typecheck && node scripts/build.mjs",
     "test": "npm run build && node --test tests/contracts.test.mjs && vite build --ssr tests/composition.test.jsx --outDir .test && node --import ./tests/setup-dom.js --test .test/composition.test.js",
     "dev:headless": "npm run codegen && vite hosts/headless/web-portal --config dev.config.mjs --host 127.0.0.1",
@@ -18,6 +18,8 @@
     "codegen:check": "node scripts/codegen.mjs --check",
     "dev:webos-slim": "npm run codegen && vite hosts/webos-slim/tv-ui --host 127.0.0.1",
     "dev:webos-portal": "npm run codegen && vite hosts/webos/web-portal --config dev.config.mjs --host 127.0.0.1",
+    "e2e": "playwright test -c e2e",
+    "e2e:install": "playwright install chromium webkit",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write \"**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}\"",
     "format:check": "prettier --check \"**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}\""
@@ -29,7 +31,9 @@
   "devDependencies": {
     "@eslint-react/eslint-plugin": "5.28.8",
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
     "@tanstack/intent": "^0.5.6",
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "ajv": "8.20.0",

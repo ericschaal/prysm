@@ -67,3 +67,38 @@ npm --prefix v1/frontend run format     # rewrite with Prettier
 
 The DOM tests use jsdom. Mobile browsers (iOS Safari, Firefox) have not been
 checked against the portal.
+
+## End-to-end tests
+
+`v1/frontend/e2e/` drives the portal in Chromium and WebKit with
+[Playwright](https://playwright.dev/). Each test starts its own
+`prysm-headless` on an ephemeral loopback port with a settings file in a
+temporary directory (remote capture, `null` output), and may start test
+senders: `prysm-capture-remote`'s `test_sender` example stands in for the
+TV's slim worker, streaming generated frames, refusing its first connections
+(`--refuse N REASON`) or stopping after some frames (`--stop-after N`).
+Nothing leaves loopback.
+
+```sh
+cargo build --manifest-path v1/Cargo.toml -p prysm-headless
+cargo build --manifest-path v1/Cargo.toml -p prysm-capture-remote --example test_sender
+npm --prefix v1/frontend run e2e:install   # Chromium and WebKit, once per Playwright version
+npm --prefix v1/frontend run e2e           # add -- --project webkit, -- --headed, -- -g brightness
+```
+
+The binary embeds the portal bundle at compile time: rebuild the frontend,
+then `prysm-headless`, before testing a frontend change. The tests take the
+debug builds from `$CARGO_TARGET_DIR` (default `v1/target`), or
+`PRYSM_HEADLESS_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
+go to `v1/frontend/.e2e/`. Find elements as a user does, by role and
+accessible name, not by class names.
+
+Playwright's WebKit is not Safari, but it shares Safari's engine bugs: the
+brightness drag fails in it when the slider captures the pointer
+([WebKit bug 219636](https://bugs.webkit.org/show_bug.cgi?id=219636)), which
+Chromium never showed. Touch drags and iOS are not covered; check them on a
+phone.
+
+CI (`e2e` in `.github/workflows/v1.yml`) runs the suite on Linux with the
+binaries built by the `rust` job, one retry per test and traces on retry; the
+report, traces and videos are uploaded when it fails.

@@ -171,9 +171,63 @@ jobs:
         run: cargo clippy --manifest-path v1/Cargo.toml --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test all targets
         run: cargo test --manifest-path v1/Cargo.toml --locked --workspace --all-targets --all-features
+      # The `e2e` job runs the portal against these. Built by name: the test
+      # run above leaves examples only under hashed file names.
+      - name: Build the e2e binaries
+        if: runner.os == 'Linux'
+        run: >-
+          cargo build --manifest-path v1/Cargo.toml --locked
+          -p prysm-headless -p prysm-capture-remote --example test_sender
+          && cargo build --manifest-path v1/Cargo.toml --locked -p prysm-headless
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: v1-e2e-binaries
+          path: |
+            v1/target/debug/prysm-headless
+            v1/target/debug/examples/test_sender
+          if-no-files-found: error
+          retention-days: 1
       # --all-targets skips doctests.
       - name: Doctests
         run: cargo test --manifest-path v1/Cargo.toml --locked --workspace --doc --all-features
+
+  # The portal in Chromium and WebKit against a real prysm-headless per test
+  # (v1/frontend/e2e). Browsers are installed per run, as Playwright advises.
+  e2e:
+    needs: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: v1/frontend/package-lock.json
+      - run: npm --prefix v1/frontend ci
+      - name: Browsers
+        run: npm --prefix v1/frontend run e2e:install -- --with-deps
+      - name: prysm-headless and the test sender
+        uses: actions/download-artifact@v4
+        with:
+          name: v1-e2e-binaries
+          path: ${{ runner.temp }}/e2e-bin
+      # Artifacts do not keep the executable bit.
+      - run: chmod +x "$RUNNER_TEMP/e2e-bin/prysm-headless" "$RUNNER_TEMP/e2e-bin/examples/test_sender"
+      - name: Portal end-to-end tests
+        env:
+          PRYSM_HEADLESS_BIN: ${{ runner.temp }}/e2e-bin/prysm-headless
+          PRYSM_TEST_SENDER_BIN: ${{ runner.temp }}/e2e-bin/examples/test_sender
+        run: npm --prefix v1/frontend run e2e
+      # The HTML report, and traces and videos of failed or retried tests.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: v1-e2e-report
+          path: v1/frontend/.e2e
+          include-hidden-files: true
+          retention-days: 7
 
   webos-armv7:
     needs: frontend
