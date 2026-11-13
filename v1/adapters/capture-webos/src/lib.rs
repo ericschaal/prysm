@@ -30,7 +30,7 @@ mod video;
 
 pub use settings::WebosSettings;
 pub use source::WebosFrames;
-pub use video::{Video, VideoSignal};
+pub use video::{Readiness, Video, VideoSignal};
 
 use prysm_ports::{FrameSource, Result, SourceFactory, ValidationError};
 

@@ -2,7 +2,7 @@
 //! paces acquisition, retries recoverable interruptions and publishes through
 //! its [`Worker`].
 use super::{Acquired, Backend, Fault, Limits, Tap};
-use crate::{Video, VideoSignal, WebosSettings};
+use crate::{Readiness, Video, VideoSignal, WebosSettings};
 use prysm_ports::{Error, Result, Worker, chain};
 use std::time::{Duration, Instant};
 
@@ -76,10 +76,13 @@ impl<B: Backend> Native<B> {
     /// Capture until stopped or failed.
     fn capture(&mut self) -> Result<()> {
         let period = Duration::from_secs(1) / self.settings.fps.max(1);
-        let mut generation = self.video.current().1;
+        let mut generation = self.video.current().generation;
         let mut next = Instant::now();
         while !self.worker.stopped() {
-            let (video, current) = self.video.current();
+            let Readiness {
+                video,
+                generation: current,
+            } = self.video.current();
             let kind = self.wanted(video);
             // A change of tap kind or video context releases the current tap;
             // the next step opens the kind that matches.
@@ -128,24 +131,31 @@ impl<B: Backend> Native<B> {
     /// Open if needed, then acquire once.
     fn step(&mut self, kind: Kind) -> Result<()> {
         let worker = self.worker.clone();
-        if self.tap.is_none() {
-            let opened = match kind {
-                Kind::Video => worker.watch("open", || self.backend.open(&self.settings)),
-                Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
-            };
-            match opened {
-                Ok(tap) => self.tap = Some((kind, tap)),
-                Err(fault) => return self.recover(kind, fault),
+        let tap = match &mut self.tap {
+            Some((_, tap)) => tap,
+            None => {
+                let opened = match kind {
+                    Kind::Video => worker.watch("open", || self.backend.open(&self.settings)),
+                    Kind::Ui => worker.watch("UI open", || self.backend.open_ui(&self.settings)),
+                };
+                match opened {
+                    Ok(tap) => &mut self.tap.insert((kind, tap)).1,
+                    Err(fault) => return self.recover(kind, fault),
+                }
             }
-        }
-        let Some((_, tap)) = self.tap.as_mut() else {
-            return Ok(());
         };
         let operation = match kind {
             Kind::Video => "acquire",
             Kind::Ui => "UI acquire",
         };
-        match worker.watch(operation, || tap.acquire()) {
+        let acquired = worker.watch(operation, || tap.acquire());
+        self.acquired(kind, acquired)
+    }
+
+    /// Act on one acquisition: publish a frame, time a pending or preparing
+    /// driver, or recover from a fault.
+    fn acquired(&mut self, kind: Kind, acquired: Result<Acquired, Fault>) -> Result<()> {
+        match acquired {
             Ok(Acquired::Frame(frame)) => {
                 self.not_ready_since = None;
                 self.pending_since = None;
@@ -157,20 +167,17 @@ impl<B: Backend> Native<B> {
                         "capturing the TV UI while there is no video"
                     );
                 }
-                worker.offer(frame);
+                self.worker.offer(frame);
             }
             Ok(Acquired::Pending) => {
                 let since = *self.pending_since.get_or_insert_with(Instant::now);
                 if since.elapsed() >= self.limits.pending {
                     return self.recover(
                         kind,
-                        Fault {
-                            error: Error::other(format!(
-                                "webOS video produced no frame for {:?}",
-                                self.limits.pending
-                            )),
-                            fatal: false,
-                        },
+                        Fault::recoverable(Error::other(format!(
+                            "webOS video produced no frame for {:?}",
+                            self.limits.pending
+                        ))),
                     );
                 }
             }

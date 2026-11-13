@@ -2,6 +2,14 @@
 use crate::software::Software;
 use crate::{DEFAULT_BITRATE, FORMAT, FrameKind, H264Error};
 use prysm_core::Frame;
+use std::ops::RangeInclusive;
+
+/// Capture rates an encoder takes.
+const FPS: RangeInclusive<u32> = 1..=60;
+/// Target bitrates an encoder takes: 64 kbit/s to 100 Mbit/s.
+const BITRATE: RangeInclusive<u32> = 64_000..=100_000_000;
+/// The smallest frame side encoded (one macroblock).
+const MIN_SIDE: u32 = 16;
 
 /// Which encoder runs. There is no automatic switching between them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +74,41 @@ struct Session {
     started: bool,
 }
 
+impl Session {
+    /// The configured backend's native encoder for `width`x`height`.
+    fn open(settings: EncoderSettings, width: u32, height: u32) -> Result<Self, H264Error> {
+        let EncoderSettings {
+            backend,
+            fps,
+            bitrate,
+        } = settings;
+        let codec = match backend {
+            Backend::Software => Codec::Software(Box::new(Software::new(bitrate, fps)?)),
+            #[cfg(feature = "hardware")]
+            Backend::Hardware => Codec::Hardware(Box::new(crate::hardware::Hardware::new(
+                width, height, fps, bitrate,
+            )?)),
+            #[cfg(not(feature = "hardware"))]
+            Backend::Hardware => return Err(H264Error::HardwareNotBuilt),
+        };
+        Ok(Self {
+            codec,
+            width,
+            height,
+            started: false,
+        })
+    }
+}
+
+/// What one frame became.
+enum Encoded {
+    /// Software rate control skipped it.
+    Skipped,
+    /// A picture is in the encoder's output; `keyframe` when it starts the
+    /// session.
+    Picture { keyframe: bool },
+}
+
 /// Encodes NV12 frames with the configured [`Backend`]. A session (one
 /// native encoder) opens on the first frame and lasts until [`restart`],
 /// a size change or an error; each session starts with a keyframe.
@@ -93,10 +136,10 @@ impl Encoder {
     /// Rate or bitrate out of range, or [`Backend::Hardware`] in a build
     /// without it.
     pub fn new(settings: EncoderSettings) -> Result<Self, H264Error> {
-        if !(1..=60).contains(&settings.fps) {
+        if !FPS.contains(&settings.fps) {
             return Err(H264Error::Settings("fps must be 1 to 60"));
         }
-        if !(64_000..=100_000_000).contains(&settings.bitrate) {
+        if !BITRATE.contains(&settings.bitrate) {
             return Err(H264Error::Settings(
                 "bitrate must be 64 kbit/s to 100 Mbit/s",
             ));
@@ -132,7 +175,7 @@ impl Encoder {
         let (width, height) = (frame.width(), frame.height());
         let planes = frame
             .nv12_planes()
-            .filter(|_| frame.format() == FORMAT && width >= 16 && height >= 16);
+            .filter(|_| frame.format() == FORMAT && width >= MIN_SIDE && height >= MIN_SIDE);
         let Some((y, uv)) = planes else {
             return Err(H264Error::Input(format!(
                 "{width}x{height} {}",
@@ -148,11 +191,11 @@ impl Encoder {
         }
         let result = self.encode_planes(width, height, y, uv, frame.as_slice());
         match result {
-            Ok(Some(keyframe)) => Ok(Some(Picture {
+            Ok(Encoded::Picture { keyframe }) => Ok(Some(Picture {
                 data: &self.output,
                 keyframe,
             })),
-            Ok(None) => Ok(None),
+            Ok(Encoded::Skipped) => Ok(None),
             Err(error) => {
                 self.restart();
                 Err(error)
@@ -160,7 +203,7 @@ impl Encoder {
         }
     }
 
-    /// `Some(keyframe)` when a picture is in `self.output`.
+    /// Encode into `self.output`, opening a session first if none is open.
     fn encode_planes(
         &mut self,
         width: u32,
@@ -168,34 +211,18 @@ impl Encoder {
         y: &[u8],
         uv: &[u8],
         #[cfg_attr(not(feature = "hardware"), allow(unused_variables))] pixels: &[u8],
-    ) -> Result<Option<bool>, H264Error> {
-        let EncoderSettings {
-            backend,
-            fps,
-            bitrate,
-        } = self.settings;
+    ) -> Result<Encoded, H264Error> {
         let session = match &mut self.session {
             Some(session) => session,
-            None => self.session.insert(Session {
-                codec: match backend {
-                    Backend::Software => Codec::Software(Box::new(Software::new(bitrate, fps)?)),
-                    #[cfg(feature = "hardware")]
-                    Backend::Hardware => Codec::Hardware(Box::new(crate::hardware::Hardware::new(
-                        width, height, fps, bitrate,
-                    )?)),
-                    #[cfg(not(feature = "hardware"))]
-                    Backend::Hardware => return Err(H264Error::HardwareNotBuilt),
-                },
-                width,
-                height,
-                started: false,
-            }),
+            None => self
+                .session
+                .insert(Session::open(self.settings, width, height)?),
         };
         let kind = match &mut session.codec {
             Codec::Software(codec) => {
                 match codec.encode(width as usize, height as usize, y, uv, &mut self.output)? {
                     Some(kind) => kind,
-                    None => return Ok(None),
+                    None => return Ok(Encoded::Skipped),
                 }
             }
             #[cfg(feature = "hardware")]
@@ -208,7 +235,7 @@ impl Encoder {
             ));
         }
         session.started = true;
-        Ok(Some(keyframe))
+        Ok(Encoded::Picture { keyframe })
     }
 }
 

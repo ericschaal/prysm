@@ -30,6 +30,21 @@ pub(crate) struct Fault {
     pub fatal: bool,
 }
 
+impl Fault {
+    /// A failure that ends the source.
+    pub(crate) fn fatal(error: Error) -> Self {
+        Self { error, fatal: true }
+    }
+
+    /// A failure after which the tap is reopened.
+    pub(crate) fn recoverable(error: Error) -> Self {
+        Self {
+            error,
+            fatal: false,
+        }
+    }
+}
+
 /// An open native tap. Created, used and released on the native thread.
 pub(crate) trait Tap {
     fn acquire(&mut self) -> Result<Acquired, Fault>;
@@ -76,8 +91,8 @@ impl Limits {
     };
 }
 
-/// The TV's video as a [`FrameSource`]: the newest frame, `Ok(None)` while
-/// video is unavailable or the driver is preparing, and `Err` on a terminal
+/// The TV's video as a [`FrameSource`]: the newest frame, [`Pull::Idle`]
+/// while video is unavailable or the driver is preparing, and `Err` on a terminal
 /// native failure or a native call that exceeds its watchdog.
 pub struct WebosFrames {
     thread: OwnerThread,

@@ -73,9 +73,11 @@ fn block_signals() -> Result<(), Fault> {
     let mut signals = nix::sys::signal::SigSet::empty();
     signals.add(nix::sys::signal::Signal::SIGINT);
     signals.add(nix::sys::signal::Signal::SIGTERM);
-    signals.thread_block().map_err(|error| Fault {
-        error: Error::adapter("cannot block signals on the webOS capture thread", error),
-        fatal: true,
+    signals.thread_block().map_err(|error| {
+        Fault::fatal(Error::adapter(
+            "cannot block signals on the webOS capture thread",
+            error,
+        ))
     })
 }
 
@@ -117,14 +119,12 @@ impl Tap for HalTap {
             .capture
             .capture()
             .map_err(|error| fault("webOS UI capture failed", error))?;
-        let recoverable = |error| Fault {
-            error,
-            fatal: false,
-        };
         let mut frame = self
             .pool
             .acquire(plane.width, plane.height, TAP_FORMAT)
-            .map_err(|error| recoverable(Error::adapter("cannot allocate an NV12 frame", error)))?;
+            .map_err(|error| {
+                Fault::recoverable(Error::adapter("cannot allocate an NV12 frame", error))
+            })?;
         self.converter
             .convert(
                 plane.pixels,
@@ -133,7 +133,7 @@ impl Tap for HalTap {
                 plane.height as usize,
                 frame.as_mut_slice(),
             )
-            .map_err(recoverable)?;
+            .map_err(Fault::recoverable)?;
         Ok(Acquired::Frame(frame.finish()))
     }
 
@@ -156,10 +156,7 @@ impl Tap for LgTap {
             Ok(sys::Acquired::Frame { width, height }) => {
                 nv12_frame(&mut self.pool, width, height, &self.nv12)
                     .map(Acquired::Frame)
-                    .map_err(|error| Fault {
-                        error,
-                        fatal: false,
-                    })
+                    .map_err(Fault::recoverable)
             }
             Ok(sys::Acquired::Pending) => Ok(Acquired::Pending),
             Ok(sys::Acquired::NotReady) => Ok(Acquired::NotReady),
@@ -192,7 +189,10 @@ pub(crate) fn nv12_frame(
         .expected_size(width, height)
         .map_err(|error| Error::adapter("invalid native NV12 geometry", error))?;
     if expected != Some(nv12.len()) {
-        return Err(Error::other("native NV12 frame has the wrong size"));
+        return Err(Error::other(format!(
+            "native {width}x{height} NV12 frame has {} bytes, not {expected:?}",
+            nv12.len()
+        )));
     }
     let mut frame = pool
         .acquire(width, height, TAP_FORMAT)

@@ -3,7 +3,7 @@ use crate::link::{ForwarderLink, Uplink, Upstream, VERSION_RECONNECT, slim_encod
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
 use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest};
-use prysm_capture_webos::{VideoSignal, WebosSettings};
+use prysm_capture_webos::{Readiness, VideoSignal, WebosSettings};
 use prysm_core::Frame;
 use prysm_h264::H264Error;
 use prysm_ports::{Error, FrameSource, Pull, Result};
@@ -432,7 +432,10 @@ async fn reports_frame_flow_and_forwards_video_commands() {
     assert_eq!(stop, Some(Stop::Requested("stdin closed")));
     assert_eq!(
         feed.current(),
-        (Video::Unavailable, 1),
+        Readiness {
+            video: Video::Unavailable,
+            generation: 1
+        },
         "set, then one reset"
     );
 }

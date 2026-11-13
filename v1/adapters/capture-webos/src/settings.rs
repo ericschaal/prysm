@@ -1,5 +1,16 @@
 use prysm_ports::ValidationError;
 use serde::{Deserialize, Serialize};
+use std::ops::RangeInclusive;
+
+/// The largest size the driver takes (full HD; even sides from 2).
+const MAX_WIDTH: u32 = 1920;
+const MAX_HEIGHT: u32 = 1080;
+/// The rates the driver paces at.
+const FPS: RangeInclusive<u32> = 1..=60;
+/// The TV UI plane's size bounds: HAL fails below 256x144 on the measured
+/// TV, and its cost grows with the size.
+const UI_WIDTH: RangeInclusive<u16> = 256..=320;
+const UI_HEIGHT: RangeInclusive<u16> = 144..=180;
 
 /// `{ "kind": "webos", "width": 640, "height": 360, "fps": 30, "include_ui": true }`
 ///
@@ -58,10 +69,13 @@ impl WebosSettings {
                 ))
             }
         };
-        even("width", self.width, 1920)?;
-        even("height", self.height, 1080)?;
-        if !(1..=60).contains(&self.fps) {
-            return Err(ValidationError::new("fps", "must be 1 to 60"));
+        even("width", self.width, MAX_WIDTH)?;
+        even("height", self.height, MAX_HEIGHT)?;
+        if !FPS.contains(&self.fps) {
+            return Err(ValidationError::new(
+                "fps",
+                format!("must be {} to {}", FPS.start(), FPS.end()),
+            ));
         }
         Ok(())
     }
@@ -73,10 +87,13 @@ impl WebosSettings {
     /// is scaled to fill the surface, exactly as the video tap fills a
     /// non-16:9 configured size, so edge sampling sees the same picture.
     pub(crate) fn ui_size(&self) -> (u16, u16) {
-        let clamp = |value: u32, min: u16, max: u16| {
-            u16::try_from(value.clamp(u32::from(min), u32::from(max))).unwrap_or(max)
+        // A side beyond `u16` is above the bound anyway.
+        let clamp = |value: u32, bounds: RangeInclusive<u16>| {
+            u16::try_from(value).map_or(*bounds.end(), |value| {
+                value.clamp(*bounds.start(), *bounds.end())
+            })
         };
-        (clamp(self.width, 256, 320), clamp(self.height, 144, 180))
+        (clamp(self.width, UI_WIDTH), clamp(self.height, UI_HEIGHT))
     }
 
     /// The driver's options; only called on validated settings.

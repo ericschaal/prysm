@@ -6,11 +6,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 #[derive(Debug, Clone, Default)]
 pub struct VideoSignal(Arc<Mutex<Readiness>>);
 
-#[derive(Debug, Clone, Copy, Default)]
-struct Readiness {
-    video: Video,
-    /// Bumped by every [`VideoSignal::reset`].
-    generation: u64,
+/// What a [`VideoSignal`] says now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Readiness {
+    pub video: Video,
+    /// The video context: bumped by every [`VideoSignal::reset`].
+    pub generation: u64,
 }
 
 impl VideoSignal {
@@ -26,8 +27,8 @@ impl VideoSignal {
 
     /// Availability and context generation (the number of resets).
     #[must_use]
-    pub fn current(&self) -> (Video, u64) {
-        self.lock(|state| (state.video, state.generation))
+    pub fn current(&self) -> Readiness {
+        self.lock(|state| *state)
     }
 
     fn lock<T>(&self, f: impl FnOnce(&mut Readiness) -> T) -> T {

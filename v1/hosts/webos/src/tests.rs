@@ -1,5 +1,5 @@
 use crate::link::EngineLink;
-use prysm_capture_webos::VideoSignal;
+use prysm_capture_webos::{Readiness, VideoSignal};
 use prysm_ports::{AdapterSettings, Error, LightingTarget, Result, SessionPhase, Settings};
 use prysm_runtime::Prysm;
 use prysm_runtime::fakes::{
@@ -102,7 +102,14 @@ async fn commands_drive_video_and_lighting_and_status_follows() {
         status(&running).unwrap().target,
         Some(LightingTarget::Processed)
     );
-    assert_eq!(feed.current(), (Video::Available, 1), "set, then one reset");
+    assert_eq!(
+        feed.current(),
+        Readiness {
+            video: Video::Available,
+            generation: 1
+        },
+        "set, then one reset"
+    );
     assert!(log.wait_for("output.write:", 1).await);
 
     peer.send(Command::Lighting {
