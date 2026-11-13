@@ -14,7 +14,7 @@ stderr. RUST_LOG filters log lines by target [default: warn,prysm=info].";
 
 #[derive(Debug, PartialEq, Eq, Parser)]
 #[command(version, after_help = AFTER_HELP)]
-pub struct Options {
+pub(crate) struct Options {
     /// Settings file
     #[arg(value_name = "settings.json")]
     pub settings: PathBuf,
@@ -44,7 +44,7 @@ pub struct Options {
 impl Options {
     /// Who may use the API besides the portal's own pages; validated by `WebPortal`.
     #[must_use]
-    pub fn access(&self) -> Access {
+    pub(crate) fn access(&self) -> Access {
         match self.allow_origin.as_slice() {
             [] => Access::SameOrigin,
             [any] if any == "*" => Access::AnyOrigin,
@@ -57,7 +57,11 @@ impl Options {
 ///
 /// # Errors
 /// Help, version or a usage error, to be shown with [`clap::Error::exit`].
-pub fn parse<I, T>(name: &'static str, about: &'static str, args: I) -> Result<Options, clap::Error>
+pub(crate) fn parse<I, T>(
+    name: &'static str,
+    about: &'static str,
+    args: I,
+) -> Result<Options, clap::Error>
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,

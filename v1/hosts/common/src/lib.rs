@@ -25,7 +25,7 @@
 //! the host's adapters and the run closure is never called.
 mod args;
 
-pub use args::{Options, parse};
+use args::{Options, parse};
 
 use futures::future::BoxFuture;
 use prysm_ports::{
@@ -87,16 +87,7 @@ where
     eprintln!("{name}: settings {}", options.settings.display());
     let prysm = adapters(Prysm::builder(SettingsFile::new(&options.settings)));
     if options.check_settings {
-        return match prysm.check() {
-            Ok(()) => {
-                eprintln!("{name}: settings OK");
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("{name}: {}", chain(&error));
-                ExitCode::FAILURE
-            }
-        };
+        return exit_code(name, prysm.check(), "settings OK");
     }
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -108,16 +99,19 @@ where
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(host(
-        Host {
-            name,
-            options,
-            quiet,
-        },
-        prysm,
-    )) {
+    let process = Host {
+        name,
+        options,
+        quiet,
+    };
+    exit_code(name, runtime.block_on(host(process, prysm)), "stopped")
+}
+
+/// Print how `result` ended (`done` when it succeeded) and its exit code.
+fn exit_code(name: &str, result: Result<()>, done: &str) -> ExitCode {
+    match result {
         Ok(()) => {
-            eprintln!("{name}: stopped");
+            eprintln!("{name}: {done}");
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -321,7 +315,7 @@ impl Surface for Status {
         self: Box<Self>,
         engine: EngineHandle,
         shutdown: Shutdown,
-    ) -> futures::future::BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<()>> {
         Box::pin(self.watch(engine, shutdown))
     }
 }
@@ -329,7 +323,7 @@ impl Surface for Status {
 /// What has already been reported, so only changes are printed.
 #[derive(Debug, Default)]
 struct Seen {
-    state: Option<String>,
+    state: Option<(LightingTarget, SessionState)>,
     failure: Option<String>,
     output_issue: Option<OutputIssue>,
     surface_failures: usize,
@@ -338,13 +332,13 @@ struct Seen {
 impl Seen {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<String> {
         let mut lines = Vec::new();
-        let state = format!(
-            "target {}, session {}",
-            snapshot.target.as_str(),
-            snapshot.session
-        );
-        if self.state.as_ref() != Some(&state) {
-            lines.push(state.clone());
+        let state = (snapshot.target, snapshot.session);
+        if self.state != Some(state) {
+            lines.push(format!(
+                "target {}, session {}",
+                snapshot.target.as_str(),
+                snapshot.session
+            ));
             self.state = Some(state);
         }
         if snapshot.output_issue != self.output_issue {
