@@ -90,7 +90,8 @@ One engine, or Firefox (installed with `npx playwright install firefox`), from
 `v1/frontend`: `npx playwright test -c e2e --project firefox`.
 
 The binary embeds the portal bundle at compile time: rebuild the frontend,
-then `prysm-headless`, before testing a frontend change. The tests take the
+then `prysm-headless`, before testing a frontend change; the suite stops at
+once if the binary serves another bundle than `dist`. The tests take the
 debug builds from `$CARGO_TARGET_DIR` (default `v1/target`), or
 `PRYSM_HEADLESS_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
 go to `v1/frontend/.e2e/`. Find elements as a user does, by role and

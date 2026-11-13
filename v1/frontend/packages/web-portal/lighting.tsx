@@ -100,6 +100,74 @@ function useLingering(active: boolean, delay: number, hold: number) {
   return shown;
 }
 
+/**
+ * What the card shows: lit by screen sync or the effects, starting, stopped
+ * by a problem, off, or without the setup it needs.
+ */
+type Mood = 'off' | 'problem' | 'sync' | 'effects' | 'starting' | 'unset';
+
+/**
+ * A failure wins, whatever the session still does: after a failed start
+ * from effects, the engine leaves the session `native` (the lights keep
+ * their own effects) with the target `processed` and the failure set. Lit
+ * only when the session does what was asked.
+ */
+function moodOf(
+  target: LightingTarget,
+  session: Session,
+  failure: Failure | null,
+  configured: boolean,
+): Mood {
+  if (!configured) return 'unset';
+  if (session.state === 'faulted' || (target !== 'off' && failure))
+    return 'problem';
+  if (session.state === 'running' && target === 'processed') return 'sync';
+  if (session.state === 'native' && target === 'device_native')
+    return 'effects';
+  return target !== 'off' ? 'starting' : 'off';
+}
+
+/**
+ * The calm line, said for sighted people (the status says it for screen
+ * readers): what Power will do, a pause once it lasts, or what runs. Empty
+ * while the card has something else to say, or Power cannot turn on.
+ */
+function calmLine({
+  info,
+  powerReason,
+  target,
+  session,
+  input,
+  mode,
+  effects,
+  note,
+  lit,
+}: {
+  info: Info | null;
+  powerReason: string | null;
+  target: LightingTarget;
+  session: Session;
+  input: Input | undefined;
+  mode: LightingMode;
+  effects: string;
+  note: 'waiting' | 'starting' | null;
+  lit: boolean;
+}) {
+  const on = target !== 'off';
+  if (info || (!on && powerReason)) return '';
+  if (!on)
+    return mode === 'processed'
+      ? 'Power turns on Screen sync.'
+      : `Power turns on ${effects}.`;
+  if (note === 'waiting') return 'Waiting for the picture.';
+  if (note === 'starting') return 'Starting…';
+  if (lit && target === 'processed' && input?.receiving)
+    return 'Following the screen.';
+  if (target === 'device_native' && session.state === 'native')
+    return `${effects} are showing.`;
+  return '';
+}
+
 /** The card's one informative line: a problem, a warning or a note. */
 interface Info {
   tone: 'problem' | 'warning' | 'note';
@@ -264,17 +332,7 @@ export function LightCard({
   const powerReason = on ? reasonOf(null) : reasons[mode];
   const locked = disabled || pending !== null;
 
-  // A failure wins, whatever the session still does: after a failed start
-  // from effects, the engine leaves the session `native` (the lights keep
-  // their own effects) with the target `processed` and the failure set.
-  // Lit only when the session does what was asked.
-  let mood = 'off';
-  if (faulted || (on && failure)) mood = 'problem';
-  else if (session.state === 'running' && target === 'processed') mood = 'sync';
-  else if (session.state === 'native' && target === 'device_native')
-    mood = 'effects';
-  else if (on) mood = 'starting';
-  if (!configured) mood = 'unset';
+  const mood = moodOf(target, session, failure, configured);
   // Switching modes passes through starting: the light stays up meanwhile.
   const [stayLit, setStayLit] = useState(false);
   const running = mood === 'sync' || mood === 'effects';
@@ -318,7 +376,8 @@ export function LightCard({
   }, [pause]);
   const note = lasting === pause ? pause : null;
   const status = headline({ target, session, failure, effects });
-  let palette = mode === 'device_native' ? 'effects' : 'sync';
+  let palette: 'sync' | 'effects' | 'error' =
+    mode === 'device_native' ? 'effects' : 'sync';
   if (mood === 'problem') palette = 'error';
   // Busy: a click on its way, or the lights starting (not yet lit).
   const ring = useLingering(
@@ -339,22 +398,17 @@ export function LightCard({
   else if (outputIssue && session.state === 'running')
     info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
 
-  // The calm line, said for sighted people (the status says it for screen
-  // readers): what Power will do, a pause once it lasts, or what runs.
-  let calm = '';
-  if (info) calm = '';
-  else if (!on && powerReason) calm = '';
-  else if (!on)
-    calm =
-      mode === 'processed'
-        ? 'Power turns on Screen sync.'
-        : `Power turns on ${effects}.`;
-  else if (note === 'waiting') calm = 'Waiting for the picture.';
-  else if (note === 'starting') calm = 'Starting…';
-  else if (lit && target === 'processed' && input?.receiving)
-    calm = 'Following the screen.';
-  else if (target === 'device_native' && session.state === 'native')
-    calm = `${effects} are showing.`;
+  const calm = calmLine({
+    info,
+    powerReason,
+    target,
+    session,
+    input,
+    mode,
+    effects,
+    note,
+    lit,
+  });
   // With the lights' own effects chosen, Prysm's picture controls do not
   // reach the lights (the engine runs no session): one line says so, with
   // the way to the device's own controls.

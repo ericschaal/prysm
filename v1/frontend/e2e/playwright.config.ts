@@ -6,6 +6,7 @@ const ci = !!process.env.CI;
 
 export default defineConfig({
   testDir: '.',
+  globalSetup: './global-setup.ts',
   outputDir: '../.e2e/results',
   timeout: 30_000,
   expect: { timeout: 10_000 },

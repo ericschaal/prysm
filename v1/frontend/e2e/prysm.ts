@@ -21,6 +21,7 @@ const target = process.env.CARGO_TARGET_DIR ?? path.join(v1, 'target');
 const headlessBin =
   process.env.PRYSM_HEADLESS_BIN ??
   path.join(target, 'debug', 'prysm-headless');
+const dist = path.join(v1, 'frontend', 'dist', 'headless', 'web-portal');
 const senderBin =
   process.env.PRYSM_TEST_SENDER_BIN ??
   path.join(target, 'debug', 'examples', 'test_sender');
@@ -131,6 +132,37 @@ class Process {
       throw new Error(`no exit within ${BOUND_MS} ms of SIGTERM`);
     }
     return code;
+  }
+}
+
+/** The entry script a page loads, e.g. `/assets/index-CZ3hLPcm.js`. */
+const script = /\/assets\/index-[\w-]+\.js/;
+
+/**
+ * Fails unless the `prysm-headless` under test serves the bundle `npm run
+ * build` last wrote: it embeds the bundle when cargo builds it, so a binary
+ * built before the frontend serves the old one.
+ */
+export async function checkBundle(): Promise<void> {
+  const built = script.exec(
+    await readFile(path.join(dist, 'assets.rs'), 'utf8'),
+  )?.[0];
+  const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
+  const file = path.join(dir, 'settings.json');
+  await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
+  const host = new Process(headlessBin, [file, '--listen', '127.0.0.1:0']);
+  try {
+    const line = await host.waitFor('portal http://');
+    const url = /http:\/\/[^/\s]+/.exec(line)?.[0];
+    if (!url) throw new Error(`no address in ${line}`);
+    const served = script.exec(await (await fetch(`${url}/`)).text())?.[0];
+    if (!built || served !== built)
+      throw new Error(
+        `${headlessBin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild prysm-headless (cargo build -p prysm-headless) after npm run build`,
+      );
+  } finally {
+    await host.stop();
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

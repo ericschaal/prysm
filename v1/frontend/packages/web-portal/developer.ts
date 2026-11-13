@@ -14,7 +14,7 @@ const changed = 'prysm-developer';
 /** Without storage (a private window) the choice lasts the page. */
 let unstored = false;
 
-export function storedDeveloper() {
+function storedDeveloper() {
   try {
     return window.localStorage.getItem(developerStorageKey) === 'on';
   } catch {

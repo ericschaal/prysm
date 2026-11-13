@@ -16,14 +16,18 @@ export const themeChoices: readonly {
   { value: 'dark', label: 'Dark', about: 'Always dark.' },
 ];
 
+/** `value` as a fixed theme, else `system`. */
+function themeOf(value: string | null): Theme {
+  return value === 'light' || value === 'dark' ? value : 'system';
+}
+
 /** A per-browser preference: kept in local storage, never sent to Prysm. */
 export const themeStorageKey = 'prysm.theme';
 
 /** The stored choice; `system` without one or without storage. */
 export function storedTheme(): Theme {
   try {
-    const value = window.localStorage.getItem(themeStorageKey);
-    return value === 'light' || value === 'dark' ? value : 'system';
+    return themeOf(window.localStorage.getItem(themeStorageKey));
   } catch {
     return 'system';
   }
@@ -31,8 +35,7 @@ export function storedTheme(): Theme {
 
 /** The theme in use on this page: the one applied, else the system's. */
 export function currentTheme(): Theme {
-  const value = document.documentElement.getAttribute('data-theme');
-  return value === 'light' || value === 'dark' ? value : 'system';
+  return themeOf(document.documentElement.getAttribute('data-theme'));
 }
 
 /**

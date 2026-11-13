@@ -99,19 +99,24 @@ function useRoute() {
     setHash(next);
     window.location.hash = next;
   }
-  let route: Route = 'home';
-  if (hash === calibrateRoute) route = 'calibrate';
-  else if (hash === settingsRoute) route = 'settings';
-  else if (hash === previewRoute) route = 'preview';
-  else if (hash === videoRoute) route = 'video';
-  else if (hash === lightsRoute) route = 'lights';
-  else if (hash === profilesRoute) route = 'profiles';
-  else if (hash === pictureRoute) route = 'picture';
-  else if (hash === appearanceRoute) route = 'appearance';
-  else if (hash === aboutRoute) route = 'about';
-  else if (hash.startsWith(`${profilesRoute}/`)) route = 'profile';
+  let route: Route = routes[hash] ?? 'home';
+  if (route === 'home' && hash.startsWith(`${profilesRoute}/`))
+    route = 'profile';
   return [route, go, hash] as const;
 }
+
+/** The page each fixed hash names; a profile's page is under its route. */
+const routes: Readonly<Record<string, Route | undefined>> = {
+  [calibrateRoute]: 'calibrate',
+  [settingsRoute]: 'settings',
+  [previewRoute]: 'preview',
+  [videoRoute]: 'video',
+  [lightsRoute]: 'lights',
+  [profilesRoute]: 'profiles',
+  [pictureRoute]: 'picture',
+  [appearanceRoute]: 'appearance',
+  [aboutRoute]: 'about',
+};
 
 function SettingsIcon() {
   return (
