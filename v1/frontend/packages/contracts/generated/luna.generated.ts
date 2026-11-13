@@ -19,10 +19,12 @@ export interface components {
          *     (slim): the encoder the receiver requested could not start or failed;
          *     the receiver is told, and another encoding chosen in its portal may work.
          *     `receiver` (slim): the receiver is unavailable (not lighting, unreachable,
-         *     or its name does not resolve); the worker keeps reconnecting. `other`: anything else.
+         *     or its name does not resolve); the worker keeps reconnecting. `version`
+         *     (slim): Prysm speaks another capture stream version; both need the same
+         *     release, and the worker retries every 10 s. `other`: anything else.
          * @enum {string}
          */
-        FailureKind: "encoder" | "receiver" | "other";
+        FailureKind: "encoder" | "receiver" | "version" | "other";
         /**
          * @description Which package this supervisor belongs to.
          * @enum {string}

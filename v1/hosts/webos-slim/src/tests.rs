@@ -1,5 +1,5 @@
 use crate::capture::{RequestedCapture, settings};
-use crate::link::{ForwarderLink, Uplink, Upstream, slim_encoding};
+use crate::link::{ForwarderLink, Uplink, Upstream, VERSION_RECONNECT, slim_encoding};
 use crate::resolve::Resolver;
 use prysm_capture_remote::testkit::Portal;
 use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest};
@@ -87,8 +87,9 @@ impl Opened {
     }
 }
 
-/// The worker, with `connect` opening its uplink (retried every 20 ms) and
-/// `opened` the capture.
+/// The worker, with `connect` opening its uplink (retried every 20 ms, or
+/// every [`VERSION_RECONNECT`] after a version mismatch) and `opened` the
+/// capture.
 fn start<S: Upstream + 'static>(
     opened: &Opened,
     connect: impl FnMut() -> Result<S> + Send + 'static,
@@ -97,7 +98,7 @@ fn start<S: Upstream + 'static>(
     let feed = VideoSignal::default();
     let stop = link.stop.clone();
     let (sink, flow) = Uplink::new(connect);
-    let sink = sink.retry_every(Duration::from_millis(20));
+    let sink = sink.retry_every(Duration::from_millis(20), VERSION_RECONNECT);
     let source = RequestedCapture::new(flow.clone(), {
         let opened = opened.clone();
         move |shape| opened.open(shape)
@@ -144,6 +145,13 @@ fn waiting(event: &Event) -> Option<&str> {
         .filter(|status| !status.capturing)
         .and_then(|status| status.failure.as_ref())
         .filter(|failure| failure.kind == FailureKind::Receiver)
+        .map(|failure| failure.message.as_str())
+}
+
+fn version_differs(event: &Event) -> Option<&str> {
+    status(event)
+        .and_then(|status| status.failure.as_ref())
+        .filter(|failure| failure.kind == FailureKind::Version)
         .map(|failure| failure.message.as_str())
 }
 
@@ -349,14 +357,18 @@ async fn a_new_request_reaches_the_tv_on_the_next_connection() {
 }
 
 /// A Prysm of another capture stream version refuses the upgrade: the
-/// worker keeps running and its status names both versions.
+/// worker keeps running, reports a `version` failure naming both versions
+/// and does not retry before [`VERSION_RECONNECT`].
 #[tokio::test]
-async fn a_prysm_of_another_version_is_reported_as_the_wait() {
+async fn a_prysm_of_another_version_is_reported_as_such_and_retried_slowly() {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicU32::new(0));
+    let counted = attempts.clone();
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
+            counted.fetch_add(1, Ordering::SeqCst);
             let mut head = [0; 1024];
             if stream.read(&mut head).is_ok() {
                 let _ = stream.write_all(
@@ -374,14 +386,17 @@ async fn a_prysm_of_another_version_is_reported_as_the_wait() {
         move || RemoteSender::connect(&url, address),
     );
     let event = peer
-        .wait_for(|e| waiting(e).is_some_and(|reason| reason.contains("versions differ")))
+        .wait_for(|e| version_differs(e).is_some())
         .await
         .unwrap();
-    let reason = waiting(&event).unwrap();
+    let reason = version_differs(&event).unwrap();
     assert!(
         reason.contains("Prysm: 9") && reason.contains("update both"),
         "{reason}"
     );
+    // Ten ordinary retry intervals pass without another attempt.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(attempts.load(Ordering::SeqCst), 1, "retried too soon");
     assert!(!task.is_finished(), "the worker keeps running");
     peer.close();
     let (result, _) = task.await.unwrap();

@@ -37,6 +37,8 @@ Nothing is saved until the last step.
    or an IP address such as `192.168.1.30`, with `:PORT` only if WLED's web
    page is not on port 80. Do not type `http://`.
    Enter the number of LEDs on each edge; use 0 for an edge without LEDs.
+   Prysm takes 1 to 16384 LEDs in total (the most a WLED device drives;
+   smaller chips such as the ESP8266 stop far earlier).
 3. **Review and start.** Check the summary, then choose
    **Save and start screen sync**, or **Save only** to start later.
 

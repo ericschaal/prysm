@@ -36,10 +36,11 @@
         "type": "object"
       },
       "FailureKind": {
-        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `other`: anything else.",
+        "description": "What a failure is, so the app can offer the matching fix. `encoder`\n(slim): the encoder the receiver requested could not start or failed;\nthe receiver is told, and another encoding chosen in its portal may work.\n`receiver` (slim): the receiver is unavailable (not lighting, unreachable,\nor its name does not resolve); the worker keeps reconnecting. `version`\n(slim): Prysm speaks another capture stream version; both need the same\nrelease, and the worker retries every 10 s. `other`: anything else.",
         "enum": [
           "encoder",
           "receiver",
+          "version",
           "other"
         ],
         "type": "string"

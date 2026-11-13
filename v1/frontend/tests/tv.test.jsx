@@ -606,6 +606,7 @@ test('status card covers the supervisor states for both packages', () => {
       slim({ video: 'unavailable' }),
       slim({ failure: { kind: 'receiver', message: 'x' } }),
       slim({ failure: { kind: 'encoder', message: 'x' } }),
+      slim({ failure: { kind: 'version', message: 'x' } }),
       slim({ failure: { kind: 'other', message: 'x' } }),
       full({ enabled: false }),
       full({ enabled: true, capturing: true, lighting: 'processed' }),
@@ -717,6 +718,33 @@ test('slim encoder failures point to the portal; waits, other failures and the f
   );
   assert.deepEqual([wait.title, wait.attention], ['Waiting for Prysm', false]);
   assert.doesNotMatch(wait.description, /encoding/);
+  // Another stream version is not a wait for Prysm: both need updating.
+  const versions = status(
+    slim({
+      failure: {
+        kind: 'version',
+        message:
+          'waiting for the receiver: the capture stream versions differ (Prysm: 9, this end: 4); update both',
+      },
+    }),
+  );
+  assert.deepEqual(
+    [versions.title, versions.description, versions.attention],
+    ['Update Prysm and TV app', 'Both need the same release.', true],
+  );
+  const versionText = status(
+    slim({
+      failure: {
+        kind: 'receiver',
+        message: 'the capture stream versions differ; update both',
+      },
+    }),
+  );
+  assert.equal(
+    versionText.title,
+    'Waiting for Prysm',
+    'only the kind says the versions differ, not the text',
+  );
   const unknownWait = status(
     slim({
       failure: { kind: 'other', message: 'waiting for the receiver: refused' },
@@ -888,6 +916,17 @@ test('every state keeps the same slots, plain words and focus on a control', asy
                 failure: { kind: 'encoder', message: 'v4l2: EBUSY' },
               },
             ],
+            [
+              'version',
+              {
+                ...running,
+                failure: {
+                  kind: 'version',
+                  message:
+                    'waiting for the receiver: Prysm answered HTTP 426: versions differ',
+                },
+              },
+            ],
           ]
         : []),
       ['stopping', { worker: { phase: 'stopping' }, failure: null }],
@@ -907,7 +946,14 @@ test('every state keeps the same slots, plain words and focus on a control', asy
         assert(tv.el(id), `${label}: #${id}`);
       assert(tv.text('status-title'), `${label}: a headline`);
       assert(tv.text('status-description'), `${label}: one line of detail`);
+      assert(tv.text('status-title').length <= 24, label);
       assert(tv.text('status-description').length <= 52, label);
+      if (name === 'version')
+        assert.deepEqual(
+          [tv.text('status-title'), tv.text('status-description')],
+          ['Update Prysm and TV app', 'Both need the same release.'],
+          'another stream version asks for an update, not for Prysm to run',
+        );
       // No programmer words outside Diagnostics.
       assert.doesNotMatch(
         tv.el('app').textContent,

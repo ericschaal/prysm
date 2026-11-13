@@ -769,6 +769,29 @@ fn failures_carry_their_kind() {
         "receiver"
     );
 
+    // Prysm of another capture stream version: its own kind, not a wait.
+    script(
+        &mut m,
+        t0,
+        vec![(
+            1,
+            reported(WorkerStatus {
+                failure: Some(WorkerFailure::new(
+                    FailureKind::Version,
+                    "waiting for the receiver: the capture stream versions differ",
+                )),
+                ..WorkerStatus::default()
+            }),
+            vec![],
+        )],
+    );
+    let state = m.state(t0);
+    assert_eq!(kind(&state), Some(FailureKind::Version));
+    assert_eq!(
+        serde_json::to_value(&state).unwrap()["failure"]["kind"],
+        "version"
+    );
+
     // The worker's final status names the encoder; the exit keeps the kind.
     script(
         &mut m,

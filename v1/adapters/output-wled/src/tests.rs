@@ -1,7 +1,7 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
 use crate::observe::Observer;
-use crate::{LedCounts, Wled, WledSettings, http::RequestError};
+use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
     AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Registry,
@@ -437,28 +437,75 @@ fn validation_rejects_malformed_and_non_unicast_addresses_and_led_totals() {
         assert_eq!(error.field, "address", "{address}");
         assert!(error.reason.contains(reason), "{address}: {}", error.reason);
     }
+    let with = |leds| {
+        WledSettings {
+            leds,
+            ..valid.clone()
+        }
+        .validate()
+    };
+    // The total, at the counts: none, or more than WLED drives across edges.
     for leds in [
         LedCounts::default(),
         LedCounts {
-            top: u16::MAX,
+            top: MAX_LEDS,
             left: 1,
             ..LedCounts::default()
         },
+        LedCounts {
+            top: 5000,
+            right: 5000,
+            bottom: 5000,
+            left: 5000,
+        },
     ] {
-        let settings = WledSettings {
-            leds,
-            ..valid.clone()
-        };
-        assert_eq!(settings.validate().unwrap_err().field, "leds");
+        let error = with(leds).unwrap_err();
+        assert_eq!(error.field, "leds", "{leds:?}");
+        assert_eq!(
+            error.reason,
+            "the LEDs must total 1 to 16384, the most WLED drives"
+        );
     }
-    let most = WledSettings {
-        leds: LedCounts {
-            top: u16::MAX,
+    // One edge over the limit, at that edge.
+    for (leds, field) in [
+        (
+            LedCounts {
+                top: MAX_LEDS + 1,
+                ..LedCounts::default()
+            },
+            "leds.top",
+        ),
+        (
+            LedCounts {
+                top: 1,
+                left: u16::MAX,
+                ..LedCounts::default()
+            },
+            "leds.left",
+        ),
+    ] {
+        let error = with(leds).unwrap_err();
+        assert_eq!(error.field, field);
+        assert_eq!(
+            error.reason,
+            "an edge can have at most 16384 LEDs, the most WLED drives"
+        );
+    }
+    // Every LED on one edge, and 5000 on one edge, are fine.
+    for leds in [
+        LedCounts {
+            top: MAX_LEDS,
             ..LedCounts::default()
         },
-        ..valid
-    };
-    assert_eq!(most.validate(), Ok(()));
+        LedCounts {
+            top: 5000,
+            right: 54,
+            bottom: 96,
+            left: 54,
+        },
+    ] {
+        assert_eq!(with(leds), Ok(()), "{leds:?}");
+    }
 }
 
 #[test]

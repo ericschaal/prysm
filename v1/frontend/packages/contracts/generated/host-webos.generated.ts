@@ -186,7 +186,10 @@ export interface components {
             right: components["schemas"]["LedColor"][];
             top: components["schemas"]["LedColor"][];
         };
-        /** @description LEDs per edge, as seen from the front of the screen. An omitted edge has none. */
+        /**
+         * @description LEDs per edge, as seen from the front of the screen. An omitted edge has
+         *     none. Together 1..=[`MAX_LEDS`].
+         */
         LedCounts: {
             /**
              * Format: int32

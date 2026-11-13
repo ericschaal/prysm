@@ -2,10 +2,13 @@ import type { LedCounts } from '@prysm/contracts/host-desktop';
 
 export type Edge = keyof LedCounts;
 
-/** The total LED count WLED accepts (`LedCounts::total` in `output-wled`). */
-export const ledTotalLimits = { min: 1, max: 65535 } as const;
-/** Per edge, from the generated `LedCounts` schema. */
-export const ledEdgeLimits = { min: 0, max: 65535, step: 1 } as const;
+/**
+ * The total LED count Prysm accepts: at most `MAX_LEDS` in `output-wled`,
+ * the most a WLED device drives.
+ */
+export const ledTotalLimits = { min: 1, max: 16384 } as const;
+/** Per edge, from the generated `LedCounts` schema: one edge may hold all. */
+export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
 
 export type Corner = 'bottom-left' | 'top-left' | 'top-right' | 'bottom-right';
 

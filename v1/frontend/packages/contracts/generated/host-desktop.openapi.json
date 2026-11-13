@@ -500,33 +500,33 @@
       },
       "LedCounts": {
         "additionalProperties": false,
-        "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has none.",
+        "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has\nnone. Together 1..=[`MAX_LEDS`].",
         "properties": {
           "bottom": {
             "default": 0,
             "format": "int32",
-            "maximum": 65535,
+            "maximum": 16384,
             "minimum": 0,
             "type": "integer"
           },
           "left": {
             "default": 0,
             "format": "int32",
-            "maximum": 65535,
+            "maximum": 16384,
             "minimum": 0,
             "type": "integer"
           },
           "right": {
             "default": 0,
             "format": "int32",
-            "maximum": 65535,
+            "maximum": 16384,
             "minimum": 0,
             "type": "integer"
           },
           "top": {
             "default": 0,
             "format": "int32",
-            "maximum": 65535,
+            "maximum": 16384,
             "minimum": 0,
             "type": "integer"
           }

@@ -1028,7 +1028,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
         field('output.leds.top').max,
         field('output.leds.top').step,
       ],
-      ['0', '65535', '1'],
+      ['0', '16384', '1'],
     );
     assert.equal(
       caption(),
@@ -1041,17 +1041,17 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     await submit(form('Lights'));
     assert.equal(
       $('[data-field-message="output.leds"]').textContent,
-      'The total must be 1 to 65535 LEDs. Use 0 for an edge without LEDs.',
+      'The total must be 1 to 16384 LEDs. Use 0 for an edge without LEDs.',
     );
     assert.equal(document.activeElement, $('[data-field="output.leds"]'));
-    await edit(field('output.leds.top'), 70000);
+    await edit(field('output.leds.top'), 20000);
     assert.equal(
       errorOf(field('output.leds.top')),
-      'Enter a whole number from 0 to 65535.',
+      'Enter a whole number from 0 to 16384.',
     );
-    await edit(field('output.leds.top'), 65535);
+    await edit(field('output.leds.top'), 16384);
     await edit(field('output.leds.left'), 1);
-    assert(text().includes('The total must be 1 to 65535 LEDs.'));
+    assert(text().includes('The total must be 1 to 16384 LEDs.'));
     assert.equal(saves(fixture), 0);
 
     for (const [edge, count] of [

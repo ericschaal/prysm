@@ -71,7 +71,7 @@ Status: **present**, **partial**, **missing**, **changed** (intentionally differ
 | Brightness, shadow lift, smoothing, sample density, spatial reach, black-bar removal | `prysm-contract/src/processing.rs` | present | Same defaults from `prysm_core::Config` |
 | Live processing changes | Applied without restart | present | Applied at next frame boundary |
 | Colour correction from active profile | `Settings.calibration` → `Config.correction` | missing | `Processing::config` uses default correction (D7) |
-| LED counts per edge, zero skips edge, total 1..65535 | `prysm-contract/src/resources.rs` | present | `adapters/output-wled/src/settings.rs` |
+| LED counts per edge, zero skips edge, total 1..65535 (v1: 1..16384, WLED's `MAX_LEDS`) | `prysm-contract/src/resources.rs` | present | `adapters/output-wled/src/settings.rs` |
 | Wiring order (bottom-left, clockwise) | Fixed in `prysm-renderer-wled` | present | Same renderer. Neither supports offset, direction or gaps |
 | Quiet-source refresh | Pipeline resends | present | Last colours rewritten every 500 ms |
 

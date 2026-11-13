@@ -176,6 +176,10 @@ pub enum FailureKind {
     /// unreachable or its name does not resolve). The worker keeps
     /// reconnecting.
     Receiver,
+    /// Slim: Prysm speaks another capture stream version than this TV app;
+    /// both need the same release. The worker retries slowly, so an update
+    /// on either side is picked up without restarting it.
+    Version,
     /// Anything else.
     Other,
 }

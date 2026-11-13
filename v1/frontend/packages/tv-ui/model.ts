@@ -164,6 +164,12 @@ export function tvStatus(
     title = 'Encoding not supported';
     description = 'Choose another encoding in Prysm’s web portal.';
     attention = true;
+  } else if (failed && !full && kind === 'version') {
+    // Prysm and this app speak different stream versions; the TV keeps
+    // checking (every 10 s), so updating either side is enough.
+    title = 'Update Prysm and TV app';
+    description = 'Both need the same release.';
+    attention = true;
   } else if (failed) {
     title = stopped;
     if (phase === 'retrying')

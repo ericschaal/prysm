@@ -173,6 +173,17 @@ export function runDemo(
             capturing: false,
             fps: null,
           },
+          'TV: Prysm of another version': {
+            enabled: true,
+            worker: { phase: 'running' },
+            failure: {
+              kind: 'version',
+              message:
+                'the capture stream versions differ (Prysm: 5, this end: 4); update both',
+            },
+            capturing: false,
+            fps: null,
+          },
         }
       : {}),
   };

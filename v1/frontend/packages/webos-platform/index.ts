@@ -120,6 +120,7 @@ const phases: Record<Phase['phase'], true> = {
 const failureKinds: Record<FailureKind, true> = {
   encoder: true,
   receiver: true,
+  version: true,
   other: true,
 };
 const targets: Record<LightingTarget, true> = {

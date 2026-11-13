@@ -31,7 +31,7 @@ mod output;
 mod settings;
 
 pub use output::Wled;
-pub use settings::{LedCounts, WledSettings};
+pub use settings::{LedCounts, MAX_LEDS, WledSettings};
 
 #[cfg(test)]
 mod tests;

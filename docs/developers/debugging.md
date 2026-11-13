@@ -30,7 +30,9 @@
   `prysm-headless` (or `prysm-tui`) with the `remote` capture and the `null`
   output, turn lighting on and give the TV the desktop's portal address. The
   portal shows the received rate and the preview; a TV of another stream
-  version shows "versions differ" as its waiting reason.
+  version reports the failure kind `version` (the TV app says "Update Prysm
+  and TV app"; the reason in its diagnostics names both versions) and
+  retries every 10 s.
 
 ## Logs
 

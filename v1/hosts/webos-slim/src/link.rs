@@ -2,10 +2,10 @@
 //! keeps reconnecting to the receiver, follows its request and tells the
 //! link whether frames flow.
 use futures::future::BoxFuture;
-use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest};
+use prysm_capture_remote::{RemoteSender, SendError, StreamEncoding, StreamRequest, WireError};
 use prysm_capture_webos::VideoSignal;
 use prysm_core::Frame;
-use prysm_ports::{FrameSink, Result, chain};
+use prysm_ports::{Error, FrameSink, Result, chain};
 use prysm_runtime::{Shutdown, Surface};
 use prysm_webos_link::worker::{Link, Stop};
 use prysm_webos_link::{
@@ -22,6 +22,12 @@ const SAMPLE: Duration = Duration::from_secs(1);
 /// How long the uplink waits between connection attempts while the receiver
 /// is unavailable (its host is not lighting, or unreachable).
 pub const RECONNECT: Duration = Duration::from_secs(1);
+
+/// How long the uplink waits between connection attempts while Prysm speaks
+/// another capture stream version. That lasts until one side is updated,
+/// so it is not retried every second; an update is still picked up within
+/// this time without restarting the TV app.
+pub const VERSION_RECONNECT: Duration = Duration::from_secs(10);
 
 /// What the uplink tells the capture and the link.
 #[derive(Debug, Default)]
@@ -53,6 +59,8 @@ enum UplinkState {
     Paused(Option<SlimEncoding>),
     /// The receiver is unavailable, and why.
     Waiting(String),
+    /// Prysm speaks another capture stream version, and which.
+    VersionDiffers(String),
     /// The requested encoder failed, and why; that request is refused until
     /// it changes.
     EncoderFailed(String),
@@ -98,6 +106,12 @@ impl Flow {
                 None,
                 false,
                 Some(WorkerFailure::new(FailureKind::Receiver, why.clone())),
+            ),
+            UplinkState::VersionDiffers(why) => (
+                None,
+                None,
+                false,
+                Some(WorkerFailure::new(FailureKind::Version, why.clone())),
             ),
             UplinkState::EncoderFailed(why) => (
                 None,
@@ -185,6 +199,10 @@ impl Upstream for RemoteSender {
 /// connects again; one that vanishes without pausing (a crash, the
 /// network) leaves it running.
 ///
+/// A Prysm of another capture stream version ([`WireError::Version`]) is
+/// reported as such and retried only every [`VERSION_RECONNECT`]: it lasts
+/// until one side is updated.
+///
 /// An encoder failure ([`SendError::Encoder`]: the requested encoder cannot
 /// start or failed) is reported as such, and every later connection
 /// with the same request is refused with that reason (the receiver shows
@@ -195,6 +213,7 @@ pub struct Uplink<S, C> {
     sink: Option<S>,
     retry_at: Option<Instant>,
     retry: Duration,
+    version_retry: Duration,
     flow: Arc<Flow>,
     /// The request whose encoder failed, and why.
     failed: Option<(StreamRequest, String)>,
@@ -208,6 +227,7 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
             sink: None,
             retry_at: None,
             retry: RECONNECT,
+            version_retry: VERSION_RECONNECT,
             flow: flow.clone(),
             failed: None,
         };
@@ -215,12 +235,14 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
     }
 
     #[cfg(test)]
-    pub fn retry_every(mut self, retry: Duration) -> Self {
+    pub fn retry_every(mut self, retry: Duration, version_retry: Duration) -> Self {
         self.retry = retry;
+        self.version_retry = version_retry;
         self
     }
 
-    /// Connect unless an attempt was made within [`RECONNECT`].
+    /// Connect unless an attempt was made within [`RECONNECT`], or within
+    /// [`VERSION_RECONNECT`] after Prysm answered with another version.
     fn reconnect(&mut self) {
         if self.retry_at.is_some_and(|at| Instant::now() < at) {
             return;
@@ -229,16 +251,22 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> Uplink<S, C> {
         let mut sink = match (self.connect)() {
             Ok(sink) => sink,
             Err(error) => {
+                let versions_differ = is_version_mismatch(&error);
+                if versions_differ {
+                    self.retry_at = Some(Instant::now() + self.version_retry);
+                }
                 let mut report = self.flow.lock();
                 // A paused receiver or a failed encoder is still the news.
                 if !matches!(
                     report.uplink,
                     UplinkState::Paused(_) | UplinkState::EncoderFailed(_)
                 ) {
-                    report.uplink = UplinkState::Waiting(format!(
-                        "waiting for the receiver: {}",
-                        chain(&error)
-                    ));
+                    let why = format!("waiting for the receiver: {}", chain(&error));
+                    report.uplink = if versions_differ {
+                        UplinkState::VersionDiffers(why)
+                    } else {
+                        UplinkState::Waiting(why)
+                    };
                 }
                 return;
             }
@@ -311,11 +339,21 @@ impl<S: Upstream, C: FnMut() -> Result<S> + Send> FrameSink for Uplink<S, C> {
     }
 }
 
+/// Whether `error` is Prysm answering with another capture stream version.
+fn is_version_mismatch(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Adapter { source: Some(source), .. }
+            if matches!(source.downcast_ref::<WireError>(), Some(WireError::Version { .. }))
+    )
+}
+
 /// `Surface<()>`: video commands into the capture, frame flow out as status:
 /// `capturing` while frames are delivered, `fps` (frames sent per second)
 /// while sending, `encoding` while connected,
 /// `paused` while the receiver paused the stream, `failure` naming the
-/// encoder failure, or else the wait while the receiver is unavailable.
+/// encoder failure, Prysm's other capture stream version, or else the wait
+/// while the receiver is unavailable.
 /// `Lighting` is protocol misuse here and stops the worker as failed.
 pub struct ForwarderLink {
     link: Link,
