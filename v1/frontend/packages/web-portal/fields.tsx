@@ -1,4 +1,10 @@
-import { use, useId, useState, type ReactNode } from 'react';
+import {
+  use,
+  useId,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { nameProblem, numberProblem, type NumberLimits } from './checks';
 import { FieldContext, shownError, useCheck } from './form';
 
@@ -249,6 +255,18 @@ export function RangeField({
   format?: (value: number) => string;
 }) {
   const field = useField(path, help);
+  // The filled part of the track. Set through the CSSOM, which the portal's
+  // CSP (`default-src 'self'`) allows; style attributes in markup it refuses.
+  const at = (number: number) =>
+    max > min
+      ? ((Math.min(Math.max(number, min), max) - min) / (max - min)) * 100
+      : 0;
+  // A signed control fills from its 0, any other from its minimum.
+  const origin = min < 0 && max > 0 ? at(0) : 0;
+  const fill = {
+    '--fill-from': `${Math.min(origin, at(value))}%`,
+    '--fill-to': `${Math.max(origin, at(value))}%`,
+  } as CSSProperties;
   return (
     <div className={className ? `field range ${className}` : 'field range'}>
       <div className="range-heading">
@@ -258,6 +276,7 @@ export function RangeField({
       <input
         {...field.control}
         type="range"
+        style={fill}
         min={min}
         max={max}
         step={step}

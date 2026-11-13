@@ -7,6 +7,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -15,7 +16,7 @@ import {
 } from 'react';
 import type { Flavor, TvService } from '@prysm/webos-platform';
 import { failureOf } from '@prysm/application-client';
-import { CalibrationScreen } from './calibration';
+import { CalibrationScreen, QrCode } from './calibration';
 import {
   calibrationBlocker,
   captureRate,
@@ -29,6 +30,7 @@ import {
   receiverAddress,
   tvStatus,
 } from './model';
+import { qrCode } from './qr';
 import { useRemoteNavigation } from './navigation';
 import { msePatternPlayer, type PatternPlayer } from './patterns';
 import { LightingCard } from './portal';
@@ -142,6 +144,11 @@ export function TvApp({
     elapsed,
   );
   const rate = captureRate(state);
+  const retry = state?.worker.phase === 'retrying' ? state.worker : null;
+  const portalQr = useMemo(
+    () => (portalAddress ? qrCode(portalAddress) : null),
+    [portalAddress],
+  );
 
   // Slim: frames go to the Prysm's own receiver port, learned from its settings.
   const port = listenPort(portal.snapshot?.settings.capture);
@@ -270,6 +277,10 @@ export function TvApp({
     >
       <main id="app" ref={rootRef} aria-hidden={nav.dialog ? true : undefined}>
         <header className="header">
+          <svg className="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="m16 3 13 24H3L16 3Z" />
+            <path d="m16 3 4 24M3 27l15-12 11 12" />
+          </svg>
           <span className="brand">
             prysm<span className="brand-dot">.</span>
           </span>
@@ -278,12 +289,18 @@ export function TvApp({
         <div className="layout">
           <div className="column" data-column="status">
             <section
-              className={`card overview${status.attention || mismatch ? ' attention' : ''}`}
+              className={`card overview${status.attention || mismatch ? ' attention' : ''}${retry ? ' retrying' : ''}`}
               aria-labelledby="status-title"
             >
-              <p className="section-label">Prysm on this TV</p>
+              <p className="section-label">
+                <span className="status-dot" aria-hidden="true" />
+                Prysm on this TV
+              </p>
               <div role="status" aria-live="polite">
-                <h1 id="status-title">
+                <h1
+                  id="status-title"
+                  key={mismatch ? 'mismatch' : status.title}
+                >
                   {mismatch
                     ? 'This app does not match the installed service'
                     : status.title}
@@ -304,6 +321,14 @@ export function TvApp({
                   Encoding in use:{' '}
                   <strong>{encodingName(state.encoding)}</strong>
                 </p>
+              ) : null}
+              {retry ? (
+                <span
+                  key={tv.stateAt}
+                  className="retry-bar"
+                  style={{ animationDuration: `${retry.seconds}s` }}
+                  aria-hidden="true"
+                />
               ) : null}
               <div className="main-actions">
                 <button
@@ -332,6 +357,19 @@ export function TvApp({
             />
           </div>
           <div className="column" data-column="settings">
+            {portalAddress ? (
+              <section className="card portal-address" id="portal-address">
+                {portalQr ? (
+                  <QrCode modules={portalQr} className="portal-qr" />
+                ) : null}
+                <p className="portal-text">
+                  <strong>Web portal</strong>
+                  <code>{portalAddress}</code>
+                  Open it on your phone or computer to set up capture and
+                  lights, and for colours, profiles and the preview.
+                </p>
+              </section>
+            ) : null}
             <section className="card settings" aria-labelledby="settings-title">
               <div className="section-heading">
                 <h2 id="settings-title">Settings</h2>
@@ -384,25 +422,9 @@ export function TvApp({
                   open={() => void startCalibration()}
                 />
               </div>
-              {portalAddress ? (
-                <p className="portal-address" id="portal-address">
-                  <strong>Web portal</strong>
-                  <code>{portalAddress}</code>
-                  Open it on your phone or computer to set up capture and
-                  lights, and for colours, profiles and the preview.
-                </p>
-              ) : null}
             </section>
           </div>
         </div>
-        <p
-          id="notice"
-          className={`notice${tv.error ? ' error' : ''}`}
-          role={tv.error ? 'alert' : 'status'}
-          aria-live="polite"
-        >
-          {tv.notice}
-        </p>
         <footer className="key-help">
           <span>
             <b>↑ ↓ ← →</b> Move
@@ -413,6 +435,14 @@ export function TvApp({
           <span>
             <b>Back</b> Return
           </span>
+          <p
+            id="notice"
+            className={`notice${tv.error ? ' error' : ''}`}
+            role={tv.error ? 'alert' : 'status'}
+            aria-live="polite"
+          >
+            {tv.notice}
+          </p>
         </footer>
       </main>
       {nav.dialog ? (

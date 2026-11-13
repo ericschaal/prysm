@@ -272,7 +272,13 @@ export function CalibrateWizard({
     </>
   );
   const heading = (title: string) => (
-    <h2 id={headingId} ref={headingRef} tabIndex={-1}>
+    // Keyed by screen so each screen's heading enters with its own transition.
+    <h2
+      key={`${phase.kind}-${screen}-${ended}`}
+      id={headingId}
+      ref={headingRef}
+      tabIndex={-1}
+    >
       {title}
     </h2>
   );
@@ -485,6 +491,7 @@ function StepScreen({
   const slider = (control: keyof typeof correctionLimits) => (
     <RangeField
       key={control}
+      className={`slider-${control}`}
       path={`${path}.${control}`}
       label={correction[control].label}
       help={correction[control].help}
@@ -503,7 +510,7 @@ function StepScreen({
         </p>
         <button
           type="button"
-          className="quiet"
+          className="quiet danger"
           disabled={locked}
           onClick={cancel}
         >
@@ -547,7 +554,11 @@ function StepScreen({
       ) : (
         <>
           {heading(section.title)}
-          <p className="calibrate-pattern" role="status">
+          <p
+            className="calibrate-pattern"
+            data-pattern={current.pattern}
+            role="status"
+          >
             On your TV: {patternLabels[current.pattern]}
             {inSection.length > 1
               ? ` (${position + 1} of ${inSection.length})`
@@ -571,6 +582,7 @@ function StepScreen({
                 ) : null}
                 {hue ? (
                   <RangeField
+                    className={`slider-hue slider-hue-${hue}`}
                     path={`${path}.hue.${hue}`}
                     {...hueText(hue)}
                     value={values.hue[hue]}

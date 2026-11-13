@@ -1,117 +1,858 @@
 /*
- * 10-foot layout. 1rem = 1.5625vw (30 px at 1920 × 1080, 20 px at 1280 × 720);
- * content stays inside a 5% overscan margin; captions >= 1rem, controls >= 2.8rem.
- * Chromium 53: no gap in flexbox, no CSS variables in media queries, no :focus-visible.
+ * Prysm on the TV: a calm 10-foot screen for the living room, driven by the
+ * remote. One focal point: what the lights do, in plain words, and the one
+ * action. Everything else is quiet.
+ *
+ * 1rem = 1.5625vw: 30 px at 1920 × 1080, 20 px at 1280 × 720, so the layout
+ * is the same at every TV resolution. Content stays inside a 5% overscan
+ * margin. Four type sizes: display, title, body, small (24 px at 1080p).
+ *
+ * Chromium 53 (webOS 4): flexbox without gap, custom properties (never in
+ * media queries or keyframes), transforms, transitions, keyframes, gradients.
+ * No grid, :focus-visible, :is(), clamp(), inset, aspect-ratio or rgb(… / a).
+ *
+ * Motion: only opacity and transform. Focus moves in 120 ms; screens and
+ * dialogs arrive in 260 ms; the lights coming on bloom in 520 ms. The one
+ * repeating animation is the small live dot. Nothing is drawn or animated
+ * over a calibration pattern.
+ *
+ * Colour roles share their names and dark values with the web portal
+ * (packages/web-portal/tokens.css). Glow appears only where light is the
+ * message: behind the status while screen sync runs.
  */
+
+/* ---- Tokens ---- */
 :root {
-  color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'LG Smart UI', sans-serif;
+  color-scheme: dark;
+
+  --bg: #0e0f16;
+  --surface-2: #1c1f2d;
+  --surface-3: #252939;
+  --surface-sunken: #11131c;
+  --border-strong: #3a3f57;
+  --text: #eceef7;
+  --text-2: #aab0c6;
+  --text-3: #8a90a8;
+  --text-on-accent: #fff;
+  --accent: #8d7dff;
+  --accent-fill: #6c59e6;
+  --accent-text: #b5abff;
+  --success: #5fd6ab;
+  --warning: #f3bd6e;
+  --danger: #ff8796;
+  /* The focused control: a light fill that reads from across the room. */
+  --focus-fill: #f1efff;
+  --focus-text: #1b1830;
+  --focus-text-2: #514c6b;
+  --focus-ring: #8d7dff;
+  --danger-focus-fill: #ffe5e9;
+  --danger-focus-text: #8c1d2f;
+
+  --font:
+    'LG Smart UI', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, sans-serif;
+  --font-mono: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  --text-display: 2.6rem;
+  --text-title: 1.35rem;
+  --text-body: 1rem;
+  --text-small: 0.8rem;
+  --weight-regular: 400;
+  --weight-bold: 600;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --safe-x: 5vw;
+  --safe-y: 5vh;
+
+  --radius-sm: 0.3rem;
+  --radius-md: 0.55rem;
+  --radius-lg: 0.9rem;
+
+  --duration-fast: 120ms;
+  --duration: 260ms;
+  --duration-bloom: 520ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  font-family: var(--font);
   font-size: 1.5625vw;
-  line-height: 1.3;
-  color: #292c38;
-  background: #f7f7fb;
-  --muted: #5d6073;
-  --focus: #7661d1;
-  --caption: 1rem;
-  --body: 1.1rem;
-  --title: 2.2rem;
+  line-height: 1.35;
+  color: var(--text);
+  background: var(--bg);
 }
-* { box-sizing: border-box; }
-body { margin: 0; background: #f7f7fb; }
-[hidden] { display: none !important; }
-h1, h2, h3, p { margin: 0; }
-#app { display: flex; flex-direction: column; height: 100vh; max-width: 1920px; margin: auto; padding: 2.5vh 2.8rem 4vh; }
-.header { display: flex; align-items: baseline; margin-bottom: .8rem; }
-.brand { font-size: 1.6rem; font-weight: 600; letter-spacing: -.05em; }
-.brand-dot { color: #8f72d8; }
-.brand-sub { margin-left: 1.2rem; padding-left: 1.2rem; border-left: 1px solid #d8d9e3; color: var(--muted); font-size: var(--body); }
-.layout { flex: 1; min-height: 0; display: flex; align-items: stretch; }
-.column { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 6px; }
-.column + .column { flex: 1.15; margin-left: 1.4rem; }
-.card { border-radius: .8rem; padding: .9rem 1.1rem; }
-.card + .card { margin-top: 1rem; }
-.overview { position: relative; background: #282a3c; color: #faf9ff; }
-.ready .overview { background: #273a3c; }
-.section-label { color: #c2c4d6; font-size: var(--caption); margin-bottom: .7rem; }
-.section-label::before { content: ''; display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; background: #aaa6c2; margin-right: .6rem; }
-.ready .section-label::before { background: #7fe0c7; }
-.attention .section-label::before { background: #f1c480; }
-.overview h1 { font-size: var(--title); line-height: 1.15; font-weight: 500; letter-spacing: -.025em; }
-.description { color: #d0d2e0; font-size: var(--body); line-height: 1.45; margin-top: .7rem; }
-.stream-info { color: #c2c4d6; font-size: var(--caption); margin-top: .5rem; }
-.stream-info strong { color: #faf9ff; font-weight: 500; }
-.portal-address { margin: .8rem 0 0; padding: .7rem .8rem; border-radius: .5rem; background: #f3f1fa; color: var(--muted); font-size: var(--caption); word-wrap: break-word; }
-.portal-address strong, .portal-address code { display: block; color: #292c38; }
-.portal-address code { margin: .2rem 0; font-size: var(--body); }
-.main-actions { margin-top: 1rem; }
-button, input { font: inherit; }
-button { border: 2px solid transparent; border-radius: .45rem; min-height: 2.8rem; padding: .5rem .8rem; cursor: pointer; text-align: left; color: #292c38; background: none; font-size: var(--body); }
-button:focus, input:focus { outline: .15rem solid var(--focus); outline-offset: .15rem; }
-button:disabled { cursor: default; color: #757889; }
-.primary { display: block; width: 100%; background: #f3f0ff; color: #493a65; text-align: center; font-weight: 600; }
-.primary:disabled { background: #d9d6e2; color: #5d6073; }
-.quiet { color: var(--muted); }
-.main-actions .quiet { display: block; width: 100%; color: #e0ddeb; text-align: center; margin-top: .5rem; }
-.main-actions .quiet:focus, .main-actions .quiet:hover { background: rgba(255, 255, 255, .12); }
-.overview .primary:focus { outline-color: #c9b9f2; }
-.lighting, .settings { background: #fefeff; border: 1px solid #dfe0ea; }
-.card-title, .section-heading h2 { font-size: 1.3rem; font-weight: 500; }
-.lighting-status { font-size: var(--body); margin-top: .5rem; }
-.lighting-detail { color: var(--muted); font-size: var(--caption); line-height: 1.4; margin-top: .3rem; }
-.lighting.attention .lighting-status { color: #874000; }
-.modes { display: flex; margin-top: .8rem; }
-.mode { flex: 1; text-align: center; border: 1px solid #dfe0ea; }
-.mode + .mode { margin-left: .5rem; }
-.mode[aria-pressed='true'] { border-color: var(--focus); background: #f0ecff; font-weight: 600; }
-.section-heading { display: flex; align-items: center; margin-bottom: .3rem; min-height: 2.8rem; }
-#saved-state { color: var(--muted); font-size: var(--caption); }
-#saved-state.unsaved { color: #875308; }
-.setting { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2.6rem; border-radius: .3rem; padding: .35rem .5rem; }
-.setting-list + .setting-list { margin-top: .5rem; border-top: 1px solid #e2e3eb; padding-top: .3rem; }
-.setting + .setting { border-top: 1px solid #e2e3eb; }
-.setting-label { display: block; font-size: var(--body); }
-.setting-selection { display: flex; align-items: center; justify-content: flex-end; margin-left: 1rem; max-width: 62%; min-width: 0; }
-.setting-value { color: var(--muted); font-size: var(--body); text-align: right; word-wrap: break-word; min-width: 0; }
-.setting:disabled .setting-value { color: inherit; }
-.chevron { color: var(--muted); margin-left: .6rem; }
-.setting:focus, .setting:not(:disabled):hover, .choice:not(:disabled):hover, .mode:not(:disabled):hover { background: #eeebf8; }
-.save-actions { display: flex; margin-left: .8rem; }
-.save-actions .secondary { background: #eeebf8; text-align: center; font-weight: 600; }
-.save-actions .quiet { margin-left: .4rem; text-align: center; }
-#saved-state { margin-left: auto; padding-left: 1rem; }
-.notice { min-height: 1.8rem; padding: .3rem 0; color: #574489; font-size: var(--caption); line-height: 1.4; }
-.notice.error { color: #934119; }
-.key-help { display: flex; border-top: 1px solid #dfe0ea; padding-top: .5rem; color: var(--muted); font-size: var(--caption); }
-.key-help span { margin-right: 1.6rem; }
-.key-help b { color: #454857; font-weight: 500; margin-right: .4rem; }
-.modal { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(25, 27, 45, .65); display: flex; align-items: center; justify-content: center; padding: 5vh 5vw; }
-.dialog { width: 40rem; max-width: 100%; max-height: 90vh; overflow-y: auto; padding: 1.2rem; border-radius: .8rem; background: #fefeff; }
-.dialog h2 { font-size: 1.6rem; font-weight: 500; line-height: 1.2; }
-.dialog-description { color: var(--muted); font-size: var(--caption); line-height: 1.4; margin: .5rem 0 .9rem; }
-.choice { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 3rem; border: 1px solid #dfe0ea; padding: .4rem .75rem; }
-.choice + .choice, form .choice { margin-top: .4rem; }
-.choice-name, .choice-detail { display: block; }
-.choice-detail { color: var(--muted); font-size: var(--caption); line-height: 1.25; margin-top: .15rem; }
-.choice[aria-pressed='true'] { border-color: var(--focus); background: #f5f2ff; }
-.check { color: #6550a8; margin-left: 1rem; }
-.danger { color: #934119; border-color: #d4a58a; }
-.dialog-back { display: block; margin: .8rem auto 0; min-width: 8rem; text-align: center; }
-.dialog label { display: block; color: var(--muted); font-size: var(--caption); margin-bottom: .3rem; }
-.dialog input { width: 100%; min-height: 2.8rem; background: #f7f7fb; border: 2px solid #a296cf; border-radius: .35rem; color: #292c38; padding: .45rem .65rem; font-size: var(--body); }
-.dialog input[aria-invalid='true'] { border-color: #934119; }
-.diagnostics { white-space: pre-wrap; word-wrap: break-word; font: .9rem/1.4 monospace; color: #454857; margin: 0; }
-/* Calibration: the pattern video edge to edge, alone; the QR code screen covers it while waiting. */
-.calibration { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #000; }
-.calibration.showing { cursor: none; }
-.pattern-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: fill; }
-.calibration-waiting { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 5vh 5vw; background: #f7f7fb; text-align: center; }
-.calibration-waiting h1 { font-size: var(--title); font-weight: 500; letter-spacing: -.025em; }
-.qr { display: block; width: 15rem; height: 15rem; margin: 1.2rem 0 .8rem; }
-#calibration-address { font-size: var(--body); word-wrap: break-word; max-width: 100%; }
-#calibration-hint { color: var(--muted); font-size: var(--body); margin-top: .4rem; }
-.calibration-waiting .key-help { border-top: 0; margin-top: 1.4rem; }
+
+/* ---- Base ---- */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+}
+[hidden] {
+  display: none !important;
+}
+/* Read out, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+h1,
+h2,
+p {
+  margin: 0;
+  font-weight: var(--weight-regular);
+}
+code {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  display: block;
+  min-height: 2.8rem;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+/* Focus is the remote's cursor: a light fill, an accent ring and a lift. */
+button:focus,
+.mode[aria-pressed='true']:focus {
+  outline: none;
+  background: var(--focus-fill);
+  color: var(--focus-text);
+  box-shadow: 0 0 0 0.1rem var(--focus-ring);
+  transform: scale(1.03);
+}
+button:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+/* ---- Layout ---- */
+/* The light on the wall: it blooms behind the status while screen sync runs. */
+.tv::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background:
+    radial-gradient(
+      ellipse at 18% 34%,
+      rgba(123, 102, 255, 0.2),
+      rgba(123, 102, 255, 0) 50%
+    ),
+    radial-gradient(
+      ellipse at 6% 78%,
+      rgba(214, 91, 192, 0.12),
+      rgba(214, 91, 192, 0) 45%
+    ),
+    radial-gradient(
+      ellipse at 42% 8%,
+      rgba(62, 195, 235, 0.1),
+      rgba(62, 195, 235, 0) 45%
+    );
+  opacity: 0;
+  transform: scale(0.92);
+  pointer-events: none;
+  transition:
+    opacity var(--duration-bloom) var(--ease-out),
+    transform var(--duration-bloom) var(--ease-out);
+}
+.tv.ready::before {
+  opacity: 1;
+  transform: none;
+}
+/* Above the glow. */
+#app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: var(--safe-y) var(--safe-x);
+  animation: arrive var(--duration) var(--ease-out) backwards;
+}
+.header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+.logo {
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-right: var(--space-2);
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.brand {
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.brand-dot {
+  color: var(--accent);
+}
+.brand-sub {
+  margin-left: var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+/* Columns scroll when they must; the padding leaves room for the focus lift. */
+.column {
+  min-width: 0;
+  overflow-y: auto;
+  margin: -1.2rem;
+  padding: 1.2rem;
+}
+.column[data-column='status'] {
+  flex: 1.55;
+}
+.column[data-column='settings'] {
+  flex: 1;
+  margin-left: var(--space-12);
+}
+
+/* ---- Status: the focal point ---- */
+.section-label {
+  display: flex;
+  align-items: center;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.status-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.ready .status-dot {
+  background: var(--success);
+}
+.attention .status-dot {
+  background: var(--warning);
+}
+/* Live: a ring leaves the dot every few seconds while frames flow. */
+.ready .status-dot::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 50%;
+  background: var(--success);
+  animation: live 2.8s ease-out infinite;
+}
+.overview h1 {
+  max-width: 14em;
+  margin-top: var(--space-3);
+  font-size: var(--text-display);
+  font-weight: var(--weight-bold);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  animation: rise var(--duration) var(--ease-out) backwards;
+}
+.description {
+  max-width: 26em;
+  margin-top: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-body);
+  line-height: 1.45;
+}
+.stream-info {
+  display: inline-block;
+  margin: var(--space-3) var(--space-6) 0 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.stream-info strong {
+  color: var(--text-2);
+  font-weight: var(--weight-regular);
+}
+/* The time left until the restart. */
+.retry-bar {
+  display: block;
+  width: 16rem;
+  height: 0.12rem;
+  margin-top: var(--space-4);
+  border-radius: 0.06rem;
+  background: var(--warning);
+  transform-origin: 0 50%;
+  animation: countdown linear forwards;
+}
+.main-actions {
+  width: 24rem;
+  margin-top: var(--space-6);
+}
+.primary {
+  width: 100%;
+  min-height: 3.2rem;
+  background: var(--accent-fill);
+  color: var(--text-on-accent);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+.primary:disabled {
+  background: var(--surface-2);
+}
+.quiet {
+  color: var(--text-2);
+}
+.main-actions .quiet {
+  width: 100%;
+  margin-top: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-small);
+  text-align: center;
+}
+
+/* ---- Lights show: what the lights do, one segmented control ---- */
+.lighting {
+  margin-top: var(--space-8);
+}
+.card-title {
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+/* Only what the chosen mode does not say: starting, stopped, unreachable. */
+.lighting-status {
+  margin-top: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-body);
+}
+.lighting-detail {
+  max-width: 24rem;
+  margin-top: var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-small);
+  line-height: 1.4;
+}
+.lighting.attention .lighting-status,
+.lighting.attention .lighting-detail {
+  color: var(--warning);
+}
+/* One track, three equal segments. */
+.modes {
+  display: flex;
+  width: 24rem;
+  margin-top: var(--space-2);
+  padding: 0.2rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.mode {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.6rem;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 0.4rem;
+  color: var(--text-2);
+  font-size: var(--text-small);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mode + .mode {
+  margin-left: 0.2rem;
+}
+/* Chosen: a raised segment with a dot, which stays when it has focus. */
+.mode[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: var(--weight-bold);
+}
+.mode[aria-pressed='true']::before {
+  content: '';
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin: 0 var(--space-2) 0.12rem 0;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+.mode:focus {
+  transform: scale(1.05);
+}
+/* Unavailable: hatched, not just dim. */
+.mode:disabled {
+  color: var(--text-3);
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.06) 0.15rem,
+    rgba(255, 255, 255, 0) 0.15rem,
+    rgba(255, 255, 255, 0) 0.45rem
+  );
+}
+
+/* ---- Secondary column: portal and settings ---- */
+.portal-address {
+  display: flex;
+  align-items: flex-start;
+}
+.portal-qr {
+  flex-shrink: 0;
+  width: 4.2rem;
+  height: 4.2rem;
+  margin-right: var(--space-4);
+  border-radius: var(--radius-sm);
+  /* Scannable, but quieter than the headline. */
+  opacity: 0.8;
+}
+.portal-text {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+.portal-text strong,
+.portal-text code {
+  display: block;
+}
+.portal-text strong {
+  font-weight: var(--weight-regular);
+}
+.portal-text code {
+  margin: 0.1rem 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--text-body);
+}
+.settings {
+  margin-top: var(--space-8);
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  min-height: 2.8rem;
+}
+.section-heading h2 {
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+#saved-state {
+  margin-left: auto;
+  padding-left: var(--space-3);
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+#saved-state.unsaved {
+  color: var(--warning);
+}
+.save-actions {
+  display: flex;
+  margin-left: var(--space-2);
+}
+.save-actions button {
+  min-height: 2.4rem;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-small);
+  white-space: nowrap;
+}
+.secondary {
+  background: var(--accent-fill);
+  color: var(--text-on-accent);
+  font-weight: var(--weight-bold);
+}
+.save-actions .quiet {
+  margin-left: var(--space-1);
+  padding-right: 0;
+}
+.setting-list + .setting-list {
+  margin-top: var(--space-4);
+}
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2.9rem;
+  margin: 0 calc(-1 * var(--space-4));
+  width: calc(100% + 2 * var(--space-4));
+}
+.setting + .setting {
+  margin-top: 0.1rem;
+}
+.setting:focus {
+  transform: scale(1.02);
+}
+.setting-label {
+  white-space: nowrap;
+}
+.setting-selection {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 64%;
+  margin-left: var(--space-4);
+}
+.setting-value {
+  min-width: 0;
+  color: var(--text-3);
+  text-align: right;
+  word-wrap: break-word;
+}
+.chevron {
+  margin-left: var(--space-3);
+  color: var(--text-3);
+  line-height: 1;
+}
+.setting:focus .setting-value,
+.setting:focus .chevron {
+  color: var(--focus-text-2);
+}
+.setting:disabled .chevron {
+  visibility: hidden;
+}
+
+/* ---- Messages and key help ---- */
+.notice {
+  min-height: 1.4rem;
+  color: var(--text-2);
+  font-size: var(--text-small);
+  line-height: 1.4;
+}
+.notice.error {
+  color: var(--danger);
+}
+.key-help {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.key-help span {
+  margin-right: var(--space-8);
+}
+.key-help b {
+  margin-right: var(--space-2);
+  color: var(--text-2);
+  font-weight: var(--weight-bold);
+}
+/* The latest message sits in the key-help line, right aligned. */
+#notice {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--space-4);
+  text-align: right;
+}
+
+/* ---- Dialogs ---- */
+.modal {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--safe-y) var(--safe-x);
+  background: rgba(6, 7, 12, 0.8);
+  animation: fade var(--duration) var(--ease-out) backwards;
+}
+.dialog {
+  width: 38rem;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-8) var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  animation: arrive var(--duration) var(--ease-out) backwards;
+}
+.dialog h2 {
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  line-height: 1.2;
+}
+.dialog-description {
+  margin: var(--space-2) 0 var(--space-6);
+  color: var(--text-2);
+  font-size: var(--text-small);
+  line-height: 1.45;
+}
+#dialog-body {
+  margin: 0 calc(-1 * var(--space-4));
+}
+.choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 3rem;
+}
+.choice + .choice,
+form .choice {
+  margin-top: var(--space-1);
+}
+.choice:focus {
+  transform: scale(1.02);
+}
+.choice-name,
+.choice-detail {
+  display: block;
+}
+.choice-detail {
+  margin-top: 0.1rem;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.choice:focus .choice-detail {
+  color: var(--focus-text-2);
+}
+.check {
+  margin-left: var(--space-4);
+  color: var(--accent-text);
+  font-weight: var(--weight-bold);
+}
+.choice:focus .check {
+  color: var(--accent-fill);
+}
+.danger {
+  color: var(--danger);
+}
+.danger:focus {
+  background: var(--danger-focus-fill);
+  color: var(--danger-focus-text);
+  box-shadow: 0 0 0 0.1rem var(--danger);
+}
+.dialog-back {
+  min-width: 8rem;
+  margin: var(--space-6) auto 0;
+  color: var(--text-3);
+  text-align: center;
+}
+.dialog label {
+  display: block;
+  margin: 0 var(--space-4) var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.dialog input {
+  display: block;
+  width: calc(100% - 2 * var(--space-4));
+  min-height: 3rem;
+  margin: 0 var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 0.1rem solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: var(--text-body);
+}
+.dialog input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+.dialog input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+.dialog input::-webkit-input-placeholder {
+  color: var(--text-3);
+}
+.dialog form .notice {
+  margin: var(--space-2) var(--space-4) 0;
+}
+.diagnostics {
+  margin: 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font: 0.7rem/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Pressed: the control sinks under OK. */
+button:active,
+.mode:active,
+.setting:active,
+.choice:active {
+  transform: scale(0.97);
+}
+
+/* ---- Calibration ---- */
+/* The pattern is the whole screen, alone: no overlay, no motion, no cursor. */
+.calibration {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: #000;
+}
+.calibration.showing {
+  cursor: none;
+}
+.pattern-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+/* While the phone has not chosen a pattern: the QR code over the gray one. */
+.calibration-waiting {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--safe-y) var(--safe-x);
+  background: var(--bg);
+  animation: fade var(--duration) var(--ease-out) backwards;
+}
+.calibration-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.calibration-copy {
+  width: 22rem;
+  margin-right: var(--space-12);
+}
+.calibration-copy h1 {
+  font-size: var(--text-display);
+  font-weight: var(--weight-bold);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+#calibration-hint {
+  margin-top: var(--space-4);
+  color: var(--text-2);
+}
+.calibration-copy .notice {
+  margin-top: var(--space-4);
+}
+.qr-card {
+  min-width: 14rem;
+  max-width: 26rem;
+  padding: var(--space-6) var(--space-6) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: #fff;
+  color: #1b1830;
+  text-align: center;
+}
+.qr {
+  display: block;
+  width: 12rem;
+  height: 12rem;
+  margin: 0 auto var(--space-3);
+}
+#calibration-address {
+  display: block;
+  font-size: var(--text-small);
+  word-wrap: break-word;
+}
+
+/* ---- Motion ---- */
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.3rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes live {
+  from {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  60%,
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* A narrow desktop window (the demo), never a TV. */
 @media (max-width: 1000px) {
-  :root { font-size: 20px; }
-  .layout { flex-direction: column; }
-  .column + .column { margin: 1rem 0 0; }
+  :root {
+    font-size: 20px;
+  }
+  .layout {
+    flex-direction: column;
+  }
+  .column[data-column='settings'] {
+    margin: var(--space-8) -1.2rem -1.2rem;
+  }
 }

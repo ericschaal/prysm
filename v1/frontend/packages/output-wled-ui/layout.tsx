@@ -60,7 +60,10 @@ export function LedLayout({ leds }: { leds: LedCounts }) {
           const strip = strips[run.edge];
           const empty = run.count === 0;
           return (
-            <g key={run.edge} className={empty ? 'strip empty' : 'strip'}>
+            <g
+              key={run.edge}
+              className={`strip strip-${run.edge}${empty ? ' empty' : ''}`}
+            >
               <line
                 x1={strip.from[0]}
                 y1={strip.from[1]}

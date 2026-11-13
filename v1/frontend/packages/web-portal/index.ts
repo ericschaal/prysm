@@ -16,7 +16,7 @@ export {
   useLiveProcessing,
   type ProcessingControls,
 } from './live-processing';
-export { ProcessingPanel } from './processing';
+export { ProcessingPanel, QuickPicture } from './processing';
 export {
   correctionLimits,
   hueLimits,
@@ -27,4 +27,12 @@ export { PreviewPanel } from './preview';
 export { drawPreview, previewLayout } from './preview-canvas';
 export { SectionFields, SectionForm } from './section-form';
 export { SetupWizard, type SetupWizardProps } from './setup';
-export { WebPortal, type WebPortalProps } from './portal';
+export { settingsRoute, WebPortal, type WebPortalProps } from './portal';
+export {
+  applyTheme,
+  saveTheme,
+  storedTheme,
+  themeStorageKey,
+  type Theme,
+} from './theme';
+export { ThemeChoice } from './theme-choice';

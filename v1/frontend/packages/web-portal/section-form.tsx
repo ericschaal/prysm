@@ -186,71 +186,89 @@ export function SectionForm<S extends AdapterSection>({
   if (busy || draft.syncing) status = 'Saving…';
   else if (draft.unconfigured) status = 'Not configured';
   else if (draft.dirty) status = 'Unsaved changes';
+  const summary = saved ? adapterFor(adapters, saved.kind) : undefined;
   return (
     <form
       ref={formRef}
-      className="card section-form"
+      className="section-form"
       aria-labelledby={headingId}
       aria-describedby={statusId}
       aria-busy={busy || draft.syncing}
       noValidate
       onSubmit={(event) => void submit(event)}
     >
-      <div className="card-heading">
-        <h2 id={headingId}>{title}</h2>
-        <span
-          id={statusId}
-          className={`badge${draft.dirty || draft.unconfigured ? ' attention' : ''}`}
-        >
-          {status}
-        </span>
-      </div>
-      <p className="intro">{description}</p>
-      <FieldScopeProvider value={scope}>
-        <SectionFields
-          key={draft.generation}
-          section={section}
-          adapters={adapters}
-          value={draft.draft}
-          base={draft.base}
-          onChange={change}
-        />
-      </FieldScopeProvider>
-      {draft.conflicted && draft.dirty ? (
-        <p className="notice warning" role="status">
-          Changed elsewhere since you started editing. Saving will load the
-          current settings instead.
-        </p>
-      ) : null}
-      {notice ? (
-        <p
-          className={`notice${notice === staleNotice ? ' warning' : ''}`}
-          role="status"
-        >
-          {notice}
-        </p>
-      ) : null}
-      {failure ? (
-        <p className="notice error" role="alert" tabIndex={-1} data-form-alert>
-          {failure}
-        </p>
-      ) : null}
-      <div className="actions">
-        <button
-          type="button"
-          onClick={reset}
-          disabled={locked || (!draft.dirty && !invalid)}
-        >
-          Reset
-        </button>
-        <button
-          className="primary"
-          type="submit"
-          disabled={locked || (!draft.dirty && !draft.unconfigured)}
-        >
-          {busy ? 'Saving…' : `Save ${section} settings`}
-        </button>
-      </div>
+      <details className="disclosure section">
+        <summary>
+          <span className="section-title">
+            <h2 id={headingId}>{title}</h2>
+            {saved && summary ? (
+              <span className="section-summary">
+                {summary.label}
+                {summary.summary ? ` · ${summary.summary(saved)}` : ''}
+              </span>
+            ) : null}
+          </span>
+          <span
+            id={statusId}
+            className={`badge${draft.dirty || draft.unconfigured ? ' attention' : ''}`}
+          >
+            {status}
+          </span>
+        </summary>
+        <div className="disclosure-body">
+          <p className="intro">{description}</p>
+          <FieldScopeProvider value={scope}>
+            <SectionFields
+              key={draft.generation}
+              section={section}
+              adapters={adapters}
+              value={draft.draft}
+              base={draft.base}
+              onChange={change}
+            />
+          </FieldScopeProvider>
+          {draft.conflicted && draft.dirty ? (
+            <p className="notice warning" role="status">
+              Changed elsewhere since you started editing. Saving will load the
+              current settings instead.
+            </p>
+          ) : null}
+          {notice ? (
+            <p
+              className={`notice${notice === staleNotice ? ' warning' : ''}`}
+              role="status"
+            >
+              {notice}
+            </p>
+          ) : null}
+          {failure ? (
+            <p
+              className="notice error"
+              role="alert"
+              tabIndex={-1}
+              data-form-alert
+            >
+              {failure}
+            </p>
+          ) : null}
+          <div className="actions">
+            <button
+              type="button"
+              onClick={reset}
+              disabled={locked || (!draft.dirty && !invalid)}
+            >
+              Reset
+            </button>
+            <button
+              className="primary"
+              type="submit"
+              disabled={locked || (!draft.dirty && !draft.unconfigured)}
+            >
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </details>
     </form>
   );
 }

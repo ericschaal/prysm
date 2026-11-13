@@ -163,7 +163,9 @@ export function PreviewPanel({
   target: LightingTarget;
   session: Session;
 }) {
-  const [open, setOpen] = useState(false);
+  /** The viewer's own choice; until then shown while screen sync runs. */
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const open = choice ?? session.state === 'running';
   const [attempt, setAttempt] = useState(0);
   const visible = usePageVisible();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -207,25 +209,34 @@ export function PreviewPanel({
       </div>
     );
   const showing = online && view.kind === 'frame';
+  const toggle = (
+    <button
+      type="button"
+      className="preview-toggle quiet"
+      aria-expanded={open}
+      aria-controls={bodyId}
+      onClick={() => setChoice(!open)}
+    >
+      {open ? 'Hide preview' : 'Show preview'}
+    </button>
+  );
   return (
-    <section className="card preview" aria-labelledby={headingId}>
-      <div className="card-heading">
-        <h2 id={headingId}>Preview</h2>
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={bodyId}
-          onClick={() => setOpen(!open)}
-        >
-          {open ? 'Hide preview' : 'Show preview'}
-        </button>
-      </div>
-      <p className="intro">
-        The captured picture, with the colours sent to each edge of your lights
-        around it.
-      </p>
+    <section
+      className="preview"
+      data-open={open}
+      data-showing={showing}
+      aria-labelledby={headingId}
+    >
+      <h2 id={headingId} className="visually-hidden">
+        Preview
+      </h2>
       {open ? (
-        <div id={bodyId} className="preview-body" aria-live="polite">
+        <div
+          id={bodyId}
+          className="preview-body"
+          data-view={online ? view.kind : 'offline'}
+          aria-live="polite"
+        >
           <canvas
             ref={canvasRef}
             className="preview-canvas"
@@ -234,7 +245,7 @@ export function PreviewPanel({
             hidden={!showing}
           />
           {showing ? (
-            <p className="help preview-info">
+            <p className="visually-hidden preview-info">
               {view.sampled
                 ? `Picture ${view.source}. Black bars removed: colours come from the outlined ${view.sampled} area.`
                 : `Picture ${view.source}.`}
@@ -244,6 +255,7 @@ export function PreviewPanel({
           )}
         </div>
       ) : null}
+      {toggle}
     </section>
   );
 }

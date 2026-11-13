@@ -75,6 +75,13 @@ export async function edit(element, value) {
 
 export const click = (element) => act(async () => element.click());
 
+/** Open Settings from Home, the way a user would. */
+export const openSettings = () =>
+  act(async () => {
+    $('[aria-label="Settings"]').click();
+    await sleep(0);
+  });
+
 export async function submit(element) {
   const view = element.ownerDocument.defaultView;
   await act(async () =>

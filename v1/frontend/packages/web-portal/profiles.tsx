@@ -114,6 +114,7 @@ export function ProfileControls({
             </button>
             <button
               type="button"
+              className="danger"
               disabled={disabled}
               onClick={() => setConfirming(selected.id)}
             >
@@ -134,6 +135,7 @@ export function ProfileControls({
           <p>Delete “{nameOf(selected)}”? This cannot be undone.</p>
           <button
             type="button"
+            className="danger solid"
             disabled={disabled}
             onClick={() =>
               restructure(
@@ -150,61 +152,64 @@ export function ProfileControls({
         </div>
       ) : null}
       {selected ? (
-        <div className="profile-editor" key={selected.id}>
-          <NameField
-            path={`${path}.name`}
-            label="Profile name"
-            help="Saved when you leave the field or press Enter."
-            value={selected.name ?? ''}
-            maxChars={profileLimits.name}
-            onChange={(name) => update({ name })}
-          />
-          <div className="grid">
-            {corrections.map(([name, label, help]) => (
-              <RangeField
-                key={name}
-                path={`${path}.correction.${name}`}
-                label={label}
-                help={help}
-                value={correction[name]}
-                onChange={(value) => correct({ [name]: value })}
-                format={signed}
-                {...correctionLimits[name]}
-              />
-            ))}
-          </div>
-          <fieldset>
-            <legend>Hue shift</legend>
-            <p className="help">
-              Turns each colour toward the next: red toward yellow, yellow
-              toward green, and so on to magenta toward red.
-            </p>
-            <div className="grid three">
-              {hues.map(([name, label]) => (
+        <details className="disclosure profile-editor" key={selected.id}>
+          <summary>Adjust this profile</summary>
+          <div className="disclosure-body">
+            <NameField
+              path={`${path}.name`}
+              label="Profile name"
+              help="Saved when you leave the field or press Enter."
+              value={selected.name ?? ''}
+              maxChars={profileLimits.name}
+              onChange={(name) => update({ name })}
+            />
+            <div className="grid">
+              {corrections.map(([name, label, help]) => (
                 <RangeField
                   key={name}
-                  path={`${path}.correction.hue.${name}`}
+                  path={`${path}.correction.${name}`}
                   label={label}
-                  value={correction.hue[name]}
-                  onChange={(value) =>
-                    correct({ hue: { ...correction.hue, [name]: value } })
-                  }
+                  help={help}
+                  value={correction[name]}
+                  onChange={(value) => correct({ [name]: value })}
                   format={signed}
-                  {...hueLimits[name]}
+                  {...correctionLimits[name]}
                 />
               ))}
             </div>
-          </fieldset>
-          <div className="actions">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => update({ correction: noCorrection })}
-            >
-              Reset correction
-            </button>
+            <fieldset>
+              <legend>Hue shift</legend>
+              <p className="help">
+                Turns each colour toward the next: red toward yellow, yellow
+                toward green, and so on to magenta toward red.
+              </p>
+              <div className="grid three">
+                {hues.map(([name, label]) => (
+                  <RangeField
+                    key={name}
+                    path={`${path}.correction.hue.${name}`}
+                    label={label}
+                    value={correction.hue[name]}
+                    onChange={(value) =>
+                      correct({ hue: { ...correction.hue, [name]: value } })
+                    }
+                    format={signed}
+                    {...hueLimits[name]}
+                  />
+                ))}
+              </div>
+            </fieldset>
+            <div className="actions">
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => update({ correction: noCorrection })}
+              >
+                Reset correction
+              </button>
+            </div>
           </div>
-        </div>
+        </details>
       ) : null}
     </section>
   );

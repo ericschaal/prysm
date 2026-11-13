@@ -223,7 +223,7 @@ export function tvStatus(
       : '';
   if (phase === 'stopping') {
     title = full ? 'Restarting Prysm…' : 'Stopping capture…';
-    description = 'Finishing the current capture session.';
+    description = 'This takes a moment.';
   } else if (phase === 'retrying') {
     const left = retrySeconds(state.worker, elapsedMs);
     title = 'Capture needs attention';
@@ -240,22 +240,20 @@ export function tvStatus(
   } else if (full) {
     if (!enabled) {
       title = 'Lights off';
-      description =
-        'Start screen sync here, or use the web portal for your lights.';
+      description = 'Start screen sync and your lights follow the picture.';
     } else if (state.lighting === 'device_native') {
       title = 'Light effects on';
       description = 'Your lights run their own effects.';
     } else if (state.capturing) {
       title = 'Screen sync is on';
-      description =
-        'This TV is processing the picture and sending colours to your lights.';
+      description = 'Your lights follow the picture.';
     } else if (state.portal && phase === 'running') {
       // Lighting is on but no frames arrive: the lights are released to WLED.
       title = 'Waiting for video';
       description = `Screen sync starts when a picture arrives.${FULL_RELEASED}`;
     } else {
       title = 'Starting Prysm…';
-      description = 'Waiting for the web portal to open.';
+      description = 'This takes a few seconds.';
     }
   } else if (!state.preferences.receiver) {
     title = 'Not set up';
@@ -275,7 +273,7 @@ export function tvStatus(
     description = `This TV connects to ${state.preferences.receiver} again every second. Check that Prysm is running with Remote capture.`;
   } else if (state.capturing) {
     title = 'Sending the picture';
-    description = 'Your TV picture is going to Prysm.';
+    description = 'Prysm on your computer gets the picture.';
   } else {
     title = 'Starting capture…';
     description = 'Waiting for the first picture.';

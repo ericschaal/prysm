@@ -47,19 +47,17 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
         onChange={(address) => onChange({ ...value, address })}
         help={
           <>
-            A name such as <code>wled.local</code> or an IP such as{' '}
-            <code>192.168.1.50</code>, with an optional HTTP port:{' '}
-            <code>wled.local:8080</code>, <code>[fe80::1]:8080</code>. WLED uses
-            plain HTTP; colours always go to UDP port 4048.
+            A name such as <code>wled.local</code> or an address such as{' '}
+            <code>192.168.1.50</code>, with an optional port (
+            <code>wled.local:8080</code>). Colours go to UDP port 4048.
           </>
         }
       />
       <fieldset className="leds" data-field="output.leds" tabIndex={-1}>
         <legend>LEDs per edge</legend>
         <p className="help">
-          Seen from the front of the screen, wiring starts at the bottom-left
-          corner and runs clockwise: up the left edge, across the top, down the
-          right and back along the bottom. Use 0 for an edge without LEDs.
+          Seen from the front, the strip starts at the bottom-left corner and
+          runs clockwise. Use 0 for an edge without LEDs.
         </p>
         <div className="led-editor">
           <LedLayout leds={value.leds} />
@@ -67,6 +65,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
             {wiring.map(({ edge }) => (
               <NumberField
                 key={edge}
+                className={`led-count led-count-${edge}`}
                 path={`output.leds.${edge}`}
                 label={`${edgeLabels[edge]} LEDs`}
                 value={value.leds[edge] ?? 0}

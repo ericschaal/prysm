@@ -1232,6 +1232,11 @@ test('slim lighting buttons drive the remote Prysm; leaving never turns it off',
   await tv.click('mode-processed');
   assert.equal(tv.application.snapshot().target, 'processed');
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');
+  assert.match(
+    tv.el('lighting-status').className,
+    /visually-hidden/,
+    'the chosen mode says it; the sentence is only read out',
+  );
   assert.equal(tv.el('mode-processed').getAttribute('aria-pressed'), 'true');
   assert.equal(tv.text('mode-device_native'), 'WLED effects');
   tv.application.failNext({
@@ -1364,9 +1369,15 @@ test('full: the lights card says why the lights do not follow the picture', asyn
     tv.text('lighting-detail'),
     /Another program is sending colours/,
   );
+  assert.doesNotMatch(tv.el('lighting-detail').className, /visually-hidden/);
   assert.match(document.querySelector('.card.lighting').className, /attention/);
   await act(async () => tv.application.publish({ output_issue: undefined }));
   assert.match(tv.text('lighting-detail'), /Picture arriving at 30\.0/);
+  assert.match(
+    tv.el('lighting-detail').className,
+    /visually-hidden/,
+    'the capture rate above already says it',
+  );
   assert.doesNotMatch(
     document.querySelector('.card.lighting').className,
     /attention/,
@@ -1406,7 +1417,7 @@ test('neither package sets up capture, lights or the stream on the TV; both show
       document.querySelector('.section-label').textContent,
       'Prysm on this TV',
     );
-    assert.equal(tv.text('lighting-title'), 'Lights');
+    assert.equal(tv.text('lighting-title'), 'Lights show');
     assert.equal(
       tv.el('portal-address').querySelector('code').textContent,
       flavor === 'full' ? 'http://192.168.1.5:8787/' : linked.instance,

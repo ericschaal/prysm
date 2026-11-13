@@ -15,6 +15,7 @@ import {
   edit,
   errorOf,
   field,
+  openSettings,
   renderPortal,
   sleep,
   text,
@@ -54,6 +55,7 @@ test('colour profiles are created, renamed, edited, duplicated, chosen and delet
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await openSettings();
     assert.deepEqual(
       $$('option', active()).map((option) => [
         option.value,
@@ -175,6 +177,7 @@ test('profile errors from the server land on their control; the list is capped',
   );
   const { fixture } = portal;
   try {
+    await openSettings();
     assert.equal(button('New profile').disabled, true);
     assert.equal(button('Duplicate').disabled, true);
     assert(text().includes('You have the most profiles Prysm keeps (32).'));

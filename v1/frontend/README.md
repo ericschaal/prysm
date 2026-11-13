@@ -33,28 +33,40 @@ Prysm ([dev.config.mjs](dev.config.mjs)): `http://127.0.0.1:8787` unless
 without one the page says "Invalid state stream response." The TV entry points use the Luna client of the TV supervisor;
 their `demo.html` pages run the same UI on an
 [in-memory supervisor](testkit/luna.ts) and portal (flags `?offline`,
-`?refused`, `?unreachable`). See the
+`?refused`, `?unreachable`, `?old`; selects at the bottom right put the
+supervisor in each of its states and play the phone's calibration part). See the
 [UI/host assembly guide](../UI-ASSEMBLIES.md) and [state wiring](STATE.md).
 
 ## Read the composition
 
-- [Shared portal](packages/web-portal/portal.tsx): lighting modes, live picture
-  controls, one Save form per adapter section, connection and failures. It
-  imports no adapters.
-  - [Lighting](packages/web-portal/lighting.tsx): Screen sync (`processed`),
-    the output's own effects (`device_native`, "WLED effects") and Off; modes
-    that cannot work are disabled with the reason; "Open WLED" for a WLED output.
+- [Shared portal](packages/web-portal/portal.tsx): two pages and two flows.
+  It imports no adapters.
+  - Home: the lighting state as a headline, the main switch, the live
+    picture, brightness and (with profiles) the colour profile. Problems show
+    here in plain words with the action that fixes them ("Set up Prysm").
+  - Settings (`#/settings`, the icon in the header): Picture (brightness,
+    black bars, colour profiles, and under Advanced shadow lift, spatial
+    reach, smoothing and sample density), Calibrate colours, Run setup again,
+    the Video source and Lights forms (one disclosure each), the theme
+    (System, Light, Dark; kept per browser in `localStorage`, never sent to
+    Prysm) and the technical details (with the capture rate).
+  - [Lighting](packages/web-portal/lighting.tsx): one switch for Screen sync
+    (`processed`; pressed again it turns the lights off, after a failure it
+    retries), and the output's own effects (`device_native`, "WLED effects")
+    and Off as quiet choices; modes that cannot work are disabled with the
+    reason; "Open WLED" for a WLED output.
   - [Picture](packages/web-portal/processing.tsx): the six `Processing`
     controls and the [colour profiles](packages/web-portal/profiles.tsx)
     (choose the active one; new, rename, duplicate, delete; correction and hue
     shift), applied live (debounced 400 ms) because processing-only changes
-    reach a running session without restarting it.
+    reach a running session without restarting it. Home's brightness and
+    profile choice save the same way.
   - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
     a canvas with each edge's colours around it and the sampled area outlined
-    when black bars are removed. Shown only on request; the stream is open only
-    while the panel is shown, the page is visible and the portal is connected
-    (the portal counts viewers). Hosts pass `httpPreviewClient()`; without a
-    preview client there is no panel.
+    when black bars are removed. Shown on Home while screen sync runs unless
+    the viewer hid it; the stream is open only while it is shown, the page is
+    visible and the portal is connected (the portal counts viewers). Hosts
+    pass `httpPreviewClient()`; without a preview client there is none.
   - [Section form](packages/web-portal/section-form.tsx) with its
     [draft](packages/web-portal/draft.ts): capture and output kind selector,
     explicit Save, Reset, dirty badge, field errors, stale reload.
@@ -64,8 +76,8 @@ their `demo.html` pages run the same UI on an
     until the end, which saves both sections with one request and can start
     screen sync; a refused field returns to its step.
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
-    `#/calibrate` (entry "Calibrate colours" on the main page; the TV's QR
-    code points there). Start creates a draft profile (new, or a copy of
+    `#/calibrate` (entry "Calibrate colours" in Settings, which it returns
+    to; the TV's QR code points there, and leaving returns Home). Start creates a draft profile (new, or a copy of
     one) and makes it active; white balance (`gray-192`), one hue per colour,
     intensity (`red-pair`, `green-pair`, `blue-pair`), mixed colours and a
     review each show their pattern on the TV (`setCalibration`); sliders
@@ -78,8 +90,8 @@ their `demo.html` pages run the same UI on an
     (`GET /api/v1/candidates/{section}/{kind}`) what is present and list it;
     picking one fills the path or address, and the typed field stays the
     fallback (nothing found: "No devices found. Enter the path below.").
-    A button rather than a lookup when the editor opens: the editors are on
-    the main page too, and WLED discovery takes over a second and asks the
+    A button rather than a lookup when the editor opens: the editors are in
+    Settings too, and WLED discovery takes over a second and asks the
     network. Hosts pass `httpDiscoveryClient()`; without one there is no button.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
@@ -102,7 +114,7 @@ their `demo.html` pages run the same UI on an
   settings rows with an explicit Save ([service and draft](packages/tv-ui/service.ts)),
   lighting modes on the Prysm that drives the lights ([portal](packages/tv-ui/portal.tsx));
   capture, lights and the slim stream encoding are set up only in the web
-  portal, whose address the TV shows (and names in the status card while no
+  portal, whose address the TV shows with a QR code (and names in the status card while no
   lights are set up). [Calibration](packages/tv-ui/calibration.tsx): a QR
   code of the portal's `#/calibrate` page, then the pattern the phone chose as
   full-screen video ([MSE player](packages/tv-ui/patterns.ts),

@@ -15,6 +15,7 @@ import {
   errorOf,
   field,
   form,
+  openSettings,
   renderPortal,
   sleep,
   submit,
@@ -50,6 +51,7 @@ test('setup opens instead of the page while capture or lights are missing', asyn
       assert.equal(!!wizard(), open, JSON.stringify(initial));
       assert.equal(!!$('.lighting'), !open);
       if (!open) {
+        await openSettings();
         assert.equal(button('Run setup again').disabled, false);
         continue;
       }
@@ -65,7 +67,8 @@ test('setup opens instead of the page while capture or lights are missing', asyn
         document.activeElement.textContent,
         'Setup closed; nothing was saved.',
       );
-      assert.equal(button('Run setup').disabled, false);
+      // Home says what is missing and offers setup.
+      assert.equal(button('Set up Prysm').disabled, false);
     } finally {
       await portal.unmount();
     }
@@ -140,7 +143,11 @@ test('setup steps keep the drafts, check each step and save both sections with o
       document.activeElement.textContent,
       'Setup saved. Screen sync is starting.',
     );
-    assert.equal($('.lighting-status').textContent, 'Screen sync is running.');
+    assert.equal(
+      $('.lighting-status').textContent,
+      'Lights follow your screen',
+    );
+    await openSettings();
     assert.equal(button('Run setup again').disabled, false);
   } finally {
     await portal.unmount();
@@ -215,6 +222,7 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await openSettings();
     await click(button('Run setup again'));
     assert.equal(heading(), 'Video source');
     assert.equal(field('capture.kind').value, 'device');
@@ -301,7 +309,11 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
     await next();
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'webos' });
     assert.equal(fixture.snapshot().target, 'processed');
-    assert.equal(form('Capture').querySelector('h2').textContent, 'Capture');
+    await openSettings();
+    assert.equal(
+      form('Video source').querySelector('h2').textContent,
+      'Video source',
+    );
   } finally {
     await portal.unmount();
   }

@@ -16,8 +16,19 @@ import { calibrationUrl } from './model';
 import { WAITING_PATTERN, type PatternPlayer } from './patterns';
 import { qrCode } from './qr';
 
-function QrCode({ modules }: { modules: boolean[][] }) {
-  // A four-module quiet zone around the code.
+/**
+ * A QR code with a four-module quiet zone. Without `id` it is decorative: the
+ * address it encodes is written next to it.
+ */
+export function QrCode({
+  modules,
+  id,
+  className = 'qr',
+}: {
+  modules: boolean[][];
+  id?: string;
+  className?: string;
+}) {
   const size = modules.length + 8;
   let path = '';
   modules.forEach((row, y) =>
@@ -25,14 +36,16 @@ function QrCode({ modules }: { modules: boolean[][] }) {
       if (dark) path += `M${x + 4} ${y + 4}h1v1h-1z`;
     }),
   );
+  const label = id
+    ? { role: 'img', 'aria-label': 'QR code of the address below' }
+    : { 'aria-hidden': true };
   return (
     <svg
-      id="calibration-qr"
-      className="qr"
+      id={id}
+      className={className}
       viewBox={`0 0 ${size} ${size}`}
       shapeRendering="crispEdges"
-      role="img"
-      aria-label="QR code of the address below"
+      {...label}
     >
       <rect width={size} height={size} fill="#fff" />
       <path d={path} fill="#000" />
@@ -111,19 +124,27 @@ export function CalibrationScreen({
       )}
       {pattern && !failed ? null : (
         <div className="calibration-waiting">
-          <h1>Calibrate colours</h1>
-          {modules ? <QrCode modules={modules} /> : null}
-          <code id="calibration-address">{url}</code>
-          <p id="calibration-hint">
-            {modules
-              ? 'Scan with your phone to start.'
-              : 'Open this address on your phone to start.'}
-          </p>
-          {failed ? (
-            <p id="calibration-error" className="notice error" role="alert">
-              The pattern video stopped. Press Back and try again.
-            </p>
-          ) : null}
+          <div className="calibration-body">
+            <div className="calibration-copy">
+              <h1>Calibrate colours</h1>
+              <p id="calibration-hint">
+                {modules
+                  ? 'Scan with your phone to start.'
+                  : 'Open this address on your phone to start.'}
+              </p>
+              {failed ? (
+                <p id="calibration-error" className="notice error" role="alert">
+                  The pattern video stopped. Press Back and try again.
+                </p>
+              ) : null}
+            </div>
+            <div className="qr-card">
+              {modules ? (
+                <QrCode id="calibration-qr" modules={modules} />
+              ) : null}
+              <code id="calibration-address">{url}</code>
+            </div>
+          </div>
           <footer className="key-help">
             <span>
               <b>Back</b> Return

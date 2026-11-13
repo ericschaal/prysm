@@ -55,6 +55,12 @@ export function LightingCard({
   let status: string;
   let detail: string | null = null;
   let attention = false;
+  /**
+   * The status only repeats the chosen mode and the detail only repeats the
+   * capture rate: kept for screen readers, not shown.
+   */
+  let quietStatus = false;
+  let quietDetail = false;
   if (!portal.baseUrl) {
     status =
       flavor === 'full'
@@ -69,13 +75,21 @@ export function LightingCard({
       ...snapshot,
       effects: effectsOf(snapshot) ?? 'Light effects',
     });
-    if (snapshot.input && snapshot.session.state === 'running')
+    const { state } = snapshot.session;
+    quietStatus =
+      state === 'running' ||
+      state === 'native' ||
+      (state === 'stopped' && snapshot.target === 'off');
+    if (snapshot.input && state === 'running') {
       detail = snapshot.input.receiving
         ? `Picture arriving at ${snapshot.input.fps.toFixed(1)} frames per second.`
         : 'No picture arriving yet.';
+      quietDetail = snapshot.input.receiving;
+    }
     if (snapshot.output_issue && snapshot.session.state === 'running') {
       detail = describeOutputIssue(snapshot.output_issue);
       attention = true;
+      quietDetail = false;
     }
     if (flavor === 'slim') {
       const kind = (snapshot.settings.capture as { kind?: string } | undefined)
@@ -83,6 +97,7 @@ export function LightingCard({
       if (kind !== 'remote') {
         detail = `This Prysm takes its picture from ${kind ? (captureNames[kind] ?? kind) : 'nothing yet'}. Choose Remote capture in its portal to use this TV.`;
         attention = true;
+        quietDetail = false;
       }
     }
   } else if (portal.reach === 'refused') {
@@ -125,21 +140,16 @@ export function LightingCard({
       aria-labelledby="lighting-title"
     >
       <h2 id="lighting-title" className="card-title">
-        Lights
+        Lights show
       </h2>
       <p
         id="lighting-status"
-        className="lighting-status"
+        className={`lighting-status${quietStatus ? ' visually-hidden' : ''}`}
         role="status"
         aria-live="polite"
       >
         {status}
       </p>
-      {detail ? (
-        <p id="lighting-detail" className="lighting-detail">
-          {detail}
-        </p>
-      ) : null}
       <div
         className="modes"
         data-row="lighting"
@@ -161,6 +171,14 @@ export function LightingCard({
           </button>
         ))}
       </div>
+      {detail ? (
+        <p
+          id="lighting-detail"
+          className={`lighting-detail${quietDetail ? ' visually-hidden' : ''}`}
+        >
+          {detail}
+        </p>
+      ) : null}
       {snapshot && !hasOutput ? (
         <p className="lighting-detail">
           Set up your lights in the web portal first.

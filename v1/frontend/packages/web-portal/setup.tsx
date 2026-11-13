@@ -324,10 +324,13 @@ export function SetupWizard<
           </li>
         ))}
       </ol>
-      <h2 id={headingId} ref={headingRef} tabIndex={-1}>
+      {/* Keyed by step so each step's heading enters with its own transition. */}
+      <h2 key={step} id={headingId} ref={headingRef} tabIndex={-1}>
         {current.title}
       </h2>
-      <p className="intro">{current.intro}</p>
+      <p key={`intro-${step}`} className="intro">
+        {current.intro}
+      </p>
       <FieldScopeProvider value={scope}>{body}</FieldScopeProvider>
       {notice ? (
         <p className="notice warning" role="status">

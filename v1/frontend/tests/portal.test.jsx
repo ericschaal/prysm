@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { JSDOM } from 'jsdom';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
@@ -10,7 +11,11 @@ import {
   processingDelayMs,
   processingLimits,
   profileLimits,
+  saveTheme,
   staleNotice,
+  storedTheme,
+  applyTheme,
+  themeStorageKey,
 } from '@prysm/web-portal';
 import {
   ledEdgeLimits,
@@ -41,6 +46,7 @@ import {
   errorOf,
   field,
   form,
+  openSettings,
   renderPortal,
   sleep,
   submit,
@@ -84,7 +90,10 @@ test('the lighting card says why the lights are not showing screen sync', async 
         output_issue: 'overridden',
       }),
     );
-    assert.equal($('.lighting-status').textContent, 'Screen sync is running.');
+    assert.equal(
+      $('.lighting-status').textContent,
+      'Lights follow your screen',
+    );
     assert.match(
       $('.lighting .output-issue').textContent,
       /^Live override is on/,
@@ -108,7 +117,7 @@ test('the lighting card says why the lights are not showing screen sync', async 
   }
 });
 
-test('the lighting status shows the capture rate or that video is awaited', async () => {
+test('Home says when video is awaited; the capture rate is in the technical details', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
@@ -121,16 +130,21 @@ test('the lighting status shows the capture rate or that video is awaited', asyn
     );
     assert.equal(
       $('.lighting-status').textContent,
-      'Screen sync is running. Waiting for video.',
+      'Lights follow your screen',
     );
+    assert.equal($('.lighting-detail').textContent, 'Waiting for video.');
 
     await act(async () =>
       fixture.publish({ input: { fps: 29.9, receiving: true } }),
     );
-    assert.equal(
-      $('.lighting-status').textContent,
-      'Screen sync is running. 30 fps.',
+    assert.equal($('.lighting-detail'), null);
+    assert(!text().includes('fps'), 'no frame rate on Home');
+    await openSettings();
+    const rate = $$('.diagnostics dt').find(
+      (term) => term.textContent === 'Capture rate',
     );
+    assert.equal(rate.nextElementSibling.textContent, '30 fps');
+    await click(button('Home'));
 
     await act(async () =>
       fixture.publish({
@@ -139,7 +153,7 @@ test('the lighting status shows the capture rate or that video is awaited', asyn
         input: undefined,
       }),
     );
-    assert.equal($('.lighting-status').textContent, 'Lights are off.');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
   } finally {
     await portal.unmount();
   }
@@ -154,21 +168,31 @@ test('lighting modes set the target and show what the session is doing', async (
       ['Screen sync', 'WLED effects', 'Off'],
     );
     assert.equal(mode('off').getAttribute('aria-pressed'), 'true');
-    assert.equal($('.lighting-status').textContent, 'Lights are off.');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
 
     await press(mode('processed'));
     assert.deepEqual(fixture.calls.slice(-1), ['target:processed']);
     assert.equal(mode('processed').getAttribute('aria-pressed'), 'true');
     assert.equal(mode('off').getAttribute('aria-pressed'), 'false');
-    assert.equal($('.lighting-status').textContent, 'Screen sync is running.');
+    assert.equal(
+      $('.lighting-status').textContent,
+      'Lights follow your screen',
+    );
+
+    // The main switch turns screen sync off again.
+    await press(mode('processed'));
+    assert.deepEqual(fixture.calls.slice(-1), ['target:off']);
+    assert.equal(mode('processed').getAttribute('aria-pressed'), 'false');
+    assert.equal(mode('off').getAttribute('aria-pressed'), 'true');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
 
     await press(mode('device_native'));
     assert.deepEqual(fixture.calls.slice(-1), ['target:device_native']);
-    assert.equal($('.lighting-status').textContent, 'WLED effects are on.');
+    assert.equal($('.lighting-status').textContent, 'WLED effects are on');
 
     await press(mode('off'));
     assert.deepEqual(fixture.calls.slice(-1), ['target:off']);
-    assert.equal($('.lighting-status').textContent, 'Lights are off.');
+    assert.equal($('.lighting-status').textContent, 'Lights are off');
 
     const link = $('.device-link a');
     assert.equal(link.href, 'http://192.0.2.1/');
@@ -186,12 +210,13 @@ test('lighting modes set the target and show what the session is doing', async (
         },
       }),
     );
-    assert.equal($('.lighting-status').textContent, 'Screen sync stopped.');
+    assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert.equal(
       $('.lighting [role="alert"]').textContent,
       'WLED at 192.0.2.1 did not switch to live mode',
     );
 
+    // After a failure the main switch retries screen sync.
     fixture.failNext({ kind: 'adapter', message: 'fake output cannot open' });
     await press(mode('processed'));
     assert(text().includes('fake output cannot open'));
@@ -215,7 +240,7 @@ test('lighting modes set the target and show what the session is doing', async (
 
 test('modes that cannot work are disabled and say why', async () => {
   for (const [initial, processed, native, effects] of [
-    [{ output }, 'Configure capture first.', null, 'WLED effects'],
+    [{ output }, 'Set up a video source first.', null, 'WLED effects'],
     [
       { capture, output: { kind: 'null' } },
       null,
@@ -224,14 +249,14 @@ test('modes that cannot work are disabled and say why', async () => {
     ],
     [
       { capture },
-      'Configure your lights first.',
-      'Configure your lights first.',
+      'Set up your lights first.',
+      'Set up your lights first.',
       'Device effects',
     ],
     [
       {},
-      'Configure capture and lights first.',
-      'Configure your lights first.',
+      'Set up a video source and lights first.',
+      'Set up your lights first.',
       'Device effects',
     ],
   ]) {
@@ -296,6 +321,7 @@ test('picture controls show the state, enforce ranges and apply live', async () 
   const attributes = (element) =>
     ['type', 'value', 'min', 'max', 'step'].map((name) => element[name] ?? '');
   try {
+    await openSettings();
     assert.deepEqual(
       [
         'brightness_percent',
@@ -399,6 +425,7 @@ test('the capture form saves the exact section on Save, with dirty state and res
   });
   const { fixture } = portal;
   try {
+    await openSettings();
     assert.deepEqual(
       ['capture.path', 'capture.width', 'capture.height', 'capture.fps'].map(
         (name) => field(name).value,
@@ -416,19 +443,19 @@ test('the capture form saves the exact section on Save, with dirty state and res
         ['1', '2147483647'],
       ],
     );
-    assert.equal(badge('Capture'), 'Saved');
-    assert.equal(button('Save capture settings').disabled, true);
+    assert.equal(badge('Video source'), 'Saved');
+    assert.equal(button('Save', form('Video source')).disabled, true);
 
     await edit(field('capture.width'), 1280);
-    assert.equal(badge('Capture'), 'Unsaved changes');
-    await click(button('Reset', form('Capture')));
+    assert.equal(badge('Video source'), 'Unsaved changes');
+    await click(button('Reset', form('Video source')));
     assert.equal(field('capture.width').value, '640');
-    assert.equal(badge('Capture'), 'Saved');
+    assert.equal(badge('Video source'), 'Saved');
 
     await edit(field('capture.width'), 1280);
     await edit(field('capture.height'), 720);
     assert.equal(saves(fixture), 0);
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings, {
       capture: {
         kind: 'device',
@@ -440,7 +467,7 @@ test('the capture form saves the exact section on Save, with dirty state and res
       output,
       processing: defaultProcessing,
     });
-    assert.equal(badge('Capture'), 'Saved');
+    assert.equal(badge('Video source'), 'Saved');
 
     // Out of range: shown at once, never sent, focused on Save.
     await edit(field('capture.width'), 4000);
@@ -448,18 +475,18 @@ test('the capture form saves the exact section on Save, with dirty state and res
       errorOf(field('capture.width')),
       'Enter a whole number from 1 to 3840.',
     );
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(saves(fixture), 1);
     assert.equal(
-      $('[data-form-alert]', form('Capture')).textContent,
+      $('[data-form-alert]', form('Video source')).textContent,
       'Correct the highlighted fields before saving.',
     );
     assert.equal(document.activeElement, field('capture.width'));
 
     // An empty path is reported once a save is tried.
-    await click(button('Reset', form('Capture')));
+    await click(button('Reset', form('Video source')));
     await edit(field('capture.path'), ' ');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(errorOf(field('capture.path')), 'Enter a value.');
     assert.equal(saves(fixture), 1);
   } finally {
@@ -471,18 +498,19 @@ test('server field errors land on their control and clear when it is edited', as
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await openSettings();
     fixture.failNext({
       kind: 'invalid',
       field: 'capture.height',
       message: 'height exceeds 2160',
     });
     await edit(field('capture.height'), 2000);
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(field('capture.height').getAttribute('aria-invalid'), 'true');
     assert.equal(errorOf(field('capture.height')), 'height exceeds 2160');
     assert.equal(document.activeElement, field('capture.height'));
     assert.equal(
-      $('[role="alert"]', form('Capture')).textContent,
+      $('[role="alert"]', form('Video source')).textContent,
       'Not saved: height exceeds 2160',
     );
     await edit(field('capture.height'), 1080);
@@ -545,6 +573,7 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await openSettings();
     // Seen before saving: the draft is kept until Save, which reloads.
     await edit(field('capture.path'), '/dev/video1');
     await elsewhere(fixture, {
@@ -552,11 +581,11 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
     });
     assert(text().includes('Changed elsewhere since you started editing.'));
     assert.equal(field('capture.path').value, '/dev/video1');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(saves(fixture), 1);
     assert.equal(field('capture.path').value, '/dev/video9');
     assert.equal(
-      $('.notice[role="status"]', form('Capture')).textContent,
+      $('.notice[role="status"]', form('Video source')).textContent,
       staleNotice,
     );
 
@@ -567,10 +596,10 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
       message: 'settings revision 1 is stale; current is 2',
       current: 2,
     });
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(field('capture.path').value, '/dev/video9');
     assert.equal(
-      $('.notice[role="status"]', form('Capture')).textContent,
+      $('.notice[role="status"]', form('Video source')).textContent,
       staleNotice,
     );
     assert.equal(fixture.snapshot().settings.capture.path, '/dev/video9');
@@ -583,9 +612,9 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
     await edit(field('capture.path'), '/dev/video3');
     await edit(field('processing.brightness_percent'), 50);
     await settle();
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(
-      $('.notice[role="status"]', form('Capture')).textContent,
+      $('.notice[role="status"]', form('Video source')).textContent,
       'Saved.',
     );
     assert.equal(fixture.snapshot().settings.capture.path, '/dev/video3');
@@ -600,6 +629,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await openSettings();
     assert.deepEqual(
       $$('option', field('capture.kind')).map((item) => [
         item.value,
@@ -630,7 +660,7 @@ test('kind selectors swap panels without losing drafts or the other section', as
     assert.equal(field('capture.listen').value, '0.0.0.0:7380');
     assert.equal(field('output.address').value, 'wled.local');
 
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'remote',
       listen: '0.0.0.0:7380',
@@ -650,6 +680,8 @@ test('kind selectors swap panels without losing drafts or the other section', as
       output: { kind: 'null' },
       processing: defaultProcessing,
     });
+    // Home: no WLED link, and these lights have no effects of their own.
+    await click(button('Home'));
     assert.equal($('.device-link a'), null);
     assert.equal(mode('device_native').disabled, true);
   } finally {
@@ -662,20 +694,22 @@ test('an unconfigured section starts from its first kind and saves only when val
   const { fixture } = portal;
   try {
     await click(button('Leave setup'));
-    assert.equal(badge('Capture'), 'Not configured');
+    await openSettings();
+    assert.equal(badge('Video source'), 'Not configured');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(errorOf(field('capture.path')), 'Enter a value.');
     assert.equal(saves(fixture), 0);
     await edit(field('capture.path'), ' /dev/video0 ');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'device',
       path: '/dev/video0',
     });
+    await click(button('Home'));
     assert.equal(mode('processed').disabled, true);
-    assert.equal(hint(mode('processed')), 'Configure your lights first.');
+    assert.equal(hint(mode('processed')), 'Set up your lights first.');
   } finally {
     await portal.unmount();
   }
@@ -687,6 +721,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
   const edges = ['top', 'right', 'bottom', 'left'];
   const caption = () => $('.led-layout figcaption').textContent;
   try {
+    await openSettings();
     assert.deepEqual(
       edges.map((edge) => field(`output.leds.${edge}`).value),
       ['10', '0', '0', '4'],
@@ -742,6 +777,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       leds: { top: 96, right: 54, bottom: 96, left: 0 },
     });
     assert.equal(field('output.address').value, 'wled.local:8080');
+    await click(button('Home'));
     assert.equal($('.device-link a').href, 'http://wled.local:8080/');
   } finally {
     await portal.unmount();
@@ -780,8 +816,9 @@ test('fields the forms do not show are preserved on every save', async () => {
   );
   const { fixture } = portal;
   try {
+    await openSettings();
     await edit(field('capture.fps'), 50);
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     await edit(field('output.leds.right'), 6);
     await submit(form('Lights'));
     await edit(field('processing.spatial_reach_percent'), 20);
@@ -816,8 +853,9 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
     const portal = await renderPortal(Host, { capture: start, output });
     const { fixture } = portal;
     const input = (name) => field(`capture.${name}`);
-    const shown = () => $('[data-size-hint]', form('Capture'));
+    const shown = () => $('[data-size-hint]', form('Video source'));
     try {
+      await openSettings();
       assert.equal(shown(), null, 'not at the default size');
       assert.match(hint, wording);
       assert.match(hint, /^640\u00a0×\u00a0360 is enough for the lights\./);
@@ -843,7 +881,7 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
       assert.equal(element.getAttribute('role'), null, 'help, not an alert');
       assert.equal(errorOf(input('width')), undefined);
       assert.equal(errorOf(input('height')), undefined);
-      await submit(form('Capture'));
+      await submit(form('Video source'));
       assert.deepEqual(
         [
           fixture.snapshot().settings.capture.width,
@@ -851,7 +889,7 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
         ],
         [1280, 720],
       );
-      assert.equal(badge('Capture'), 'Saved');
+      assert.equal(badge('Video source'), 'Saved');
       assert.equal(shown().textContent, hint, 'still shown after saving');
     } finally {
       await portal.unmount();
@@ -867,9 +905,13 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
   const { fixture } = portal;
   const input = (name) => field(`capture.${name}`);
   try {
+    await openSettings();
     assert.equal(field('capture.kind'), null);
     assert.equal(field('output.kind'), null);
-    assert.equal(form('Capture').querySelector('h2').textContent, 'Capture');
+    assert.equal(
+      form('Video source').querySelector('h2').textContent,
+      'Video source',
+    );
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
         input(name).value,
@@ -893,7 +935,7 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
     await edit(input('height'), 720);
     await edit(input('fps'), 60);
     await click(input('include_ui'));
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'webos',
       width: 1280,
@@ -918,6 +960,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
   const help = (element) =>
     element.closest('.field').querySelector('.help')?.textContent;
   try {
+    await openSettings();
     // Defaults shown for omitted fields; the shared fields' limits and labels.
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
@@ -970,7 +1013,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     );
     await edit(input('encoding'), 'raw');
     assert.match(help(input('encoding')), /ten times the network/);
-    assert.equal(badge('Capture'), 'Unsaved changes');
+    assert.equal(badge('Video source'), 'Unsaved changes');
 
     // Same validation as the webOS form.
     await edit(input('height'), 181);
@@ -985,7 +1028,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     await edit(input('height'), 8);
     assert.equal(errorOf(input('encoding')), undefined);
     await edit(input('encoding'), 'h264_hardware');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(saves(fixture), 0);
     assert.match(
       errorOf(input('encoding')),
@@ -995,7 +1038,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     await edit(input('width'), 256);
     await click(input('include_ui'));
     await edit(input('encoding'), 'h264_software');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, {
       kind: 'remote',
       listen,
@@ -1005,7 +1048,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
       include_ui: false,
       encoding: 'h264_software',
     });
-    assert.equal(badge('Capture'), 'Saved');
+    assert.equal(badge('Video source'), 'Saved');
 
     // The server's own check on the encoding lands on the selector.
     fixture.failNext({
@@ -1014,7 +1057,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
       message: 'H.264 needs at least 16x16; use raw for smaller pictures',
     });
     await edit(input('encoding'), 'h264_hardware');
-    await submit(form('Capture'));
+    await submit(form('Video source'));
     assert.equal(
       errorOf(input('encoding')),
       'H.264 needs at least 16x16; use raw for smaller pictures',
@@ -1041,15 +1084,16 @@ test('the sender refusing the requested stream is shown in full with the lightin
         failure: { kind: 'adapter', message: refusal },
       }),
     );
-    assert.equal($('.lighting-status').textContent, 'Screen sync stopped.');
+    assert.equal($('.lighting-status').textContent, 'Screen sync stopped');
     assert.equal(
       $('.lighting [role="alert"]').textContent,
       refusal,
       'not shortened',
     );
-    // The capture form says where the fix is.
+    // The capture form, in Settings, says where the fix is.
+    await openSettings();
     assert.match(
-      form('Capture').textContent,
+      form('Video source').textContent,
       /If the TV cannot send it, lighting stops and says why; change the encoding or size here/,
     );
   } finally {
@@ -1120,4 +1164,89 @@ test('limits and defaults written in the panels match the generated schemas', as
     encodingChoices.map((choice) => choice.value),
     desktop.StreamEncoding.enum,
   );
+});
+
+test('Home holds the state, the switch, brightness and the profile; the rest is in Settings', async () => {
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({
+      settings: {
+        ...snapshot.settings,
+        processing: {
+          ...snapshot.settings.processing,
+          profiles: [{ id: 'movie', name: 'Movie night' }],
+        },
+      },
+    }),
+  );
+  const { fixture } = portal;
+  try {
+    assert.equal($$('form').length, 0, 'no forms on Home');
+    assert.equal($('.diagnostics'), null);
+    assert.deepEqual(
+      $$('.quick-picture input, .quick-picture select').map(
+        (control) => control.name,
+      ),
+      ['processing.brightness_percent', 'processing.active_profile'],
+    );
+    await edit(field('processing.brightness_percent'), 55);
+    await edit(field('processing.active_profile'), 'movie');
+    await settle();
+    assert.equal(fixture.snapshot().settings.processing.brightness_percent, 55);
+    assert.equal(
+      fixture.snapshot().settings.processing.active_profile,
+      'movie',
+    );
+
+    await openSettings();
+    assert.equal(window.location.hash, '#/settings');
+    assert.equal(document.activeElement.textContent, 'Settings');
+    assert(form('Video source') && form('Lights'));
+    assert($('.diagnostics'));
+    await click(button('Home'));
+    assert.equal(window.location.hash, '');
+    assert($('.lighting'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the theme choice sets data-theme, is kept in this browser and works without storage', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    await openSettings();
+    const choice = (label) =>
+      $$('.theme-choice input').find(
+        (input) => input.parentElement.textContent === label,
+      );
+    assert.equal(choice('System').checked, true);
+    // An about:blank page has no storage: the choice still applies.
+    await click(choice('Dark'));
+    assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
+    assert.equal(choice('Dark').checked, true);
+    assert.equal(storedTheme(), 'system', 'nothing kept without storage');
+    await click(choice('System'));
+    assert.equal(document.documentElement.hasAttribute('data-theme'), false);
+  } finally {
+    await portal.unmount();
+  }
+  // With storage the choice is kept and applied on the next visit.
+  const dom = new JSDOM('', { url: 'http://prysm.test/' });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+  });
+  try {
+    saveTheme('light');
+    assert.equal(dom.window.localStorage.getItem(themeStorageKey), 'light');
+    assert.equal(storedTheme(), 'light');
+    applyTheme(storedTheme());
+    assert.equal(document.documentElement.getAttribute('data-theme'), 'light');
+    saveTheme('system');
+    assert.equal(dom.window.localStorage.getItem(themeStorageKey), null);
+    assert.equal(storedTheme(), 'system');
+  } finally {
+    dom.window.close();
+  }
 });

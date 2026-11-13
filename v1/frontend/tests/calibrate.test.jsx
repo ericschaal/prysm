@@ -9,7 +9,16 @@ import {
   screens,
   wizardReducer,
 } from '../packages/web-portal/calibrate-wizard';
-import { $, button, edit, field, renderPortal, sleep, text } from './dom';
+import {
+  $,
+  button,
+  edit,
+  field,
+  openSettings,
+  renderPortal,
+  sleep,
+  text,
+} from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
 const output = {
@@ -54,6 +63,7 @@ async function openCalibrate({
       },
     },
   }));
+  await openSettings();
   await press(button('Calibrate colours'));
   return portal;
 }
@@ -73,11 +83,28 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       );
       await press(button('Leave'));
       assert.equal($('.calibrate'), null);
-      assert(button('Calibrate colours'));
+      assert(button('Calibrate colours'), 'back in Settings');
       assert.deepEqual(patterns(portal.fixture), []);
     } finally {
       await portal.unmount();
     }
+  }
+});
+
+test("the TV's link opens Calibrate directly; leaving returns Home", async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    await act(async () => {
+      window.location.hash = calibrateRoute;
+      await sleep(0);
+    });
+    assert.equal(heading(), 'Match the lights to your TV');
+    await press(button('Leave'));
+    assert.equal($('.calibrate'), null);
+    assert.equal(window.location.hash, '');
+    assert($('.lighting'), 'Home');
+  } finally {
+    await portal.unmount();
   }
 });
 
