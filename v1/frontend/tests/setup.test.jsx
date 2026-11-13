@@ -15,6 +15,7 @@ import {
   errorOf,
   field,
   form,
+  openEditor,
   openSettings,
   renderPortal,
   sleep,
@@ -236,7 +237,11 @@ test('setup again starts from the saved settings, and leaving it saves nothing',
     assert.equal(field('output.leds.left').value, '4');
     await click(button('Leave setup'));
     assert.equal(saves(fixture), 0);
-    assert.equal(field('capture.path').value, '/dev/video0');
+    assert(
+      $$('.entry-description').some((line) =>
+        line.textContent.includes('/dev/video0'),
+      ),
+    );
 
     // Again: a fresh start from the saved values; Save only keeps lights off.
     await click(button('Run setup again'));
@@ -312,11 +317,9 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
     await next();
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'webos' });
     assert.equal(fixture.snapshot().target, 'processed');
-    await openSettings();
-    assert.equal(
-      form('Video source').querySelector('h2').textContent,
-      'Video source',
-    );
+    await openEditor('Video source');
+    assert.equal($('.page-heading h2').textContent, 'Video source');
+    assert(form('Video source'));
   } finally {
     await portal.unmount();
   }

@@ -76,7 +76,10 @@ Good to know:
 
 ## 5. Change settings
 
-Open **Settings** (the icon in the header).
+Open **Settings** (the icon in the header). The line under the title says
+whether everything is saved: **All changes saved**, **Saving…** or **Not
+saved**; a change that could not be saved also says so at its control, with
+**Try again**.
 
 <a id="processing"></a>
 
@@ -89,24 +92,32 @@ Picture changes apply while you move the control; there is no Save button.
 | Brightness | 100% | Overall LED brightness. Also on Home. |
 | Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 | Colour profile | No correction | A saved colour correction; see [Calibrate colours](calibration.md). |
-| Shadow lift (Advanced) | 0% | Brightens dark colours; black stays off. |
-| Spatial reach (Advanced) | 10% | How far into the picture colours affect each edge. |
-| Smoothing (Advanced) | 0.1 s | Softens changes. 0 reacts at once. |
-| Sample density (Advanced) | 128 | More samples use more CPU. Leave it at 128 to start. |
+| Shadow lift (Fine-tuning) | 0% | Brightens dark colours; black stays off. |
+| Edge depth (Fine-tuning) | 10% | How far into the picture each light looks. |
+| Smoothing (Fine-tuning) | 0.1 s | Softens quick changes. 0 reacts at once. |
+| Detail (Fine-tuning) | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. |
 
 Use [Live preview](preview.md) to check a change.
 
 ### Video source and lights
 
-Each has its own form. Edit it and choose **Save**; **Reset** discards your
-edits. Saving while the lights are on restarts Screen sync with the new
-settings. **Run setup again** reopens the wizard.
+Choose **Video source** or **Lights** in Settings to change them on a page of
+their own, with the same steps as the setup wizard. **Use this video source**
+or **Use these lights** saves; **Cancel** leaves without saving. A problem with
+either shows on its row in Settings.
 
-If someone changed the same settings in another browser, or Prysm restarted,
-the form shows the current values and says so. Make your change again.
+Saving restarts Screen sync if it is on, and Prysm then checks the change: it
+says when the picture arrives or the lights work, or that they don't. Until
+they work, **Go back to the previous video source** (or lights) puts the old
+one back. With Screen sync off nothing is tried; **Turn on screen sync to
+try** does that.
+
+If someone changed the same part in another browser, Prysm asks: **Use
+theirs** shows their settings, **Keep mine** saves yours. **Run setup again**
+reopens the wizard.
 
 Settings also has the theme (System, Light, Dark; kept in this browser only)
-and **Technical details**.
+and **About this Prysm**.
 
 ## Settings file
 

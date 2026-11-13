@@ -114,12 +114,23 @@ supervisor in each of its states and play the phone's calibration part). See the
     browser tab is visible and the portal is connected (the portal counts
     viewers). Hosts pass `httpPreviewClient()`; without a preview client
     there is none.
-  - [Section form](packages/web-portal/section-form.tsx) with its
-    [draft](packages/web-portal/draft.ts): capture and output kind selector,
-    explicit Save, Reset, dirty badge, field errors, stale reload.
+  - [Section editor](packages/web-portal/section-editor.tsx) with its
+    [draft](packages/web-portal/draft.ts): the video source
+    (`#/settings/video`) or the lights (`#/settings/lights`) on a page of
+    their own, opened from their row in Settings. The same step as in setup
+    ([section step](packages/web-portal/section-step.tsx), words in
+    [step copy](packages/web-portal/step-copy.ts)), one button that saves
+    ("Use this video source", "Use these lights"), Cancel. Saving restarts
+    screen sync, so the editor then checks it: with screen sync on it waits
+    up to 10 s for the new source or lights to work (flowing for 1.5 s) or
+    fail (a new failure on that side), and says which; with it off it says
+    nothing was tried and offers "Turn on screen sync to try". While it is
+    not known to work, "Go back to the previous …" saves what was there
+    before. A change on another device asks: Use theirs, or Keep mine.
+    The rows in Settings keep a line for their side's live problem.
   - [Setup](packages/web-portal/setup.tsx): shown instead of the page while
     capture or output is missing, and on "Run setup again": video source, lights
-    (the same kind selector and editors as the forms), review. Nothing is saved
+    (the same step as the editors), review. Nothing is saved
     until the end, which saves both sections with one request and can start
     screen sync; a refused field returns to its step.
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
@@ -188,17 +199,17 @@ supervisor in each of its states and play the phone's calibration part). See the
 
 | Section | When it is sent | Conflict check |
 | --- | --- | --- |
-| Picture (`processing`) | 400 ms after the last change (a profile name when it is committed with Enter or by leaving the field); a refused value is not retried until edited | The six controls, the profiles and the active profile must still match what the panel started from |
-| Capture, Lights (`capture`, `output`) | Save; Reset discards the draft | The section must still match what the form started from |
+| Picture (`processing`) | 400 ms after the last change; a slider where it is let go (tried on the lights while held); a profile name when it is committed with Enter or by leaving the field. Saves never overlap: one asked for meanwhile follows at once. A refused value is not retried until edited | None asked: a refused stale save waits for the newer settings, puts the user's changed controls on them and saves again |
+| Video source, Lights (`capture`, `output`) | The editor's one button; Cancel discards the draft | The section must still match what the editor started from; otherwise the user chooses theirs or mine |
 
 Every save copies the latest observed settings, replaces one section and sends
 the current revision, so fields the UI does not show (new settings, unknown
 adapter fields) are kept, and saving one section never
-conflicts with another. If the section changed elsewhere, or the server answers
-`stale_revision` (409), the form reloads the current values and says so.
-`invalid` failures mark the control named by `field` (`capture.width`,
-`output.leds` for the LED group) and move focus to it; a field the form does not
-show is reported in the form's alert. Limits come from the generated schemas
+conflicts with another. Settings says in one line whether everything is saved
+(`SaveStatus`). `invalid` failures mark the control named by `field`
+(`capture.width`, `output.leds` for the LED group) with the adapter's own
+sentence (`AdapterUi.problems`) in place of its help, and move focus to it; a
+field the form does not show is reported in the form's status line. Limits come from the generated schemas
 and are checked against them in [tests](tests/portal.test.jsx); where a schema
 has no maximum the panel uses the Rust type bound (`sample_density` `u16`,
 file `fps` `u32`, device `fps` `i32` for AVFoundation). Profile limits (32

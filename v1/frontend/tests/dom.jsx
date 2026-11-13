@@ -50,7 +50,11 @@ export const field = (name) => $(`[name="${name}"]`);
 export const button = (text, scope = document) =>
   $$('button', scope).find((item) => item.textContent.trim() === text);
 export const form = (title) =>
-  $$('form').find((item) => item.querySelector('h2')?.textContent === title);
+  $$('form').find(
+    (item) =>
+      item.querySelector('h2')?.textContent === title ||
+      item.getAttribute('aria-label') === title,
+  );
 export const text = () => document.body.textContent;
 
 /** Type into an input or choose an option the way a user would. */
@@ -79,6 +83,24 @@ export const click = (element) => act(async () => element.click());
 export const openSettings = () =>
   act(async () => {
     $('[aria-label="Settings"]').click();
+    await sleep(0);
+  });
+
+/** From Home or Settings: the editor of one part of the setup. */
+export async function openEditor(label) {
+  if (!$('.settings')) await openSettings();
+  await act(async () => {
+    $$('.entry button')
+      .find((item) => item.firstChild?.textContent === label)
+      .click();
+    await sleep(0);
+  });
+}
+
+/** Leave an editor, dropping what it holds, for Settings. */
+export const leaveEditor = () =>
+  act(async () => {
+    $('.page-heading button').click();
     await sleep(0);
   });
 

@@ -76,3 +76,26 @@ test('the brightness slider moves with a held arrow key and the result is saved'
     )
     .toBe(moved);
 });
+
+test('quick separate arrow taps all land: the last value is saved', async ({
+  page,
+  prysm,
+}) => {
+  const slider = page.getByRole('slider', { name: 'Brightness' });
+  await slider.focus();
+  // Five taps, each a press and a release, faster than a save goes round.
+  for (let tap = 0; tap < 5; tap += 1) {
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(250);
+  }
+  await expect(slider).toHaveValue('55');
+  await expect
+    .poll(
+      async () => (await prysm.state()).settings.processing.brightness_percent,
+    )
+    .toBe(55);
+  // And it stays: nothing later puts an older value back.
+  await page.waitForTimeout(1500);
+  expect((await prysm.state()).settings.processing.brightness_percent).toBe(55);
+  await expect(slider).toHaveValue('55');
+});

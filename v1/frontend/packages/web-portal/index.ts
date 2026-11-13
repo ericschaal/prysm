@@ -37,11 +37,20 @@ export { PreviewPanel } from './preview';
 export { colorsRetryMs, ledProperties, ledValues } from './live-colors';
 export { deviceNamesKey } from './setup-card';
 export { drawPreview, previewLayout } from './preview-canvas';
-export { SectionFields, SectionForm } from './section-form';
+export {
+  checkForMs,
+  SectionEditor,
+  workingAfterMs,
+  type SectionEditorProps,
+} from './section-editor';
+export { SectionFields } from './section-step';
+export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';
 export {
+  lightsRoute,
   previewRoute,
   settingsRoute,
+  videoRoute,
   WebPortal,
   type WebPortalProps,
 } from './portal';

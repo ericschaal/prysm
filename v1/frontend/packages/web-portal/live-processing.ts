@@ -221,7 +221,25 @@ export function useLiveProcessing({
   });
 
   /** Save `value`; resolves with whether it was saved. */
-  async function apply(edited: ProcessingControls): Promise<boolean> {
+  /**
+   * The save on its way, if any. Saves never overlap: one asked for meanwhile
+   * (a quick second tap) waits for it, then the newest value is saved
+   * against the revision it returned, at once.
+   */
+  const inFlight = useRef<Promise<boolean> | null>(null);
+  const again = useRef(false);
+  function apply(edited: ProcessingControls): Promise<boolean> {
+    if (inFlight.current) {
+      again.current = true;
+      return inFlight.current;
+    }
+    const run = send(edited).finally(() => {
+      inFlight.current = null;
+    });
+    inFlight.current = run;
+    return run;
+  }
+  async function send(edited: ProcessingControls): Promise<boolean> {
     let value = edited;
     // Changed elsewhere since the draft began: keep both changes.
     if (draft.conflicted && draft.base) {
@@ -261,14 +279,22 @@ export function useLiveProcessing({
   // Debounce: every change restarts the wait. A new revision (another section
   // saved meanwhile) also restarts it, so `apply` sends the current one.
   const applyLater = useEffectEvent((value: ProcessingControls) => {
+    again.current = false;
     void apply(value);
   });
-  // A held slider saves on release instead.
+  // A held slider saves on release instead. Values tried on the lights are
+  // saved too, even when they ended where they started, to end the trial. A
+  // save asked for while another was on its way goes without the wait.
+  const pending = draft.dirty || tried;
   useEffect(() => {
-    if (!draft.dirty || blocked || held) return;
-    const timer = setTimeout(() => applyLater(draft.draft), processingDelayMs);
+    if (!pending) again.current = false;
+    if (!pending || blocked || held) return;
+    const timer = setTimeout(
+      () => applyLater(draft.draft),
+      again.current ? 0 : processingDelayMs,
+    );
     return () => clearTimeout(timer);
-  }, [draft.draft, draft.dirty, blocked, held, revision]);
+  }, [draft.draft, pending, blocked, held, revision]);
 
   const { clearServer } = errors;
   const retry = useMemo(

@@ -17,10 +17,10 @@ import {
   throttled,
   trialIntervalMs,
   ringDelayMs,
+  workingAfterMs,
   ringHoldMs,
   saveTheme,
   slowStartMs,
-  staleNotice,
   storedTheme,
   applyTheme,
   themeStorageKey,
@@ -55,6 +55,8 @@ import {
   errorOf,
   field,
   form,
+  leaveEditor,
+  openEditor,
   openSettings,
   renderPortal,
   sleep,
@@ -85,7 +87,8 @@ const note = () =>
     : null;
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
-const badge = (title) => $('.badge', form(title)).textContent;
+/** The editor's one status line. */
+const status = () => $('.form-status').textContent;
 const saves = (fixture) =>
   fixture.calls.filter((call) => call === 'replaceSettings').length;
 const press = (element) =>
@@ -815,14 +818,15 @@ test('picture controls show the state, enforce ranges and apply live', async () 
   }
 });
 
-test('the capture form saves the exact section on Save, with dirty state and reset', async () => {
+test('the video source editor saves the exact section once; Cancel drops the draft', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {
     capture: { ...capture, fps: 25 },
     output,
   });
   const { fixture } = portal;
+  const primary = () => button('Use this video source', form('Video source'));
   try {
-    await openSettings();
+    await openEditor('Video source');
     assert.deepEqual(
       ['capture.path', 'capture.width', 'capture.height', 'capture.fps'].map(
         (name) => field(name).value,
@@ -840,14 +844,16 @@ test('the capture form saves the exact section on Save, with dirty state and res
         ['1', '2147483647'],
       ],
     );
-    assert.equal(badge('Video source'), 'Saved');
-    assert.equal(button('Save', form('Video source')).disabled, true);
+    // Nothing to save yet: only the way out.
+    assert.equal(primary(), undefined);
+    assert(button('Done', form('Video source')));
 
     await edit(field('capture.width'), 1280);
-    assert.equal(badge('Video source'), 'Not saved yet');
-    await click(button('Reset', form('Video source')));
-    assert.equal(field('capture.width').value, '640');
-    assert.equal(badge('Video source'), 'Saved');
+    assert.equal(primary().disabled, false);
+    await click(button('Cancel', form('Video source')));
+    assert.equal(window.location.hash, '#/settings');
+    await openEditor('Video source');
+    assert.equal(field('capture.width').value, '640', 'the draft was dropped');
 
     await edit(field('capture.width'), 1280);
     await edit(field('capture.height'), 720);
@@ -864,9 +870,13 @@ test('the capture form saves the exact section on Save, with dirty state and res
       output,
       processing: defaultProcessing,
     });
-    assert.equal(badge('Video source'), 'Saved');
+    // Screen sync is off: saved, and said not to be tried.
+    assert.equal(
+      status(),
+      'Saved. Screen sync is off, so this source hasn’t been tried.',
+    );
 
-    // Out of range: shown at once, never sent, focused on Save.
+    // Out of range: shown at once, never sent, focused on the button.
     await edit(field('capture.width'), 4000);
     assert.equal(
       errorOf(field('capture.width')),
@@ -874,14 +884,11 @@ test('the capture form saves the exact section on Save, with dirty state and res
     );
     await submit(form('Video source'));
     assert.equal(saves(fixture), 1);
-    assert.equal(
-      $('[data-form-alert]', form('Video source')).textContent,
-      'Not saved. Check the marked field.',
-    );
+    assert.equal(status(), 'Not saved. Check the marked field.');
     assert.equal(document.activeElement, field('capture.width'));
 
     // An empty path is reported once a save is tried.
-    await click(button('Reset', form('Video source')));
+    await edit(field('capture.width'), 640);
     await edit(field('capture.path'), ' ');
     await submit(form('Video source'));
     assert.equal(errorOf(field('capture.path')), 'Enter a value.');
@@ -895,7 +902,7 @@ test('server field errors land on their control and clear when it is edited', as
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
-    await openSettings();
+    await openEditor('Video source');
     fixture.failNext({
       kind: 'invalid',
       field: 'capture.height',
@@ -910,21 +917,20 @@ test('server field errors land on their control and clear when it is edited', as
       'Use a size the device supports.',
     );
     assert.equal(document.activeElement, field('capture.height'));
-    assert.equal(
-      $('.form-status', form('Video source')).textContent,
-      'Not saved. Check the marked field.',
-    );
+    assert.equal(status(), 'Not saved. Check the marked field.');
     await edit(field('capture.height'), 1080);
     assert.equal(errorOf(field('capture.height')), undefined);
     assert.equal(field('capture.height').getAttribute('aria-invalid'), null);
 
+    await leaveEditor();
+    await openEditor('Lights');
     fixture.failNext({
       kind: 'invalid',
       field: 'output.address',
       message: 'a unicast device address is required',
     });
     await edit(field('output.address'), '224.0.0.1');
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
     assert.equal(
       errorOf(field('output.address')),
       'Use the lights’ name, such as wled.local, or their number, such as 192.168.1.50.',
@@ -937,7 +943,7 @@ test('server field errors land on their control and clear when it is edited', as
       message: 'the LEDs must total 1 to 16384, the most WLED drives',
     });
     await edit(field('output.address'), '192.0.2.7');
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
     assert.equal(
       $('[data-field-message="output.leds"]').textContent,
       'Use 1 to 16384 LEDs in total.',
@@ -953,10 +959,10 @@ test('server field errors land on their control and clear when it is edited', as
       field: 'output.unknown',
       message: 'unknown field',
     });
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
     assert.equal(
       document.activeElement,
-      $('[data-form-alert]', form('Lights')),
+      $('[data-form-alert]', form('Your lights')),
     );
     assert.equal(
       document.activeElement.textContent,
@@ -970,27 +976,26 @@ test('server field errors land on their control and clear when it is edited', as
   }
 });
 
-test('a section changed elsewhere is reloaded instead of overwritten', async () => {
+test('a section changed on another device: use theirs, or keep mine', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
+  const conflict =
+    'The video source was changed on another device since you opened this.';
   try {
-    await openSettings();
-    // Seen before saving: the draft is kept until Save, which reloads.
+    await openEditor('Video source');
+    // Seen before saving: the draft is kept, and saving asks.
     await edit(field('capture.path'), '/dev/video1');
     await elsewhere(fixture, {
       capture: { kind: 'device', path: '/dev/video9' },
     });
-    assert(text().includes('Changed on another device.'));
     assert.equal(field('capture.path').value, '/dev/video1');
     await submit(form('Video source'));
-    assert.equal(saves(fixture), 1);
+    assert.equal(saves(fixture), 1, 'only the other device saved');
+    assert.equal(status(), conflict);
+    await click(button('Use theirs'));
     assert.equal(field('capture.path').value, '/dev/video9');
-    assert.equal(
-      $('.form-status', form('Video source')).textContent,
-      staleNotice,
-    );
 
-    // Refused by the server (409): reloaded the same way.
+    // Refused by Prysm (409): the same choice; keeping mine saves it.
     await edit(field('capture.path'), '/dev/video2');
     fixture.failNext({
       kind: 'stale_revision',
@@ -998,36 +1003,130 @@ test('a section changed elsewhere is reloaded instead of overwritten', async () 
       current: 2,
     });
     await submit(form('Video source'));
-    assert.equal(field('capture.path').value, '/dev/video9');
-    assert.equal(
-      $('.form-status', form('Video source')).textContent,
-      staleNotice,
-    );
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video9');
+    assert.equal(status(), conflict);
+    assert.equal(field('capture.path').value, '/dev/video2');
+    await click(button('Keep mine'));
+    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video2');
 
-    // Clean forms follow other clients.
+    // An editor without changes follows other devices.
+    await leaveEditor();
+    await openEditor('Lights');
     await elsewhere(fixture, { output: { ...output, address: '192.0.2.50' } });
     assert.equal(field('output.address').value, '192.0.2.50');
 
-    // Saving other sections (here a live picture change) is not a conflict.
-    await edit(field('capture.path'), '/dev/video3');
-    await edit(field('processing.brightness_percent'), 50);
-    await settle();
-    await submit(form('Video source'));
-    assert.equal($('.form-status', form('Video source')).textContent, 'Saved');
-    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video3');
+    // Another section saved meanwhile is no conflict.
+    await edit(field('output.address'), '192.0.2.60');
+    await elsewhere(fixture, {
+      processing: {
+        ...fixture.snapshot().settings.processing,
+        brightness_percent: 50,
+      },
+    });
+    await submit(form('Your lights'));
+    assert.equal(fixture.snapshot().settings.output.address, '192.0.2.60');
     assert.equal(fixture.snapshot().settings.processing.brightness_percent, 50);
-    assert.equal(fixture.snapshot().settings.output.address, '192.0.2.50');
+    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video2');
   } finally {
     await portal.unmount();
   }
 });
 
-test('kind selectors swap panels without losing drafts or the other section', async () => {
+/** The live problem line of a part of the setup, on Settings. */
+const problem = (label) =>
+  $$('.entry')
+    .find((row) => $('button', row).firstChild?.textContent === label)
+    ?.querySelector('.entry-problem').textContent;
+
+test('new lights are checked after saving; failing ones can be swapped back', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await press(mode('processed'));
     await openSettings();
+    assert.equal(problem('Lights'), '', 'nothing wrong: an empty line, kept');
+    await openEditor('Lights');
+    await edit(field('output.address'), '192.0.2.99');
+    await submit(form('Your lights'));
+    assert.equal(fixture.snapshot().settings.output.address, '192.0.2.99');
+    assert.equal(status(), 'Saved. Starting the lights…');
+    assert(button('Go back to the previous lights'));
+
+    // The new address does not answer: said plainly, with the way back.
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'stopped' },
+        failure: {
+          kind: 'adapter',
+          section: 'output',
+          message: 'no answer from 192.0.2.99',
+        },
+      }),
+    );
+    assert.equal(status(), 'Saved, but the lights are not responding.');
+    assert(!text().includes('no answer from'), 'no raw message');
+
+    // Settings shows the live problem on its row; the way back stays.
+    await leaveEditor();
+    assert.equal(problem('Lights'), 'The lights are not responding.');
+    assert.equal(problem('Video source'), '');
+    await openEditor('Lights');
+    assert.equal(status(), 'The lights are not responding.');
+    await click(button('Go back to the previous lights'));
+    assert.deepEqual(fixture.snapshot().settings.output, output);
+    assert.equal(status(), 'Saved. Back to the previous lights.');
+    assert.equal(field('output.address').value, '192.0.2.1');
+    await leaveEditor();
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'running' },
+        failure: null,
+        input: { fps: 30, receiving: true },
+      }),
+    );
+    assert.equal(problem('Lights'), '');
+
+    // Working: flowing for a moment after the save says so.
+    await openEditor('Video source');
+    await edit(field('capture.path'), '/dev/video3');
+    await submit(form('Video source'));
+    assert.equal(status(), 'Saved. Waiting for the picture…');
+    await act(async () => sleep(workingAfterMs + 100));
+    assert.equal(status(), 'Saved. The picture is arriving.');
+    assert.equal(button('Go back to the previous video source'), undefined);
+    await click(button('Done'));
+    assert.equal(window.location.hash, '#/settings');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('with screen sync off, a saved source can be tried at once', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await openEditor('Video source');
+    await edit(field('capture.path'), '/dev/video4');
+    await submit(form('Video source'));
+    assert.equal(
+      status(),
+      'Saved. Screen sync is off, so this source hasn’t been tried.',
+    );
+    assert.equal(fixture.snapshot().target, 'off', 'saving starts nothing');
+    await click(button('Turn on screen sync to try'));
+    assert.equal(fixture.snapshot().target, 'processed');
+    assert.equal(status(), 'Saved. Waiting for the picture…');
+    await click(button('Go back to the previous video source'));
+    assert.deepEqual(fixture.snapshot().settings.capture, capture);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('kind selectors swap panels without losing drafts', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    await openEditor('Video source');
     assert.deepEqual(
       $$('option', field('capture.kind')).map((item) => [
         item.value,
@@ -1039,12 +1138,6 @@ test('kind selectors swap panels without losing drafts or the other section', as
         ['file', 'Video file (development only)'],
       ],
     );
-    assert.deepEqual(
-      $$('option', field('output.kind')).map((item) => item.value),
-      ['wled', 'null'],
-    );
-
-    await edit(field('output.address'), 'wled.local');
     await edit(field('capture.kind'), 'remote');
     assert.equal(field('capture.path'), null);
     // The TV reaches this computer at the portal's address: no address field.
@@ -1054,32 +1147,40 @@ test('kind selectors swap panels without losing drafts or the other section', as
     await edit(field('capture.kind'), 'file');
     assert.equal(field('capture.path').value, '');
     assert.equal(field('capture.path').labels[0].textContent, 'Video file');
-    // Development only: it says what it needs, and where it does not work.
+    // Development only: it says what it needs.
     assert.match(
       form('Video source').textContent,
       /Plays a video file instead of a live picture, for testing\. Needs FFmpeg 9 or newer on this computer\./,
     );
     await edit(field('capture.kind'), 'remote');
-    assert.equal(field('output.address').value, 'wled.local');
-
     await submit(form('Video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, { kind: 'remote' });
     assert.deepEqual(fixture.snapshot().settings.output, output);
-    assert.equal(field('output.address').value, 'wled.local');
-    assert.equal(badge('Lights'), 'Not saved yet');
 
-    await click(button('Reset', form('Lights')));
+    await leaveEditor();
+    await openEditor('Lights');
+    assert.deepEqual(
+      $$('option', field('output.kind')).map((item) => item.value),
+      ['wled', 'null'],
+    );
+    await edit(field('output.address'), 'wled.local');
     await edit(field('output.kind'), 'null');
     assert(
-      form('Lights').textContent.includes('There is nothing to configure.'),
+      form('Your lights').textContent.includes(
+        'There is nothing to configure.',
+      ),
     );
-    await submit(form('Lights'));
+    await edit(field('output.kind'), 'wled');
+    assert.equal(field('output.address').value, 'wled.local', 'kept');
+    await edit(field('output.kind'), 'null');
+    await submit(form('Your lights'));
     assert.deepEqual(fixture.snapshot().settings, {
       capture: { kind: 'remote' },
       output: { kind: 'null' },
       processing: defaultProcessing,
     });
     // Home: no WLED link, and these lights have no effects of their own.
+    await leaveEditor();
     await click(button('Home'));
     assert.equal($('.effects-panel .device-link'), null);
     assert.equal(mode('device_native').disabled, true);
@@ -1094,7 +1195,12 @@ test('an unconfigured section starts from its first kind and saves only when val
   try {
     await click(button('Leave setup'));
     await openSettings();
-    assert.equal(badge('Video source'), 'Not set up');
+    assert(
+      $$('.entry-description').some(
+        (line) => line.textContent === 'Not set up yet.',
+      ),
+    );
+    await openEditor('Video source');
     assert.equal(field('capture.kind').value, 'device');
     assert.equal(errorOf(field('capture.path')), undefined);
     await submit(form('Video source'));
@@ -1107,6 +1213,7 @@ test('an unconfigured section starts from its first kind and saves only when val
       path: '/dev/video0',
     });
     // Lights still missing: Home keeps offering setup.
+    await leaveEditor();
     await click(button('Home'));
     assert.equal(button('Set up Prysm').disabled, false);
   } finally {
@@ -1120,7 +1227,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
   const edges = ['top', 'right', 'bottom', 'left'];
   const caption = () => $('.led-layout figcaption').textContent;
   try {
-    await openSettings();
+    await openEditor('Lights');
     assert.deepEqual(
       edges.map((edge) => field(`output.leds.${edge}`).value),
       ['10', '0', '0', '4'],
@@ -1141,10 +1248,10 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
 
     for (const edge of edges) await edit(field(`output.leds.${edge}`), 0);
     assert.equal(caption(), 'No LEDs yet.');
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
     assert.equal(
       $('[data-field-message="output.leds"]').textContent,
-      'The total must be 1 to 16384 LEDs. Use 0 for an edge without LEDs.',
+      'Use 1 to 16384 LEDs in total.',
     );
     assert.equal(document.activeElement, $('[data-field="output.leds"]'));
     await edit(field('output.leds.top'), 20000);
@@ -1154,7 +1261,7 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     );
     await edit(field('output.leds.top'), 16384);
     await edit(field('output.leds.left'), 1);
-    assert(text().includes('The total must be 1 to 16384 LEDs.'));
+    assert(text().includes('Use 1 to 16384 LEDs in total.'));
     assert.equal(saves(fixture), 0);
 
     for (const [edge, count] of [
@@ -1169,13 +1276,14 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       'LED 1 is at the top-left corner. Order: left: none; top rightward: LEDs 1–96; right downward: LEDs 97–150; bottom leftward: LEDs 151–246.',
     );
     await edit(field('output.address'), ' http://wled.local:8080/ ');
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
     assert.deepEqual(fixture.snapshot().settings.output, {
       kind: 'wled',
       address: 'wled.local:8080',
       leds: { top: 96, right: 54, bottom: 96, left: 0 },
     });
     assert.equal(field('output.address').value, 'wled.local:8080');
+    await leaveEditor();
     await click(button('Home'));
     assert.equal(
       $('.effects-panel .device-link').href,
@@ -1218,11 +1326,14 @@ test('fields the forms do not show are preserved on every save', async () => {
   );
   const { fixture } = portal;
   try {
-    await openSettings();
+    await openEditor('Video source');
     await edit(field('capture.fps'), 50);
     await submit(form('Video source'));
+    await leaveEditor();
+    await openEditor('Lights');
     await edit(field('output.leds.right'), 6);
-    await submit(form('Lights'));
+    await submit(form('Your lights'));
+    await leaveEditor();
     await edit(field('processing.spatial_reach_percent'), 20);
     await settle();
     assert.deepEqual(fixture.snapshot().settings, {
@@ -1257,7 +1368,7 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
     const input = (name) => field(`capture.${name}`);
     const shown = () => $('[data-size-hint]', form('Video source'));
     try {
-      await openSettings();
+      await openEditor('Video source');
       assert.equal(shown(), null, 'not at the default size');
       assert.match(hint, wording);
       assert.match(hint, /^640\u00a0×\u00a0360 is enough for the lights\./);
@@ -1291,7 +1402,10 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
         ],
         [1280, 720],
       );
-      assert.equal(badge('Video source'), 'Saved');
+      assert.equal(
+        status(),
+        'Saved. Screen sync is off, so this source hasn’t been tried.',
+      );
       assert.equal(shown().textContent, hint, 'still shown after saving');
     } finally {
       await portal.unmount();
@@ -1307,13 +1421,9 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
   const { fixture } = portal;
   const input = (name) => field(`capture.${name}`);
   try {
-    await openSettings();
+    await openEditor('Video source');
     assert.equal(field('capture.kind'), null);
-    assert.equal(field('output.kind'), null);
-    assert.equal(
-      form('Video source').querySelector('h2').textContent,
-      'Video source',
-    );
+    assert.equal($('.page-heading h2').textContent, 'Video source');
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
         input(name).value,
@@ -1346,6 +1456,9 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
       include_ui: false,
     });
     assert.deepEqual(fixture.snapshot().settings.output, output);
+    await leaveEditor();
+    await openEditor('Lights');
+    assert.equal(field('output.kind'), null);
   } finally {
     await portal.unmount();
   }
@@ -1361,7 +1474,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
   const help = (element) =>
     element.closest('.field').querySelector('.help')?.textContent;
   try {
-    await openSettings();
+    await openEditor('Video source');
     // Defaults shown for omitted fields; the shared fields' limits and labels.
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
@@ -1414,7 +1527,7 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     );
     await edit(input('encoding'), 'raw');
     assert.match(help(input('encoding')), /ten times the network/);
-    assert.equal(badge('Video source'), 'Not saved yet');
+    assert(button('Use this video source'));
 
     // Same validation as the webOS form.
     await edit(input('height'), 181);
@@ -1448,7 +1561,10 @@ test('the remote capture form asks the TV for a stream with the same picture fie
       include_ui: false,
       encoding: 'h264_software',
     });
-    assert.equal(badge('Video source'), 'Saved');
+    assert.equal(
+      status(),
+      'Saved. Screen sync is off, so this source hasn’t been tried.',
+    );
 
     // The server's own check on the encoding lands on the selector.
     fixture.failNext({
@@ -1490,8 +1606,8 @@ test('the sender refusing the requested stream is shown in full with the lightin
       'Screen sync could not start.',
     );
     assert.equal($('.light-details p').textContent, refusal, 'not shortened');
-    // The capture form, in Settings, says where the fix is.
-    await openSettings();
+    // The video source editor says where the fix is.
+    await openEditor('Video source');
     assert.match(
       form('Video source').textContent,
       /If the TV can’t send it, Home says why; then change how it sends the picture, or its size, here/,
@@ -1614,8 +1730,18 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     await openSettings();
     assert.equal(window.location.hash, '#/settings');
     assert.equal(document.activeElement.textContent, 'Settings');
-    assert(form('Video source') && form('Lights'));
+    assert.equal($$('form').length, 0, 'nothing waits for a Save here');
     assert($('.diagnostics'));
+    await openEditor('Video source');
+    assert.equal(window.location.hash, '#/settings/video');
+    assert.equal(document.activeElement.textContent, 'Video source');
+    assert(form('Video source'));
+    await leaveEditor();
+    await openEditor('Lights');
+    assert.equal(window.location.hash, '#/settings/lights');
+    assert(form('Your lights'));
+    await leaveEditor();
+    assert.equal(window.location.hash, '#/settings');
     await click(button('Home'));
     assert.equal(window.location.hash, '');
     assert($('.light-card'));
@@ -2229,6 +2355,46 @@ test('slider trials go at most every interval, one at a time, the latest winning
   t.mock.timers.tick(1000);
   await flush();
   assert.equal(sent.at(-1)[0], 1301, 'the dropped value is never sent');
+});
+
+test('quick separate taps on Home brightness always save the last value', async (t) => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture, dom } = portal;
+  const view = dom.window;
+  const slider = () => field('processing.brightness_percent');
+  const fire = (type, init = {}) =>
+    act(async () =>
+      slider().dispatchEvent(new view.Event(type, { bubbles: true, ...init })),
+    );
+  const saved = () => fixture.snapshot().settings.processing.brightness_percent;
+  try {
+    await press(mode('processed'));
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    for (const answer of ['at once', 'slowly']) {
+      const start = saved();
+      // Slow answers: each tap's save is still on its way at the next tap.
+      const release = answer === 'slowly' ? fixture.holdSaves() : () => {};
+      for (let step = 1; step <= 5; step++) {
+        await fire('keydown', { key: 'ArrowLeft' });
+        await edit(slider(), start - step);
+        await fire('keyup', { key: 'ArrowLeft' });
+        await flush();
+        t.mock.timers.tick(40);
+        await flush();
+      }
+      release();
+      for (let wait = 0; wait < 6; wait++) {
+        await flush();
+        t.mock.timers.tick(processingDelayMs);
+      }
+      await flush();
+      assert.equal(slider().value, String(start - 5), answer);
+      assert.equal(saved(), start - 5, `${answer}: the last value is saved`);
+    }
+  } finally {
+    t.mock.timers.reset();
+    await portal.unmount();
+  }
 });
 
 test('dragging Home brightness lights as it moves and saves once, where it is let go', async (t) => {

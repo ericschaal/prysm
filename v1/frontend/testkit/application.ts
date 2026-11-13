@@ -43,6 +43,7 @@ export function fakeApplicationPort<C, O>(initial: {
   let nextFailure: Failure | null = null;
   /** Trials wait for this before answering; trials fail while `trialFailure`. */
   let trialGate: Promise<void> | null = null;
+  let saveGate: Promise<void> | null = null;
   let trialFailure: Failure | null = null;
   const trials = { inFlight: 0, mostInFlight: 0 };
   function publish(change: Partial<ApplicationSnapshot<C, O>>) {
@@ -97,6 +98,9 @@ export function fakeApplicationPort<C, O>(initial: {
     },
     replaceSettings: async (expected, settings) => {
       calls.push('replaceSettings');
+      // As the engine: saves are taken in order, each against the then
+      // current revision.
+      while (saveGate) await saveGate;
       failIfScripted();
       if (expected !== snapshot.revision)
         throw new ApplicationError({
@@ -179,6 +183,17 @@ export function fakeApplicationPort<C, O>(initial: {
     /** Trials fail with `failure` until called with `null`. */
     failTrials: (failure: Failure | null) => {
       trialFailure = failure;
+    },
+    /** Saves wait, in order, until the returned function is called. */
+    holdSaves: () => {
+      let release = () => {};
+      saveGate = new Promise<void>((resolve) => {
+        release = () => {
+          saveGate = null;
+          resolve();
+        };
+      });
+      return release;
     },
     /** Trials stay unanswered until the returned function is called. */
     holdTrials: () => {

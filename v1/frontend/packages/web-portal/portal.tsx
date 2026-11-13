@@ -1,10 +1,11 @@
 import type { ApplicationRuntime } from '@prysm/application-state';
 import type { Processing } from '@prysm/contracts/application';
-import type {
-  ApplicationSnapshot,
-  ColorsClient,
-  DiscoveryClient,
-  PreviewClient,
+import {
+  plainFailure,
+  type ApplicationSnapshot,
+  type ColorsClient,
+  type DiscoveryClient,
+  type PreviewClient,
 } from '@prysm/application-client';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
@@ -19,7 +20,8 @@ import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
 import { ProcessingPanel, QuickPicture } from './processing';
 import { SaveStatus, SaveStatusProvider } from './save-status';
-import { SectionForm } from './section-form';
+import { SectionEditor } from './section-editor';
+import { stepCopy } from './step-copy';
 import { SetupWizard } from './setup';
 import { nameOf } from './profile-model';
 import { SetupCard, type PathState } from './setup-card';
@@ -55,8 +57,11 @@ export interface WebPortalProps<
 export const settingsRoute = '#/settings';
 /** The hash route of the live preview, opened from Settings. */
 export const previewRoute = '#/preview';
+/** The hash routes of the video source and lights editors, under Settings. */
+export const videoRoute = '#/settings/video';
+export const lightsRoute = '#/settings/lights';
 
-type Route = 'home' | 'settings' | 'calibrate' | 'preview';
+type Route = 'home' | 'settings' | 'calibrate' | 'preview' | 'video' | 'lights';
 
 /**
  * Which page the hash names (Home, `#/settings`, `#/calibrate`,
@@ -78,6 +83,8 @@ function useRoute() {
   if (hash === calibrateRoute) route = 'calibrate';
   else if (hash === settingsRoute) route = 'settings';
   else if (hash === previewRoute) route = 'preview';
+  else if (hash === videoRoute) route = 'video';
+  else if (hash === lightsRoute) route = 'lights';
   return [route, go] as const;
 }
 
@@ -123,20 +130,30 @@ function ChevronIcon() {
   );
 }
 
-/** A row in Settings that opens a flow: what it does, and the button. */
+/**
+ * A row in Settings that opens a flow: what it does, and the button. A row
+ * for part of the setup keeps a line for its live problem, in place.
+ */
 function Entry({
   description,
   label,
   onClick,
+  problem,
 }: {
   description: string;
   label: string;
   onClick: () => void;
+  /** The live problem of this part; `undefined` for rows without one. */
+  problem?: string | null;
 }) {
   const id = useId();
   return (
     <li className="entry">
-      <button type="button" aria-describedby={id} onClick={onClick}>
+      <button
+        type="button"
+        aria-describedby={problem === undefined ? id : `${id} ${id}-problem`}
+        onClick={onClick}
+      >
         {label}
         <ChevronIcon />
       </button>
@@ -144,6 +161,11 @@ function Entry({
       <span id={id} className="entry-description">
         {description}
       </span>
+      {problem === undefined ? null : (
+        <span id={`${id}-problem`} className="entry-problem" role="status">
+          {problem}
+        </span>
+      )}
     </li>
   );
 }
@@ -173,6 +195,17 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
   if (target === 'device_native' && session.state === 'native')
     return { kind: 'effects' };
   return { kind: 'off' };
+}
+
+/** What a saved section is, in one line: its kind, and a few details. */
+function describe<S extends AdapterSection>(
+  adapters: AdapterUis<S>,
+  saved: S | null,
+) {
+  if (!saved) return 'Not set up yet.';
+  const adapter = adapterFor(adapters, saved.kind);
+  const label = adapter?.label ?? saved.kind;
+  return adapter?.summary ? `${label} · ${adapter.summary(saved)}` : label;
 }
 
 /** The active colour profile's name, or `null` without one. */
@@ -219,6 +252,14 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   const [hashRoute, go] = useRoute();
   // Without a preview client there is no Preview page: Home instead.
   const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
+  /**
+   * What each editor saved over last, offered back until it is replaced,
+   * also after leaving the editor.
+   */
+  const [previous, setPrevious] = useState<{
+    capture: C | null;
+    output: O | null;
+  }>({ capture: null, output: null });
   /** Where Calibrate returns to: Settings when opened from there. */
   const [calibrateFrom, setCalibrateFrom] = useState('');
   const pageHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -227,7 +268,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   }, [setupNotice]);
   // Arriving in Settings or Preview: its heading, for screen readers and keyboards.
   useEffect(() => {
-    if (route === 'settings' || route === 'preview')
+    if (route !== 'home' && route !== 'calibrate')
       pageHeadingRef.current?.focus({ preventScroll: true });
   }, [route]);
 
@@ -403,6 +444,67 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </>,
     );
 
+  const path = pathOf(snapshot);
+  /** The live problem of one side, in plain words; `null` while it works. */
+  const problemAt = (section: 'capture' | 'output') =>
+    path.kind === 'failed' && path.at === section && snapshot.failure
+      ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
+      : null;
+  const startSync = () => dispatch(application.commands.setTarget('processed'));
+  const editorProps = {
+    revision,
+    disabled: !online,
+    target: snapshot.target,
+    path,
+    failure: snapshot.failure ?? null,
+    startSync,
+    leave: () => go(settingsRoute),
+  };
+  if (route === 'video' || route === 'lights')
+    return page(
+      'portal-page section-page',
+      route === 'video' ? 'Prysm video source' : 'Prysm lights',
+      <>
+        {pageHeading(
+          stepCopy[route === 'video' ? 'capture' : 'output'].title,
+          settingsRoute,
+          'Settings',
+        )}
+        {offline}
+        <DiscoveryContext value={discovery ?? null}>
+          {route === 'video' ? (
+            <SectionEditor
+              section="capture"
+              adapters={captures}
+              saved={settings.capture ?? null}
+              previous={previous.capture}
+              setPrevious={(capture) => setPrevious({ ...previous, capture })}
+              save={(expected, capture) =>
+                dispatch(
+                  application.commands.configureCapture(expected, capture),
+                )
+              }
+              {...editorProps}
+            />
+          ) : (
+            <SectionEditor
+              section="output"
+              adapters={outputs}
+              saved={output}
+              previous={previous.output}
+              setPrevious={(value) =>
+                setPrevious({ ...previous, output: value })
+              }
+              save={(expected, value) =>
+                dispatch(application.commands.configureOutput(expected, value))
+              }
+              {...editorProps}
+            />
+          )}
+        </DiscoveryContext>
+      </>,
+    );
+
   if (route === 'settings')
     return page(
       'portal-page settings',
@@ -452,38 +554,20 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
               />
             ) : null}
           </ul>
-          <DiscoveryContext value={discovery ?? null}>
-            <div className="section-forms">
-              <SectionForm
-                section="capture"
-                title="Video source"
-                description="Saving restarts screen sync if it is on."
-                adapters={captures}
-                saved={settings.capture ?? null}
-                revision={revision}
-                disabled={!online}
-                save={(expected, capture) =>
-                  dispatch(
-                    application.commands.configureCapture(expected, capture),
-                  )
-                }
-              />
-              <SectionForm
-                section="output"
-                title="Lights"
-                description="Saving restarts screen sync if it is on."
-                adapters={outputs}
-                saved={output}
-                revision={revision}
-                disabled={!online}
-                save={(expected, value) =>
-                  dispatch(
-                    application.commands.configureOutput(expected, value),
-                  )
-                }
-              />
-            </div>
-          </DiscoveryContext>
+          <ul className="entries">
+            <Entry
+              label="Video source"
+              description={describe(captures, settings.capture ?? null)}
+              problem={problemAt('capture')}
+              onClick={() => go(videoRoute)}
+            />
+            <Entry
+              label="Lights"
+              description={describe(outputs, output)}
+              problem={problemAt('output')}
+              onClick={() => go(lightsRoute)}
+            />
+          </ul>
         </section>
         <section
           className="settings-section"
@@ -615,7 +699,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
               output: outputUi?.transport?.(output),
             }}
             discovery={discovery ?? null}
-            path={pathOf(snapshot)}
+            path={path}
             profile={activeProfile(settings.processing)}
             openSettings={() => go(settingsRoute)}
           />

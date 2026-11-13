@@ -22,7 +22,7 @@ export function WledEditor({ value, onChange }: EditorProps<WledSettings>) {
   useCheck(
     'output.leds',
     total < ledTotalLimits.min || total > ledTotalLimits.max
-      ? `The total must be ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs. Use 0 for an edge without LEDs.`
+      ? `Use ${ledTotalLimits.min} to ${ledTotalLimits.max} LEDs in total.`
       : null,
   );
   return (

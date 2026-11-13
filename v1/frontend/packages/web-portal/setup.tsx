@@ -23,18 +23,12 @@ import {
   useFieldErrors,
   useFieldScope,
 } from './form';
-import { SectionFields } from './section-form';
+import { SectionFields } from './section-step';
+import { stepCopy } from './step-copy';
 
 const steps = [
-  {
-    title: 'Video source',
-    intro: 'Choose where the picture comes from. You can fine-tune it later.',
-  },
-  {
-    title: 'Your lights',
-    intro:
-      'Tell Prysm where the colours go and how your LEDs run around the screen.',
-  },
+  stepCopy.capture,
+  stepCopy.output,
   {
     title: 'Review and start',
     intro:
