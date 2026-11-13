@@ -1145,7 +1145,9 @@ async fn a_slow_output_is_named_after_a_few_seconds() {
             },
             FakeOutputSettings {
                 name: "a".into(),
-                write_delay_ms: 40,
+                // Far longer than the source's 2 ms sleep can overrun on a
+                // loaded machine, so the loop stays saturated there too.
+                write_delay_ms: 200,
                 ..Default::default()
             },
         );
