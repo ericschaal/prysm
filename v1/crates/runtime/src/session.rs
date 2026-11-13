@@ -9,6 +9,7 @@ use prysm_ports::{
     Error, FrameSource, IdleMode, LatestSlot, OutputIssue, Result, Section, SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -51,17 +52,33 @@ impl SessionEnd {
     }
 }
 
+/// Shared by the engine's [`Session`] handle and the session thread. The
+/// thread reads one atomic per frame and locks only when something changed.
 struct Control {
     config: LatestSlot<Config>,
+    /// A config was offered and not yet taken.
+    config_offered: AtomicBool,
     idle: Mutex<IdleMode>,
-    /// The held output's latest [`LedOutput::observe`]; read by the engine
-    /// about once a second.
+    /// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe);
+    /// read by the engine about once a second.
     issue: Mutex<Option<OutputIssue>>,
 }
 
 impl Control {
-    fn report(&self, issue: Option<OutputIssue>) {
-        *self.issue.lock().unwrap_or_else(PoisonError::into_inner) = issue;
+    fn offer_config(&self, config: Config) {
+        self.config.offer(config);
+        self.config_offered.store(true, Ordering::Release);
+    }
+
+    /// The config offered since the last call, if any.
+    fn take_config(&self) -> Option<Config> {
+        if !self.config_offered.load(Ordering::Relaxed) {
+            return None;
+        }
+        // Cleared before taking: an offer racing this call is either taken
+        // now or flagged for the next frame.
+        self.config_offered.swap(false, Ordering::AcqRel);
+        self.config.take()
     }
 }
 
@@ -88,32 +105,48 @@ struct SessionLoop {
     last_frame: Instant,
     open_output: OpenOutput,
     control: Arc<Control>,
+    /// What [`Control::issue`] holds, so it is written only on a change.
+    reported: Option<OutputIssue>,
     feeds: Feeds,
     stats: Arc<Stats>,
 }
 
 impl SessionLoop {
+    /// Publish what the output knows about its device, if that changed.
+    fn report(&mut self, issue: Option<OutputIssue>) {
+        if issue != self.reported {
+            self.reported = issue;
+            *self
+                .control
+                .issue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = issue;
+        }
+    }
+
     fn on_frame(&mut self, frame: Frame) -> Result<()> {
         let received = Instant::now();
         let captured = frame.captured();
         self.last_frame = received;
-        if let Some(config) = self.control.config.take() {
+        if let Some(config) = self.control.take_config() {
             self.processor.configure(&config);
         }
         let shown = self.feeds.preview_frame(&frame);
         let colors = self.processor.process_frame_at(frame, received);
         let processed = Instant::now();
-        let written = self
+        let write = self
             .leds
             .write(&colors, processed, &mut self.open_output, &self.stats);
+        // Recorded whether or not the write worked.
         self.stats.frame(FrameTimes {
             received,
             captured,
             processed,
-            written: written.as_ref().ok().copied(),
+            written: write.as_ref().ok().copied(),
         });
-        let written = written.map_err(lights)?;
-        self.control.report(self.leds.observe());
+        let written = write.map_err(lights)?;
+        let issue = self.leds.observe();
+        self.report(issue);
         self.feeds
             .publish(&colors, shown, self.processor.viewport());
         self.last = Some((colors, written));
@@ -127,7 +160,7 @@ impl SessionLoop {
         let now = Instant::now();
         if now - self.last_frame >= VIDEO_GRACE {
             self.last = None;
-            self.control.report(None);
+            self.report(None);
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
             return self.leds.release(RELEASE).map_err(lights);
@@ -139,7 +172,8 @@ impl SessionLoop {
                 .leds
                 .write(colors, now, &mut self.open_output, &self.stats)
                 .map_err(lights)?;
-            self.control.report(self.leds.observe());
+            let issue = self.leds.observe();
+            self.report(issue);
         }
         Ok(())
     }
@@ -147,7 +181,7 @@ impl SessionLoop {
     fn finish(mut self, pumped: Pumped, source: Box<dyn FrameSource>, flags: &Flags) -> SessionEnd {
         let ended = matches!(pumped, Pumped::Ended);
         let failure = pumped.failure();
-        self.control.report(None);
+        self.report(None);
         self.feeds.clear();
         flags.set_phase(SessionPhase::ClosingSource);
         let released = source.close();
@@ -190,6 +224,7 @@ impl Session {
     ) -> Result<Self, (Error, Box<dyn FrameSource>)> {
         let control = Arc::new(Control {
             config: LatestSlot::new(),
+            config_offered: AtomicBool::new(false),
             idle: Mutex::new(IdleMode::Off),
             issue: Mutex::new(None),
         });
@@ -200,6 +235,7 @@ impl Session {
             last_frame: Instant::now(),
             open_output,
             control: control.clone(),
+            reported: None,
             feeds,
             stats,
         };
@@ -220,7 +256,7 @@ impl Session {
 
     /// Apply processing settings at the next frame boundary.
     pub fn configure(&self, config: Config) {
-        self.control.config.offer(config);
+        self.control.offer_config(config);
     }
 
     /// Why the held output's LEDs are not showing the session's colours.

@@ -368,6 +368,20 @@ impl Core {
         }
     }
 
+    /// What the session is doing. `running` is the one truth for whether a
+    /// session runs: [`Self::start`] sets both it and the published
+    /// `Running`, and [`Self::stop`] and [`Self::session_ended`] clear both;
+    /// otherwise the snapshot says why none runs.
+    fn session(&self) -> SessionState {
+        let published = self.state.borrow().session;
+        debug_assert_eq!(
+            self.running.is_some(),
+            published == SessionState::Running,
+            "running and the published session state disagree"
+        );
+        published
+    }
+
     fn measure(&mut self) {
         let Some(running) = &mut self.running else {
             return;
@@ -411,7 +425,7 @@ impl Core {
 
     async fn set_target(&mut self, target: LightingTarget) -> Result<()> {
         self.faulted()?;
-        let current = self.state.borrow().session;
+        let current = self.session();
         self.state.send_modify(|s| s.target = target);
         if target != LightingTarget::Processed {
             self.calibrate(None);
@@ -447,24 +461,31 @@ impl Core {
         let saved = settings.clone();
         blocking(move || lock(&store).save(&saved)).await??;
 
-        let revision = current.next();
-        // Saved settings end a trial; the session drops it below.
-        let tried = self.trial.take().is_some();
-        let (previous, target, session) = {
-            let mut previous = None;
-            self.state.send_modify(|s| {
-                previous = Some(std::mem::replace(&mut s.settings, settings.clone()));
-                s.revision = revision;
-            });
+        let (target, output_changed, capture_changed) = {
             let snapshot = self.state.borrow();
             (
-                previous.unwrap_or_default(),
                 snapshot.target,
-                snapshot.session,
+                snapshot.settings.output != settings.output,
+                snapshot.settings.capture != settings.capture,
             )
         };
-        let output_changed = previous.output != settings.output;
-        let adapters_changed = output_changed || previous.capture != settings.capture;
+        let adapters_changed = output_changed || capture_changed;
+        let session = self.session();
+        let revision = current.next();
+        // Saved settings end a trial.
+        let install = |core: &mut Self| {
+            core.trial = None;
+            core.state.send_modify(|s| {
+                s.settings = settings;
+                s.revision = revision;
+            });
+        };
+        if session == SessionState::Running && !adapters_changed {
+            // Same adapters: the running session takes the new processing.
+            self.reconfigure(install);
+        } else {
+            install(self);
+        }
         let applied = match session {
             // Processed was requested but failed to start or ended in a
             // failure: the new settings get the next attempt. A start that
@@ -481,12 +502,6 @@ impl Core {
                     Ok(()) => self.start().await,
                     Err(error) => Err(error),
                 }
-            }
-            SessionState::Running if tried || previous.processing != settings.processing => {
-                if let Some(running) = &self.running {
-                    running.session.configure(self.config());
-                }
-                Ok(())
             }
             SessionState::Native if output_changed => self.idle_output(IdleMode::Native).await,
             _ => Ok(()),
@@ -544,6 +559,8 @@ impl Core {
         Ok(())
     }
 
+    /// Stop the running session, if one runs (see [`Self::session`]):
+    /// without one there is nothing to stop and the state stays as it is.
     async fn stop(&mut self, mode: IdleMode) -> Result<()> {
         let Some(running) = self.running.take() else {
             return Ok(());
@@ -614,8 +631,12 @@ impl Core {
     }
 
     /// Apply `change`, then give a running session the config that follows
-    /// if it differs.
+    /// if it differs. Without a session there is nothing to compare.
     fn reconfigure(&mut self, change: impl FnOnce(&mut Self)) {
+        if self.running.is_none() {
+            change(self);
+            return;
+        }
         let before = self.config();
         change(self);
         let after = self.config();
@@ -646,6 +667,8 @@ impl Core {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        // Calibration ends at shutdown even on a faulted engine: the last
+        // snapshot shows no pattern that nothing is showing any more.
         self.calibrate(None);
         self.faulted()?;
         let result = self.stop(IdleMode::Off).await;
