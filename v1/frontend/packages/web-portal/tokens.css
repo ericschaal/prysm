@@ -109,6 +109,10 @@
   --duration-light-on: 1600ms;
   --duration-light-off: 500ms;
   --duration-mix: 900ms;
+  /* The ignition on top of it: the wavefront, the lift, the lamp. */
+  --duration-wave: 1000ms;
+  --duration-ignite: 1300ms;
+  --duration-lamp: 550ms;
   --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1);
   --ease-in-out: cubic-bezier(0.55, 0, 0.3, 1);
   --ease-light: cubic-bezier(0.16, 1, 0.3, 1);
@@ -204,6 +208,8 @@
   --warning-soft: rgb(240 189 114 / 0.14);
   /* Over the lit aurora (measured ≥ 4.5:1). */
   --warning-lit: #ffe4bd;
+  /* The dim state word, opaque (text-3 over the stage) so glyphs never seam. */
+  --word-dim: #94939f;
   --danger: #ff9aa6;
   --danger-soft: rgb(255 138 152 / 0.14);
   --focus: #d2cbff;

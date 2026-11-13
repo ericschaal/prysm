@@ -699,7 +699,47 @@ fieldset > .help {
 }
 .light-frame[data-lit='true'] .light-spill {
   opacity: 0.45;
-  transition: opacity var(--duration-light-on) var(--ease-in-out);
+  /* The page catches the light just after the card does. */
+  transition: opacity var(--duration-light-on) var(--ease-in-out) 150ms;
+}
+/* One breath out onto the page as the light arrives. */
+.light-spill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  opacity: 0;
+}
+.light-frame[data-ignite='a'] .light-spill::after {
+  animation: breath-a var(--duration-light-on) var(--ease-in-out) 150ms both;
+}
+.light-frame[data-ignite='b'] .light-spill::after {
+  animation: breath-b var(--duration-light-on) var(--ease-in-out) 150ms both;
+}
+.light-frame:not([data-lit='true']) .light-spill::after {
+  animation: none;
+}
+@keyframes breath-a {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  45% {
+    opacity: 0.6;
+    transform: scale(1.06);
+  }
+}
+@keyframes breath-b {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  45% {
+    opacity: 0.6;
+    transform: scale(1.06);
+  }
 }
 .light-frame[data-lit='true'][data-palette='effects'] .light-spill {
   opacity: 0.3;
@@ -822,6 +862,196 @@ fieldset > .help {
 .light-card[data-lit='true'][data-mode='device_native'] .aurora-light {
   opacity: 0.62;
 }
+/*
+ * The ignition, on top of the growth and in its direction: a brief lift of
+ * the light (at most about 13% above rest, at about 40% of the way) and a
+ * feathered wavefront in the mode's own colours that leaves the button and
+ * crosses the card once. Opacity and transform only; it plays once per
+ * turn-on, alternating names a/b so each turn-on restarts it.
+ */
+/* The effects rest dimmer, so their ignition is gentler in proportion. */
+.light-card[data-mode='device_native'] {
+  --ignite-strength: 0.5;
+}
+.aurora-crest,
+.aurora-wave {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.aurora-crest {
+  inset: 0;
+  background:
+    radial-gradient(
+      90% 70% at calc(100% - var(--pad) - 38px) calc(var(--pad) + 56px),
+      color-mix(in srgb, var(--light-c) 45%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      70% 60% at 20% 20%,
+      color-mix(in srgb, var(--light-a) 50%, transparent),
+      transparent 75%
+    );
+}
+.aurora-wave {
+  /* A circle wide enough to cross the card, centred on the power button. */
+  left: calc(100% - var(--pad) - 38px);
+  top: calc(var(--pad) + 56px);
+  width: 420%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    transparent 38%,
+    color-mix(in srgb, var(--light-c) 16%, transparent) 56%,
+    color-mix(in srgb, var(--light-b) 30%, transparent) 70%,
+    color-mix(in srgb, var(--light-a) 18%, transparent) 82%,
+    transparent 96%
+  );
+  transform: translate(-50%, -50%) scale(0.02);
+}
+.light-card[data-ignite='a'] .aurora-crest {
+  animation: crest-a var(--duration-ignite) linear;
+}
+.light-card[data-ignite='b'] .aurora-crest {
+  animation: crest-b var(--duration-ignite) linear;
+}
+.light-card[data-ignite='a'] .aurora-wave {
+  animation: wave-a var(--duration-wave) cubic-bezier(0.25, 0.55, 0.35, 1);
+}
+.light-card[data-ignite='b'] .aurora-wave {
+  animation: wave-b var(--duration-wave) cubic-bezier(0.25, 0.55, 0.35, 1);
+}
+@keyframes crest-a {
+  0% {
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  40% {
+    opacity: var(--ignite-strength, 1);
+    animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes crest-b {
+  0% {
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+  }
+  40% {
+    opacity: var(--ignite-strength, 1);
+    animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes wave-a {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.02);
+  }
+  18% {
+    opacity: var(--ignite-strength, 1);
+  }
+  60% {
+    opacity: calc(var(--ignite-strength, 1) * 0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes wave-b {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.02);
+  }
+  18% {
+    opacity: var(--ignite-strength, 1);
+  }
+  60% {
+    opacity: calc(var(--ignite-strength, 1) * 0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Turning off is simple: an ignition still playing stops at once. */
+.light-card:not([data-lit='true']) .aurora-crest,
+.light-card:not([data-lit='true']) .aurora-wave,
+.light-card:not([data-lit='true']) .power-wrap,
+.light-card:not([data-lit='true']) .power-wrap::after {
+  animation: none;
+}
+
+/* The lamp ignites: a small push out, and a halo that settles. */
+.light-card[data-ignite='a'] .power-wrap {
+  animation: ignite-a var(--duration-lamp) cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.light-card[data-ignite='b'] .power-wrap {
+  animation: ignite-b var(--duration-lamp) cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.power-wrap::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.5),
+    0 0 30px 6px color-mix(in srgb, var(--light-c) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.light-card[data-ignite='a'] .power-wrap::after {
+  animation: halo-a var(--duration-wave) cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.light-card[data-ignite='b'] .power-wrap::after {
+  animation: halo-b var(--duration-wave) cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@keyframes ignite-a {
+  from {
+    transform: scale(0.94);
+  }
+}
+@keyframes ignite-b {
+  from {
+    transform: scale(0.94);
+  }
+}
+@keyframes halo-a {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+@keyframes halo-b {
+  0% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
 @keyframes drift-a {
   to {
     transform: translate3d(22%, 16%, 0) rotate(40deg) scale(1.15);
@@ -866,43 +1096,44 @@ fieldset > .help {
 /* Off, On and Stopped share one cell and cross-fade: no snap, no shift. */
 .light-word {
   display: grid;
-  align-items: center;
+  /* Every word on one baseline, whatever its size. */
+  align-items: baseline;
   min-width: 0;
   /* Optical: without its descender room the word's capitals sit centred. */
   padding-bottom: 0.06em;
   font-size: var(--text-state);
   font-weight: var(--weight-strong);
-  letter-spacing: -0.055em;
+  /* Tight, yet the two f's crossbars stay apart in "Off" (no collision). */
+  letter-spacing: -0.025em;
   line-height: 1;
+  font-kerning: normal;
 }
+/*
+ * Each word sits on the same baseline and left edge and only its opacity
+ * changes. Colours are opaque: overlapping glyphs (the ff) show no seam.
+ */
 .light-word span {
   grid-area: 1 / 1;
-  color: var(--text-3);
+  color: var(--word-dim);
   opacity: 0;
-  transform: translateY(0.08em);
-  transition:
-    opacity var(--duration-slow) var(--ease-in-out),
-    transform var(--duration-slow) var(--ease-in-out);
+  transition: opacity var(--duration-slow) var(--ease-in-out);
 }
 .light-word span[data-shown='true'] {
   opacity: 1;
-  transform: none;
 }
 .light-word [data-word='On'] {
   color: var(--text);
   text-shadow: 0 0 36px rgb(255 255 255 / 0.28);
 }
 .light-word [data-word='Stopped'] {
-  /* A longer word, said calmly: smaller than On and Off. */
+  /* A longer word, said calmly: smaller than On and Off, same baseline. */
   font-size: var(--text-hero);
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
   color: var(--danger);
 }
 /* "On" arrives with the light, at the light's pace. */
 .light-card[data-lit='true'] .light-word [data-word='On'] {
-  transition:
-    opacity var(--duration-light-on) var(--ease-light),
-    transform var(--duration-light-on) var(--ease-light);
+  transition: opacity var(--duration-light-on) var(--ease-light);
 }
 
 /*

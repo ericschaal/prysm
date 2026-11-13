@@ -292,12 +292,15 @@ test('the word follows the light; starting is said only when it lasts', async ()
     assert.equal(word(), 'Off', 'no "On" before the light');
     assert.equal($('.light-card').dataset.mood, 'starting');
     assert.equal(info(), null, 'a quick start says nothing');
+    assert.equal($('.light-card').dataset.ignite, undefined, 'not yet lit');
     await act(async () => sleep(slowStartMs + 50));
     assert.equal(info(), 'Starting screen sync…');
 
     await act(async () => fixture.publish({ session: { state: 'running' } }));
     assert.equal(word(), 'On');
     assert.equal(info(), null);
+    // The ignition plays as the light arrives.
+    assert.equal($('.light-card').dataset.ignite, 'a');
 
     // Switching modes passes through starting without the light going out.
     await act(async () =>
@@ -313,12 +316,23 @@ test('the word follows the light; starting is said only when it lasts', async ()
     await act(async () => fixture.publish({ session: { state: 'native' } }));
     assert.equal($('.light-frame').dataset.palette, 'effects');
 
+    assert.equal(
+      $('.light-card').dataset.ignite,
+      'a',
+      'a mode switch is no ignition',
+    );
+
     // Off: the light goes, and with it the word.
     await act(async () =>
       fixture.publish({ target: 'off', session: { state: 'stopped' } }),
     );
     assert.equal($('.light-card').dataset.lit, 'false');
     assert.equal(word(), 'Off');
+    // On again: the ignition's other name restarts it.
+    await act(async () =>
+      fixture.publish({ target: 'processed', session: { state: 'running' } }),
+    );
+    assert.equal($('.light-card').dataset.ignite, 'b');
   } finally {
     await portal.unmount();
   }

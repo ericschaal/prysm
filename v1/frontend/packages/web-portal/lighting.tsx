@@ -240,6 +240,17 @@ export function LightCard({
   if (running && !stayLit) setStayLit(true);
   if (!running && mood !== 'starting' && stayLit) setStayLit(false);
   const lit = running || (mood === 'starting' && stayLit);
+  // Each time the light comes on (not on load), the ignition plays once. Its
+  // CSS animations alternate between two names, so a new one restarts them
+  // without remounting anything.
+  const [wasLit, setWasLit] = useState(lit);
+  const [ignitions, setIgnitions] = useState(0);
+  if (lit !== wasLit) {
+    setWasLit(lit);
+    if (lit) setIgnitions(ignitions + 1);
+  }
+  let ignite: 'a' | 'b' | undefined;
+  if (ignitions) ignite = ignitions % 2 ? 'a' : 'b';
   // The word follows the light, not the request: "On" arrives with the light.
   let word: Word = lit ? 'On' : 'Off';
   if (mood === 'problem') word = 'Stopped';
@@ -286,6 +297,7 @@ export function LightCard({
     <div
       className="light-frame"
       data-lit={lit}
+      data-ignite={ignite}
       data-palette={mode === 'device_native' ? 'effects' : 'sync'}
     >
       <section
@@ -293,6 +305,7 @@ export function LightCard({
         data-mood={mood}
         data-mode={mode}
         data-lit={lit}
+        data-ignite={ignite}
         aria-labelledby={headingId}
         aria-busy={pending !== null}
       >
@@ -303,6 +316,9 @@ export function LightCard({
             <span />
             <span />
           </div>
+          {/* The ignition: a brief lift of the light, and its leading edge. */}
+          <div className="aurora-crest" />
+          <div className="aurora-wave" />
         </div>
         <h2 id={headingId} className="overline">
           Your lights
