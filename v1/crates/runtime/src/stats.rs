@@ -1,8 +1,6 @@
 //! Totals of what the engine's sessions did since the process started, for
 //! the portal's opt-in `/metrics`. The session thread only adds to atomics
 //! (no locks, no allocation); readers copy them out as [`Counters`].
-use prysm_core::EdgeColors;
-use prysm_ports::{LedOutput, Result};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -59,15 +57,7 @@ struct Timer {
 }
 
 impl Timer {
-    fn time<T>(&self, work: impl FnOnce() -> T) -> T {
-        let started = Instant::now();
-        let done = work();
-        let nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        self.nanos.fetch_add(nanos, Ordering::Relaxed);
-        self.count.fetch_add(1, Ordering::Relaxed);
-        done
-    }
-
+    /// One more span: two relaxed adds.
     fn add(&self, span: Duration) {
         let nanos = u64::try_from(span.as_nanos()).unwrap_or(u64::MAX);
         self.nanos.fetch_add(nanos, Ordering::Relaxed);
@@ -80,6 +70,20 @@ impl Timer {
             total: Duration::from_nanos(self.nanos.load(Ordering::Relaxed)),
         }
     }
+}
+
+/// When one frame passed each step on the session thread.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameTimes {
+    /// The source handed it over.
+    pub(crate) received: Instant,
+    /// The source captured it, if it says.
+    pub(crate) captured: Option<Instant>,
+    /// Its colors were ready.
+    pub(crate) processed: Instant,
+    /// The write of its colors returned successfully; `None` if opening or
+    /// writing the output failed.
+    pub(crate) written: Option<Instant>,
 }
 
 impl Stats {
@@ -98,12 +102,28 @@ impl Stats {
         }
     }
 
-    pub(crate) fn frame_received(&self) {
+    /// One frame taken from the source: counted and its processing timed;
+    /// if its colors reached the output, also counted as sent and its spans
+    /// from receipt (and from capture, if known) to the write returning.
+    pub(crate) fn frame(&self, times: FrameTimes) {
         self.frames_received.fetch_add(1, Ordering::Relaxed);
+        self.processing.add(times.processed - times.received);
+        if let Some(written) = times.written {
+            self.frames_sent.fetch_add(1, Ordering::Relaxed);
+            self.flushed.add(written - times.received);
+            if let Some(captured) = times.captured {
+                self.captured
+                    .add(written.saturating_duration_since(captured));
+            }
+        }
     }
 
-    pub(crate) fn frame_sent(&self) {
-        self.frames_sent.fetch_add(1, Ordering::Relaxed);
+    /// One output write, a frame's or a keep-alive rewrite, that took `span`.
+    pub(crate) fn output_write(&self, span: Duration, ok: bool) {
+        self.output_writes.add(span);
+        if !ok {
+            self.output_write_failures.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn source_opened(&self) {
@@ -114,34 +134,10 @@ impl Stats {
         self.output_opens.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A frame received at `received` (captured at `captured`, if the source
-    /// says) reached the output now: one span from the source handing it
-    /// over, one from its capture, each to the write returning.
-    pub(crate) fn flushed(&self, received: Instant, captured: Option<Instant>) {
-        let now = Instant::now();
-        self.flushed.add(now - received);
-        if let Some(captured) = captured {
-            self.captured.add(now.saturating_duration_since(captured));
-        }
-    }
-
     /// The `flushed` spans of frames with a capture time, from that time.
     /// Not a metric: the engine reports it as the latency when every frame
     /// of a window had one.
     pub(crate) fn captured(&self) -> Timing {
         self.captured.read()
-    }
-
-    pub(crate) fn process<T>(&self, work: impl FnOnce() -> T) -> T {
-        self.processing.time(work)
-    }
-
-    /// Write `colors`, timing the write and counting a failure.
-    pub(crate) fn write(&self, output: &mut dyn LedOutput, colors: &EdgeColors) -> Result<()> {
-        let written = self.output_writes.time(|| output.write(colors));
-        if written.is_err() {
-            self.output_write_failures.fetch_add(1, Ordering::Relaxed);
-        }
-        written
     }
 }

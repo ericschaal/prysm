@@ -8,7 +8,10 @@
 //! - `logging` (feature `logging`): the hosts' `tracing` subscriber.
 mod builder;
 mod engine;
+mod feeds;
 mod forwarder;
+mod leds;
+mod meter;
 mod null;
 mod sample;
 mod session;
@@ -23,9 +26,9 @@ pub mod logging;
 
 pub use builder::{Builder, Prysm};
 pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
+pub use feeds::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
 pub use sample::{SampleError, sample_rgb};
-pub use session::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use stats::{Counters, Timing};
 pub use surface::{Shutdown, Surface};
