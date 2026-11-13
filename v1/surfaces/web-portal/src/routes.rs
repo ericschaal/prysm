@@ -15,9 +15,10 @@ use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, Targ
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tokio::task::JoinSet;
 use tokio::time::{Instant, Interval, interval_at, timeout};
 
 const BODY_LIMIT: usize = 1024 * 1024;
@@ -39,6 +40,9 @@ pub(crate) struct Context {
     /// Where capture stream connections go; `None`: the path is not served.
     pub capture: Option<Handoff>,
     pub shutdown: Shutdown,
+    /// Capture stream upgrades waiting for hyper to release their
+    /// connection; joined by the server after the connections.
+    upgrades: Mutex<JoinSet<()>>,
     streams: Arc<Semaphore>,
     previews: Previews,
     colors: Colors,
@@ -60,10 +64,26 @@ impl Context {
             metrics,
             capture,
             shutdown,
+            upgrades: Mutex::default(),
             streams: Arc::new(Semaphore::new(STREAMS)),
             previews: Previews::new(),
             colors: Colors::new(),
         }
+    }
+}
+
+impl Context {
+    /// Run `task` as part of the server: it is joined (or aborted) before
+    /// the server returns. Finished ones are collected here.
+    pub(crate) fn spawn_upgrade(&self, task: impl Future<Output = ()> + Send + 'static) {
+        let mut upgrades = self.upgrades.lock().unwrap_or_else(PoisonError::into_inner);
+        while upgrades.try_join_next().is_some() {}
+        upgrades.spawn(task);
+    }
+
+    /// The upgrade tasks still running, for the server to join.
+    pub(crate) fn take_upgrades(&self) -> JoinSet<()> {
+        std::mem::take(&mut *self.upgrades.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
@@ -130,7 +150,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
         }
         "/api/v1/colors/stream" if get => context.colors.stream(&context.engine, &context.shutdown),
         CAPTURE_STREAM_PATH => match &context.capture {
-            Some(handoff) if get => capture::upgrade(handoff, request),
+            Some(handoff) if get => capture::upgrade(context, handoff, request),
             Some(_) => method_not_allowed(),
             None => not_found(),
         },

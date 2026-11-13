@@ -1,5 +1,7 @@
-use prysm_core::CaptureResolution;
 use prysm_ports::ValidationError;
+use prysm_ports::capture_size::{
+    default_fps, default_height, default_width, validate_capture_size,
+};
 use serde::{Deserialize, Serialize};
 
 /// `{ "kind": "device", "path": "/dev/video0", "width": 640, "height": 360, "fps": 30 }`
@@ -24,18 +26,6 @@ pub struct DeviceSettings {
     pub fps: u32,
 }
 
-fn default_width() -> u32 {
-    CaptureResolution::default().dimensions()[0]
-}
-
-fn default_height() -> u32 {
-    CaptureResolution::default().dimensions()[1]
-}
-
-const fn default_fps() -> u32 {
-    30
-}
-
 impl DeviceSettings {
     #[must_use]
     pub fn new(path: impl Into<String>) -> Self {
@@ -58,17 +48,9 @@ impl DeviceSettings {
                 "a device path or identifier is required",
             ));
         }
-        if let Err(reason) = CaptureResolution::new(self.width, self.height) {
-            // The width alone, with any valid height, says which is wrong.
-            let field = if CaptureResolution::new(self.width, 1).is_err() {
-                "width"
-            } else {
-                "height"
-            };
-            return Err(ValidationError::new(field, reason));
-        }
+        validate_capture_size(self.width, self.height, self.fps)?;
         // AVFoundation expresses frame durations with an i32 timescale.
-        if self.fps == 0 || (cfg!(target_os = "macos") && i32::try_from(self.fps).is_err()) {
+        if cfg!(target_os = "macos") && i32::try_from(self.fps).is_err() {
             return Err(ValidationError::new("fps", "must be a positive frame rate"));
         }
         if !cfg!(any(target_os = "linux", target_os = "macos")) {

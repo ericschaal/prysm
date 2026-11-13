@@ -59,9 +59,16 @@ pub enum H264Error {
     Hardware(#[source] prysm_h264_rvenc_sys::Error),
     #[error("OpenH264")]
     OpenH264(#[source] openh264::Error),
-    /// The access unit is malformed or outside what the stream allows.
+    /// The access unit is malformed or outside what the stream allows: a
+    /// received one, or the hardware encoder's before transmission.
     #[error("invalid H.264 access unit: {0}")]
     Bitstream(String),
+    /// The decoder's destination is not a `width`x`height` NV12 buffer.
+    #[error("the {len}-byte destination is not {width}x{height} NV12")]
+    Destination { width: u32, height: u32, len: usize },
+    /// The encoder returned something a session cannot use.
+    #[error("the encoder misbehaved: {0}")]
+    Encoder(String),
     #[error("the access unit did not produce a picture")]
     NoPicture,
 }

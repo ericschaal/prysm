@@ -1,5 +1,6 @@
-//! Listener and connection ownership. Every connection task is joined (or,
-//! past the drain deadline, aborted) before `serve` returns.
+//! Listener and connection ownership. Every connection task, and every
+//! capture stream upgrade it started, is joined (or, past the drain
+//! deadline, aborted) before `serve` returns.
 use crate::WebPortal;
 use crate::routes::{self, BODY_DEADLINE, Context};
 use crate::timed_io::TimedIo;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout_at};
 
 const CONNECTIONS: usize = 64;
 /// How long open requests may take to finish once shutdown starts.
@@ -54,12 +55,22 @@ pub(crate) async fn serve(
     };
     // Refuse new connections at once; open ones finish their current request.
     drop(listener);
-    let drained = timeout(DRAIN_DEADLINE, async {
+    let deadline = Instant::now() + DRAIN_DEADLINE;
+    let drained = timeout_at(deadline, async {
         while connections.join_next().await.is_some() {}
     })
     .await;
     if drained.is_err() {
         connections.shutdown().await;
+    }
+    // No connection is left to start another upgrade.
+    let mut upgrades = context.take_upgrades();
+    let handed_over = timeout_at(deadline, async {
+        while upgrades.join_next().await.is_some() {}
+    })
+    .await;
+    if handed_over.is_err() {
+        upgrades.shutdown().await;
     }
     result
 }

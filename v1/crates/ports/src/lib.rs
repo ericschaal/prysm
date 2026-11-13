@@ -5,6 +5,7 @@
 //! consuming `close`/`idle` calls release exactly once.
 mod adapter;
 mod calibration;
+pub mod capture_size;
 mod error;
 mod handoff;
 mod owner;

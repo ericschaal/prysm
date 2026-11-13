@@ -39,10 +39,13 @@ impl Decoder {
         nv12: &mut [u8],
     ) -> Result<(), H264Error> {
         let (w, h) = (width as usize, height as usize);
-        ensure!(
-            width.is_multiple_of(2) && height.is_multiple_of(2) && nv12.len() == w * h * 3 / 2,
-            "the destination is not {width}x{height} NV12"
-        );
+        if !(width.is_multiple_of(2) && height.is_multiple_of(2) && nv12.len() == w * h * 3 / 2) {
+            return Err(H264Error::Destination {
+                width,
+                height,
+                len: nv12.len(),
+            });
+        }
         ensure!(
             !payload.is_empty() && payload.len() <= MAX_ACCESS_UNIT_BYTES,
             "access unit of {} bytes",

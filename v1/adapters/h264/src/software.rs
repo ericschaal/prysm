@@ -66,7 +66,7 @@ impl Software {
             FrameType::I | FrameType::P => FrameKind::Predicted,
             FrameType::Skip => return Ok(None),
             other => {
-                return Err(H264Error::Bitstream(format!(
+                return Err(H264Error::Encoder(format!(
                     "unexpected OpenH264 frame type {other:?}"
                 )));
             }

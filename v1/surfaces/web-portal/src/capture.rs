@@ -2,6 +2,7 @@
 //! upgraded here and handed, as a plain blocking socket, to the remote
 //! source, which speaks the WebSocket itself on its own thread.
 use crate::response::{self, Response, failure};
+use crate::routes::Context;
 use crate::timed_io::TimedIo;
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderValue};
@@ -14,7 +15,11 @@ use prysm_protocol::FailureKind;
 /// subprotocol, and hand the connection over once hyper releases it. `426`,
 /// naming the version spoken here, when the sender offers another; `503`
 /// while no source receives (lighting off, or the capture is not `remote`).
-pub(crate) fn upgrade(handoff: &Handoff, mut request: Request<Incoming>) -> Response {
+pub(crate) fn upgrade(
+    context: &Context,
+    handoff: &Handoff,
+    mut request: Request<Incoming>,
+) -> Response {
     let Some(key) = websocket_key(request.headers()) else {
         return failure(
             StatusCode::BAD_REQUEST,
@@ -44,7 +49,7 @@ pub(crate) fn upgrade(handoff: &Handoff, mut request: Request<Incoming>) -> Resp
     let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
     let upgraded = hyper::upgrade::on(&mut request);
     let handoff = handoff.clone();
-    tokio::spawn(async move {
+    context.spawn_upgrade(async move {
         let upgraded = match upgraded.await {
             Ok(upgraded) => upgraded,
             Err(error) => {

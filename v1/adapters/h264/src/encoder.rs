@@ -230,7 +230,7 @@ impl Encoder {
         };
         let keyframe = !session.started;
         if keyframe && kind != FrameKind::Idr {
-            return Err(H264Error::Bitstream(
+            return Err(H264Error::Encoder(
                 "an encoder session must start with an IDR picture".into(),
             ));
         }
@@ -365,19 +365,21 @@ mod tests {
             .data
             .to_vec();
         let mut wrong = vec![0; 32 * 32 * 3 / 2];
-        assert!(
-            Decoder::new()
-                .unwrap()
-                .decode(&picture, 32, 32, &mut wrong)
-                .is_err()
-        );
+        assert!(matches!(
+            Decoder::new().unwrap().decode(&picture, 32, 32, &mut wrong),
+            Err(H264Error::Bitstream(_))
+        ));
         let mut out = vec![0; 64 * 32 * 3 / 2];
-        assert!(
+        assert!(matches!(
             Decoder::new()
                 .unwrap()
-                .decode(&picture, 64, 32, &mut out[1..])
-                .is_err()
-        );
+                .decode(&picture, 64, 32, &mut out[1..]),
+            Err(H264Error::Destination {
+                width: 64,
+                height: 32,
+                len: 3071
+            })
+        ));
         for garbage in [
             &b""[..],
             b"\x00\x00\x01",
