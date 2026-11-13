@@ -1,7 +1,7 @@
 import type { FileSettings } from '@prysm/contracts/host-desktop';
 import {
-  describePicture,
-  pictureSize,
+  describeSavedPicture,
+  pictureFacts,
   type AdapterUi,
 } from '@prysm/web-portal';
 import { FileEditor } from './editor';
@@ -16,17 +16,8 @@ export const fileCapture: AdapterUi<FileSettings> = {
   create: () => ({ kind: 'file', path: '' }),
   Editor: FileEditor,
   normalize: (value) => ({ ...value, path: value.path.trim() }),
-  summary: ({ path, width, height, fps }) =>
-    `${path}, ${describePicture(width ?? fileDefaults.width, height ?? fileDefaults.height, fps ?? fileDefaults.fps)}`,
+  summary: (value) =>
+    `${value.path}, ${describeSavedPicture(value, fileDefaults)}`,
   transport: () => 'file',
-  facts: ({ width, height, fps }) => [
-    {
-      label: 'Picture',
-      value: pictureSize(
-        width ?? fileDefaults.width,
-        height ?? fileDefaults.height,
-      ),
-    },
-    { label: 'Rate', value: `${fps ?? fileDefaults.fps} fps` },
-  ],
+  facts: (value) => pictureFacts(value, fileDefaults),
 };

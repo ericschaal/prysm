@@ -1,4 +1,4 @@
-import { describePicture, pictureSize } from '@prysm/web-portal';
+import { describeSavedPicture, pictureFacts } from '@prysm/web-portal';
 
 /**
  * Limits of the picture a TV captures, the same for this TV (`WebosSettings`)
@@ -19,21 +19,13 @@ export interface TvPicture {
   include_ui?: boolean;
 }
 
-/** `640 × 360 at 30 fps, with menus` for a TV picture. */
 /** A TV picture as Home's facts: size, rate and whether menus are captured. */
 export function tvPictureFacts(
   value: TvPicture,
   defaults: Required<TvPicture>,
 ) {
   return [
-    {
-      label: 'Picture',
-      value: pictureSize(
-        value.width ?? defaults.width,
-        value.height ?? defaults.height,
-      ),
-    },
-    { label: 'Rate', value: `${value.fps ?? defaults.fps} fps` },
+    ...pictureFacts(value, defaults),
     {
       label: 'Menus',
       value:
@@ -42,15 +34,12 @@ export function tvPictureFacts(
   ];
 }
 
+/** `640 × 360 at 30 fps, with menus` for a TV picture. */
 export function describeTvPicture(
   value: TvPicture,
   defaults: Required<TvPicture>,
 ) {
-  const picture = describePicture(
-    value.width ?? defaults.width,
-    value.height ?? defaults.height,
-    value.fps ?? defaults.fps,
-  );
+  const picture = describeSavedPicture(value, defaults);
   return `${picture}, ${(value.include_ui ?? defaults.include_ui) ? 'with' : 'without'} menus`;
 }
 

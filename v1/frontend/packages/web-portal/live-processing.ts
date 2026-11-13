@@ -86,16 +86,12 @@ export function throttled<T>(intervalMs: number) {
     const { value, send } = pending;
     pending = undefined;
     last = Date.now();
-    inFlight = send(value).then(
-      () => {
-        inFlight = undefined;
-        pump();
-      },
-      () => {
-        inFlight = undefined;
-        pump();
-      },
-    );
+    // A failure is dropped like a success: the next value follows.
+    const next = () => {
+      inFlight = undefined;
+      pump();
+    };
+    inFlight = send(value).then(next, next);
   }
   return {
     push(value: T, send: (value: T) => Promise<unknown>) {
@@ -222,13 +218,16 @@ export function useLiveProcessing({
   const [trials] = useState(() => throttled<Processing>(trialIntervalMs));
   /** Values were tried since the last save, so the lights may not match it. */
   const [tried, setTried] = useState(false);
+  /** A field's own check or the server refuses a value. */
+  const invalid =
+    Object.keys(errors.local).length > 0 ||
+    Object.keys(errors.server).length > 0;
   const blocked =
     disabled ||
     busy ||
     draft.syncing ||
     staleAt === revision ||
-    Object.keys(errors.local).length > 0 ||
-    Object.keys(errors.server).length > 0 ||
+    invalid ||
     (failed !== null && same(failed, draft.draft));
 
   // `value` decides the profiles: an absent one was removed.
@@ -237,9 +236,8 @@ export function useLiveProcessing({
     ...value,
   });
 
-  /** Save `value`; resolves with whether it was saved. */
   /**
-   * The save on its way, if any. Saves never overlap: one asked for meanwhile
+   * The save on its way, if any; it resolves with whether it was saved. Saves never overlap: one asked for meanwhile
    * (a quick second tap) waits for it, then the newest value is saved
    * against the revision it returned, at once.
    */
@@ -336,9 +334,6 @@ export function useLiveProcessing({
     if (path) changedRef.current = path;
     draft.setDraft(next);
   }
-  const invalid =
-    Object.keys(errors.local).length > 0 ||
-    Object.keys(errors.server).length > 0;
   let state: SaveState = 'idle';
   if (failure || invalid) state = 'failed';
   else if (busy || draft.syncing || draft.dirty) state = 'saving';

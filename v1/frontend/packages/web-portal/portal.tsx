@@ -3,11 +3,18 @@ import type { Processing } from '@prysm/contracts/application';
 import {
   plainFailure,
   type ApplicationSnapshot,
+  type LightingTarget,
   type ColorsClient,
   type DiscoveryClient,
   type PreviewClient,
 } from '@prysm/application-client';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import {
   useApplication,
   useApplicationDispatch,
@@ -316,9 +323,6 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
 
   const { settings, revision, session } = snapshot;
   const output = settings.output ?? null;
-  const outputLighting = output
-    ? (adapterFor(outputs, output.kind)?.lighting?.(output) ?? {})
-    : null;
   const offline = !online ? (
     <p className="notice warning" role="alert">
       Lost the connection to Prysm. Reconnecting; your changes are kept.
@@ -635,84 +639,135 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </>,
     );
 
-  const capture = settings.capture ?? null;
-  const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
-  const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
-  const calibrate = () => {
-    setCalibrateFrom('');
-    go(calibrateRoute);
-  };
   return page(
     'portal-page home',
     'Prysm',
     <>
       {notices}
-      {/* Whether this host streams the LEDs' colours at all. */}
-      <div
-        className="home-grid"
-        ref={homeGridRef}
-        data-colors={colors ? 'stream' : 'none'}
-      >
-        <LightCard
-          target={snapshot.target}
-          session={session}
-          failure={snapshot.failure}
-          outputIssue={snapshot.output_issue}
-          input={snapshot.input}
-          hasCapture={!!capture}
-          hasOutput={!!output}
-          output={outputLighting}
-          disabled={!online}
-          setTarget={(target) =>
-            dispatch(application.commands.setTarget(target))
-          }
-          openSetup={openSetup}
-        >
-          <QuickPicture
-            processing={settings.processing}
-            revision={revision}
-            disabled={!online}
-            save={saveProcessing}
-            calibrate={calibrate}
-            tryProcessing={(processing) =>
-              dispatch(application.commands.tryProcessing(processing))
-            }
-          />
-        </LightCard>
-        {/* Before setup the light card's prompt says it all. */}
-        {capture && output ? (
-          <SetupCard
-            capture={{
-              section: 'capture',
-              saved: capture,
-              label: captureUi?.label ?? capture.kind,
-              facts: captureUi?.facts?.(capture) ?? [],
-            }}
-            output={{
-              section: 'output',
-              saved: output,
-              label: outputUi?.label ?? output.kind,
-              facts: outputUi?.facts?.(output) ?? [],
-            }}
-            edges={outputUi?.edges?.(output)}
-            transports={{
-              capture: captureUi?.transport?.(capture),
-              output: outputUi?.transport?.(output),
-            }}
-            discovery={discovery ?? null}
-            path={path}
-            profile={activeProfile(settings.processing)}
-            openSettings={() => {
-              if (path.kind === 'failed' && path.at === 'capture')
-                go(videoRoute);
-              else if (path.kind === 'failed' && path.at === 'output')
-                go(lightsRoute);
-              else go(settingsRoute);
-            }}
-          />
-        ) : null}
-      </div>
+      <HomePage
+        snapshot={snapshot}
+        captures={captures}
+        outputs={outputs}
+        discovery={discovery ?? null}
+        hasColors={!!colors}
+        gridRef={homeGridRef}
+        online={online}
+        path={path}
+        setTarget={(target) => dispatch(application.commands.setTarget(target))}
+        save={saveProcessing}
+        tryProcessing={tryProcessing}
+        openSetup={openSetup}
+        calibrate={() => {
+          setCalibrateFrom('');
+          go(calibrateRoute);
+        }}
+        go={go}
+      />
     </>,
     true,
+  );
+}
+
+/**
+ * Home: the light card (power, mode, brightness, colour profile) and, once
+ * set up, the path the light takes. `gridRef` takes the live LED colours.
+ */
+function HomePage<C extends AdapterSection, O extends AdapterSection>({
+  snapshot,
+  captures,
+  outputs,
+  discovery,
+  hasColors,
+  gridRef,
+  online,
+  path,
+  setTarget,
+  save,
+  tryProcessing,
+  openSetup,
+  calibrate,
+  go,
+}: {
+  snapshot: ApplicationSnapshot<C, O>;
+  captures: AdapterUis<C>;
+  outputs: AdapterUis<O>;
+  discovery: DiscoveryClient | null;
+  /** Whether this host streams the LEDs' colours at all. */
+  hasColors: boolean;
+  gridRef: RefObject<HTMLDivElement | null>;
+  online: boolean;
+  path: PathState;
+  setTarget: (target: LightingTarget) => Promise<unknown>;
+  save: (expected: number, processing: Processing) => Promise<number>;
+  tryProcessing: (processing: Processing) => Promise<unknown>;
+  openSetup: () => void;
+  calibrate: () => void;
+  go: (route: string) => void;
+}) {
+  const { settings, revision, session } = snapshot;
+  const capture = settings.capture ?? null;
+  const output = settings.output ?? null;
+  const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
+  const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
+  return (
+    <div
+      className="home-grid"
+      ref={gridRef}
+      data-colors={hasColors ? 'stream' : 'none'}
+    >
+      <LightCard
+        target={snapshot.target}
+        session={session}
+        failure={snapshot.failure}
+        outputIssue={snapshot.output_issue}
+        input={snapshot.input}
+        hasCapture={!!capture}
+        hasOutput={!!output}
+        output={output ? (outputUi?.lighting?.(output) ?? {}) : null}
+        disabled={!online}
+        setTarget={setTarget}
+        openSetup={openSetup}
+      >
+        <QuickPicture
+          processing={settings.processing}
+          revision={revision}
+          disabled={!online}
+          save={save}
+          calibrate={calibrate}
+          tryProcessing={tryProcessing}
+        />
+      </LightCard>
+      {/* Before setup the light card's prompt says it all. */}
+      {capture && output ? (
+        <SetupCard
+          capture={{
+            section: 'capture',
+            saved: capture,
+            label: captureUi?.label ?? capture.kind,
+            facts: captureUi?.facts?.(capture) ?? [],
+          }}
+          output={{
+            section: 'output',
+            saved: output,
+            label: outputUi?.label ?? output.kind,
+            facts: outputUi?.facts?.(output) ?? [],
+          }}
+          edges={outputUi?.edges?.(output)}
+          transports={{
+            capture: captureUi?.transport?.(capture),
+            output: outputUi?.transport?.(output),
+          }}
+          discovery={discovery}
+          path={path}
+          profile={activeProfile(settings.processing)}
+          openSettings={() => {
+            if (path.kind === 'failed' && path.at === 'capture') go(videoRoute);
+            else if (path.kind === 'failed' && path.at === 'output')
+              go(lightsRoute);
+            else go(settingsRoute);
+          }}
+        />
+      ) : null}
+    </div>
   );
 }

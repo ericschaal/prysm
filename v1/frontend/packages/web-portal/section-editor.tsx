@@ -167,6 +167,14 @@ export function SectionEditor<S extends AdapterSection>({
     else outcome = 'waiting';
   }
 
+  /** The draft tidied for saving, as its kind asks. */
+  const normalized = () => adapter?.normalize?.(draft.draft) ?? draft.draft;
+  /** A new check starts: its timers from zero. */
+  function restartCheck() {
+    setSettled(false);
+    setTimedOut(false);
+  }
+
   function change(next: S) {
     draft.setDraft(next);
     if (phase.kind !== 'editing') setPhase({ kind: 'editing' });
@@ -180,8 +188,7 @@ export function SectionEditor<S extends AdapterSection>({
       draft.setDraft(value);
       draft.saved(value, next);
       setAttempted(false);
-      setSettled(false);
-      setTimedOut(false);
+      restartCheck();
       if (after === 'reverted') {
         setPrevious(null);
         setPhase({ kind: 'reverted' });
@@ -224,7 +231,7 @@ export function SectionEditor<S extends AdapterSection>({
       setPhase({ kind: 'conflict' });
       return;
     }
-    void store(adapter?.normalize?.(draft.draft) ?? draft.draft, 'checking');
+    void store(normalized(), 'checking');
   }
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -238,15 +245,10 @@ export function SectionEditor<S extends AdapterSection>({
   function keepMine() {
     // Edit on top of what is saved now, then save as usual.
     draft.rebase(draft.draft);
-    void store(
-      adapter?.normalize?.(draft.draft) ?? draft.draft,
-      'checking',
-      saved,
-    );
+    void store(normalized(), 'checking', saved);
   }
   async function tryNow() {
-    setSettled(false);
-    setTimedOut(false);
+    restartCheck();
     setPhase({ kind: 'checking', before: null });
     try {
       await startSync();

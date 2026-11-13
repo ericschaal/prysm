@@ -1,6 +1,12 @@
 import { useId, type ReactNode } from 'react';
 import type { DiscoveryClient } from '@prysm/application-client';
-import type { AdapterFact, LedEdges, Transport } from './adapters';
+import {
+  ledCount,
+  unbroken,
+  type AdapterFact,
+  type LedEdges,
+  type Transport,
+} from './adapters';
 import { useDeviceName, type SetupPart } from './device-name';
 import { LightsIcon, PrysmIcon, VideoIcon } from './path-icons';
 import { RowLink } from './rows';
@@ -13,7 +19,7 @@ const sides = ['top', 'right', 'bottom', 'left'] as const;
  */
 function LedMap({ edges }: { edges: LedEdges }) {
   const blurId = useId();
-  const total = sides.reduce((sum, edge) => sum + edges[edge], 0);
+  const total = ledCount(edges);
   // Screen 200 × 112 at (60, 34); the band 9 out; the counts 22 out (the
   // bottom one past the stand).
   const band = {
@@ -158,7 +164,7 @@ function Stop({
         <span className="visually-hidden">{title}: </span>
         {/* Never broken at a hyphen ("WLED-Gledopto"). */}
         <strong className="path-name" title={short === name ? undefined : name}>
-          {short.split('-').join('\u2011')}
+          {unbroken(short)}
         </strong>
         {hidden ? <span className="visually-hidden"> {hidden},</span> : null}
         {/* Always a line, so the stops stay aligned when one has no fact. */}
@@ -197,6 +203,9 @@ function frameRate(fps: number) {
   return `${Math.abs(fps - whole) < 0.05 ? whole : fps.toFixed(1)} fps`;
 }
 
+/** Whether a link's light runs, stands still or shows a break. */
+type LinkState = 'still' | 'flowing' | 'failed';
+
 /** A link between two stops: a hairline, its light, and what it carries. */
 function Link({
   state,
@@ -205,7 +214,7 @@ function Link({
   about,
   behind = false,
 }: {
-  state: string;
+  state: LinkState;
   /** Working, but this link keeps Prysm from keeping up (shown in orange). */
   behind?: boolean;
   /** Above the hairline: how the link carries its data. */
@@ -308,8 +317,8 @@ export function SetupCard({
   const headingId = useId();
   const failedAt = path.kind === 'failed' ? path.at : undefined;
   // Which links are lit, still or broken.
-  let into = 'still';
-  let out = 'still';
+  let into: LinkState = 'still';
+  let out: LinkState = 'still';
   if (path.kind === 'flowing') into = out = 'flowing';
   // The lights' own effects: Prysm sends nothing; only the Lights stop is lit.
   if (path.kind === 'failed') {
@@ -331,9 +340,7 @@ export function SetupCard({
             : 'frames per second Prysm processes and sends, over the last second',
       }
     : undefined;
-  const total = edges
-    ? edges.top + edges.right + edges.bottom + edges.left
-    : undefined;
+  const total = edges ? ledCount(edges) : undefined;
   // How far behind the picture the lights are: the two links added, only
   // when the source says when it captured (otherwise the start is unknown).
   const parts = flowing?.latency;

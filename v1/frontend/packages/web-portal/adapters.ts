@@ -32,6 +32,13 @@ export interface LedEdges {
   left: number;
 }
 
+/** All the LEDs around the screen. */
+export const ledCount = (edges: LedEdges) =>
+  edges.top + edges.right + edges.bottom + edges.left;
+
+/** A device name never broken at a hyphen ("WLED-Gledopto"). */
+export const unbroken = (name: string) => name.split('-').join('\u2011');
+
 /**
  * How a link of the signal path carries its data: the lights' protocol, or
  * a capture stream's encoding. A closed set, named by the portal.
@@ -47,6 +54,39 @@ export interface AdapterFact {
 /** A picture size for facts: `640 × 360`. */
 export const pictureSize = (width: number, height: number) =>
   `${width}\u00a0×\u00a0${height}`;
+
+/** A capture's size and rate; an omitted one means the Rust default. */
+export interface Picture {
+  width?: number;
+  height?: number;
+  fps?: number;
+}
+
+/** A capture's size and rate as Home's facts: `Picture`, then `Rate`. */
+export function pictureFacts(
+  { width, height, fps }: Picture,
+  defaults: Required<Picture>,
+): AdapterFact[] {
+  return [
+    {
+      label: 'Picture',
+      value: pictureSize(width ?? defaults.width, height ?? defaults.height),
+    },
+    { label: 'Rate', value: `${fps ?? defaults.fps} fps` },
+  ];
+}
+
+/** A capture's size and rate for summaries: `640 × 360 at 30 fps`. */
+export function describeSavedPicture(
+  { width, height, fps }: Picture,
+  defaults: Required<Picture>,
+) {
+  return describePicture(
+    width ?? defaults.width,
+    height ?? defaults.height,
+    fps ?? defaults.fps,
+  );
+}
 
 /** One registered adapter kind: how the portal names, creates and edits it. */
 export interface AdapterUi<S extends AdapterSection> {

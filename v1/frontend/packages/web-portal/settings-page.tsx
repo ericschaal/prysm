@@ -3,7 +3,13 @@ import type {
   DiscoveryClient,
 } from '@prysm/application-client';
 import type { Processing } from '@prysm/contracts/application';
-import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
+import {
+  adapterFor,
+  ledCount,
+  unbroken,
+  type AdapterSection,
+  type AdapterUis,
+} from './adapters';
 import { saveDeveloper, useDeveloper } from './developer';
 import { useDeviceName } from './device-name';
 import { CheckboxField } from './fields';
@@ -49,13 +55,12 @@ function SetupRow<S extends AdapterSection>({
   // The lights by their LED count, as on Home; a source by size and rate.
   const edges = adapter?.edges?.(saved);
   const details = edges
-    ? [`${edges.top + edges.right + edges.bottom + edges.left} LEDs`]
+    ? [`${ledCount(edges)} LEDs`]
     : facts
         // As on Home: whether TV menus are included is not a fact to list.
         .filter((fact) => fact.label !== 'Menus')
         .map((fact) => fact.value);
-  // Never broken at a hyphen ("WLED-Gledopto").
-  const shownName = name.split('-').join('‑');
+  const shownName = unbroken(name);
   return (
     <RowLink
       label={section === 'capture' ? 'Video source' : 'Lights'}

@@ -47,6 +47,11 @@ function Note({
   );
 }
 
+/** A field's classes: its own, then the caller's. */
+function classes(own: string, extra: string | undefined) {
+  return extra ? `${own} ${extra}` : own;
+}
+
 function useField(path: string, help?: ReactNode) {
   const scope = use(FieldContext);
   const id = useId();
@@ -118,7 +123,7 @@ export function TextField({
   const missing = required && !value.trim();
   useCheck(path, missing ? 'Enter a value.' : null);
   return (
-    <div className={className ? `field ${className}` : 'field'}>
+    <div className={classes('field', className)}>
       <label htmlFor={field.id}>{label}</label>
       <input
         {...field.control}
@@ -179,7 +184,7 @@ export function NameField({
     }
   }
   return (
-    <div className={className ? `field ${className}` : 'field'}>
+    <div className={classes('field', className)}>
       <label htmlFor={field.id}>{label}</label>
       <input
         {...field.control}
@@ -234,7 +239,7 @@ export function NumberField({
   const problem = numberProblem(text, limits);
   useCheck(path, problem);
   return (
-    <div className={className ? `field ${className}` : 'field'}>
+    <div className={classes('field', className)}>
       <label htmlFor={field.id}>
         {label}
         {unit ? <span className="unit"> ({unit})</span> : null}
@@ -309,7 +314,7 @@ export function RangeField({
     '--fill-to': `${Math.max(origin, at(value))}%`,
   } as CSSProperties;
   return (
-    <div className={className ? `field range ${className}` : 'field range'}>
+    <div className={classes('field range', className)}>
       <div className="range-heading">
         <label htmlFor={field.id}>{label}</label>
         <output htmlFor={field.id}>{format(value)}</output>
@@ -366,7 +371,7 @@ export function CheckboxField({
 }: FieldProps & { checked: boolean; onChange: (checked: boolean) => void }) {
   const field = useField(path, help);
   return (
-    <div className={className ? `field check ${className}` : 'field check'}>
+    <div className={classes('field check', className)}>
       <input
         {...field.control}
         type="checkbox"
@@ -397,7 +402,7 @@ export function SelectField<V extends string>({
 }) {
   const field = useField(path, help);
   return (
-    <div className={className ? `field ${className}` : 'field'}>
+    <div className={classes('field', className)}>
       <label htmlFor={field.id}>{label}</label>
       <select
         {...field.control}
