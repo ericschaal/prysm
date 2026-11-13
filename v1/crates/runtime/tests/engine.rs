@@ -1141,13 +1141,16 @@ async fn a_slow_output_is_named_after_a_few_seconds() {
         let slow = settings(
             FakeSourceSettings {
                 name: "a".into(),
+                // No wait between frames: a short sleep overruns on a loaded
+                // machine and would count as slack.
+                immediate: true,
                 ..Default::default()
             },
             FakeOutputSettings {
                 name: "a".into(),
-                // Far longer than the source's 2 ms sleep can overrun on a
-                // loaded machine, so the loop stays saturated there too.
-                write_delay_ms: 200,
+                // Short against the one-second window, so a write cut off at
+                // a window's edge leaves it saturated.
+                write_delay_ms: 40,
                 ..Default::default()
             },
         );

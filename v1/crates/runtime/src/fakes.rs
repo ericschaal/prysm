@@ -95,6 +95,9 @@ pub struct FakeSourceSettings {
     pub captured_ago_ms: Option<u64>,
     /// Hand over a frame this often; 0: every 2 ms.
     pub frame_interval_ms: u64,
+    /// Hand over frames without waiting between them, so a test of a
+    /// saturated loop does not depend on how punctual a short sleep is.
+    pub immediate: bool,
     /// Frame size; 0: 16 × 9. A large picture makes processing slow.
     pub width: u32,
     pub height: u32,
@@ -172,7 +175,9 @@ impl FrameSource for FakeSource {
             0 => 2,
             ms => ms,
         };
-        thread::sleep(timeout.min(Duration::from_millis(interval)));
+        if !self.settings.immediate {
+            thread::sleep(timeout.min(Duration::from_millis(interval)));
+        }
         self.frames += 1;
         let fill = match self.settings.blink {
             Some(other) if (self.frames / BLINK_FRAMES) % 2 == 1 => other,
