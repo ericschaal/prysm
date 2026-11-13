@@ -52,6 +52,7 @@ into `@prysm/contracts/application`.
 | `GET /api/v1/state` | — | `200 State` |
 | `GET /api/v1/state/stream` | — | `200 text/event-stream`: `data: <State>` now, then after every change |
 | `GET /api/v1/preview/stream` | — | `200 text/event-stream`: `data: <PreviewEvent>` now, then at most 8 per second; see [Preview](#preview) |
+| `GET /api/v1/colors/stream` | — | `200 text/event-stream`: `data: <ColorsEvent>` now, then at most 10 per second, only on change; see [Colors](#colors) |
 | `PUT /api/v1/target` | `TargetRequest { target }` | `204` once the engine has applied the target |
 | `PUT /api/v1/settings` | `SettingsRequest { expected, settings }` | `200 SettingsReplaced { revision }` once saved |
 | `PUT /api/v1/calibration` | `Calibration { pattern, uncorrected }` | `204` once shown in the state; see [Calibration](#calibration) |
@@ -198,6 +199,33 @@ The portal's CSP blocks `data:` and `blob:` images, so a portal page decodes
 `jpeg` to bytes and draws it with `createImageBitmap(new Blob([bytes], { type:
 'image/jpeg' }))` on a canvas.
 
+## Colors
+
+`GET /api/v1/colors/stream` carries only the colors the LEDs show, for a page
+that tints with them (Home) instead of showing the picture. Server-sent events
+whose `data:` is a `ColorsEvent`, tagged by `type`:
+
+| `type` | Fields | When |
+| --- | --- | --- |
+| `colors` | `top, right, bottom, left` | The LEDs show Prysm's colors and they differ from the last ones sent |
+| `idle` | — | They do not: no session runs (`off`, `device_native`, stopped after a failure, faulted), it has not processed a frame yet, or its output was released after 3 s without frames |
+
+- Each edge is `LedColors`' `[r, g, b]` sRGB bytes in screen orientation (as in
+  the preview), but at most 8 entries (`COLOR_SEGMENTS`): each the average, in
+  linear light, of an equal stretch of the edge; an edge with fewer samples
+  keeps them. A tint needs a few colors, not 256 per edge.
+- There is no `unavailable`: colors exist for every processed frame, also one
+  the preview cannot show.
+
+Cadence and demand: the stream checks every 100 ms (the first `idle` waits one
+check, like the preview) and sends only when the summary changed, so at most
+10 events per second and none while the picture is still. Each open stream
+registers a colors listener with the engine, independent of preview viewers:
+with listeners, the session copies the colors it wrote (never the frame) once
+per frame; with none, it costs one atomic load per frame. Nothing is encoded
+but the JSON line. At most 8 streams; idle streams carry a `:` comment every
+15 seconds.
+
 ## Metrics
 
 `GET /metrics` is opt-in: the host enables it with `--metrics` (headless and
@@ -253,7 +281,7 @@ Source chains stay in the process; `message` is what the user can act on.
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
 | 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
-| 429 | `busy` | More than 8 open state streams, or more than 4 preview streams |
+| 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle |
 | 503 | `faulted` | The engine is faulted; only a restart recovers |
@@ -333,7 +361,8 @@ What it does not protect against:
   cross-origin TV UI is unaffected: CSP applies to the documents the portal
   serves, not to pages that call its API.
 - 64 concurrent connections (the listener stops accepting at the limit), 8 state
-  streams, 4 preview streams (8 events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
+  streams, 4 preview streams (8 events per second each), 8 colors streams (10
+  events per second each), 1 MiB bodies, 5 s to read headers and bodies, 5 s per stalled socket
   write (slow or vanished readers are disconnected), 15 s per engine command.
 
 ## Lifetime
@@ -360,9 +389,12 @@ media type and size limits, stream delivery, the stream limit, a faulted engine
 (503), prompt listener shutdown, and the preview: `idle` while off and after the
 session ends, frames while running, no viewer registered without a stream, the
 viewer limit, the 8 per second cap, the origin policy and streams ending at
-shutdown, and `/metrics`: `404` when disabled; content type, counted frames,
+shutdown, the colors stream: `idle` while off and in `device_native`, an
+edge summary while running, nothing more while the colors stay the same, no
+preview viewer registered for it, the 10 per second cap, its own limit, the
+origin policy and `405`, and `/metrics`: `404` when disabled; content type, counted frames,
 `405` and the origin policy when enabled; candidates: the fake output's
 list, the default empty list, an unknown kind (422), malformed paths (404),
 `405`, the origin policy, and no revision change. Unit tests in `src/metrics.rs` check
 the exact text; unit tests in `src/preview.rs` decode the JPEG and check its size,
-the sRGB colors and the strip bound.
+the sRGB colors and the strip bound; in `src/colors.rs` the averaged segments.

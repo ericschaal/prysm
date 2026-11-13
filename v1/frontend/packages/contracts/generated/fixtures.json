@@ -73,6 +73,47 @@
       "label": "Living room"
     }
   ],
+  "ColorsEvent": [
+    {
+      "type": "idle"
+    },
+    {
+      "bottom": [
+        [
+          188,
+          188,
+          188
+        ]
+      ],
+      "left": [
+        [
+          0,
+          0,
+          0
+        ]
+      ],
+      "right": [
+        [
+          0,
+          0,
+          255
+        ]
+      ],
+      "top": [
+        [
+          255,
+          0,
+          0
+        ],
+        [
+          0,
+          255,
+          0
+        ]
+      ],
+      "type": "colors"
+    }
+  ],
   "DeviceSettings": [
     {
       "fps": 30,

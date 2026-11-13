@@ -5,7 +5,7 @@ use prysm_ports::{
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
-use prysm_runtime::{Engine, EngineHandle, Prysm, Shutdown};
+use prysm_runtime::{ColorsWatch, Engine, EngineHandle, Prysm, Shutdown};
 use std::future::Future;
 use std::time::Duration;
 
@@ -826,12 +826,16 @@ async fn a_quiet_source_releases_the_output_until_frames_return() {
     within(async {
         let log = CallLog::new();
         let (handle, engine, _) = start(&log, quiet(3, 3_600), DEADLINE).await;
+        let colors = handle.colors();
         handle.set_target(LightingTarget::Processed).await.unwrap();
         assert!(log.wait_for("output.write:o", 3).await);
         assert_eq!(log.count("output.open:o"), 1);
+        colors_until(&colors, true).await;
 
-        // After the grace period the device returns to its own state.
+        // After the grace period the device returns to its own state, and
+        // the colors it no longer shows are withdrawn.
         assert!(log.wait_for("output.idle:o:Native", 1).await);
+        assert!(colors.latest().is_none());
         let snapshot = handle.snapshot().borrow().clone();
         assert_eq!(snapshot.session, SessionState::Running);
         assert!(snapshot.input.is_some_and(|i| !i.receiving));
@@ -842,8 +846,10 @@ async fn a_quiet_source_releases_the_output_until_frames_return() {
         assert!(log.position("output.idle:o:Native") < log.last_position("output.open:o"));
         let writes = log.count("output.write:o");
         assert!(log.wait_for("output.write:o", writes + 1).await);
+        colors_until(&colors, true).await;
 
         handle.set_target(LightingTarget::Off).await.unwrap();
+        assert!(colors.latest().is_none());
         assert_eq!(log.count("output.idle:o:Off"), 1);
         assert_eq!(log.count("output.open:o"), 2);
         engine.shutdown().await.unwrap();
@@ -874,6 +880,46 @@ async fn stopping_while_released_leaves_the_output_in_the_stop_mode() {
         assert_eq!(log.count("output.open:o"), 3);
         assert!(before(&log, "source.close:s", "output.idle:o:Off"));
         assert_eq!(log.count("output.idle:o:Off"), 1);
+        engine.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+async fn colors_until(watch: &ColorsWatch, present: bool) {
+    while watch.latest().is_some() != present {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
+/// Colors are those the LEDs show: none while off or showing the device's own
+/// effects, and none published at all while nobody watches.
+#[tokio::test]
+async fn colors_follow_the_lights_and_only_while_watched() {
+    within(async {
+        let log = CallLog::new();
+        let (handle, engine, _) = start(&log, named("a", "a"), DEADLINE).await;
+        let colors = handle.colors();
+        assert_eq!(handle.colors_viewers(), 1);
+        assert_eq!(handle.preview_viewers(), 0, "colors are not a preview");
+        assert!(colors.latest().is_none(), "off");
+
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        colors_until(&colors, true).await;
+        let written = colors.latest().unwrap();
+        assert!(!written.top.is_empty() && !written.left.is_empty());
+
+        handle
+            .set_target(LightingTarget::DeviceNative)
+            .await
+            .unwrap();
+        assert!(colors.latest().is_none(), "effects show their own colors");
+
+        handle.set_target(LightingTarget::Processed).await.unwrap();
+        colors_until(&colors, true).await;
+        handle.set_target(LightingTarget::Off).await.unwrap();
+        assert!(colors.latest().is_none());
+        drop(colors);
+        assert_eq!(handle.colors_viewers(), 0);
         engine.shutdown().await.unwrap();
     })
     .await;

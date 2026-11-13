@@ -16,7 +16,7 @@ use image::ExtendedColorType;
 use image::codecs::jpeg::JpegEncoder;
 use prysm_core::{ColorStrip, Frame, Viewport};
 use prysm_protocol::{
-    FailureKind, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
+    FailureKind, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport,
 };
 use prysm_runtime::{EngineHandle, Preview, PreviewWatch, Shutdown};
 use std::convert::Infallible;
@@ -210,7 +210,7 @@ pub(crate) fn event(preview: &Preview) -> PreviewEvent {
             width: viewport.width,
             height: viewport.height,
         },
-        colors: PreviewColors {
+        colors: LedColors {
             top: srgb(&colors.top),
             right: srgb(&colors.right),
             bottom: srgb(&colors.bottom),
@@ -221,13 +221,13 @@ pub(crate) fn event(preview: &Preview) -> PreviewEvent {
 }
 
 /// The colors as written, in display space, at most [`STRIP_SAMPLES`] per edge.
-fn srgb(strip: &ColorStrip) -> Vec<PreviewColor> {
+fn srgb(strip: &ColorStrip) -> Vec<LedColor> {
     let count = strip.len().min(STRIP_SAMPLES);
     (0..count)
         .filter_map(|index| strip.color_at(index, count))
         .map(|color| {
             let color = color.to_srgb();
-            PreviewColor([color.r, color.g, color.b])
+            LedColor([color.r, color.g, color.b])
         })
         .collect()
 }
@@ -324,11 +324,11 @@ mod tests {
     fn colors_are_srgb_and_bounded_per_edge() {
         let encoded = frame(event(&preview(Frame::dummy(16, 9).unwrap())));
         assert_eq!(encoded.colors.top.len(), STRIP_SAMPLES);
-        assert_eq!(encoded.colors.top[0], PreviewColor([255, 0, 0]));
-        assert_eq!(encoded.colors.right[0], PreviewColor([0, 255, 0]));
-        assert_eq!(encoded.colors.bottom[0], PreviewColor([0, 0, 255]));
+        assert_eq!(encoded.colors.top[0], LedColor([255, 0, 0]));
+        assert_eq!(encoded.colors.right[0], LedColor([0, 255, 0]));
+        assert_eq!(encoded.colors.bottom[0], LedColor([0, 0, 255]));
         // Linear 0.5 is sRGB 188, not 128.
-        assert_eq!(encoded.colors.left[0], PreviewColor([188, 188, 188]));
+        assert_eq!(encoded.colors.left[0], LedColor([188, 188, 188]));
     }
 
     #[test]

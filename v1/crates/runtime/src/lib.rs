@@ -26,6 +26,6 @@ pub use engine::{CALIBRATION_TIMEOUT, Engine, EngineHandle};
 pub use forwarder::Forwarder;
 pub use null::{NullOutput, NullSettings};
 pub use sample::{SampleError, sample_rgb};
-pub use session::{Preview, PreviewWatch};
+pub use session::{ColorsWatch, Preview, PreviewWatch, Watch};
 pub use stats::{Counters, Timing};
 pub use surface::{Shutdown, Surface};

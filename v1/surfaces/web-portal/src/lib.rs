@@ -12,6 +12,7 @@
 //!     .await
 //! ```
 mod access;
+mod colors;
 mod metrics;
 mod preview;
 mod response;

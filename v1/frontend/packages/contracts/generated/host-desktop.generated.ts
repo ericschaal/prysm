@@ -35,6 +35,14 @@ export interface components {
             /** @description Without surrounding whitespace or control characters. */
             name: string;
         };
+        /** @description One server-sent event of the colors stream. */
+        ColorsEvent: (components["schemas"]["LedColors"] & {
+            /** @enum {string} */
+            type: "colors";
+        }) | {
+            /** @enum {string} */
+            type: "idle";
+        };
         /** @description Correction controls, each -100 to 100; all zero is no correction. */
         CorrectionControls: {
             hue: components["schemas"]["HueControls"];
@@ -173,6 +181,23 @@ export interface components {
              */
             receiving: boolean;
         };
+        LedColor: [
+            number,
+            number,
+            number
+        ];
+        /**
+         * @description The colors written to the LEDs, in display (sRGB) space and screen
+         *     orientation: `top` and `bottom` left to right, `left` and `right` top to
+         *     bottom. Each edge has entries spread evenly along it; how many depends on
+         *     the stream.
+         */
+        LedColors: {
+            bottom: components["schemas"]["LedColor"][];
+            left: components["schemas"]["LedColor"][];
+            right: components["schemas"]["LedColor"][];
+            top: components["schemas"]["LedColor"][];
+        };
         /** @description LEDs per edge, as seen from the front of the screen. An omitted edge has none. */
         LedCounts: {
             /**
@@ -223,22 +248,6 @@ export interface components {
          * @enum {string}
          */
         Phase: "running" | "closing_source" | "idling_output" | "finishing";
-        PreviewColor: [
-            number,
-            number,
-            number
-        ];
-        /**
-         * @description The colors written to the LEDs, in display (sRGB) space and screen
-         *     orientation: `top` and `bottom` left to right, `left` and `right` top to
-         *     bottom. Each edge has at most 256 entries spread evenly along it.
-         */
-        PreviewColors: {
-            bottom: components["schemas"]["PreviewColor"][];
-            left: components["schemas"]["PreviewColor"][];
-            right: components["schemas"]["PreviewColor"][];
-            top: components["schemas"]["PreviewColor"][];
-        };
         /** @description One server-sent event of the preview stream. */
         PreviewEvent: (components["schemas"]["PreviewFrame"] & {
             /** @enum {string} */
@@ -253,7 +262,8 @@ export interface components {
         };
         /** @description A downscaled JPEG of the captured frame, the sampled area and the colors. */
         PreviewFrame: {
-            colors: components["schemas"]["PreviewColors"];
+            /** @description At most 256 colors per edge. */
+            colors: components["schemas"]["LedColors"];
             /** Format: int32 */
             height: number;
             /** @description Base64 (standard alphabet, padded) baseline JPEG. */
@@ -467,6 +477,7 @@ export type Calibration = components['schemas']['Calibration'];
 export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type ColorProfile = components['schemas']['ColorProfile'];
+export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type DeviceSettings = components['schemas']['DeviceSettings'];
 export type Failure = components['schemas']['Failure'];
@@ -474,6 +485,8 @@ export type FailureKind = components['schemas']['FailureKind'];
 export type FileSettings = components['schemas']['FileSettings'];
 export type HueControls = components['schemas']['HueControls'];
 export type Input = components['schemas']['Input'];
+export type LedColor = components['schemas']['LedColor'];
+export type LedColors = components['schemas']['LedColors'];
 export type LedCounts = components['schemas']['LedCounts'];
 export type LightingTarget = components['schemas']['LightingTarget'];
 export type NullSettings = components['schemas']['NullSettings'];
@@ -481,8 +494,6 @@ export type OutputIssue = components['schemas']['OutputIssue'];
 export type OutputSettings = components['schemas']['OutputSettings'];
 export type Pattern = components['schemas']['Pattern'];
 export type Phase = components['schemas']['Phase'];
-export type PreviewColor = components['schemas']['PreviewColor'];
-export type PreviewColors = components['schemas']['PreviewColors'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];

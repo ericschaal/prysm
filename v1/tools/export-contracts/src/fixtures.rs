@@ -12,7 +12,7 @@ use prysm_ports::{
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
-    Failure, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
+    ColorsEvent, Failure, LedColor, LedColors, PreviewEvent, PreviewFrame, PreviewViewport,
     SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_runtime::{NullOutput, NullSettings};
@@ -211,13 +211,25 @@ fn preview_events() -> Vec<PreviewEvent> {
                 width: 1920,
                 height: 800,
             },
-            colors: PreviewColors {
-                top: vec![PreviewColor([255, 0, 0]), PreviewColor([0, 255, 0])],
-                right: vec![PreviewColor([0, 0, 255])],
-                bottom: vec![PreviewColor([188, 188, 188])],
-                left: vec![PreviewColor([0, 0, 0])],
+            colors: LedColors {
+                top: vec![LedColor([255, 0, 0]), LedColor([0, 255, 0])],
+                right: vec![LedColor([0, 0, 255])],
+                bottom: vec![LedColor([188, 188, 188])],
+                left: vec![LedColor([0, 0, 0])],
             },
             jpeg: "/9j/2wBDAP/Z".into(),
+        }),
+    ]
+}
+
+fn colors_events() -> Vec<ColorsEvent> {
+    vec![
+        ColorsEvent::Idle,
+        ColorsEvent::Colors(LedColors {
+            top: vec![LedColor([255, 0, 0]), LedColor([0, 255, 0])],
+            right: vec![LedColor([0, 0, 255])],
+            bottom: vec![LedColor([188, 188, 188])],
+            left: vec![LedColor([0, 0, 0])],
         }),
     ]
 }
@@ -227,6 +239,7 @@ fn application() -> Value {
     json!({
         "State": states(),
         "PreviewEvent": preview_events(),
+        "ColorsEvent": colors_events(),
         "Failure": failures(),
         "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
         // Every pattern, as `PUT /api/v1/calibration` bodies.

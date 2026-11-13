@@ -3,6 +3,8 @@ import {
   type ApplicationClient,
   type ApplicationSnapshot,
   type Candidate,
+  type ColorsClient,
+  type ColorsEvent,
   type DiscoveryClient,
   type Failure,
   type LightingTarget,
@@ -172,6 +174,32 @@ export function httpPreviewClient({
   };
 }
 
+/**
+ * The portal's colors stream. Each open stream is a listener the portal counts
+ * (at most 8; more are refused as `busy`), so close it when it is not shown.
+ */
+export function httpColorsClient({
+  baseUrl = '',
+  fetch: fetcher = fetch,
+}: HttpClientOptions = {}): ColorsClient {
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1/colors/stream`;
+  return {
+    colors: async (signal) => {
+      const stream = await openEvents(
+        fetcher,
+        url,
+        signal,
+        validColors,
+        'colors',
+      );
+      return {
+        events: stream.events as AsyncIterable<ColorsEvent>,
+        close: stream.close,
+      };
+    },
+  };
+}
+
 /** The portal's `GET /api/v1/candidates/{section}/{kind}`. */
 export function httpDiscoveryClient({
   baseUrl = '',
@@ -318,6 +346,16 @@ function validPreview(value: unknown): boolean {
     [viewport.x, viewport.y, viewport.width, viewport.height].every(isInt) &&
     !!colors &&
     [colors.top, colors.right, colors.bottom, colors.left].every(isColors)
+  );
+}
+
+function validColors(value: unknown): boolean {
+  const event = value as Record<string, unknown> | null;
+  if (!event || typeof event !== 'object') return false;
+  if (event.type === 'idle') return true;
+  return (
+    event.type === 'colors' &&
+    [event.top, event.right, event.bottom, event.left].every(isColors)
   );
 }
 

@@ -1,4 +1,5 @@
 //! Events of `GET /api/v1/preview/stream`: what the LEDs show, for a browser.
+use crate::LedColors;
 use serde::{Deserialize, Serialize};
 
 /// One server-sent event of the preview stream.
@@ -29,7 +30,8 @@ pub struct PreviewFrame {
     pub height: u32,
     /// The part of the frame that was sampled, after black-bar removal.
     pub viewport: PreviewViewport,
-    pub colors: PreviewColors,
+    /// At most 256 colors per edge.
+    pub colors: LedColors,
     /// Base64 (standard alphabet, padded) baseline JPEG.
     pub jpeg: String,
 }
@@ -44,47 +46,10 @@ pub struct PreviewViewport {
     pub height: u32,
 }
 
-/// The colors written to the LEDs, in display (sRGB) space and screen
-/// orientation: `top` and `bottom` left to right, `left` and `right` top to
-/// bottom. Each edge has at most 256 entries spread evenly along it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-pub struct PreviewColors {
-    pub top: Vec<PreviewColor>,
-    pub right: Vec<PreviewColor>,
-    pub bottom: Vec<PreviewColor>,
-    pub left: Vec<PreviewColor>,
-}
-
-/// `[r, g, b]`, each 0–255 sRGB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PreviewColor(pub [u8; 3]);
-
-#[cfg(feature = "schema")]
-impl utoipa::PartialSchema for PreviewColor {
-    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
-        ArrayBuilder::new()
-            .prefix_items([(); 3].map(|()| {
-                ObjectBuilder::new()
-                    .schema_type(Type::Integer)
-                    .minimum(Some(0.0))
-                    .maximum(Some(255.0))
-                    .build()
-            }))
-            .min_items(Some(3))
-            .max_items(Some(3))
-            .into()
-    }
-}
-
-#[cfg(feature = "schema")]
-impl utoipa::ToSchema for PreviewColor {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LedColor;
     use serde_json::json;
 
     #[test]
@@ -105,8 +70,8 @@ mod tests {
                 width: 4,
                 height: 1,
             },
-            colors: PreviewColors {
-                top: vec![PreviewColor([1, 2, 3])],
+            colors: LedColors {
+                top: vec![LedColor([1, 2, 3])],
                 right: vec![],
                 bottom: vec![],
                 left: vec![],

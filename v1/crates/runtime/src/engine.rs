@@ -1,4 +1,4 @@
-use crate::session::{OpenOutput, PreviewSlot, PreviewWatch, Session, SessionEnd};
+use crate::session::{ColorsWatch, Feeds, OpenOutput, PreviewWatch, Session, SessionEnd};
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
@@ -36,7 +36,7 @@ pub const CALIBRATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub struct EngineHandle {
     commands: mpsc::Sender<Command>,
     snapshot: watch::Receiver<Snapshot>,
-    preview: Arc<PreviewSlot>,
+    feeds: Feeds,
     stats: Arc<Stats>,
     /// For [`candidates`](Self::candidates), which needs no engine state.
     registry: Registry,
@@ -102,7 +102,17 @@ impl EngineHandle {
     /// session publishes previews only while at least one watch exists.
     #[must_use]
     pub fn preview(&self) -> PreviewWatch {
-        self.preview.watch()
+        self.feeds.preview.watch()
+    }
+
+    /// Watch the colors the running session last wrote to the LEDs. The
+    /// session publishes them (a copy of the colors, never the frame) only
+    /// while at least one watch exists, independently of preview watches.
+    /// Empty while the LEDs show anything else: off, the device's own effects,
+    /// or a source without frames.
+    #[must_use]
+    pub fn colors(&self) -> ColorsWatch {
+        self.feeds.colors.watch()
     }
 
     /// Totals of frames, timings and opens since the process started; a few
@@ -115,7 +125,13 @@ impl EngineHandle {
     /// How many preview watches exist.
     #[must_use]
     pub fn preview_viewers(&self) -> usize {
-        self.preview.viewers()
+        self.feeds.preview.watchers()
+    }
+
+    /// How many colors watches exist.
+    #[must_use]
+    pub fn colors_viewers(&self) -> usize {
+        self.feeds.colors.watchers()
     }
 
     pub(crate) async fn report_surface_failure(&self, error: Error) {
@@ -164,7 +180,7 @@ impl Engine {
             failure,
             ..Snapshot::default()
         });
-        let preview = Arc::new(PreviewSlot::default());
+        let feeds = Feeds::default();
         let stats = Arc::new(Stats::default());
         let (commands, inbox) = mpsc::channel(16);
         let core = Core {
@@ -172,7 +188,7 @@ impl Engine {
             store,
             running: None,
             calibration_expires: None,
-            preview: preview.clone(),
+            feeds: feeds.clone(),
             stats: stats.clone(),
             stop_deadline,
             state,
@@ -181,7 +197,7 @@ impl Engine {
         let handle = EngineHandle {
             commands: commands.clone(),
             snapshot,
-            preview,
+            feeds,
             stats,
             registry,
         };
@@ -303,7 +319,7 @@ struct Core {
     running: Option<Running>,
     /// When the snapshot's calibration is cleared; present exactly while it is.
     calibration_expires: Option<Instant>,
-    preview: Arc<PreviewSlot>,
+    feeds: Feeds,
     stats: Arc<Stats>,
     stop_deadline: Duration,
     state: watch::Sender<Snapshot>,
@@ -506,7 +522,7 @@ impl Core {
             source,
             open_output,
             config,
-            self.preview.clone(),
+            self.feeds.clone(),
             self.stats.clone(),
         ) {
             Ok(session) => session,

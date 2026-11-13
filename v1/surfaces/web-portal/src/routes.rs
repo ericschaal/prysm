@@ -1,6 +1,7 @@
 //! Routing, request decoding and the state stream.
 use crate::FrontendAsset;
 use crate::access::{self, Access};
+use crate::colors::Colors;
 use crate::metrics;
 use crate::preview::Previews;
 use crate::response::{self, Body, Response, failure};
@@ -41,6 +42,7 @@ pub(crate) struct Context {
     pub shutdown: Shutdown,
     streams: Arc<Semaphore>,
     previews: Previews,
+    colors: Colors,
 }
 
 impl Context {
@@ -59,6 +61,7 @@ impl Context {
             shutdown,
             streams: Arc::new(Semaphore::new(STREAMS)),
             previews: Previews::new(),
+            colors: Colors::new(),
         }
     }
 }
@@ -121,6 +124,9 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
         ("/api/v1/preview/stream", Method::GET) => {
             context.previews.stream(&context.engine, &context.shutdown)
         }
+        ("/api/v1/colors/stream", Method::GET) => {
+            context.colors.stream(&context.engine, &context.shutdown)
+        }
         ("/api/v1/target", Method::PUT) => match decode::<TargetRequest>(request).await {
             Ok(body) => applied(command(context.engine.set_target(body.target)).await),
             Err(response) => *response,
@@ -154,6 +160,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             "/api/v1/state"
             | "/api/v1/state/stream"
             | "/api/v1/preview/stream"
+            | "/api/v1/colors/stream"
             | "/api/v1/target"
             | "/api/v1/calibration"
             | "/api/v1/settings"

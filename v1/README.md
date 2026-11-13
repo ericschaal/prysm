@@ -118,7 +118,8 @@ device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
 at the next frame; a source that never delivers never takes the device over. Register it with
 `.output(MyLeds)` in each host that should offer it.
 
-A **surface** gets an `EngineHandle` (commands, snapshot watch, preview slot)
+A **surface** gets an `EngineHandle` (commands, snapshot watch, preview and
+colors watches)
 and a `Shutdown`:
 
 ```rust,ignore

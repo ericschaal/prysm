@@ -77,7 +77,9 @@ holds the live picture controls with colour profiles, Calibrate colours, Run
 setup again, the live preview (`#/preview`), one Save form each for capture
 and output, the theme and the technical details. Both browser hosts
 pass `httpPreviewClient()` (same `baseUrl` option as the application client)
-as `WebPortal`'s optional `preview`. A host registers each section's kinds as an `AdapterUis` map of
+as `WebPortal`'s optional `preview`. `httpColorsClient()` (a `ColorsClient`;
+`fakeColorsClient()` in the testkit) streams just the LED colors, a few per
+edge, for tinting Home. A host registers each section's kinds as an `AdapterUis` map of
 `AdapterUi { label, create, Editor, normalize?, summary?, lighting?, edges? }`; the map is
 exhaustive over the host's generated union, the form shows a kind selector when
 there is more than one, and editors are controlled components built from the

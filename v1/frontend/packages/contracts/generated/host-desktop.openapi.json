@@ -83,6 +83,49 @@
         ],
         "type": "object"
       },
+      "ColorsEvent": {
+        "description": "One server-sent event of the colors stream.",
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LedColors",
+                "description": "The colors last written to the LEDs, [`COLOR_SEGMENTS`] per edge\n(fewer when an edge has fewer samples). Sent only when they changed."
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "colors"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "The colors last written to the LEDs, [`COLOR_SEGMENTS`] per edge\n(fewer when an edge has fewer samples). Sent only when they changed."
+          },
+          {
+            "description": "The LEDs are not showing Prysm's colors: lights off, the device's own\neffects, a source without frames, or no frame processed yet.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "idle"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "CorrectionControls": {
         "additionalProperties": false,
         "description": "Correction controls, each -100 to 100; all zero is no correction.",
@@ -338,6 +381,65 @@
         ],
         "type": "object"
       },
+      "LedColor": {
+        "items": {},
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ],
+        "type": "array"
+      },
+      "LedColors": {
+        "description": "The colors written to the LEDs, in display (sRGB) space and screen\norientation: `top` and `bottom` left to right, `left` and `right` top to\nbottom. Each edge has entries spread evenly along it; how many depends on\nthe stream.",
+        "properties": {
+          "bottom": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "left": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "right": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "top": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "type": "object"
+      },
       "LedCounts": {
         "additionalProperties": false,
         "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has none.",
@@ -449,65 +551,6 @@
         ],
         "type": "string"
       },
-      "PreviewColor": {
-        "items": {},
-        "maxItems": 3,
-        "minItems": 3,
-        "prefixItems": [
-          {
-            "maximum": 255,
-            "minimum": 0,
-            "type": "integer"
-          },
-          {
-            "maximum": 255,
-            "minimum": 0,
-            "type": "integer"
-          },
-          {
-            "maximum": 255,
-            "minimum": 0,
-            "type": "integer"
-          }
-        ],
-        "type": "array"
-      },
-      "PreviewColors": {
-        "description": "The colors written to the LEDs, in display (sRGB) space and screen\norientation: `top` and `bottom` left to right, `left` and `right` top to\nbottom. Each edge has at most 256 entries spread evenly along it.",
-        "properties": {
-          "bottom": {
-            "items": {
-              "$ref": "#/components/schemas/PreviewColor"
-            },
-            "type": "array"
-          },
-          "left": {
-            "items": {
-              "$ref": "#/components/schemas/PreviewColor"
-            },
-            "type": "array"
-          },
-          "right": {
-            "items": {
-              "$ref": "#/components/schemas/PreviewColor"
-            },
-            "type": "array"
-          },
-          "top": {
-            "items": {
-              "$ref": "#/components/schemas/PreviewColor"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "top",
-          "right",
-          "bottom",
-          "left"
-        ],
-        "type": "object"
-      },
       "PreviewEvent": {
         "description": "One server-sent event of the preview stream.",
         "oneOf": [
@@ -574,7 +617,8 @@
         "description": "A downscaled JPEG of the captured frame, the sampled area and the colors.",
         "properties": {
           "colors": {
-            "$ref": "#/components/schemas/PreviewColors"
+            "$ref": "#/components/schemas/LedColors",
+            "description": "At most 256 colors per edge."
           },
           "height": {
             "format": "int32",

@@ -41,51 +41,52 @@ pub struct Preview {
     pub sequence: u64,
 }
 
-/// Where the session publishes previews. It publishes only while at least
-/// one [`PreviewWatch`] exists, so nobody watching costs one atomic load per
-/// frame and pins no frame buffer. Empty while no session runs.
+/// Values the session publishes only while at least one [`Watch`] exists, so
+/// nobody watching costs one atomic load per frame and holds nothing. Empty
+/// while no session runs.
 #[derive(Debug)]
-pub(crate) struct PreviewSlot {
-    latest: LatestSlot<Preview>,
-    viewers: AtomicUsize,
+pub(crate) struct Feed<T> {
+    latest: LatestSlot<T>,
+    watchers: AtomicUsize,
     sequence: AtomicU64,
 }
 
-impl Default for PreviewSlot {
+impl<T> Default for Feed<T> {
     fn default() -> Self {
         Self {
             latest: LatestSlot::new(),
-            viewers: AtomicUsize::new(0),
+            watchers: AtomicUsize::new(0),
             sequence: AtomicU64::new(1),
         }
     }
 }
 
-impl PreviewSlot {
-    /// Register a viewer until the returned watch is dropped.
+impl<T> Feed<T> {
+    /// Register a watcher until the returned watch is dropped.
     #[must_use]
-    pub(crate) fn watch(self: &Arc<Self>) -> PreviewWatch {
-        self.viewers.fetch_add(1, Ordering::SeqCst);
-        PreviewWatch(self.clone())
+    pub(crate) fn watch(self: &Arc<Self>) -> Watch<T> {
+        self.watchers.fetch_add(1, Ordering::SeqCst);
+        Watch(self.clone())
     }
 
     /// How many watches exist.
     #[must_use]
-    pub(crate) fn viewers(&self) -> usize {
-        self.viewers.load(Ordering::SeqCst)
+    pub(crate) fn watchers(&self) -> usize {
+        self.watchers.load(Ordering::SeqCst)
     }
 
-    fn publish(&self, frame: Frame, colors: EdgeColors, viewport: Viewport) {
+    fn watched(&self) -> bool {
+        self.watchers() > 0
+    }
+
+    /// Offer the value `make` builds from the next sequence number, which
+    /// increases with every published value, across sessions.
+    fn publish(&self, make: impl FnOnce(u64) -> T) {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
-        self.latest.offer(Preview {
-            frame,
-            colors,
-            viewport,
-            sequence,
-        });
+        self.latest.offer(make(sequence));
         // The last watch may have gone between the check and the offer; its
-        // clear could have run first, so do not leave the frame pinned.
-        if self.viewers() == 0 {
+        // clear could have run first, so do not leave the value pinned.
+        if !self.watched() {
             self.latest.take();
         }
     }
@@ -95,25 +96,49 @@ impl PreviewSlot {
     }
 }
 
-/// A registered preview viewer. Cheap to hold; dropping the last one stops
-/// publication and releases the held frame.
+/// A registered watcher of a feed. Cheap to hold; dropping the last one stops
+/// publication and releases the held value.
 #[derive(Debug)]
-pub struct PreviewWatch(Arc<PreviewSlot>);
+pub struct Watch<T>(Arc<Feed<T>>);
 
-impl PreviewWatch {
-    /// The latest preview without taking it: other viewers see it too.
-    /// `None` while no session runs or before its first frame.
+impl<T: Clone> Watch<T> {
+    /// The latest value without taking it: other watchers see it too.
+    /// `None` while no session runs, before its first frame, or (colors)
+    /// while its output is released.
     #[must_use]
-    pub fn latest(&self) -> Option<Preview> {
+    pub fn latest(&self) -> Option<T> {
         self.0.latest.peek()
     }
 }
 
-impl Drop for PreviewWatch {
+impl<T> Drop for Watch<T> {
     fn drop(&mut self) {
-        if self.0.viewers.fetch_sub(1, Ordering::SeqCst) == 1 {
+        if self.0.watchers.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.0.clear();
         }
+    }
+}
+
+/// Watches the latest processed frame with its colors; publishing one clones
+/// the frame.
+pub type PreviewWatch = Watch<Preview>;
+
+/// Watches the colors last written to the LEDs, without the frame: publishing
+/// clones only the colors. Empty whenever the LEDs are not showing the
+/// session's colors (no session, or its output released for lack of frames).
+pub type ColorsWatch = Watch<EdgeColors>;
+
+/// The feeds a session publishes to; they outlive sessions.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Feeds {
+    pub(crate) preview: Arc<Feed<Preview>>,
+    pub(crate) colors: Arc<Feed<EdgeColors>>,
+}
+
+impl Feeds {
+    fn clear(&self) {
+        self.preview.clear();
+        self.colors.clear();
     }
 }
 
@@ -217,11 +242,12 @@ impl Control {
 /// The session thread's state between frames.
 ///
 /// Each frame: count, apply a pending config, process, open the output if not
-/// held, write, observe, preview (only while watched). A quiet tick rewrites
-/// (and observes) the last colors, and after [`VIDEO_GRACE`] without frames
-/// idles the output in [`RELEASE`] and closes it until the next frame. When
-/// the loop ends (stop, failure, or [`Pull::Ended`](prysm_ports::Pull::Ended))
-/// the preview is cleared, `source.close()`, and the output is left in the
+/// held, write, observe, publish colors and preview (each only while
+/// watched). A quiet tick rewrites (and observes) the last colors, and after
+/// [`VIDEO_GRACE`] without frames idles the output in [`RELEASE`], clears the
+/// published colors and closes it until the next frame. When the loop ends
+/// (stop, failure, or [`Pull::Ended`](prysm_ports::Pull::Ended)) the feeds
+/// are cleared, `source.close()`, and the output is left in the
 /// stop's idle mode (idled if held, reopened only if it was left in another
 /// mode; never opened for `Off` if no frame came).
 struct SessionLoop {
@@ -232,7 +258,7 @@ struct SessionLoop {
     last_frame: Instant,
     open_output: OpenOutput,
     control: Arc<Control>,
-    preview: Arc<PreviewSlot>,
+    feeds: Feeds,
     stats: Arc<Stats>,
 }
 
@@ -243,19 +269,27 @@ impl SessionLoop {
         if let Some(config) = self.control.config.take() {
             self.processor.configure(&config);
         }
-        let shown = (self.preview.viewers() > 0).then(|| frame.clone());
+        let shown = self.feeds.preview.watched().then(|| frame.clone());
         let colors = self.stats.process(|| self.processor.process_frame(frame));
         self.leds
             .write(&colors, &mut self.open_output, &self.stats)?;
         self.stats.frame_sent();
         self.control.report(self.leds.observe());
         self.last = Some((colors.clone(), Instant::now()));
-        if let Some(shown) = shown {
+        if self.feeds.colors.watched() {
+            self.feeds.colors.publish(|_| colors.clone());
+        }
+        if let Some(frame) = shown {
             let viewport = self
                 .processor
                 .viewport()
-                .unwrap_or_else(|| Viewport::full_frame(shown.width(), shown.height()));
-            self.preview.publish(shown, colors, viewport);
+                .unwrap_or_else(|| Viewport::full_frame(frame.width(), frame.height()));
+            self.feeds.preview.publish(|sequence| Preview {
+                frame,
+                colors,
+                viewport,
+                sequence,
+            });
         }
         Ok(())
     }
@@ -267,6 +301,8 @@ impl SessionLoop {
         if self.last_frame.elapsed() >= VIDEO_GRACE {
             self.last = None;
             self.control.report(None);
+            // The device shows its own state now, not these colors.
+            self.feeds.colors.clear();
             return self.leds.release(RELEASE);
         }
         if let Some((colors, written)) = &mut self.last
@@ -283,7 +319,7 @@ impl SessionLoop {
         let ended = matches!(pumped, Pumped::Ended);
         let failure = pumped.failure();
         self.control.report(None);
-        self.preview.clear();
+        self.feeds.clear();
         flags.set_phase(SessionPhase::ClosingSource);
         let released = source.close();
         flags.set_phase(SessionPhase::IdlingOutput);
@@ -317,7 +353,7 @@ impl Session {
         source: Box<dyn FrameSource>,
         open_output: OpenOutput,
         config: Config,
-        preview: Arc<PreviewSlot>,
+        feeds: Feeds,
         stats: Arc<Stats>,
     ) -> Result<Self, (Error, Box<dyn FrameSource>)> {
         let control = Arc::new(Control {
@@ -332,7 +368,7 @@ impl Session {
             last_frame: Instant::now(),
             open_output,
             control: control.clone(),
-            preview,
+            feeds,
             stats,
         };
         let worker = Worker::spawn(
@@ -429,13 +465,13 @@ mod tests {
         }
     }
 
-    fn start(slot: &Arc<PreviewSlot>) -> (Session, Arc<AtomicUsize>) {
+    fn start(feeds: &Feeds) -> (Session, Arc<AtomicUsize>) {
         let frames = Arc::new(AtomicUsize::new(0));
         let session = Session::start(
             Box::new(Grey(frames.clone())),
             Box::new(|| Ok(Box::new(Sink(Arc::new(AtomicBool::new(false)))) as Box<dyn LedOutput>)),
             Config::default(),
-            slot.clone(),
+            feeds.clone(),
             Arc::new(Stats::default()),
         )
         .map_err(|(error, _)| error)
@@ -459,28 +495,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn unwatched_sessions_publish_nothing() {
-        let slot = Arc::new(PreviewSlot::default());
-        let (session, frames) = start(&slot);
-        frames_after(&frames, 20).await;
-        assert!(slot.latest.peek().is_none());
-        assert_eq!(slot.sequence.load(Ordering::SeqCst), 1, "nothing published");
+    fn published<T>(feed: &Feed<T>) -> u64 {
+        feed.sequence.load(Ordering::SeqCst) - 1
+    }
 
-        let watch = slot.watch();
-        let first = latest(&watch, 0).await;
-        drop(watch);
-        assert_eq!(slot.viewers(), 0);
-        // A frame already past the check may still be published, then dropped.
-        frames_after(&frames, 5).await;
-        assert!(
-            slot.latest.peek().is_none(),
-            "the last viewer releases the frame"
-        );
-        let published = slot.sequence.load(Ordering::SeqCst);
-        frames_after(&frames, 20).await;
-        assert_eq!(slot.sequence.load(Ordering::SeqCst), published);
-        assert!(first.sequence >= 1);
+    async fn stop(session: Session) {
         session
             .stop(IdleMode::Off, Duration::from_secs(2))
             .await
@@ -488,31 +507,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unwatched_sessions_publish_nothing() {
+        let feeds = Feeds::default();
+        let (session, frames) = start(&feeds);
+        frames_after(&frames, 20).await;
+        assert!(feeds.preview.latest.peek().is_none());
+        assert!(feeds.colors.latest.peek().is_none());
+        assert_eq!(published(&feeds.preview), 0, "nothing published");
+        assert_eq!(published(&feeds.colors), 0, "nothing published");
+
+        let watch = feeds.preview.watch();
+        let first = latest(&watch, 0).await;
+        drop(watch);
+        assert_eq!(feeds.preview.watchers(), 0);
+        // A frame already past the check may still be published, then dropped.
+        frames_after(&frames, 5).await;
+        assert!(
+            feeds.preview.latest.peek().is_none(),
+            "the last viewer releases the frame"
+        );
+        let count = published(&feeds.preview);
+        frames_after(&frames, 20).await;
+        assert_eq!(published(&feeds.preview), count);
+        assert!(first.sequence >= 1);
+        stop(session).await;
+    }
+
+    #[tokio::test]
     async fn watched_previews_carry_viewport_and_increasing_sequence() {
-        let slot = Arc::new(PreviewSlot::default());
-        let watch = slot.watch();
-        let (session, _) = start(&slot);
+        let feeds = Feeds::default();
+        let watch = feeds.preview.watch();
+        let (session, _) = start(&feeds);
         let first = latest(&watch, 0).await;
         assert_eq!((first.frame.width(), first.frame.height()), (32, 18));
         assert_eq!(first.viewport, Viewport::full_frame(32, 18));
         let second = latest(&watch, first.sequence).await;
         assert!(second.sequence > first.sequence);
-        session
-            .stop(IdleMode::Off, Duration::from_secs(2))
-            .await
-            .unwrap();
+        stop(session).await;
         assert!(
             watch.latest().is_none(),
             "no preview once the session ended"
         );
 
         // A later session continues the sequence, so viewers never skip it.
-        let (session, _) = start(&slot);
+        let (session, _) = start(&feeds);
         let next = latest(&watch, 0).await;
         assert!(next.sequence > second.sequence);
-        session
-            .stop(IdleMode::Off, Duration::from_secs(2))
-            .await
-            .unwrap();
+        stop(session).await;
+    }
+
+    #[tokio::test]
+    async fn colors_and_preview_are_published_independently() {
+        let feeds = Feeds::default();
+        let colors = feeds.colors.watch();
+        let (session, frames) = start(&feeds);
+        frames_after(&frames, 20).await;
+        let written = colors.latest().expect("colors are published");
+        assert!(!written.top.is_empty());
+        // Watching colors copies no frame and publishes no preview.
+        assert_eq!(published(&feeds.preview), 0);
+        assert!(feeds.preview.latest.peek().is_none());
+
+        drop(colors);
+        // A frame already past the check may still be published, then dropped.
+        frames_after(&frames, 5).await;
+        assert!(
+            feeds.colors.latest.peek().is_none(),
+            "the last watch clears"
+        );
+        let count = published(&feeds.colors);
+        // Watching the preview publishes no colors.
+        let preview = feeds.preview.watch();
+        latest(&preview, 0).await;
+        frames_after(&frames, 20).await;
+        assert_eq!(published(&feeds.colors), count);
+        assert!(feeds.colors.latest.peek().is_none());
+
+        let colors = feeds.colors.watch();
+        frames_after(&frames, 5).await;
+        assert!(colors.latest().is_some());
+        stop(session).await;
+        assert!(
+            colors.latest().is_none(),
+            "no colors once the session ended"
+        );
+        assert!(preview.latest().is_none());
     }
 }

@@ -23,8 +23,8 @@
 //! Without registrations `CaptureSettings` and `OutputSettings` are open
 //! objects with a string `kind`.
 use crate::{
-    Failure, FailureKind, PreviewColor, PreviewColors, PreviewEvent, PreviewFrame, PreviewViewport,
-    Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
+    ColorsEvent, Failure, FailureKind, LedColor, LedColors, PreviewEvent, PreviewFrame,
+    PreviewViewport, Session, SettingsReplaced, SettingsRequest, State, TargetRequest,
 };
 use prysm_ports::{
     MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS, MAX_PROFILES, OutputFactory, SourceFactory,
@@ -328,8 +328,9 @@ impl ToSchema for OutputSettings {}
     PreviewEvent,
     PreviewFrame,
     PreviewViewport,
-    PreviewColors,
-    PreviewColor,
+    ColorsEvent,
+    LedColors,
+    LedColor,
     CandidateSchema,
 )))]
 struct Roots;

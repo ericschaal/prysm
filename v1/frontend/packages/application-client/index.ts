@@ -1,6 +1,7 @@
 import type {
   Calibration,
   Candidate,
+  ColorsEvent,
   Failure,
   LightingTarget,
   OutputIssue,
@@ -15,6 +16,7 @@ import type {
 export type {
   Calibration,
   Candidate,
+  ColorsEvent,
   Failure,
   LightingTarget,
   OutputIssue,
@@ -43,7 +45,11 @@ export function describeOutputIssue(issue: OutputIssue): string {
       return 'The lights do not answer. Check that they are powered and on the network.';
   }
 }
-export type { PreviewFrame } from '@prysm/contracts/application';
+export type {
+  LedColor,
+  LedColors,
+  PreviewFrame,
+} from '@prysm/contracts/application';
 
 /** What a faulted session was doing when it stopped. */
 const phases: Record<Phase, string> = {
@@ -138,6 +144,25 @@ export interface PreviewStream {
  */
 export interface PreviewClient {
   preview(signal: AbortSignal): Promise<PreviewStream>;
+}
+
+/** An open colors stream: events until closed or the portal goes away. */
+export interface ColorsStream {
+  events: AsyncIterable<ColorsEvent>;
+  close(): void;
+}
+
+/**
+ * The colours the lights show, a few per edge, without the picture: light
+ * enough for a page to tint with while it is shown. `colors` events come at
+ * most ten times a second and only when they change; `idle` means the lights
+ * are not showing Prysm's colours (off, the device's own effects, no picture).
+ * Each open stream counts as a listener, and the session copies colours only
+ * while one is open, so close it when it is not shown. Rejects with `busy`
+ * when the portal has too many listeners.
+ */
+export interface ColorsClient {
+  colors(signal: AbortSignal): Promise<ColorsStream>;
 }
 
 /**
