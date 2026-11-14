@@ -27,8 +27,14 @@ pub struct Config {
     /// Values above 100 are treated as 100.
     pub brightness_percent: BrightnessPercent,
 
-    /// Boost dark colors without lighting black. Default: 0; clamped to 0–100.
-    pub shadow_lift_percent: ShadowLiftPercent,
+    /// Scales each light's chroma by `1 + p/100`, keeping its luminance and
+    /// hue, as far as the lights can show. Default: 0; clamped to 0–100.
+    pub saturation_boost_percent: SaturationBoostPercent,
+
+    /// A neutral white glow, in percent of full linear light, that the
+    /// lights keep while their colour is darker. Default: 0, fully dark on
+    /// black; clamped to 0–20.
+    pub dark_floor_percent: DarkFloorPercent,
 
     /// Seconds to complete 95% of a color transition, independent of frame rate.
     /// Higher values reduce flicker but make the lights respond more slowly.
@@ -70,7 +76,8 @@ impl Default for Config {
         Self {
             correction: crate::ColorCorrection::default(),
             brightness_percent: BrightnessPercent(100),
-            shadow_lift_percent: ShadowLiftPercent(0),
+            saturation_boost_percent: SaturationBoostPercent(0),
+            dark_floor_percent: DarkFloorPercent(0),
             smoothing_seconds: SmoothingSeconds(0.1),
             cut_response_percent: CutResponsePercent(0),
             brightness_ramp_seconds: BrightnessRampSeconds(0.0),
@@ -163,9 +170,31 @@ impl BrightnessRampSeconds {
     }
 }
 
-/// Shadow boost strength; zero preserves the original output.
+/// Chroma boost in percent, clamped to 0–100; zero preserves the colour.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ShadowLiftPercent(pub u8);
+pub struct SaturationBoostPercent(pub u8);
+
+impl SaturationBoostPercent {
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.min(100)) / 100.0
+    }
+}
+
+/// The least luminance the lights keep, in percent of full linear light,
+/// clamped to 0–[`DarkFloorPercent::MAX`]; zero lets them go fully dark.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DarkFloorPercent(pub u8);
+
+impl DarkFloorPercent {
+    /// More than a faint glow would no longer read as a dark scene.
+    pub const MAX: u8 = 20;
+
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.min(Self::MAX)) / 100.0
+    }
+}
 
 /// Sample density representing samples per 1000 pixels of edge length
 ///
@@ -216,6 +245,19 @@ mod tests {
             assert_eq!(ColorFocusPercent(percent).as_ratio(), ratio);
         }
         assert_eq!(Config::default().color_focus_percent.as_ratio(), 0.0);
+    }
+
+    #[test]
+    fn boost_and_floor_are_clamped_and_off_by_default() {
+        for (percent, ratio) in [(0, 0.0), (50, 0.5), (100, 1.0), (101, 1.0), (255, 1.0)] {
+            assert_eq!(SaturationBoostPercent(percent).as_ratio(), ratio);
+        }
+        for (percent, ratio) in [(0, 0.0), (10, 0.1), (20, 0.2), (21, 0.2), (255, 0.2)] {
+            assert_eq!(DarkFloorPercent(percent).as_ratio(), ratio);
+        }
+        let config = Config::default();
+        assert_eq!(config.saturation_boost_percent.as_ratio(), 0.0);
+        assert_eq!(config.dark_floor_percent.as_ratio(), 0.0);
     }
 
     #[test]

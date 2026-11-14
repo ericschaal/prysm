@@ -708,11 +708,11 @@ test('modes that cannot work are disabled and say why; before setup only the pro
 
 test('a stale picture change keeps both changes: mine where I changed, theirs elsewhere', () => {
   const base = { ...defaultProcessing, brightness_percent: 80 };
-  const mine = { ...base, shadow_lift_percent: 30, brightness_percent: 60 };
+  const mine = { ...base, dark_floor_percent: 10, brightness_percent: 60 };
   const theirs = { ...base, smoothing_seconds: 0.5, brightness_percent: 90 };
   assert.deepEqual(rebased(theirs, base, mine), {
     ...base,
-    shadow_lift_percent: 30,
+    dark_floor_percent: 10,
     smoothing_seconds: 0.5,
     // The same control on both: the value the user sees wins.
     brightness_percent: 60,
@@ -739,7 +739,7 @@ test('Settings has one save status; a refused stale change is saved again on the
     await openPage('Fine-tuning');
     assert.equal(window.location.hash, '#/settings/picture');
     assert.equal(status(), 'All changes saved');
-    await edit(field('processing.shadow_lift_percent'), 30);
+    await edit(field('processing.dark_floor_percent'), 10);
     assert.equal(status(), 'Saving…');
     await settle();
     assert.equal(status(), 'Saved');
@@ -752,7 +752,7 @@ test('Settings has one save status; a refused stale change is saved again on the
       message: 'settings revision 1 is stale; current is 2',
       current: 2,
     });
-    await edit(field('processing.shadow_lift_percent'), 40);
+    await edit(field('processing.dark_floor_percent'), 15);
     await settle();
     assert.equal(saves(fixture), 2);
     assert.equal(status(), 'Saving…', 'waits for the newer settings');
@@ -764,7 +764,7 @@ test('Settings has one save status; a refused stale change is saved again on the
     });
     await settle();
     const saved = fixture.snapshot().settings.processing;
-    assert.equal(saved.shadow_lift_percent, 40);
+    assert.equal(saved.dark_floor_percent, 15);
     assert.equal(saved.smoothing_seconds, 0.5);
     assert.equal(field('processing.smoothing_seconds').value, '0.5');
     assert.equal(status(), 'Saved');
@@ -890,17 +890,19 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     await openPage('Fine-tuning');
     assert.deepEqual(
       [
-        'shadow_lift_percent',
+        'dark_floor_percent',
         'spatial_reach_percent',
         'color_focus_percent',
+        'saturation_boost_percent',
         'smoothing_seconds',
         'cut_response_percent',
         'brightness_ramp_seconds',
         'sample_density',
       ].map((name) => attributes(control(name))),
       [
-        ['range', '0', '0', '100', '1'],
+        ['range', '0', '0', '20', '1'],
         ['range', '10', '1', '100', '1'],
+        ['range', '0', '0', '100', '1'],
         ['range', '0', '0', '100', '1'],
         // Smoothing and detail as sliders over the range worth tuning.
         ['range', '0', '0', '2', '0.05'],
@@ -911,18 +913,20 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     );
     assert.deepEqual(
       [
-        'shadow_lift_percent',
+        'dark_floor_percent',
         'spatial_reach_percent',
         'color_focus_percent',
+        'saturation_boost_percent',
         'smoothing_seconds',
         'cut_response_percent',
         'brightness_ramp_seconds',
         'sample_density',
       ].map((name) => control(name).labels[0].textContent),
       [
-        'Shadow lift',
+        'Dark-scene glow',
         'Edge depth',
         'Colour focus',
+        'Colour boost',
         'Smoothing',
         'Scene cuts',
         'Brightness ramp',
@@ -942,6 +946,17 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     assert.equal(
       $('output', control('color_focus_percent').closest('.field')).textContent,
       '40%',
+    );
+    await edit(control('saturation_boost_percent'), 25);
+    assert.equal(
+      $('output', control('saturation_boost_percent').closest('.field'))
+        .textContent,
+      '25%',
+    );
+    await edit(control('dark_floor_percent'), 8);
+    assert.equal(
+      $('output', control('dark_floor_percent').closest('.field')).textContent,
+      '8%',
     );
     await edit(control('smoothing_seconds'), 0.5);
     assert.equal(
@@ -967,6 +982,8 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
       spatial_reach_percent: 20,
       sample_density: 128,
       color_focus_percent: 40,
+      saturation_boost_percent: 25,
+      dark_floor_percent: 8,
       smoothing_seconds: 0.5,
       cut_response_percent: 60,
       brightness_ramp_seconds: 0.5,
@@ -978,24 +995,21 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     // A field rejected by the server is marked and not retried until edited.
     fixture.failNext({
       kind: 'invalid',
-      field: 'processing.shadow_lift_percent',
-      message: 'must be 0-100',
+      field: 'processing.dark_floor_percent',
+      message: 'must be 0-20',
     });
-    await edit(control('shadow_lift_percent'), 30);
+    await edit(control('dark_floor_percent'), 12);
     await settle();
     assert.equal(
-      errorOf(control('shadow_lift_percent')),
+      errorOf(control('dark_floor_percent')),
       'Prysm can’t use this value.',
     );
     await settle();
     assert.equal(saves(fixture), 4);
-    await edit(control('shadow_lift_percent'), 20);
+    await edit(control('dark_floor_percent'), 5);
     await settle();
     assert.equal(saves(fixture), 5);
-    assert.equal(
-      fixture.snapshot().settings.processing.shadow_lift_percent,
-      20,
-    );
+    assert.equal(fixture.snapshot().settings.processing.dark_floor_percent, 5);
   } finally {
     await portal.unmount();
   }

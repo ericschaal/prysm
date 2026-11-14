@@ -78,7 +78,8 @@ device.commands.configureOutput('0', {
 });
 device.commands.configureProcessing(0, {
   brightness_percent: 80,
-  shadow_lift_percent: 0,
+  saturation_boost_percent: 0,
+  dark_floor_percent: 0,
   smoothing_seconds: 0.1,
   cut_response_percent: 0,
   brightness_ramp_seconds: 0,

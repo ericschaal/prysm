@@ -9,7 +9,8 @@ import {
 
 export const defaultProcessing = {
   brightness_percent: 100,
-  shadow_lift_percent: 0,
+  saturation_boost_percent: 0,
+  dark_floor_percent: 0,
   smoothing_seconds: 0,
   cut_response_percent: 0,
   brightness_ramp_seconds: 0,

@@ -10,7 +10,7 @@ fn rgb(width: u32, height: u32, value: u8) -> Frame {
 }
 
 #[test]
-fn live_shadow_lift_preserves_history_and_respects_master_brightness() {
+fn live_dark_floor_preserves_history_and_respects_master_brightness() {
     let start = Instant::now();
     for brightness in [0, 50, 100] {
         let config = Config {
@@ -25,10 +25,10 @@ fn live_shadow_lift_preserves_history_and_respects_master_brightness() {
         });
         processor.process_frame_at(rgb(64, 36, 10), start);
         reference.process_frame_at(rgb(64, 36, 10), start);
-        for (step, strength) in [100, 0, 50].into_iter().enumerate() {
-            let strength = prysm_core::ShadowLiftPercent(strength);
+        for (step, strength) in [20, 0, 10].into_iter().enumerate() {
+            let strength = prysm_core::DarkFloorPercent(strength);
             processor.configure(&Config {
-                shadow_lift_percent: strength,
+                dark_floor_percent: strength,
                 ..config
             });
             let now = start + Duration::from_millis((step as u64 + 1) * 10);
@@ -40,7 +40,7 @@ fn live_shadow_lift_preserves_history_and_respects_master_brightness() {
                 .process_frame_at(rgb(64, 36, 30), now)
                 .top
                 .sample_at(0.5)
-                .lift_shadows(strength)
+                .with_dark_floor(strength)
                 * config.brightness_percent.as_ratio();
             assert!(
                 (actual.r - expected.r).abs() < 1e-6,

@@ -118,22 +118,12 @@ impl ColorCorrection {
                 *value += weight * shift.abs() * (WHEEL[neighbor][channel] - WHEEL[index][channel]);
             }
         }
-        // Scale chroma about BT.709 luminance. Limit all channels together at
-        // the gamut boundary so a saturated channel cannot pull the hue around.
-        let luminance = |[r, g, b]: [f32; 3]| 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        let y = luminance(rgb);
-        let shifted_y = luminance(shifted);
-        let chroma = shifted.map(|v| v - shifted_y);
-        let mut amount = 1.0 + f32::from(self.intensity) / 100.0;
-        for c in chroma {
-            if c > 0.0 {
-                amount = amount.min((1.0 - y) / c);
-            } else if c < 0.0 {
-                amount = amount.min(-y / c);
-            }
-        }
-        let [r, g, b] = chroma.map(|c| (y + c * amount).clamp(0.0, 1.0));
-        LinearColor::new(r, g, b)
+        // A hue shift moves luminance; restore the input's, then scale chroma
+        // about it within the gamut.
+        let [r, g, b] = shifted;
+        let restore = color.luminance() - LinearColor::new(r, g, b).luminance();
+        LinearColor::new(r + restore, g + restore, b + restore)
+            .scale_chroma(1.0 + f32::from(self.intensity) / 100.0)
     }
 
     /// Correct the shared peak before white balance, preserving black and hue

@@ -93,16 +93,49 @@ impl LinearColor {
         }
     }
 
-    /// Lift shadows with one RGB gain, preserving black, chromaticity and highlights.
+    /// Scale chroma about this colour's own luminance: 1 keeps it, 0 leaves
+    /// the grey of the same luminance. One factor limits all channels together
+    /// at the edge of 0–1, so luminance and hue hold where a channel would
+    /// otherwise clip on its own. Expects luminance within 0–1.
     #[must_use]
-    pub fn lift_shadows(self, strength: crate::ShadowLiftPercent) -> Self {
-        let peak = self.r.max(self.g).max(self.b);
-        if strength.0 == 0 || peak <= 0.0 || peak >= 0.1 {
+    pub fn scale_chroma(self, amount: f32) -> Self {
+        let y = self.luminance();
+        let chroma = [self.r - y, self.g - y, self.b - y];
+        let mut amount = amount;
+        for c in chroma {
+            if c > 0.0 {
+                amount = amount.min((1.0 - y) / c);
+            } else if c < 0.0 {
+                amount = amount.min(-y / c);
+            }
+        }
+        // The clamp only absorbs rounding at the boundary.
+        let [r, g, b] = chroma.map(|c| (y + c * amount).clamp(0.0, 1.0));
+        Self::new(r, g, b)
+    }
+
+    /// Strengthen the colour by scaling its chroma by `1 + boost`, as far as
+    /// the lights can show; zero leaves it exactly as it is.
+    #[must_use]
+    pub fn boost_saturation(self, boost: crate::SaturationBoostPercent) -> Self {
+        if boost.0 == 0 {
             return self;
         }
-        // At full strength the curve stays monotonic and fades to identity at 0.1.
-        let fade = 1.0 - peak / 0.1;
-        self * (1.0 + 3.0 * f32::from(strength.0.min(100)) / 100.0 * fade * fade)
+        self.scale_chroma(1.0 + boost.as_ratio())
+    }
+
+    /// Below the floor's luminance, add the neutral white that brings the
+    /// colour up to it, keeping the colour's tint on top; brighter colours
+    /// and a zero floor are left exactly as they are.
+    #[must_use]
+    pub fn with_dark_floor(self, floor: crate::DarkFloorPercent) -> Self {
+        let lift = floor.as_ratio() - self.luminance();
+        if floor.0 == 0 || lift <= 0.0 {
+            return self;
+        }
+        // A deep blue can leave no room for all of the white; the gamut limit
+        // then gives up tint rather than the floor's luminance or the hue.
+        Self::new(self.r + lift, self.g + lift, self.b + lift).scale_chroma(1.0)
     }
 
     /// Linearly interpolate between two colors.
@@ -171,26 +204,112 @@ impl Div<f32> for LinearColor {
 mod tests {
     use super::*;
 
+    /// Colours across the cube, from black and greys to full primaries.
+    fn sweep() -> impl Iterator<Item = LinearColor> {
+        let levels = [0.0, 0.003, 0.05, 0.2, 0.5, 0.8, 1.0];
+        levels.into_iter().flat_map(move |r| {
+            levels
+                .into_iter()
+                .flat_map(move |g| levels.into_iter().map(move |b| LinearColor::new(r, g, b)))
+        })
+    }
+
+    fn chroma(color: LinearColor) -> [f32; 3] {
+        let y = color.luminance();
+        [color.r - y, color.g - y, color.b - y]
+    }
+
+    fn in_gamut(color: LinearColor) -> bool {
+        [color.r, color.g, color.b]
+            .into_iter()
+            .all(|v| (0.0..=1.0).contains(&v))
+    }
+
     #[test]
-    fn shadow_lift_preserves_black_color_ratios_highlights_and_order() {
-        for strength in [0, 25, 100, 255] {
-            let mut previous = 0.0;
-            for step in 0_u16..=2000 {
-                let peak = f32::from(step) / 2000.0;
-                let input = LinearColor::new(peak, peak * 0.4, peak * 0.1);
-                let output = input.lift_shadows(crate::ShadowLiftPercent(strength));
-                assert!(output.r >= previous - 1e-6 && output.r >= peak);
-                assert!(output.r <= 1.0 && output.r.is_finite());
-                assert!((output.g - output.r * 0.4).abs() < 1e-6);
-                assert!((output.b - output.r * 0.1).abs() < 1e-6);
-                if strength == 0 || peak == 0.0 || peak >= 0.1 {
-                    assert_eq!(output, input);
-                } else {
-                    assert!(output.r > input.r);
+    fn saturation_boost_keeps_greys_luminance_and_hue_within_the_gamut() {
+        use crate::SaturationBoostPercent as Boost;
+        for input in sweep() {
+            assert_eq!(input.boost_saturation(Boost(0)), input);
+            let mut previous = chroma(input).map(f32::abs).iter().sum::<f32>();
+            for strength in [1, 10, 25, 50, 75, 100, 255] {
+                let output = input.boost_saturation(Boost(strength));
+                assert!(in_gamut(output), "{input:?} at {strength}: {output:?}");
+                assert!((output.luminance() - input.luminance()).abs() < 1e-5);
+                if input.r == input.g && input.g == input.b {
+                    assert!(output.r == output.g && output.g == output.b, "{output:?}");
                 }
-                previous = output.r;
+                // Same hue: the chroma only grows along its own direction.
+                let (before, after) = (chroma(input), chroma(output));
+                let size = after.map(f32::abs).iter().sum::<f32>();
+                assert!(size >= previous - 1e-6, "{input:?} at {strength}");
+                for (b, a) in before.into_iter().zip(after) {
+                    assert!(a * b >= 0.0 && a.abs() >= b.abs() - 1e-6, "{input:?}");
+                }
+                let cross = [
+                    before[1] * after[2] - before[2] * after[1],
+                    before[2] * after[0] - before[0] * after[2],
+                    before[0] * after[1] - before[1] * after[0],
+                ];
+                assert!(cross.iter().all(|c| c.abs() < 1e-5), "{input:?}: {cross:?}");
+                previous = size;
             }
         }
+        // With room to grow, a muted green reaches twice its chroma.
+        let sage = LinearColor::new(0.2, 0.3, 0.18);
+        let doubled = chroma(sage.boost_saturation(Boost(100)));
+        for (b, a) in chroma(sage).into_iter().zip(doubled) {
+            assert!((a - 2.0 * b).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn dark_floor_lifts_dark_colours_to_a_neutral_glow_and_leaves_the_rest() {
+        use crate::DarkFloorPercent as Floor;
+        for input in sweep() {
+            assert_eq!(input.with_dark_floor(Floor(0)), input);
+        }
+        for percent in [1, 10, 20, 21, 255] {
+            let floor = Floor(percent);
+            let f = floor.as_ratio();
+            let black = LinearColor::black().with_dark_floor(floor);
+            assert!(black.r == black.g && black.g == black.b, "{black:?}");
+            assert!((black.luminance() - f).abs() < 1e-6, "{black:?}");
+            for input in sweep() {
+                let output = input.with_dark_floor(floor);
+                assert!(in_gamut(output), "{input:?} at {percent}: {output:?}");
+                if input.luminance() >= f {
+                    assert_eq!(output, input);
+                } else {
+                    assert!((output.luminance() - f).abs() < 1e-5, "{input:?}");
+                }
+            }
+            // Along each ray from black: luminance never falls as the input
+            // brightens, and nothing jumps where the floor stops applying.
+            for direction in [
+                LinearColor::new(1.0, 0.4, 0.1),
+                LinearColor::new(0.2, 0.2, 1.0),
+                LinearColor::new(0.0, 0.0, 1.0),
+                LinearColor::new(1.0, 1.0, 1.0),
+            ] {
+                let mut previous = black;
+                for step in 1_u16..=2000 {
+                    let output = (direction * (f32::from(step) / 2000.0)).with_dark_floor(floor);
+                    assert!(output.luminance() >= previous.luminance() - 1e-6);
+                    for (a, b) in [
+                        (previous.r, output.r),
+                        (previous.g, output.g),
+                        (previous.b, output.b),
+                    ] {
+                        assert!((a - b).abs() < 0.01, "{direction:?} at {step}");
+                    }
+                    previous = output;
+                }
+            }
+        }
+        // The colour's own tint stays on top of the glow.
+        let ember = LinearColor::new(0.02, 0.005, 0.0).with_dark_floor(Floor(10));
+        assert!(ember.r > ember.g && ember.g > ember.b && ember.b > 0.0);
+        assert!((ember.r - ember.b - 0.02).abs() < 1e-6);
     }
 
     #[test]

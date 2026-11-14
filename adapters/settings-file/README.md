@@ -37,7 +37,8 @@ the adapter's factory, not here.
   },
   "processing": {
     "brightness_percent": 80,
-    "shadow_lift_percent": 0,
+    "saturation_boost_percent": 0,
+    "dark_floor_percent": 0,
     "smoothing_seconds": 0.3,
     "cut_response_percent": 0,
     "brightness_ramp_seconds": 0,
@@ -62,6 +63,11 @@ the adapter's factory, not here.
   }
 }
 ```
+
+`processing.saturation_boost_percent` (0-100) scales the lights' chroma by
+1 + p/100; `processing.dark_floor_percent` (0-20) is the neutral white glow, in
+percent of full light, that the lights keep in dark scenes. Both default to 0,
+which changes nothing; neither has been tried on a TV yet.
 
 `processing.calibrations` holds up to 32 saved calibrations (colour
 corrections) with unique ids (1-64 ASCII letters, digits, `-` or `_`) and names

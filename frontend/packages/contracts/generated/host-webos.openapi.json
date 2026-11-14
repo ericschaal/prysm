@@ -705,6 +705,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "dark_floor_percent": {
+            "description": "The least luminance the lights keep, as a neutral white glow, in\npercent of full light; 0 lets them go fully dark.",
+            "format": "int32",
+            "maximum": 20,
+            "minimum": 0,
+            "type": "integer"
+          },
           "remove_black_bars": {
             "type": "boolean"
           },
@@ -713,7 +720,8 @@
             "minimum": 1,
             "type": "integer"
           },
-          "shadow_lift_percent": {
+          "saturation_boost_percent": {
+            "description": "Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.",
             "format": "int32",
             "maximum": 100,
             "minimum": 0,
@@ -734,7 +742,8 @@
         },
         "required": [
           "brightness_percent",
-          "shadow_lift_percent",
+          "saturation_boost_percent",
+          "dark_floor_percent",
           "smoothing_seconds",
           "cut_response_percent",
           "brightness_ramp_seconds",

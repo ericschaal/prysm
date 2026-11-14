@@ -20,7 +20,7 @@ pub use color::Color;
 pub use color_strip::{ColorStrip, EdgeColors, EmptyColorStrip};
 pub use config::{
     BrightnessPercent, BrightnessRampSeconds, ColorFocusPercent, Config, CutResponsePercent,
-    SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
+    DarkFloorPercent, SampleDensity, SaturationBoostPercent, SmoothingSeconds, SpatialReachPercent,
 };
 pub use linear::LinearColor;
 pub use oklab::Oklab;

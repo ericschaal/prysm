@@ -1,4 +1,6 @@
-use prysm_core::{ColorCorrection, Config, SmoothingSeconds};
+use prysm_core::{
+    ColorCorrection, Config, DarkFloorPercent, SaturationBoostPercent, SmoothingSeconds,
+};
 use serde::{Deserialize, Serialize};
 
 /// The calibration pattern a TV is showing, so the lights can be compared
@@ -16,11 +18,15 @@ pub struct CalibrationPattern {
 impl CalibrationPattern {
     /// The processing config while this pattern shows: no smoothing, so a
     /// change shows at once, and with `uncorrected` no color correction.
-    /// Brightness, shadow lift and black bars stay as configured.
+    /// Colour boost and the dark floor are off, so a calibration matches the
+    /// lights to the screen itself and holds whatever style is chosen later.
+    /// Brightness and black bars stay as configured.
     #[must_use]
     pub fn adjust(self, config: Config) -> Config {
         Config {
             smoothing_seconds: SmoothingSeconds(0.0),
+            saturation_boost_percent: SaturationBoostPercent(0),
+            dark_floor_percent: DarkFloorPercent(0),
             correction: if self.uncorrected {
                 ColorCorrection::default()
             } else {
@@ -121,11 +127,13 @@ mod tests {
     }
 
     #[test]
-    fn calibration_disables_smoothing_and_optionally_correction() {
+    fn a_pattern_shows_without_smoothing_boost_or_glow_and_optionally_without_correction() {
         let configured = Config {
             correction: ColorCorrection::new(40, 0, 0).unwrap(),
             brightness_percent: BrightnessPercent(55),
             smoothing_seconds: SmoothingSeconds(2.5),
+            saturation_boost_percent: SaturationBoostPercent(30),
+            dark_floor_percent: DarkFloorPercent(10),
             remove_black_bars: true,
             ..Config::default()
         };
@@ -134,13 +142,13 @@ mod tests {
             uncorrected: false,
         }
         .adjust(configured);
-        assert_eq!(
-            corrected,
-            Config {
-                smoothing_seconds: SmoothingSeconds(0.0),
-                ..configured
-            }
-        );
+        let plain = Config {
+            smoothing_seconds: SmoothingSeconds(0.0),
+            saturation_boost_percent: SaturationBoostPercent(0),
+            dark_floor_percent: DarkFloorPercent(0),
+            ..configured
+        };
+        assert_eq!(corrected, plain);
         let uncorrected = CalibrationPattern {
             pattern: Pattern::Gray192,
             uncorrected: true,
@@ -149,9 +157,8 @@ mod tests {
         assert_eq!(
             uncorrected,
             Config {
-                smoothing_seconds: SmoothingSeconds(0.0),
                 correction: ColorCorrection::default(),
-                ..configured
+                ..plain
             }
         );
         assert!(

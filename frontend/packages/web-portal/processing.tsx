@@ -209,11 +209,11 @@ export function FineTuning(props: LiveProps) {
     <FieldScopeProvider value={live.scope}>
       <div className="fine-tuning" key={live.generation}>
         <RangeField
-          label="Shadow lift"
-          help="Lifts dark colours; black stays off."
+          label="Dark-scene glow"
+          help="A faint white glow the lights keep while the picture is dark. 0% lets them go fully dark."
           format={percent}
-          {...slider('shadow_lift_percent')}
-          {...processingLimits.shadow_lift_percent}
+          {...slider('dark_floor_percent')}
+          {...processingLimits.dark_floor_percent}
         />
         <RangeField
           label="Edge depth"
@@ -228,6 +228,13 @@ export function FineTuning(props: LiveProps) {
           format={percent}
           {...slider('color_focus_percent')}
           {...processingLimits.color_focus_percent}
+        />
+        <RangeField
+          label="Colour boost"
+          help="Makes the lights’ colours stronger. 0% leaves them as they are."
+          format={percent}
+          {...slider('saturation_boost_percent')}
+          {...processingLimits.saturation_boost_percent}
         />
         <RangeField
           label="Smoothing"

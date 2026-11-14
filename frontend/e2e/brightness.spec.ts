@@ -10,7 +10,6 @@ test.use({
     output: { kind: 'null' },
     processing: {
       brightness_percent: 50,
-      shadow_lift_percent: 0,
       smoothing_seconds: 0.1,
       sample_density: 128,
       spatial_reach_percent: 10,

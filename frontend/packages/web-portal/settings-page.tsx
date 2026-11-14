@@ -165,7 +165,7 @@ export function SettingsPage<
         />
         <RowLink
           label="Fine-tuning"
-          value="Shadow lift, edge depth, smoothing, detail"
+          value="Glow, colour boost, smoothing, detail"
           onClick={() => open('picture')}
         />
         <RowSwitch>

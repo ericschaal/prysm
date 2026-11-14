@@ -264,9 +264,10 @@
         "brightness_ramp_seconds": 0,
         "color_focus_percent": 0,
         "cut_response_percent": 0,
+        "dark_floor_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
-        "shadow_lift_percent": 0,
+        "saturation_boost_percent": 0,
         "smoothing_seconds": 0.10000000149011612,
         "spatial_reach_percent": 10
       }
@@ -316,9 +317,10 @@
         ],
         "color_focus_percent": 0,
         "cut_response_percent": 0,
+        "dark_floor_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
-        "shadow_lift_percent": 0,
+        "saturation_boost_percent": 0,
         "smoothing_seconds": 0.10000000149011612,
         "spatial_reach_percent": 10
       }
@@ -338,9 +340,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -366,9 +369,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -421,9 +425,10 @@
           ],
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -443,9 +448,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -488,9 +494,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -558,9 +565,10 @@
           ],
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -580,9 +588,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -618,9 +627,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }
@@ -644,9 +654,10 @@
           "brightness_ramp_seconds": 0,
           "color_focus_percent": 0,
           "cut_response_percent": 0,
+          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "shadow_lift_percent": 0,
+          "saturation_boost_percent": 0,
           "smoothing_seconds": 0.10000000149011612,
           "spatial_reach_percent": 10
         }

@@ -19,6 +19,8 @@ fn sample() -> Settings {
             cut_response_percent: 40,
             brightness_ramp_seconds: 0.5,
             color_focus_percent: 60,
+            saturation_boost_percent: 40,
+            dark_floor_percent: 10,
             ..Processing::default()
         },
     }
@@ -78,6 +80,8 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert!(text.contains("\"smoothing_seconds\": 0.3,"), "{text}");
     assert!(text.contains("\"brightness_ramp_seconds\": 0.5,"), "{text}");
     assert!(text.contains("\"color_focus_percent\": 60,"), "{text}");
+    assert!(text.contains("\"saturation_boost_percent\": 40,"), "{text}");
+    assert!(text.contains("\"dark_floor_percent\": 10,"), "{text}");
     // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();

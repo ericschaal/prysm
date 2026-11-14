@@ -6,7 +6,8 @@ Calibrating uses two small pieces, not a session:
   32) and `processing.active_calibration`, saved through `PUT /api/v1/settings` and
   applied at the next frame. The correction maths is in `prysm-core`
   ([correction.rs](../../crates/core/src/correction.rs)) and runs
-  after shadow lift, before brightness, for the LEDs and the preview alike.
+  after colour boost and the dark-scene glow, before brightness, for the LEDs
+  and the preview alike.
 - **The pattern** the TV shows is engine state beside the target:
   `PUT /api/v1/calibration` with `{ pattern, uncorrected }`, cleared by
   `DELETE`. It needs Screen sync on (`409 not_processed` otherwise) and never

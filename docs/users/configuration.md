@@ -113,9 +113,10 @@ Picture changes apply while you move the control; there is no Save button.
 | Setting | Default | Effect |
 | --- | --- | --- |
 | Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
-| Shadow lift | 0% | Brightens dark colours; black stays off. |
+| Dark-scene glow | 0% | A faint white glow the lights keep while the picture is dark, instead of going fully dark. The percentage is of full light; the slider goes to 20%. 0% lets them go fully dark. |
 | Edge depth | 10% | How far into the picture each light looks. |
 | Colour focus | 0% | Each light keeps the colour next to it and takes less from the rest of the picture, so two different colours side by side do not mix into a duller one. Brightness stays as it is. 0% is off. |
+| Colour boost | 0% | Makes the lights’ colours stronger; 100% is up to twice as strong, as far as the lights can show. Brightness and hue stay as they are. 0% leaves them as they are. |
 | Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
 | Scene cuts | 0% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
 | Brightness ramp | 0 s | The least time the lights take from dark to full brightness, so a sudden flash does not dazzle. 0 follows at once. The slider goes to 2 s. |
@@ -125,6 +126,7 @@ Scene cuts and Brightness ramp have not yet been tried on a TV; try them with
 a Smoothing of about 0.5 s. Colour focus has not yet been tried on a TV either;
 compare 0% with 50% and 100% on a scene with two strong colours. On a TV it
 is heavy work for now: use it with a capture rate of 30 fps, not 60.
+Colour boost and Dark-scene glow have not yet been tried on a TV.
 
 **Calibrations** lists your calibrations: each matches the lights’ colours to
 your screen and wall. Choose one to rename it, switch it **In use**, adjust its

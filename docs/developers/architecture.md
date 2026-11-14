@@ -50,8 +50,8 @@ of `prysm-core`.
 ## Processing and colour
 
 The session thread pulls the newest frame from the source, runs the
-`PrysmProcessor` (black-bar detection, sampling, smoothing, shadow lift,
-colour correction, brightness) and writes `EdgeColors` to the output. Sources
+`PrysmProcessor` (black-bar detection, sampling, smoothing, colour boost,
+dark-scene glow, colour correction, brightness) and writes `EdgeColors` to the output. Sources
 replace untaken frames instead of queueing them, so latency does not build up.
 Processing assumes sRGB; the file source tone-maps HDR before it.
 

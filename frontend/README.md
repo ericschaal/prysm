@@ -138,8 +138,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): black bars as a switch
-    row, and Picture fine-tuning (`#/settings/picture`: shadow lift, edge
-    depth, colour focus 0 to 100 %, smoothing 0 to 2 s, scene cuts 0 to
+    row, and Picture fine-tuning (`#/settings/picture`: dark-scene glow 0 to
+    20 %, edge depth, colour focus and colour boost 0 to 100 %, smoothing 0 to 2 s, scene cuts 0 to
     100 %, brightness ramp 0 to 2 s, detail 1 to 512, all sliders in Home's
     one slider style, widened to fit a saved value beyond), applied live (debounced 400 ms, sliders on
     release) because processing-only changes reach a running session without

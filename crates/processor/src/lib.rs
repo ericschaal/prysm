@@ -1,6 +1,6 @@
 use frames::{FrameView, Viewport};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
-use prysm_core::{Config, EdgeColors, Frame, PixelFormat};
+use prysm_core::{ColorCorrection, Config, EdgeColors, Frame, LinearColor, PixelFormat};
 use std::time::Instant;
 
 mod frames;
@@ -123,9 +123,12 @@ impl PrysmProcessor {
             edge_colors = smoother.process(edge_colors, now);
         }
 
-        if self.config.correction != prysm_core::ColorCorrection::default()
-            || self.config.shadow_lift_percent.0 != 0
-            || self.config.brightness_percent.0 < 100
+        let config = &self.config;
+        // Every output step is exact identity at its neutral setting.
+        if config.correction != ColorCorrection::default()
+            || config.saturation_boost_percent.0 != 0
+            || config.dark_floor_percent.0 != 0
+            || config.brightness_percent.0 < 100
         {
             for strip in [
                 &mut edge_colors.top,
@@ -133,16 +136,21 @@ impl PrysmProcessor {
                 &mut edge_colors.bottom,
                 &mut edge_colors.left,
             ] {
-                strip.map_colors(|color| {
-                    self.config
-                        .correction
-                        .apply(color.lift_shadows(self.config.shadow_lift_percent))
-                        * self.config.brightness_percent.as_ratio()
-                });
+                strip.map_colors(|color| output_color(config, color));
             }
         }
         edge_colors
     }
+}
+
+/// One light's output stage: colour boost, dark floor, calibration, brightness.
+fn output_color(config: &Config, color: LinearColor) -> LinearColor {
+    let color = color
+        .boost_saturation(config.saturation_boost_percent)
+        .with_dark_floor(config.dark_floor_percent);
+    // The glow is meant as neutral white on the wall, so the calibration
+    // corrects it and brightness scales it like any other colour.
+    config.correction.apply(color) * config.brightness_percent.as_ratio()
 }
 
 impl Default for PrysmProcessor {
@@ -175,5 +183,42 @@ mod correction_tests {
         config.correction = prysm_core::ColorCorrection::default();
         processor.configure(&config);
         assert_eq!(processor.process_frame(frame).top.sample_at(0.5), original);
+    }
+
+    #[test]
+    fn the_dark_floor_glow_is_calibrated_and_scaled_by_brightness() {
+        let black = Frame::fill(0, 4, 2, PixelFormat::RGB24).unwrap();
+        let glow = |correction| {
+            let config = Config {
+                remove_black_bars: false,
+                smoothing_seconds: prysm_core::SmoothingSeconds(0.0),
+                brightness_percent: prysm_core::BrightnessPercent(50),
+                dark_floor_percent: prysm_core::DarkFloorPercent(10),
+                correction,
+                ..Config::default()
+            };
+            PrysmProcessor::new(&config)
+                .process_frame(black.clone())
+                .top
+                .sample_at(0.5)
+        };
+        let neutral = glow(ColorCorrection::default());
+        for channel in [neutral.r, neutral.g, neutral.b] {
+            assert!((channel - 0.05).abs() < 1e-6, "{neutral:?}");
+        }
+        let warm = ColorCorrection::new(60, -30, 40).unwrap();
+        let corrected = glow(warm);
+        let expected = warm.apply(LinearColor::new(0.1, 0.1, 0.1)) * 0.5;
+        for (actual, expected) in [
+            (corrected.r, expected.r),
+            (corrected.g, expected.g),
+            (corrected.b, expected.b),
+        ] {
+            assert!((actual - expected).abs() < 1e-6, "{corrected:?}");
+        }
+        assert!(
+            corrected.r > corrected.b,
+            "the warm calibration reaches the glow"
+        );
     }
 }

@@ -11,13 +11,14 @@ import {
 } from './form';
 
 /**
- * What this panel owns: nine controls plus the calibrations and the active
+ * What this panel owns: ten controls plus the calibrations and the active
  * one. Other processing fields are preserved.
  */
 export type ProcessingControls = Pick<
   Processing,
   | 'brightness_percent'
-  | 'shadow_lift_percent'
+  | 'saturation_boost_percent'
+  | 'dark_floor_percent'
   | 'smoothing_seconds'
   | 'cut_response_percent'
   | 'brightness_ramp_seconds'
@@ -36,7 +37,8 @@ export type ProcessingControls = Pick<
  */
 export const processingLimits = {
   brightness_percent: { min: 0, max: 100, step: 1 },
-  shadow_lift_percent: { min: 0, max: 100, step: 1 },
+  saturation_boost_percent: { min: 0, max: 100, step: 1 },
+  dark_floor_percent: { min: 0, max: 20, step: 1 },
   spatial_reach_percent: { min: 1, max: 100, step: 1 },
   color_focus_percent: { min: 0, max: 100, step: 1 },
   smoothing_seconds: { min: 0, step: 'any' },
@@ -118,7 +120,8 @@ export function processingControls(processing: Processing): ProcessingControls {
   return withCalibrations(
     {
       brightness_percent: processing.brightness_percent,
-      shadow_lift_percent: processing.shadow_lift_percent,
+      saturation_boost_percent: processing.saturation_boost_percent,
+      dark_floor_percent: processing.dark_floor_percent,
       smoothing_seconds: processing.smoothing_seconds,
       cut_response_percent: processing.cut_response_percent,
       brightness_ramp_seconds: processing.brightness_ramp_seconds,

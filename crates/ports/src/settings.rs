@@ -2,7 +2,8 @@ use crate::ValidationError;
 use crate::calibrations::{self, Calibration};
 use prysm_core::{
     BrightnessPercent, BrightnessRampSeconds, ColorCorrection, ColorFocusPercent, Config,
-    CutResponsePercent, SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
+    CutResponsePercent, DarkFloorPercent, SampleDensity, SaturationBoostPercent, SmoothingSeconds,
+    SpatialReachPercent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -92,7 +93,9 @@ impl AdapterSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct Processing {
     pub brightness_percent: u8,
-    pub shadow_lift_percent: u8,
+    pub saturation_boost_percent: u8,
+    /// At most [`Processing::MAX_DARK_FLOOR_PERCENT`].
+    pub dark_floor_percent: u8,
     pub smoothing_seconds: f32,
     pub cut_response_percent: u8,
     /// At most [`Processing::MAX_BRIGHTNESS_RAMP_SECONDS`]; 0 sets no limit.
@@ -114,7 +117,8 @@ impl Default for Processing {
         let config = Config::default();
         Self {
             brightness_percent: config.brightness_percent.0,
-            shadow_lift_percent: config.shadow_lift_percent.0,
+            saturation_boost_percent: config.saturation_boost_percent.0,
+            dark_floor_percent: config.dark_floor_percent.0,
             smoothing_seconds: config.smoothing_seconds.0,
             cut_response_percent: config.cut_response_percent.0,
             brightness_ramp_seconds: config.brightness_ramp_seconds.0,
@@ -133,21 +137,35 @@ impl Processing {
     /// scene looks like a fade rather than a cut.
     pub const MAX_BRIGHTNESS_RAMP_SECONDS: f32 = 2.0;
 
+    /// The brightest dark-scene glow, in percent.
+    pub const MAX_DARK_FLOOR_PERCENT: u8 = DarkFloorPercent::MAX;
+
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore.
     pub fn validate(&self) -> Result<(), ValidationError> {
         let path = |field: &str| format!("{}.{field}", Section::Processing);
-        let percent = |field: &str, value: u8, min: u8| {
-            (min..=100)
+        let percent = |field: &str, value: u8, min: u8, max: u8| {
+            (min..=max)
                 .contains(&value)
                 .then_some(())
-                .ok_or_else(|| ValidationError::new(path(field), format!("must be {min}-100")))
+                .ok_or_else(|| ValidationError::new(path(field), format!("must be {min}-{max}")))
         };
-        percent("brightness_percent", self.brightness_percent, 0)?;
-        percent("shadow_lift_percent", self.shadow_lift_percent, 0)?;
-        percent("cut_response_percent", self.cut_response_percent, 0)?;
-        percent("spatial_reach_percent", self.spatial_reach_percent, 1)?;
-        percent("color_focus_percent", self.color_focus_percent, 0)?;
+        percent("brightness_percent", self.brightness_percent, 0, 100)?;
+        percent(
+            "saturation_boost_percent",
+            self.saturation_boost_percent,
+            0,
+            100,
+        )?;
+        percent(
+            "dark_floor_percent",
+            self.dark_floor_percent,
+            0,
+            Self::MAX_DARK_FLOOR_PERCENT,
+        )?;
+        percent("cut_response_percent", self.cut_response_percent, 0, 100)?;
+        percent("spatial_reach_percent", self.spatial_reach_percent, 1, 100)?;
+        percent("color_focus_percent", self.color_focus_percent, 0, 100)?;
         if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
             return Err(ValidationError::new(
                 path("smoothing_seconds"),
@@ -200,7 +218,8 @@ impl Processing {
         Config {
             correction: self.correction(),
             brightness_percent: BrightnessPercent(self.brightness_percent),
-            shadow_lift_percent: ShadowLiftPercent(self.shadow_lift_percent),
+            saturation_boost_percent: SaturationBoostPercent(self.saturation_boost_percent),
+            dark_floor_percent: DarkFloorPercent(self.dark_floor_percent),
             smoothing_seconds: SmoothingSeconds(self.smoothing_seconds),
             cut_response_percent: CutResponsePercent(self.cut_response_percent),
             brightness_ramp_seconds: BrightnessRampSeconds(self.brightness_ramp_seconds),
@@ -296,6 +315,30 @@ mod tests {
             invalid.validate().unwrap_err().field,
             "processing.color_focus_percent"
         );
+        let invalid = Processing {
+            saturation_boost_percent: 101,
+            ..Processing::default()
+        };
+        assert_eq!(
+            invalid.validate().unwrap_err().field,
+            "processing.saturation_boost_percent"
+        );
+        let invalid = Processing {
+            dark_floor_percent: 21,
+            ..Processing::default()
+        };
+        let error = invalid.validate().unwrap_err();
+        assert_eq!(error.field, "processing.dark_floor_percent");
+        assert_eq!(error.reason, "must be 0-20");
+        for (boost, floor) in [(100, 20), (0, 0)] {
+            Processing {
+                saturation_boost_percent: boost,
+                dark_floor_percent: floor,
+                ..Processing::default()
+            }
+            .validate()
+            .unwrap();
+        }
         for seconds in [-0.1, 2.01, f32::NAN, f32::INFINITY] {
             let invalid = Processing {
                 brightness_ramp_seconds: seconds,
@@ -354,6 +397,31 @@ mod tests {
                 "{removed}"
             );
         }
+    }
+
+    #[test]
+    fn boost_and_floor_round_trip_and_default_when_omitted() {
+        let omitted: Processing =
+            serde_json::from_value(serde_json::json!({ "brightness_percent": 80 })).unwrap();
+        assert_eq!(omitted.saturation_boost_percent, 0);
+        assert_eq!(omitted.dark_floor_percent, 0);
+        assert_eq!(
+            omitted.config().saturation_boost_percent,
+            SaturationBoostPercent(0)
+        );
+        assert_eq!(omitted.config().dark_floor_percent, DarkFloorPercent(0));
+        let present: Processing = serde_json::from_value(serde_json::json!({
+            "saturation_boost_percent": 40,
+            "dark_floor_percent": 10,
+        }))
+        .unwrap();
+        present.validate().unwrap();
+        let config = present.config();
+        assert_eq!(config.saturation_boost_percent, SaturationBoostPercent(40));
+        assert_eq!(config.dark_floor_percent, DarkFloorPercent(10));
+        let written = serde_json::to_value(&present).unwrap();
+        assert_eq!(written["saturation_boost_percent"], 40);
+        assert_eq!(written["dark_floor_percent"], 10);
     }
 
     #[test]

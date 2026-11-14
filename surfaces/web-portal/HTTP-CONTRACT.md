@@ -142,7 +142,7 @@ on the state stream.
   lighting: otherwise `409 not_processed`.
 - While a pattern is set, the processor runs without smoothing, so a
   calibration change shows at once, and with `uncorrected: true` without any
-  calibration, to compare. Brightness, shadow lift, black bars and the saved
+  calibration, to compare. Brightness, colour boost, dark-scene glow, black bars and the saved
   settings are unchanged; both return to the settings when it clears.
 - It clears on `DELETE`, when the target leaves `processed` (`off`,
   `device_native`, or a file source ending), at shutdown, and 10 minutes

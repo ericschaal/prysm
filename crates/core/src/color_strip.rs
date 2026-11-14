@@ -255,11 +255,11 @@ mod tests {
     fn adjustments_reuse_unique_storage_and_preserve_shared_samples() {
         let original = ColorStrip::new(vec![LinearColor::new(0.02, 0.01, 0.0); 7]).unwrap();
         let mut adjusted = original.clone();
-        adjusted.map_colors(|color| color.lift_shadows(crate::ShadowLiftPercent(30)) * 0.5);
+        adjusted.map_colors(|color| color.with_dark_floor(crate::DarkFloorPercent(10)) * 0.5);
         assert_eq!(original.samples[0], LinearColor::new(0.02, 0.01, 0.0));
         assert_eq!(
             adjusted.samples[0],
-            original.samples[0].lift_shadows(crate::ShadowLiftPercent(30)) * 0.5
+            original.samples[0].with_dark_floor(crate::DarkFloorPercent(10)) * 0.5
         );
         let allocation = adjusted.samples.as_ptr();
         adjusted.map_colors(|color| color * 0.5);

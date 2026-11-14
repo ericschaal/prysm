@@ -306,11 +306,20 @@ export interface components {
              *     like any other change.
              */
             cut_response_percent: number;
+            /**
+             * Format: int32
+             * @description The least luminance the lights keep, as a neutral white glow, in
+             *     percent of full light; 0 lets them go fully dark.
+             */
+            dark_floor_percent: number;
             remove_black_bars: boolean;
             /** Format: int32 */
             sample_density: number;
-            /** Format: int32 */
-            shadow_lift_percent: number;
+            /**
+             * Format: int32
+             * @description Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
+             */
+            saturation_boost_percent: number;
             /**
              * Format: float
              * @description Seconds; 0 disables smoothing.

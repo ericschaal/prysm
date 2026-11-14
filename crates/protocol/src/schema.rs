@@ -60,11 +60,12 @@ pub struct SettingsSchema {
     processing: ProcessingSchema,
 }
 
-// `schema(...)` takes literals only: the calibration and ramp limits below are spelled out.
+// `schema(...)` takes literals only: the calibration, ramp and floor limits below are spelled out.
 const _: () = assert!(
     MAX_CALIBRATIONS == 32 && MAX_CALIBRATION_ID_LEN == 64 && MAX_CALIBRATION_NAME_CHARS == 64
 );
 const _: () = assert!(prysm_ports::Processing::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
+const _: () = assert!(prysm_ports::Processing::MAX_DARK_FLOOR_PERCENT == 20);
 
 // Mirrors `prysm_ports::Processing`.
 /// Processing controls in plain units.
@@ -74,8 +75,13 @@ const _: () = assert!(prysm_ports::Processing::MAX_BRIGHTNESS_RAMP_SECONDS == 2.
 pub struct ProcessingSchema {
     #[schema(minimum = 0, maximum = 100)]
     brightness_percent: u8,
+    /// Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
     #[schema(minimum = 0, maximum = 100)]
-    shadow_lift_percent: u8,
+    saturation_boost_percent: u8,
+    /// The least luminance the lights keep, as a neutral white glow, in
+    /// percent of full light; 0 lets them go fully dark.
+    #[schema(minimum = 0, maximum = 20)]
+    dark_floor_percent: u8,
     /// Seconds; 0 disables smoothing.
     #[schema(minimum = 0)]
     smoothing_seconds: f32,
@@ -618,6 +624,8 @@ mod tests {
                 cut_response_percent: 70,
                 brightness_ramp_seconds: 0.5,
                 color_focus_percent: 60,
+                saturation_boost_percent: 40,
+                dark_floor_percent: 10,
                 ..Processing::default()
             },
             ..Settings::default()
