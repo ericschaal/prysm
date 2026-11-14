@@ -282,26 +282,44 @@
 .slider-tint input {
   --track: linear-gradient(90deg, #7fcf98, #e7e3e8, #e08fd2);
 }
-.slider-intensity input {
-  --track: linear-gradient(90deg, #8a8a92, #e04ad8);
+.slider-red-hue input {
+  --track: linear-gradient(90deg, #e04a9a, #f0373c, #f5873a);
 }
-.slider-hue-red input {
-  --track: linear-gradient(90deg, #e04ad8, #f0373c, #f5d93a);
+.slider-green-hue input {
+  --track: linear-gradient(90deg, #c4d93a, #3ccf5a, #3cd6c0);
 }
-.slider-hue-yellow input {
-  --track: linear-gradient(90deg, #f0373c, #f5d93a, #3ccf5a);
+.slider-blue-hue input {
+  --track: linear-gradient(90deg, #3cc8e6, #3c5cf0, #9a4ae0);
 }
-.slider-hue-green input {
-  --track: linear-gradient(90deg, #f5d93a, #3ccf5a, #3cd6e6);
+.slider-red-strength input {
+  --track: linear-gradient(90deg, #b48486, #f0373c);
 }
-.slider-hue-cyan input {
-  --track: linear-gradient(90deg, #3ccf5a, #3cd6e6, #3c5cf0);
+.slider-green-strength input {
+  --track: linear-gradient(90deg, #86a88c, #3ccf5a);
 }
-.slider-hue-blue input {
-  --track: linear-gradient(90deg, #3cd6e6, #3c5cf0, #e04ad8);
+.slider-blue-strength input {
+  --track: linear-gradient(90deg, #8890b4, #3c5cf0);
 }
-.slider-hue-magenta input {
-  --track: linear-gradient(90deg, #3c5cf0, #e04ad8, #f0373c);
+/* Reset sits under the sliders it resets, quiet until needed. */
+.calibrate-reset {
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-3)) var(--space-4) 0;
+}
+.calibrate-reset button {
+  font-size: var(--text-small);
+}
+/* A check's links back to the colours it is made of. */
+.calibrate-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-6);
+  color: var(--text-2);
+}
+.calibrate-fixes button.link {
+  min-height: var(--hit);
 }
 button.compare {
   width: 100%;

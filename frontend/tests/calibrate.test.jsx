@@ -6,11 +6,13 @@ import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import { processingDelayMs } from '@prysm/web-portal';
 import {
   initialWizard,
+  screenOf,
   screens,
   wizardReducer,
 } from '../packages/web-portal/calibrate-wizard';
 import {
   $,
+  $$,
   button,
   edit,
   field,
@@ -27,12 +29,14 @@ const output = {
   address: '192.0.2.1',
   leds: { top: 10, left: 4 },
 };
+const unchanged = { hue: 0, strength: 0 };
 const zero = {
   warmth: 0,
   tint: 0,
   midtones: 0,
-  intensity: 0,
-  hue: { red: 0, yellow: 0, green: 0, cyan: 0, blue: 0, magenta: 0 },
+  red: unchanged,
+  green: unchanged,
+  blue: unchanged,
 };
 const ps5 = { id: 'ps5', name: 'PS5', correction: { ...zero, warmth: 12 } };
 const settle = () => act(async () => sleep(processingDelayMs + 100));
@@ -46,6 +50,19 @@ const processing = (fixture) => fixture.snapshot().settings.processing;
 const patterns = (fixture) =>
   fixture.calls.filter((call) => call.startsWith('calibration:'));
 const heading = () => $('.calibrate h2').textContent;
+const sliders = () =>
+  $$('.calibrate input[type="range"]').map((input) => input.name);
+const draftField = (name) =>
+  field(`processing.calibrations[0].correction.${name}`);
+const questions = {
+  white: 'Does the wall look as neutral as the grey on the screen?',
+  red: 'Does the red on the wall match the red on the screen?',
+  green: 'Does the green on the wall match the green on the screen?',
+  blue: 'Does the blue on the wall match the blue on the screen?',
+  yellow: 'Does the yellow on the wall match the screen?',
+  mixed: 'Do both colours on the wall match the screen?',
+  review: 'Name your calibration',
+};
 
 /** Screen sync running, optionally with saved calibrations; opens the Calibrate page. */
 async function openCalibrate({
@@ -124,12 +141,17 @@ test('a new calibration is made step by step and finished under its name', async
       pattern: 'gray-192',
       uncorrected: false,
     });
-    assert.equal(heading(), 'Find a natural white');
+    assert.equal(heading(), questions.white);
     assert.equal($('.calibrate-pattern').textContent, 'On your TV: light gray');
+    assert.equal($('.setup-steps [aria-current="step"]').textContent, 'White');
+    assert.deepEqual(sliders(), [
+      'processing.calibrations[0].correction.warmth',
+      'processing.calibrations[0].correction.tint',
+    ]);
 
     // Slider edits are live saves on the draft calibration.
-    await edit(field('processing.calibrations[0].correction.warmth'), 20);
-    await edit(field('processing.calibrations[0].correction.tint'), -5);
+    await edit(draftField('warmth'), 20);
+    await edit(draftField('tint'), -5);
     await settle();
     assert.deepEqual(processing(fixture).calibrations[0].correction, {
       ...zero,
@@ -148,32 +170,112 @@ test('a new calibration is made step by step and finished under its name', async
       'calibration:gray-192',
     ]);
 
+    // Each primary: two sliders named by their ends, on its pair.
     fixture.calls.length = 0;
-    await press(button('Next'));
-    assert.equal(heading(), 'Fine-tune each colour');
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.red);
     assert.equal(
       $('.calibrate-pattern').textContent,
-      'On your TV: red (1 of 6)',
+      'On your TV: moderate red (left), vivid red (right)',
     );
-    await edit(field('processing.calibrations[0].correction.hue.red'), 8);
+    assert.deepEqual(sliders(), [
+      'processing.calibrations[0].correction.red.hue',
+      'processing.calibrations[0].correction.red.strength',
+    ]);
+    const hue = draftField('red.hue');
+    assert.equal(hue.labels[0].textContent, 'More pink or more orange');
+    assert.deepEqual(
+      $$('[aria-hidden="true"]', hue.closest('.range')).map(
+        (end) => end.textContent,
+      ),
+      ['More pink', 'More orange'],
+    );
+    assert.equal(
+      draftField('red.strength').labels[0].textContent,
+      'Softer or stronger',
+    );
+    await edit(hue, 8);
+    await edit(draftField('red.strength'), -12);
     await settle();
-    assert.equal(processing(fixture).calibrations[0].correction.hue.red, 8);
-    for (let step = 0; step < 12; step++) await press(button('Next'));
-    assert.equal(heading(), 'Name your calibration');
-    assert(!button('Next'));
+    assert.deepEqual(processing(fixture).calibrations[0].correction.red, {
+      hue: 8,
+      strength: -12,
+    });
+
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.green);
+    assert.equal(
+      draftField('green.hue').labels[0].textContent,
+      'More yellow or more turquoise',
+    );
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.blue);
+    assert.equal(
+      draftField('blue.hue').labels[0].textContent,
+      'More turquoise or more purple',
+    );
+
+    // A check has no sliders: it asks, and links to what it is made of.
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.yellow);
+    assert.equal($('.setup-steps [aria-current="step"]').textContent, 'Checks');
+    assert.equal(
+      $('.calibrate-pattern').textContent,
+      'On your TV: yellow (1 of 6)',
+    );
+    assert.deepEqual(sliders(), []);
+    assert(!button('Reset'), 'nothing to reset on a check');
+    assert.deepEqual(
+      $$('.calibrate-fixes button').map((link) => link.textContent),
+      ['Adjust red', 'Adjust green'],
+    );
+
+    // Adjusting from a check comes back to it.
+    await press(button('Adjust green'));
+    assert.equal(heading(), questions.green);
+    assert(!button('Back'), 'the way on is back to the check');
+    await edit(draftField('green.strength'), 30);
+    await settle();
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.yellow);
+    assert(button('Back'));
+    await press(button('Looks right'));
+    assert.equal(heading(), 'Does the cyan on the wall match the screen?');
+    await press(button('Looks right'));
+    assert.equal(heading(), 'Does the magenta on the wall match the screen?');
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.mixed);
+    assert.deepEqual(
+      $$('.calibrate-fixes button').map((link) => link.textContent),
+      ['Adjust white', 'Adjust red', 'Adjust green', 'Adjust blue'],
+    );
+    await press(button('Adjust white'));
+    assert.equal(heading(), questions.white);
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.mixed);
+    await press(button('Looks right'));
+    await press(button('Looks right'));
+    await press(button('Looks right'));
+    assert.equal(heading(), questions.review);
+    assert(!button('Looks right'));
     await press(button('Back'));
-    assert.equal(heading(), 'Check colours together');
-    await press(button('Next'));
+    assert.equal(heading(), questions.mixed);
+    assert.equal(
+      $('.calibrate-pattern').textContent,
+      'On your TV: amber (left), violet (right) (6 of 6)',
+    );
+    await press(button('Looks right'));
     assert.deepEqual(patterns(fixture), [
-      'calibration:red',
-      'calibration:yellow',
-      'calibration:green',
-      'calibration:cyan',
-      'calibration:blue-pair',
-      'calibration:magenta',
       'calibration:red-pair',
       'calibration:green-pair',
       'calibration:blue-pair',
+      'calibration:yellow',
+      'calibration:green-pair',
+      'calibration:yellow',
+      'calibration:cyan',
+      'calibration:magenta',
+      'calibration:coast',
+      'calibration:gray-192',
       'calibration:coast',
       'calibration:garden',
       'calibration:dusk',
@@ -195,7 +297,8 @@ test('a new calibration is made step by step and finished under its name', async
           ...zero,
           warmth: 20,
           tint: -5,
-          hue: { ...zero.hue, red: 8 },
+          red: { hue: 8, strength: -12 },
+          green: { hue: 0, strength: 30 },
         },
       },
     ]);
@@ -206,6 +309,41 @@ test('a new calibration is made step by step and finished under its name', async
     assert(text().includes('“Movie night” is saved and active.'));
     await press(button('Back to Prysm'));
     assert(!$('.calibrate'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test("Reset puts back only the screen's own controls", async () => {
+  const portal = await openCalibrate();
+  const { fixture } = portal;
+  try {
+    await press(button('Start'));
+    assert.equal(button('Reset').disabled, true, 'nothing to reset yet');
+    await edit(draftField('warmth'), 15);
+    await edit(draftField('tint'), 10);
+    assert.equal(button('Reset').disabled, false);
+    await press(button('Looks right'));
+    await edit(draftField('red.hue'), -20);
+    await edit(draftField('red.strength'), 40);
+    await press(button('Looks right'));
+    assert.equal(button('Reset').disabled, true, 'green is unchanged');
+    await edit(draftField('green.hue'), 7);
+    await press(button('Reset'));
+    assert.equal(draftField('green.hue').value, '0');
+    await press(button('Back'));
+    await press(button('Reset'));
+    assert.equal(button('Reset').disabled, true);
+    await settle();
+    assert.deepEqual(processing(fixture).calibrations[0].correction, {
+      ...zero,
+      warmth: 15,
+      tint: 10,
+    });
+    await press(button('Back'));
+    await press(button('Reset'));
+    await settle();
+    assert.deepEqual(processing(fixture).calibrations[0].correction, zero);
   } finally {
     await portal.unmount();
   }
@@ -227,7 +365,7 @@ test('starting from a saved calibration works on a copy; Cancel deletes it and r
     assert.equal(processing(fixture).active_calibration, copy.id);
     assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
 
-    await press(button('Next'));
+    await press(button('Looks right'));
     await press(button('Cancel calibration'));
     await act(async () => sleep(5));
     assert.deepEqual(processing(fixture).calibrations, [ps5]);
@@ -277,7 +415,7 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
   const { fixture } = portal;
   try {
     await press(button('Start'));
-    await press(button('Next'));
+    await press(button('Looks right'));
     const [draft] = processing(fixture).calibrations;
 
     // The engine's 10-minute timeout, or the TV leaving the pattern screen.
@@ -289,8 +427,8 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     assert(text().includes('Your changes so far are kept in “Calibrated”.'));
     fixture.calls.length = 0;
     await press(button('Resume'));
-    assert.deepEqual(patterns(fixture), ['calibration:red']);
-    assert.equal(heading(), 'Fine-tune each colour');
+    assert.deepEqual(patterns(fixture), ['calibration:red-pair']);
+    assert.equal(heading(), questions.red);
 
     // Lights turned off: calibration ends and the TV is needed again.
     await act(async () => {
@@ -330,6 +468,7 @@ test('the wizard moves only on what the TV confirms and ends once', () => {
     draftId: 'd',
     previous: 'p1',
     screen: 0,
+    returnTo: null,
     name: null,
   });
   assert.equal(state.seen, false, 'waits for the TV to show the pattern');
@@ -342,6 +481,22 @@ test('the wizard moves only on what the TV confirms and ends once', () => {
   state = wizardReducer(state, { type: 'patternShown', screen: 1 });
   assert.equal(state.busy, false);
   assert.equal(state.phase.screen, 1);
+
+  // From a check to a colour and back: the check is kept while the colour
+  // shows, also through a comparison or a resume, and cleared on the way back.
+  const yellow = screens.findIndex((screen) => screen.pattern === 'yellow');
+  state = wizardReducer(state, {
+    type: 'patternShown',
+    screen: screenOf('green'),
+    returnTo: yellow,
+  });
+  assert.equal(state.phase.screen, screenOf('green'));
+  assert.equal(state.phase.returnTo, yellow);
+  state = wizardReducer(state, { type: 'patternShown' });
+  assert.equal(state.phase.returnTo, yellow);
+  state = wizardReducer(state, { type: 'patternShown', screen: yellow });
+  assert.equal(state.phase.screen, yellow);
+  assert.equal(state.phase.returnTo, null);
 
   // A refused pattern keeps the screen and says why; the next request clears it.
   state = [
@@ -360,7 +515,35 @@ test('the wizard moves only on what the TV confirms and ends once', () => {
   ].reduce(wizardReducer, state);
   assert.equal(state.problem, '');
   assert.equal(state.phase.name, 'Movie night');
-  assert.equal(screens.at(-1).section, 'review');
+
+  // White, one screen per primary on its pair, checks, review.
+  assert.deepEqual(
+    screens.map(({ section, pattern }) => `${section}:${pattern}`),
+    [
+      'white:gray-192',
+      'red:red-pair',
+      'green:green-pair',
+      'blue:blue-pair',
+      'checks:yellow',
+      'checks:cyan',
+      'checks:magenta',
+      'checks:coast',
+      'checks:garden',
+      'checks:dusk',
+      'review:review-grid',
+    ],
+  );
+  assert.deepEqual(
+    screens.filter((screen) => screen.fixes).map((screen) => screen.fixes),
+    [
+      ['red', 'green'],
+      ['green', 'blue'],
+      ['red', 'blue'],
+      ['white', 'red', 'green', 'blue'],
+      ['white', 'red', 'green', 'blue'],
+      ['white', 'red', 'green', 'blue'],
+    ],
+  );
 
   state = [
     { type: 'ending' },

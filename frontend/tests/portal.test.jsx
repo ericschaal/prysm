@@ -9,7 +9,7 @@ import {
   allPicturePresets,
   correctionLimits,
   deviceNamesKey,
-  hueLimits,
+  primaryLimits,
   processingDelayMs,
   processingLimits,
   picturePresets,
@@ -2146,7 +2146,7 @@ test('limits and defaults written in the panels match the generated schemas', as
     [application.Processing, processingLimits, {}],
     [application.StyleValues, styleLimits, {}],
     [application.CorrectionControls, correctionLimits, {}],
-    [application.HueControls, hueLimits, {}],
+    [application.PrimaryControls, primaryLimits, {}],
     [desktop.DeviceSettings, deviceLimits, deviceDefaults],
     [desktop.FileSettings, fileLimits, fileDefaults],
     [webos.WebosSettings, tvPictureLimits, webosDefaults],
@@ -2174,10 +2174,10 @@ test('limits and defaults written in the panels match the generated schemas', as
   );
   for (const name of Object.keys(
     application.CorrectionControls.properties,
-  ).filter((name) => name !== 'hue'))
+  ).filter((name) => !['red', 'green', 'blue'].includes(name)))
     assert(name in correctionLimits, `${name} has a control`);
-  for (const name of Object.keys(application.HueControls.properties))
-    assert(name in hueLimits, `${name} has a control`);
+  for (const name of Object.keys(application.PrimaryControls.properties))
+    assert(name in primaryLimits, `${name} has a control`);
   for (const name of Object.keys(application.StyleValues.properties))
     assert(name in styleLimits, `${name} has a slider`);
   // Every style has words, in the order Rust offers them, Custom last; the

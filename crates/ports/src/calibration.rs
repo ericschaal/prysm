@@ -44,19 +44,19 @@ pub enum Pattern {
     /// Light gray (192) full screen: white balance (warmth, tint).
     #[serde(rename = "gray-192")]
     Gray192,
-    /// Full-screen primaries and secondaries: one hue each.
+    /// Full-screen primaries and secondaries, one colour each. The
+    /// secondaries check the primaries they mix.
     Red,
     Yellow,
     Green,
     Cyan,
-    /// Shown as [`Pattern::BluePair`] while the blue hue is adjusted.
     Blue,
     Magenta,
-    /// Moderate blue left, vivid blue right: intensity, and the blue hue.
+    /// Moderate blue left, vivid blue right: the blue primary's controls.
     BluePair,
-    /// Moderate red left, vivid red right: intensity.
+    /// Moderate red left, vivid red right: the red primary's controls.
     RedPair,
-    /// Moderate green left, vivid green right: intensity.
+    /// Moderate green left, vivid green right: the green primary's controls.
     GreenPair,
     /// Peach left, teal right: mixed colors.
     Coast,

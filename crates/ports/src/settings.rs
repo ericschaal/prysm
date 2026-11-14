@@ -237,6 +237,7 @@ impl fmt::Display for Revision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prysm_core::PrimaryAdjustment;
 
     #[test]
     fn settings_file_is_kind_tagged_and_defaults_processing() {
@@ -458,7 +459,7 @@ mod tests {
     fn active_calibration_sets_the_processor_correction() {
         let processing: Processing = serde_json::from_value(serde_json::json!({
             "calibrations": [
-                { "id": "ps5", "name": "PS5", "correction": { "warmth": 40, "hue": { "red": -5 } } },
+                { "id": "ps5", "name": "PS5", "correction": { "warmth": 40, "red": { "hue": -5 } } },
                 { "id": "apps", "name": "TV apps" }
             ],
             "active_calibration": "ps5"
@@ -466,7 +467,16 @@ mod tests {
         .unwrap();
         processing.validate().unwrap();
         let expected = ColorCorrection::new(40, 0, 0)
-            .and_then(|c| c.with_chroma(0, [-5, 0, 0, 0, 0, 0]))
+            .and_then(|c| {
+                c.with_primaries([
+                    PrimaryAdjustment {
+                        hue: -5,
+                        strength: 0,
+                    },
+                    PrimaryAdjustment::default(),
+                    PrimaryAdjustment::default(),
+                ])
+            })
             .unwrap();
         assert_eq!(processing.config().correction, expected);
         assert_eq!(
@@ -491,7 +501,7 @@ mod tests {
         // Every control is written, so the file shows what can be edited.
         let written = serde_json::to_value(&processing).unwrap();
         assert_eq!(
-            written["calibrations"][1]["correction"]["hue"]["magenta"],
+            written["calibrations"][1]["correction"]["blue"]["strength"],
             0
         );
         assert_eq!(

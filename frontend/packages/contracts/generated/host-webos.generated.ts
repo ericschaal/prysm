@@ -56,17 +56,14 @@ export interface components {
         };
         /** @description Correction controls, each -100 to 100; all zero is no correction. */
         CorrectionControls: {
-            hue: components["schemas"]["HueControls"];
-            /**
-             * Format: int32
-             * @description Positive saturates, negative desaturates.
-             */
-            intensity: number;
+            blue: components["schemas"]["PrimaryControls"];
+            green: components["schemas"]["PrimaryControls"];
             /**
              * Format: int32
              * @description Positive lightens midtones, negative darkens them.
              */
             midtones: number;
+            red: components["schemas"]["PrimaryControls"];
             /**
              * Format: int32
              * @description Positive adds magenta, negative adds green.
@@ -119,21 +116,6 @@ export interface components {
          * @enum {string}
          */
         FailureSection: "capture" | "output";
-        /** @description Hue shift per wheel anchor, each -100 to 100. */
-        HueControls: {
-            /** Format: int32 */
-            blue: number;
-            /** Format: int32 */
-            cyan: number;
-            /** Format: int32 */
-            green: number;
-            /** Format: int32 */
-            magenta: number;
-            /** Format: int32 */
-            red: number;
-            /** Format: int32 */
-            yellow: number;
-        };
         /** @description Whether frames are arriving, and how fast. */
         Input: {
             /**
@@ -302,6 +284,20 @@ export interface components {
             x: number;
             /** Format: int32 */
             y: number;
+        };
+        /** @description One picture primary's controls, each -100 to 100; white never moves. */
+        PrimaryControls: {
+            /**
+             * Format: int32
+             * @description Positive turns toward the next primary in red, green, blue order,
+             *     negative toward the previous one.
+             */
+            hue: number;
+            /**
+             * Format: int32
+             * @description Negative makes the colour softer, positive stronger.
+             */
+            strength: number;
         };
         /** @description Processing controls in plain units. */
         Processing: {
@@ -521,7 +517,6 @@ export type DeviceBrightness = components['schemas']['DeviceBrightness'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type FailureSection = components['schemas']['FailureSection'];
-export type HueControls = components['schemas']['HueControls'];
 export type Input = components['schemas']['Input'];
 export type Latency = components['schemas']['Latency'];
 export type LedColor = components['schemas']['LedColor'];
@@ -535,6 +530,7 @@ export type Phase = components['schemas']['Phase'];
 export type PreviewEvent = components['schemas']['PreviewEvent'];
 export type PreviewFrame = components['schemas']['PreviewFrame'];
 export type PreviewViewport = components['schemas']['PreviewViewport'];
+export type PrimaryControls = components['schemas']['PrimaryControls'];
 export type Processing = components['schemas']['Processing'];
 export type Session = components['schemas']['Session'];
 export type Settings = components['schemas']['Settings'];

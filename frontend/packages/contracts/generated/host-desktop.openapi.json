@@ -151,15 +151,11 @@
         "additionalProperties": false,
         "description": "Correction controls, each -100 to 100; all zero is no correction.",
         "properties": {
-          "hue": {
-            "$ref": "#/components/schemas/HueControls"
+          "blue": {
+            "$ref": "#/components/schemas/PrimaryControls"
           },
-          "intensity": {
-            "description": "Positive saturates, negative desaturates.",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
+          "green": {
+            "$ref": "#/components/schemas/PrimaryControls"
           },
           "midtones": {
             "description": "Positive lightens midtones, negative darkens them.",
@@ -167,6 +163,9 @@
             "maximum": 100,
             "minimum": -100,
             "type": "integer"
+          },
+          "red": {
+            "$ref": "#/components/schemas/PrimaryControls"
           },
           "tint": {
             "description": "Positive adds magenta, negative adds green.",
@@ -187,8 +186,9 @@
           "warmth",
           "tint",
           "midtones",
-          "intensity",
-          "hue"
+          "red",
+          "green",
+          "blue"
         ],
         "type": "object"
       },
@@ -356,57 +356,6 @@
         "required": [
           "kind",
           "path"
-        ],
-        "type": "object"
-      },
-      "HueControls": {
-        "additionalProperties": false,
-        "description": "Hue shift per wheel anchor, each -100 to 100.",
-        "properties": {
-          "blue": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          },
-          "cyan": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          },
-          "green": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          },
-          "magenta": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          },
-          "red": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          },
-          "yellow": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": -100,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "red",
-          "yellow",
-          "green",
-          "cyan",
-          "blue",
-          "magenta"
         ],
         "type": "object"
       },
@@ -786,6 +735,31 @@
           "y",
           "width",
           "height"
+        ],
+        "type": "object"
+      },
+      "PrimaryControls": {
+        "additionalProperties": false,
+        "description": "One picture primary's controls, each -100 to 100; white never moves.",
+        "properties": {
+          "hue": {
+            "description": "Positive turns toward the next primary in red, green, blue order,\nnegative toward the previous one.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "strength": {
+            "description": "Negative makes the colour softer, positive stronger.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hue",
+          "strength"
         ],
         "type": "object"
       },

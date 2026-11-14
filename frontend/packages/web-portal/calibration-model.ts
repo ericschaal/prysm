@@ -1,7 +1,7 @@
 import type {
   Calibration,
   CorrectionControls,
-  HueControls,
+  PrimaryControls,
 } from '@prysm/contracts/application';
 
 /**
@@ -11,37 +11,25 @@ import type {
 export const calibrationLimits = { count: 32, name: 64 } as const;
 
 const control = { min: -100, max: 100, step: 1 } as const;
-/** Each correction control, from the generated `CorrectionControls` schema. */
+/** Each white control, from the generated `CorrectionControls` schema. */
 export const correctionLimits = {
   warmth: control,
   tint: control,
   midtones: control,
-  intensity: control,
 } as const;
-/** Each hue anchor, from the generated `HueControls` schema. */
-export const hueLimits = {
-  red: control,
-  yellow: control,
-  green: control,
-  cyan: control,
-  blue: control,
-  magenta: control,
-} as const;
+/** Each primary's controls, from the generated `PrimaryControls` schema. */
+export const primaryLimits = { hue: control, strength: control } as const;
 
-const noHue: HueControls = {
-  red: 0,
-  yellow: 0,
-  green: 0,
-  cyan: 0,
-  blue: 0,
-  magenta: 0,
-};
+export type Primary = 'red' | 'green' | 'blue';
+
+const unchanged: PrimaryControls = { hue: 0, strength: 0 };
 export const noCorrection: CorrectionControls = {
   warmth: 0,
   tint: 0,
   midtones: 0,
-  intensity: 0,
-  hue: noHue,
+  red: unchanged,
+  green: unchanged,
+  blue: unchanged,
 };
 
 /** A calibration's correction with absent controls as 0, as the engine reads it. */
@@ -50,7 +38,9 @@ export function correctionOf(calibration: Calibration): CorrectionControls {
   return {
     ...noCorrection,
     ...correction,
-    hue: { ...noHue, ...correction.hue },
+    red: { ...unchanged, ...correction.red },
+    green: { ...unchanged, ...correction.green },
+    blue: { ...unchanged, ...correction.blue },
   };
 }
 
@@ -102,17 +92,24 @@ export const corrections = [
     'Midtones',
     'Positive lightens midtones, negative darkens them.',
   ],
-  [
-    'intensity',
-    'Intensity',
-    'Positive makes colours more vivid, negative makes them paler.',
-  ],
 ] as const;
-export const hues = [
-  ['red', 'Red'],
-  ['yellow', 'Yellow'],
-  ['green', 'Green'],
-  ['cyan', 'Cyan'],
-  ['blue', 'Blue'],
-  ['magenta', 'Magenta'],
-] as const;
+
+/**
+ * The red, green and blue controls in plain words: each slider is named by
+ * what its two ends do. A positive hue mixes in the next primary (red, green,
+ * blue, red), so the right end names that neighbour's direction.
+ */
+export const primaries: readonly {
+  name: Primary;
+  label: string;
+  hue: readonly [string, string];
+}[] = [
+  { name: 'red', label: 'Red', hue: ['More pink', 'More orange'] },
+  { name: 'green', label: 'Green', hue: ['More yellow', 'More turquoise'] },
+  { name: 'blue', label: 'Blue', hue: ['More turquoise', 'More purple'] },
+];
+export const strengthEnds = ['Softer', 'Stronger'] as const;
+
+/** A slider named by its ends, as a screen reader says it: “Softer or stronger”. */
+export const endsLabel = ([start, end]: readonly [string, string]) =>
+  `${start} or ${end.toLowerCase()}`;

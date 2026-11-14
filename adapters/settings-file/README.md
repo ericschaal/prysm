@@ -57,8 +57,9 @@ the adapter's factory, not here.
           "warmth": 12,
           "tint": -4,
           "midtones": 0,
-          "intensity": 10,
-          "hue": { "red": 0, "yellow": 0, "green": 0, "cyan": 0, "blue": 0, "magenta": 0 }
+          "red": { "hue": 8, "strength": -20 },
+          "green": { "hue": 0, "strength": -10 },
+          "blue": { "hue": -5, "strength": 0 }
         }
       }
     ],
@@ -113,7 +114,13 @@ With a custom style:
 `processing.calibrations` holds up to 32 saved calibrations (colour
 corrections) with unique ids (1-64 ASCII letters, digits, `-` or `_`) and names
 (1-64 characters, no surrounding whitespace or control characters); every
-control is -100 to 100 and omitted ones are 0. `active_calibration` names the
+control is -100 to 100 and omitted ones are 0. `warmth` and `tint` balance
+white, `midtones` lightens or darkens them; `red`, `green` and `blue` each turn
+that colour toward the next (`hue` positive: red toward green, green toward
+blue, blue toward red) and make it softer or stronger (`strength`), without
+moving white ([correction maths](../../crates/core/src/correction.rs)). A
+refused control names its path, such as
+`processing.calibrations[0].correction.red.strength`. `active_calibration` names the
 applied calibration; without it no correction is applied. Both are omitted when empty.
 
 `load` returns `None` only when the file does not exist; an empty or malformed

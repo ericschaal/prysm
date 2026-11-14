@@ -11,12 +11,14 @@ import {
   correctionLimits,
   correctionOf,
   corrections,
-  hueLimits,
-  hues,
   nameOf,
   noCorrection,
   calibrationLimits,
+  primaries,
+  primaryLimits,
   signed,
+  endsLabel,
+  strengthEnds,
 } from './calibration-model';
 import { Group, RowLink, RowSwitch } from './rows';
 import { useSaveReport } from './save-state';
@@ -184,8 +186,8 @@ export function CalibrationList({
 }
 
 /**
- * One calibration on its own page: its name, whether it is in use, its colour
- * correction and hue shift, and Delete (back to the list, with Undo there).
+ * One calibration on its own page: its name, whether it is in use, its white
+ * balance, red, green and blue, and Delete (back to the list, with Undo there).
  */
 export function CalibrationPage({
   id,
@@ -296,30 +298,39 @@ export function CalibrationPage({
             />
           ))}
         </div>
-        <fieldset>
-          <legend>Hue shift</legend>
-          <p className="help">
-            Turns each colour toward the next: red toward yellow, yellow toward
-            green, and so on to magenta toward red.
-          </p>
-          <div className="grid three">
-            {hues.map(([name, label]) => (
-              <RangeField
-                key={name}
-                label={label}
-                value={correction.hue[name]}
-                onChange={(value) =>
-                  correct(
-                    { hue: { ...correction.hue, [name]: value } },
-                    `${path}.correction.hue.${name}`,
-                  )
-                }
-                {...slider(`hue.${name}`)}
-                {...hueLimits[name]}
-              />
-            ))}
-          </div>
-        </fieldset>
+        {primaries.map((primary) => (
+          <fieldset key={primary.name}>
+            <legend>{primary.label}</legend>
+            <div className="grid">
+              {(
+                [
+                  ['hue', primary.hue],
+                  ['strength', strengthEnds],
+                ] as const
+              ).map(([control, ends]) => (
+                <RangeField
+                  key={control}
+                  label={endsLabel(ends)}
+                  ends={ends}
+                  value={correction[primary.name][control]}
+                  onChange={(value) =>
+                    correct(
+                      {
+                        [primary.name]: {
+                          ...correction[primary.name],
+                          [control]: value,
+                        },
+                      },
+                      `${path}.correction.${primary.name}.${control}`,
+                    )
+                  }
+                  {...slider(`${primary.name}.${control}`)}
+                  {...primaryLimits[control]}
+                />
+              ))}
+            </div>
+          </fieldset>
+        ))}
         <div className="page-actions">
           <div className="actions">
             <button

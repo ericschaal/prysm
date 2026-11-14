@@ -22,8 +22,8 @@ pub use adapter::{
 };
 pub use calibration::{CalibrationPattern, Pattern};
 pub use calibrations::{
-    Calibration, CorrectionControls, HueControls, MAX_CALIBRATION_ID_LEN,
-    MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS,
+    Calibration, CorrectionControls, MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS,
+    MAX_CALIBRATIONS, PrimaryControls,
 };
 pub use error::{Error, Result, ValidationError, chain};
 pub use handoff::{

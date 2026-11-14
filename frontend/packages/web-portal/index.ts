@@ -27,7 +27,7 @@ export { undoForMs } from './calibrations';
 export { developerStorageKey, saveDeveloper } from './developer';
 export {
   correctionLimits,
-  hueLimits,
+  primaryLimits,
   newCalibrationId,
   calibrationLimits,
 } from './calibration-model';

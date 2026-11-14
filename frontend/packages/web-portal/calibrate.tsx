@@ -12,9 +12,10 @@ import type {
 } from '@prysm/contracts/application';
 import {
   initialWizard,
+  screenOf,
   screens,
   wizardReducer,
-  type Hue,
+  type Adjustable,
   type Screen,
   type Section,
   type WizardAction,
@@ -28,13 +29,16 @@ import {
   correctionOf,
   corrections,
   freeName,
-  hueLimits,
-  hues,
   nameOf,
   newCalibrationId,
   noCorrection,
   calibrationLimits,
+  primaries,
+  primaryLimits,
+  endsLabel,
   signed,
+  strengthEnds,
+  type Primary,
 } from './calibration-model';
 
 /** What the TV shows for each pattern. */
@@ -55,37 +59,87 @@ const patternLabels: Record<Pattern, string> = {
   'review-grid': 'a grid of colours',
 };
 
-const sections: Record<
-  Section,
-  { label: string; title: string; lead: string }
-> = {
-  white: {
-    label: 'White balance',
-    title: 'Find a natural white',
-    lead: 'Make the wall glow as neutral as the gray on your TV. Ignore brightness. If the wall looks blue, raise Warmth; if it looks yellow, lower it. Use Tint for a green or pink cast. Small changes are enough.',
-  },
-  hues: {
-    label: 'Hues',
-    title: 'Fine-tune each colour',
-    lead: 'Change this colour only if the wall leans toward a neighbouring colour. If it differs only in brightness, leave it at 0.',
-  },
-  intensity: {
-    label: 'Intensity',
-    title: 'Match colour intensity',
-    lead: 'Compare each half of the TV with the wall behind it. If the wall looks washed out, raise Intensity; if it looks too vivid, lower it. Keep a change only if it helps both halves.',
-  },
-  mixed: {
-    label: 'Mixed colours',
-    title: 'Check colours together',
-    lead: 'Compare each side of the wall with the same side of the TV: the two colours should stay distinct. If one looks off, go back to its hue or to intensity.',
-  },
-  review: {
-    label: 'Review',
-    title: 'Name your calibration',
-    lead: 'Check the glow around the whole screen. When it looks right, name it and finish.',
-  },
+/** Each section's name in the progress bar. */
+const sections: Record<Section, string> = {
+  white: 'White',
+  red: 'Red',
+  green: 'Green',
+  blue: 'Blue',
+  checks: 'Checks',
+  review: 'Review',
 };
 const sectionOrder = Object.keys(sections) as Section[];
+
+const primaryOf = (section: Section) =>
+  primaries.find((primary) => primary.name === section);
+
+/** A screen's one question and how to answer it. */
+function wordsOf(screen: Screen): { title: string; lead: string } {
+  const primary = primaryOf(screen.section);
+  if (primary) {
+    const [left, right] = primary.hue;
+    const colour = primary.label.toLowerCase();
+    // “More orange” → “orange”: the colour an end adds.
+    const leaning = (end: string) => end.replace(/^More /, '');
+    return {
+      title: `Does the ${colour} on the wall match the ${colour} on the screen?`,
+      lead: `Compare each half of the TV with the wall behind it. If the wall’s ${colour} looks too ${leaning(right)}, move toward ${left}; if too ${leaning(left)}, toward ${right}. If it looks more vivid than the screen, move toward ${strengthEnds[0]}; if paler, toward ${strengthEnds[1]}.`,
+    };
+  }
+  switch (screen.section) {
+    case 'white':
+      return {
+        title: 'Does the wall look as neutral as the grey on the screen?',
+        lead: 'Ignore brightness. If the wall looks blue, raise Warmth; if it looks yellow, lower it. Use Tint for a green or pink cast. Small changes are enough.',
+      };
+    case 'checks': {
+      const fixes = screen.fixes ?? [];
+      // A mixed scene can be off anywhere; a secondary in its two primaries.
+      if (fixes.includes('white'))
+        return {
+          title: 'Do both colours on the wall match the screen?',
+          lead: 'Compare each side of the wall with the same side of the TV. If a side looks off, adjust white or the colour it is closest to.',
+        };
+      const colour = patternLabels[screen.pattern];
+      return {
+        title: `Does the ${colour} on the wall match the screen?`,
+        lead: `${colour[0]!.toUpperCase()}${colour.slice(1)} is ${fixes.join(' and ')} together. If the wall’s ${colour} looks off, adjust one of them.`,
+      };
+    }
+    default:
+      return {
+        title: 'Name your calibration',
+        lead: 'Check the glow around the whole screen. When it looks right, name it and finish.',
+      };
+  }
+}
+
+/** This screen's own controls back to 0, and whether any is not; `null` without controls. */
+function resetOf(
+  section: Section,
+  values: CorrectionControls,
+): { to: Partial<CorrectionControls>; changed: boolean } | null {
+  if (section === 'white')
+    return {
+      to: { warmth: 0, tint: 0 },
+      changed: values.warmth !== 0 || values.tint !== 0,
+    };
+  const primary = primaryOf(section);
+  if (!primary) return null;
+  const { hue, strength } = values[primary.name];
+  return {
+    to: { [primary.name]: noCorrection[primary.name] },
+    changed: hue !== 0 || strength !== 0,
+  };
+}
+
+/** A check's link back to what it is made of. */
+const fixLabels: Record<Adjustable, string> = {
+  white: 'Adjust white',
+  red: 'Adjust red',
+  green: 'Adjust green',
+  blue: 'Adjust blue',
+};
 
 const tvInstruction = 'Open Prysm on the TV and choose Calibrate.';
 const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInstruction}`;
@@ -93,17 +147,6 @@ const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInst
 const correction = Object.fromEntries(
   corrections.map(([name, label, help]) => [name, { label, help }]),
 ) as Record<keyof typeof correctionLimits, { label: string; help: string }>;
-
-/** `Red hue` and which way it turns, from the hue wheel. */
-function hueText(hue: Hue) {
-  const at = hues.findIndex(([name]) => name === hue);
-  const label = (index: number) =>
-    hues[(index + hues.length) % hues.length]![1];
-  return {
-    label: `${label(at)} hue`,
-    help: `Positive turns ${label(at).toLowerCase()} toward ${label(at + 1).toLowerCase()}, negative toward ${label(at - 1).toLowerCase()}.`,
-  };
-}
 
 export interface CalibrateProps {
   processing: Processing;
@@ -120,7 +163,7 @@ export interface CalibrateProps {
 
 /**
  * The Calibrate page, used on a phone while the TV shows patterns: a guided
- * walk through white balance, hues, intensity and mixed colours on a draft
+ * walk through white, red, green and blue, then checks, on a draft
  * calibration. The draft is an ordinary calibration, created and made active at the
  * start and saved live like the Picture panel; Finish names it, Cancel
  * deletes it and makes the previous calibration active again.
@@ -157,12 +200,20 @@ export function CalibrateWizard({
     headingRef.current?.focus({ preventScroll: true });
   }, [phase.kind, screen, ended]);
 
-  /** Show `pattern` on the TV, then `next` as the current screen; resolves with whether it did. */
-  async function show(pattern: Pattern, uncorrected = false, next?: number) {
+  /**
+   * Show `pattern` on the TV, then `next` as the current screen, opened from
+   * the check `returnTo` if given; resolves with whether it did.
+   */
+  async function show(
+    pattern: Pattern,
+    uncorrected = false,
+    next?: number,
+    returnTo?: number,
+  ) {
     dispatch({ type: 'requestSent' });
     try {
       await setCalibration({ pattern, uncorrected });
-      dispatch({ type: 'patternShown', screen: next });
+      dispatch({ type: 'patternShown', screen: next, returnTo });
       return true;
     } catch (error) {
       const reason = failureOf(error);
@@ -330,6 +381,7 @@ export function CalibrateWizard({
         notices={notices}
         current={screens[phase.screen] ?? screens[0]!}
         screen={phase.screen}
+        returnTo={phase.returnTo}
         draft={draft}
         path={`processing.calibrations[${draftIndex}].correction`}
         name={phase.name}
@@ -340,8 +392,8 @@ export function CalibrateWizard({
         live={live}
         dispatch={dispatch}
         correct={correct}
-        show={(pattern, uncorrected, next) =>
-          void show(pattern, uncorrected, next)
+        show={(pattern, uncorrected, next, returnTo) =>
+          void show(pattern, uncorrected, next, returnTo)
         }
         resume={() => {
           dispatch({ type: 'patternRequested' });
@@ -453,6 +505,7 @@ function StepScreen({
   notices,
   current,
   screen,
+  returnTo,
   draft,
   path,
   name,
@@ -473,6 +526,8 @@ function StepScreen({
   notices: ReactNode;
   current: Screen;
   screen: number;
+  /** The check this screen was opened from, to go back to. */
+  returnTo: number | null;
   draft: Calibration | undefined;
   /** The draft's correction in the processing section. */
   path: string;
@@ -485,17 +540,24 @@ function StepScreen({
   live: { scope: FieldScope; generation: number };
   dispatch: (action: WizardAction) => void;
   correct: (change: Partial<CorrectionControls>) => void;
-  show: (pattern: Pattern, uncorrected: boolean, next?: number) => void;
+  show: (
+    pattern: Pattern,
+    uncorrected: boolean,
+    next?: number,
+    returnTo?: number,
+  ) => void;
   resume: () => void;
   finish: () => void;
   cancel: () => void;
   leave: () => void;
 }) {
-  const section = sections[current.section];
+  const words = wordsOf(current);
   const sectionIndex = sectionOrder.indexOf(current.section);
   const inSection = screens.filter((item) => item.section === current.section);
   const position = inSection.indexOf(current);
   const values = draft ? correctionOf(draft) : noCorrection;
+  const go = (to: number, from?: number) =>
+    show(screens[to]!.pattern, false, to, from);
   const slider = (control: keyof typeof correctionLimits) => (
     <RangeField
       key={control}
@@ -509,7 +571,28 @@ function StepScreen({
       {...correctionLimits[control]}
     />
   );
-  const hue = current.hue;
+  const primary = primaryOf(current.section);
+  const primarySlider = (
+    name: Primary,
+    control: keyof typeof primaryLimits,
+    ends: readonly [string, string],
+  ) => (
+    <RangeField
+      key={control}
+      className={`slider-${name}-${control}`}
+      path={`${path}.${name}.${control}`}
+      label={endsLabel(ends)}
+      ends={ends}
+      value={values[name][control]}
+      onChange={(value) =>
+        correct({ [name]: { ...values[name], [control]: value } })
+      }
+      format={signed}
+      {...primaryLimits[control]}
+    />
+  );
+  const reset = resetOf(current.section, values);
+  const review = current.section === 'review';
   return (
     <>
       <div className="card-heading">
@@ -532,7 +615,7 @@ function StepScreen({
             className={index < sectionIndex ? 'done' : undefined}
             aria-current={index === sectionIndex ? 'step' : undefined}
           >
-            {sections[id].label}
+            {sections[id]}
           </li>
         ))}
       </ol>
@@ -561,7 +644,7 @@ function StepScreen({
         </>
       ) : (
         <>
-          {heading(section.title)}
+          {heading(words.title)}
           <p
             className="calibrate-pattern"
             data-pattern={current.pattern}
@@ -572,13 +655,7 @@ function StepScreen({
               ? ` (${position + 1} of ${inSection.length})`
               : ''}
           </p>
-          <p className="intro">{section.lead}</p>
-          {hue === 'blue' ? (
-            <p className="help">
-              If the wall blue looks purple, move toward cyan; if it looks teal,
-              toward magenta.
-            </p>
-          ) : null}
+          <p className="intro">{words.lead}</p>
           {draft ? (
             <FieldScopeProvider value={live.scope}>
               <div key={live.generation} className="calibrate-controls">
@@ -588,21 +665,41 @@ function StepScreen({
                     {slider('tint')}
                   </>
                 ) : null}
-                {hue ? (
-                  <RangeField
-                    className={`slider-hue slider-hue-${hue}`}
-                    path={`${path}.hue.${hue}`}
-                    {...hueText(hue)}
-                    value={values.hue[hue]}
-                    onChange={(value) =>
-                      correct({ hue: { ...values.hue, [hue]: value } })
-                    }
-                    format={signed}
-                    {...hueLimits[hue]}
-                  />
+                {primary ? (
+                  <>
+                    {primarySlider(primary.name, 'hue', primary.hue)}
+                    {primarySlider(primary.name, 'strength', strengthEnds)}
+                  </>
                 ) : null}
-                {current.section === 'intensity' ? slider('intensity') : null}
-                {current.section === 'review' ? (
+                {reset ? (
+                  <div className="calibrate-reset">
+                    <button
+                      type="button"
+                      className="quiet"
+                      disabled={locked || !reset.changed}
+                      onClick={() => correct(reset.to)}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                ) : null}
+                {current.fixes ? (
+                  <p className="calibrate-fixes">
+                    Not quite?
+                    {current.fixes.map((fix) => (
+                      <button
+                        key={fix}
+                        type="button"
+                        className="link"
+                        disabled={locked}
+                        onClick={() => go(screenOf(fix), screen)}
+                      >
+                        {fixLabels[fix]}
+                      </button>
+                    ))}
+                  </p>
+                ) : null}
+                {review ? (
                   <TextField
                     path="calibration.name"
                     label="Name"
@@ -632,29 +729,16 @@ function StepScreen({
           </button>
           {notices}
           <div className="actions">
-            {screen > 0 ? (
+            {screen > 0 && returnTo === null ? (
               <button
                 type="button"
                 disabled={locked}
-                onClick={() =>
-                  show(screens[screen - 1]!.pattern, false, screen - 1)
-                }
+                onClick={() => go(screen - 1)}
               >
                 Back
               </button>
             ) : null}
-            {screen < screens.length - 1 ? (
-              <button
-                type="button"
-                className="primary"
-                disabled={locked}
-                onClick={() =>
-                  show(screens[screen + 1]!.pattern, false, screen + 1)
-                }
-              >
-                Next
-              </button>
-            ) : (
+            {review ? (
               <button
                 type="button"
                 className="primary"
@@ -662,6 +746,15 @@ function StepScreen({
                 onClick={finish}
               >
                 Finish
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                disabled={locked}
+                onClick={() => go(returnTo ?? screen + 1)}
+              >
+                Looks right
               </button>
             )}
           </div>

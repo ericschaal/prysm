@@ -185,30 +185,24 @@ pub struct CorrectionControlsSchema {
     /// Positive lightens midtones, negative darkens them.
     #[schema(minimum = -100, maximum = 100)]
     midtones: i16,
-    /// Positive saturates, negative desaturates.
-    #[schema(minimum = -100, maximum = 100)]
-    intensity: i16,
-    hue: HueControlsSchema,
+    red: PrimaryControlsSchema,
+    green: PrimaryControlsSchema,
+    blue: PrimaryControlsSchema,
 }
 
-// Mirrors `prysm_ports::HueControls`.
-/// Hue shift per wheel anchor, each -100 to 100.
+// Mirrors `prysm_ports::PrimaryControls`.
+/// One picture primary's controls, each -100 to 100; white never moves.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[schema(as = HueControls)]
+#[schema(as = PrimaryControls)]
 #[serde(deny_unknown_fields)]
-pub struct HueControlsSchema {
+pub struct PrimaryControlsSchema {
+    /// Positive turns toward the next primary in red, green, blue order,
+    /// negative toward the previous one.
     #[schema(minimum = -100, maximum = 100)]
-    red: i16,
+    hue: i16,
+    /// Negative makes the colour softer, positive stronger.
     #[schema(minimum = -100, maximum = 100)]
-    yellow: i16,
-    #[schema(minimum = -100, maximum = 100)]
-    green: i16,
-    #[schema(minimum = -100, maximum = 100)]
-    cyan: i16,
-    #[schema(minimum = -100, maximum = 100)]
-    blue: i16,
-    #[schema(minimum = -100, maximum = 100)]
-    magenta: i16,
+    strength: i16,
 }
 
 // Mirrors `prysm_ports::CalibrationPattern`.
@@ -449,7 +443,7 @@ impl ToSchema for OutputSettings {}
     StyleValuesSchema,
     CalibrationSchema,
     CorrectionControlsSchema,
-    HueControlsSchema,
+    PrimaryControlsSchema,
     LightingTargetSchema,
     CalibrationPatternSchema,
     PatternSchema,
@@ -604,8 +598,9 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
-        DeviceBrightness, FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue,
-        Pattern, Processing, Result, SessionPhase, Settings, Style, StyleValues, ValidationError,
+        DeviceBrightness, FrameSource, Input, Latency, LightingTarget, OutputIssue, Pattern,
+        PrimaryControls, Processing, Result, SessionPhase, Settings, Style, StyleValues,
+        ValidationError,
     };
     use serde_json::json;
 
@@ -646,8 +641,18 @@ mod tests {
                             warmth: 12,
                             tint: -4,
                             midtones: 3,
-                            intensity: 20,
-                            hue: HueControls::from_array([1, -2, 3, -4, 5, -6]),
+                            red: PrimaryControls {
+                                hue: 1,
+                                strength: -2,
+                            },
+                            green: PrimaryControls {
+                                hue: 3,
+                                strength: -4,
+                            },
+                            blue: PrimaryControls {
+                                hue: 5,
+                                strength: -6,
+                            },
                         },
                     },
                     Calibration {

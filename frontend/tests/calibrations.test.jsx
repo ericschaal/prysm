@@ -10,6 +10,7 @@ import {
 } from '@prysm/web-portal';
 import {
   $,
+  $$,
   button,
   click,
   edit,
@@ -30,12 +31,14 @@ const output = {
 };
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const unchanged = { hue: 0, strength: 0 };
 const zero = {
   warmth: 0,
   tint: 0,
   midtones: 0,
-  intensity: 0,
-  hue: { red: 0, yellow: 0, green: 0, cyan: 0, blue: 0, magenta: 0 },
+  red: unchanged,
+  green: unchanged,
+  blue: unchanged,
 };
 const settle = () => act(async () => sleep(processingDelayMs + 100));
 const saves = (fixture) =>
@@ -105,7 +108,18 @@ test('calibrations are rows; each opens its page, saved live, deleted with Undo'
       ['range', '-100', '100', '1'],
     );
     await edit(warmth, 25);
-    await edit(field('processing.calibrations[1].correction.hue.cyan'), -10);
+    // Red, green and blue as in Calibrate: two sliders named by their ends.
+    assert.deepEqual(
+      $$('.calibration-page legend').map((legend) => legend.textContent),
+      ['Red', 'Green', 'Blue'],
+    );
+    const blueHue = field('processing.calibrations[1].correction.blue.hue');
+    assert.equal(
+      blueHue.labels[0].textContent,
+      'More turquoise or more purple',
+    );
+    await edit(blueHue, -10);
+    await edit(field('processing.calibrations[1].correction.blue.strength'), 6);
     assert.equal(
       warmth.parentElement.querySelector('output').textContent,
       '+25',
@@ -114,7 +128,7 @@ test('calibrations are rows; each opens its page, saved live, deleted with Undo'
     assert.deepEqual(processing(fixture).calibrations[1].correction, {
       ...zero,
       warmth: 25,
-      hue: { ...zero.hue, cyan: -10 },
+      blue: { hue: -10, strength: 6 },
     });
 
     // Deleted from its page; the list keeps its row, with Undo.

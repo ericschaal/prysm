@@ -1,6 +1,6 @@
 //! Saved calibrations, in the controls a user edits.
 use crate::{Section, ValidationError};
-use prysm_core::ColorCorrection;
+use prysm_core::{ColorCorrection, PrimaryAdjustment};
 use serde::{Deserialize, Serialize};
 
 /// Most calibrations one settings file may hold.
@@ -35,60 +35,27 @@ pub struct CorrectionControls {
     pub tint: i16,
     /// Positive lightens midtones, negative darkens them.
     pub midtones: i16,
-    /// Chroma: positive saturates, negative desaturates.
-    pub intensity: i16,
-    pub hue: HueControls,
+    pub red: PrimaryControls,
+    pub green: PrimaryControls,
+    pub blue: PrimaryControls,
 }
 
-/// Hue shift per wheel anchor, each -100 to 100. Positive turns toward the
-/// next anchor in red, yellow, green, cyan, blue, magenta order.
+/// One picture primary's controls, each -100 to 100. White stays as the
+/// white balance leaves it whatever they are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct HueControls {
-    pub red: i16,
-    pub yellow: i16,
-    pub green: i16,
-    pub cyan: i16,
-    pub blue: i16,
-    pub magenta: i16,
+pub struct PrimaryControls {
+    /// Positive turns the colour toward the next primary in red, green, blue
+    /// order (red more orange, green more turquoise, blue more purple),
+    /// negative toward the previous one (more pink, yellow, turquoise).
+    pub hue: i16,
+    /// Negative makes the colour softer, positive stronger.
+    pub strength: i16,
 }
 
-impl HueControls {
-    /// Wheel order, as [`ColorCorrection::with_chroma`] takes them.
-    #[must_use]
-    pub const fn to_array(self) -> [i16; 6] {
-        [
-            self.red,
-            self.yellow,
-            self.green,
-            self.cyan,
-            self.blue,
-            self.magenta,
-        ]
-    }
-
-    #[must_use]
-    pub const fn from_array([red, yellow, green, cyan, blue, magenta]: [i16; 6]) -> Self {
-        Self {
-            red,
-            yellow,
-            green,
-            cyan,
-            blue,
-            magenta,
-        }
-    }
-
-    fn named(self) -> [(&'static str, i16); 6] {
-        let [red, yellow, green, cyan, blue, magenta] = self.to_array();
-        [
-            ("red", red),
-            ("yellow", yellow),
-            ("green", green),
-            ("cyan", cyan),
-            ("blue", blue),
-            ("magenta", magenta),
-        ]
+impl From<PrimaryControls> for PrimaryAdjustment {
+    fn from(PrimaryControls { hue, strength }: PrimaryControls) -> Self {
+        Self { hue, strength }
     }
 }
 
@@ -96,21 +63,26 @@ impl CorrectionControls {
     /// # Errors
     /// The first control outside -100..=100, named under `field`.
     pub fn validate(&self, field: &str) -> Result<(), ValidationError> {
-        let plain = [
-            ("warmth", self.warmth),
-            ("tint", self.tint),
-            ("midtones", self.midtones),
-            ("intensity", self.intensity),
-        ]
-        .map(|(name, value)| (format!("{field}.{name}"), value));
-        let hue = self
-            .hue
-            .named()
-            .map(|(name, value)| (format!("{field}.hue.{name}"), value));
-        for (name, value) in plain.into_iter().chain(hue) {
-            if !(-100..=100).contains(&value) {
-                return Err(ValidationError::new(name, "must be -100 to 100"));
+        let check = |name: &str, value: i16| {
+            if (-100..=100).contains(&value) {
+                Ok(())
+            } else {
+                Err(ValidationError::new(
+                    format!("{field}.{name}"),
+                    "must be -100 to 100",
+                ))
             }
+        };
+        check("warmth", self.warmth)?;
+        check("tint", self.tint)?;
+        check("midtones", self.midtones)?;
+        for (name, primary) in [
+            ("red", self.red),
+            ("green", self.green),
+            ("blue", self.blue),
+        ] {
+            check(&format!("{name}.hue"), primary.hue)?;
+            check(&format!("{name}.strength"), primary.strength)?;
         }
         Ok(())
     }
@@ -123,36 +95,9 @@ impl CorrectionControls {
     #[must_use]
     pub fn to_core(&self) -> Option<ColorCorrection> {
         ColorCorrection::new(self.warmth, self.tint, self.midtones)
-            .and_then(|c| c.with_chroma(self.intensity, self.hue.to_array()))
+            .and_then(|c| c.with_primaries([self.red, self.green, self.blue].map(Into::into)))
             .ok()
     }
-
-    /// Recover the controls a [`ColorCorrection`] was built from. Exact for
-    /// every correction [`CorrectionControls::to_core`] returns.
-    #[must_use]
-    pub fn from_core(correction: &ColorCorrection) -> Self {
-        // to_core: gains = 2^(w/200), 2^(-t/200), 2^(-w/200), divided by their
-        // maximum (which cancels in ratios); tone = 2^(-m/100).
-        let [red, green, blue] = correction.gains();
-        let warmth = 100.0 * (red / blue).log2();
-        let tint = warmth - 200.0 * (green / blue).log2();
-        let midtones = -100.0 * correction.tone().log2();
-        Self {
-            warmth: control(warmth),
-            tint: control(tint),
-            midtones: control(midtones),
-            intensity: correction.intensity(),
-            hue: HueControls::from_array(correction.hue()),
-        }
-    }
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "rounded and clamped to the control range first"
-)]
-fn control(value: f32) -> i16 {
-    value.round().clamp(-100.0, 100.0) as i16
 }
 
 /// Check a calibration list and its active reference. Fields are named under
@@ -240,43 +185,32 @@ mod tests {
     }
 
     #[test]
-    fn controls_map_to_core_and_back_exactly() {
+    fn controls_map_to_the_core_correction() {
         assert_eq!(
             CorrectionControls::default().to_core().unwrap(),
             ColorCorrection::default()
         );
-        // Every white-balance pair, across the midtone range.
-        for warmth in -100..=100 {
-            for tint in -100..=100 {
-                for midtones in [-100, -37, 0, 1, 64, 100] {
-                    let controls = CorrectionControls {
-                        warmth,
-                        tint,
-                        midtones,
-                        ..CorrectionControls::default()
-                    };
-                    let core = controls.to_core().unwrap();
-                    assert_eq!(
-                        core,
-                        ColorCorrection::new(warmth, tint, midtones).unwrap(),
-                        "{controls:?}"
-                    );
-                    assert_eq!(CorrectionControls::from_core(&core), controls);
-                }
-            }
-        }
-        for value in -100..=100 {
-            let controls = CorrectionControls {
-                midtones: value,
-                intensity: value,
-                hue: HueControls::from_array([value, -value, 0, value / 2, 100, -100]),
-                ..CorrectionControls::default()
-            };
-            let core = controls.to_core().unwrap();
-            assert_eq!(core.intensity(), value);
-            assert_eq!(core.hue(), controls.hue.to_array());
-            assert_eq!(CorrectionControls::from_core(&core), controls);
-        }
+        let red = PrimaryControls {
+            hue: 20,
+            strength: -35,
+        };
+        let blue = PrimaryControls {
+            hue: -100,
+            strength: 100,
+        };
+        let controls = CorrectionControls {
+            warmth: 12,
+            tint: -4,
+            midtones: 6,
+            red,
+            blue,
+            ..CorrectionControls::default()
+        };
+        let expected = ColorCorrection::new(12, -4, 6)
+            .unwrap()
+            .with_primaries([red.into(), PrimaryAdjustment::default(), blue.into()])
+            .unwrap();
+        assert_eq!(controls.to_core().unwrap(), expected);
     }
 
     #[test]
@@ -287,15 +221,62 @@ mod tests {
         };
         assert_eq!(bad.validate("c").unwrap_err().field, "c.tint");
         assert_eq!(bad.to_core(), None);
-        let bad = CorrectionControls {
-            hue: HueControls {
-                cyan: 101,
-                ..HueControls::default()
-            },
-            ..CorrectionControls::default()
-        };
-        assert_eq!(bad.validate("c").unwrap_err().field, "c.hue.cyan");
-        assert_eq!(bad.to_core(), None);
+        for (primary, field) in [
+            (
+                PrimaryControls {
+                    hue: 101,
+                    strength: 0,
+                },
+                "c.green.hue",
+            ),
+            (
+                PrimaryControls {
+                    hue: 0,
+                    strength: -101,
+                },
+                "c.green.strength",
+            ),
+        ] {
+            let bad = CorrectionControls {
+                green: primary,
+                ..CorrectionControls::default()
+            };
+            assert_eq!(bad.validate("c").unwrap_err().field, field);
+            assert_eq!(bad.to_core(), None);
+        }
+    }
+
+    #[test]
+    fn controls_are_read_and_written_with_every_field() {
+        let json = serde_json::json!({
+            "warmth": 5,
+            "red": { "hue": 10 },
+            "blue": { "strength": -20 }
+        });
+        let controls: CorrectionControls = serde_json::from_value(json).unwrap();
+        assert_eq!(controls.red.hue, 10);
+        assert_eq!(controls.blue.strength, -20);
+        let written = serde_json::to_value(controls).unwrap();
+        assert_eq!(
+            written,
+            serde_json::json!({
+                "warmth": 5, "tint": 0, "midtones": 0,
+                "red": { "hue": 10, "strength": 0 },
+                "green": { "hue": 0, "strength": 0 },
+                "blue": { "hue": 0, "strength": -20 }
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<CorrectionControls>(written).unwrap(),
+            controls
+        );
+        for unknown in [
+            serde_json::json!({ "intensity": 0 }),
+            serde_json::json!({ "hue": { "red": 0 } }),
+            serde_json::json!({ "red": { "saturation": 0 } }),
+        ] {
+            assert!(serde_json::from_value::<CorrectionControls>(unknown).is_err());
+        }
     }
 
     #[test]
@@ -336,10 +317,10 @@ mod tests {
         .unwrap();
 
         let mut out_of_range = calibration("a", "A");
-        out_of_range.correction.hue.magenta = -101;
+        out_of_range.correction.red.strength = -101;
         assert_eq!(
             field(&[calibration("b", "B"), out_of_range], None),
-            "processing.calibrations[1].correction.hue.magenta"
+            "processing.calibrations[1].correction.red.strength"
         );
 
         let many: Vec<_> = (0..=MAX_CALIBRATIONS)

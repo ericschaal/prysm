@@ -275,16 +275,19 @@
         "calibrations": [
           {
             "correction": {
-              "hue": {
-                "blue": 0,
-                "cyan": 0,
-                "green": 0,
-                "magenta": 0,
-                "red": -5,
-                "yellow": 0
+              "blue": {
+                "hue": 0,
+                "strength": 0
               },
-              "intensity": 15,
+              "green": {
+                "hue": 0,
+                "strength": 0
+              },
               "midtones": 6,
+              "red": {
+                "hue": -5,
+                "strength": -15
+              },
               "tint": -4,
               "warmth": 12
             },
@@ -293,16 +296,19 @@
           },
           {
             "correction": {
-              "hue": {
-                "blue": 0,
-                "cyan": 0,
-                "green": 0,
-                "magenta": 0,
-                "red": 0,
-                "yellow": 0
+              "blue": {
+                "hue": 0,
+                "strength": 0
               },
-              "intensity": 0,
+              "green": {
+                "hue": 0,
+                "strength": 0
+              },
               "midtones": 0,
+              "red": {
+                "hue": 0,
+                "strength": 0
+              },
               "tint": 0,
               "warmth": 0
             },
@@ -409,16 +415,19 @@
           "calibrations": [
             {
               "correction": {
-                "hue": {
-                  "blue": 0,
-                  "cyan": 0,
-                  "green": 0,
-                  "magenta": 0,
-                  "red": -5,
-                  "yellow": 0
+                "blue": {
+                  "hue": 0,
+                  "strength": 0
                 },
-                "intensity": 15,
+                "green": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "midtones": 6,
+                "red": {
+                  "hue": -5,
+                  "strength": -15
+                },
                 "tint": -4,
                 "warmth": 12
               },
@@ -427,16 +436,19 @@
             },
             {
               "correction": {
-                "hue": {
-                  "blue": 0,
-                  "cyan": 0,
-                  "green": 0,
-                  "magenta": 0,
-                  "red": 0,
-                  "yellow": 0
+                "blue": {
+                  "hue": 0,
+                  "strength": 0
                 },
-                "intensity": 0,
+                "green": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "midtones": 0,
+                "red": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "tint": 0,
                 "warmth": 0
               },
@@ -537,16 +549,19 @@
           "calibrations": [
             {
               "correction": {
-                "hue": {
-                  "blue": 0,
-                  "cyan": 0,
-                  "green": 0,
-                  "magenta": 0,
-                  "red": -5,
-                  "yellow": 0
+                "blue": {
+                  "hue": 0,
+                  "strength": 0
                 },
-                "intensity": 15,
+                "green": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "midtones": 6,
+                "red": {
+                  "hue": -5,
+                  "strength": -15
+                },
                 "tint": -4,
                 "warmth": 12
               },
@@ -555,16 +570,19 @@
             },
             {
               "correction": {
-                "hue": {
-                  "blue": 0,
-                  "cyan": 0,
-                  "green": 0,
-                  "magenta": 0,
-                  "red": 0,
-                  "yellow": 0
+                "blue": {
+                  "hue": 0,
+                  "strength": 0
                 },
-                "intensity": 0,
+                "green": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "midtones": 0,
+                "red": {
+                  "hue": 0,
+                  "strength": 0
+                },
                 "tint": 0,
                 "warmth": 0
               },

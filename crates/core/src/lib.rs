@@ -3,7 +3,7 @@ mod color;
 mod color_strip;
 mod config;
 mod correction;
-pub use correction::ColorCorrection;
+pub use correction::{ColorCorrection, PrimaryAdjustment};
 mod frame;
 mod linear;
 pub mod nv12;

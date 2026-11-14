@@ -281,6 +281,7 @@ export function RangeField({
   max,
   step,
   format = String,
+  ends,
   onPress,
   onRelease,
 }: FieldProps & {
@@ -290,6 +291,11 @@ export function RangeField({
   max: number;
   step: number;
   format?: (value: number) => string;
+  /**
+   * What the minimum and maximum do, shown at the ends in place of the
+   * label, which stays the slider's accessible name.
+   */
+  ends?: readonly [string, string];
   /** The pointer or a key went down on the slider: a change may follow. */
   onPress?: () => void;
   /** It came up, or the slider lost focus or the pointer. */
@@ -315,10 +321,21 @@ export function RangeField({
   } as CSSProperties;
   return (
     <div className={classes('field range', className)}>
-      <div className="range-heading">
-        <label htmlFor={field.id}>{label}</label>
-        <output htmlFor={field.id}>{format(value)}</output>
-      </div>
+      {ends ? (
+        <div className="range-heading range-ends">
+          <label htmlFor={field.id} className="visually-hidden">
+            {label}
+          </label>
+          <span aria-hidden="true">{ends[0]}</span>
+          <output htmlFor={field.id}>{format(value)}</output>
+          <span aria-hidden="true">{ends[1]}</span>
+        </div>
+      ) : (
+        <div className="range-heading">
+          <label htmlFor={field.id}>{label}</label>
+          <output htmlFor={field.id}>{format(value)}</output>
+        </div>
+      )}
       <input
         {...field.control}
         type="range"

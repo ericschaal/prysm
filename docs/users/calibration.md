@@ -19,14 +19,20 @@ have not been tested on a TV with Prysm 1.x.
    You can also open **Settings → Calibrations → New calibration** in the
    portal.
 3. Start a new calibration, or start from a copy of a saved one.
-4. Follow the steps. Each shows a pattern on the TV:
-   - **White balance:** make the wall as neutral as the grey on the TV with
+4. Follow the steps. Each shows a pattern on the TV and asks one question.
+   If it already looks right, tap **Looks right**.
+   - **White:** make the wall as neutral as the grey on the TV with
      **Warmth** and **Tint**. Ignore brightness.
-   - **Hues:** change a colour only if the wall leans towards a neighbouring
-     colour.
-   - **Intensity:** compare each half of the TV with the wall behind it.
-   - **Mixed colours:** check that colours stay distinct side by side.
+   - **Red, Green, Blue:** compare each half of the TV with the wall. The
+     first slider turns the colour (for red: **More pink** or **More
+     orange**), the second makes it **Softer** or **Stronger**. Adjusting a
+     colour does not change white.
+   - **Checks:** yellow, cyan, magenta and three mixed scenes. If one does not
+     match, tap the colour it links to (for yellow: **Adjust red** or
+     **Adjust green**); **Looks right** there brings you back to the check.
    - **Review:** name the calibration and finish.
+
+   **Reset** puts the sliders on the screen you are on back to 0.
 5. Press Back on the TV to leave. The lights stay on.
 
 Changes show on the wall as you move a slider. A button compares the wall
@@ -40,7 +46,7 @@ keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 
 - **Home:** tap a calibration to use it, or **No correction**.
 - **Settings → Calibrations:** choose a calibration to rename it, adjust its
-  colours or delete it; make a new one with **New calibration**.
+  colours (the same sliders as when calibrating, plus **Midtones**) or delete it; make a new one with **New calibration**.
 
 Calibrations do not change brightness, smoothing or other picture settings,
 and do not switch with the TV's input. Check the result with the content you

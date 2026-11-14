@@ -155,7 +155,8 @@ supervisor in each of its states and play the phone's calibration part). See the
     changes reach a running session without restarting it. [Calibrations](packages/web-portal/calibrations.tsx)
     (`#/settings/calibrations`): one row each ("In use" or "Not in use") opening
     the calibration's page (`#/settings/calibrations/<id>`: name, an "In use" switch,
-    correction and hue shift, Reset, Delete). A deleted calibration keeps its row
+    warmth, tint, midtones, then red, green and blue with the wizard's two
+    sliders each, Reset, Delete). A deleted calibration keeps its row
     in the list with Undo for 5 s (kept by the portal across the two pages);
     the "New calibration" row opens Calibrate. Home's brightness changes
     the lights while it is dragged (pointer or keys): each value is tried
@@ -197,9 +198,12 @@ supervisor in each of its states and play the phone's calibration part). See the
     `#/calibrate` ("New calibration" in Calibrations, which it
     returns to; Home's chip while there are no calibrations; the TV's QR code
     points there, and leaving returns Home). Start creates a draft calibration (new, or a copy of
-    one) and makes it active; white balance (`gray-192`), one hue per colour,
-    intensity (`red-pair`, `green-pair`, `blue-pair`), mixed colours and a
-    review each show their pattern on the TV (`setCalibration`); sliders
+    one) and makes it active; white (`gray-192`: warmth, tint), red, green
+    and blue (`red-pair`, `green-pair`, `blue-pair`: two sliders each, named
+    by their ends), checks without sliders (`yellow`, `cyan`, `magenta`,
+    `coast`, `garden`, `dusk`: "Looks right", or a link to a colour it is made
+    of, which comes back to the check) and a review each show their pattern
+    on the TV (`setCalibration`); each adjusting screen has its own Reset; sliders
     save live through `useLiveProcessing`, as the calibrations page does. Finish names
     it, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on

@@ -545,6 +545,14 @@ button.link {
   justify-content: space-between;
   gap: var(--space-3);
 }
+/* A slider named by its ends: what each end does, its value between them. */
+.range-ends {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.range-ends > span:last-child {
+  text-align: right;
+}
 .range output {
   color: var(--text-2);
   font-size: var(--text-body);

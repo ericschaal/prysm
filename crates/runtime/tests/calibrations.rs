@@ -210,7 +210,7 @@ async fn invalid_calibrations_are_rejected_before_persistence() {
         let mut unknown_active = initial.clone();
         unknown_active.processing.active_calibration = Some("gone".into());
         let mut out_of_range = initial.clone();
-        out_of_range.processing.calibrations[1].correction.hue.blue = 101;
+        out_of_range.processing.calibrations[1].correction.blue.hue = 101;
         let mut too_many = initial.clone();
         too_many.processing.calibrations = (0..=MAX_CALIBRATIONS)
             .map(|i| calibration(&format!("c{i}"), 0))
@@ -226,7 +226,7 @@ async fn invalid_calibrations_are_rejected_before_persistence() {
             (unknown_active, "processing.active_calibration"),
             (
                 out_of_range,
-                "processing.calibrations[1].correction.hue.blue",
+                "processing.calibrations[1].correction.blue.hue",
             ),
             (too_many, "processing.calibrations"),
             (bad_name, "processing.calibrations[0].name"),

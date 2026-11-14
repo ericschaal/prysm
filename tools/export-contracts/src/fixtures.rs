@@ -7,7 +7,7 @@ use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls, Error,
-    HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision,
+    Input, Latency, LightingTarget, OutputIssue, Pattern, PrimaryControls, Processing, Revision,
     Section, SessionPhase, SessionState, Settings, Snapshot, Style, StyleValues, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
@@ -100,11 +100,11 @@ fn with_calibrations() -> Settings {
                         warmth: 12,
                         tint: -4,
                         midtones: 6,
-                        intensity: 15,
-                        hue: HueControls {
-                            red: -5,
-                            ..HueControls::default()
+                        red: PrimaryControls {
+                            hue: -5,
+                            strength: -15,
                         },
+                        ..CorrectionControls::default()
                     },
                 },
                 Calibration {
