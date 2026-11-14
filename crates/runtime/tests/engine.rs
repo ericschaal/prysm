@@ -870,7 +870,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
         assert_eq!(reported.output_issue, Some(OutputIssue::Overridden));
         assert_eq!(
             reported.output_brightness,
-            Some(DeviceBrightness { percent: 40 }),
+            DeviceBrightness::from_percent(40),
             "the device's own brightness goes with the issue"
         );
         assert_eq!(reported.session, SessionState::Running);

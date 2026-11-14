@@ -36,9 +36,27 @@ pub struct FrontendAsset {
     pub bytes: &'static [u8],
     /// `bytes` gzip-compressed, sent to clients that accept gzip.
     pub gzip: Option<&'static [u8]>,
-    /// The path names the content (a hash in the file name), so clients may
-    /// keep it for good; otherwise they ask again on every load.
-    pub immutable: bool,
+    pub caching: Caching,
+}
+
+/// How long a browser may keep a [`FrontendAsset`]. Everything else the
+/// portal sends is never stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caching {
+    /// Checked again on every load: the page, which names the current files.
+    Revalidate,
+    /// Kept for good: the path names the content (a hash in the file name).
+    Immutable,
+}
+
+impl Caching {
+    /// The `Cache-Control` value.
+    pub(crate) const fn header(self) -> &'static str {
+        match self {
+            Self::Revalidate => "no-cache",
+            Self::Immutable => "public, max-age=31536000, immutable",
+        }
+    }
 }
 
 /// The portal surface. Construction validates the assets and access;

@@ -126,7 +126,7 @@ for (const { host, surface } of assemblies) {
       gzip = `Some(include_bytes!("${file}.gz"))`;
     }
     assets.push(
-      `    prysm_web_portal::FrontendAsset { path: "/${file}", content_type: "${contentType}", bytes: include_bytes!("${file}"), gzip: ${gzip}, immutable: ${immutable} },`,
+      `    prysm_web_portal::FrontendAsset { path: "/${file}", content_type: "${contentType}", bytes: include_bytes!("${file}"), gzip: ${gzip}, caching: prysm_web_portal::Caching::${immutable ? 'Immutable' : 'Revalidate'} },`,
     );
   }
   await writeFile(

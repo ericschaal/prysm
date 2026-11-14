@@ -9,11 +9,12 @@ use tokio::time::{Instant, Interval, MissedTickBehavior};
 /// How often [`Snapshot::input`] is measured and republished.
 const MEASURE: Duration = Duration::from_secs(1);
 
-/// A window counts as saturated when its frames took at least this share of
-/// the loop's time (received to written, against the time from one frame
-/// being done to the next): little or no idle time waiting for the next
-/// frame, so frames are being dropped. Both are sums over the same frames, so
-/// a frame in progress at the window's edge does not count as idle.
+/// A window counts as saturated when the loop spent at least this share of
+/// its time for the window's frames working on them (received to written)
+/// rather than waiting for them: newer frames replace older ones before they
+/// are taken, so frames are being dropped. Both sums cover the same frames
+/// ([`Stats::cycles`]), so a frame in progress at the window's edge counts in
+/// neither and never as waiting.
 const SATURATED: f64 = 0.85;
 
 /// Consecutive windows that set [`Behind`] (saturated) or clear it (not), so
@@ -52,9 +53,10 @@ impl Pace {
 
 /// One window's verdict: which step, if the loop had no slack. `busy` is the
 /// received-to-written time of the window's flushed frames, `processing` its
-/// received-to-processed part, `elapsed` the loop time those frames took.
-fn verdict(busy: Duration, processing: Duration, elapsed: Duration) -> Behind {
-    if elapsed.is_zero() || busy.as_secs_f64() < SATURATED * elapsed.as_secs_f64() {
+/// received-to-processed part, `cycles` the loop time those frames took,
+/// waiting for them included.
+fn verdict(busy: Duration, processing: Duration, cycles: Duration) -> Behind {
+    if cycles.is_zero() || busy.as_secs_f64() < SATURATED * cycles.as_secs_f64() {
         return Behind::None;
     }
     let output = busy.saturating_sub(processing);
@@ -106,7 +108,7 @@ impl Meter {
         reason = "per-second frame counts and spans are far below f64 precision and f32 range"
     )]
     pub(crate) fn sample(&mut self, stats: &Stats) -> Input {
-        let (counters, captured) = (stats.read(), stats.captured());
+        let (counters, captured, cycles) = (stats.read(), stats.captured(), stats.cycles());
         let now = Instant::now();
         let window = now.duration_since(self.at);
         let elapsed = window.as_secs_f64();
@@ -128,9 +130,7 @@ impl Meter {
             .processing
             .total
             .saturating_sub(self.last.processing.total);
-        let cycles = stats.cycles();
         let spent = cycles.total.saturating_sub(self.last_cycles.total);
-        self.last_cycles = cycles;
         let behind = self.pace.window(verdict(output, processing, spent));
         // Capture to received, only when every flushed frame had a capture time.
         let stamped = captured.count.saturating_sub(self.last_captured.count);
@@ -138,6 +138,7 @@ impl Meter {
             .then(|| captured.total.saturating_sub(self.last_captured.total));
         self.last = counters;
         self.last_captured = captured;
+        self.last_cycles = cycles;
         self.at = now;
         let tenth = |value: f64| ((value * 10.0).round() / 10.0) as f32;
         let rate = |counted: u64| {

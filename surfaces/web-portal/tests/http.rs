@@ -5,7 +5,7 @@ use prysm_runtime::fakes::{
     self, CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
 use prysm_runtime::{EngineHandle, Prysm, Shutdown};
-use prysm_web_portal::{Access, FrontendAsset, WebPortal};
+use prysm_web_portal::{Access, Caching, FrontendAsset, WebPortal};
 use reqwest::{Method, RequestBuilder, StatusCode, header};
 use serde_json::{Value, json};
 use std::future::Future;
@@ -21,7 +21,7 @@ const ASSETS: &[FrontendAsset] = &[
         content_type: "text/html; charset=utf-8",
         bytes: b"<!doctype html><title>Prysm</title>",
         gzip: None,
-        immutable: false,
+        caching: Caching::Revalidate,
     },
     FrontendAsset {
         path: "/assets/app.js",
@@ -29,7 +29,7 @@ const ASSETS: &[FrontendAsset] = &[
         bytes: b"console.log('prysm')",
         // Stands in for the compressed script: the portal sends it as it is.
         gzip: Some(b"compressed"),
-        immutable: true,
+        caching: Caching::Immutable,
     },
 ];
 const LIMIT: Duration = Duration::from_secs(10);
@@ -252,7 +252,7 @@ async fn asset_serving_and_unauthenticated_api() {
             assert_secure_kept(&script, kept);
             assert_eq!(script.bytes().await.unwrap().as_ref(), b"compressed");
         }
-        for refused in ["br", "gzip;q=0", "identity"] {
+        for refused in ["br", "gzip;q=0", "identity", "gzip;q=0, *"] {
             let script = client
                 .get(url("/assets/app.js"))
                 .header(header::ACCEPT_ENCODING, refused)

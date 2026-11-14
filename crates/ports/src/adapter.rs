@@ -1,6 +1,7 @@
-use crate::{Result, Settings};
+use crate::{Result, Settings, ValidationError};
 use prysm_core::{EdgeColors, Frame};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 /// What [`FrameSource::next_frame`] produced.
@@ -82,26 +83,53 @@ pub trait LedOutput: Send {
 }
 
 /// The device's own brightness while it scales Prysm's colours: the LEDs
-/// show them at `percent` of the brightness Prysm asks for. Prysm reports it
-/// and never changes it; the device's owner sets it there.
+/// show them at [`percent`](Self::percent) of the brightness Prysm asks for.
+/// Prysm reports it and never changes it; the device's owner sets it there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "UncheckedBrightness")]
 pub struct DeviceBrightness {
-    /// 0 to 100.
-    pub percent: u8,
+    percent: u8,
 }
 
 impl DeviceBrightness {
-    /// `level` of `full` (WLED: 0–255), rounded to a whole percent; a lit
-    /// device never reads 0 %.
+    /// `percent` of the brightness Prysm asks for; `None` above 100.
     #[must_use]
-    pub fn of(level: u32, full: u32) -> Self {
-        let level = level.min(full);
-        let percent = (level * 100 + full / 2)
-            .checked_div(full)
-            .map_or(100, |percent| percent.max(u32::from(level > 0)));
+    pub fn from_percent(percent: u8) -> Option<Self> {
+        (percent <= 100).then_some(Self { percent })
+    }
+
+    /// `level` of `full` (WLED: 0–255), rounded to a whole percent; a level
+    /// above `full` is full, and a lit device never reads 0 %.
+    #[must_use]
+    pub fn of(level: u32, full: NonZeroU32) -> Self {
+        let full = u64::from(full.get());
+        let level = u64::from(level).min(full);
+        let percent = ((level * 100 + full / 2) / full).max(u64::from(level > 0));
         Self {
+            // Never above 100: `level` is at most `full`.
             percent: u8::try_from(percent).unwrap_or(100),
         }
+    }
+
+    /// 0 to 100.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.percent
+    }
+}
+
+/// A [`DeviceBrightness`] as it arrives, before its range is checked.
+#[derive(Deserialize)]
+struct UncheckedBrightness {
+    percent: u8,
+}
+
+impl TryFrom<UncheckedBrightness> for DeviceBrightness {
+    type Error = ValidationError;
+
+    fn try_from(unchecked: UncheckedBrightness) -> Result<Self, ValidationError> {
+        Self::from_percent(unchecked.percent)
+            .ok_or_else(|| ValidationError::new("percent", "must be at most 100"))
     }
 }
 
@@ -171,4 +199,40 @@ pub trait SettingsStore: Send {
     /// `Ok(None)`: nothing saved yet.
     fn load(&mut self) -> Result<Option<Settings>>;
     fn save(&mut self, settings: &Settings) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_brightness_rounds_to_whole_percent_and_a_lit_device_is_never_zero() {
+        let of = |level| DeviceBrightness::of(level, NonZeroU32::new(255).unwrap()).percent();
+        assert_eq!(of(255), 100);
+        assert_eq!(of(128), 50);
+        assert_eq!(of(1), 1);
+        assert_eq!(of(0), 0);
+        assert_eq!(of(300), 100);
+        assert_eq!(
+            DeviceBrightness::of(u32::MAX, NonZeroU32::MAX).percent(),
+            100
+        );
+    }
+
+    #[test]
+    fn device_brightness_is_at_most_full() {
+        assert_eq!(
+            DeviceBrightness::from_percent(100).map(DeviceBrightness::percent),
+            Some(100)
+        );
+        assert_eq!(DeviceBrightness::from_percent(101), None);
+        let decoded: DeviceBrightness = serde_json::from_str(r#"{"percent":40}"#).unwrap();
+        assert_eq!(decoded.percent(), 40);
+        assert_eq!(
+            serde_json::to_string(&decoded).unwrap(),
+            r#"{"percent":40}"#
+        );
+        let error = serde_json::from_str::<DeviceBrightness>(r#"{"percent":101}"#).unwrap_err();
+        assert!(error.to_string().contains("at most 100"), "{error}");
+    }
 }

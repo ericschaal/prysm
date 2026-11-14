@@ -20,6 +20,7 @@ use prysm_ports::{DeviceBrightness, OutputIssue, chain};
 use serde::Deserialize;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 /// How often WLED's state is checked while it answers.
@@ -40,7 +41,7 @@ const MAX_REPLY: usize = 64 * 1024;
 /// within half a minute at no extra request.
 const CONFIG_EVERY: u32 = 30;
 /// WLED's brightness scale: `bri` is 0–255.
-const FULL: u32 = 255;
+const FULL: NonZeroU32 = NonZeroU32::new(255).unwrap();
 
 /// What a check asks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,12 +111,12 @@ impl Observer {
     pub fn brightness(&self) -> Option<DeviceBrightness> {
         let config = self.config?;
         let bri = if config.force_max {
-            FULL
+            FULL.get()
         } else {
             u32::from(self.bri?)
         };
-        // WLED's `scaledBri`: the factor scales and full brightness caps it.
-        let level = (bri * u32::from(config.scale) / 100).min(FULL);
+        // WLED's `scaledBri`: the factor scales it, capped at full (by `of`).
+        let level = bri * u32::from(config.scale) / 100;
         Some(DeviceBrightness::of(level, FULL))
     }
 
@@ -176,7 +177,7 @@ impl Observer {
                 self.every * BACKOFF
             };
         match answer {
-            Ok(config) => self.config = Some(config.interfaces.live.into_realtime(&config.light)),
+            Ok(config) => self.config = Some(config.into()),
             Err(error) => tracing::debug!(
                 device = %self.device,
                 error = %chain(&error),
@@ -355,31 +356,24 @@ struct Live {
     maxbri: bool,
 }
 
-impl Live {
-    fn into_realtime(self, light: &Light) -> Realtime {
-        Realtime {
-            force_max: self.maxbri,
-            scale: light.scale,
-        }
-    }
-}
-
 #[derive(Deserialize)]
+#[serde(default)]
 struct Light {
-    #[serde(rename = "scale-bri", default = "Light::full")]
+    #[serde(rename = "scale-bri")]
     scale: u8,
-}
-
-impl Light {
-    const fn full() -> u8 {
-        100
-    }
 }
 
 impl Default for Light {
     fn default() -> Self {
+        Self { scale: 100 }
+    }
+}
+
+impl From<Config> for Realtime {
+    fn from(config: Config) -> Self {
         Self {
-            scale: Self::full(),
+            force_max: config.interfaces.live.maxbri,
+            scale: config.light.scale,
         }
     }
 }

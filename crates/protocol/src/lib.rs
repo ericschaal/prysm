@@ -310,7 +310,7 @@ mod tests {
                 ..Input::default()
             }),
             output_issue: Some(OutputIssue::OtherSender),
-            output_brightness: Some(DeviceBrightness { percent: 40 }),
+            output_brightness: DeviceBrightness::from_percent(40),
             ..Snapshot::default()
         };
         let running = Snapshot {

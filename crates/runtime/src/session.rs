@@ -112,8 +112,8 @@ struct SessionLoop {
     /// The last colors written and when.
     last: Option<(EdgeColors, Instant)>,
     last_frame: Instant,
-    /// When the frame before the current one was done.
-    previous: Option<Instant>,
+    /// When the last frame was done; `None` before the first.
+    previous_done: Option<Instant>,
     open_output: OpenOutput,
     control: Arc<Control>,
     /// What [`Control::observed`] holds, so it is written only on a change.
@@ -150,7 +150,7 @@ impl SessionLoop {
             .write(&colors, processed, &mut self.open_output, &self.stats);
         // Recorded whether or not the write worked.
         self.stats.frame(FrameTimes {
-            previous: self.previous.replace(Instant::now()),
+            previous_done: self.previous_done.replace(Instant::now()),
             received,
             captured,
             processed,
@@ -245,7 +245,7 @@ impl Session {
             leds: Leds::Untouched,
             last: None,
             last_frame: Instant::now(),
-            previous: None,
+            previous_done: None,
             open_output,
             control: control.clone(),
             reported: Observed::default(),

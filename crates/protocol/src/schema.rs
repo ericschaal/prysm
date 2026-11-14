@@ -633,7 +633,9 @@ mod tests {
         ] {
             same_shape::<OutputIssue, OutputIssueSchema>(&issue);
         }
-        same_shape::<DeviceBrightness, DeviceBrightnessSchema>(&DeviceBrightness { percent: 40 });
+        same_shape::<DeviceBrightness, DeviceBrightnessSchema>(
+            &DeviceBrightness::from_percent(40).unwrap(),
+        );
         for phase in [
             SessionPhase::Running,
             SessionPhase::ClosingSource,

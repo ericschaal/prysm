@@ -861,7 +861,7 @@ fn at(bri: u8) -> Reply {
     )
 }
 fn percent(percent: u8) -> Option<DeviceBrightness> {
-    Some(DeviceBrightness { percent })
+    DeviceBrightness::from_percent(percent)
 }
 
 #[test]
@@ -971,13 +971,4 @@ fn an_open_output_reports_wled_brightness() {
     device.get_request("/json/cfg");
     output.idle(IdleMode::Off).unwrap();
     device.expect(&[release(), off()]);
-}
-
-#[test]
-fn device_brightness_rounds_to_whole_percent_and_a_lit_device_is_never_zero() {
-    assert_eq!(DeviceBrightness::of(255, 255).percent, 100);
-    assert_eq!(DeviceBrightness::of(128, 255).percent, 50);
-    assert_eq!(DeviceBrightness::of(1, 255).percent, 1);
-    assert_eq!(DeviceBrightness::of(0, 255).percent, 0);
-    assert_eq!(DeviceBrightness::of(300, 255).percent, 100);
 }

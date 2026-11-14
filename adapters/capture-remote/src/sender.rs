@@ -349,15 +349,11 @@ fn upgrade(url: &Uri, socket: TcpStream) -> Result<Link<MaybeTlsStream<TcpStream
         HeaderValue::from_static(CAPTURE_PROTOCOL),
     );
     let connector = match url.scheme_str() {
-        Some("wss") => Some(Connector::Rustls(authorities().ok_or_else(|| {
-            Error::adapter(
-                format!("cannot open {url}"),
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "the system has no certificate authorities",
-                ),
-            )
-        })?)),
+        Some("wss") => {
+            Some(Connector::Rustls(authorities().map_err(|none| {
+                Error::adapter(format!("cannot open {url}"), none)
+            })?))
+        }
         _ => None,
     };
     // A request or a control is the longest message this end reads.
@@ -380,12 +376,14 @@ fn upgrade(url: &Uri, socket: TcpStream) -> Result<Link<MaybeTlsStream<TcpStream
 }
 
 /// TLS verification against the system's certificate authorities, loaded
-/// once per process (`None`: there are none). Loading is the slow part of a
-/// `wss://` connect: on macOS it asks the trust daemon about every keychain
-/// certificate, which takes seconds; elsewhere it parses the system bundle.
-/// `SSL_CERT_FILE` and `SSL_CERT_DIR` replace the system's set, read here.
-fn authorities() -> Option<Arc<rustls::ClientConfig>> {
-    static CONFIG: OnceLock<Option<Arc<rustls::ClientConfig>>> = OnceLock::new();
+/// once per process: the answer, including that there are none, holds until
+/// a restart. Loading is the slow part of a `wss://` connect: on macOS it
+/// asks the trust daemon about every keychain certificate, which takes
+/// seconds; elsewhere it parses the system bundle. `SSL_CERT_FILE` and
+/// `SSL_CERT_DIR` replace the system's set, read here.
+fn authorities() -> Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>> {
+    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, Arc<NoAuthorities>>> =
+        OnceLock::new();
     CONFIG
         .get_or_init(|| {
             let loaded = rustls_native_certs::load_native_certs();
@@ -395,16 +393,26 @@ fn authorities() -> Option<Arc<rustls::ClientConfig>> {
             let mut roots = rustls::RootCertStore::empty();
             let (added, ignored) = roots.add_parsable_certificates(loaded.certs);
             tracing::debug!(added, ignored, "certificate authorities loaded");
-            (added > 0).then(|| {
-                Arc::new(
-                    rustls::ClientConfig::builder()
-                        .with_root_certificates(roots)
-                        .with_no_client_auth(),
-                )
-            })
+            if added == 0 {
+                // The first load failure, if any, says why (a missing
+                // `SSL_CERT_FILE`, say); the rest were logged above.
+                let cause = loaded.errors.into_iter().next();
+                return Err(Arc::new(NoAuthorities(cause)));
+            }
+            Ok(Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            ))
         })
         .clone()
 }
+
+/// No `wss://` connection can be verified: not one certificate authority
+/// loaded.
+#[derive(Debug, thiserror::Error)]
+#[error("the system has no certificate authorities")]
+struct NoAuthorities(#[source] Option<rustls_native_certs::Error>);
 
 /// The receiver's first message: its request. A peer that closes or stays
 /// silent sent none.

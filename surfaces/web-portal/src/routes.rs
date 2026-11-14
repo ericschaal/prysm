@@ -120,7 +120,7 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
 }
 
 /// `GET` or `HEAD` of a bundle file: gzip-compressed for clients that accept
-/// it, kept for good when its name carries its hash, else checked every load.
+/// it, cached as the asset says.
 fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response {
     if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return not_found();
@@ -136,12 +136,11 @@ fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response
         gzip.unwrap_or(asset.bytes),
     );
     let headers = response.headers_mut();
-    let cache = if asset.immutable {
-        "public, max-age=31536000, immutable"
-    } else {
-        "no-cache"
-    };
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(asset.caching.header()),
+    );
+    // Either answer depends on `Accept-Encoding`, so caches keep both apart.
     if asset.gzip.is_some() {
         headers.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
     }
@@ -151,23 +150,32 @@ fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response
     response
 }
 
-/// Whether `Accept-Encoding` lists gzip (or `*`) without refusing it (`q=0`).
+/// Whether `Accept-Encoding` accepts gzip: it names gzip, or else `*`,
+/// without `q=0` (RFC 9110, 12.5.3). Without the header, or with neither,
+/// the file is sent as it is.
 fn accepts_gzip(headers: &header::HeaderMap) -> bool {
-    headers
+    let (mut gzip, mut any) = (None, None);
+    let codings = headers
         .get_all(header::ACCEPT_ENCODING)
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .any(|coding| {
-            let mut parts = coding.split(';').map(str::trim);
-            let name = parts.next().unwrap_or_default();
-            let refused = parts.any(|part| {
-                part.strip_prefix("q=")
-                    .and_then(|q| q.parse::<f32>().ok())
-                    .is_some_and(|q| q == 0.0)
-            });
-            (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
-        })
+        .flat_map(|value| value.split(','));
+    for coding in codings {
+        let mut parts = coding.split(';').map(str::trim);
+        let name = parts.next().unwrap_or_default();
+        let accepted = !parts.any(|parameter| {
+            parameter.split_once('=').is_some_and(|(key, q)| {
+                // Zero is "0", "0.0" and so on: exactly 0 as a float.
+                key.trim().eq_ignore_ascii_case("q") && q.trim().parse::<f32>() == Ok(0.0)
+            })
+        });
+        if name.eq_ignore_ascii_case("gzip") {
+            gzip = Some(accepted);
+        } else if name == "*" {
+            any = Some(accepted);
+        }
+    }
+    gzip.or(any).unwrap_or(false)
 }
 
 /// One API path's methods. A known path with another method is `405`, an
@@ -391,5 +399,53 @@ impl Events {
             _ = self.keepalive.tick() => KEEPALIVE_COMMENT,
         };
         Some((Frame::data(event), self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accepts_gzip;
+    use hyper::header::{ACCEPT_ENCODING, HeaderMap, HeaderValue};
+
+    fn accepts(values: &[&'static str]) -> bool {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(ACCEPT_ENCODING, HeaderValue::from_static(value));
+        }
+        accepts_gzip(&headers)
+    }
+
+    #[test]
+    fn gzip_is_sent_when_accept_encoding_names_it_or_any_coding() {
+        for accepted in [
+            &["gzip"][..],
+            &["gzip, deflate, br, zstd"],
+            &["GZip;q=0.5"],
+            &["gzip; Q=0.001"],
+            &["*"],
+            &["br;q=0", "*;q=0.1"],
+            &["br", "gzip"],
+            &["gzip;q=0", "gzip"],
+        ] {
+            assert!(accepts(accepted), "{accepted:?}");
+        }
+    }
+
+    #[test]
+    fn gzip_is_not_sent_when_refused_or_not_named() {
+        for refused in [
+            &[][..],
+            &[""],
+            &["identity"],
+            &["br, deflate"],
+            &["gzip;q=0"],
+            &["gzip; q=0.000"],
+            &["*;q=0"],
+            // Named gzip outranks `*` either way.
+            &["gzip;q=0, *"],
+            &["*", "gzip;q=0"],
+        ] {
+            assert!(!accepts(refused), "{refused:?}");
+        }
     }
 }

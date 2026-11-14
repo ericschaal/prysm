@@ -295,7 +295,7 @@ impl LedOutput for FakeOutput {
         self.settings
             .brightness
             .filter(|_| self.writes > 0)
-            .map(|percent| DeviceBrightness { percent })
+            .and_then(DeviceBrightness::from_percent)
     }
 
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {

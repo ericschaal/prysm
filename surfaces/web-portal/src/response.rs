@@ -40,15 +40,13 @@ pub(crate) fn bytes(
 /// other sites (clickjacking). Applied to every response, assets and API alike.
 pub(crate) const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; frame-ancestors 'none'";
 
+/// The headers every response carries. `Cache-Control` is `no-store` unless
+/// the response set its own: only an asset does, from its [`Caching`](crate::Caching).
 pub(crate) fn secure(response: &mut Response) {
     let headers = response.headers_mut();
-    // Bundle files say how long they keep; nothing else is ever stored.
-    if !headers.contains_key(header::CACHE_CONTROL) {
-        headers.insert(
-            header::CACHE_CONTROL,
-            header::HeaderValue::from_static("no-store"),
-        );
-    }
+    headers
+        .entry(header::CACHE_CONTROL)
+        .or_insert(header::HeaderValue::from_static("no-store"));
     for (name, value) in [
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
