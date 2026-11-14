@@ -255,3 +255,45 @@ letterboxed scene is confirmed between 1.5 and 3 s once at least half of its sca
 see the bars. Detector cost on this Mac, with a scan on every frame of `sintel-s3`:
 0.73 → 0.73 ms at 640×360, 1.57 → 1.21 ms at 1280×720 and 2.44 → 1.34 ms at
 1920×1080. Nothing was run on the TV.
+
+## Follow-up 2026-11-14: an independent check, and 320×180 as a preset
+
+Why: the portal is to offer capture presets (640×360 by default, 320×180 as the
+lighter one), so the cost of 320×180 had to be stated honestly. This check used another
+film and another method, and agrees with the tables above.
+
+Method: "Tears of Steel" (2012, © Blender Foundation, mango.blender.org,
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/),
+`tears_of_steel_1080p.mov`, 1920×800), one frame every 7 s (105 frames), once
+letterboxed into 1920×1080 and once cropped to 1422×800 without bars, reduced with
+`scale=…:flags=area` and delivered as RGB. Each frame was shown to a fresh default
+processor for 2 s (60 frames) and the 162 LED colours taken from the last one. Processor
+at `bd70d6f`; the "every pixel" runs had the sampler's pixel budget lifted for the run
+only. No video or tool is committed; [`ledrun.rs`](ledrun.rs) does the same job.
+
+| Comparison (largest channel difference per LED, sRGB steps) | Mean | p99 | Max | > 2 | > 4 | > 8 | Colour difference ΔE76: median / p95 / max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Full size, lattice vs every pixel (letterboxed) | 1.53 | 7 | 14 | 21.0 % | 8.8 % | 0.22 % | 0.60 / 2.0 / 5.7 |
+| Full size, lattice vs every pixel (no bars) | 0.81 | 5 | 16 | 5.1 % | 1.3 % | 0.15 % | 0.42 / 1.2 / 6.9 |
+| 640×360 vs every pixel of full size (letterboxed) | 3.60 | 18 | 26 | 53.6 % | 28.7 % | 5.05 % | 1.17 / 3.3 / 10.9 |
+| 640×360 vs every pixel of full size (no bars) | 1.57 | 13 | 17 | 15.8 % | 7.9 % | 3.03 % | 0.55 / 2.7 / 6.8 |
+| 320×180 vs 640×360 (letterboxed) | 2.58 | 14 | 29 | 33.5 % | 14.6 % | 4.64 % | 0.83 / 3.4 / 15.9 |
+| 320×180 vs 640×360 (no bars) | 2.10 | 14 | 20 | 25.1 % | 12.4 % | 3.61 % | 0.70 / 3.0 / 10.4 |
+
+Reading it:
+
+- The pixel budget costs little: the typical LED differs by less than a just-noticeable
+  colour difference (ΔE about 2.3) from reading every pixel, and 97.5–99 % of LEDs stay
+  under it. It is not literally nothing: a few LEDs on fine bright detail differ by up to
+  14–16 steps.
+- 640×360 is not the same as full size, but the difference is mostly the scaler and the
+  crop, as found above, and the lattice at full size is closer to the reference than a
+  640×360 capture is.
+- 320×180 has a real, small cost against 640×360: about one LED in ten differs by more
+  than a just-noticeable amount, 1.5–2 % by more than ΔE 5, and the lights are slightly
+  softer (0.3 LED, above). So the preset's description must name a cost, and 320×180
+  should not become the default.
+- The letterboxed figures are higher than the no-bars ones because the detected picture
+  area differs by up to 0.4–0.6 % of the frame between sizes.
+
+Limits: stills, not motion; one film; the scaler is ffmpeg's box filter, not the TV's.
