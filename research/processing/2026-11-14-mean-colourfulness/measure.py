@@ -86,6 +86,7 @@ def main(path):
     full, local = kernels()
     data = open(path, "rb")
     size = W * H * 3
+    per_frame = []
     rows = []  # (L_out, C_out, C_seen, C_anchor, C_sel, dE out->sel)
     index = 0
     while True:
@@ -93,7 +94,7 @@ def main(path):
         if len(frame) < size:
             break
         index += 1
-        if index % STEP:
+        if index % STEP or not (LO <= index <= HI) or index in SKIP:
             continue
         rgb = cells(frame)
         lab = [oklab(*c) for c in rgb]
@@ -136,7 +137,10 @@ def main(path):
                 math.hypot(as_, bs),
                 math.sqrt((ls - lo) ** 2 + (as_ - ao) ** 2 + (bs - bo) ** 2),
             ))
-        print(f"frame {index}", file=sys.stderr, flush=True)
+        fr = rows[-256:]
+        k = sorted(r[1] / r[2] for r in fr if r[2] > 0.02 and r[0] > 0.2)
+        over = sum(r[5] / 0.02 > 2 for r in fr) / 256
+        per_frame.append((index, k[len(k) // 2] if k else 1.0, over))
     lit = [row for row in rows if row[0] > 0.2]
     print(f"LED samples: {len(rows)}, lit (L > 0.2): {len(lit)}")
     for name, col in (("out (today)", 1), ("seen", 2), ("anchor", 3), ("selective", 4)):
@@ -149,5 +153,10 @@ def main(path):
     de = [row[5] / 0.02 for row in lit]
     print(f"selective vs today, in JND (0.02): median {pct(de, .5):.1f} p90 {pct(de, .9):.1f} share over 2 JND: {sum(d > 2 for d in de)/len(de):.1%}")
 
+    worst = sorted(per_frame, key=lambda f: -f[2])[:6]
+    print('frames where selective differs most (frame, median kept, share over 2 JND):', [(i, round(k, 2), round(o, 2)) for i, k, o in worst])
 
+
+LO, HI = int(sys.argv[2]), int(sys.argv[3])
+SKIP = set(map(int, sys.argv[4].split(','))) if len(sys.argv) > 4 else set()
 main(sys.argv[1])

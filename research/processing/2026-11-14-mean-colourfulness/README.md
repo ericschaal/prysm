@@ -14,25 +14,37 @@ each LED win it back?
 
 ## Finding
 
-Little is lost, and a selective sampler would rarely be visible. The typical LED keeps
-85–90 % of the colourfulness in its view, because the kernel's local peak already makes
-each LED look mostly at what is next to it. A selective sampler changes the colour by
-more than two just-noticeable steps on about 1 LED in 100. It would also redo the
-weights every frame, estimated at 8–12 ms per frame on the TV. It is not worth building;
-a plain saturation control gives a more colourful wall for almost nothing.
+Over a whole film little is lost, but it depends on the scene. The typical LED keeps
+86–88 % of the colourfulness in its view, because the kernel's local peak already makes
+each LED look mostly at what is next to it, and a selective sampler changes the colour by
+more than two just-noticeable steps on about 1 LED in 100. In the few scenes where
+strongly different colours share the frame (Tears of Steel's pink and green holograms)
+it changes about 1 LED in 4. It would also redo the weights every frame, estimated at
+8–12 ms per frame on the TV. Deferred: not worth building for content like these films;
+content full of clashing colours (neon, games, music videos) was not measured.
+
+Story frames only (credits and title cards left out):
 
 | | Tears of Steel (live action, muted) | Big Buck Bunny (animation, colourful) |
 | --- | --- | --- |
-| Frames (every other one of one per 7 s / 6 s) | 52 | 49 |
-| Colourfulness kept, median LED | 85 % | 90 % |
-| Colourfulness kept, lowest tenth of LEDs | 54 % | 61 % |
-| LEDs keeping less than half | 8.2 % | 5.5 % |
-| Selective sampler's chroma gain, median / top tenth | 3 % / 24 % | 8 % / 31 % |
-| LEDs where selective differs by more than 2 steps | 1.4 % | 0.8 % |
+| Frames | 41 | 40 |
+| Colourfulness kept, median LED | 86 % | 88 % |
+| Colourfulness kept, lowest tenth of LEDs | 57 % | 60 % |
+| LEDs keeping less than half | 6.8 % | 5.6 % |
+| Selective sampler's chroma gain, median / top tenth | 2 % / 18 % | 9 % / 32 % |
+| LEDs where selective differs by more than 2 steps | 1.6 % | 0.6 % |
+| The most affected frame: LEDs differing by more than 2 steps | 25 % (hologram scene) | 8 % |
 
 "Kept" is the Oklab chroma of the averaged colour over the weighted mean of the cells'
 own chroma, for LEDs whose view has chroma above 0.02. A step is an Oklab distance of
 0.02.
+
+The first run (same day) sampled the whole files without looking at the frames: about
+one frame in six was credits or a title card. Leaving those out moved the film-wide
+numbers by a point or two; the per-scene spread only showed once frames were listed
+one by one. Edge depth barely matters: at 10 %, 30 % and 60 % reach the median kept is
+90 %, 88 % and 87 % (Big Buck Bunny, 25 frames, credits included), because the kernel's
+broad tail brings in the whole picture at any reach.
 
 ## Method
 
@@ -45,8 +57,11 @@ grey cells less, and keeps the plain average's brightness.
 
 ```sh
 ffmpeg -i film.mov -vf "fps=1/7,scale=640:360:flags=area" -pix_fmt rgb24 -f rawvideo frames.rgb
-python3 measure.py frames.rgb
+python3 measure.py frames.rgb FIRST LAST [SKIP,SKIP]   # frame numbers, from 1
 ```
+
+Story frames: Tears of Steel (one frame per 7 s) 2–84 without 10; Big Buck Bunny (one
+per 6 s) 1–81 without 4; every other frame of those.
 
 The films are Blender's open movies; they are not kept in the repository.
 
@@ -54,7 +69,9 @@ The films are Blender's open movies; they are not kept in the repository.
 
 - A model, not the processor: a coarser grid than the real one (64×36 against about
   82×46), and frames scaled by ffmpeg in gamma space.
-- Two films, about fifty stills each; no motion, so nothing about flicker.
+- Two films, about forty stills each; no motion, so nothing about flicker. Neither has
+  many scenes of clashing colours, where the difference is largest.
+- Tears of Steel is 2.40:1; its frames were stretched to 16:9, not cropped.
 - One setting of the selective sampler; a narrower agreement width would change more
   LEDs, and would also be less stable.
 - Numbers, not eyes: whether the remaining loss matters on a wall was not judged.
