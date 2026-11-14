@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: v1-e2e-nightly-${{ github.ref }}
+  group: e2e-nightly-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: v1-e2e-nightly-report
+          name: e2e-nightly-report
           path: frontend/.e2e
           include-hidden-files: true
           retention-days: 7

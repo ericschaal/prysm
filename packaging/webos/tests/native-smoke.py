@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native smoke test of a v1 TV supervisor under an isolated probe identity.
+"""Native smoke test of a TV supervisor under an isolated probe identity.
 
 Runs the cargo binaries from a webOS build (build-ipk.sh, or cargo with
 env.sh and --profile webos) on a rooted TV over SSH, never the installed
@@ -32,7 +32,7 @@ import sys
 import time
 
 HERE = Path(__file__).resolve().parents[1]
-V1 = HERE.parents[1]
+ROOT = HERE.parents[1]
 
 
 def manifest_version():
@@ -41,7 +41,7 @@ def manifest_version():
     spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
     ipk = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ipk)
-    return ipk.app_version(ipk.workspace_version((V1 / 'Cargo.toml').read_text()))
+    return ipk.app_version(ipk.workspace_version((ROOT / 'Cargo.toml').read_text()))
 APP = 'io.prysm.tv.probe'
 SERVICE = APP + '.service'
 MANIFEST = f'/var/luna-service2/manifests.d/{APP}.json'
@@ -314,7 +314,7 @@ def main():
     parser.add_argument('--supervisor', action='store_true', help='setup, app-only API, fake worker, uninstall')
     parser.add_argument('--capture', action='store_true', help='the real worker (implies --supervisor)')
     parser.add_argument('--prysm', help='slim --capture: a running Prysm with the remote source and lighting on, http://HOST:8787')
-    parser.add_argument('--build-dir', type=Path, default=V1 / 'target', help='Cargo target directory')
+    parser.add_argument('--build-dir', type=Path, default=ROOT / 'target', help='Cargo target directory')
     parser.add_argument('--run-for', type=int, help='probe lifetime in seconds, 10 to 300 (30; 120 with --supervisor)')
     parser.add_argument('--dry-run', action='store_true', help='print the probe files; touch no TV')
     args = parser.parse_args()

@@ -76,7 +76,7 @@ Conflicts: prysm-led
 Section: video
 Priority: optional
 Homepage: https://github.com/ericschaal/prysm
-Description: Prysm ambient lighting, v1 headless host
+Description: Prysm ambient lighting, headless host
  Captures video from a V4L2 device or a capture-only TV and drives WLED
  LEDs from its edges. A web portal on port 8787 configures and controls it.
  Runs as the prysm-headless systemd service with settings in

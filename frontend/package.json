@@ -1,5 +1,5 @@
 {
-  "name": "prysm-v1-frontend",
+  "name": "prysm-frontend",
   "private": true,
   "type": "module",
   "workspaces": [

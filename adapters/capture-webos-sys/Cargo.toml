@@ -19,7 +19,7 @@ tempfile.workspace = true
 [build-dependencies]
 cc = "1"
 
-# One of the three v1 crates allowed to use `unsafe` (with webos-luna-sys and h264-rvenc-sys). Every block carries a SAFETY note.
+# One of the four crates allowed to use `unsafe` (with capture-device-sys, webos-luna-sys and h264-rvenc-sys). Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

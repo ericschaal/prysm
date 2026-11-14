@@ -1,5 +1,5 @@
 //! LG webOS Luna service bus (LS2) and a private GLib main loop behind a safe
-//! API. The only Luna binding in v1: `prysm-capture-webos-sys` uses
+//! API. The only Luna binding in the workspace: `prysm-capture-webos-sys` uses
 //! [`check_registration`] from here.
 //!
 //! - [`run`]: register a service name with methods, keep subscription calls

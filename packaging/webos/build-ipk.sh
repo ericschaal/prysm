@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build one v1 TV package: io.prysm.tv-<flavour>_<version>_all.ipk, full or slim
+# Build one TV package: io.prysm.tv-<flavour>_<version>_all.ipk, full or slim
 # flavour. Both install as app io.prysm.tv with service io.prysm.tv.service,
 # so installing one replaces the other. Builds do not install or deploy.
 #

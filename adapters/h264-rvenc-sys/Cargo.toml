@@ -20,8 +20,9 @@ gstreamer-allocators = "0.25"
 libc = "0.2"
 memmap2 = "0.9"
 
-# One of the v1 crates allowed to use `unsafe` (DMA-BUF allocation, mapping
-# and synchronisation). Every block carries a SAFETY note.
+# One of the four crates allowed to use `unsafe` (with capture-device-sys,
+# capture-webos-sys and webos-luna-sys): DMA-BUF allocation, mapping and
+# synchronisation. Every block carries a SAFETY note.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

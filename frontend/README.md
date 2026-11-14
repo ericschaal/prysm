@@ -1,4 +1,4 @@
-# Prysm v1 frontend
+# Prysm frontend
 
 An isolated npm workspace with its own lockfile. Node.js 24+ and Rust are
 required; codegen runs the Rust contract exporter.

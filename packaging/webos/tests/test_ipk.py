@@ -1,4 +1,4 @@
-"""Host tests for the v1 TV package files and ipk.py (no SDK needed)."""
+"""Host tests for the TV package files and ipk.py (no SDK needed)."""
 import importlib.util
 import io
 import json
@@ -202,7 +202,7 @@ class PackageTests(unittest.TestCase):
             (complete((ipk.APP + 'evil', 'link')), 'unexpected link'),
             (complete()[:-1], 'missing package files'),
             (complete((ipk.APP + 'index.html', 'file')), 'duplicate package file'),
-            # The old app's paths are not part of a v1 package.
+            # The earlier app's paths are not part of a package.
             (complete(('usr/palm/services/io.prysm.capture.service/x', 'file')), 'unexpected package path'),
         ]
         for data, error in cases:

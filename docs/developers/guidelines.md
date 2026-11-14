@@ -5,7 +5,7 @@
 Use Conventional Commits for commit messages and PR titles:
 `feat:`, `fix:`, `perf:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`,
 `chore:`, `style:`, or `revert:`. Add a scope when useful, such as
-`fix(v1): keep the receiver port after a failed save`. Mark breaking changes
+`fix(capture-remote): keep the receiver port after a failed save`. Mark breaking changes
 with `!`. Squash-merge PRs using their title as the commit title.
 
 Releases: [releasing](releasing.md).

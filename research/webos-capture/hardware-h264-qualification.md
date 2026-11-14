@@ -5,7 +5,8 @@
 reduced input overhead in short target-TV samples. No universal performance claim follows.
 **Platform and limits:** project webOS 25 TV, stated resolutions and workloads.
 Earlier RGB/NV16, UI-fallback and composition results describe removed paths.
-**Current contract:** [hardware H.264](../../docs/developers/hardware-h264.md).
+**Current contract:** [two TV packages, explicit stream encoding](../../docs/developers/decisions/2026-11-12-two-tv-packages.md)
+and the [slim encoder check](../../packaging/README.md#checking-the-slim-h264-encoder-on-a-tv).
 
 ## Combined capture observation (0.1.22)
 

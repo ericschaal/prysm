@@ -1,12 +1,12 @@
-# Prysm v1
+# Workspace
 
-A rewrite of Prysm around one runtime and plain blocking adapters. Concurrency
-lives in [`prysm-runtime`](../../crates/runtime/src/lib.rs): one engine task owns
-settings and intent, one session thread owns a source, the processor and an
-output. Adapters are single-trait objects with no channels or state machines.
-Design and rationale: [simplified runtime](../plans/prysm-v1-simplified-runtime.md).
-v1 is the product and replaces the earlier implementation (tag
-`pre-1.0-consolidation`).
+Prysm is one Cargo workspace at the repository root plus the npm workspace in
+[`frontend/`](../../frontend/README.md). Concurrency lives in
+[`prysm-runtime`](../../crates/runtime/src/lib.rs): one engine task owns settings
+and intent, one session thread owns a source, the processor and an output.
+Adapters are single-trait objects with no channels or state machines. Design
+and rationale: [simplified runtime](../plans/prysm-v1-simplified-runtime.md).
+The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 ## Layout
 
@@ -26,8 +26,13 @@ Contracts: [ownership and generation](contracts.md), [portal HTTP](../../surface
 
 | Host | Sources | Outputs | Surfaces |
 | --- | --- | --- | --- |
-| `prysm-headless` (production, Docker) | `device`, `file`¹, `remote` | `wled`, `null` | web portal |
+| `prysm-headless` (production: Docker, Debian) | `device`, `file`¹, `remote` | `wled`, `null` | web portal |
 | `prysm-tui` (local testing) | `device`, `file`¹, `remote` | `wled`, `null` | web portal, terminal |
+| `prysm-webos` (full TV package) | `webos` | `wled` | web portal, link to the TV supervisor |
+| `prysm-webos-slim` (slim TV package) | TV capture sent to a desktop host's `remote` source; no engine | — | link to the TV supervisor |
+
+The two TV workers run under the supervisor `prysm-webos-service`; see
+[LG TV](webos.md). The rest of this section is about the two desktop hosts.
 
 ¹ `file` is for development only: it plays a video file through FFmpeg, which
 Prysm does not ship. It works only where FFmpeg 9 or newer is installed and on

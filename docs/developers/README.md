@@ -82,7 +82,9 @@ build needs the webOS SDK. Tests on a TV are separate and manual
 
 ## Topics
 
-[Architecture](architecture.md) · [Portal API and settings](control-api.md) ·
+[Workspace map](workspace.md) · [Architecture](architecture.md) ·
+[Contracts](contracts.md) · [UI assemblies](ui-assemblies.md) ·
+[Portal API and settings](control-api.md) ·
 [Frontend](frontend.md) · [Calibration](calibration.md) · [LG TV](webos.md) ·
 [Packaging](packaging.md) · [Releasing](releasing.md) ·
 [Monitoring](monitoring.md) · [Errors](error-handling.md) ·

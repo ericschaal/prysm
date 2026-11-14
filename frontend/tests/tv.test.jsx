@@ -1,7 +1,8 @@
 /**
  * The TV app on the real Luna client over an in-memory supervisor, and the
- * portal over the application fixture. Ported from the root TV app's
- * behaviour tests (crates/web/prysm-webos/tests/app.test.cjs) to v1 state.
+ * portal over the application fixture. Ported from the earlier TV app's
+ * behaviour tests (crates/web/prysm-webos/tests/app.test.cjs in the tag
+ * `pre-1.0-consolidation`) to the current state.
  */
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';

@@ -1,6 +1,6 @@
 [Unit]
-Description=Prysm ambient lighting (v1 headless host)
-Documentation=https://github.com/ericschaal/prysm/tree/main/v1/packaging
+Description=Prysm ambient lighting
+Documentation=https://github.com/ericschaal/prysm/tree/main/packaging
 Wants=network-online.target
 After=network-online.target
 

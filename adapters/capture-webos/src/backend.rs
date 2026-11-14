@@ -10,7 +10,8 @@ use prysm_ports::{Error, Result};
 use std::fs::File;
 use std::path::Path;
 
-/// Shared with the pre-v1 capturer so the two never open the tap together.
+/// Shared with the earlier capturer (`io.prysm.capture`) so the two never open
+/// the tap together.
 const LOCK: &str = "/tmp/prysm-capture.lock";
 
 /// Take the exclusive capture lock. Held until the backend is dropped, which

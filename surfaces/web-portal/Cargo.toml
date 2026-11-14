@@ -19,7 +19,7 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-# The preview's JPEG encoder, as the shipping portal uses it; decoding is for tests.
+# The preview's JPEG encoder (the earlier portal used the same); decoding is for tests.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 base64 = "0.23"
 # The upgrade's accept key; the remote source speaks the WebSocket itself.

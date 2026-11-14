@@ -6,7 +6,7 @@
 | Debian package `prysm-headless` | Same Dockerfile, `deb` target | `prysm-headless_<version>_<arch>.deb` |
 | TV packages, full and slim | [build-ipk.sh](../../packaging/webos/build-ipk.sh) | `io.prysm.tv-full_<version>_all.ipk`, `io.prysm.tv-slim_<version>_all.ipk` |
 
-Reference: [v1 packaging](../../packaging/README.md). Builds never install
+Reference: [packaging](../../packaging/README.md). Builds never install
 or deploy. Release builds: [releasing](releasing.md).
 
 ## Docker

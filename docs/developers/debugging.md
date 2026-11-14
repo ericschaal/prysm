@@ -71,7 +71,7 @@ None of these have been run against Prysm 1.x yet; results belong in
   the real worker.
 - **TV, slim encoder:** with the Prysm service disabled, the installed slim
   worker can check one encoder without capture or a receiver
-  (`check-encoder`; see [v1 packaging](../../packaging/README.md#checking-the-slim-h264-encoder-on-a-tv)).
+  (`check-encoder`; see [packaging](../../packaging/README.md#checking-the-slim-h264-encoder-on-a-tv)).
 - **TV acceptance:** install, set up, capture with video and without,
   standby and wake, cold boot with **Start with TV**, a hung capture being
   killed, reconnecting the slim stream, calibration, and removal.

@@ -17,7 +17,7 @@ Still holds: command-line options and the settings file never override each
 other, startup is idle, missing settings open setup, and saves are complete
 documents checked against a revision.
 
-Changed in [v1](../workspace.md): the selected mode (Screen sync or
+Changed in 1.x ([workspace](../workspace.md)): the selected mode (Screen sync or
 device effects) is no longer saved; `--start` requests lighting at launch.
 The settings path is a required argument and there are no `PRYSM_*`
 environment variables ([args.rs](../../../hosts/common/src/args.rs)).

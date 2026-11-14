@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Harden and verify the v1 TV packages.
+"""Harden and verify the TV packages.
 
   ipk.py elf [--gstreamer] BINARY...
                          ARMv7 EABI5 soft-float, stripped, only TV libraries

@@ -1,6 +1,6 @@
 # Packaging prysm-headless
 
-Two ways to run the v1 [headless host](../hosts/headless/src/main.rs) on Linux:
+Two ways to run the [headless host](../hosts/headless/src/main.rs) on Linux:
 a Docker image and a Debian package with a systemd service. Both are built by
 [`docker/Dockerfile`](docker/Dockerfile) from the repository root, for
 `linux/amd64` and `linux/arm64` (Raspberry Pi OS 64-bit). They assume a machine

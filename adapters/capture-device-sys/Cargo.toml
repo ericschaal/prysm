@@ -46,7 +46,7 @@ dispatch2 = "0.3.1"
 objc2 = "0.6.5"
 objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSDictionary", "NSEnumerator", "NSError", "NSNotification", "NSObject", "NSString", "NSValue"] }
 
-# One of the v1 crates allowed to use `unsafe` (with capture-webos-sys,
+# One of the four crates allowed to use `unsafe` (with capture-webos-sys,
 # webos-luna-sys and h264-rvenc-sys): the V4L2 buffers and AVFoundation's
 # Objective-C API.
 [lints.rust]

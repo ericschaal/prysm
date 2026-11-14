@@ -1,8 +1,8 @@
 //! The LG webOS TV's hardware H.264 encoder (`rvenc`, a GStreamer element)
 //! fed with NV12 in DMA-BUFs from `/dev/dma_heap/dvr`. Ported from the
 //! qualified `apps/prysm-webos-capture/src/encoder/gst.rs` (tag
-//! `pre-1.0-consolidation`); the contract is
-//! `docs/developers/hardware-h264.md`.
+//! `pre-1.0-consolidation`); the contract is the two-TV-packages decision
+//! (`docs/developers/decisions/2026-11-12-two-tv-packages.md`).
 //!
 //! [`Pipeline`] is the one safe type: `appsrc ! rvenc ! appsink`, one picture
 //! in flight. Bitstream validation and SPS repair belong to the caller

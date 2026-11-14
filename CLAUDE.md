@@ -1,18 +1,21 @@
 # Working on Prysm
 
-Prysm turns screen colours into WLED LED colours. The product is the
-[workspace](docs/developers/workspace.md) at the repository root: desktop hosts (`prysm-headless`,
-`prysm-tui`) and two LG webOS TV packages (full, slim) under one supervisor.
-Use the maintained documentation rather than duplicating it here.
+Prysm turns screen colours into WLED LED colours. It is one Cargo workspace at
+the repository root (`crates/`, `adapters/`, `surfaces/`, `hosts/`, `tools/`)
+and the npm workspace in `frontend/`; packaging is in `packaging/`. It builds
+two desktop hosts (`prysm-headless`, `prysm-tui`) and two LG webOS TV packages
+(full, slim) under one supervisor. Use the maintained documentation rather
+than duplicating it here.
 
 - [Developer setup and checks](docs/developers/README.md)
-- [Architecture and workspace map](docs/developers/architecture.md)
+- [Workspace map](docs/developers/workspace.md) and [architecture](docs/developers/architecture.md)
 - [Technical decisions](docs/developers/decisions/README.md)
 - [Contribution and documentation guidelines](docs/developers/guidelines.md)
 - [Error handling](docs/developers/error-handling.md)
 - [HTTP/configuration contracts](docs/developers/control-api.md)
 - [Frontend and generated API](docs/developers/frontend.md)
 - [TV lifecycle and permissions](docs/developers/webos.md)
+- [Packaging](docs/developers/packaging.md)
 - [Debugging](docs/developers/debugging.md)
 
 Concurrency lives in `prysm-runtime`; adapters are plain blocking objects.
@@ -22,9 +25,10 @@ the session's stop/close/idle/join order and output idle compensation. Native
 TV tests require the target SDK/hardware and must retain isolation, timeouts
 and cleanup. Never overwrite TV system partitions. Builds do not deploy.
 
-For runtime instructions use [Run Prysm](docs/users/README.md).
+For runtime instructions use [Set up Prysm](docs/users/README.md).
 For experiments and measurements use [research](research/README.md); local `work/`
-artifacts are not public documentation or runtime dependencies.
+artifacts are not public documentation or runtime dependencies. The
+implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
