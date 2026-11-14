@@ -1,8 +1,6 @@
 use crate::frames::FrameView;
 use color_focus::ColorFocus;
-use prysm_core::{
-    ColorFocusPercent, ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity,
-};
+use prysm_core::{ColorFocusPercent, ColorStrip, Edge, EdgeColors, LinearColor, SampleDensity};
 
 mod color_focus;
 
@@ -35,7 +33,6 @@ pub struct SpatialSampler {
     cells: Vec<[u32; 4]>,
     columns: usize,
     cell_colors: Vec<LinearColor>,
-    rgb: Vec<u8>,
     // The kernel radius in pixels, and where each output sample sits on the
     // picture's edge, in strip order.
     radius: f32,
@@ -161,7 +158,6 @@ impl SpatialSampler {
             cells: Vec::new(),
             columns: 0,
             cell_colors: Vec::new(),
-            rgb: Vec::new(),
             radius: 0.0,
             sample_points: std::array::from_fn(|_| Vec::new()),
             sample_weights: std::array::from_fn(|_| Vec::new()),
@@ -272,20 +268,10 @@ impl SpatialSampler {
         if self.dimensions != Some((width, height)) {
             self.prepare_geometry(width, height);
         }
-        // shortcut: full-frame SIMD is slower for tiny crops; revisit if they are common in real use.
-        let rgb = if matches!(view.frame.format(), PixelFormat::YUYV { .. }) {
-            if let Err(error) = prysm_core::yuyv::yuyv_to_rgb_into(&view.frame, &mut self.rgb) {
-                tracing::error!(%error, "Cannot convert sampling frame");
-                return EdgeColors::black(width as usize, height as usize, self.sample_density);
-            }
-            Some(self.rgb.as_slice())
-        } else {
-            None
-        };
         let cells = self.cell_colors.iter_mut().zip(&self.cells);
         let step = self.step;
         cells.for_each(|(color, &[x0, y0, x1, y1])| {
-            *color = view.average_linear_every(x0, y0, x1, y1, rgb, step);
+            *color = view.average_linear_every(x0, y0, x1, y1, step);
         });
         let focus = self.color_focus.as_ratio();
         if focus > 0.0 {
@@ -343,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn yuyv_conversion_reuses_storage_and_matches_rgb_with_an_offset_crop() {
+    fn yuyv_is_sampled_in_place_and_matches_its_pixels_as_rgb_with_an_offset_crop() {
         use prysm_core::{YuvRange, YuvStandardMatrix};
         let mut sampler = SpatialSampler::new(SampleDensity(128), 0.1);
         for range in [YuvRange::Full, YuvRange::Limited] {
@@ -366,22 +352,14 @@ mod tests {
                         width: 45,
                         height: 19,
                     };
-                    let mut rgb = FrameView::new(
-                        Frame::new(
-                            prysm_core::yuyv::yuyv_to_rgb(&raw.frame).unwrap(),
-                            66,
-                            34,
-                            PixelFormat::RGB24,
-                        )
-                        .unwrap(),
-                    );
+                    let yuyv = prysm_core::yuyv::YuyvView::new(&raw.frame).unwrap();
+                    let mut rgb = picture(66, 34, |x, y| yuyv.pixel(x, y).into());
                     rgb.viewport = raw.viewport;
-                    let actual = sampler.process(&raw);
-                    let allocation = sampler.rgb.as_ptr();
-                    let expected = sampler.process(&rgb);
-                    assert_eq!(actual, expected, "{range:?} {matrix:?}");
-                    assert_eq!(sampler.process(&raw), expected);
-                    assert_eq!(sampler.rgb.as_ptr(), allocation);
+                    assert_eq!(
+                        sampler.process(&raw),
+                        sampler.process(&rgb),
+                        "{range:?} {matrix:?}"
+                    );
                 }
             }
         }
@@ -417,7 +395,6 @@ mod tests {
                 );
                 rgb.viewport = raw.viewport;
                 let actual = sampler.process(&raw);
-                assert!(sampler.rgb.is_empty(), "NV12 must not be converted");
                 let expected = sampler.process(&rgb);
                 for (actual, expected) in strips(&actual).into_iter().zip(strips(&expected)) {
                     for (a, e) in actual
@@ -454,7 +431,7 @@ mod tests {
         let cells: Vec<_> = sampler
             .cells
             .iter()
-            .map(|&[x0, y0, x1, y1]| view.average_linear(x0, y0, x1, y1, None))
+            .map(|&[x0, y0, x1, y1]| view.average_linear(x0, y0, x1, y1))
             .collect();
         assert_eq!(sampler.cell_colors, cells);
         for (strip, weights) in strips(&output).into_iter().zip(&sampler.sample_weights) {
@@ -540,7 +517,7 @@ mod tests {
             let mut count = 0.0;
             for y in (y0..y1).step_by(2) {
                 for x in (x0..x1).step_by(2) {
-                    let pixel = view.average_linear(x, y, x + 1, y + 1, None);
+                    let pixel = view.average_linear(x, y, x + 1, y + 1);
                     for (sum, value) in sum.iter_mut().zip([pixel.r, pixel.g, pixel.b]) {
                         *sum += f64::from(value);
                     }

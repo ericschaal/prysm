@@ -1,5 +1,6 @@
 //! Loopback fixtures stand in for the device: a scripted HTTP listener and a UDP socket.
 use crate::address::{DeviceAddress, Host};
+use crate::ddp::{Gamma, Transfer};
 use crate::observe::Observer;
 use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
@@ -967,6 +968,119 @@ fn an_open_output_reports_wled_brightness() {
         thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(output.brightness(), percent(40));
+    device.check_request();
+    device.get_request("/json/cfg");
+    output.idle(IdleMode::Off).unwrap();
+    device.expect(&[release(), off()]);
+}
+
+/// WLED 16.0.1's own `/json/cfg`, cut to what Prysm reads, with colour gamma
+/// `col` and "Disable realtime gamma correction" `no_gc`.
+fn gamma_cfg(col: f32, no_gc: bool) -> Reply {
+    cfg(json!({
+        "light": {"gc": {"bri": 1, "col": col, "val": 2.2}, "scale-bri": 100},
+        "if": {"live": {"en": true, "maxbri": false, "no-gc": no_gc}},
+    }))
+}
+fn gamma(value: f32) -> Transfer {
+    Transfer::Gamma(Gamma::new(value).unwrap())
+}
+fn refused() -> Reply {
+    Reply::Raw("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".into())
+}
+
+#[test]
+fn wled_gamma_is_read_from_its_configuration() {
+    let linear = Transfer::Gamma(Gamma::LINEAR);
+    let cases = [
+        (gamma_cfg(2.2, false), gamma(2.2)),
+        (gamma_cfg(2.8, false), gamma(2.8)),
+        // "Use Gamma correction for color" off: WLED reports 1.
+        (gamma_cfg(1.0, false), linear),
+        // Realtime gamma disabled: linear, whatever the colour gamma.
+        (gamma_cfg(2.8, true), linear),
+        // No colour gamma given: unknown.
+        (cfg(json!({"if": {"live": {}}})), Transfer::Srgb),
+        (
+            cfg(json!({"if": {"live": {}}, "light": {"gc": {"bri": 1}}})),
+            Transfer::Srgb,
+        ),
+        // Behind WLED's settings PIN.
+        (refused(), Transfer::Srgb),
+    ];
+    for (index, (config, expected)) in cases.into_iter().enumerate() {
+        let device = Device::new(vec![at(255), config]);
+        let mut observer = device.observer_with_config();
+        check(&mut observer);
+        assert_eq!(
+            observer.transfer(),
+            Transfer::Srgb,
+            "case {index}: not read yet"
+        );
+        device.check_request();
+        check(&mut observer);
+        device.get_request("/json/cfg");
+        assert_eq!(observer.transfer(), expected, "case {index}");
+    }
+}
+
+#[test]
+fn a_gamma_changed_in_wled_is_followed_and_kept_through_a_refused_read() {
+    // Checks 1, 31 and 61 (from 0) read the configuration; the last is refused.
+    let states = || (0..29).map(|_| at(255));
+    let replies = [at(255), gamma_cfg(2.2, false)]
+        .into_iter()
+        .chain(states())
+        .chain([gamma_cfg(2.8, false)])
+        .chain(states())
+        .chain([refused()])
+        .collect();
+    let device = Device::new(replies);
+    let mut observer = device.observer_with_config();
+    let mut checks = 0;
+    for (until, expected) in [
+        (2, gamma(2.2)),
+        (31, gamma(2.2)),
+        (32, gamma(2.8)),
+        (62, gamma(2.8)),
+    ] {
+        while checks < until {
+            check(&mut observer);
+            checks += 1;
+        }
+        assert_eq!(observer.transfer(), expected, "after {checks} checks");
+    }
+}
+
+#[test]
+fn an_open_output_encodes_for_wled_gamma() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(OK),
+        at(255),
+        gamma_cfg(2.8, false),
+        Reply::Json(OK),
+        Reply::Json(OK),
+    ]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let deadline = Instant::now() + WAIT;
+    while output.brightness().is_none() {
+        assert!(Instant::now() < deadline, "WLED configuration was not read");
+        assert_eq!(output.observe(), None);
+        thread::sleep(Duration::from_millis(2));
+    }
+    let color = fill(0.18, 0.0, 1.0);
+    output
+        .write(&EdgeColors::new(
+            color.clone(),
+            color.clone(),
+            color.clone(),
+            color,
+        ))
+        .unwrap();
+    // 0.18^(1/2.8): WLED's 2.8 brings it back to 18 % light.
+    assert_eq!(device.rgb(), [138, 0, 255].repeat(4));
     device.check_request();
     device.get_request("/json/cfg");
     output.idle(IdleMode::Off).unwrap();

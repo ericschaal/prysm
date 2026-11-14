@@ -1,26 +1,46 @@
+//! YUYV (packed 4:2:2) sampling and whole-frame conversion.
 use crate::{Frame, PixelFormat, YuvToRgb};
-use yuv::{YuvPackedImage, YuvRange, YuvStandardMatrix, yuyv422_to_rgb};
+use yuv::{YuvPackedImage, yuyv422_to_rgb};
 
-/// Decode one YUYV pixel using the frame's range and color matrix.
-/// Builds the coefficients per call; loops should use [`YuvToRgb`] directly.
-#[inline]
-#[must_use]
-pub fn yuyv_pixel_to_rgb(
-    data: &[u8],
-    x: u32,
-    y: u32,
+/// A borrowed YUYV frame plus its precomputed colour conversion. Reads only
+/// the pixels asked for, at full precision (the `yuv` crate's YUYV path uses
+/// 6-bit coefficients).
+#[derive(Debug, Clone, Copy)]
+pub struct YuyvView<'a> {
+    data: &'a [u8],
     width: u32,
-    range: YuvRange,
-    matrix: YuvStandardMatrix,
-) -> (u8, u8, u8) {
-    if x >= width || !width.is_multiple_of(2) {
-        return (0, 0, 0);
+    height: u32,
+    convert: YuvToRgb,
+}
+
+impl<'a> YuyvView<'a> {
+    /// `None` unless `frame` is YUYV.
+    #[must_use]
+    pub fn new(frame: &'a Frame) -> Option<Self> {
+        let PixelFormat::YUYV { range, matrix } = frame.format() else {
+            return None;
+        };
+        Some(Self {
+            data: frame.as_slice(),
+            width: frame.width(),
+            height: frame.height(),
+            convert: YuvToRgb::new(range, matrix),
+        })
     }
-    let offset = (y as usize * width as usize + (x as usize / 2) * 2) * 2;
-    let Some(pair) = data.get(offset..offset + 4) else {
-        return (0, 0, 0);
-    };
-    YuvToRgb::with_precision(range, matrix, 6).rgb(pair[(x % 2) as usize * 2], pair[1], pair[3])
+
+    /// One pixel; black outside the frame.
+    #[inline]
+    #[must_use]
+    pub fn pixel(&self, x: u32, y: u32) -> (u8, u8, u8) {
+        if x >= self.width || y >= self.height {
+            return (0, 0, 0);
+        }
+        // A frame's YUYV width is even, so the pixel's pair `[Y0 U Y1 V]` is whole.
+        let pair = (y as usize * self.width as usize + (x as usize & !1)) * 2;
+        let luma = self.data[pair + (x as usize & 1) * 2];
+        self.convert
+            .rgb(luma, self.data[pair + 1], self.data[pair + 3])
+    }
 }
 
 /// Converts YUYV (YUV 4:2:2) format to RGB using the `yuv` crate
@@ -37,9 +57,8 @@ pub fn yuyv_pixel_to_rgb(
 /// Uses the supplied frame range and color matrix.
 ///
 /// # Performance
-/// For full-frame conversion, this is ~10x faster than pixel-by-pixel conversion
-/// due to SIMD optimizations. For sampling a small subset of pixels, use
-/// `yuyv_pixel_to_rgb` instead to avoid allocating the full RGB buffer.
+/// Its 6-bit coefficients put a channel up to 3 codes off the exact maths;
+/// sampling should use [`YuyvView`], which reads only the pixels it needs.
 ///
 /// # Errors
 /// Returns an error for a non-YUYV frame, RGB size overflow, or a decoder failure.
@@ -110,6 +129,7 @@ pub fn yuyv_to_rgb_into(frame: &Frame, rgb_out: &mut Vec<u8>) -> Result<(), Conv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{YuvRange, YuvStandardMatrix};
 
     fn decode(
         data: &[u8],
@@ -160,8 +180,18 @@ mod tests {
                     decode(&data, 2, 1, YuvRange::Limited, matrix),
                     [expected; 6]
                 );
+                let frame = Frame::new(
+                    data.to_vec(),
+                    2,
+                    1,
+                    PixelFormat::YUYV {
+                        range: YuvRange::Limited,
+                        matrix,
+                    },
+                )
+                .unwrap();
                 assert_eq!(
-                    yuyv_pixel_to_rgb(&data, 0, 0, 2, YuvRange::Limited, matrix),
+                    YuyvView::new(&frame).unwrap().pixel(0, 0),
                     (expected, expected, expected)
                 );
             }
@@ -169,7 +199,36 @@ mod tests {
     }
 
     #[test]
-    fn scalar_and_full_decode_agree_for_each_matrix_and_range() {
+    fn view_reads_each_pixel_with_its_pairs_chroma_and_black_outside() {
+        let (range, matrix) = (YuvRange::Limited, YuvStandardMatrix::Bt709);
+        // 4x2, pairs [Y0 U Y1 V].
+        let data = [
+            20, 60, 40, 200, 80, 100, 120, 140, // row 0
+            160, 180, 200, 30, 220, 50, 235, 70, // row 1
+        ];
+        let frame = Frame::new(data.to_vec(), 4, 2, PixelFormat::YUYV { range, matrix }).unwrap();
+        let view = YuyvView::new(&frame).unwrap();
+        let convert = YuvToRgb::new(range, matrix);
+        for y in 0..2 {
+            for x in 0..4 {
+                let pair = (y * 4 + x / 2 * 2) * 2;
+                let luma = data[pair + x % 2 * 2];
+                assert_eq!(
+                    view.pixel(u32::try_from(x).unwrap(), u32::try_from(y).unwrap()),
+                    convert.rgb(luma, data[pair + 1], data[pair + 3]),
+                    "({x}, {y})"
+                );
+            }
+        }
+        assert_eq!(view.pixel(4, 0), (0, 0, 0));
+        assert_eq!(view.pixel(0, 2), (0, 0, 0));
+        assert!(YuyvView::new(&Frame::dummy(2, 1).unwrap()).is_none());
+    }
+
+    /// The whole-frame decode is the `yuv` crate's 6-bit fast path, so it
+    /// lands within a few codes of the view's (exact) result, not one.
+    #[test]
+    fn full_decode_stays_within_its_precision_of_the_view() {
         for range in [YuvRange::Full, YuvRange::Limited] {
             for matrix in [
                 YuvStandardMatrix::Bt601,
@@ -182,10 +241,17 @@ mod tests {
                         for v in [0, 64, 128, 192, 255] {
                             let data = [y, u, y, v];
                             let full = decode(&data, 2, 1, range, matrix);
-                            let (r, g, b) = yuyv_pixel_to_rgb(&data, 1, 0, 2, range, matrix);
+                            let frame = Frame::new(
+                                data.to_vec(),
+                                2,
+                                1,
+                                PixelFormat::YUYV { range, matrix },
+                            )
+                            .unwrap();
+                            let (r, g, b) = YuyvView::new(&frame).unwrap().pixel(1, 0);
                             for (actual, expected) in [r, g, b].into_iter().zip(full) {
                                 assert!(
-                                    actual.abs_diff(expected) <= 1,
+                                    actual.abs_diff(expected) <= 3,
                                     "{range:?} {matrix:?}, {data:?}: {actual} != {expected}"
                                 );
                             }
@@ -258,60 +324,5 @@ mod tests {
         // Blue component should be higher than red/green
         assert!(rgb[2] > rgb[0]); // B > R
         assert!(rgb[2] > rgb[1]); // B > G
-    }
-
-    #[test]
-    fn test_pixel_conversion_consistency() {
-        // Verify that pixel-by-pixel conversion matches full-frame conversion
-        let yuyv = vec![
-            0, 128, 0, 128, // Black pixels
-            255, 128, 255, 128, // White pixels
-            128, 128, 128, 128, // Gray pixels
-            128, 128, 128, 200, // Red-tinted pixels
-        ];
-
-        // Full-frame conversion
-        let full_rgb = decode(&yuyv, 8, 1, YuvRange::Full, YuvStandardMatrix::Bt601);
-
-        // Pixel-by-pixel conversion
-        for x in 0..8 {
-            let (r, g, b) =
-                yuyv_pixel_to_rgb(&yuyv, x, 0, 8, YuvRange::Full, YuvStandardMatrix::Bt601);
-            let offset = (x * 3) as usize;
-
-            // Should match within rounding tolerance (±1)
-            assert!(
-                (i16::from(full_rgb[offset]) - i16::from(r)).abs() <= 1,
-                "Red mismatch at pixel {}: full={}, pixel={}",
-                x,
-                full_rgb[offset],
-                r
-            );
-            assert!(
-                (i16::from(full_rgb[offset + 1]) - i16::from(g)).abs() <= 1,
-                "Green mismatch at pixel {}: full={}, pixel={}",
-                x,
-                full_rgb[offset + 1],
-                g
-            );
-            assert!(
-                (i16::from(full_rgb[offset + 2]) - i16::from(b)).abs() <= 1,
-                "Blue mismatch at pixel {}: full={}, pixel={}",
-                x,
-                full_rgb[offset + 2],
-                b
-            );
-        }
-    }
-
-    #[test]
-    fn test_pixel_conversion_bounds() {
-        // Test out-of-bounds handling
-        let yuyv = vec![128, 128, 128, 128];
-        let (r, g, b) =
-            yuyv_pixel_to_rgb(&yuyv, 10, 0, 2, YuvRange::Full, YuvStandardMatrix::Bt601);
-
-        // Should return black for out-of-bounds
-        assert_eq!((r, g, b), (0, 0, 0));
     }
 }

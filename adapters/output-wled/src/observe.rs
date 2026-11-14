@@ -1,5 +1,5 @@
-//! Whether WLED is showing Prysm's colours, from its own state, and how much
-//! its own brightness dims them.
+//! Whether WLED is showing Prysm's colours, from its own state, how much its
+//! own brightness dims them, and the gamma it applies to them.
 //!
 //! One request at most every [`EVERY`] (5 × that after a check that got no
 //! usable answer): `GET /json/si`, except that the second check and every
@@ -13,8 +13,14 @@
 //! the LED preferences' brightness factor (`light.scale-bri`, percent,
 //! capped at full), unless the realtime setting "Force max brightness"
 //! (`if.live.maxbri`) is on: then at full brightness times that factor.
+//!
+//! It raises realtime colours to its colour gamma (`light.gc.col`, reported
+//! as 1 when off) unless "Disable realtime gamma correction"
+//! (`if.live.no-gc`) is on: then they are linear.
+//!
 //! Without a configuration read (none yet, or WLED refuses it behind its
-//! settings PIN) no brightness is reported.
+//! settings PIN) no brightness is reported and the gamma is unknown.
+use crate::ddp::{Gamma, Transfer};
 use crate::http::{self, RequestError};
 use prysm_ports::{DeviceBrightness, OutputIssue, chain};
 use serde::Deserialize;
@@ -118,6 +124,14 @@ impl Observer {
         // WLED's `scaledBri`: the factor scales it, capped at full (by `of`).
         let level = bri * u32::from(config.scale) / 100;
         Some(DeviceBrightness::of(level, FULL))
+    }
+
+    /// How to encode colours for the gamma WLED applies, from the latest
+    /// configuration read; sRGB until one gave the gamma.
+    pub fn transfer(&self) -> Transfer {
+        self.config
+            .and_then(|config| config.gamma)
+            .map_or(Transfer::Srgb, Transfer::Gamma)
     }
 
     /// Advance the check without waiting for WLED; the latest finding.
@@ -326,17 +340,19 @@ struct Info {
     lip: Option<String>,
 }
 
-/// What scales realtime colours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What scales realtime colours, and the gamma it raises them to.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Realtime {
     /// "Force max brightness": realtime colours ignore `bri`.
     force_max: bool,
     /// The brightness factor, percent; WLED's default is 100.
     scale: u8,
+    /// `None` when the configuration does not give it.
+    gamma: Option<Gamma>,
 }
 
 /// The parts of WLED's `/json/cfg` that scale realtime colours. A missing
-/// field takes WLED's default.
+/// field takes WLED's default, except the gamma, which is then unknown.
 #[derive(Deserialize)]
 struct Config {
     #[serde(rename = "if")]
@@ -354,6 +370,9 @@ struct Interfaces {
 struct Live {
     #[serde(default)]
     maxbri: bool,
+    /// "Disable realtime gamma correction".
+    #[serde(default, rename = "no-gc")]
+    no_gamma: bool,
 }
 
 #[derive(Deserialize)]
@@ -361,19 +380,37 @@ struct Live {
 struct Light {
     #[serde(rename = "scale-bri")]
     scale: u8,
+    #[serde(rename = "gc")]
+    gamma: GammaCorrection,
 }
 
 impl Default for Light {
     fn default() -> Self {
-        Self { scale: 100 }
+        Self {
+            scale: 100,
+            gamma: GammaCorrection::default(),
+        }
     }
+}
+
+/// `light.gc`; its `bri` and `val` do not touch realtime colours.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct GammaCorrection {
+    col: Option<f32>,
 }
 
 impl From<Config> for Realtime {
     fn from(config: Config) -> Self {
+        let gamma = if config.interfaces.live.no_gamma {
+            Some(Gamma::LINEAR)
+        } else {
+            config.light.gamma.col.and_then(Gamma::new)
+        };
         Self {
             force_max: config.interfaces.live.maxbri,
             scale: config.light.scale,
+            gamma,
         }
     }
 }

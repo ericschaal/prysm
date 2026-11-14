@@ -154,7 +154,7 @@ impl WledOutput {
 impl LedOutput for WledOutput {
     fn write(&mut self, colors: &EdgeColors) -> Result<()> {
         self.renderer
-            .render_edges(colors, self.leds)
+            .render_edges(colors, self.leds, self.observer.transfer())
             .map_err(|source| {
                 Error::adapter(
                     format!("cannot send colours to WLED at {}", self.label),

@@ -31,6 +31,17 @@ pub enum CaptureError {
 
 type Result<T> = std::result::Result<T, CaptureError>;
 
+/// The colour matrix of a picture whose source does not name one: BT.709 for
+/// HD (720 lines and up), BT.601 below, as FFmpeg and browsers assume.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn unspecified_matrix(height: u32) -> prysm_core::YuvStandardMatrix {
+    if height >= 720 {
+        prysm_core::YuvStandardMatrix::Bt709
+    } else {
+        prysm_core::YuvStandardMatrix::Bt601
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
     if error.kind() == std::io::ErrorKind::InvalidInput {
@@ -45,6 +56,17 @@ fn check_format_rejection(error: std::io::Error) -> Result<std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unnamed_matrix_is_bt709_from_720_lines() {
+        use prysm_core::YuvStandardMatrix::{Bt601, Bt709};
+        for (height, matrix) in [(0, Bt601), (480, Bt601), (576, Bt601), (719, Bt601)] {
+            assert_eq!(unspecified_matrix(height), matrix, "{height}");
+        }
+        for height in [720, 1080, 2160] {
+            assert_eq!(unspecified_matrix(height), Bt709, "{height}");
+        }
+    }
 
     #[test]
     fn format_negotiation_only_falls_back_for_invalid_input() {

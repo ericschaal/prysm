@@ -66,25 +66,10 @@ fn bench_color_focus(reach: u8) {
     );
 }
 
-/// Isolate the reusable SIMD conversion from the rest of the pipeline.
-fn bench_full_decode() {
-    let frame = yuyv_frame(1920, 1080, 0);
-    let mut rgb = Vec::new();
-    let start = Instant::now();
-    let iterations = 120;
-    for _ in 0..iterations {
-        prysm_core::yuyv::yuyv_to_rgb_into(&frame, &mut rgb).unwrap();
-        std::hint::black_box(&rgb);
-    }
-    let per_frame = start.elapsed() / iterations;
-    println!("1920x1080 full decode (reference): {per_frame:?}/frame");
-}
-
 fn main() {
     bench("640x360  changing frames", 640, 360, true);
     bench("640x360  static frames   ", 640, 360, false);
     bench("1920x1080 changing frames", 1920, 1080, true);
-    bench_full_decode();
     // Colour focus costs the same at any focus above 0; the default edge
     // depth, and the deepest, where its near field is largest.
     bench_color_focus(10);

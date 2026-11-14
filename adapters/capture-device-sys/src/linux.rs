@@ -10,15 +10,20 @@ use stream::Stream;
 use v4l::video::Capture;
 use v4l::{Device, Format, FourCC};
 
+/// Range and matrix from the negotiated format. A matrix the device leaves
+/// unnamed follows the picture `height` ([`crate::unspecified_matrix`]).
 #[allow(non_upper_case_globals)] // Names come from the generated kernel bindings.
 fn yuv_colorimetry(
     colorspace: u32,
     encoding: u32,
     quantization: u32,
+    height: u32,
 ) -> Result<(YuvRange, YuvStandardMatrix)> {
     use v4l::v4l_sys::{
-        v4l2_colorspace_V4L2_COLORSPACE_BT2020, v4l2_colorspace_V4L2_COLORSPACE_DCI_P3,
-        v4l2_colorspace_V4L2_COLORSPACE_JPEG, v4l2_colorspace_V4L2_COLORSPACE_REC709,
+        v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_BG,
+        v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_M, v4l2_colorspace_V4L2_COLORSPACE_BT2020,
+        v4l2_colorspace_V4L2_COLORSPACE_DCI_P3, v4l2_colorspace_V4L2_COLORSPACE_JPEG,
+        v4l2_colorspace_V4L2_COLORSPACE_REC709, v4l2_colorspace_V4L2_COLORSPACE_SMPTE170M,
         v4l2_colorspace_V4L2_COLORSPACE_SMPTE240M, v4l2_quantization_V4L2_QUANTIZATION_DEFAULT,
         v4l2_quantization_V4L2_QUANTIZATION_FULL_RANGE,
         v4l2_quantization_V4L2_QUANTIZATION_LIM_RANGE, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601,
@@ -26,21 +31,21 @@ fn yuv_colorimetry(
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_DEFAULT, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SMPTE240M,
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SYCC,
     };
-    let encoding = if encoding == v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_DEFAULT {
-        match colorspace {
-            v4l2_colorspace_V4L2_COLORSPACE_REC709 | v4l2_colorspace_V4L2_COLORSPACE_DCI_P3 => {
-                v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_709
-            }
-            v4l2_colorspace_V4L2_COLORSPACE_SMPTE240M => {
-                v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SMPTE240M
-            }
-            v4l2_colorspace_V4L2_COLORSPACE_BT2020 => v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020,
-            _ => v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601,
-        }
-    } else {
-        encoding
-    };
     let matrix = match encoding {
+        v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_DEFAULT => match colorspace {
+            v4l2_colorspace_V4L2_COLORSPACE_REC709 | v4l2_colorspace_V4L2_COLORSPACE_DCI_P3 => {
+                YuvStandardMatrix::Bt709
+            }
+            v4l2_colorspace_V4L2_COLORSPACE_SMPTE240M => YuvStandardMatrix::Smpte240,
+            v4l2_colorspace_V4L2_COLORSPACE_BT2020 => YuvStandardMatrix::Bt2020,
+            v4l2_colorspace_V4L2_COLORSPACE_SMPTE170M
+            | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_M
+            | v4l2_colorspace_V4L2_COLORSPACE_470_SYSTEM_BG
+            | v4l2_colorspace_V4L2_COLORSPACE_JPEG => YuvStandardMatrix::Bt601,
+            // Default, sRGB (what uvcvideo reports without a colour-matching
+            // descriptor) and the rest name no video matrix.
+            _ => crate::unspecified_matrix(height),
+        },
         v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601 | v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_SYCC => {
             YuvStandardMatrix::Bt601
         }
@@ -95,7 +100,12 @@ fn negotiated_colorimetry(device: &Device) -> Result<(YuvRange, YuvStandardMatri
     // SAFETY: both members of this union (`ycbcr_enc`, `hsv_enc`) are `u32`,
     // so either read is defined; for a YUV format the kernel sets `ycbcr_enc`.
     let encoding = unsafe { format.__bindgen_anon_1.ycbcr_enc };
-    yuv_colorimetry(format.colorspace, encoding, format.quantization)
+    yuv_colorimetry(
+        format.colorspace,
+        encoding,
+        format.quantization,
+        format.height,
+    )
 }
 
 fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow::Result<()> {
@@ -359,29 +369,59 @@ mod tests {
 
     #[test]
     fn default_and_explicit_color_metadata() {
+        let colorimetry = |colorspace, encoding, quantization, height| {
+            yuv_colorimetry(colorspace, encoding, quantization, height).unwrap()
+        };
+        let limited = |matrix| (YuvRange::Limited, matrix);
+        // No matrix named: by picture height.
+        for colorspace in [0, v4l2_colorspace_V4L2_COLORSPACE_SRGB] {
+            assert_eq!(
+                colorimetry(colorspace, 0, 0, 1080),
+                limited(YuvStandardMatrix::Bt709)
+            );
+            assert_eq!(
+                colorimetry(colorspace, 0, 0, 576),
+                limited(YuvStandardMatrix::Bt601)
+            );
+        }
+        // Named by the colorspace or the encoding: whatever the height.
         assert_eq!(
-            yuv_colorimetry(v4l2_colorspace_V4L2_COLORSPACE_SRGB, 0, 0).unwrap(),
-            (YuvRange::Limited, YuvStandardMatrix::Bt601)
+            colorimetry(v4l2_colorspace_V4L2_COLORSPACE_SMPTE170M, 0, 0, 1080),
+            limited(YuvStandardMatrix::Bt601)
         );
         assert_eq!(
-            yuv_colorimetry(v4l2_colorspace_V4L2_COLORSPACE_REC709, 0, 0).unwrap(),
-            (YuvRange::Limited, YuvStandardMatrix::Bt709)
+            colorimetry(v4l2_colorspace_V4L2_COLORSPACE_REC709, 0, 0, 480),
+            limited(YuvStandardMatrix::Bt709)
         );
         assert_eq!(
-            yuv_colorimetry(v4l2_colorspace_V4L2_COLORSPACE_JPEG, 0, 0).unwrap(),
+            colorimetry(v4l2_colorspace_V4L2_COLORSPACE_JPEG, 0, 0, 1080),
             (YuvRange::Full, YuvStandardMatrix::Bt601)
         );
         assert_eq!(
-            yuv_colorimetry(
+            colorimetry(
+                v4l2_colorspace_V4L2_COLORSPACE_SRGB,
+                v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601,
+                0,
+                1080
+            ),
+            limited(YuvStandardMatrix::Bt601)
+        );
+        assert_eq!(
+            colorimetry(
                 v4l2_colorspace_V4L2_COLORSPACE_REC709,
                 v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_601,
-                v4l2_quantization_V4L2_QUANTIZATION_FULL_RANGE
-            )
-            .unwrap(),
+                v4l2_quantization_V4L2_QUANTIZATION_FULL_RANGE,
+                1080
+            ),
             (YuvRange::Full, YuvStandardMatrix::Bt601)
         );
         assert!(matches!(
-            yuv_colorimetry(0, v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020_CONST_LUM, 0),
+            yuv_colorimetry(
+                0,
+                v4l2_ycbcr_encoding_V4L2_YCBCR_ENC_BT2020_CONST_LUM,
+                0,
+                1080
+            ),
             Err(CaptureError::UnsupportedFormat { .. })
         ));
     }

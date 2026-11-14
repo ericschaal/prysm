@@ -33,8 +33,7 @@ pub fn luma_at(frame: &Frame, x: u32, y: u32) -> u8 {
 
 /// A raw frame plus the viewport that downstream nodes should read from.
 ///
-/// Detection reads raw pixels; sampling reads NV12 directly and can use a
-/// reusable RGB conversion for YUYV.
+/// Detection and sampling read the raw pixels; nothing converts a whole frame.
 #[derive(Debug, Clone)]
 pub struct FrameView {
     pub frame: Frame,
@@ -63,9 +62,8 @@ impl FrameView {
         y_start: u32,
         x_end: u32,
         y_end: u32,
-        rgb: Option<&[u8]>,
     ) -> LinearColor {
-        self.average_linear_every(x_start, y_start, x_end, y_end, rgb, 1)
+        self.average_linear_every(x_start, y_start, x_end, y_end, 1)
     }
 
     /// Like [`Self::average_linear`], but reads only every `step`th pixel of
@@ -82,7 +80,6 @@ impl FrameView {
         y_start: u32,
         x_end: u32,
         y_end: u32,
-        rgb: Option<&[u8]>,
         step: u32,
     ) -> LinearColor {
         let width = self.frame.width();
@@ -103,9 +100,7 @@ impl FrameView {
             width as usize,
         );
 
-        let (data, format) = rgb.map_or((self.frame.as_slice(), self.frame.format()), |rgb| {
-            (rgb, PixelFormat::RGB24)
-        });
+        let (data, format) = (self.frame.as_slice(), self.frame.format());
         let mut sum = [0.0f64; 3];
         let mut count = 0u64;
         let mut add = |color| {
@@ -132,16 +127,16 @@ impl FrameView {
                 }
             }
             PixelFormat::YUYV { range, matrix } => {
+                let convert = YuvToRgb::new(range, matrix);
                 for y in (y0..y1).step_by(step) {
+                    // Whole rows of `[Y0 U Y1 V]` pairs; the width is even.
+                    let Some(row) = data.get(y * width * 2..(y + 1) * width * 2) else {
+                        return LinearColor::black();
+                    };
                     for x in (x0..x1).step_by(step) {
-                        let (r, g, b) = prysm_core::yuyv::yuyv_pixel_to_rgb(
-                            data,
-                            x as u32,
-                            y as u32,
-                            width as u32,
-                            range,
-                            matrix,
-                        );
+                        let pair = (x & !1) * 2;
+                        let luma = row[pair + (x & 1) * 2];
+                        let (r, g, b) = convert.rgb(luma, row[pair + 1], row[pair + 3]);
                         add(Color::new(r, g, b));
                     }
                 }
@@ -241,12 +236,12 @@ pub mod tests {
         assert_eq!(luma_at(&frame, 4, 0), 0);
         let mut view = FrameView::new(frame);
         assert_eq!(
-            view.average_linear(0, 0, 4, 2, None),
+            view.average_linear(0, 0, 4, 2),
             LinearColor::new(0.5, 0.5, 0.5)
         );
         view.viewport.x = 1;
         // Columns 1..4 after the offset, clipped at the frame: one black, two white.
-        let avg = view.average_linear(0, 0, 4, 2, None);
+        let avg = view.average_linear(0, 0, 4, 2);
         assert!((avg.r - 2.0 / 3.0).abs() < 1e-6, "{avg:?}");
     }
 
@@ -267,7 +262,7 @@ pub mod tests {
             let mut view = FrameView::new(Frame::new(data, 2, 2, format).unwrap());
             view.viewport.x = 1;
             assert_eq!(
-                view.average_linear(0, 0, 3, 2, None),
+                view.average_linear(0, 0, 3, 2),
                 LinearColor::new(0.5, 0.0, 0.0)
             );
         }
@@ -277,7 +272,7 @@ pub mod tests {
     fn average_linear_uniform_region() {
         let frame = yuyv_frame_from_luma(8, 8, |_, _| 128);
         let view = FrameView::new(frame);
-        let avg = view.average_linear(0, 0, 8, 8, None);
+        let avg = view.average_linear(0, 0, 8, 8);
         let expected = LinearColor::from_srgb(Color::new(128, 128, 128));
         assert!((avg.r - expected.r).abs() < 0.01, "r = {}", avg.r);
         assert!((avg.g - expected.g).abs() < 0.01);
@@ -300,7 +295,7 @@ pub mod tests {
             width: 4,
             height: 4,
         };
-        let avg = view.average_linear(0, 0, 4, 2, None);
+        let avg = view.average_linear(0, 0, 4, 2);
         // Both rows count equally, including black pixels.
         assert!(
             (avg.r - 0.5).abs() < 1e-6,

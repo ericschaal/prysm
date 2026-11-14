@@ -6,11 +6,16 @@ Open WLED in a browser and check that it lights the whole strip. Then set:
 
 | WLED page | Setting |
 | --- | --- |
-| **Config → LED Preferences** | The physical LED count; **Use Gamma for color** on. |
+| **Config → LED Preferences** | The physical LED count; **Use Gamma for color** on, at 2.2. |
 | **Config → Sync Interfaces** | DDP input allowed; **Disable realtime gamma correction** off. |
 
 Prysm sends colours to WLED over UDP port 4048 (DDP) and switches WLED into
 live mode over HTTP. Both must be allowed between Prysm and WLED.
+
+Prysm reads WLED's gamma settings and adapts its colours to them, so any
+gamma shows the right brightness; a change applies within about 30 seconds.
+If it cannot read them (a settings PIN is set in WLED), it assumes a gamma of
+about 2.2, which is why 2.2 is recommended.
 
 ## 2. Open the web portal
 

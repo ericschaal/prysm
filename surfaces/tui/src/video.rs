@@ -127,10 +127,11 @@ mod tests {
                 )
                 .unwrap();
                 let sampled = sample(&frame, 4, 1).unwrap();
-                let full = prysm_core::yuyv::yuyv_to_rgb(&frame).unwrap();
-                for (actual, expected) in rgb(&sampled.pixels).iter().zip(&full) {
-                    assert!(actual.abs_diff(*expected) <= 1);
-                }
+                let view = prysm_core::yuyv::YuyvView::new(&frame).unwrap();
+                let expected: Vec<u8> = (0..4)
+                    .flat_map(|x| <[u8; 3]>::from(view.pixel(x, 0)))
+                    .collect();
+                assert_eq!(rgb(&sampled.pixels), expected);
             }
         }
     }

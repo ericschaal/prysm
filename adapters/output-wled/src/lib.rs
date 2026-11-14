@@ -6,7 +6,8 @@
 //!   The resolved IP is used for HTTP and DDP until the output is dropped; the
 //!   next open resolves again.
 //! - `write` sends colours as DDP over UDP (port 4048), clockwise from the
-//!   bottom-left corner.
+//!   bottom-left corner, encoded for the gamma WLED applies (read with its
+//!   configuration; sRGB until then).
 //! - `idle` powers the device off or returns it to its own effect; a failed open
 //!   turns it off before returning.
 //! - `observe` checks WLED's own state about once a second without waiting for

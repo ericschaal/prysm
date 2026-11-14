@@ -1,5 +1,6 @@
 //! Nearest-pixel sampling of a captured frame into RGB, for the surfaces' previews.
 use prysm_core::nv12::Nv12View;
+use prysm_core::yuyv::YuyvView;
 use prysm_core::{Frame, PixelFormat, Viewport};
 use std::fmt;
 
@@ -48,14 +49,17 @@ pub fn sample_rgb(
     if frame.format() == PixelFormat::MJPEG {
         return Err(SampleError::Compressed);
     }
-    let nv12 = Nv12View::new(frame);
+    let (nv12, yuyv) = (Nv12View::new(frame), YuyvView::new(frame));
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for y in 0..height {
         let sy = area.y + scale(y, area.height, height);
         for x in 0..width {
             let sx = area.x + scale(x, area.width, width);
-            pixels
-                .push(nv12.map_or_else(|| pixel(frame, sx, sy), |nv12| nv12.pixel(sx, sy).into()));
+            pixels.push(match (nv12, yuyv) {
+                (Some(nv12), _) => nv12.pixel(sx, sy).into(),
+                (_, Some(yuyv)) => yuyv.pixel(sx, sy).into(),
+                _ => pixel(frame, sx, sy),
+            });
         }
     }
     Ok(pixels)
@@ -81,13 +85,8 @@ fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 3] {
                 [c, b, a]
             }
         }
-        PixelFormat::YUYV { range, matrix } => {
-            let (r, g, b) =
-                prysm_core::yuyv::yuyv_pixel_to_rgb(data, x, y, frame.width(), range, matrix);
-            [r, g, b]
-        }
-        // Sampled through `Nv12View` by the caller.
-        PixelFormat::NV12 { .. } | PixelFormat::MJPEG => [0; 3],
+        // Sampled through their views by the caller.
+        PixelFormat::YUYV { .. } | PixelFormat::NV12 { .. } | PixelFormat::MJPEG => [0; 3],
     }
 }
 
@@ -124,17 +123,16 @@ mod tests {
     }
 
     #[test]
-    fn yuyv_matches_the_full_conversion_at_odd_offsets() {
+    fn yuyv_matches_its_view_at_odd_offsets() {
         for range in [YuvRange::Full, YuvRange::Limited] {
             for matrix in [YuvStandardMatrix::Bt601, YuvStandardMatrix::Bt709] {
                 let format = PixelFormat::YUYV { range, matrix };
                 let frame =
                     Frame::new(vec![32, 90, 180, 210, 210, 180, 70, 100], 4, 1, format).unwrap();
                 let sampled = sample_rgb(&frame, full(&frame), 4, 1).unwrap();
-                let converted = prysm_core::yuyv::yuyv_to_rgb(&frame).unwrap();
-                for (actual, expected) in sampled.iter().flatten().zip(&converted) {
-                    assert!(actual.abs_diff(*expected) <= 1, "{format:?}");
-                }
+                let view = YuyvView::new(&frame).unwrap();
+                let expected: Vec<[u8; 3]> = (0..4).map(|x| view.pixel(x, 0).into()).collect();
+                assert_eq!(sampled, expected, "{format:?}");
             }
         }
     }

@@ -208,15 +208,19 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
         tracing::error!("YUYV width must be even");
         return None;
     }
+    // H.273 code points; 2 is "unspecified", as is a missing attachment.
     let matrix = pixel_buffer
         .as_buffer()
         .get_attachment(&CVImageBufferKeys::YCbCrMatrix.into(), None)
         .and_then(|value| value.downcast::<CFString>())
-        .map_or(6, |value| {
+        .map_or(2, |value| {
             ycbcr_matrix_get_integer_code_point_for_string(&value)
         });
     let matrix = match matrix {
         1 => YuvStandardMatrix::Bt709,
+        2 => {
+            crate::unspecified_matrix(u32::try_from(pixel_buffer.get_height()).unwrap_or(u32::MAX))
+        }
         5 | 6 => YuvStandardMatrix::Bt601,
         7 => YuvStandardMatrix::Smpte240,
         9 => YuvStandardMatrix::Bt2020,
@@ -647,5 +651,26 @@ mod tests {
                 matrix: YuvStandardMatrix::Bt709
             }
         );
+    }
+
+    #[test]
+    fn a_pixel_buffer_without_a_matrix_follows_its_height() {
+        for (height, matrix) in [
+            (2, YuvStandardMatrix::Bt601),
+            (576, YuvStandardMatrix::Bt601),
+            (720, YuvStandardMatrix::Bt709),
+        ] {
+            let buffer =
+                CVPixelBuffer::new(kCVPixelFormatType_422YpCbCr8_yuvs, 4, height, None).unwrap();
+            let frame = frame_from_pixel_buffer(&buffer, &mut FramePool::default()).unwrap();
+            assert_eq!(
+                frame.format(),
+                PixelFormat::YUYV {
+                    range: YuvRange::Limited,
+                    matrix
+                },
+                "{height}"
+            );
+        }
     }
 }

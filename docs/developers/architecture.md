@@ -53,7 +53,11 @@ The session thread pulls the newest frame from the source, runs the
 `PrysmProcessor` (black-bar detection, sampling, smoothing, colour boost,
 dark-scene glow, colour correction, brightness) and writes `EdgeColors` to the output. Sources
 replace untaken frames instead of queueing them, so latency does not build up.
-Processing assumes sRGB; the file source tone-maps HDR before it. The
+Processing assumes sRGB; the file source tone-maps HDR before it. YUYV and
+NV12 are sampled in place at full precision; a capture card that names no
+YCbCr matrix gets BT.709 from 720 lines up and BT.601 below. The WLED output
+encodes the linear colours for the gamma WLED applies, read from its
+configuration (sRGB until read; see [`observe.rs`](../../adapters/output-wled/src/observe.rs)). The
 settings' chosen style is resolved to plain values when `Processing::config`
 builds the processor's `Config`; the processor never learns about styles.
 

@@ -1,19 +1,70 @@
 //! Colours to WLED as DDP over UDP (port 4048): resample the edges to the LED
-//! counts in linear light, convert to 8-bit sRGB and send one packet stream per
-//! frame, clockwise from the bottom-left corner as seen from the front.
+//! counts in linear light, encode them to 8 bits for the gamma WLED applies
+//! ([`Transfer`]) and send one packet stream per frame, clockwise from the
+//! bottom-left corner as seen from the front.
 //!
-//! WLED owns brightness, gamma, channel order and the realtime timeout: enable
-//! **Use Gamma for color** and leave **Disable realtime gamma correction**
-//! unchecked. Sending never blocks and never retries; `WouldBlock` and other
-//! socket errors are returned. Empty frames send nothing, shorter frames leave
-//! the trailing LEDs unchanged, and frames over 65535 LEDs are rejected.
+//! WLED owns brightness, channel order and the realtime timeout, and raises
+//! each byte to its colour gamma before driving the LEDs; the encoding undoes
+//! that, so the light is the intended linear value. Sending never blocks and
+//! never retries; `WouldBlock` and other socket errors are returned. Empty
+//! frames send nothing, shorter frames leave the trailing LEDs unchanged, and
+//! frames over 65535 LEDs are rejected.
 
 use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
-use prysm_core::{Color, EdgeColors};
+use prysm_core::{Color, EdgeColors, LinearColor};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
+
+/// How WLED turns a byte into light, and so how a linear colour is encoded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Transfer {
+    /// WLED's gamma is not known (not read yet, or refused): sRGB, which the
+    /// usual colour gamma of 2.2 nearly undoes.
+    Srgb,
+    /// WLED shows `(byte / 255)^gamma`.
+    Gamma(Gamma),
+}
+
+/// The power WLED raises a colour byte (as 0–1) to: 1 when it applies none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Gamma(f32);
+
+impl Gamma {
+    /// No gamma: bytes are linear light.
+    pub(crate) const LINEAR: Self = Self(1.0);
+
+    /// WLED's colour gamma held to 1–3 (WLED reports 1 when it is off);
+    /// `None` unless finite.
+    pub(crate) fn new(value: f32) -> Option<Self> {
+        value.is_finite().then(|| Self(value.clamp(1.0, 3.0)))
+    }
+}
+
+impl Transfer {
+    /// The bytes that WLED shows as `color`. `powf` per channel, as the sRGB
+    /// encoding does: a few hundred LEDs a frame need no table.
+    pub(crate) fn encode(self, color: LinearColor) -> Color {
+        match self {
+            Self::Srgb => color.to_srgb(),
+            Self::Gamma(Gamma(gamma)) => {
+                let byte = |linear: f32| quantize(linear.clamp(0.0, 1.0).powf(gamma.recip()));
+                Color::new(byte(color.r), byte(color.g), byte(color.b))
+            }
+        }
+    }
+}
+
+/// `value` in 0–1 to the nearest of 0–255.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a value within 0–1 is rounded to an 8-bit channel"
+)]
+fn quantize(value: f32) -> u8 {
+    (value * 255.0 + 0.5) as u8
+}
 
 /// Packed 8-bit RGB channels, including the DDP encoding contract.
 /// Keeping this alongside the allocation prevents raw bytes losing their format.
@@ -92,11 +143,12 @@ impl WledRenderer {
     /// Output starts at the bottom-left corner and runs clockwise, as viewed from
     /// the screen's front: left bottom-to-top, top left-to-right, right
     /// top-to-bottom, bottom right-to-left. Zero skips an edge.
-    /// Interpolation happens in linear light, followed by conversion to 8-bit sRGB.
+    /// Interpolation happens in linear light, followed by `transfer`'s encoding.
     pub(crate) fn render_edges(
         &mut self,
         edges: &EdgeColors,
         led_counts: [usize; 4],
+        transfer: Transfer,
     ) -> Result<(), DDPError> {
         let total = led_counts
             .into_iter()
@@ -113,16 +165,13 @@ impl WledRenderer {
         ] {
             for i in 0..count {
                 let index = if reverse { count - 1 - i } else { i };
-                let color = strip
-                    .color_at(index, count)
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "LED sample index out of bounds",
-                        )
-                    })?
-                    .to_srgb();
-                self.rgb.push(color);
+                let color = strip.color_at(index, count).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "LED sample index out of bounds",
+                    )
+                })?;
+                self.rgb.push(transfer.encode(color));
             }
         }
         self.connection.write(&self.rgb.0)?;
@@ -234,7 +283,9 @@ mod tests {
             gradient,
             ColorStrip::new(vec![LinearColor::black(), LinearColor::new(0.0, 0.0, 1.0)]).unwrap(),
         );
-        renderer.render_edges(&edges, [3, 1, 2, 2]).unwrap();
+        renderer
+            .render_edges(&edges, [3, 1, 2, 2], Transfer::Srgb)
+            .unwrap();
         let bytes = receive(&socket);
         let packet = PacketRef::from_bytes(&bytes).unwrap();
         assert_eq!(
@@ -256,7 +307,9 @@ mod tests {
                 .unwrap(),
             ..EdgeColors::default()
         };
-        renderer.render_edges(&edges, [0, 0, 1, 0]).unwrap();
+        renderer
+            .render_edges(&edges, [0, 0, 1, 0], Transfer::Srgb)
+            .unwrap();
         let bytes = receive(&socket);
         assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [188, 188, 188]);
     }
@@ -266,7 +319,7 @@ mod tests {
         let (mut renderer, socket) = receiver();
         renderer.render(&[]).unwrap();
         renderer
-            .render_edges(&EdgeColors::default(), [0; 4])
+            .render_edges(&EdgeColors::default(), [0; 4], Transfer::Srgb)
             .unwrap();
         assert_no_packet(&socket);
     }
@@ -282,7 +335,7 @@ mod tests {
                 [color.r, color.g, color.b]
             );
             renderer
-                .render_edges(&EdgeColors::default(), [1; 4])
+                .render_edges(&EdgeColors::default(), [1; 4], Transfer::Srgb)
                 .unwrap();
             let bytes = receive(&socket);
             assert_eq!(PacketRef::from_bytes(&bytes).unwrap().data, [0; 12]);
@@ -296,11 +349,94 @@ mod tests {
         let edges = EdgeColors::default();
         for counts in [[65536, 0, 0, 0], [usize::MAX, 1, 0, 0]] {
             assert!(matches!(
-                renderer.render_edges(&edges, counts),
+                renderer.render_edges(&edges, counts, Transfer::Srgb),
                 Err(DDPError::Disconnect(e)) if e.kind() == io::ErrorKind::InvalidInput
             ));
         }
         assert!(renderer.render(&vec![Color::black(); 65536]).is_err());
         assert_no_packet(&socket);
+    }
+
+    /// What WLED emits for `byte` at `gamma`, as 0–255 light.
+    fn emitted(byte: u8, gamma: f32) -> f32 {
+        (255.0 * (f32::from(byte) / 255.0).powf(gamma)).round()
+    }
+
+    #[test]
+    fn gamma_encoding_makes_wled_emit_the_intended_light() {
+        for gamma in [1.0, 2.2, 2.8] {
+            let transfer = Transfer::Gamma(Gamma::new(gamma).unwrap());
+            for step in 0..=1000 {
+                let linear = f32::from(u16::try_from(step).unwrap()) / 1000.0;
+                let byte = transfer.encode(LinearColor::new(linear, 0.0, 0.0)).r;
+                // The light lies within one LED step of the intent (plus
+                // WLED's own rounding): no other byte would be nearer.
+                let wanted = 255.0 * linear;
+                let below = emitted(byte.saturating_sub(1), gamma);
+                let above = emitted(byte.saturating_add(1), gamma);
+                assert!(
+                    below - 0.5 <= wanted && wanted <= above + 0.5,
+                    "gamma {gamma}, {linear}: byte {byte} emits {}, wanted {wanted}",
+                    emitted(byte, gamma)
+                );
+            }
+            let encode = |value| transfer.encode(LinearColor::new(value, value, value));
+            assert_eq!(encode(0.0), Color::black(), "gamma {gamma}");
+            assert_eq!(encode(1.0), Color::new(255, 255, 255), "gamma {gamma}");
+            assert_eq!(encode(-0.5), Color::black(), "gamma {gamma}");
+            assert_eq!(encode(1.5), Color::new(255, 255, 255), "gamma {gamma}");
+        }
+    }
+
+    #[test]
+    fn no_gamma_sends_linear_bytes_and_unknown_gamma_sends_srgb() {
+        let linear = Transfer::Gamma(Gamma::LINEAR);
+        for byte in 0..=255 {
+            let value = f32::from(byte) / 255.0;
+            let color = LinearColor::new(value, value, value);
+            assert_eq!(linear.encode(color), Color::new(byte, byte, byte));
+        }
+        for step in 0..=1000 {
+            let value = f32::from(u16::try_from(step).unwrap()) / 1000.0;
+            let color = LinearColor::new(value, value / 2.0, 1.0 - value);
+            assert_eq!(Transfer::Srgb.encode(color), color.to_srgb());
+        }
+    }
+
+    #[test]
+    fn gamma_is_held_to_what_wled_offers() {
+        assert_eq!(Gamma::new(0.5), Some(Gamma::LINEAR));
+        assert_eq!(Gamma::new(2.2), Some(Gamma(2.2)));
+        assert_eq!(Gamma::new(9.0), Some(Gamma(3.0)));
+        assert_eq!(Gamma::new(f32::NAN), None);
+        assert_eq!(Gamma::new(f32::INFINITY), None);
+    }
+
+    #[test]
+    fn edges_are_encoded_with_the_transfer_given() {
+        let (mut renderer, socket) = receiver();
+        let edges = EdgeColors {
+            bottom: ColorStrip::fill(
+                LinearColor::new(0.18, 0.0, 1.0),
+                std::num::NonZeroUsize::MIN,
+            ),
+            ..EdgeColors::default()
+        };
+        let mut send = |transfer| {
+            renderer
+                .render_edges(&edges, [0, 0, 1, 0], transfer)
+                .unwrap();
+            PacketRef::from_bytes(&receive(&socket))
+                .unwrap()
+                .data
+                .to_vec()
+        };
+        // 0.18^(1/2.8) and 0.18 in sRGB.
+        assert_eq!(
+            send(Transfer::Gamma(Gamma::new(2.8).unwrap())),
+            [138, 0, 255]
+        );
+        assert_eq!(send(Transfer::Srgb), [118, 0, 255]);
+        assert_eq!(send(Transfer::Gamma(Gamma::LINEAR)), [46, 0, 255]);
     }
 }
