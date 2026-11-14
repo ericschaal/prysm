@@ -1737,7 +1737,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-device"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "prysm-capture-device-sys",
@@ -1750,7 +1750,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-device-sys"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "av-foundation",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-file"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "nix",
  "prysm-core",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-remote"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "bytes",
  "prysm-capture-remote",
@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-webos"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "nix",
  "prysm-capture-webos-sys",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-capture-webos-sys"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "cc",
  "libc",
@@ -1837,14 +1837,14 @@ dependencies = [
 
 [[package]]
 name = "prysm-core"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "yuv",
 ]
 
 [[package]]
 name = "prysm-export-contracts"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "prysm-capture-device",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-h264"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "h264-reader",
  "openh264",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-h264-rvenc-sys"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "gstreamer",
  "gstreamer-allocators",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-headless"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "prysm-capture-device",
  "prysm-capture-file",
@@ -1898,6 +1898,7 @@ dependencies = [
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",
+ "prysm-version",
  "prysm-web-portal",
  "serde_json",
  "tempfile",
@@ -1905,20 +1906,21 @@ dependencies = [
 
 [[package]]
 name = "prysm-host"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "futures",
  "prysm-ports",
  "prysm-runtime",
  "prysm-settings-file",
+ "prysm-version",
  "prysm-web-portal",
  "tokio",
 ]
 
 [[package]]
 name = "prysm-output-wled"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "ddp-rs",
  "prysm-core",
@@ -1932,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-ports"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "prysm-core",
  "serde",
@@ -1942,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-processor"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-core",
@@ -1951,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-protocol"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "prysm-ports",
  "serde",
@@ -1961,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-runtime"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-core",
@@ -1977,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-settings-file"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "prysm-ports",
  "serde_json",
@@ -1986,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-surface-tui"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "crossterm",
  "futures",
@@ -2001,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-tui"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "prysm-capture-device",
  "prysm-capture-file",
@@ -2012,14 +2014,19 @@ dependencies = [
  "prysm-runtime",
  "prysm-settings-file",
  "prysm-surface-tui",
+ "prysm-version",
  "prysm-web-portal",
  "tempfile",
  "tokio",
 ]
 
 [[package]]
+name = "prysm-version"
+version = "0.0.0"
+
+[[package]]
 name = "prysm-web-portal"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2033,6 +2040,7 @@ dependencies = [
  "prysm-ports",
  "prysm-protocol",
  "prysm-runtime",
+ "prysm-version",
  "reqwest",
  "serde",
  "serde_json",
@@ -2043,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-webos"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "futures",
  "prysm-capture-webos",
@@ -2060,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-webos-link"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "http",
@@ -2074,7 +2082,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-webos-luna-sys"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "bindgen 0.73.2",
  "clap",
@@ -2084,11 +2092,12 @@ dependencies = [
 
 [[package]]
 name = "prysm-webos-service"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "nix",
  "prysm-ports",
+ "prysm-version",
  "prysm-webos-link",
  "prysm-webos-luna-sys",
  "serde",
@@ -2101,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-webos-slim"
-version = "1.0.0-alpha.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "futures",

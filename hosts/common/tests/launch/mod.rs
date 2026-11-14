@@ -186,7 +186,7 @@ pub fn check_arguments(binary: &str, name: &str) {
     let version = Command::new(binary).arg("--version").output().unwrap();
     assert!(version.status.success());
     let text = String::from_utf8(version.stdout).unwrap();
-    assert_eq!(text, format!("{name} {}\n", env!("CARGO_PKG_VERSION")));
+    assert_eq!(text, format!("{name} {}\n", prysm_version::VERSION));
 
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("unused.json");

@@ -21,6 +21,7 @@ prysm-capture-remote = { workspace = true, features = ["testkit"] }
 prysm-core.workspace = true
 prysm-ports.workspace = true
 prysm-settings-file.workspace = true
+prysm-version.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

@@ -81,11 +81,11 @@ What the script enforces:
   install scripts, links, absolute or `..` paths, or files outside the app and
   service directories.
 
-**Version.** The only source is `version` under `[workspace.package]` in
-[`Cargo.toml`](../../Cargo.toml). Binaries report it in full (for
-example `1.0.0-alpha.0`); `appinfo.json`, the IPK file name and its control
-file carry only `major.minor.patch`, because `ares-package` accepts nothing
-else.
+**Version.** The only source is [`VERSION`](../../VERSION) (see
+[releasing](releasing.md#the-version-is-one-file)). Binaries report it in full
+(for example `1.0.0-alpha.0`); `appinfo.json`, the IPK file name and its
+control file carry only `major.minor.patch`, because `ares-package` accepts
+nothing else.
 
 **Licences.** Each package carries Prysm's, hyperion-webos's and the TV
 native API notices, plus `javascript.txt`, which the frontend build writes

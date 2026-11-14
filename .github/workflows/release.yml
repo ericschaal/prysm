@@ -1,0 +1,128 @@
+# Release: one path for every `v*` tag. Release Please (release-please.yml)
+# opens the release pull request; merging it creates the tag and a draft
+# GitHub release. This workflow then
+# - `prepare`: checks that the tag's commit is on main, that the tag is v plus
+#   VERSION (the one version file), that the release-please manifest and the
+#   TrueNAS image pin agree, and that nothing else carries the version
+#   (scripts/check-release.py);
+# - `build`: runs CI (ci.yml) at that commit with `release: true`, which keeps
+#   the image tars, the .debs and both IPKs as artifacts;
+# - `publish`: packaging/release/publish.sh pushes
+#   ghcr.io/<owner>/prysm-headless:<version> (amd64, arm64 and the index),
+#   attaches the packages and publishes the release.
+#
+# A manual run with an existing tag recovers a release whose publish failed;
+# a release already published is only checked again.
+name: Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish or recover
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - name: Tag, commit and versions
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git merge-base --is-ancestor HEAD origin/main
+          version=$(python3 scripts/check-release.py "$RELEASE_TAG")
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$version"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/release.json" 2> "$RUNNER_TEMP/release-error"; then
+            python3 -c 'import json,sys; print("published=" + str(not json.load(open(sys.argv[1]))["isDraft"]).lower())' "$RUNNER_TEMP/release.json" >> "$GITHUB_OUTPUT"
+          elif grep -qi 'release not found' "$RUNNER_TEMP/release-error"; then
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/release-error" >&2
+            exit 1
+          fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.published != 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      release: true
+
+  publish:
+    needs: [prepare, build]
+    if: >-
+      always() && !cancelled() && needs.prepare.result == 'success' &&
+      (needs.build.result == 'success' || needs.prepare.outputs.published == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: release-publication
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      # The publish script as of this workflow run, so a fixed script on main
+      # can recover an older tag.
+      - name: Check out publication tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+      # Image tars, .debs and IPKs (prysm-headless-image-*, prysm-headless-deb-*,
+      # prysm-tv-ipk-*), not CI's frontend bundle or e2e binaries.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.prepare.outputs.published != 'true'
+        with:
+          pattern: prysm-*
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the images and the release
+        env:
+          RELEASE_DIRECTORY: ${{ runner.temp }}/release
+        run: |
+          mkdir -p "$RELEASE_DIRECTORY"
+          bash .release-tools/packaging/release/publish.sh

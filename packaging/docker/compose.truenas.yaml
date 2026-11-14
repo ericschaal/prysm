@@ -1,8 +1,8 @@
 # prysm-headless on TrueNAS SCALE (Apps → Discover Apps → Install via YAML).
-# Guide: docs/users/truenas.md. Before installing, change:
-#   1. VERSION in `image` to a v1.* release version.
-#   2. /mnt/tank/apps/prysm to your dataset. The `user` below must be able to
-#      create and replace files in it (568:568 is TrueNAS's "apps" user).
+# Guide: docs/users/truenas.md. `image` names the latest release (each release
+# updates it). Before installing, change /mnt/tank/apps/prysm to your dataset.
+# The `user` below must be able to create and replace files in it (568:568 is
+# TrueNAS's "apps" user).
 # The portal (port 8787) has no password: anyone who can reach the NAS on that
 # port controls the lights. Publish it on a trusted LAN only.
 # The default bridge network is enough. WLED must then be entered by IP
@@ -10,7 +10,7 @@
 # portal's "Find lights" finds nothing.
 services:
   prysm:
-    image: ghcr.io/ericschaal/prysm-headless:VERSION
+    image: ghcr.io/ericschaal/prysm-headless:1.0.0-alpha.0 # x-release-please-version
     restart: unless-stopped
     user: "568:568"
     read_only: true

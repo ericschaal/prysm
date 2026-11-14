@@ -84,9 +84,9 @@ trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/app" "$stage/service/licenses"
 cp -R "$ui/." "$stage/app/"
 cp "$here/app/icon.png" "$stage/app/"
-# The one version source is [workspace.package] in Cargo.toml; appinfo.json
-# takes its major.minor.patch (ares-package accepts nothing else).
-version=$(python3 "$here/ipk.py" appinfo "$root/Cargo.toml" "$here/app/appinfo.json" "$stage/app/appinfo.json")
+# The one version source is VERSION; appinfo.json and the file name take its
+# major.minor.patch (ares-package accepts nothing else).
+version=$(python3 "$here/ipk.py" appinfo "$root/VERSION" "$here/app/appinfo.json" "$stage/app/appinfo.json")
 for file in services.json setup.sh supervisor.role.json worker.role.json supervisor.service \
   supervisor.client.json supervisor.api.json; do
   cp "$here/service/$file" "$stage/service/"

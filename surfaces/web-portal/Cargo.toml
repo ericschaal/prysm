@@ -11,6 +11,7 @@ prysm-core.workspace = true
 prysm-ports.workspace = true
 prysm-protocol.workspace = true
 prysm-runtime.workspace = true
+prysm-version.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true

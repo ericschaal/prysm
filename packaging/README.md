@@ -72,7 +72,9 @@ or `docker compose -f packaging/docker/compose.yaml up -d`
   start; use `device` or `remote`.
 
 Release images are published as `ghcr.io/ericschaal/prysm-headless:<version>`
-by [v1-release.yml](../.github/workflows/v1-release.yml) on a `v1.*` tag.
+(and `:latest` for the newest stable release) by
+[release.yml](../.github/workflows/release.yml); see
+[releasing](../docs/developers/releasing.md).
 
 ## Debian package
 
@@ -188,8 +190,8 @@ else; no install scripts, links, absolute or `..` paths, files outside the
 app, service and package directories, or unknown service files. Despite
 `_all`, the binaries are ARMv7.
 
-The version has one source: `version` under `[workspace.package]` in
-[`Cargo.toml`](../Cargo.toml). The binaries report it in full
+The version has one source: [`VERSION`](../VERSION) (see
+[releasing](../docs/developers/releasing.md#the-version-is-one-file)). The binaries report it in full
 (`prysm-webos-service --version` prints `1.0.0-alpha.0`). The app's
 `appinfo.json`, and with it the IPK's file name and control file, carry only
 its `major.minor.patch` (`1.0.0`), because `ares-package` accepts nothing but

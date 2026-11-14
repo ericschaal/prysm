@@ -12,7 +12,7 @@ The implementation before 1.0 is in the tag `pre-1.0-consolidation`.
 
 | Directory | Crates | Role |
 | --- | --- | --- |
-| `crates/` | [`prysm-core`](../../crates/core/src/lib.rs), [`prysm-processor`](../../crates/processor/src/lib.rs), [`prysm-ports`](../../crates/ports/src/lib.rs), [`prysm-runtime`](../../crates/runtime/src/lib.rs), [`prysm-protocol`](../../crates/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/webos-link/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol |
+| `crates/` | [`prysm-core`](../../crates/core/src/lib.rs), [`prysm-processor`](../../crates/processor/src/lib.rs), [`prysm-ports`](../../crates/ports/src/lib.rs), [`prysm-runtime`](../../crates/runtime/src/lib.rs), [`prysm-protocol`](../../crates/protocol/src/lib.rs), [`prysm-webos-link`](../../crates/webos-link/src/lib.rs), [`prysm-version`](../../crates/version/src/lib.rs) | Frame and colour types, colour correction; edge sampling and smoothing; ports and settings; engine, session, builder; JSON wire types; TV supervisor ↔ worker protocol; the product version from `VERSION` |
 | `adapters/` | [`capture-device`](../../adapters/capture-device/src/lib.rs) (+ [`-sys`](../../adapters/capture-device-sys/src/lib.rs): V4L2 and AVFoundation), [`capture-file`](../../adapters/capture-file/src/lib.rs), [`capture-remote`](../../adapters/capture-remote/README.md), [`capture-webos`](../../adapters/capture-webos/src/lib.rs) (+ `-sys`), [`h264`](../../adapters/h264/src/lib.rs) (+ [`-rvenc-sys`](../../adapters/h264-rvenc-sys/src/lib.rs)), [`webos-luna-sys`](../../adapters/webos-luna-sys/src/lib.rs), [`output-wled`](../../adapters/output-wled/src/lib.rs), [`settings-file`](../../adapters/settings-file/README.md) | `FrameSource`, `FrameSink`, `LedOutput` and `SettingsStore` implementations; the Luna bus; H.264 for the remote stream |
 | `surfaces/` | [`tui`](../../surfaces/tui/src/lib.rs), [`web-portal`](../../surfaces/web-portal/HTTP-CONTRACT.md) | Ways in and out of a running engine |
 | `hosts/` | [`headless`](../../hosts/headless/src/main.rs), [`tui`](../../hosts/tui/src/main.rs), [`common`](../../hosts/common/src/lib.rs) (`prysm-host`); TV: [`webos`](../../hosts/webos/src/main.rs), [`webos-slim`](../../hosts/webos-slim/src/main.rs), [`webos-service`](../../hosts/webos-service/src/lib.rs) | Executables: a builder list plus process options; the TV workers and their supervisor ([design](../plans/prysm-v1-webos-supervisor.md)) |
@@ -175,5 +175,5 @@ members). Builds do not deploy.
 ## Packaging
 
 `prysm-headless` ships as a Docker image and a Debian package with a systemd
-service, the TV as two IPKs (full and slim); see [packaging](../../packaging/README.md). Releases on `v1.*` tags:
-[v1-release.yml](../../.github/workflows/v1-release.yml).
+service, the TV as two IPKs (full and slim); see [packaging](../../packaging/README.md).
+Releases: [releasing](releasing.md).

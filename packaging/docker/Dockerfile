@@ -25,7 +25,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+# VERSION: the product version, compiled in by prysm-version and read by
+# build-deb.sh.
+COPY Cargo.toml Cargo.lock VERSION ./
 COPY adapters/ adapters/
 COPY crates/ crates/
 COPY hosts/ hosts/

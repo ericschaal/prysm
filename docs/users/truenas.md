@@ -19,11 +19,14 @@ to create and replace files there; it writes `settings.json` on the first save.
 1. Open **Apps → Discover Apps → Install via YAML**.
 2. Paste [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml).
 3. Change:
-   - `VERSION` in `image` to a version from a `v1.*`
-     [release](https://github.com/ericschaal/prysm/releases).
    - `/mnt/tank/apps/prysm` to your dataset.
    - `user`, if your dataset belongs to another user and group.
 4. Install. Open `http://NAS_IP:8787`.
+
+The file's `image` names the latest
+[release](https://github.com/ericschaal/prysm/releases); to install another
+one, change the tag after `prysm-headless:`. To update, paste the current file
+again or change the tag and redeploy.
 
 The example publishes port 8787 (the portal, which also receives the TV's
 picture) and starts Prysm with `--allow-origin null`, which the slim TV app

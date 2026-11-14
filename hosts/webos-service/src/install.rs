@@ -14,16 +14,10 @@ use std::time::{Duration, Instant};
 pub const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPLY: usize = 65_536;
 
-/// The Luna manifests' version: the workspace version's major.minor.patch,
+/// The Luna manifests' version: the product version's major.minor.patch,
 /// the same rule as the packaged appinfo.json (`ipk.py app_version`), which
 /// takes no pre-release suffix.
-pub const MANIFEST_VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION_MAJOR"),
-    ".",
-    env!("CARGO_PKG_VERSION_MINOR"),
-    ".",
-    env!("CARGO_PKG_VERSION_PATCH"),
-);
+pub const MANIFEST_VERSION: &str = prysm_version::RELEASE;
 
 /// Why registration could not be changed.
 #[derive(Debug, thiserror::Error)]

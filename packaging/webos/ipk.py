@@ -7,9 +7,9 @@
                          the slim worker's hardware H.264 encoder)
   ipk.py secure PACKAGE  normalize ownership and modes, reject stray payload
   ipk.py verify PACKAGE  check a hardened package without changing it
-  ipk.py appinfo CARGO_TOML SOURCE DEST
+  ipk.py appinfo VERSION_FILE SOURCE DEST
                          write SOURCE's appinfo.json to DEST with the app
-                         version derived from the workspace version; print it
+                         version derived from the product version; print it
 
 Both flavours install the same paths (app io.prysm.tv, service
 io.prysm.tv.service), so one allowlist covers both.
@@ -71,33 +71,32 @@ GSTREAMER_LIBRARIES = {
 VERSIONS = {'GLIBC': (2, 12), 'GLIBCXX': (3, 4), 'CXXABI': (1, 3, 9), 'GCC': (4, 3, 0)}
 
 
-def workspace_version(cargo_toml):
-    """The `[workspace.package]` version in the text of Cargo.toml."""
-    section = re.search(r'^\[workspace\.package\]$(.*?)(?=^\[|\Z)', cargo_toml, re.M | re.S)
-    match = section and re.search(r'^version = "(.+?)"$', section.group(1), re.M)
-    if not match:
-        raise ValueError('no [workspace.package] version in Cargo.toml')
-    return match.group(1)
+def product_version(version_file):
+    """The product version: the one line of the repository's VERSION file."""
+    version = Path(version_file).read_text().strip()
+    if not version or any(c.isspace() for c in version):
+        raise ValueError(f'{version_file} must hold one version')
+    return version
 
 
 def app_version(version):
-    """The appinfo.json version for a workspace version: its major.minor.patch.
+    """The appinfo.json version for a product version: its major.minor.patch.
 
     ares-package accepts only three dot-separated numbers, so a pre-release or
     build suffix (1.0.0-alpha.0) is dropped; the binaries report the full version.
     """
     match = re.fullmatch(r'((?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8}))(?:[-+].*)?', version)
     if not match:
-        raise ValueError('unexpected workspace version: ' + version)
+        raise ValueError('unexpected product version: ' + version)
     return match.group(1)
 
 
-def write_appinfo(cargo_toml, source, destination):
-    """Copy appinfo.json with the version from Cargo.toml; return that version."""
+def write_appinfo(version_file, source, destination):
+    """Copy appinfo.json with the version from VERSION; return that version."""
     appinfo = json.loads(Path(source).read_text())
     if 'version' in appinfo:
-        raise ValueError(f'{source} must not set version; it comes from the workspace version')
-    version = app_version(workspace_version(Path(cargo_toml).read_text()))
+        raise ValueError(f'{source} must not set version; it comes from VERSION')
+    version = app_version(product_version(version_file))
     appinfo = {'id': appinfo.pop('id'), 'version': version, **appinfo}
     Path(destination).write_text(json.dumps(appinfo, indent=2) + '\n')
     return version

@@ -92,20 +92,20 @@ class MetadataTests(unittest.TestCase):
                                          capture_output=True, text=True)
                 self.assertEqual(refused.returncode, 2, other)
 
-    def test_appinfo_version_is_the_workspace_version(self):
+    def test_appinfo_version_is_the_product_version(self):
         # One place to bump: the source appinfo.json has no version of its own.
         self.assertNotIn('version', load('app/appinfo.json'))
-        self.assertIn('ipk.py" appinfo "$root/Cargo.toml"', (HERE / 'build-ipk.sh').read_text())
-        workspace = ipk.workspace_version((ROOT / 'Cargo.toml').read_text())
+        self.assertIn('ipk.py" appinfo "$root/VERSION"', (HERE / 'build-ipk.sh').read_text())
+        product = ipk.product_version(ROOT / 'VERSION')
         with tempfile.TemporaryDirectory() as directory:
             staged = Path(directory) / 'appinfo.json'
-            version = ipk.write_appinfo(ROOT / 'Cargo.toml', HERE / 'app/appinfo.json', staged)
+            version = ipk.write_appinfo(ROOT / 'VERSION', HERE / 'app/appinfo.json', staged)
             appinfo = json.loads(staged.read_text())
         self.assertEqual(appinfo['version'], version)
         self.assertEqual(appinfo['id'], ipk.APP_ID)
         # ares-package's rule: three dot-separated numbers, nothing else.
         self.assertRegex(version, r'^(?:[1-9]\d{0,8}|\d)\.(?:[1-9]\d{0,8}|\d)\.(?:[1-9]\d{0,8}|\d)$')
-        self.assertTrue(workspace == version or workspace.startswith(version + '-'), workspace)
+        self.assertTrue(product == version or product.startswith((version + '-', version + '+')), product)
         self.assertEqual(ipk.app_version('1.0.0-alpha.0'), '1.0.0')
         self.assertEqual(ipk.app_version('2.10.3'), '2.10.3')
         for bad in ('1.0', '01.0.0', 'v1.0.0'):
@@ -260,7 +260,7 @@ class SmokeProbeTests(unittest.TestCase):
         self.assertEqual(json.loads(files['probe.worker.role.json'])['exeName'], directory + '/prysm-webos-slim')
         self.assertIn(directory + '/probe.worker.role.json', json.loads(manifest)['roleFiles'])
         # The probe's Luna manifest has the packaged app's version.
-        version = ipk.app_version(ipk.workspace_version((ROOT / 'Cargo.toml').read_text()))
+        version = ipk.app_version(ipk.product_version(ROOT / 'VERSION'))
         self.assertEqual(json.loads(manifest)['version'], version)
         self.assertIn('run --sandbox ' + directory + ' --run-for 60', files['probe.service'])
         status = json.loads(smoke.STATUS)

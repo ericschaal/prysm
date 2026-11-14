@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 /// The TV supervisor of Prysm.
 #[derive(Debug, Parser)]
 #[command(
-    version,
+    version = prysm_version::VERSION,
     args_conflicts_with_subcommands = true,
     disable_help_subcommand = true
 )]

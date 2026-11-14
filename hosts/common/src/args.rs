@@ -13,7 +13,7 @@ SIGINT or SIGTERM stops lighting, idles the output and exits. Status goes to
 stderr. RUST_LOG filters log lines by target [default: warn,prysm=info].";
 
 #[derive(Debug, PartialEq, Eq, Parser)]
-#[command(version, after_help = AFTER_HELP)]
+#[command(version = prysm_version::VERSION, after_help = AFTER_HELP)]
 pub(crate) struct Options {
     /// Settings file
     #[arg(value_name = "settings.json")]

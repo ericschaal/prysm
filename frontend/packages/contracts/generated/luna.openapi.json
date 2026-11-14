@@ -365,7 +365,7 @@
       "name": "Apache-2.0"
     },
     "title": "Prysm TV service (luna://io.prysm.tv.service)",
-    "version": "1.0.0-alpha.0"
+    "version": "1"
   },
   "openapi": "3.1.0",
   "paths": {}

@@ -110,7 +110,7 @@ pub(crate) fn render(counters: &Counters, snapshot: &Snapshot) -> String {
     text.header("prysm_build_info", Kind::Gauge, "Prysm version; always 1.");
     text.line(format_args!(
         "prysm_build_info{{version=\"{}\"}} 1",
-        env!("CARGO_PKG_VERSION")
+        prysm_version::VERSION
     ));
     text.one_of(
         "prysm_target",
@@ -269,7 +269,7 @@ prysm_source_opens_total 2
 # TYPE prysm_output_opens_total counter
 prysm_output_opens_total 3
 ",
-            env!("CARGO_PKG_VERSION")
+            prysm_version::VERSION
         );
         assert_eq!(render(&counters, &snapshot), expected);
     }

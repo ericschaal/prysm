@@ -7,6 +7,7 @@ members = [
     "crates/webos-link",
     "crates/core",
     "crates/processor",
+    "crates/version",
     "adapters/capture-device",
     "adapters/capture-device-sys",
     "adapters/capture-file",
@@ -31,7 +32,9 @@ members = [
 default-members = ["hosts/headless", "hosts/tui"]
 
 [workspace.package]
-version = "1.0.0-alpha.0"
+# Not the product version: that is the VERSION file alone, read by
+# prysm-version (crates/version). The crates are never published.
+version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
@@ -40,6 +43,8 @@ publish = false
 # Frame and colour types, processing
 prysm-core = { path = "crates/core" }
 prysm-processor = { path = "crates/processor" }
+# The product version (VERSION)
+prysm-version = { path = "crates/version" }
 # Runtime
 prysm-ports = { path = "crates/ports" }
 prysm-runtime = { path = "crates/runtime" }

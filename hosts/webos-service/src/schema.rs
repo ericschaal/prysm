@@ -21,6 +21,10 @@ pub use utoipa::openapi::OpenApi;
 use utoipa::openapi::schema::{ObjectBuilder, Type};
 use utoipa::{OpenApi as _, ToSchema};
 
+/// The Luna API's own version, in the document's `info.version`; not the
+/// product version, which only `VERSION` carries.
+pub const API_VERSION: &str = "1";
+
 // Mirrors `prysm_webos_link::Video`.
 /// The TV's main video output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -158,7 +162,7 @@ struct Roots;
 pub fn document() -> OpenApi {
     let mut document = Roots::openapi();
     document.info.title = "Prysm TV service (luna://io.prysm.tv.service)".into();
-    document.info.version = env!("CARGO_PKG_VERSION").into();
+    document.info.version = API_VERSION.into();
     document
 }
 

@@ -15,10 +15,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 package=prysm-headless
 
-# Workspace version, e.g. 1.0.0-alpha.0 -> 1.0.0~alpha.0-1 (sorts before
-# 1.0.0; "-1" is the packaging revision).
-version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$repo/Cargo.toml")
-[ -n "$version" ] || { echo "no [workspace.package] version in $repo/Cargo.toml" >&2; exit 1; }
+# The product version (VERSION), e.g. 1.0.0-alpha.0 -> 1.0.0~alpha.0-1
+# (sorts before 1.0.0; "-1" is the packaging revision).
+version=$(tr -d '[:space:]' <"$repo/VERSION")
+[ -n "$version" ] || { echo "no version in $repo/VERSION" >&2; exit 1; }
 version=$(printf '%s' "$version" | tr - '~')-${DEB_REVISION:-1}
 arch=$(dpkg --print-architecture)
 

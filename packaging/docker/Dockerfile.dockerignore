@@ -1,7 +1,8 @@
 # Context for packaging/docker/Dockerfile (BuildKit reads the ignore file next
-# to the Dockerfile). Only source inputs: the workspaces and the licence.
+# to the Dockerfile). Only source inputs: the workspaces, VERSION and the licence.
 **
 !LICENSE
+!VERSION
 !Cargo.toml
 !Cargo.lock
 !adapters/

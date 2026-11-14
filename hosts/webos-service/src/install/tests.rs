@@ -49,18 +49,15 @@ impl Sandbox {
     }
 }
 
-/// One version to bump: the workspace's, without a pre-release suffix, as
-/// the packaged appinfo.json has it.
+/// One version to bump: the product's (VERSION), without a pre-release
+/// suffix, as the packaged appinfo.json has it.
 #[test]
-fn manifests_carry_the_workspace_version() {
-    let workspace = env!("CARGO_PKG_VERSION");
-    let rest = workspace
+fn manifests_carry_the_product_version() {
+    let version = prysm_version::VERSION;
+    let rest = version
         .strip_prefix(MANIFEST_VERSION)
-        .expect("the workspace version starts with it");
-    assert!(
-        rest.is_empty() || rest.starts_with(['-', '+']),
-        "{workspace}"
-    );
+        .expect("the product version starts with it");
+    assert!(rest.is_empty() || rest.starts_with(['-', '+']), "{version}");
     let parts: Vec<&str> = MANIFEST_VERSION.split('.').collect();
     assert_eq!(parts.len(), 3, "{MANIFEST_VERSION}");
     assert!(parts.iter().all(|part| part.parse::<u32>().is_ok()));

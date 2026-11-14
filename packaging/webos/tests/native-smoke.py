@@ -36,12 +36,12 @@ ROOT = HERE.parents[1]
 
 
 def manifest_version():
-    """The Luna manifest version: the workspace version's major.minor.patch,
+    """The Luna manifest version: the product version's major.minor.patch,
     as ipk.py gives the packaged appinfo.json."""
     spec = importlib.util.spec_from_file_location('ipk', HERE / 'ipk.py')
     ipk = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ipk)
-    return ipk.app_version(ipk.workspace_version((ROOT / 'Cargo.toml').read_text()))
+    return ipk.app_version(ipk.product_version(ROOT / 'VERSION'))
 APP = 'io.prysm.tv.probe'
 SERVICE = APP + '.service'
 MANIFEST = f'/var/luna-service2/manifests.d/{APP}.json'

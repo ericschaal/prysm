@@ -1,0 +1,10 @@
+[package]
+name = "prysm-version"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Prysm product version, read from the repository's VERSION file at compile time"
+
+[lints]
+workspace = true

@@ -40,6 +40,10 @@ use utoipa::openapi::schema::{
 use utoipa::openapi::{Ref, RefOr};
 use utoipa::{OpenApi as _, PartialSchema, ToSchema};
 
+/// The HTTP API's own version (`/api/v1`), in the documents' `info.version`;
+/// not the product version, which only `VERSION` carries.
+pub const API_VERSION: &str = "1";
+
 // Mirrors `prysm_ports::Settings`.
 /// Everything a user can change at runtime; adapter sections are tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -468,7 +472,7 @@ impl Contract {
     pub fn document(self) -> Result<OpenApi, SchemaConflict> {
         let mut document = Roots::openapi();
         document.info.title = self.title;
-        document.info.version = env!("CARGO_PKG_VERSION").into();
+        document.info.version = API_VERSION.into();
         let schemas = &mut document
             .components
             .get_or_insert_with(Default::default)

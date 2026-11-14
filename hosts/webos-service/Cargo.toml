@@ -24,6 +24,7 @@ schema = ["dep:utoipa"]
 
 [dependencies]
 prysm-ports.workspace = true
+prysm-version.workspace = true
 prysm-webos-link.workspace = true
 prysm-webos-luna-sys.workspace = true
 clap.workspace = true
