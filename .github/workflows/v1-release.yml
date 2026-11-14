@@ -151,7 +151,7 @@ jobs:
           # build-ipk.sh names them io.prysm.tv-<flavour>_<version>_all.ipk.
           mkdir -p "$RUNNER_TEMP/ipk"
           for flavour in full slim; do
-            cp "$ARTIFACTS/prysm-tv-ipk-$flavour"/io.prysm.tv-"$flavour"_*_all.ipk "$RUNNER_TEMP/ipk/"
+            cp "$ARTIFACTS/prysm-tv-ipk-$flavour/io.prysm.tv-${flavour}"_*_all.ipk "$RUNNER_TEMP/ipk/"
           done
           # A pre-release version is a GitHub pre-release. Not "Latest" until the
           # unified 1.x release path decides it.
