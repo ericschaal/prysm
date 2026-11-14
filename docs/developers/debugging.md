@@ -40,7 +40,7 @@ Log lines are `tracing` events, including those of the shared capture and
 processing crates, filtered by `RUST_LOG` (default `warn,prysm=info`):
 
 ```sh
-RUST_LOG=debug cargo run --manifest-path v1/Cargo.toml -p prysm-headless -- settings.json
+RUST_LOG=debug cargo run -p prysm-headless -- settings.json
 ```
 
 While `prysm-tui` shows its preview, logs go only to `--log-file PATH`. The TV
@@ -64,14 +64,14 @@ None of these have been run against Prysm 1.x yet; results belong in
   what it created. Read its plan first with `--dry-run`:
 
   ```sh
-  python3 v1/packaging/webos/tests/native-smoke.py --host root@TV --flavour full --dry-run
+  python3 packaging/webos/tests/native-smoke.py --host root@TV --flavour full --dry-run
   ```
 
   `--supervisor` adds setup, the app-only API and uninstall; `--capture` runs
   the real worker.
 - **TV, slim encoder:** with the Prysm service disabled, the installed slim
   worker can check one encoder without capture or a receiver
-  (`check-encoder`; see [v1 packaging](../../v1/packaging/README.md#checking-the-slim-h264-encoder-on-a-tv)).
+  (`check-encoder`; see [v1 packaging](../../packaging/README.md#checking-the-slim-h264-encoder-on-a-tv)).
 - **TV acceptance:** install, set up, capture with video and without,
   standby and wake, cold boot with **Start with TV**, a hung capture being
   killed, reconnecting the slim stream, calibration, and removal.
@@ -81,8 +81,8 @@ None of these have been run against Prysm 1.x yet; results belong in
   plan first:
 
   ```sh
-  v1/packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
-  v1/packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.prysm.tv-slim_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour full root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
+  packaging/webos/tests/tv-acceptance.sh --dry-run --flavour slim --prysm http://HOST:8787 root@TV path/to/io.prysm.tv-slim_VERSION_all.ipk
   ```
 
 Compare release builds with the same content, size, rate and encoding.

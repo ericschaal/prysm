@@ -7,13 +7,13 @@ name: **full** (the TV processes, drives WLED and serves the portal) and
 **slim** (the TV only captures and streams to a desktop Prysm). Installing one
 replaces the other; there is no processing-location switch in the app. The
 flavour is compiled into each supervisor binary
-([webos-service](../../../v1/hosts/webos-service/src/lib.rs)).
+([webos-service](../../../hosts/webos-service/src/lib.rs)).
 
 The slim stream is requested by the desktop receiver (size, rate, menus,
 encoding). Encoding is an explicit setting, `h264_hardware` (default),
 `h264_software` or `raw`. An encoder that cannot start refuses the request
 and lighting stops with its reason; nothing falls back on its own. LZ4 is
-dropped ([capture-remote](../../../v1/adapters/capture-remote/README.md)).
+dropped ([capture-remote](../../../adapters/capture-remote/README.md)).
 
 Kept: capture in a supervised worker process, because a hung LG capture call
 is recovered only by killing that process.

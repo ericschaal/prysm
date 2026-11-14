@@ -14,7 +14,7 @@ capture. Visible UI no longer requires a separate HAL copy or CPU composition
 when that tap is available. Readiness-driven UI fallback remains supported.
 The deployed 640×360/30 fps sample averaged 12.9 ms per whole iteration; hardware
 output wait remained dominant at 11.9 ms. See
-[combined capture deployment](../../research/webos-capture/2026-11-02-encoder-latency/combined-deployment.md).
+[combined capture deployment](2026-11-02-encoder-latency/combined-deployment.md).
 
 ## Direct output qualification on 2026-11-02
 

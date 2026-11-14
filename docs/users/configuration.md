@@ -158,7 +158,7 @@ Prysm keeps all of the above in one JSON file:
 
 The portal creates the file on the first save. Back it up before upgrades.
 Stop Prysm before editing it by hand. The format is described in the
-[settings-file reference](../../v1/adapters/settings-file/README.md).
+[settings-file reference](../../adapters/settings-file/README.md).
 
 To check a file without starting the lights:
 

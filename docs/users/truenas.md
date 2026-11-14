@@ -17,7 +17,7 @@ to create and replace files there; it writes `settings.json` on the first save.
 ## 2. Install
 
 1. Open **Apps → Discover Apps → Install via YAML**.
-2. Paste [compose.truenas.yaml](../../v1/packaging/docker/compose.truenas.yaml).
+2. Paste [compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml).
 3. Change:
    - `VERSION` in `image` to a version from a `v1.*`
      [release](https://github.com/ericschaal/prysm/releases).

@@ -25,8 +25,8 @@ Releases: [releasing](releasing.md).
 - Keep process options on the command line and run-time settings in the
   settings file.
 - Rust owns contracts. After a settings, state or route change, run
-  `npm --prefix v1/frontend run codegen` and update the
-  [portal contract](../../v1/surfaces/web-portal/HTTP-CONTRACT.md).
+  `npm --prefix frontend run codegen` and update the
+  [portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md).
 - Change callers, fixtures and docs together. Test the changed behaviour.
 - TV tests on hardware keep isolation (probe identity, private directory),
   timeouts and cleanup. Builds do not deploy.
@@ -36,7 +36,7 @@ Releases: [releasing](releasing.md).
 [Users](../users/README.md): steps to working lights.
 [Developers](README.md): current architecture, commands and contracts.
 [Research](../../research/README.md): experiments and measurements.
-Reference detail lives next to the code (`v1/**/README.md`, the HTTP
+Reference detail lives next to the code (`**/README.md` in the workspace, the HTTP
 contract); guides link to it instead of copying it.
 
 Write short, task-first pages: prerequisites, exact commands or clicks,

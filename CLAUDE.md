@@ -1,7 +1,7 @@
 # Working on Prysm
 
-Prysm turns screen colours into WLED LED colours. The product is the v1
-workspace in [`v1/`](v1/README.md): desktop hosts (`prysm-headless`,
+Prysm turns screen colours into WLED LED colours. The product is the
+[workspace](docs/developers/workspace.md) at the repository root: desktop hosts (`prysm-headless`,
 `prysm-tui`) and two LG webOS TV packages (full, slim) under one supervisor.
 Use the maintained documentation rather than duplicating it here.
 

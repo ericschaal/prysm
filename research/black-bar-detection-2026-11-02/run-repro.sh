@@ -16,6 +16,6 @@ prysm-core = { path = %s }
 [[bin]]
 name = "repro"
 path = %s
-''' % (json.dumps(str(repo/'v1/crates/core')), json.dumps(str(repo/'research/black-bar-detection-2026-11-02/repro.rs'))))
+''' % (json.dumps(str(repo/'crates/core')), json.dumps(str(repo/'research/black-bar-detection-2026-11-02/repro.rs'))))
 PY
 cargo run --offline --release --manifest-path "$work/Cargo.toml" -- "$@"

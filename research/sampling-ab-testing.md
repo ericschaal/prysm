@@ -21,16 +21,16 @@ The original baseline used quadratic inward weighting, linear-light region avera
 
 Relevant code:
 
-- [Region averaging](../v1/crates/processor/src/frames/frame_view.rs)
-- [Sampling geometry](../v1/crates/processor/src/nodes/spatial_sampler.rs)
-- [Density and color strip interpolation](../v1/crates/core/src/color_strip.rs)
-- [Processor configuration](../v1/crates/core/src/config.rs)
-- [Temporal smoothing](../v1/crates/processor/src/nodes/temporal_smoother.rs)
+- [Region averaging](../crates/processor/src/frames/frame_view.rs)
+- [Sampling geometry](../crates/processor/src/nodes/spatial_sampler.rs)
+- [Density and color strip interpolation](../crates/core/src/color_strip.rs)
+- [Processor configuration](../crates/core/src/config.rs)
+- [Temporal smoothing](../crates/processor/src/nodes/temporal_smoother.rs)
 - `apps/prysm/runtime/src/video.rs` (in the tag `pre-1.0-consolidation`)
 - [Desktop rendering](https://github.com/ericschaal/prysm/blob/343b0c698a68ff0efe268c7cc73987c2e57545e8/crates/rendering/prysm-renderer-desktop/src/lib.rs)
-- [Existing pipeline regression tests](../v1/crates/processor/tests/pipeline.rs)
+- [Existing pipeline regression tests](../crates/processor/tests/pipeline.rs)
 
-The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../v1/adapters/output-wled/src/ddp.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured through **Settings** in the browser and saved in `settings.json`). Open **Preview & tuning** in the browser panel for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
+The repository currently has no A/B mode selector, per-frame measurement exporter, or implemented histogram candidate. The [LED renderer](../adapters/output-wled/src/ddp.rs) supports WLED output over DDP through the single application (`cargo run --release -p prysm`, configured through **Settings** in the browser and saved in `settings.json`). Open **Preview & tuning** in the browser panel for an on-screen preview. Implement only the candidate and measurement support needed for the experiment being run. Real-wall conclusions require a functioning LED output path; desktop preview results must be labeled as preview results.
 
 Both outputs use FFmpeg 9+ for file input (select **Video file** in Settings and enter its absolute path), delivering sRGB RGB24 frames at the configured capture resolution (default 640×360), playing once and completing capture at EOF while the UI/API remain available. They can support visual inspection, but their playback and scheduling are not a deterministic measurement harness.
 

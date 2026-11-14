@@ -27,10 +27,10 @@ it. Capture therefore runs in a worker process under a supervisor.
 
 The flavour is compiled into each supervisor binary, and each package ships
 only its own pair, so a supervisor cannot start the other package's worker.
-Code: [webos-service](../../v1/hosts/webos-service/src/lib.rs),
-[webos](../../v1/hosts/webos/src/main.rs),
-[webos-slim](../../v1/hosts/webos-slim/src/main.rs),
-[webos-link](../../v1/crates/webos-link/src/lib.rs).
+Code: [webos-service](../../hosts/webos-service/src/lib.rs),
+[webos](../../hosts/webos/src/main.rs),
+[webos-slim](../../hosts/webos-slim/src/main.rs),
+[webos-link](../../crates/webos-link/src/lib.rs).
 
 ## Supervisor and worker
 
@@ -60,7 +60,7 @@ name at each attempt; follows the receiver's stream request (size, rate,
 menus, encoding); closes capture while the receiver has paused the stream. An
 encoder failure is reported as `failure_kind: encoder` and refused until the
 desktop asks for another encoding; nothing falls back on its own. Wire
-protocol: [capture-remote](../../v1/adapters/capture-remote/README.md).
+protocol: [capture-remote](../../adapters/capture-remote/README.md).
 
 ## Luna API
 
@@ -69,7 +69,7 @@ Service `io.prysm.tv.service`: `getState` (any caller, subscribable),
 application ID). Preferences hold only `autostart` and, for slim, `instance`
 (the desktop portal) and `receiver` (`host:port`). Picture settings live in a
 portal, never in Luna. Types: generated `@prysm/contracts/luna` from
-[schema.rs](../../v1/hosts/webos-service/src/schema.rs).
+[schema.rs](../../hosts/webos-service/src/schema.rs).
 
 The TV app sets the service up through the Homebrew Channel's `exec` of
 `setup.sh`, because the service does not exist yet at that point.
@@ -100,5 +100,5 @@ first.
 
 Arrows move focus between two columns and within rows, OK chooses, Back closes
 one dialog level and then asks before closing. Closing the app leaves the
-service running. Source: [TV UI](../../v1/frontend/packages/tv-ui/app.tsx);
+service running. Source: [TV UI](../../frontend/packages/tv-ui/app.tsx);
 local demo: [frontend](frontend.md#webos-tv-app).

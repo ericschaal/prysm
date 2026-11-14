@@ -6,7 +6,7 @@ when a `v1.*` tag is pushed.
 ## Cut a release
 
 1. Set `version` under `[workspace.package]` in
-   [`v1/Cargo.toml`](../../v1/Cargo.toml) and update `v1/Cargo.lock`
+   [`Cargo.toml`](../../Cargo.toml) and update `Cargo.lock`
    in the same change. It is the only version source: binaries, the Debian
    package and the IPKs all derive from it.
 2. Merge to `main`.

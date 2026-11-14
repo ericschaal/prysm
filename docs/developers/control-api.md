@@ -2,8 +2,8 @@
 
 The web portal is a surface over the engine: every API call is one engine
 command or watch. The complete contract (routes, bodies, limits, status codes)
-is [HTTP-CONTRACT.md](../../v1/surfaces/web-portal/HTTP-CONTRACT.md); generated
-types live in `@prysm/contracts/application` ([contracts](../../v1/CONTRACTS.md)).
+is [HTTP-CONTRACT.md](../../surfaces/web-portal/HTTP-CONTRACT.md); generated
+types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 
 ## Routes at a glance
 
@@ -36,7 +36,7 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
 
 - The settings file holds everything a user changes at run time: `capture`,
   `output`, `processing` (with colour profiles). Format:
-  [settings-file](../../v1/adapters/settings-file/README.md).
+  [settings-file](../../adapters/settings-file/README.md).
 - Process options (settings path, `--listen`, `--allow-origin`, `--metrics`,
   `--start`, `--log-file`) are command-line only and never in the file. There
   are no `PRYSM_*` environment variables.
@@ -45,7 +45,7 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
 - Saves replace the whole document with the revision the client edited from;
   a stale revision is `409` and is never retried automatically. The browser
   copies the latest settings and replaces one section, so it keeps fields it
-  does not show ([saving settings](../../v1/frontend/README.md#saving-settings)).
+  does not show ([saving settings](../../frontend/README.md#saving-settings)).
 
 See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 

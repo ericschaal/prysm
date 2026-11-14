@@ -1,0 +1,97 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ports",
+    "crates/runtime",
+    "crates/protocol",
+    "crates/webos-link",
+    "crates/core",
+    "crates/processor",
+    "adapters/capture-device",
+    "adapters/capture-device-sys",
+    "adapters/capture-file",
+    "adapters/capture-remote",
+    "adapters/capture-webos",
+    "adapters/capture-webos-sys",
+    "adapters/h264",
+    "adapters/h264-rvenc-sys",
+    "adapters/output-wled",
+    "adapters/settings-file",
+    "adapters/webos-luna-sys",
+    "surfaces/tui",
+    "surfaces/web-portal",
+    "hosts/common",
+    "hosts/headless",
+    "hosts/tui",
+    "hosts/webos",
+    "hosts/webos-slim",
+    "hosts/webos-service",
+    "tools/export-contracts",
+]
+default-members = ["hosts/headless", "hosts/tui"]
+
+[workspace.package]
+version = "1.0.0-alpha.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Frame and colour types, processing
+prysm-core = { path = "crates/core" }
+prysm-processor = { path = "crates/processor" }
+# Runtime
+prysm-ports = { path = "crates/ports" }
+prysm-runtime = { path = "crates/runtime" }
+prysm-protocol = { path = "crates/protocol" }
+prysm-webos-link = { path = "crates/webos-link" }
+# Adapters
+prysm-capture-device = { path = "adapters/capture-device" }
+prysm-capture-device-sys = { path = "adapters/capture-device-sys" }
+prysm-capture-file = { path = "adapters/capture-file" }
+prysm-capture-remote = { path = "adapters/capture-remote" }
+prysm-capture-webos = { path = "adapters/capture-webos" }
+prysm-h264 = { path = "adapters/h264" }
+prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }
+prysm-output-wled = { path = "adapters/output-wled" }
+prysm-settings-file = { path = "adapters/settings-file" }
+# Surfaces and hosts
+prysm-surface-tui = { path = "surfaces/tui" }
+prysm-web-portal = { path = "surfaces/web-portal" }
+prysm-host = { path = "hosts/common" }
+# External
+# Only the features the hosts' help and usage errors need; no colour or suggestions.
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+futures = "0.3"
+libloading = "0.9"
+nix = "0.31"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
+tempfile = "3.27"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+tracing = "0.1"
+# The capture stream: a blocking WebSocket; rustls with ring (no C toolchain
+# beyond what ring needs) and the system's certificate authorities for wss.
+tungstenite = { version = "0.30", default-features = false }
+http = "1"
+bytes = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+utoipa = "6"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+
+# The TV packages (packaging/webos/build-ipk.sh): smaller and faster ARMv7
+# binaries; no symbols or debug info on the TV.
+[profile.webos]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+debug = false
+strip = true

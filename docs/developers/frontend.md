@@ -1,24 +1,24 @@
 # Frontend development
 
-`v1/frontend` is one npm workspace (Node.js 24+) with four bundles: the
+`frontend` is one npm workspace (Node.js 24+) with four bundles: the
 desktop portal (served by `prysm-headless` and `prysm-tui`), the TV's own
 portal (full package), and the TV app for each package. The Rust hosts embed
 the browser bundles at compile time; the TV bundles go into the IPKs.
-Reference: [frontend README](../../v1/frontend/README.md) (screens, saving
-rules, limits) and [UI and host assemblies](../../v1/UI-ASSEMBLIES.md).
+Reference: [frontend README](../../frontend/README.md) (screens, saving
+rules, limits) and [UI and host assemblies](ui-assemblies.md).
 
 ## Portal with hot reload
 
 Start a host, then the dev server in a second terminal:
 
 ```sh
-npm --prefix v1/frontend ci
-npm --prefix v1/frontend run build
-cargo run --manifest-path v1/Cargo.toml -p prysm-tui -- v1/hosts/tui/settings.example.json
+npm --prefix frontend ci
+npm --prefix frontend run build
+cargo run -p prysm-tui -- hosts/tui/settings.example.json
 ```
 
 ```sh
-npm --prefix v1/frontend run dev:headless
+npm --prefix frontend run dev:headless
 ```
 
 The dev server forwards `/api` to `http://127.0.0.1:8787`, or to the Prysm
@@ -33,18 +33,18 @@ TypeScript under `packages/contracts/generated`, which is checked in. Never
 edit generated files.
 
 ```sh
-npm --prefix v1/frontend run codegen        # after a Rust contract change
-npm --prefix v1/frontend run codegen:check  # fail on drift without writing
+npm --prefix frontend run codegen        # after a Rust contract change
+npm --prefix frontend run codegen:check  # fail on drift without writing
 ```
 
 Codegen runs Rust, so it needs a Rust toolchain (and `libclang` on Linux).
-Details: [contract ownership](../../v1/CONTRACTS.md).
+Details: [contract ownership](contracts.md).
 
 ## webOS TV app
 
 ```sh
-npm --prefix v1/frontend run dev:webos        # full package's TV app
-npm --prefix v1/frontend run dev:webos-slim   # slim package's TV app
+npm --prefix frontend run dev:webos        # full package's TV app
+npm --prefix frontend run dev:webos-slim   # slim package's TV app
 ```
 
 Open `/demo.html` on the dev server. It runs the TV app on an in-memory
@@ -59,10 +59,10 @@ browsers and remote-control navigation have not yet been verified on a TV.
 ## Tests and formatting
 
 ```sh
-npm --prefix v1/frontend test           # codegen, typecheck, build, contract and DOM tests
-npm --prefix v1/frontend run lint
-npm --prefix v1/frontend run format:check
-npm --prefix v1/frontend run format     # rewrite with Prettier
+npm --prefix frontend test           # codegen, typecheck, build, contract and DOM tests
+npm --prefix frontend run lint
+npm --prefix frontend run format:check
+npm --prefix frontend run format     # rewrite with Prettier
 ```
 
 The DOM tests use jsdom. Mobile browsers (iOS Safari, Firefox) have not been
@@ -70,7 +70,7 @@ checked against the portal.
 
 ## End-to-end tests
 
-`v1/frontend/e2e/` drives the portal in Chromium and WebKit with
+`frontend/e2e/` drives the portal in Chromium and WebKit with
 [Playwright](https://playwright.dev/). Each test starts its own
 `prysm-headless` on an ephemeral loopback port with a settings file in a
 temporary directory (remote capture, `null` output), and may start test
@@ -80,21 +80,21 @@ TV's slim worker, streaming generated frames, refusing its first connections
 Nothing leaves loopback.
 
 ```sh
-cargo build --manifest-path v1/Cargo.toml -p prysm-headless
-cargo build --manifest-path v1/Cargo.toml -p prysm-capture-remote --example test_sender
-npm --prefix v1/frontend run e2e:install   # Chromium and WebKit, once per Playwright version
-npm --prefix v1/frontend run e2e           # Chromium and WebKit; add -- --headed, -- -g brightness
+cargo build -p prysm-headless
+cargo build -p prysm-capture-remote --example test_sender
+npm --prefix frontend run e2e:install   # Chromium and WebKit, once per Playwright version
+npm --prefix frontend run e2e           # Chromium and WebKit; add -- --headed, -- -g brightness
 ```
 
 One engine, or Firefox (installed with `npx playwright install firefox`), from
-`v1/frontend`: `npx playwright test -c e2e --project firefox`.
+`frontend`: `npx playwright test -c e2e --project firefox`.
 
 The binary embeds the portal bundle at compile time: rebuild the frontend,
 then `prysm-headless`, before testing a frontend change; the suite stops at
 once if the binary serves another bundle than `dist`. The tests take the
-debug builds from `$CARGO_TARGET_DIR` (default `v1/target`), or
+debug builds from `$CARGO_TARGET_DIR` (default `target`), or
 `PRYSM_HEADLESS_BIN` and `PRYSM_TEST_SENDER_BIN`. Results, traces and videos
-go to `v1/frontend/.e2e/`. Find elements as a user does, by role and
+go to `frontend/.e2e/`. Find elements as a user does, by role and
 accessible name, not by class names.
 
 Playwright's WebKit is not Safari, but it shares Safari's engine bugs: the
@@ -111,7 +111,7 @@ macOS) and Firefox on a macOS runner every night and on demand.
 
 The system behind the portal (the TV stream over `ws://` and `wss://`, a fake
 WLED on 127.0.0.1, settings files across restarts) is tested without a
-browser in [`v1/hosts/headless/tests/system.rs`](../../v1/hosts/headless/tests/system.rs).
+browser in [`hosts/headless/tests/system.rs`](../../hosts/headless/tests/system.rs).
 
 ### Manual browser checks
 

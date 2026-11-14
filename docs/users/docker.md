@@ -21,7 +21,7 @@ Open `http://localhost:8787`, or `http://DOCKER_HOST_IP:8787` from a phone.
 Keep it on a trusted network; the portal has no password.
 
 For Compose, start from the example
-[compose.yaml](../../v1/packaging/docker/compose.yaml): set `image` to
+[compose.yaml](../../packaging/docker/compose.yaml): set `image` to
 `ghcr.io/ericschaal/prysm-headless:VERSION`, then run `docker compose up -d`.
 To build the image yourself, see [packaging](../developers/packaging.md#docker).
 

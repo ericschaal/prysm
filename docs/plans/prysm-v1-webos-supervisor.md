@@ -33,7 +33,7 @@ the Luna registration observes, restarts and kills it.
    non-fault session failure (1–30 s backoff); Screen Saver keeps the worker
    with video Unavailable; an unconfirmed source release is a fault — the
    runtime already reports `SessionState::Faulted(ClosingSource)`
-   ([engine.rs](../../v1/crates/runtime/src/engine.rs) `UNRELEASED`), so the
+   ([engine.rs](../../crates/runtime/src/engine.rs) `UNRELEASED`), so the
    worker exits `FAULTED` and is restarted.
 
 ## 2. Inventory of the current supervisor
@@ -52,12 +52,12 @@ Sources: `apps/prysm-webos-service/src/supervisor.rs`,
 | `tvpower` subscription, renewed after 5 s without a good reply, fail closed | Kept |
 | Remote runs only when Active, embedded in Active/Screen Saver | One rule: awake = Active or Screen Saver; capture only in Active |
 | Manual Stop survives standby; cold boot from `autostart` | Kept (intent in memory, seeded from `autostart`) |
-| `videooutput` MAIN readiness, muted counts; context change resets | Kept ([observe.rs](../../v1/hosts/webos-service/src/observe.rs)) |
+| `videooutput` MAIN readiness, muted counts; context change resets | Kept ([observe.rs](../../hosts/webos-service/src/observe.rs)) |
 | Embedded pause handshake (`p`, `CapturePaused`) | Dropped: target Off closes the source with certified release |
 | Env config, one-byte stdin commands, inherited event fd with unsafe `pre_exec` | Typed argv, JSON lines on stdin/stdout, no `pre_exec` |
 | `PR_SET_PDEATHSIG` + ppid recheck | Kept, in the worker at startup (safe `nix`), plus stdin EOF |
 | stderr tail as `lastLog` | Last 20 lines in `State.log` |
-| Encoder and 5 s video-reset watchdogs | Dropped (no H.264; native watchdogs live in [capture-webos](../../v1/adapters/capture-webos/src/source.rs)); 15 s liveness timeout instead |
+| Encoder and 5 s video-reset watchdogs | Dropped (no H.264; native watchdogs live in [capture-webos](../../adapters/capture-webos/src/source.rs)); 15 s liveness timeout instead |
 | TERM, KILL after 5 s; reap before restart | Kept; window 8 s |
 | Backoff 1 s doubling, cap 5 s | 1 s doubling to 30 s, reset after 60 s healthy |
 | `--verify-instance`, `Connected`/`ReceiverBusy` events | Dropped: a slim connect failure is a worker failure within 3 s |
@@ -77,18 +77,18 @@ Sources: `apps/prysm-webos-service/src/supervisor.rs`,
 
 | Crate | Location | Contents | `unsafe` |
 | --- | --- | --- | --- |
-| `prysm-webos-link` | [crates/webos-link](../../v1/crates/webos-link/src/lib.rs) | Protocol, codec, argv, exit codes; `worker` feature: stdio link, stop reasons, worker `main` | forbidden |
-| `prysm-webos-luna-sys` | [adapters/webos-luna-sys](../../v1/adapters/webos-luna-sys/src/lib.rs) | The only Luna/GLib binding: `run(Config, Handler)`, `check_registration` | own lints |
-| `prysm-webos-service` | [hosts/webos-service](../../v1/hosts/webos-service/src/lib.rs) | Machine, driver, launcher, preferences, installer, CLI; two thin bins | forbidden |
-| `prysm-webos` | [hosts/webos](../../v1/hosts/webos/src/main.rs) | Full worker, `EngineLink` surface | forbidden |
-| `prysm-webos-slim` | [hosts/webos-slim](../../v1/hosts/webos-slim/src/main.rs) | Slim worker, `ForwarderLink` surface, `Counted` sink | forbidden |
+| `prysm-webos-link` | [crates/webos-link](../../crates/webos-link/src/lib.rs) | Protocol, codec, argv, exit codes; `worker` feature: stdio link, stop reasons, worker `main` | forbidden |
+| `prysm-webos-luna-sys` | [adapters/webos-luna-sys](../../adapters/webos-luna-sys/src/lib.rs) | The only Luna/GLib binding: `run(Config, Handler)`, `check_registration` | own lints |
+| `prysm-webos-service` | [hosts/webos-service](../../hosts/webos-service/src/lib.rs) | Machine, driver, launcher, preferences, installer, CLI; two thin bins | forbidden |
+| `prysm-webos` | [hosts/webos](../../hosts/webos/src/main.rs) | Full worker, `EngineLink` surface | forbidden |
+| `prysm-webos-slim` | [hosts/webos-slim](../../hosts/webos-slim/src/main.rs) | Slim worker, `ForwarderLink` surface, `Counted` sink | forbidden |
 
 **One supervisor library, two thin binaries** (`src/bin/*.rs`, each one line
 calling `prysm_webos_service::main(Flavor)`). The flavor is baked into the
 binary, and each package ships only its own supervisor and worker under the
 shared installed names, so a supervisor can never run the other package's
 worker and no runtime flag can be set wrong. Names and paths are one set for
-both flavors ([identity.rs](../../v1/hosts/webos-service/src/identity.rs)). A single
+both flavors ([identity.rs](../../hosts/webos-service/src/identity.rs)). A single
 binary with a `--flavor` in the `.service` file would save one link step and
 add a way to mismatch. The supervisor stays separate from the worker so Luna
 FFI and the engine never share a process and the worker cannot claim the name.
@@ -100,7 +100,7 @@ has one Luna binding.
 ## 4. Supervisor ↔ worker contract
 
 - **Start**: argv only, built without a shell
-  ([args.rs](../../v1/crates/webos-link/src/args.rs)):
+  ([args.rs](../../crates/webos-link/src/args.rs)):
   `prysm-webos --settings /var/lib/io.prysm.tv/settings.json --listen 0.0.0.0:8787 --lighting off`;
   `prysm-webos-slim --receiver 192.168.1.20:7380` (size, rate, menus and
   encoding come from the receiver's stream request, `prysm-3jx.63`).
@@ -139,14 +139,14 @@ pub struct WorkerStatus {
 pub mod exit { STOPPED = 0 /* TERM, EOF */, FAILED = 1, USAGE = 2, FAULTED = 3 }
 ```
 
-Worker side ([worker.rs](../../v1/crates/webos-link/src/worker.rs)):
+Worker side ([worker.rs](../../crates/webos-link/src/worker.rs)):
 `worker::main(name, usage, parse, body)` parses argv (exit `USAGE`), guards the
 parent, takes over stdio, installs SIGTERM/SIGINT, runs `body(args, Link)` on a
 current-thread runtime and maps the outcome: a `Faulted` stop reason or
 `Err(Error::Faulted)` → 3; a `Failed` stop reason or other `Err` → 1 after a
 final `Status { failure }`; else 0.
 
-- [`EngineLink`](../../v1/hosts/webos/src/link.rs) (`Surface<EngineHandle>`):
+- [`EngineLink`](../../hosts/webos/src/link.rs) (`Surface<EngineHandle>`):
   applies the initial target; `Video`/`ResetVideo` → `VideoSignal`, `Lighting`
   → `set_target`; snapshot changes and the heartbeat → `Status`; a session that
   stopped with a non-validation failure and a non-Off target is re-applied after
@@ -155,13 +155,13 @@ final `Status { failure }`; else 0.
   `capture: { kind: "webos" }` when missing, binds the portal listener itself
   (so it can report the LAN URL, looked up again at every heartbeat so a new
   TV address is advertised within 5 s) and uses a 6 s stop deadline.
-- [`ForwarderLink`](../../v1/hosts/webos-slim/src/link.rs) (`Surface<()>`):
+- [`ForwarderLink`](../../hosts/webos-slim/src/link.rs) (`Surface<()>`):
   video commands into the capture; `capturing` sampled every second from the
   `Counted` sink. The slim host connects the `RemoteSender` before taking the device.
 
 ## 5. Supervisor state machine
 
-[machine.rs](../../v1/hosts/webos-service/src/machine.rs) is sans-IO:
+[machine.rs](../../hosts/webos-service/src/machine.rs) is sans-IO:
 `Machine::handle(Input, now) -> Vec<Effect>`; `Effect = Spawn(argv) | Send(Command)
 | Terminate | Kill | Publish`. Inputs: `Power`, `Video`, `VideoContextChanged`,
 `Preferences` (validated, persisted), `Enabled`, `Worker(Event)`, `WorkerLog`,
@@ -209,12 +209,12 @@ lighting ≠ Off`; `setEnabled(true)` keeps a non-Off target, else Processed.
 
 | Seam | Production | Tests |
 | --- | --- | --- |
-| `Bus` (publish, resubscribe) | [luna.rs](../../v1/hosts/webos-service/src/luna.rs) over `prysm-webos-luna-sys` | recording bus |
+| `Bus` (publish, resubscribe) | [luna.rs](../../hosts/webos-service/src/luna.rs) over `prysm-webos-luna-sys` | recording bus |
 | `Launcher`/`Worker` | `ProcessLauncher`: pipes, reader threads, `kill(2)`, `try_wait`, reaper on drop | scripted fake; `sh` workers |
 | `PreferencesStore` | `FileStore`: 0600, atomic replace, `O_NOFOLLOW`, 64 KiB | `MemoryStore` |
 | `Installer` | `FsInstaller`: manifests, hook, bounded `ls-control` and `luna-send` | temp root with script stubs |
 
-The driver ([service.rs](../../v1/hosts/webos-service/src/service.rs)) runs on
+The driver ([service.rs](../../hosts/webos-service/src/service.rs)) runs on
 the GLib thread: requests and subscription replies arrive as callbacks, a
 100 ms timer drains worker output, reaps, ticks the machine and renews a
 subscription without a good reply for 5 s. The sys crate defers bus actions
@@ -225,7 +225,7 @@ until the handler returns, so LS2 is never re-entered while it is borrowed.
 Both packages: service `io.prysm.tv.service`, app `io.prysm.tv`. Replies carry LS2
 `returnValue`/`errorText`; payloads are objects of at most 4 KiB. The values
 are exported as the `luna` OpenAPI document
-([schema.rs](../../v1/hosts/webos-service/src/schema.rs), generated
+([schema.rs](../../hosts/webos-service/src/schema.rs), generated
 `@prysm/contracts/luna`): one document for both flavors, with flavor-specific
 fields marked "Full only" or "Slim only".
 

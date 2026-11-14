@@ -2,11 +2,11 @@
 
 Date: 2026-11-12
 
-Concurrency lives in one runtime, [`prysm-runtime`](../../../v1/crates/runtime/src/lib.rs):
+Concurrency lives in one runtime, [`prysm-runtime`](../../../crates/runtime/src/lib.rs):
 one engine task owns settings, target and at most one session; one session
 thread owns a source, the processor and an output. Adapters are plain
 blocking objects behind one object-safe trait each
-([`prysm-ports`](../../../v1/crates/ports/src/lib.rs)): `FrameSource::next_frame(timeout)`,
+([`prysm-ports`](../../../crates/ports/src/lib.rs)): `FrameSource::next_frame(timeout)`,
 `LedOutput::write`/`idle`, `SettingsStore`. They hold no channels, mailboxes
 or state machines; a push-style backend runs on an owner thread and hands
 over its newest frame.

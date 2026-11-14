@@ -43,7 +43,7 @@ install it over SSH (replace `TV` with the TV's address; `--dry-run` only
 prints the steps):
 
 ```sh
-v1/packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
+packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
 ```
 
 The helper copies the package to the TV, installs it through the TV's install

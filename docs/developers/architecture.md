@@ -11,21 +11,21 @@ video source ──frames──▶ Prysm engine and session ──colours──�
 **Concurrency lives in one runtime; adapters are plain blocking objects.**
 The rule and its reasons: [simplified runtime](../plans/prysm-v1-simplified-runtime.md),
 recorded as a [decision](decisions/2026-11-12-one-runtime-plain-adapters.md).
-Reference: [v1 README](../../v1/README.md).
+Reference: [workspace map](workspace.md).
 
 ## Owners
 
 | Owner | Where | Owns |
 | --- | --- | --- |
-| Engine | [`prysm-runtime` engine.rs](../../v1/crates/runtime/src/engine.rs) | One Tokio task and the only mailbox: settings, revision, lighting target, calibration pattern, at most one session. |
-| Session | [session.rs](../../v1/crates/runtime/src/session.rs) | One OS thread per lighting run: the source, the processor and the output. |
-| Adapters | [`v1/adapters`](../../v1/adapters) | One trait each, no channels or state machines: `FrameSource`, `LedOutput`, `SettingsStore`, `FrameSink`. |
-| Surfaces | [`v1/surfaces`](../../v1/surfaces) | Ways in and out: the web portal, the terminal UI, the TV links. Each gets an `EngineHandle` and a `Shutdown`. |
-| Hosts | [`v1/hosts`](../../v1/hosts) | Executables: a list of adapters and surfaces, plus process options. |
+| Engine | [`prysm-runtime` engine.rs](../../crates/runtime/src/engine.rs) | One Tokio task and the only mailbox: settings, revision, lighting target, calibration pattern, at most one session. |
+| Session | [session.rs](../../crates/runtime/src/session.rs) | One OS thread per lighting run: the source, the processor and the output. |
+| Adapters | [`adapters`](../../adapters) | One trait each, no channels or state machines: `FrameSource`, `LedOutput`, `SettingsStore`, `FrameSink`. |
+| Surfaces | [`surfaces`](../../surfaces) | Ways in and out: the web portal, the terminal UI, the TV links. Each gets an `EngineHandle` and a `Shutdown`. |
+| Hosts | [`hosts`](../../hosts) | Executables: a list of adapters and surfaces, plus process options. |
 
-Ports and settings types are in [`prysm-ports`](../../v1/crates/ports/src/lib.rs).
-[`prysm-core`](../../v1/crates/core/src/lib.rs) (frame and colour types, colour
-correction) and [`prysm-processor`](../../v1/crates/processor/src/lib.rs) are shared by the
+Ports and settings types are in [`prysm-ports`](../../crates/ports/src/lib.rs).
+[`prysm-core`](../../crates/core/src/lib.rs) (frame and colour types, colour
+correction) and [`prysm-processor`](../../crates/processor/src/lib.rs) are shared by the
 runtime and the adapters; keep application, serialisation and runtime code out
 of `prysm-core`.
 
@@ -63,7 +63,7 @@ frames arrive and the mean latency per link (`State.input`).
 
 Preview and LED-colour streams are demand-driven: with no viewer, the session
 publishes nothing and nothing is encoded. See
-[portal contract](../../v1/surfaces/web-portal/HTTP-CONTRACT.md#preview).
+[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#preview).
 
 ## Shutdown ordering
 
@@ -87,13 +87,13 @@ capture adapters. Host shutdown stops the session with the output idled off.
 | `prysm-webos-slim` (slim TV worker) | TV capture into a `RemoteSender`, no engine | — | Link to the TV supervisor |
 
 The two TV workers run under one supervisor, `prysm-webos-service`; see
-[LG TV](webos.md) and [UI and host assemblies](../../v1/UI-ASSEMBLIES.md).
+[LG TV](webos.md) and [UI and host assemblies](ui-assemblies.md).
 
 ## Workspace map
 
-`v1/crates` (core types, processor, ports, runtime, wire protocol, TV link),
-`v1/adapters` (sources, outputs, settings file, H.264, Luna and capture
-bindings), `v1/surfaces`,
-`v1/hosts`, `v1/tools/export-contracts` (OpenAPI for frontend codegen),
-`v1/frontend` (portal and TV bundles), `v1/packaging` (Docker, Debian, IPKs).
-Contract ownership: [CONTRACTS.md](../../v1/CONTRACTS.md).
+`crates` (core types, processor, ports, runtime, wire protocol, TV link),
+`adapters` (sources, outputs, settings file, H.264, Luna and capture
+bindings), `surfaces`,
+`hosts`, `tools/export-contracts` (OpenAPI for frontend codegen),
+`frontend` (portal and TV bundles), `packaging` (Docker, Debian, IPKs).
+Contract ownership: [CONTRACTS.md](contracts.md).

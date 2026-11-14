@@ -5,11 +5,11 @@
 # this file and release-please's tags at consolidation.
 #
 # A `v1.*` tag must equal "v" + the [workspace.package] version in
-# v1/Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes the v1 gate
+# Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes the v1 gate
 # (v1.yml, which also builds the IPKs with the pinned webOS SDK); manual runs
 # build and smoke-test both architectures and keep the image, .deb and IPKs as
 # workflow artifacts; only a tag publishes. The image and .deb are built by
-# v1/packaging/docker/Dockerfile (its frontend stage runs npm ci and the bundle
+# packaging/docker/Dockerfile (its frontend stage runs npm ci and the bundle
 # build before cargo).
 name: V1 release
 on:
@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOCKERFILE: v1/packaging/docker/Dockerfile
+  DOCKERFILE: packaging/docker/Dockerfile
 
 jobs:
   ci:
@@ -59,7 +59,7 @@ jobs:
           cache-from: type=gha,scope=prysm-v1-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=prysm-v1-${{ matrix.arch }}
       - name: Smoke-test image
-        run: v1/packaging/docker/smoke.sh prysm-headless:local
+        run: packaging/docker/smoke.sh prysm-headless:local
       - name: Build Debian package
         uses: docker/build-push-action@v7
         with:
@@ -116,7 +116,7 @@ jobs:
           import os
           import tomllib
           from pathlib import Path
-          version = tomllib.loads(Path('v1/Cargo.toml').read_text())['workspace']['package']['version']
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
           assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Tag must match the v1 workspace version'
           PY
       - uses: actions/download-artifact@v4
@@ -160,7 +160,7 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease="$prerelease" --latest=false \
               --title "Prysm $GITHUB_REF_NAME (v1)" \
-              --notes "Prysm v1 $GITHUB_REF_NAME. Image: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/prysm-headless:${GITHUB_REF_NAME#v}. Debian packages for prysm-headless and the full and slim webOS TV packages (io.prysm.tv) are attached. See v1/packaging/README.md."
+              --notes "Prysm v1 $GITHUB_REF_NAME. Image: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/prysm-headless:${GITHUB_REF_NAME#v}. Debian packages for prysm-headless and the full and slim webOS TV packages (io.prysm.tv) are attached. See packaging/README.md."
           fi
           gh release upload "$GITHUB_REF_NAME" --clobber \
             "$ARTIFACTS"/prysm-headless-deb-*/*.deb "$RUNNER_TEMP"/ipk/*.ipk

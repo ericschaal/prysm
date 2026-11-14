@@ -120,7 +120,7 @@ required opposing bars, applied an asymmetry correction, then confirmed a change
 pair for 200 ms.
 
 1. **A discontinuous geometry correction.** In
-   [detect_axis](../../v1/crates/processor/src/nodes/black_bar_detector.rs),
+   [detect_axis](../../crates/processor/src/nodes/black_bar_detector.rs),
    opposing margins differing by more than `height / 40` are both replaced by their
    minimum. At height 360 this tolerance is nine pixels: `(20,11)` stays `(20,11)`,
    but `(20,10)` becomes `(10,10)`. The two-pixel temporal deadband operates after
@@ -142,7 +142,7 @@ pair for 200 ms.
    equally. A scene can easily sustain an error for 200 ms. Two matching observations
    across a long capture gap can also confirm because elapsed silence counts.
 6. **Geometry changes affect the whole color sampler.**
-   [SpatialSampler](../../v1/crates/processor/src/nodes/spatial_sampler.rs)
+   [SpatialSampler](../../crates/processor/src/nodes/spatial_sampler.rs)
    rebuilds its grid, edge sample counts, and weighting when cropped dimensions change.
    Its influence radius depends on cropped height. Changing top/bottom can therefore
    alter all four output strips. This is expected sampling behavior, not proof of a
