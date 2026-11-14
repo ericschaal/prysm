@@ -144,9 +144,13 @@ const script = /\/assets\/index-[\w-]+\.js/;
  * built before the frontend serves the old one.
  */
 export async function checkBundle(): Promise<void> {
-  const built = script.exec(
-    await readFile(path.join(dist, 'assets.rs'), 'utf8'),
-  )?.[0];
+  // No bundle here: the binary was built elsewhere (CI hands it to this
+  // job), so there is nothing it could be stale against.
+  const assets = await readFile(path.join(dist, 'assets.rs'), 'utf8').catch(
+    () => null,
+  );
+  if (assets === null) return;
+  const built = script.exec(assets)?.[0];
   const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
   const file = path.join(dir, 'settings.json');
   await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
