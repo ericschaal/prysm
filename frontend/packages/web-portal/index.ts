@@ -43,17 +43,6 @@ export {
 export { SectionFields } from './section-step';
 export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';
-export {
-  aboutRoute,
-  appearanceRoute,
-  calibrateRoute,
-  lightsRoute,
-  pictureRoute,
-  previewRoute,
-  profilesRoute,
-  settingsRoute,
-  videoRoute,
-} from './routes';
 export { WebPortal } from './portal';
 export { scriptReplaced } from './replaced';
 export type { WebPortalProps } from './portal-context';

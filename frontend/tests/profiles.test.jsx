@@ -15,6 +15,7 @@ import {
   edit,
   errorOf,
   field,
+  navigatedOn,
   openPage,
   renderPortal,
   valueOf,
@@ -140,10 +141,7 @@ test('colour profiles are rows; each opens its page, saved live, deleted with Un
     await openPage('Game');
     t.mock.timers.enable({ apis: ['setTimeout'] });
     await click(button('Delete profile'));
-    // Going back to the list is a history traversal, which jsdom runs on
-    // the timers mocked here.
-    for (let task = 0; task < 3; task += 1)
-      await act(async () => t.mock.timers.tick(0));
+    await navigatedOn(t.mock.timers);
     assert.equal(window.location.hash, '#/settings/profiles');
     assert.equal(processing(fixture).active_profile, undefined);
     await act(async () => t.mock.timers.tick(undoForMs));

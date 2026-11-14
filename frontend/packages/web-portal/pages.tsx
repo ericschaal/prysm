@@ -4,25 +4,16 @@ import type {
   DiscoveryClient,
   LightingTarget,
 } from '@prysm/application-client';
-import type { ReactNode, RefObject } from 'react';
+import { useRef, type ReactNode, type RefObject } from 'react';
 import { useParams } from 'react-router';
 import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
 import { CalibrateWizard } from './calibrate';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
-import { Page, PageHeading, SetupNotice } from './page';
-import { usePortal, usePortalRefs } from './portal-context';
-import {
-  aboutRoute,
-  appearanceRoute,
-  calibrateRoute,
-  lightsRoute,
-  pictureRoute,
-  previewRoute,
-  profilesRoute,
-  settingsRoute,
-  videoRoute,
-} from './routes';
+import { useLiveColors, usePageVisible } from './live-colors';
+import { OfflineNotice, Page, PageHeading, SetupNotice } from './page';
+import { useNav, usePortal } from './portal-context';
+import type { Place } from './routes';
 import { PreviewPanel } from './preview';
 import { FineTuning, QuickPicture } from './processing';
 import { nameOf } from './profile-model';
@@ -30,7 +21,7 @@ import { ProfileList, ProfilePage } from './profiles';
 import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionEditor } from './section-editor';
 import { SetupCard, type PathState } from './setup-card';
-import { AboutPage, SettingsPage, type SettingsPlace } from './settings-page';
+import { AboutPage, SettingsPage } from './settings-page';
 import { stepCopy } from './step-copy';
 import { ThemeChoice } from './theme-choice';
 
@@ -48,7 +39,7 @@ function LivePage({
   title,
   name,
   heading,
-  to = settingsRoute,
+  to = 'settings',
   backLabel = 'Settings',
   note,
   children,
@@ -57,7 +48,7 @@ function LivePage({
   title: string;
   name: string;
   heading: string;
-  to?: string;
+  to?: Place;
   backLabel?: string;
   /** Instead of the save status, for a page with nothing to save. */
   note?: string;
@@ -97,11 +88,17 @@ function useLiveProps() {
 
 export function HomeRoute() {
   const portal = usePortal();
-  const { homeGrid } = usePortalRefs();
-  const { snapshot, host, online, dispatch, commands, nav } = portal;
+  const nav = useNav();
+  const { snapshot, host, online, dispatch, commands } = portal;
+  // The glow takes the LEDs' colours while screen sync runs and is seen.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const visible = usePageVisible();
+  const syncing =
+    snapshot.target === 'processed' && snapshot.session.state === 'running';
+  useLiveColors(host.colors, online && visible && syncing, gridRef);
   return (
-    <Page className="portal-page home" title="Prysm" wide>
-      {portal.offline}
+    <Page className="portal-page home" title="Prysm" wide settingsLink>
+      <OfflineNotice />
       <SetupNotice />
       <HomePage
         snapshot={snapshot}
@@ -109,14 +106,14 @@ export function HomeRoute() {
         outputs={host.outputs}
         discovery={host.discovery ?? null}
         hasColors={!!host.colors}
-        gridRef={homeGrid}
+        gridRef={gridRef}
         online={online}
         path={portal.path}
         setTarget={(target) => dispatch(commands.setTarget(target))}
         save={portal.saveProcessing}
         tryProcessing={portal.tryProcessing}
         openSetup={portal.openSetup}
-        calibrate={() => nav.go(calibrateRoute)}
+        calibrate={() => nav.go('calibrate')}
         go={nav.go}
       />
     </Page>
@@ -125,16 +122,8 @@ export function HomeRoute() {
 
 export function SettingsRoute() {
   const portal = usePortal();
-  const { snapshot, host, online, nav } = portal;
-  const places: Record<SettingsPlace, () => void> = {
-    video: () => nav.go(videoRoute),
-    lights: () => nav.go(lightsRoute),
-    profiles: () => nav.go(profilesRoute),
-    picture: () => nav.go(pictureRoute),
-    appearance: () => nav.go(appearanceRoute),
-    about: () => nav.go(aboutRoute),
-    setup: portal.openSetup,
-  };
+  const nav = useNav();
+  const { snapshot, host, online } = portal;
   return (
     <Page
       className="portal-page settings"
@@ -142,7 +131,7 @@ export function SettingsRoute() {
       name="Settings"
     >
       <SaveStatusProvider>
-        <PageHeading title="Settings" to="" backLabel="Home" />
+        <PageHeading title="Settings" to="home" backLabel="Home" />
         <SaveStatus online={online} />
         <SetupNotice />
         {snapshot.surface_failures.length ? (
@@ -159,7 +148,9 @@ export function SettingsRoute() {
           problemAt={portal.problemAt}
           save={portal.saveProcessing}
           tryProcessing={portal.tryProcessing}
-          open={(place) => places[place]()}
+          open={(place) =>
+            place === 'setup' ? portal.openSetup() : nav.go(place)
+          }
         />
       </SaveStatusProvider>
     </Page>
@@ -169,7 +160,8 @@ export function SettingsRoute() {
 /** The video source or lights editor, on a page of its own. */
 export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
   const portal = usePortal();
-  const { snapshot, host, online, dispatch, commands, nav } = portal;
+  const nav = useNav();
+  const { snapshot, host, online, dispatch, commands } = portal;
   const { settings } = snapshot;
   const copy = stepCopy[section];
   const shared = {
@@ -179,8 +171,8 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
     path: portal.path,
     failure: snapshot.failure ?? null,
     startSync: () => dispatch(commands.setTarget('processed')),
-    leave: () => nav.back(settingsRoute),
-    showPreview: host.preview ? () => nav.go(previewRoute) : undefined,
+    leave: () => nav.back('settings'),
+    showPreview: host.preview ? () => nav.go('preview') : undefined,
   };
   return (
     <Page
@@ -188,12 +180,12 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       title={section === 'capture' ? 'Prysm video source' : 'Prysm lights'}
       name={copy.title}
     >
-      <PageHeading title={copy.title} to={settingsRoute} backLabel="Settings" />
+      <PageHeading title={copy.title} to="settings" backLabel="Settings" />
       {/* In the save line's place: how this page saves. */}
       <p className="save-status" data-phase="local">
         Saved when you choose “{copy.use}”
       </p>
-      {portal.offline}
+      <OfflineNotice />
       <DiscoveryContext value={host.discovery ?? null}>
         {section === 'capture' ? (
           <SectionEditor
@@ -231,6 +223,7 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
 
 export function ProfilesRoute() {
   const portal = usePortal();
+  const nav = useNav();
   return (
     <LivePage
       className="profiles-page"
@@ -242,10 +235,8 @@ export function ProfilesRoute() {
         {...useLiveProps()}
         deleted={portal.deletedProfiles}
         setDeleted={portal.setDeletedProfiles}
-        open={(id) =>
-          portal.nav.go(`${profilesRoute}/${encodeURIComponent(id)}`)
-        }
-        calibrate={() => portal.nav.go(calibrateRoute)}
+        open={(id) => nav.go({ profile: id })}
+        calibrate={() => nav.go('calibrate')}
       />
     </LivePage>
   );
@@ -253,6 +244,7 @@ export function ProfilesRoute() {
 
 export function ProfileRoute() {
   const portal = usePortal();
+  const nav = useNav();
   const live = useLiveProps();
   const id = useParams().id ?? '';
   const profile = live.processing.profiles?.find((item) => item.id === id);
@@ -263,7 +255,7 @@ export function ProfileRoute() {
       title="Prysm colour profile"
       name={heading}
       heading={heading}
-      to={profilesRoute}
+      to="profiles"
       backLabel="Colour profiles"
     >
       <ProfilePage
@@ -272,7 +264,7 @@ export function ProfileRoute() {
         deleted={(gone) =>
           portal.setDeletedProfiles((current) => ({ ...current, [id]: gone }))
         }
-        leave={() => portal.nav.back(profilesRoute)}
+        leave={() => nav.back('profiles')}
       />
     </LivePage>
   );
@@ -321,7 +313,7 @@ export function AboutRoute() {
 }
 
 export function PreviewRoute() {
-  const { snapshot, host, online, offline } = usePortal();
+  const { snapshot, host, online } = usePortal();
   // Without a preview client there is no Preview page: Home instead.
   if (!host.preview) return <HomeRoute />;
   return (
@@ -330,11 +322,7 @@ export function PreviewRoute() {
       title="Prysm live preview"
       name="Live preview"
     >
-      <PageHeading
-        title="Live preview"
-        to={settingsRoute}
-        backLabel="Settings"
-      />
+      <PageHeading title="Live preview" to="settings" backLabel="Settings" />
       {/* In the save line's place, so every page starts alike. */}
       <p className="save-status" data-phase="local">
         Live while this page is open
@@ -343,7 +331,7 @@ export function PreviewRoute() {
         What Prysm captures, with the colours it sends to each edge around it.
         Check black bars and LED placement here.
       </p>
-      {offline}
+      <OfflineNotice />
       <PreviewPanel
         client={host.preview}
         online={online}
@@ -355,15 +343,15 @@ export function PreviewRoute() {
 }
 
 export function CalibrateRoute() {
-  const { snapshot, online, dispatch, commands, nav, offline, saveProcessing } =
-    usePortal();
+  const { snapshot, online, dispatch, commands, saveProcessing } = usePortal();
+  const nav = useNav();
   return (
     <Page
       className="portal-flow portal-flow-narrow"
       title="Prysm calibration"
       name="Calibrate"
     >
-      {offline}
+      <OfflineNotice />
       <CalibrateWizard
         processing={snapshot.settings.processing}
         revision={snapshot.revision}
@@ -375,7 +363,7 @@ export function CalibrateRoute() {
           dispatch(commands.setCalibration(calibration))
         }
         // Back where it was opened (Home, or the profiles), else Home.
-        leave={() => nav.back(nav.from ?? '')}
+        leave={nav.backToOpener}
       />
     </Page>
   );
@@ -415,7 +403,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
   tryProcessing: (processing: Processing) => Promise<unknown>;
   openSetup: () => void;
   calibrate: () => void;
-  go: (route: string) => void;
+  go: (place: Place) => void;
 }) {
   const { settings, revision, session } = snapshot;
   const capture = settings.capture ?? null;
@@ -475,10 +463,10 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
           path={path}
           profile={activeProfile(settings.processing)}
           openSettings={() => {
-            if (path.kind === 'failed' && path.at === 'capture') go(videoRoute);
+            if (path.kind === 'failed' && path.at === 'capture') go('video');
             else if (path.kind === 'failed' && path.at === 'output')
-              go(lightsRoute);
-            else go(settingsRoute);
+              go('lights');
+            else go('settings');
           }}
         />
       ) : null}

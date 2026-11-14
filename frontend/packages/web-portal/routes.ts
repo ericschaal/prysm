@@ -1,18 +1,30 @@
-/** The hash route of the Settings page. */
-export const settingsRoute = '#/settings';
-/** The hash route of the live preview, opened from Settings. */
-export const previewRoute = '#/preview';
-/** The hash routes of the video source and lights editors, under Settings. */
-export const videoRoute = '#/settings/video';
-export const lightsRoute = '#/settings/lights';
-/** The hash routes of the colour profiles and picture fine-tuning pages. */
-export const profilesRoute = '#/settings/profiles';
-export const pictureRoute = '#/settings/picture';
-/** The hash routes of the appearance and about pages. */
-export const appearanceRoute = '#/settings/appearance';
-export const aboutRoute = '#/settings/about';
-/** The hash route of the Calibrate page; the TV shows a QR code of it. */
-export const calibrateRoute = '#/calibrate';
+import { generatePath } from 'react-router';
 
-/** A `#/…` route as a router path: `#/settings` → `/settings`, `''` → `/`. */
-export const pathOfRoute = (route: string) => route.replace(/^#/, '') || '/';
+/**
+ * Every page's address under the hash (`#/settings`), by the page's id. The
+ * TV's QR code links to `calibrate`; anything else not here shows Home.
+ */
+export const pages = {
+  home: '/',
+  settings: '/settings',
+  video: '/settings/video',
+  lights: '/settings/lights',
+  profiles: '/settings/profiles',
+  profile: '/settings/profiles/:id',
+  picture: '/settings/picture',
+  appearance: '/settings/appearance',
+  about: '/settings/about',
+  preview: '/preview',
+  calibrate: '/calibrate',
+} as const;
+
+export type PageId = keyof typeof pages;
+
+/** A page to open: by its id, or one colour profile's page by the profile. */
+export type Place = Exclude<PageId, 'profile'> | { profile: string };
+
+/** The router path of `place`: `'settings'` → `/settings`. */
+export const pathTo = (place: Place) =>
+  typeof place === 'string'
+    ? pages[place]
+    : generatePath(pages.profile, { id: place.profile });

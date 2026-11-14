@@ -87,12 +87,23 @@ export async function edit(element, value) {
 }
 
 /**
- * Let a navigation land: going back is a history traversal, which jsdom
- * (like a browser) delivers a couple of tasks after the click.
+ * The tasks a navigation takes to land: going back is a history traversal,
+ * which jsdom (like a browser) queues and performs in tasks of their own
+ * after the click, before the router renders the page it hears of. Opening
+ * a page needs fewer.
  */
+const navigationTasks = 3;
+
+/** Let a navigation land. */
 export async function navigated() {
-  for (let task = 0; task < 3; task += 1)
+  for (let task = 0; task < navigationTasks; task += 1)
     await new Promise((resolve) => realSetTimeout(resolve, 0));
+}
+
+/** Let a navigation land while a test mocks `timers` (jsdom runs on them). */
+export async function navigatedOn(timers) {
+  for (let task = 0; task < navigationTasks; task += 1)
+    await act(async () => timers.tick(0));
 }
 
 export const click = (element) =>

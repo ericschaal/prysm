@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
-import { calibrateRoute, processingDelayMs } from '@prysm/web-portal';
+import { processingDelayMs } from '@prysm/web-portal';
 import {
   initialWizard,
   screens,
@@ -73,7 +73,7 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
   for (const Host of [HeadlessWebPortal, WebosWebPortal]) {
     const portal = await openCalibrate({ Host });
     try {
-      assert.equal(window.location.hash, calibrateRoute);
+      assert.equal(window.location.hash, '#/calibrate');
       assert.equal(heading(), 'Match the lights to your TV');
       assert.equal(document.activeElement, $('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
@@ -92,7 +92,7 @@ test("the TV's link opens Calibrate directly; leaving returns Home", async () =>
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     await act(async () => {
-      window.location.hash = calibrateRoute;
+      window.location.hash = '#/calibrate';
       await sleep(0);
     });
     assert.equal(heading(), 'Match the lights to your TV');

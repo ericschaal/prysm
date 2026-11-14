@@ -23,17 +23,16 @@ export function useReplaced(
   replaced: (() => Promise<boolean>) | undefined,
 ) {
   const [updated, setUpdated] = useState(false);
-  // Lost after having been connected: the first connect is not a return.
-  const connectedRef = useRef(false);
-  const lostRef = useRef(false);
+  // The first connect is not a return: only a connection lost and back is.
+  const connection = useRef<'first' | 'connected' | 'lost'>('first');
   useEffect(() => {
     if (!online) {
-      lostRef.current = connectedRef.current;
+      if (connection.current === 'connected') connection.current = 'lost';
       return;
     }
-    connectedRef.current = true;
-    if (!lostRef.current || !replaced) return;
-    lostRef.current = false;
+    const returned = connection.current === 'lost';
+    connection.current = 'connected';
+    if (!returned || !replaced) return;
     let current = true;
     void replaced().then((gone) => {
       if (gone && current) setUpdated(true);

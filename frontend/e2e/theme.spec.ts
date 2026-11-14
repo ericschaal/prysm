@@ -1,9 +1,6 @@
 // A theme chosen in this browser is in place before the page is drawn: the
 // other theme never flashes first.
-import { expect, test } from './prysm';
-
-/** The page's own script, which draws it. */
-const script = /\/assets\/index-[\w-]+\.js/;
+import { entryScript, expect, test } from './prysm';
 
 test.use({ colorScheme: 'light' });
 
@@ -18,7 +15,7 @@ test('the chosen theme is applied before the page is drawn', async ({
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route(script, async (route) => {
+  await page.route(entryScript, async (route) => {
     await held;
     await route.continue();
   });

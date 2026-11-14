@@ -1,13 +1,13 @@
 import type { ApplicationSnapshot } from '@prysm/application-client';
 import { plainFailure } from '@prysm/application-client';
-import { createContext, use, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createHashRouter,
   Outlet,
   RouterProvider,
   ScrollRestoration,
   useLocation,
-  useMatches,
+  useMatch,
   type RouteObject,
 } from 'react-router';
 import {
@@ -18,8 +18,7 @@ import type { AdapterSection } from './adapters';
 import { useDeveloper } from './developer';
 import { DiscoveryContext } from './discovery-context';
 import { useLingering } from './lingering';
-import { useLiveColors, usePageVisible } from './live-colors';
-import { Page } from './page';
+import { OfflineNotice, Page } from './page';
 import {
   AboutRoute,
   AppearanceRoute,
@@ -33,26 +32,18 @@ import {
   SettingsRoute,
 } from './pages';
 import {
+  ChromeContext,
+  HostContext,
   PortalContext,
-  RefsContext,
-  useNav,
+  usePortal,
+  useHost,
   type Chrome,
   type Host,
   type Portal,
   type WebPortalProps,
 } from './portal-context';
 import type { DeletedProfile } from './profiles';
-import {
-  aboutRoute,
-  appearanceRoute,
-  calibrateRoute,
-  lightsRoute,
-  pictureRoute,
-  previewRoute,
-  profilesRoute,
-  settingsRoute,
-  videoRoute,
-} from './routes';
+import { pages } from './routes';
 import { SetupWizard } from './setup';
 import { useReplaced } from './replaced';
 import { PortalError } from './update';
@@ -105,8 +96,9 @@ function pathOf(snapshot: Snapshot): PathState {
  * next. The router keeps each history entry's scroll place: a new page
  * starts at its top, going back returns to where it was.
  */
-function PortalFrame({ host }: { host: Host }) {
-  const { application, discovery, colors } = host;
+function PortalFrame() {
+  const host = useHost();
+  const { application } = host;
   const connection = useApplication(application);
   const dispatch = useApplicationDispatch<AdapterSection, AdapterSection>();
   // Keep showing the last state (and every draft) while reconnecting.
@@ -122,12 +114,8 @@ function PortalFrame({ host }: { host: Host }) {
       snapshot.settings.capture && snapshot.settings.output ? 'closed' : 'open',
     );
   const [setupNotice, setSetupNotice] = useState('');
-  const developer = useDeveloper();
-  const nav = useNav();
   const location = useLocation();
-  const matches = useMatches();
-  const page = matches[matches.length - 1]?.id;
-  const home = page === 'home' || page === 'elsewhere';
+  const calibrating = useMatch(pages.calibrate) !== null;
   const [previous, setPrevious] = useState<Portal['previous']>({
     capture: null,
     output: null,
@@ -136,20 +124,9 @@ function PortalFrame({ host }: { host: Host }) {
     Record<string, DeletedProfile>
   >({});
   const noticeRef = useRef<HTMLParagraphElement>(null);
-  const homeGridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
-
-  // Home's glow takes the LEDs' colours while screen sync runs and is seen.
-  const visible = usePageVisible();
-  const syncing =
-    snapshot?.target === 'processed' && snapshot.session.state === 'running';
-  useLiveColors(
-    colors,
-    home && setup === 'closed' && online && visible && syncing,
-    homeGridRef,
-  );
 
   // Disabled at once while offline, but said only once it lasts.
   const outOfTouch = useLingering(!online, connectionGraceMs, 0);
@@ -160,15 +137,13 @@ function PortalFrame({ host }: { host: Host }) {
   const chrome: Chrome = {
     connectionLabel,
     outOfTouch,
-    settingsLink:
-      home && snapshot && setup !== 'open' ? () => nav.go(settingsRoute) : null,
-    developer,
+    developer: useDeveloper(),
     updated: useReplaced(online, host.replaced),
   };
 
   if (!snapshot)
     return (
-      <PortalContext value={{ portal: null, chrome }}>
+      <ChromeContext value={chrome}>
         <Page className="portal-flow" title="Prysm">
           <section className="connecting">
             <h2>Connecting to Prysm</h2>
@@ -177,14 +152,9 @@ function PortalFrame({ host }: { host: Host }) {
             </p>
           </section>
         </Page>
-      </PortalContext>
+      </ChromeContext>
     );
 
-  const offline = outOfTouch ? (
-    <p className="notice warning" role="alert">
-      Lost the connection to Prysm. Reconnecting; your changes are kept.
-    </p>
-  ) : null;
   const path = pathOf(snapshot);
   const { commands } = application;
   const portal: Portal = {
@@ -193,7 +163,6 @@ function PortalFrame({ host }: { host: Host }) {
     online,
     commands,
     dispatch,
-    nav,
     path,
     problemAt: (section) =>
       path.kind === 'failed' && path.at === section && snapshot.failure
@@ -202,8 +171,8 @@ function PortalFrame({ host }: { host: Host }) {
     saveProcessing: (expected, processing) =>
       dispatch(commands.configureProcessing(expected, processing)),
     tryProcessing: (processing) => dispatch(commands.tryProcessing(processing)),
-    offline,
     setupNotice,
+    noticeRef,
     openSetup: () => {
       setSetupNotice('');
       setSetup('open');
@@ -213,92 +182,70 @@ function PortalFrame({ host }: { host: Host }) {
     deletedProfiles,
     setDeletedProfiles,
   };
-  const { settings, revision } = snapshot;
   return (
-    <PortalContext value={{ portal, chrome }}>
-      <RefsContext value={{ notice: noticeRef, homeGrid: homeGridRef }}>
+    <ChromeContext value={chrome}>
+      <PortalContext value={portal}>
         <ScrollRestoration />
         {/* Setup takes over whatever the hash says, except Calibrate. */}
-        {setup === 'open' && page !== 'calibrate' ? (
-          <Page className="portal-flow" title="Prysm setup" name="Setup">
-            {offline}
-            <DiscoveryContext value={discovery ?? null}>
-              <SetupWizard
-                captures={host.captures}
-                outputs={host.outputs}
-                capture={settings.capture ?? null}
-                output={settings.output ?? null}
-                revision={revision}
-                disabled={!online}
-                save={(expected, capture, value) =>
-                  dispatch(commands.configureSetup(expected, capture, value))
-                }
-                start={() => dispatch(commands.setTarget('processed'))}
-                close={(notice) => {
-                  setSetup('closed');
-                  setSetupNotice(notice);
-                }}
-              />
-            </DiscoveryContext>
-          </Page>
+        {setup === 'open' && !calibrating ? (
+          <SetupPage
+            close={(notice) => {
+              setSetup('closed');
+              setSetupNotice(notice);
+            }}
+          />
         ) : (
           <Outlet key={location.pathname} />
         )}
-      </RefsContext>
-    </PortalContext>
+      </PortalContext>
+    </ChromeContext>
   );
 }
 
-/** The host's props, for the frame the router renders. */
-const HostContext = createContext<Host | null>(null);
-
-function Frame() {
-  const host = use(HostContext);
-  if (!host) throw new Error('Outside the portal.');
-  return <PortalFrame host={host} />;
+/** The guided setup, in place of every page; `close` says how it ended. */
+function SetupPage({ close }: { close: (notice: string) => void }) {
+  const { host, snapshot, online, dispatch, commands } = usePortal();
+  const { settings, revision } = snapshot;
+  return (
+    <Page className="portal-flow" title="Prysm setup" name="Setup">
+      <OfflineNotice />
+      <DiscoveryContext value={host.discovery ?? null}>
+        <SetupWizard
+          captures={host.captures}
+          outputs={host.outputs}
+          capture={settings.capture ?? null}
+          output={settings.output ?? null}
+          revision={revision}
+          disabled={!online}
+          save={(expected, capture, value) =>
+            dispatch(commands.configureSetup(expected, capture, value))
+          }
+          start={() => dispatch(commands.setTarget('processed'))}
+          close={close}
+        />
+      </DiscoveryContext>
+    </Page>
+  );
 }
-
-/** A `#/…` route as a path under the frame. */
-const at = (route: string) => route.slice(2);
 
 /** Every page, by its address under the hash; anything else is Home. */
 const portalRoutes: RouteObject[] = [
   {
-    element: <Frame />,
+    element: <PortalFrame />,
     errorElement: <PortalError />,
     children: [
-      { id: 'home', index: true, element: <HomeRoute /> },
-      { id: 'settings', path: at(settingsRoute), element: <SettingsRoute /> },
-      {
-        id: 'video',
-        path: at(videoRoute),
-        element: <EditorRoute section="capture" />,
-      },
-      {
-        id: 'lights',
-        path: at(lightsRoute),
-        element: <EditorRoute section="output" />,
-      },
-      { id: 'profiles', path: at(profilesRoute), element: <ProfilesRoute /> },
-      {
-        id: 'profile',
-        path: `${at(profilesRoute)}/:id`,
-        element: <ProfileRoute />,
-      },
-      { id: 'picture', path: at(pictureRoute), element: <PictureRoute /> },
-      {
-        id: 'appearance',
-        path: at(appearanceRoute),
-        element: <AppearanceRoute />,
-      },
-      { id: 'about', path: at(aboutRoute), element: <AboutRoute /> },
-      { id: 'preview', path: at(previewRoute), element: <PreviewRoute /> },
-      {
-        id: 'calibrate',
-        path: at(calibrateRoute),
-        element: <CalibrateRoute />,
-      },
-      { id: 'elsewhere', path: '*', element: <HomeRoute /> },
+      { path: pages.home, element: <HomeRoute /> },
+      { path: pages.settings, element: <SettingsRoute /> },
+      { path: pages.video, element: <EditorRoute section="capture" /> },
+      { path: pages.lights, element: <EditorRoute section="output" /> },
+      { path: pages.profiles, element: <ProfilesRoute /> },
+      { path: pages.profile, element: <ProfileRoute /> },
+      { path: pages.picture, element: <PictureRoute /> },
+      { path: pages.appearance, element: <AppearanceRoute /> },
+      { path: pages.about, element: <AboutRoute /> },
+      { path: pages.preview, element: <PreviewRoute /> },
+      { path: pages.calibrate, element: <CalibrateRoute /> },
+      { path: '*', element: <HomeRoute /> },
     ],
   },
 ];
@@ -315,6 +262,8 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>(
   props: WebPortalProps<C, O>,
 ) {
   const [router] = useState(() => createHashRouter(portalRoutes));
+  // The pages are not generic: they pass each section back only to the
+  // host's own commands and adapters, so its kinds can be forgotten here.
   return (
     <HostContext value={props as unknown as Host}>
       <RouterProvider router={router} />

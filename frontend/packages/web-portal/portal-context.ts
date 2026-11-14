@@ -11,14 +11,13 @@ import {
   createContext,
   use,
   type Dispatch,
-  type ReactNode,
   type RefObject,
   type SetStateAction,
 } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import type { AdapterSection, AdapterUis } from './adapters';
 import type { DeletedProfile } from './profiles';
-import { pathOfRoute } from './routes';
+import { pages, pathTo, type Place } from './routes';
 import type { PathState } from './setup-card';
 
 export interface WebPortalProps<
@@ -54,31 +53,41 @@ export type Host = WebPortalProps<Section, Section>;
 
 /** Where the portal goes: to a page, or back to where it came from. */
 export interface Nav {
-  /** Open `route` (a `#/…` route) as a new page, at its top. */
-  go: (route: string) => void;
+  /** Open `place` as a new page, at its top. */
+  go: (place: Place) => void;
   /**
-   * Return to `route`: back through the history when the page was opened
+   * Return to `place`: back through the history when this page was opened
    * from there, so it comes back at its place; else open it.
    */
-  back: (route: string) => void;
-  /** The page this one was opened from, if it was opened in the portal. */
-  from: string | null;
+  back: (place: Place) => void;
+  /** Return to the page this one was opened from in the portal, else Home. */
+  backToOpener: () => void;
+}
+
+/**
+ * The path of the page this history entry was opened from, which `go` keeps
+ * in its state. Any other state (from another build, or none) means none.
+ */
+function openedFrom(state: unknown): string | null {
+  return typeof state === 'object' &&
+    state !== null &&
+    'from' in state &&
+    typeof state.from === 'string'
+    ? state.from
+    : null;
 }
 
 export function useNav(): Nav {
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? null;
+  const { pathname } = location;
+  const from = openedFrom(location.state);
   return {
-    go: (route) =>
-      void navigate(pathOfRoute(route), {
-        state: { from: location.pathname },
-      }),
-    back: (route) =>
-      void (from === pathOfRoute(route)
-        ? navigate(-1)
-        : navigate(pathOfRoute(route))),
-    from,
+    go: (place) => void navigate(pathTo(place), { state: { from: pathname } }),
+    back: (place) =>
+      void (from === pathTo(place) ? navigate(-1) : navigate(pathTo(place))),
+    backToOpener: () =>
+      void (from === null ? navigate(pages.home) : navigate(-1)),
   };
 }
 
@@ -89,16 +98,15 @@ export interface Portal {
   online: boolean;
   commands: ApplicationRuntime<Section, Section>['commands'];
   dispatch: ReturnType<typeof useApplicationDispatch<Section, Section>>;
-  nav: Nav;
   path: PathState;
   /** The live problem of one side, in plain words; `null` while it works. */
   problemAt: (section: 'capture' | 'output') => string | null;
   saveProcessing: (expected: number, processing: Processing) => Promise<number>;
   tryProcessing: (processing: Processing) => Promise<unknown>;
-  /** "Lost the connection", once that lasts; `null` otherwise. */
-  offline: ReactNode;
   /** How setup ended, shown on Home and Settings until setup opens again. */
   setupNotice: string;
+  /** Where the setup notice shows, focused by the frame when it appears. */
+  noticeRef: RefObject<HTMLParagraphElement | null>;
   openSetup: () => void;
   /**
    * What each editor saved over last, offered back until it is replaced,
@@ -111,48 +119,37 @@ export interface Portal {
   setDeletedProfiles: Dispatch<SetStateAction<Record<string, DeletedProfile>>>;
 }
 
-/** The page chrome: the header's connection line and Settings button. */
+/** What every page shows, connected or not: the header's line and notices. */
 export interface Chrome {
   connectionLabel: string;
+  /** The connection has been missing long enough to say so. */
   outOfTouch: boolean;
-  /** Home's Settings button, while Home shows the set-up portal. */
-  settingsLink: (() => void) | null;
   developer: boolean;
   /** Prysm was updated under this page: every page offers a reload. */
   updated: boolean;
 }
 
-/** The elements the frame reaches into: kept apart from what renders. */
-export interface PortalRefs {
-  /** The setup notice, focused when it appears. */
-  notice: RefObject<HTMLParagraphElement | null>;
-  /** Home's grid, which takes the live LED colours. */
-  homeGrid: RefObject<HTMLDivElement | null>;
+/** The host's props, for the frame the router renders. */
+export const HostContext = createContext<Host | null>(null);
+export const ChromeContext = createContext<Chrome | null>(null);
+/** Provided only once the first state has arrived. */
+export const PortalContext = createContext<Portal | null>(null);
+
+export function useHost(): Host {
+  const host = use(HostContext);
+  if (!host) throw new Error('Outside the portal.');
+  return host;
 }
 
-export const PortalContext = createContext<{
-  portal: Portal | null;
-  chrome: Chrome;
-} | null>(null);
-export const RefsContext = createContext<PortalRefs | null>(null);
-
-function usePortalContext() {
-  const context = use(PortalContext);
-  if (!context) throw new Error('Outside the portal.');
-  return context;
+export function useChrome(): Chrome {
+  const chrome = use(ChromeContext);
+  if (!chrome) throw new Error('Outside the portal.');
+  return chrome;
 }
 
-export const useChrome = () => usePortalContext().chrome;
-
-/** What every page shares; only under a connected portal. */
+/** What every page shares; only on the pages of a connected portal. */
 export function usePortal(): Portal {
-  const { portal } = usePortalContext();
-  if (!portal) throw new Error('Not connected yet.');
+  const portal = use(PortalContext);
+  if (!portal) throw new Error('Outside a connected portal.');
   return portal;
-}
-
-export function usePortalRefs(): PortalRefs {
-  const refs = use(RefsContext);
-  if (!refs) throw new Error('Outside the portal.');
-  return refs;
 }

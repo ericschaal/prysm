@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { DeveloperContext } from './developer';
-import { useChrome, usePortal, usePortalRefs } from './portal-context';
+import { useChrome, useNav, usePortal } from './portal-context';
+import type { Place } from './routes';
 import { UpdatedNotice } from './update';
 
 function SettingsIcon() {
@@ -13,8 +14,9 @@ function SettingsIcon() {
   );
 }
 
-function Header() {
+function Header({ settingsLink }: { settingsLink: boolean }) {
   const chrome = useChrome();
+  const nav = useNav();
   return (
     <header className="portal-header">
       <span className="brand">
@@ -39,11 +41,11 @@ function Header() {
         >
           {chrome.connectionLabel}
         </span>
-        {chrome.settingsLink ? (
+        {settingsLink ? (
           <button
             type="button"
             className="header-link"
-            onClick={chrome.settingsLink}
+            onClick={() => nav.go('settings')}
           >
             <SettingsIcon />
             Settings
@@ -63,19 +65,22 @@ export function Page({
   title,
   name,
   wide = false,
+  settingsLink = false,
   children,
 }: {
   className: string;
   title: string;
   name?: string;
   wide?: boolean;
+  /** A Settings button in the header: Home's way to Settings. */
+  settingsLink?: boolean;
   children: ReactNode;
 }) {
   const { developer, updated } = useChrome();
   return (
     <div className={wide ? 'portal wide' : 'portal'}>
       <title>{name ? `${name} · Prysm` : 'Prysm'}</title>
-      <Header />
+      <Header settingsLink={settingsLink} />
       <main id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
         {updated ? <UpdatedNotice /> : null}
@@ -95,10 +100,10 @@ export function PageHeading({
   backLabel,
 }: {
   title: string;
-  to: string;
+  to: Place;
   backLabel: string;
 }) {
-  const { nav } = usePortal();
+  const nav = useNav();
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => headingRef.current?.focus({ preventScroll: true }), []);
   return (
@@ -118,11 +123,23 @@ export function PageHeading({
 
 /** How setup ended, where it is shown (Home, Settings); focused by the frame. */
 export function SetupNotice() {
-  const { setupNotice } = usePortal();
-  const { notice } = usePortalRefs();
+  const { setupNotice, noticeRef } = usePortal();
   return setupNotice ? (
-    <p className="notice" role="status" tabIndex={-1} ref={notice}>
+    <p className="notice" role="status" tabIndex={-1} ref={noticeRef}>
       {setupNotice}
+    </p>
+  ) : null;
+}
+
+/**
+ * Says the connection is lost, once that lasts; the controls are disabled
+ * at once, so a short gap (a restart) shows nothing.
+ */
+export function OfflineNotice() {
+  const { outOfTouch } = useChrome();
+  return outOfTouch ? (
+    <p className="notice warning" role="alert">
+      Lost the connection to Prysm. Reconnecting; your changes are kept.
     </p>
   ) : null;
 }

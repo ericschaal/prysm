@@ -135,8 +135,11 @@ class Process {
   }
 }
 
-/** The entry script a page loads, e.g. `/assets/index-CZ3hLPcm.js`. */
-const script = /\/assets\/index-[\w-]+\.js/;
+/**
+ * The entry script a page loads, named by its content, e.g.
+ * `/assets/index-CZ3hLPcm.js`.
+ */
+export const entryScript = /\/assets\/index-[\w-]+\.js/;
 
 /**
  * Fails unless the `prysm-headless` under test serves the bundle `npm run
@@ -150,7 +153,7 @@ export async function checkBundle(): Promise<void> {
     () => null,
   );
   if (assets === null) return;
-  const built = script.exec(assets)?.[0];
+  const built = entryScript.exec(assets)?.[0];
   const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
   const file = path.join(dir, 'settings.json');
   await writeFile(file, JSON.stringify({ output: { kind: 'null' } }));
@@ -159,7 +162,7 @@ export async function checkBundle(): Promise<void> {
     const line = await host.waitFor('portal http://');
     const url = /http:\/\/[^/\s]+/.exec(line)?.[0];
     if (!url) throw new Error(`no address in ${line}`);
-    const served = script.exec(await (await fetch(`${url}/`)).text())?.[0];
+    const served = entryScript.exec(await (await fetch(`${url}/`)).text())?.[0];
     if (!built || served !== built)
       throw new Error(
         `${headlessBin} serves ${served ?? 'no script'}, but dist has ${built ?? 'none'}: rebuild prysm-headless (cargo build -p prysm-headless) after npm run build`,
