@@ -349,6 +349,41 @@ test("Reset puts back only the screen's own controls", async () => {
   }
 });
 
+test('a held slider lights its values at once and saves on release', async () => {
+  // Without this the lights followed only 0.4 s after the slider stopped.
+  const portal = await openCalibrate();
+  const { fixture, dom } = portal;
+  const fire = (target, type) =>
+    act(async () =>
+      target.dispatchEvent(new dom.window.Event(type, { bubbles: true })),
+    );
+  const trials = () =>
+    fixture.calls.filter((call) => call.startsWith('trial:')).length;
+  try {
+    await press(button('Start'));
+    await press(button('Looks right'));
+    const slider = () => draftField('red.strength');
+    const before = trials();
+    await fire(slider(), 'pointerdown');
+    await edit(slider(), -30);
+    assert.equal(trials(), before + 1, 'tried on the lights while held');
+    assert.equal(
+      processing(fixture).calibrations[0].correction.red.strength,
+      0,
+      'not saved while held',
+    );
+    await fire(dom.window, 'pointerup');
+    await settle();
+    assert.equal(
+      processing(fixture).calibrations[0].correction.red.strength,
+      -30,
+      'saved on release',
+    );
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('starting from a saved calibration works on a copy; Cancel deletes it and restores the previous one', async () => {
   const portal = await openCalibrate({ calibrations: [ps5] });
   const { fixture } = portal;

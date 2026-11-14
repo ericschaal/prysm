@@ -156,6 +156,8 @@ export interface CalibrateProps {
   shown: CalibrationPattern | undefined;
   disabled: boolean;
   save: (expected: number, processing: Processing) => Promise<number>;
+  /** Light with a processing section unsaved, while a slider is held. */
+  tryProcessing: (processing: Processing) => Promise<unknown>;
   setCalibration: (pattern: CalibrationPattern | null) => Promise<unknown>;
   /** Go back to the portal's main page. */
   leave: () => void;
@@ -175,10 +177,17 @@ export function CalibrateWizard({
   shown,
   disabled,
   save,
+  tryProcessing,
   setCalibration,
   leave,
 }: CalibrateProps) {
-  const live = useLiveProcessing({ processing, revision, disabled, save });
+  const live = useLiveProcessing({
+    processing,
+    revision,
+    disabled,
+    save,
+    tryProcessing,
+  });
   const calibrations = live.value.calibrations ?? [];
   const [state, dispatch] = useReducer(wizardReducer, initialWizard);
   const { phase, busy, problem } = state;
@@ -265,7 +274,8 @@ export function CalibrateWizard({
       ...draft,
       correction: { ...correctionOf(draft), ...change },
     };
-    live.replace(
+    // The lights follow a held slider at once; its release saves.
+    live.slider.slide(
       withCalibrations(
         live.value,
         calibrations.map((calibration, at) =>
@@ -537,7 +547,12 @@ function StepScreen({
   /** The TV shows the pattern without the draft's correction. */
   uncorrected: boolean;
   locked: boolean;
-  live: { scope: FieldScope; generation: number };
+  live: {
+    scope: FieldScope;
+    generation: number;
+    /** A held slider lights its values at once and saves on release. */
+    slider: { press: () => void; release: () => void };
+  };
   dispatch: (action: WizardAction) => void;
   correct: (change: Partial<CorrectionControls>) => void;
   show: (
@@ -567,6 +582,8 @@ function StepScreen({
       help={correction[control].help}
       value={values[control]}
       onChange={(value) => correct({ [control]: value })}
+      onPress={live.slider.press}
+      onRelease={live.slider.release}
       format={signed}
       {...correctionLimits[control]}
     />
@@ -587,6 +604,8 @@ function StepScreen({
       onChange={(value) =>
         correct({ [name]: { ...values[name], [control]: value } })
       }
+      onPress={live.slider.press}
+      onRelease={live.slider.release}
       format={signed}
       {...primaryLimits[control]}
     />

@@ -361,7 +361,14 @@ export function PreviewRoute() {
 }
 
 export function CalibrateRoute() {
-  const { snapshot, online, dispatch, commands, saveProcessing } = usePortal();
+  const {
+    snapshot,
+    online,
+    dispatch,
+    commands,
+    saveProcessing,
+    tryProcessing,
+  } = usePortal();
   const nav = useNav();
   return (
     <Page
@@ -377,6 +384,7 @@ export function CalibrateRoute() {
         shown={snapshot.calibration}
         disabled={!online}
         save={saveProcessing}
+        tryProcessing={tryProcessing}
         setCalibration={(pattern) => dispatch(commands.setCalibration(pattern))}
         // Back where it was opened (Home, or the calibrations), else Home.
         leave={nav.backToOpener}
