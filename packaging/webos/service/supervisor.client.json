@@ -1,5 +1,5 @@
 {
-  "io.prysm.capture.service": [
+  "io.prysm.tv.service": [
     "activities.callbacks"
   ]
 }

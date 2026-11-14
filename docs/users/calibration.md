@@ -1,32 +1,47 @@
-# Calibrate colors with an LG TV
+# Calibrate colours
 
-Requires the [webOS capturer](webos.md), working Screen sync, and a phone on the
-same network as Prysm.
+Calibration saves a **colour profile** that makes the light on the wall match
+the colours on the TV. You match by eye: the TV shows test patterns and you
+adjust sliders on your phone.
 
-1. On the TV, open **Prysm → Settings → Calibrate Colors**. Scan the QR code.
-2. On your phone, choose **New profile** or a saved profile. Confirm that the
-   wall lights follow the gray, red, green, and blue sequence.
-3. Match the gray tint with **Cooler/Warmer** and **Greener/More magenta**.
-   Ignore brightness differences.
-4. In **Match color intensity**, compare each half with the wall behind it.
-   Try blue, red, and green; keep changes that improve both halves.
-5. **Skip hue adjustment** unless a color's tint is wrong. For blue: move toward
-   Cyan if the wall looks purple, or toward Magenta if it looks teal.
-6. Check Coast, Garden, Dusk, and the four-color grid against the wall.
-7. Name the profile and choose **Save and use**. Press Return on the TV to exit.
+It needs the Prysm app on an LG TV ([full or slim package](webos.md)), working
+Screen sync from that TV, and a phone on the same network.
 
-Hold **Hold for uncorrected** to compare without the profile. Picture settings
-such as brightness and smoothing are separate from the profile.
+*Not yet verified on hardware:* the TV pattern player and the phone wizard
+have not been tested on a TV with Prysm 1.x.
 
-## Profiles
+## Run it
 
-- **Overview → Color profile:** select a profile or **No correction**.
-- **Settings → Color profiles → •••:** rename or delete; **Save & apply** commits.
-- Profiles do not switch automatically with the HDMI input.
+1. On the TV, open **Prysm** and choose **Calibrate colours**. Screen sync
+   turns on and the TV shows a QR code. If the row is greyed out, the TV says
+   why (for example, the lights are not using this TV's picture).
+2. Scan the QR code with your phone. It opens the portal's calibration page.
+   You can also open **Settings → Colour profiles → New profile (guided)** in
+   the portal.
+3. Start a new profile, or start from a copy of a saved one.
+4. Follow the steps. Each shows a pattern on the TV:
+   - **White balance:** make the wall as neutral as the grey on the TV with
+     **Warmth** and **Tint**. Ignore brightness.
+   - **Hues:** change a colour only if the wall leans towards a neighbouring
+     colour.
+   - **Intensity:** compare each half of the TV with the wall behind it.
+   - **Mixed colours:** check that colours stay distinct side by side.
+   - **Review:** name the profile and finish.
+5. Press Back on the TV to leave. The lights stay on.
 
-## Cancel
+Changes show on the wall as you move a slider. A button compares the wall
+without the profile.
 
-Back/Exit on the TV discards unsaved changes. **Stop lighting** cancels and
-turns the lights off. A lost connection cancels after 30 seconds.
+**Cancel** deletes the new profile and brings back the profile you used
+before. If calibration ends on the TV side, the phone offers to resume and
+keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 
-Calibration matches colors by eye. Check the result with your usual content.
+## Use profiles
+
+- **Home:** tap a profile to use it, or **No correction**.
+- **Settings → Colour profiles:** choose a profile to rename it, adjust its
+  colours or delete it; make a new one with **New profile (guided)**.
+
+Profiles do not change brightness, smoothing or other picture settings, and do
+not switch with the TV's input. Check the result with the content you usually
+watch.

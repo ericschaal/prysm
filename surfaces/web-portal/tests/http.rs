@@ -1,0 +1,1445 @@
+//! The portal against a real engine with fake adapters, over loopback HTTP.
+use futures::StreamExt;
+use prysm_ports::{AdapterSettings, Settings};
+use prysm_runtime::fakes::{
+    self, CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
+};
+use prysm_runtime::{EngineHandle, Prysm, Shutdown};
+use prysm_web_portal::{Access, Caching, FrontendAsset, WebPortal};
+use reqwest::{Method, RequestBuilder, StatusCode, header};
+use serde_json::{Value, json};
+use std::future::Future;
+use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
+
+const ASSETS: &[FrontendAsset] = &[
+    FrontendAsset {
+        path: "/index.html",
+        content_type: "text/html; charset=utf-8",
+        bytes: b"<!doctype html><title>Prysm</title>",
+        gzip: None,
+        caching: Caching::Revalidate,
+    },
+    FrontendAsset {
+        path: "/assets/app.js",
+        content_type: "text/javascript",
+        bytes: b"console.log('prysm')",
+        // Stands in for the compressed script: the portal sends it as it is.
+        gzip: Some(b"compressed"),
+        caching: Caching::Immutable,
+    },
+];
+const LIMIT: Duration = Duration::from_secs(10);
+
+struct Portal {
+    address: SocketAddr,
+    client: reqwest::Client,
+    log: CallLog,
+    store: MemoryStore,
+    stop: Option<oneshot::Sender<()>>,
+    host: JoinHandle<prysm_ports::Result<()>>,
+    /// The portal's engine, to observe preview demand.
+    engine: EngineHandle,
+}
+
+async fn start(settings: Settings, stop_deadline: Duration) -> Portal {
+    start_with(settings, stop_deadline, Access::SameOrigin).await
+}
+
+async fn start_with(settings: Settings, stop_deadline: Duration, access: Access) -> Portal {
+    start_full(settings, stop_deadline, access, false).await
+}
+
+async fn start_full(
+    settings: Settings,
+    stop_deadline: Duration,
+    access: Access,
+    metrics: bool,
+) -> Portal {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let portal = WebPortal::from_listener(listener, ASSETS, access)
+        .unwrap()
+        .metrics(metrics);
+    let log = CallLog::new();
+    let store = MemoryStore::with(settings);
+    let (stop, stopped) = oneshot::channel::<()>();
+    let (engine, handed) = oneshot::channel::<EngineHandle>();
+    let host = tokio::spawn(
+        Prysm::builder(store.clone())
+            .source(FakeSources(log.clone()))
+            .output(FakeOutputs(log.clone()))
+            .surface(portal)
+            .surface(move |handle: EngineHandle, shutdown: Shutdown| async move {
+                let _ = engine.send(handle);
+                shutdown.requested().await;
+                Ok(())
+            })
+            .stop_deadline(stop_deadline)
+            .run(async move {
+                let _ = stopped.await;
+            }),
+    );
+    Portal {
+        address,
+        client: reqwest::Client::new(),
+        log,
+        store,
+        stop: Some(stop),
+        host,
+        engine: handed.await.unwrap(),
+    }
+}
+
+impl Portal {
+    fn request(&self, method: Method, path: &str) -> RequestBuilder {
+        self.client
+            .request(method, format!("http://{}{path}", self.address))
+    }
+
+    async fn json(&self, method: Method, path: &str, body: Value) -> (StatusCode, Value) {
+        let response = self.request(method, path).json(&body).send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    async fn get(&self, path: &str) -> (StatusCode, Value) {
+        let response = self.request(Method::GET, path).send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    async fn state(&self) -> Value {
+        let response = self
+            .request(Method::GET, "/api/v1/state")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.json().await.unwrap()
+    }
+
+    async fn target(&self, target: &str) -> (StatusCode, Value) {
+        self.json(Method::PUT, "/api/v1/target", json!({ "target": target }))
+            .await
+    }
+
+    async fn shutdown(mut self) -> prysm_ports::Result<()> {
+        let _ = self.stop.take().unwrap().send(());
+        timeout(LIMIT, self.host).await.unwrap().unwrap()
+    }
+}
+
+async fn bounded<F: Future>(test: F) -> F::Output {
+    timeout(LIMIT, test).await.expect("test timed out")
+}
+
+fn with_output(output: FakeOutputSettings) -> Settings {
+    Settings {
+        output: Some(AdapterSettings::new("fake", &output)),
+        ..fakes::settings()
+    }
+}
+
+#[tokio::test]
+async fn construction_rejects_bad_assets_and_origins() {
+    let field = |result: prysm_ports::Result<WebPortal>| match result {
+        Err(prysm_ports::Error::Invalid(invalid)) => invalid.field,
+        other => panic!("expected a validation error, got {other:?}"),
+    };
+    let portal = |assets, access| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        WebPortal::from_listener(listener, assets, access)
+    };
+    portal(ASSETS, Access::SameOrigin).unwrap();
+    portal(ASSETS, Access::AnyOrigin).unwrap();
+    let origins = |origins: &[&str]| Access::Origins(origins.iter().map(|o| (*o).into()).collect());
+    portal(
+        ASSETS,
+        origins(&[
+            "http://192.168.1.20:3000",
+            "HTTPS://TV.example:443",
+            "app://x",
+            "null",
+        ]),
+    )
+    .unwrap();
+    for origin in [
+        "NULL",
+        " null",
+        "*",
+        "192.168.1.20",
+        "http://tv.example/",
+        "http://tv.example/path",
+        "http://user@tv.example",
+        "http://tv.example?x",
+        "",
+    ] {
+        assert_eq!(
+            field(portal(ASSETS, origins(&[origin]))),
+            "portal.access",
+            "{origin}"
+        );
+    }
+    for path in ["/api/v1/state", "relative", "/../x", "/a%2e", "/index.html"] {
+        let assets: &'static [FrontendAsset] = Box::leak(Box::new([
+            ASSETS[0].clone(),
+            FrontendAsset {
+                path: Box::leak(path.to_owned().into_boxed_str()),
+                ..ASSETS[1].clone()
+            },
+        ]));
+        assert_eq!(field(portal(assets, Access::SameOrigin)), "portal.assets");
+    }
+}
+
+/// Every response, asset or API, success or failure; `cache` is how long it
+/// may be kept.
+fn assert_secure_kept(response: &reqwest::Response, cache: &str) {
+    let headers = response.headers();
+    assert_eq!(headers[header::CACHE_CONTROL], cache);
+    assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert_eq!(
+        headers[header::CONTENT_SECURITY_POLICY],
+        "default-src 'self'; frame-ancestors 'none'"
+    );
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+}
+
+/// Everything but the bundle is never stored.
+fn assert_secure(response: &reqwest::Response) {
+    assert_secure_kept(response, "no-store");
+}
+
+#[tokio::test]
+async fn asset_serving_and_unauthenticated_api() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let url = |path: &str| format!("http://{}{path}", portal.address);
+        let client = &portal.client;
+
+        let page = client.get(url("/")).send().await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_eq!(
+            page.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        // The page is checked on every load; it names the current script.
+        assert_secure_kept(&page, "no-cache");
+        assert!(!page.headers().contains_key(header::VARY));
+        assert!(page.text().await.unwrap().contains("Prysm"));
+        // A script named by its hash is kept for good, compressed or not.
+        let kept = "public, max-age=31536000, immutable";
+        let script = client.get(url("/assets/app.js")).send().await.unwrap();
+        assert_eq!(script.headers()[header::CONTENT_TYPE], "text/javascript");
+        assert_secure_kept(&script, kept);
+        assert_eq!(script.headers()[header::VARY], "accept-encoding");
+        assert!(!script.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(script.text().await.unwrap(), "console.log('prysm')");
+        for accepted in ["gzip", "br;q=1.0, GZip;q=0.5", "*"] {
+            let script = client
+                .get(url("/assets/app.js"))
+                .header(header::ACCEPT_ENCODING, accepted)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(script.headers()[header::CONTENT_ENCODING], "gzip");
+            assert_secure_kept(&script, kept);
+            assert_eq!(script.bytes().await.unwrap().as_ref(), b"compressed");
+        }
+        for refused in ["br", "gzip;q=0", "identity", "gzip;q=0, *"] {
+            let script = client
+                .get(url("/assets/app.js"))
+                .header(header::ACCEPT_ENCODING, refused)
+                .send()
+                .await
+                .unwrap();
+            assert!(!script.headers().contains_key(header::CONTENT_ENCODING));
+            assert_eq!(script.text().await.unwrap(), "console.log('prysm')");
+        }
+        // HEAD answers as GET does, without the body: is this file served?
+        let head = client.head(url("/assets/app.js")).send().await.unwrap();
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(head.headers()[header::CONTENT_LENGTH], "20");
+        assert_secure_kept(&head, kept);
+        assert!(head.bytes().await.unwrap().is_empty());
+        let gone = client.head(url("/assets/old.js")).send().await.unwrap();
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+        let missing = client.get(url("/missing")).send().await.unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_secure(&missing);
+        // Any Host is served: the portal is reached by IP or LAN name.
+        let named = client
+            .get(url("/api/v1/state"))
+            .header(header::HOST, "prysm.lan:8787")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(named.status(), StatusCode::OK);
+        assert_eq!(named.headers()[header::VARY], "origin");
+        assert_secure(&named);
+
+        let unknown = portal
+            .request(Method::GET, "/api/v1/nothing")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let method = portal
+            .request(Method::POST, "/api/v1/target")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(method.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            method.json::<Value>().await.unwrap()["kind"],
+            "method_not_allowed"
+        );
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn foreign_origins_are_refused_without_running_the_command() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let put = |origin: Option<&str>, host: Option<&str>| {
+            let mut request = portal
+                .request(Method::PUT, "/api/v1/target")
+                .json(&json!({ "target": "processed" }));
+            if let Some(origin) = origin {
+                request = request.header(header::ORIGIN, origin);
+            }
+            if let Some(host) = host {
+                request = request.header(header::HOST, host);
+            }
+            request.send()
+        };
+
+        for origin in ["http://evil.example", "null", "https://127.0.0.1"] {
+            let refused = put(Some(origin), None).await.unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{origin}");
+            assert!(
+                !refused
+                    .headers()
+                    .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            );
+            assert_eq!(
+                refused.json::<Value>().await.unwrap(),
+                json!({ "kind": "forbidden", "message": "origin denied" })
+            );
+        }
+        let stream = portal
+            .request(Method::GET, "/api/v1/state/stream")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stream.status(), StatusCode::FORBIDDEN);
+        let preflight = portal
+            .request(Method::OPTIONS, "/api/v1/target")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.state().await["target"], "off");
+
+        // The portal's own pages, by IP or by name, and clients without Origin.
+        let own = format!("http://{}", portal.address);
+        let same = put(Some(&own), None).await.unwrap();
+        assert_eq!(same.status(), StatusCode::NO_CONTENT);
+        assert!(
+            !same
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
+        let named = put(Some("http://Prysm.lan"), Some("prysm.lan:80"))
+            .await
+            .unwrap();
+        assert_eq!(named.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            put(None, None).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn allowed_origins_get_cors() {
+    bounded(async {
+        let tv = "http://192.168.1.30:3000";
+        let access = Access::Origins(vec!["HTTP://192.168.1.30:3000".into()]);
+        let portal = start_with(fakes::settings(), Duration::from_secs(5), access).await;
+
+        let preflight = portal
+            .request(Method::OPTIONS, "/api/v1/target")
+            .header(header::ORIGIN, tv)
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+            .header("access-control-request-private-network", "true")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        let headers = preflight.headers();
+        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
+        assert_eq!(
+            headers[header::ACCESS_CONTROL_ALLOW_METHODS],
+            "GET, PUT, DELETE"
+        );
+        assert_eq!(
+            headers[header::ACCESS_CONTROL_ALLOW_HEADERS],
+            "content-type"
+        );
+        assert_eq!(headers["access-control-allow-private-network"], "true");
+        assert_eq!(headers[header::VARY], "origin");
+        assert_secure(&preflight);
+
+        let put = portal
+            .request(Method::PUT, "/api/v1/target")
+            .header(header::ORIGIN, tv)
+            .json(&json!({ "target": "processed" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put.status(), StatusCode::NO_CONTENT);
+        assert_eq!(put.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
+        assert_secure(&put);
+        let stream = portal
+            .request(Method::GET, "/api/v1/state/stream")
+            .header(header::ORIGIN, tv)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stream.status(), StatusCode::OK);
+        assert_eq!(stream.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], tv);
+        assert_eq!(stream.headers()[header::CONTENT_TYPE], "text/event-stream");
+        assert_secure(&stream);
+        drop(stream);
+
+        let other = portal
+            .request(Method::GET, "/api/v1/state")
+            .header(header::ORIGIN, "http://192.168.1.31:3000")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(other.status(), StatusCode::FORBIDDEN);
+        assert_secure(&other);
+        portal.shutdown().await.unwrap();
+
+        // A packaged webOS app sends `Origin: null`; listing `null` allows
+        // exactly that, not every origin.
+        let access = Access::Origins(vec!["null".into()]);
+        let portal = start_with(fakes::settings(), Duration::from_secs(5), access).await;
+        let put = portal
+            .request(Method::PUT, "/api/v1/target")
+            .header(header::ORIGIN, "null")
+            .json(&json!({ "target": "processed" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put.status(), StatusCode::NO_CONTENT);
+        assert_eq!(put.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+        let preflight = portal
+            .request(Method::OPTIONS, "/api/v1/target")
+            .header(header::ORIGIN, "null")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        // The TV app clears a calibration pattern with DELETE.
+        let delete = portal
+            .request(Method::DELETE, "/api/v1/calibration")
+            .header(header::ORIGIN, "null")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            delete.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "null"
+        );
+        for origin in ["http://anything.example", "http://192.168.1.30:3000"] {
+            let refused = portal
+                .request(Method::GET, "/api/v1/state")
+                .header(header::ORIGIN, origin)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{origin}");
+        }
+        portal.shutdown().await.unwrap();
+
+        let portal = start_with(fakes::settings(), Duration::from_secs(5), Access::AnyOrigin).await;
+        for origin in ["null", "http://anything.example"] {
+            let state = portal
+                .request(Method::GET, "/api/v1/state")
+                .header(header::ORIGIN, origin)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(state.status(), StatusCode::OK);
+            assert_eq!(state.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], origin);
+        }
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn state_read_and_set_target() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let state = portal.state().await;
+        assert_eq!(state["target"], "off");
+        assert_eq!(state["session"], json!({ "state": "stopped" }));
+        assert!(state["revision"].is_u64());
+        assert_eq!(state["settings"]["capture"]["kind"], "fake");
+        assert_eq!(state["failure"], Value::Null);
+
+        let (status, _) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let state = portal.state().await;
+        assert_eq!(state["target"], "processed");
+        assert_eq!(state["session"]["state"], "running");
+        assert!(portal.log.wait_for("output.write:", 1).await);
+
+        let (status, _) = portal.target("off").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(portal.state().await["session"]["state"], "stopped");
+        assert_eq!(portal.log.count("output.idle::Off"), 1);
+
+        let (status, body) = portal.target("sideways").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Candidates are an on-request lookup: no revision or state change, unknown
+/// kinds name the field, other paths are unknown routes, and the origin
+/// policy applies as to every API call.
+#[tokio::test]
+async fn candidates_list_what_an_adapter_finds() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let revision = portal.state().await["revision"].clone();
+
+        let (status, body) = portal.get("/api/v1/candidates/output/fake").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            json!([{ "label": "Fake lights", "detail": "fake", "fields": { "name": "found" } }])
+        );
+        assert_eq!(portal.log.count("output.candidates"), 1);
+        // The fake source finds nothing: the default.
+        let (status, body) = portal.get("/api/v1/candidates/capture/fake").await;
+        assert_eq!((status, body), (StatusCode::OK, json!([])));
+
+        let (status, body) = portal.get("/api/v1/candidates/output/hue").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "output.kind");
+        for path in [
+            "/api/v1/candidates/processing/fake",
+            "/api/v1/candidates/output/",
+            "/api/v1/candidates/output",
+            "/api/v1/candidates/output/fake/more",
+        ] {
+            let (status, body) = portal.get(path).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(body["kind"], "not_found");
+        }
+        let (status, _) = portal
+            .json(Method::PUT, "/api/v1/candidates/output/fake", json!({}))
+            .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let foreign = portal
+            .request(Method::GET, "/api/v1/candidates/output/fake")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.log.count("output.candidates"), 1);
+        assert_eq!(portal.state().await["revision"], revision);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn calibration_shows_switches_and_clears_a_pattern_without_saving() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let put = |body: Value| portal.json(Method::PUT, "/api/v1/calibration", body);
+        let gray = json!({ "pattern": "gray-192", "uncorrected": false });
+
+        // Lighting must be on first.
+        let (status, body) = put(gray.clone()).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["kind"], "not_processed");
+        assert!(body.get("field").is_none());
+        assert!(portal.state().await.get("calibration").is_none());
+
+        portal.target("processed").await;
+        let before = portal.state().await;
+        let (status, _) = put(gray.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let state = portal.state().await;
+        assert_eq!(state["calibration"], gray);
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(state["settings"], before["settings"]);
+
+        let grid = json!({ "pattern": "review-grid", "uncorrected": true });
+        assert_eq!(put(grid.clone()).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        // Closed pattern set, exact fields.
+        for bad in [
+            json!({ "pattern": "gray-64", "uncorrected": false }),
+            json!({ "pattern": "response", "uncorrected": false }),
+            json!({ "pattern": "red" }),
+            json!({ "pattern": "red", "uncorrected": false, "token": "x" }),
+            json!(null),
+        ] {
+            let (status, body) = put(bad.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(body["kind"], "bad_request");
+        }
+        let untyped = portal
+            .request(Method::PUT, "/api/v1/calibration")
+            .body(gray.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(untyped.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        let get = portal
+            .request(Method::GET, "/api/v1/calibration")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // A foreign page can neither set nor clear it.
+        for method in [Method::PUT, Method::DELETE] {
+            let refused = portal
+                .request(method.clone(), "/api/v1/calibration")
+                .header(header::ORIGIN, "http://evil.example")
+                .json(&gray)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{method}");
+        }
+        assert_eq!(portal.state().await["calibration"], grid);
+
+        let cleared = portal
+            .request(Method::DELETE, "/api/v1/calibration")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cleared.status(), StatusCode::NO_CONTENT);
+        assert!(portal.state().await.get("calibration").is_none());
+
+        // Leaving processed lighting clears it.
+        assert_eq!(put(gray.clone()).await.0, StatusCode::NO_CONTENT);
+        portal.target("off").await;
+        let state = portal.state().await;
+        assert!(state.get("calibration").is_none());
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_processing_trial_applies_without_saving() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let before = portal.state().await;
+        let mut processing = before["settings"]["processing"].clone();
+        processing["brightness_percent"] = json!(40);
+        let put = |body: Value| portal.json(Method::PUT, "/api/v1/processing/trial", body);
+
+        // Accepted with lighting off or on; nothing saved, no new revision.
+        assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
+        portal.target("processed").await;
+        assert_eq!(put(processing.clone()).await.0, StatusCode::NO_CONTENT);
+        let state = portal.state().await;
+        assert_eq!(state["revision"], before["revision"]);
+        assert_eq!(state["settings"], before["settings"]);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
+
+        // Validated like settings, exact fields.
+        let mut out_of_range = processing.clone();
+        out_of_range["brightness_percent"] = json!(101);
+        let (status, body) = put(out_of_range).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["kind"], "invalid");
+        assert_eq!(body["field"], "processing.brightness_percent");
+        let mut unknown = processing.clone();
+        unknown["token"] = json!("x");
+        let (status, body) = put(unknown).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["kind"], "bad_request");
+
+        let get = portal
+            .request(Method::GET, "/api/v1/processing/trial")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let refused = portal
+            .request(Method::PUT, "/api/v1/processing/trial")
+            .header(header::ORIGIN, "http://evil.example")
+            .json(&processing)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.store.saved(), Some(fakes::settings()));
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn adapter_failures_are_bad_gateway_and_missing_settings_are_invalid() {
+    bounded(async {
+        let failing = Settings {
+            capture: Some(AdapterSettings::new(
+                "fake",
+                &FakeSourceSettings {
+                    fail_open: true,
+                    ..FakeSourceSettings::default()
+                },
+            )),
+            ..fakes::settings()
+        };
+        let portal = start(failing, Duration::from_secs(5)).await;
+        let (status, body) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            body,
+            json!({
+                "kind": "adapter",
+                "message": "fake source cannot open",
+                "section": "capture",
+            })
+        );
+        assert_eq!(portal.state().await["failure"]["kind"], "adapter");
+        // The state says the same side, for the portal's Video stop.
+        assert_eq!(portal.state().await["failure"]["section"], "capture");
+        portal.shutdown().await.unwrap();
+
+        // The output opens at the first frame: its failure ends the session
+        // and is reported in the state, not in the reply.
+        let failing = with_output(FakeOutputSettings {
+            fail_open: true,
+            ..FakeOutputSettings::default()
+        });
+        let portal = start(failing, Duration::from_secs(5)).await;
+        let (status, _) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let mut state = portal.state().await;
+        while state["failure"].is_null() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            state = portal.state().await;
+        }
+        assert_eq!(state["failure"]["kind"], "adapter");
+        assert_eq!(state["failure"]["message"], "fake output cannot open");
+        assert_eq!(state["failure"]["section"], "output");
+        portal.shutdown().await.unwrap();
+
+        let portal = start(Settings::default(), Duration::from_secs(5)).await;
+        let (status, body) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "capture");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn settings_replace_succeeds_conflicts_and_validates() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let state = portal.state().await;
+        let initial = state["revision"].as_u64().unwrap();
+        let next = initial + 1;
+        let mut settings = state["settings"].clone();
+        settings["processing"]["brightness_percent"] = json!(40);
+        let replace = |expected: u64, settings: Value| {
+            portal.json(
+                Method::PUT,
+                "/api/v1/settings",
+                json!({ "expected": expected, "settings": settings }),
+            )
+        };
+
+        let (status, body) = replace(initial, settings.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({ "revision": next }));
+        assert_eq!(
+            portal.store.saved().unwrap().processing.brightness_percent,
+            40
+        );
+        let state = portal.state().await;
+        assert_eq!(state["revision"], next);
+        assert_eq!(state["settings"]["processing"]["brightness_percent"], 40);
+
+        let (status, body) = replace(initial, settings.clone()).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["kind"], "stale_revision");
+        assert_eq!(body["current"], next);
+
+        let mut invalid = settings.clone();
+        invalid["capture"] = serde_json::to_value(AdapterSettings::new(
+            "fake",
+            &FakeSourceSettings {
+                invalid: true,
+                ..FakeSourceSettings::default()
+            },
+        ))
+        .unwrap();
+        let (status, body) = replace(next, invalid).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            body,
+            json!({ "kind": "invalid", "message": "fake rejects it", "field": "capture.invalid" })
+        );
+
+        let mut range = settings.clone();
+        range["processing"]["spatial_reach_percent"] = json!(0);
+        let (status, body) = replace(next, range).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "processing.spatial_reach_percent");
+
+        let mut unknown = settings.clone();
+        unknown["output"] = json!({ "kind": "laser" });
+        let (status, body) = replace(next, unknown).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["field"], "output.kind");
+
+        let mut undecodable = settings.clone();
+        undecodable["output"] = json!({ "kind": "fake", "fail_after": "soon" });
+        let (status, body) = replace(next, undecodable).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("cannot decode `fake` settings:")
+        );
+        assert_eq!(portal.state().await["revision"], next);
+
+        let plain = portal
+            .request(Method::PUT, "/api/v1/settings")
+            .body("{}")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(plain.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let large = portal
+            .request(Method::PUT, "/api/v1/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(vec![b' '; 1024 * 1024 + 1])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+/// Read server-sent events until one satisfies `done`.
+async fn next_state(
+    events: &mut (impl futures::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin),
+    buffer: &mut String,
+    done: impl Fn(&Value) -> bool,
+) -> Value {
+    loop {
+        while let Some(end) = buffer.find("\n\n") {
+            let event: String = buffer.drain(..end + 2).collect();
+            if let Some(data) = event.strip_prefix("data: ") {
+                let state: Value = serde_json::from_str(data.trim_end()).unwrap();
+                if done(&state) {
+                    return state;
+                }
+            }
+        }
+        let chunk = events.next().await.expect("stream ended").unwrap();
+        buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+    }
+}
+
+#[tokio::test]
+async fn state_stream_delivers_changes_and_ends_on_shutdown() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let response = portal
+            .request(Method::GET, "/api/v1/state/stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        let mut events = response.bytes_stream();
+        let mut buffer = String::new();
+        let first = next_state(&mut events, &mut buffer, |_| true).await;
+        assert_eq!(first["session"]["state"], "stopped");
+
+        let (status, _) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let running = next_state(&mut events, &mut buffer, |s| {
+            s["session"]["state"] == "running"
+        })
+        .await;
+        assert_eq!(running["target"], "processed");
+
+        portal.shutdown().await.unwrap();
+        // The stream ends instead of hanging once the portal stops.
+        while let Some(chunk) = events.next().await {
+            if chunk.is_err() {
+                break;
+            }
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn state_streams_are_limited() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let mut open = Vec::new();
+        for _ in 0..8 {
+            let response = portal
+                .request(Method::GET, "/api/v1/state/stream")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            open.push(response);
+        }
+        let refused = portal
+            .request(Method::GET, "/api/v1/state/stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(refused.json::<Value>().await.unwrap()["kind"], "busy");
+        drop(open);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn faulted_engine_is_unavailable() {
+    bounded(async {
+        let slow_close = Settings {
+            capture: Some(AdapterSettings::new(
+                "fake",
+                &FakeSourceSettings {
+                    close_delay_ms: 500,
+                    ..FakeSourceSettings::default()
+                },
+            )),
+            ..fakes::settings()
+        };
+        let portal = start(slow_close, Duration::from_millis(50)).await;
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        let (status, body) = portal.target("off").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["kind"], "faulted");
+        let (status, body) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["kind"], "faulted");
+        let state = portal.state().await;
+        assert_eq!(
+            state["session"],
+            json!({ "state": "faulted", "phase": "closing_source" })
+        );
+        // A faulted engine cannot shut down cleanly; the portal still stops.
+        assert!(portal.shutdown().await.is_err());
+    })
+    .await;
+}
+
+/// A reply sent before the request body was read (here a 403) must reach the
+/// client: closing with unread bytes would reset the connection and discard it.
+#[tokio::test]
+async fn early_replies_survive_an_unread_request_body() {
+    use std::io::{Read, Write};
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let address = portal.address;
+        let reply = tokio::task::spawn_blocking(move || {
+            let body = vec![b' '; 256 * 1024];
+            let mut socket = std::net::TcpStream::connect(address).unwrap();
+            socket.set_read_timeout(Some(LIMIT)).unwrap();
+            let mut writer = socket.try_clone().unwrap();
+            let sender = std::thread::spawn(move || {
+                let head = format!(
+                    "PUT /api/v1/target HTTP/1.1\r\nHost: {address}\r\n\
+                     Origin: http://evil.example\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                // The portal may stop reading; the reply is what matters.
+                let _ = writer.write_all(head.as_bytes());
+                let _ = writer.write_all(&body);
+            });
+            // Let the reply and any reset arrive before reading.
+            std::thread::sleep(Duration::from_millis(200));
+            let mut reply = Vec::new();
+            let read = socket.read_to_end(&mut reply);
+            sender.join().unwrap();
+            read.map(|_| String::from_utf8_lossy(&reply).into_owned())
+        })
+        .await
+        .unwrap()
+        .expect("the portal reset the connection");
+        assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
+        assert!(reply.contains(r#""kind":"forbidden""#), "{reply}");
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn shutdown_closes_the_listener_promptly() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let address = portal.address;
+        assert_eq!(portal.state().await["target"], "off");
+        let started = std::time::Instant::now();
+        portal.shutdown().await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
+    })
+    .await;
+}
+
+async fn preview_stream(portal: &Portal) -> reqwest::Response {
+    portal
+        .request(Method::GET, "/api/v1/preview/stream")
+        .send()
+        .await
+        .unwrap()
+}
+
+/// Wait until the engine sees `count` preview viewers.
+async fn viewers(portal: &Portal, count: usize) {
+    while portal.engine.preview_viewers() != count {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[tokio::test]
+async fn preview_is_idle_while_off_and_streams_frames_while_running() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let (status, _) = portal.target("processed").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        // Lighting runs, nobody watches: the session publishes nothing.
+        assert_eq!(portal.engine.preview_viewers(), 0);
+        assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
+
+        let response = preview_stream(&portal).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_secure(&response);
+        assert_eq!(portal.engine.preview_viewers(), 1);
+        let mut events = response.bytes_stream();
+        let mut buffer = String::new();
+        let first = next_state(&mut events, &mut buffer, |_| true).await;
+        assert_eq!(first, json!({ "type": "idle" }));
+
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        let frame = next_state(&mut events, &mut buffer, |e| e["type"] != "idle").await;
+        assert_eq!(frame["type"], "frame");
+        assert_eq!(
+            (frame["width"].clone(), frame["height"].clone()),
+            (json!(16), json!(9))
+        );
+        assert_eq!(frame["source_width"], 16);
+        assert_eq!(
+            frame["viewport"],
+            json!({ "x": 0, "y": 0, "width": 16, "height": 9 })
+        );
+        for edge in ["top", "right", "bottom", "left"] {
+            let colors = frame["colors"][edge].as_array().unwrap();
+            assert!(!colors.is_empty() && colors.len() <= 256, "{edge}");
+            assert_eq!(colors[0].as_array().unwrap().len(), 3);
+        }
+        assert!(
+            frame["jpeg"].as_str().unwrap().starts_with("/9j/"),
+            "JPEG SOI"
+        );
+        let later = next_state(&mut events, &mut buffer, |e| e["type"] == "frame").await;
+        assert!(later["sequence"].as_u64() > frame["sequence"].as_u64());
+
+        // The session ends mid-stream: the stream stays open and says so.
+        assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
+        next_state(&mut events, &mut buffer, |e| e["type"] == "idle").await;
+
+        drop(events);
+        viewers(&portal, 0).await;
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn preview_cadence_is_capped_at_eight_per_second() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        let response = preview_stream(&portal).await;
+        let mut events = response.bytes_stream();
+        let mut buffer = String::new();
+        next_state(&mut events, &mut buffer, |e| e["type"] == "frame").await;
+        // The fake source produces about 500 frames per second.
+        let started = std::time::Instant::now();
+        let mut frames = 0;
+        while started.elapsed() < Duration::from_millis(1500) {
+            next_state(&mut events, &mut buffer, |e| e["type"] == "frame").await;
+            frames += 1;
+        }
+        let rate = f64::from(frames) / started.elapsed().as_secs_f64();
+        assert!((3.0..=9.0).contains(&rate), "{frames} frames, {rate:.1}/s");
+        drop(events);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn preview_viewers_are_limited_and_streams_end_on_shutdown() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let mut open = Vec::new();
+        for _ in 0..4 {
+            let response = preview_stream(&portal).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            open.push(response);
+        }
+        let refused = preview_stream(&portal).await;
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(refused.json::<Value>().await.unwrap()["kind"], "busy");
+        assert_eq!(portal.engine.preview_viewers(), 4);
+        // Preview viewers do not use up state streams.
+        let state = portal
+            .request(Method::GET, "/api/v1/state/stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(state.status(), StatusCode::OK);
+        drop(state);
+
+        let mut streams: Vec<_> = open.into_iter().map(|r| r.bytes_stream()).collect();
+        let engine = portal.engine.clone();
+        portal.shutdown().await.unwrap();
+        for events in &mut streams {
+            while let Some(chunk) = events.next().await {
+                if chunk.is_err() {
+                    break;
+                }
+            }
+        }
+        drop(streams);
+        while engine.preview_viewers() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn preview_follows_the_origin_policy() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let foreign = portal
+            .request(Method::GET, "/api/v1/preview/stream")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        assert_eq!(portal.engine.preview_viewers(), 0);
+
+        let own = portal
+            .request(Method::GET, "/api/v1/preview/stream")
+            .header(header::ORIGIN, format!("http://{}", portal.address))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(own.status(), StatusCode::OK);
+        assert!(
+            own.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+        drop(own);
+
+        let wrong = portal
+            .request(Method::PUT, "/api/v1/preview/stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::METHOD_NOT_ALLOWED);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+async fn colors_stream(portal: &Portal) -> reqwest::Response {
+    portal
+        .request(Method::GET, "/api/v1/colors/stream")
+        .send()
+        .await
+        .unwrap()
+}
+
+fn assert_summary(event: &Value) {
+    assert_eq!(event["type"], "colors");
+    for edge in ["top", "right", "bottom", "left"] {
+        let colors = event[edge].as_array().unwrap();
+        assert!((1..=8).contains(&colors.len()), "{edge}: {colors:?}");
+        assert_eq!(colors[0].as_array().unwrap().len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_changed() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let response = colors_stream(&portal).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        assert_secure(&response);
+        assert_eq!(portal.engine.colors_viewers(), 1);
+        // Listening to colors is not watching the preview: no frame is copied
+        // or encoded for it.
+        assert_eq!(portal.engine.preview_viewers(), 0);
+        let mut events = response.bytes_stream();
+        let mut buffer = String::new();
+        let first = next_state(&mut events, &mut buffer, |_| true).await;
+        assert_eq!(first, json!({ "type": "idle" }));
+
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        let colors = next_state(&mut events, &mut buffer, |_| true).await;
+        assert_summary(&colors);
+        assert!(colors.get("jpeg").is_none());
+        // The fake's frames are all black: the colors settle, then nothing
+        // more is sent while they stay the same.
+        while let Ok(event) = timeout(
+            Duration::from_millis(600),
+            next_state(&mut events, &mut buffer, |_| true),
+        )
+        .await
+        {
+            assert_eq!(event["type"], "colors");
+        }
+
+        // The device's own effects are not Prysm's colors.
+        assert_eq!(
+            portal.target("device_native").await.0,
+            StatusCode::NO_CONTENT
+        );
+        let idle = next_state(&mut events, &mut buffer, |_| true).await;
+        assert_eq!(idle, json!({ "type": "idle" }));
+
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert_summary(&next_state(&mut events, &mut buffer, |_| true).await);
+        assert_eq!(portal.target("off").await.0, StatusCode::NO_CONTENT);
+        next_state(&mut events, &mut buffer, |e| e["type"] == "idle").await;
+
+        drop(events);
+        while portal.engine.colors_viewers() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn colors_cadence_is_capped_at_ten_per_second() {
+    bounded(async {
+        // Black and white alternate every 50 ms: the colors never settle.
+        let blinking = Settings {
+            capture: Some(AdapterSettings::new(
+                "fake",
+                &FakeSourceSettings {
+                    blink: Some(255),
+                    ..Default::default()
+                },
+            )),
+            ..fakes::settings()
+        };
+        let portal = start(blinking, Duration::from_secs(5)).await;
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        let response = colors_stream(&portal).await;
+        let mut events = response.bytes_stream();
+        let mut buffer = String::new();
+        next_state(&mut events, &mut buffer, |e| e["type"] == "colors").await;
+        let started = std::time::Instant::now();
+        let mut sent = 0;
+        while started.elapsed() < Duration::from_millis(1500) {
+            next_state(&mut events, &mut buffer, |e| e["type"] == "colors").await;
+            sent += 1;
+        }
+        let rate = f64::from(sent) / started.elapsed().as_secs_f64();
+        assert!((3.0..=11.0).contains(&rate), "{sent} events, {rate:.1}/s");
+        drop(events);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn colors_streams_are_limited_apart_from_previews() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(5)).await;
+        let preview = preview_stream(&portal).await;
+        assert_eq!(preview.status(), StatusCode::OK);
+        let mut open = Vec::new();
+        for _ in 0..8 {
+            let response = colors_stream(&portal).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            open.push(response);
+        }
+        let refused = colors_stream(&portal).await;
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(refused.json::<Value>().await.unwrap()["kind"], "busy");
+        assert_eq!(portal.engine.colors_viewers(), 8);
+        assert_eq!(portal.engine.preview_viewers(), 1);
+
+        let foreign = portal
+            .request(Method::GET, "/api/v1/colors/stream")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        let wrong = portal
+            .request(Method::PUT, "/api/v1/colors/stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        let mut streams: Vec<_> = open.into_iter().map(|r| r.bytes_stream()).collect();
+        let engine = portal.engine.clone();
+        drop(preview);
+        portal.shutdown().await.unwrap();
+        for events in &mut streams {
+            while let Some(chunk) = events.next().await {
+                if chunk.is_err() {
+                    break;
+                }
+            }
+        }
+        drop(streams);
+        while engine.colors_viewers() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn metrics_are_off_by_default() {
+    bounded(async {
+        let portal = start(fakes::settings(), Duration::from_secs(2)).await;
+        for method in [Method::GET, Method::POST] {
+            let response = portal.request(method, "/metrics").send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn enabled_metrics_count_frames_and_follow_the_origin_policy() {
+    bounded(async {
+        let portal = start_full(
+            fakes::settings(),
+            Duration::from_secs(2),
+            Access::SameOrigin,
+            true,
+        )
+        .await;
+        assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
+        assert!(portal.log.wait_for("output.write:", 3).await);
+
+        let response = portal
+            .request(Method::GET, "/metrics")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        assert_secure(&response);
+        let text = response.text().await.unwrap();
+        assert!(text.contains("# TYPE prysm_frames_received_total counter\n"));
+        assert!(text.contains("prysm_target{target=\"processed\"} 1\n"));
+        assert!(text.contains("prysm_session_state{state=\"running\"} 1\n"));
+        assert!(text.contains("prysm_source_opens_total 1\n"));
+        let received = text
+            .lines()
+            .find_map(|line| line.strip_prefix("prysm_frames_received_total "))
+            .and_then(|count| count.parse::<u64>().ok())
+            .unwrap();
+        assert!(received >= 3, "{text}");
+
+        for method in [Method::POST, Method::PUT, Method::DELETE] {
+            let response = portal.request(method, "/metrics").send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+        let foreign = portal
+            .request(Method::GET, "/metrics")
+            .header(header::ORIGIN, "http://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+        portal.shutdown().await.unwrap();
+    })
+    .await;
+}

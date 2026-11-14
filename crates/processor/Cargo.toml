@@ -1,0 +1,19 @@
+[package]
+name = "prysm-processor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Video edge colour sampling and smoothing for Prysm"
+
+[dependencies]
+prysm-core.workspace = true
+tracing.workspace = true
+
+# Not the workspace lints: examples/frame_recycling.rs counts allocations with
+# an unsafe GlobalAlloc, which `forbid` would reject.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

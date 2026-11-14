@@ -1,3 +1,18 @@
+# Release: one path for every `v*` tag. Release Please (release-please.yml)
+# opens the release pull request; merging it creates the tag and a draft
+# GitHub release. This workflow then
+# - `prepare`: checks that the tag's commit is on main, that the tag is v plus
+#   VERSION (the one version file), that the release-please manifest and the
+#   TrueNAS image pin agree, and that nothing else carries the version
+#   (scripts/check-release.py);
+# - `build`: runs CI (ci.yml) at that commit with `release: true`, which keeps
+#   the image tars, the .debs and both IPKs as artifacts;
+# - `publish`: packaging/release/publish.sh pushes
+#   ghcr.io/<owner>/prysm-headless:<version> (amd64, arm64 and the index),
+#   attaches the packages and publishes the release.
+#
+# A manual run with an existing tag recovers a release whose publish failed;
+# a release already published is only checked again.
 name: Release
 run-name: Release ${{ inputs.tag || github.ref_name }}
 
@@ -32,7 +47,7 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
-      - name: Validate release version and commit
+      - name: Tag, commit and versions
         id: release
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -57,7 +72,7 @@ jobs:
   build:
     needs: prepare
     if: needs.prepare.outputs.published != 'true'
-    uses: ./.github/workflows/check.yml
+    uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.prepare.outputs.sha }}
       release: true
@@ -84,11 +99,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+      # The publish script as of this workflow run, so a fixed script on main
+      # can recover an older tag.
       - name: Check out publication tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: .release-tools
+      # Image tars, .debs and IPKs (prysm-headless-image-*, prysm-headless-deb-*,
+      # prysm-tv-ipk-*), not CI's frontend bundle or e2e binaries.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.prepare.outputs.published != 'true'
         with:
@@ -101,7 +120,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish tested images and complete release
+      - name: Publish the images and the release
         env:
           RELEASE_DIRECTORY: ${{ runner.temp }}/release
-        run: bash .release-tools/packaging/release/publish.sh
+        run: |
+          mkdir -p "$RELEASE_DIRECTORY"
+          bash .release-tools/packaging/release/publish.sh

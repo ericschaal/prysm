@@ -1,9 +1,8 @@
 {
   "public": [
-    "io.prysm.capture.service/status",
-    "io.prysm.capture.service/start",
-    "io.prysm.capture.service/stop",
-    "io.prysm.capture.service/setConfig",
-    "io.prysm.capture.service/cleanup"
+    "io.prysm.tv.service/getState",
+    "io.prysm.tv.service/setPreferences",
+    "io.prysm.tv.service/setEnabled",
+    "io.prysm.tv.service/uninstall"
   ]
 }

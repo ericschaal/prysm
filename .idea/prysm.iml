@@ -27,7 +27,62 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/common/prysm-metrics/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/xtask/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/xtask/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/apps/prysm/runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/assemblies/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/application/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/contract/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/flow/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/testkit/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-desktop/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-device/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/control-local/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/control-terminal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-terminal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-terminal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/output-wled/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/settings-file/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/output/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/protocol/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/tools/export-contracts/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/web-portal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-file/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-webos-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/remote-capture/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/webos-luna-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/ports/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/runtime/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/crates/webos-link/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/common/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/headless/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/headless/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/tui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/tui/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-service/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-service/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-slim/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos-slim/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/hosts/webos/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/tui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/surfaces/web-portal/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/capture-remote/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264-rvenc-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/v1/adapters/h264/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
+      <excludeFolder url="file://$MODULE_DIR$/v1/target" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

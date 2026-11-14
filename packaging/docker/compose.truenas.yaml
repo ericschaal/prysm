@@ -1,20 +1,37 @@
-# Replace the LAN address and dataset path before installing.
+# prysm-headless on TrueNAS SCALE (Apps → Discover Apps → Install via YAML).
+# Guide: docs/users/truenas.md. `image` names the latest release (each release
+# updates it). Before installing, change /mnt/tank/apps/prysm to your dataset.
+# The `user` below must be able to create and replace files in it (568:568 is
+# TrueNAS's "apps" user).
+# The portal (port 8787) has no password: anyone who can reach the NAS on that
+# port controls the lights. Publish it on a trusted LAN only.
+# The default bridge network is enough. WLED must then be entered by IP
+# address: a bridge network cannot resolve names such as wled.local, and the
+# portal's "Find lights" finds nothing.
 services:
   prysm:
-    image: ghcr.io/ericschaal/prysm:0.2.0 # x-release-please-version
-    user: "568:568"
+    image: ghcr.io/ericschaal/prysm-headless:1.0.0-alpha.0 # x-release-please-version
     restart: unless-stopped
+    user: "568:568"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    stop_grace_period: 90s
+    stop_grace_period: 30s
     environment:
-      PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787,truenas.local:8787"
+      RUST_LOG: warn,prysm=info
+    # Options after the settings path. `--allow-origin null` lets the slim
+    # TV app (io.prysm.tv, slim package) control this Prysm; remove it if no
+    # TV uses this NAS. Add "--start" to start screen sync with the app.
+    command: ["--allow-origin", "null"]
     ports:
-      - "192.168.1.20:8787:8787"
+      # The portal; the slim TV package streams its picture to it too.
+      - "8787:8787"
     volumes:
       - type: bind
         source: /mnt/tank/apps/prysm
-        target: /config
-        bind:
-          create_host_path: false
+        target: /data
+    # A USB capture card on the NAS: uncomment, and set the group to the
+    # device's group ID (`stat -c '%g' /dev/video0` in the TrueNAS shell).
+    # devices:
+    #   - /dev/video0:/dev/video0
+    # group_add: ["44"]

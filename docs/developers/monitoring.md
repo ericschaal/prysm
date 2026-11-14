@@ -1,41 +1,32 @@
 # Monitoring
 
-## Enable exporters
+The desktop hosts serve Prometheus metrics on the portal port when started
+with `--metrics`:
 
 ```sh
-prysm --config settings.json --metrics-listen 0.0.0.0:9102
+cargo run -p prysm-headless -- settings.json --metrics
+curl http://127.0.0.1:8787/metrics
 ```
 
-TV: save **Prometheus metrics** in the TV app; its worker serves port 9101.
-Both default off. Exporter failure does not stop lighting. Metrics have no
-authentication: restrict ports to the monitoring network.
+Metrics are off by default, have no authentication and follow the portal's
+origin policy. They are totals the session already keeps (frames received and
+sent, processing and output-write time, write failures, opens) plus the
+target, session state, revision and input rate. There are no system or
+per-adapter metrics and no histograms. Names and meanings:
+[portal contract](../../surfaces/web-portal/HTTP-CONTRACT.md#metrics).
 
-## Start Grafana
+The TV workers have no metrics switch; use the rate in the TV app and the
+portal's state instead.
 
-Set addresses in [targets.json](../../observability/prometheus/targets.json), then:
+## Dashboards
 
-```sh
-docker compose -f observability/compose.yaml up -d
-```
-
-Open [Grafana](http://localhost:3000/d/prysm-overview), initially `admin`/`admin`.
-`GRAFANA_ADMIN_PASSWORD` sets a new volume's initial password. Check scrape errors
-in [Prometheus targets](http://localhost:9090/targets).
-
-Targets reload within five seconds; Prometheus config changes need a container
-restart. Named volumes retain state; `down -v` deletes it. Edit provisioned dashboard
-JSON to keep changes in source control.
+There is no dashboard for these metrics. The Grafana and Prometheus stack of
+the earlier implementation (`observability/` in the tag
+`pre-1.0-consolidation`) used other metric names and was removed.
 
 ## Read measurements
 
-[Metric catalog](../../observability/CATALOG.md): units, labels and boundaries.
-Compare the same build/content/dimensions/FPS/codec, including actual throughput
-and failures. Process CPU uses cores; machine CPU is normalized. Histogram
-percentiles are estimates; do not average p95/p99. Socket sends/receiver gaps do
-not measure physical screen-to-light latency.
-
-Dashboard self-check, using Docker and synthetic data:
-
-```sh
-python3 observability/tests/check-health.py
-```
+Compare the same build, content, size, rate and encoding, including actual
+throughput and failures. Use `rate()` and `_sum / _count` for averages.
+Prysm's timings end at the output write; they do not measure the
+screen-to-light latency.

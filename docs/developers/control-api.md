@@ -1,46 +1,70 @@
-# Control API
+# Portal API and settings
 
-## Access policy
+The web portal is a surface over the engine: every API call is one engine
+command or watch. The complete contract (routes, bodies, limits, status codes)
+is [HTTP-CONTRACT.md](../../surfaces/web-portal/HTTP-CONTRACT.md); generated
+types live in `@prysm/contracts/application` ([contracts](contracts.md)).
 
-Panel/API share Host validation, CSRF checks, security headers and request limits.
-Cross-site writes fail; CLI requests without browser metadata work. There is no
-login: use a trusted LAN/private VPN.
+## Routes at a glance
 
-## Configuration and HTTP
-
-| Route | Contract |
+| Route | Purpose |
 | --- | --- |
-| `GET /api/settings` | `{revision, settings, missing_required}` |
-| `PUT /api/settings` | Complete `{expected_revision, settings}`; stale revision → 409; reject invalid/unknown fields. |
-| `GET /api/state` | Observed lights, pipeline and operation status. |
-| `PUT /api/state` | `{power, source}` → 202 with operation ID. |
+| `GET /api/v1/state`, `GET /api/v1/state/stream` | The whole state, once or as server-sent events after every change |
+| `PUT /api/v1/target` | `off`, `processed` (Screen sync) or `device_native` (the output's own effects) |
+| `PUT /api/v1/settings` | Replace the whole settings document from an expected revision |
+| `PUT /api/v1/processing/trial` | Light with a processing section without saving it, while a slider is dragged |
+| `GET /api/v1/preview/stream` | Picture, sampled area and edge colours, at most 8 per second |
+| `GET /api/v1/colors/stream` | A few LED colours per edge, for tinting Home |
+| `PUT`, `DELETE /api/v1/calibration` | Show or clear a calibration pattern on the TV |
+| `GET /api/v1/candidates/{section}/{kind}` | What an adapter can find: video devices, WLED lights |
+| `GET /metrics` | Prometheus text, only with `--metrics` |
 
-One controller serializes mutations, including those whose callers disconnect.
-Settings persist atomically before publication; failed writes retain prior state.
-Saved and processor-applied revisions differ. Processing changes apply live;
-input/output changes restart capture. CLI/environment process options stay outside
-saved JSON. Missing settings open setup; malformed files fail. Startup stays idle.
+Commands answer once applied (`204`), not with an operation ID. A client that
+loses a reply reads the state instead of resubmitting.
 
-## Browser preview and live settings
+## Access
 
-Setup/Settings share the same save API. Conflicts preserve the draft for review.
-`/api/preview` is a same-origin WebSocket: send `next`, receive a paired frame
-(JPEG/base64, dimensions, source-pixel crop, sRGB edge strips, frame ID, revision)
-or idle/busy/error. Limits: four viewers, one request each, 8 fps; one encoder with
-one active/one queued job. Hidden views stop requests; stopped capture retains a
-stale image. Preview never starts capture. WLED is the only output type.
+There is no login or token. Anyone who can reach the port can read the state
+and control the lights. The portal refuses requests from web pages of other
+sites by their `Origin` header, unless the host was started with
+`--allow-origin ORIGIN` (`null` for the slim TV app, `*` for any). `Host` is
+not checked, so DNS rebinding is not prevented. The full TV worker allows any
+origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
+`--listen`.
+
+## Settings ownership
+
+- The settings file holds everything a user changes at run time: `capture`,
+  `output`, `processing` (with colour profiles). Format:
+  [settings-file](../../adapters/settings-file/README.md).
+- Process options (settings path, `--listen`, `--allow-origin`, `--metrics`,
+  `--start`, `--log-file`) are command-line only and never in the file. There
+  are no `PRYSM_*` environment variables.
+- The lighting mode is not saved. Hosts start with the lights off unless
+  started with `--start`.
+- Saves replace the whole document with the revision the client edited from;
+  a stale revision is `409` and is never retried automatically. The browser
+  copies the latest settings and replaces one section, so it keeps fields it
+  does not show ([saving settings](../../frontend/README.md#saving-settings)).
+
+See the [settings ownership decision](decisions/2026-11-03-settings-ownership.md).
 
 ## Lighting transitions
 
-- **Off:** stop/join capture and output, then send Off after the final DDP packet.
-- **WLED effects:** stop/join before releasing realtime control.
-- **Screen sync:** enable realtime and capture; confirm frames plus WLED live state
-  within 12 seconds, otherwise compensate to the previous state where possible.
+- **Off:** stop the session; the output is idled off after the last frame.
+- **WLED effects** (`device_native`): stop the session; the output is idled
+  to the device's own state.
+- **Screen sync** (`processed`): open the source (a failure is the reply), then
+  open the output at the first frame. An output that cannot open ends the
+  session and shows in `failure`.
 
-Selecting a source while Off keeps lights off. WLED failure must not prevent local
-capture stopping. Ctrl+C/SIGTERM drains accepted work. A restart makes unfinished
-operation results unknown; retries remain explicit.
+There is no confirmation window and no rollback to the previous mode after a
+failed start. A failure leaves the target as requested. Without frames for 3 s
+the output returns to the device's own state until frames return; WLED
+problems while running (switched off, live override, another sender, no
+answer) show as `output_issue`, and Prysm does not switch WLED back.
+`output_brightness` (`{"percent": 40}`) is WLED's own brightness while it
+scales Prysm's colours; Prysm reports it and never changes it.
 
-The webOS receiver remains available while lighting is off. Screen sync configures
-the webOS capturer; Off/effects ends its session. Wake the TV before starting.
-See [TV lifecycle](webos.md) and [generated clients](frontend.md#api-generation).
+On SIGINT or SIGTERM the host stops the session (output idled off), lets open
+requests finish for up to 5 s, and exits non-zero if shutdown failed.

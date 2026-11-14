@@ -1,0 +1,799 @@
+{
+  "Calibration": [
+    {
+      "pattern": "gray-192",
+      "uncorrected": false
+    },
+    {
+      "pattern": "red",
+      "uncorrected": true
+    },
+    {
+      "pattern": "yellow",
+      "uncorrected": false
+    },
+    {
+      "pattern": "green",
+      "uncorrected": true
+    },
+    {
+      "pattern": "cyan",
+      "uncorrected": false
+    },
+    {
+      "pattern": "blue",
+      "uncorrected": true
+    },
+    {
+      "pattern": "magenta",
+      "uncorrected": false
+    },
+    {
+      "pattern": "blue-pair",
+      "uncorrected": true
+    },
+    {
+      "pattern": "red-pair",
+      "uncorrected": false
+    },
+    {
+      "pattern": "green-pair",
+      "uncorrected": true
+    },
+    {
+      "pattern": "coast",
+      "uncorrected": false
+    },
+    {
+      "pattern": "garden",
+      "uncorrected": true
+    },
+    {
+      "pattern": "dusk",
+      "uncorrected": false
+    },
+    {
+      "pattern": "review-grid",
+      "uncorrected": true
+    }
+  ],
+  "Candidate": [
+    {
+      "detail": "/dev/video0",
+      "fields": {
+        "path": "/dev/video0"
+      },
+      "label": "USB Video"
+    },
+    {
+      "detail": "192.168.1.40, 120 LEDs",
+      "fields": {
+        "address": "192.168.1.40"
+      },
+      "label": "Living room"
+    }
+  ],
+  "ColorsEvent": [
+    {
+      "type": "idle"
+    },
+    {
+      "bottom": [
+        [
+          188,
+          188,
+          188
+        ]
+      ],
+      "left": [
+        [
+          0,
+          0,
+          0
+        ]
+      ],
+      "right": [
+        [
+          0,
+          0,
+          255
+        ]
+      ],
+      "top": [
+        [
+          255,
+          0,
+          0
+        ],
+        [
+          0,
+          255,
+          0
+        ]
+      ],
+      "type": "colors"
+    }
+  ],
+  "DeviceSettings": [
+    {
+      "fps": 30,
+      "height": 360,
+      "kind": "device",
+      "path": "/dev/video0",
+      "width": 640
+    }
+  ],
+  "Failure": [
+    {
+      "field": "output.address",
+      "kind": "invalid",
+      "message": "a unicast device address is required"
+    },
+    {
+      "current": 2,
+      "kind": "stale_revision",
+      "message": "settings revision 1 is stale; current is 2"
+    },
+    {
+      "kind": "not_processed",
+      "message": "calibration patterns need lighting on: set the target to processed first"
+    },
+    {
+      "kind": "adapter",
+      "message": "device unplugged"
+    },
+    {
+      "kind": "adapter",
+      "message": "capture device does not support 640x400 at 30 Hz",
+      "section": "capture"
+    },
+    {
+      "kind": "adapter",
+      "message": "WLED did not answer",
+      "section": "output"
+    },
+    {
+      "kind": "unavailable",
+      "message": "runtime has stopped"
+    }
+  ],
+  "FileSettings": [
+    {
+      "fps": 30,
+      "height": 360,
+      "kind": "file",
+      "path": "/videos/clip.mkv",
+      "repeat": false,
+      "width": 640
+    },
+    {
+      "fps": 24,
+      "height": 180,
+      "kind": "file",
+      "path": "clip.mp4",
+      "repeat": false,
+      "width": 320
+    }
+  ],
+  "NullSettings": [
+    {
+      "kind": "null"
+    }
+  ],
+  "PreviewEvent": [
+    {
+      "type": "idle"
+    },
+    {
+      "message": "MJPEG frames cannot be previewed",
+      "type": "unavailable"
+    },
+    {
+      "colors": {
+        "bottom": [
+          [
+            188,
+            188,
+            188
+          ]
+        ],
+        "left": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "right": [
+          [
+            0,
+            0,
+            255
+          ]
+        ],
+        "top": [
+          [
+            255,
+            0,
+            0
+          ],
+          [
+            0,
+            255,
+            0
+          ]
+        ]
+      },
+      "height": 270,
+      "jpeg": "/9j/2wBDAP/Z",
+      "sequence": 42,
+      "source_height": 1080,
+      "source_width": 1920,
+      "type": "frame",
+      "viewport": {
+        "height": 800,
+        "width": 1920,
+        "x": 0,
+        "y": 140
+      },
+      "width": 480
+    }
+  ],
+  "RemoteReceiverSettings": [
+    {
+      "encoding": "h264_hardware",
+      "fps": 30,
+      "height": 180,
+      "include_ui": true,
+      "kind": "remote",
+      "width": 320
+    },
+    {
+      "encoding": "h264_software",
+      "fps": 25,
+      "height": 280,
+      "include_ui": false,
+      "kind": "remote",
+      "width": 640
+    }
+  ],
+  "Settings": [
+    {
+      "processing": {
+        "brightness_percent": 100,
+        "brightness_smoothing": "with_color",
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "shadow_lift_percent": 0,
+        "smoothing_response_percent": 0,
+        "smoothing_seconds": 0.10000000149011612,
+        "spatial_reach_percent": 10
+      }
+    },
+    {
+      "processing": {
+        "active_profile": "ps5",
+        "brightness_percent": 100,
+        "brightness_smoothing": "with_color",
+        "profiles": [
+          {
+            "correction": {
+              "hue": {
+                "blue": 0,
+                "cyan": 0,
+                "green": 0,
+                "magenta": 0,
+                "red": -5,
+                "yellow": 0
+              },
+              "intensity": 15,
+              "midtones": 6,
+              "tint": -4,
+              "warmth": 12
+            },
+            "id": "ps5",
+            "name": "PS5"
+          },
+          {
+            "correction": {
+              "hue": {
+                "blue": 0,
+                "cyan": 0,
+                "green": 0,
+                "magenta": 0,
+                "red": 0,
+                "yellow": 0
+              },
+              "intensity": 0,
+              "midtones": 0,
+              "tint": 0,
+              "warmth": 0
+            },
+            "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+            "name": "TV apps"
+          }
+        ],
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "shadow_lift_percent": 0,
+        "smoothing_response_percent": 0,
+        "smoothing_seconds": 0.10000000149011612,
+        "spatial_reach_percent": 10
+      }
+    }
+  ],
+  "SettingsReplaced": [
+    {
+      "revision": 8
+    }
+  ],
+  "SettingsRequest": [
+    {
+      "expected": 0,
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    },
+    {
+      "expected": 7,
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    },
+    {
+      "expected": 8,
+      "settings": {
+        "processing": {
+          "active_profile": "ps5",
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "profiles": [
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": -5,
+                  "yellow": 0
+                },
+                "intensity": 15,
+                "midtones": 6,
+                "tint": -4,
+                "warmth": 12
+              },
+              "id": "ps5",
+              "name": "PS5"
+            },
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": 0,
+                  "yellow": 0
+                },
+                "intensity": 0,
+                "midtones": 0,
+                "tint": 0,
+                "warmth": 0
+              },
+              "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+              "name": "TV apps"
+            }
+          ],
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      }
+    }
+  ],
+  "State": [
+    {
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "stopped"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "off"
+    },
+    {
+      "failure": null,
+      "input": {
+        "behind": "output",
+        "fps": 29.899999618530273,
+        "latency": {
+          "capture_ms": 88,
+          "output_ms": 2.4000000953674316
+        },
+        "receiving": true,
+        "sent_fps": 29.899999618530273
+      },
+      "output_issue": "overridden",
+      "revision": 7,
+      "session": {
+        "state": "running"
+      },
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [
+        {
+          "kind": "adapter",
+          "message": "portal listener failed"
+        }
+      ],
+      "target": "processed"
+    },
+    {
+      "calibration": {
+        "pattern": "gray-192",
+        "uncorrected": false
+      },
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "running"
+      },
+      "settings": {
+        "processing": {
+          "active_profile": "ps5",
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "profiles": [
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": -5,
+                  "yellow": 0
+                },
+                "intensity": 15,
+                "midtones": 6,
+                "tint": -4,
+                "warmth": 12
+              },
+              "id": "ps5",
+              "name": "PS5"
+            },
+            {
+              "correction": {
+                "hue": {
+                  "blue": 0,
+                  "cyan": 0,
+                  "green": 0,
+                  "magenta": 0,
+                  "red": 0,
+                  "yellow": 0
+                },
+                "intensity": 0,
+                "midtones": 0,
+                "tint": 0,
+                "warmth": 0
+              },
+              "id": "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f",
+              "name": "TV apps"
+            }
+          ],
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "processed"
+    },
+    {
+      "failure": null,
+      "revision": 0,
+      "session": {
+        "state": "native"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "device_native"
+    },
+    {
+      "failure": {
+        "kind": "adapter",
+        "message": "video device capture failed",
+        "section": "capture"
+      },
+      "revision": 0,
+      "session": {
+        "state": "native"
+      },
+      "settings": {
+        "capture": {
+          "kind": "device",
+          "path": "/dev/video0"
+        },
+        "output": {
+          "address": "192.0.2.1",
+          "kind": "wled",
+          "leds": {
+            "left": 4,
+            "top": 10
+          }
+        },
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "processed"
+    },
+    {
+      "failure": {
+        "kind": "faulted",
+        "message": "runtime is faulted: session did not finish idling the output"
+      },
+      "revision": 0,
+      "session": {
+        "phase": "idling_output",
+        "state": "faulted"
+      },
+      "settings": {
+        "processing": {
+          "brightness_percent": 100,
+          "brightness_smoothing": "with_color",
+          "remove_black_bars": true,
+          "sample_density": 128,
+          "shadow_lift_percent": 0,
+          "smoothing_response_percent": 0,
+          "smoothing_seconds": 0.10000000149011612,
+          "spatial_reach_percent": 10
+        }
+      },
+      "surface_failures": [],
+      "target": "off"
+    }
+  ],
+  "TargetRequest": [
+    {
+      "target": "processed"
+    }
+  ],
+  "WebosSettings": [
+    {
+      "fps": 60,
+      "height": 360,
+      "include_ui": false,
+      "kind": "webos",
+      "width": 640
+    }
+  ],
+  "WledSettings": [
+    {
+      "address": "192.0.2.1",
+      "kind": "wled",
+      "leds": {
+        "bottom": 0,
+        "left": 4,
+        "right": 0,
+        "top": 10
+      }
+    }
+  ],
+  "luna/GetStateRequest": [
+    {
+      "subscribe": true
+    }
+  ],
+  "luna/Preferences": [
+    {
+      "autostart": false,
+      "instance": null
+    },
+    {
+      "autostart": true,
+      "instance": "http://192.168.1.20:8787"
+    }
+  ],
+  "luna/SetEnabledRequest": [
+    {
+      "enabled": false
+    }
+  ],
+  "luna/State": [
+    {
+      "capturing": true,
+      "enabled": true,
+      "encoding": null,
+      "failure": null,
+      "flavor": "full",
+      "fps": 30,
+      "lighting": "processed",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "paused": false,
+      "portal": "http://192.168.1.5:8787/",
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "instance": null
+      },
+      "video": "available",
+      "worker": {
+        "phase": "running"
+      }
+    },
+    {
+      "capturing": false,
+      "enabled": true,
+      "encoding": null,
+      "failure": {
+        "kind": "encoder",
+        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
+      },
+      "flavor": "slim",
+      "fps": null,
+      "lighting": null,
+      "log": [],
+      "paused": false,
+      "portal": null,
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "instance": "http://192.168.1.20:8787"
+      },
+      "video": "unknown",
+      "worker": {
+        "phase": "retrying",
+        "seconds": 4
+      }
+    }
+  ],
+  "luna/StateReply": [
+    {
+      "capturing": true,
+      "enabled": true,
+      "encoding": null,
+      "failure": null,
+      "flavor": "full",
+      "fps": 30,
+      "lighting": "processed",
+      "log": [
+        "prysm-webos: portal on 0.0.0.0:8787"
+      ],
+      "paused": false,
+      "portal": "http://192.168.1.5:8787/",
+      "power": "active",
+      "preferences": {
+        "autostart": false,
+        "instance": null
+      },
+      "returnValue": true,
+      "subscribed": true,
+      "video": "available",
+      "worker": {
+        "phase": "running"
+      }
+    },
+    {
+      "capturing": false,
+      "enabled": true,
+      "encoding": null,
+      "failure": {
+        "kind": "encoder",
+        "message": "cannot encode frame: hardware H.264 encoder cannot start: rvenc unavailable"
+      },
+      "flavor": "slim",
+      "fps": null,
+      "lighting": null,
+      "log": [],
+      "paused": false,
+      "portal": null,
+      "power": "screen_saver",
+      "preferences": {
+        "autostart": true,
+        "instance": "http://192.168.1.20:8787"
+      },
+      "returnValue": true,
+      "video": "unknown",
+      "worker": {
+        "phase": "retrying",
+        "seconds": 4
+      }
+    }
+  ],
+  "luna/UninstallRequest": [
+    {}
+  ]
+}

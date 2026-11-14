@@ -1,0 +1,3 @@
+# System user for prysm-headless; "video" grants access to V4L2 capture devices.
+u prysm - "Prysm ambient lighting" /var/lib/prysm /usr/sbin/nologin
+m prysm video

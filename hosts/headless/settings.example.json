@@ -1,0 +1,17 @@
+{
+  "capture": {
+    "kind": "device",
+    "path": "/dev/video0",
+    "width": 640,
+    "height": 360,
+    "fps": 30
+  },
+  "output": {
+    "kind": "wled",
+    "address": "wled.local",
+    "leds": { "top": 96, "right": 54, "bottom": 96, "left": 54 }
+  },
+  "processing": {
+    "brightness_percent": 80
+  }
+}

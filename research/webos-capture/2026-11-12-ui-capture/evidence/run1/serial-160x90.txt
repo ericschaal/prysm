@@ -1,0 +1,8 @@
+The ppid=14979, pid=14980, tid=14980 open GAL-SE/mmap success.
+# surface 160x90 pitch=640 bpp=32 fmt=0 len=57600 open_us=2349
+idx,start_us,capture_us,capture_cpu_us,copy_us,scan_us,visible,hash
+# 160x90 hz=0 frames=0 changed=0 wall_ms=0 process_cpu_ms=0 cpu_share_of_one_core=96.5%
+# capture_wall n=0
+# capture_cpu n=0
+# copy n=0
+# scan n=0

@@ -1,0 +1,13 @@
+[package]
+name = "prysm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Core colour, frame and processing types for Prysm"
+
+[dependencies]
+yuv = { version = "0.8.20", features = ["fast_mode"] }
+
+[lints]
+workspace = true

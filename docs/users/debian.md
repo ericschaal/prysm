@@ -1,52 +1,67 @@
-# Raspberry Pi / Debian arm64
+# Raspberry Pi and Debian
 
-Requires 64-bit Raspberry Pi OS or Debian arm64.
+The `prysm-headless` package runs Prysm as a systemd service. It needs a
+64-bit system with systemd and glibc 2.34 or newer: Raspberry Pi OS (bookworm,
+64-bit), Debian 12 or newer, or Ubuntu 22.04 or newer, on arm64 or amd64.
+
+*Not yet verified on hardware:* the package is built and install-tested in CI,
+but not yet with a capture card and WLED on a Raspberry Pi.
 
 ## 1. Install
 
-Download `prysm-led_*_arm64.deb` from the
-[latest release](https://github.com/ericschaal/prysm/releases).
-Alternatively, [build the package](../developers/packaging.md#debian-arm64).
-
-In the download directory, run:
+Download `prysm-headless_*_arm64.deb` (Raspberry Pi) or `..._amd64.deb` from a
+`v1.*` [release](https://github.com/ericschaal/prysm/releases), or
+[build it](../developers/packaging.md#debian-package). In the download
+directory, run:
 
 ```sh
-sudo apt install ./prysm-led_*_arm64.deb
-sudo systemctl enable --now prysm
+sudo apt install ./prysm-headless_*.deb
 ```
 
-## 2. Open the control panel
+This creates the system user `prysm`, then enables and starts the
+`prysm-headless` service.
 
-On the Pi, open `http://localhost:8787`.
+## 2. Open the portal
 
-For a phone or another computer, run `sudo systemctl edit prysm` and add this,
-replacing `192.168.1.20` with the Pi's LAN IP:
-
-```ini
-[Service]
-Environment="PRYSM_ALLOWED_HOSTS=localhost:8787,127.0.0.1:8787,192.168.1.20:8787"
-```
-
-Run `sudo systemctl restart prysm`, then open `http://192.168.1.20:8787`.
-Use a trusted LAN; Prysm has no login.
+On the Pi, open `http://localhost:8787`. From a phone or another computer,
+open `http://PI_IP:8787`, for example `http://192.168.1.20:8787`. Keep it on a
+trusted network; the portal has no password.
 
 ## 3. Connect video and lights
 
-Connect a [capture card](quickstart.md) or [webOS capturer](webos.md), then
-[set up WLED and Screen sync](configuration.md).
+Connect a [capture card](quickstart.md) or the [slim TV package](webos.md),
+then [set up your lights](configuration.md).
 
 ## Manage the service
 
 ```sh
-sudo systemctl stop prysm
-sudo systemctl restart prysm
-sudo journalctl -u prysm -f
+systemctl status prysm-headless
+sudo systemctl restart prysm-headless
+journalctl -u prysm-headless -f
 ```
 
-Settings: `/etc/prysm/settings.json`. Back up `/etc/prysm` and keep it writable
-by user `prysm`. Restarting Prysm leaves Screen sync off.
+Settings live in `/var/lib/prysm/settings.json`. Back it up before upgrades.
+Restarting leaves the lights off; stopping the service turns them off.
 
-Stopping the service can return the lights to a WLED effect. Turn them off in
-the panel first if you want them off.
+To add options, such as starting Screen sync at boot (`--start`) or allowing
+the slim TV app (`--allow-origin null`), run `sudo systemctl edit prysm-headless`
+and add:
 
-`sudo apt remove prysm-led` keeps settings; `sudo apt purge prysm-led` deletes them.
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/prysm-headless /var/lib/prysm/settings.json --start
+```
+
+Then run `sudo systemctl restart prysm-headless`. See all options with
+`prysm-headless --help`.
+
+The service can open video devices (`/dev/video*`) and the network, nothing
+else. The slim TV sends its picture to the portal's port (8787), so that is
+the only port to allow in a firewall.
+
+## Remove
+
+`sudo apt remove prysm-headless` stops and disables the service and keeps the
+settings. `sudo apt purge prysm-headless` also deletes `/var/lib/prysm`. The
+`prysm` user stays.

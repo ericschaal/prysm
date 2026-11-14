@@ -1,101 +1,103 @@
 [workspace]
 resolver = "3"
-default-members = ["apps/prysm"]
 members = [
-    "xtask",
-    "apps/prysm",
-    "apps/prysm-webos-capture",
-    "apps/prysm-webos-service",
-    "crates/web/prysm-web",
-    "crates/capture/prysm-capture",
-    "crates/capture/prysm-webos-protocol",
-    "crates/processing/prysm-processor",
-    "crates/common/prysm-core",
-    "crates/common/prysm-contract",
-    "crates/common/prysm-api",
-    "crates/common/prysm-metrics",
-    "crates/rendering/prysm-renderer-wled",
+    "crates/ports",
+    "crates/runtime",
+    "crates/protocol",
+    "crates/webos-link",
+    "crates/core",
+    "crates/processor",
+    "crates/version",
+    "adapters/capture-device",
+    "adapters/capture-device-sys",
+    "adapters/capture-file",
+    "adapters/capture-remote",
+    "adapters/capture-webos",
+    "adapters/capture-webos-sys",
+    "adapters/h264",
+    "adapters/h264-rvenc-sys",
+    "adapters/output-wled",
+    "adapters/settings-file",
+    "adapters/webos-luna-sys",
+    "surfaces/tui",
+    "surfaces/web-portal",
+    "hosts/common",
+    "hosts/headless",
+    "hosts/tui",
+    "hosts/webos",
+    "hosts/webos-slim",
+    "hosts/webos-service",
+    "tools/export-contracts",
 ]
+default-members = ["hosts/headless", "hosts/tui"]
 
 [workspace.package]
+# Not the product version: that is the VERSION file alone, read by
+# prysm-version (crates/version). The crates are never published.
+version = "0.0.0"
+edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/ericschaal/prysm"
-readme = "README.md"
-keywords = ["ambilight", "lighting", "video", "wled"]
-categories = ["multimedia::video"]
+publish = false
 
-# The video pipeline does per-pixel work on full HD frames; unoptimized dev
-# builds make it burn >100% CPU. Lightly optimize workspace code and fully
-# optimize dependencies (yuv, codecs) while keeping debug assertions on.
-[profile.dev]
-opt-level = 1
+[workspace.dependencies]
+# Frame and colour types, processing
+prysm-core = { path = "crates/core" }
+prysm-processor = { path = "crates/processor" }
+# The product version (VERSION)
+prysm-version = { path = "crates/version" }
+# Runtime
+prysm-ports = { path = "crates/ports" }
+prysm-runtime = { path = "crates/runtime" }
+prysm-protocol = { path = "crates/protocol" }
+prysm-webos-link = { path = "crates/webos-link" }
+# Adapters
+prysm-capture-device = { path = "adapters/capture-device" }
+prysm-capture-device-sys = { path = "adapters/capture-device-sys" }
+prysm-capture-file = { path = "adapters/capture-file" }
+prysm-capture-remote = { path = "adapters/capture-remote" }
+prysm-capture-webos = { path = "adapters/capture-webos" }
+prysm-h264 = { path = "adapters/h264" }
+prysm-webos-luna-sys = { path = "adapters/webos-luna-sys" }
+prysm-output-wled = { path = "adapters/output-wled" }
+prysm-settings-file = { path = "adapters/settings-file" }
+# Surfaces and hosts
+prysm-surface-tui = { path = "surfaces/tui" }
+prysm-web-portal = { path = "surfaces/web-portal" }
+prysm-host = { path = "hosts/common" }
+# External
+# Only the features the hosts' help and usage errors need; no colour or suggestions.
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+futures = "0.3"
+libloading = "0.9"
+nix = "0.31"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signal-hook = "0.3"
+tempfile = "3.27"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+tracing = "0.1"
+# The capture stream: a blocking WebSocket; rustls with ring (no C toolchain
+# beyond what ring needs) and the system's certificate authorities for wss.
+tungstenite = { version = "0.30", default-features = false }
+http = "1"
+bytes = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+utoipa = "6"
 
-[profile.dev.package."*"]
-opt-level = 3
+[workspace.lints.rust]
+unsafe_code = "forbid"
 
+[workspace.lints.clippy]
+all = "warn"
+
+# The TV packages (packaging/webos/build-ipk.sh): smaller and faster ARMv7
+# binaries; no symbols or debug info on the TV.
 [profile.webos]
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+debug = false
 strip = true
-
-[workspace.lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
-missing_errors_doc = "allow"
-
-[workspace.dependencies]
-anyhow = "=1.0.104"
-atomic-write-file = "=0.3.1"
-av-foundation = "=0.8.1"
-axum = "=0.8.9"
-bindgen = { version = "=0.73.2", default-features = false, features = ["runtime"] }
-cc = "=1.10.0"
-clap = "=4.6.7"
-core-foundation = { version = "=0.10.1", default-features = false }
-core-media = { version = "=0.8.1", default-features = false }
-core-video = { version = "=0.6.1", default-features = false }
-ddp-rs = "=1.3.0"
-dispatch2 = "=0.3.1"
-futures = "=0.3.34"
-gstreamer = "=0.25.4"
-gstreamer-app = "=0.25.2"
-gstreamer-video = "=0.25.4"
-gstreamer-allocators = "=0.25.4"
-h264-reader = "=0.9.0"
-libc = "=0.2.191"
-libloading = "=0.9.0"
-lz4_flex = { version = "=0.14.0", default-features = false }
-memmap2 = "=0.9.12"
-mime_guess = "=2.0.5"
-nix = "=0.31.3"
-objc2 = "=0.6.5"
-objc2-foundation = "=0.3.2"
-openh264 = "=0.9.9"
-prometheus-client = "=0.25.2"
-reqwest = { version = "=0.13.5", default-features = false }
-rust-embed = "=8.13.0"
-rustls = { version = "=0.23.46", default-features = false, features = ["ring", "tls12"] }
-serde = "=1.0.229"
-serde_json = "=1.0.154"
-signal-hook = "=0.4.6"
-sysinfo = { version = "=0.40.1", default-features = false }
-tempfile = "=3.27.0"
-thiserror = "=2.0.21"
-tiny_http = { version = "=0.12.0", default-features = false }
-tokio = "=1.54.1"
-tokio-tungstenite = { version = "=0.30.0", features = ["rustls-tls-native-roots"] }
-tokio-util = "=0.7.20"
-tower = "=0.5.3"
-tower-http = "=0.7.1"
-tracing = "=0.1.44"
-tracing-subscriber = "=0.3.23"
-url = "=2.5.8"
-utoipa = "=6.0.0"
-utoipa-axum = "=0.3.0"
-uuid = "=1.29.0"
-yuv = { version = "=0.8.20", default-features = false }
-
-# shortcut: Axum 0.8.9 still uses tungstenite 0.29; remove when a release includes 0.30.
-[patch.crates-io]
-axum = { git = "https://github.com/tokio-rs/axum", rev = "dcfd5e3442b2a8b021ccc954501157ebd602d2a2" }

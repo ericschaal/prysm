@@ -9,6 +9,9 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | Investigation | Finding / status |
 | --- | --- |
 | [Stable black-bar detection](black-bar-detection-2026-11-02/README.md) | Live crop diagnosis, literature review, implemented temporal boundary estimator and offline replay validation; not deployed |
+| [Capture resolution and LED detail](processing/2026-11-12-resolution-detail/README.md) | Offline: 1280×720 adds ≤ 2 steps (p95) over 640×360 on real content; the bounded lattice costs less than dropping to 640; capture size changes black-bar crops in dark scenes; 2026-11-14 follow-up: 320×180 costs a little against 640×360 (about 1 LED in 10 noticeably different) |
+| [How much colour the plain average loses](processing/2026-11-14-mean-colourfulness/README.md) | Offline model on two films: the typical LED keeps 86–88 % of the colourfulness in view; a selective sampler would differ visibly on about 1 LED in 100 over a film, 1 in 4 in scenes of clashing colours; deferred |
+| [Adaptive smoothing](processing/2026-11-14-adaptive-smoothing/README.md) | Offline, synthetic: 0.5 s smoothing with Response 100 % follows a cut within about a frame and shows less grain than the 0.1 s default; brightness variants compared; not yet seen on the TV |
 | [Sampling A/B protocol](sampling-ab-testing.md) | Historical proposal; not run, and based on a superseded edge-band sampler |
 | [webOS colorimetry](webos-capture/2026-11-01-colorimetry/README.md) | Target-TV evidence for limited-range BT.709 capture decoding |
 | [HDR and brightness](webos-capture/2026-11-01-hdr-brightness/README.md) | Capture reflects TV tone/gamut mapping; transfer calibration remains separate |
@@ -23,16 +26,19 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | [Readiness](webos-capture/2026-11-01-readiness/README.md) | Readiness-driven recovery and dated validation evidence |
 | [Supervisor validation](webos-capture/supervisor-validation.md) | Staged and installed checks across earlier versions |
 | [Deployment history](webos-capture/deployment-history.md) | Version-specific installations and observations; not installation instructions |
+| [TV acceptance records](tv-acceptance/README.md) | One record per `tv-acceptance.sh` run (smoke, install, manual checks); none yet |
 
 ## Encoding and latency
 
 | Investigation | Finding / status |
 | --- | --- |
+| [On-TV Prysm pipeline](webos-capture/2026-11-04-on-tv-pipeline/README.md) | Integrated native capture and lighting at 1280×720 with staged profiles, exact replay evidence and the tested ARM binary |
 | [Direct WebSocket capture](webos-capture/2026-11-04-websocket-transport/README.md) | On-TV TCP, LAN WebSocket and Caddy WSS benchmark with RP5 packet and WLED pixel observations |
 | [Initial hardware encoding](webos-capture/2026-11-01-hardware-encoding/README.md) | Feasibility probes and vendor encoder investigation |
 | [Encoder latency](webos-capture/2026-11-02-encoder-latency/README.md) | Static hypotheses followed by live tests and integration; read follow-ups in order |
 | [Hardware qualification](webos-capture/hardware-h264-qualification.md) | Measurements from multiple historical implementations, with workload limits |
 | [Single-tap cleanup](webos-capture/2026-11-02-encoder-latency/single-tap-cleanup.md) | Current reduction to Combined/Video-only capture; older UI fallback paths removed |
+| [TV UI capture revisited](webos-capture/2026-11-12-ui-capture/README.md) | HAL graphics capture at 320×180 costs about 4.3 ms per frame; recommended only as a tap used while there is no video; probe-measured, not in v1 |
 | [Open encoder driver](webos-capture/2026-11-02-open-encoder-driver/report.md) | Public-source analysis and native V4L2 experiments; distinguish static evidence from live results |
 
 ## Reading and adding evidence

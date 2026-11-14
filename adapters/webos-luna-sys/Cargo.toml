@@ -1,0 +1,31 @@
+[package]
+name = "prysm-webos-luna-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "LG webOS Luna service bus (LS2) and GLib main loop FFI behind a safe service API"
+
+[dependencies]
+libloading.workspace = true
+thiserror.workspace = true
+# Only for the binding generator (`--features codegen`); needs libclang.
+bindgen = { version = "0.73.2", default-features = false, features = ["runtime"], optional = true }
+clap = { workspace = true, optional = true }
+
+# One of the four crates allowed to use `unsafe` (with capture-device-sys, capture-webos-sys and h264-rvenc-sys). Every block carries a SAFETY note.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+
+[features]
+# The binding generator: regenerate or `--check` src/generated from the webOS SDK.
+codegen = ["dep:bindgen", "dep:clap"]
+
+[[bin]]
+name = "generate-luna-bindings"
+path = "codegen/main.rs"
+required-features = ["codegen"]

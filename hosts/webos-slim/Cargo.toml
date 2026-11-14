@@ -1,0 +1,31 @@
+[package]
+name = "prysm-webos-slim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "TV worker (slim): webOS capture forwarded to a headless Prysm, run by prysm-webos-service"
+
+[dependencies]
+prysm-webos-link = { workspace = true, features = ["worker"] }
+prysm-core.workspace = true
+clap.workspace = true
+prysm-ports.workspace = true
+prysm-runtime = { workspace = true, features = ["logging"] }
+prysm-capture-webos.workspace = true
+prysm-capture-remote.workspace = true
+# Hardware H.264 is the default encoding; its GStreamer code is only built
+# for the TV (32-bit ARM Linux), so desktop builds of this crate need no GStreamer.
+prysm-h264 = { workspace = true, features = ["hardware"] }
+futures.workspace = true
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+tungstenite.workspace = true
+prysm-capture-remote = { workspace = true, features = ["testkit"] }
+prysm-runtime = { workspace = true, features = ["testkit"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time", "rt", "macros"] }
+
+[lints]
+workspace = true

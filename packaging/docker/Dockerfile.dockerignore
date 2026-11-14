@@ -1,0 +1,31 @@
+# Context for packaging/docker/Dockerfile (BuildKit reads the ignore file next
+# to the Dockerfile). Only source inputs: the workspaces, VERSION and the licence.
+**
+!LICENSE
+!VERSION
+!Cargo.toml
+!Cargo.lock
+!adapters/
+!adapters/**
+!crates/
+!crates/**
+!hosts/
+!hosts/**
+!surfaces/
+!surfaces/**
+!tools/
+!tools/**
+!frontend/
+!frontend/**
+!packaging/debian/
+!packaging/debian/**
+**/node_modules
+**/target
+**/dist
+**/.test
+**/__pycache__
+**/.DS_Store
+**/.env*
+**/*.pem
+**/*.key
+**/settings.json

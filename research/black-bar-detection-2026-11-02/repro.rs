@@ -1,10 +1,10 @@
 //! Regression replay using the actual repository detector and sampler.
 #![allow(dead_code)]
-#[path = "../../crates/processing/prysm-processor/src/nodes/black_bar_detector.rs"]
+#[path = "../../crates/processor/src/nodes/black_bar_detector.rs"]
 mod detector;
-#[path = "../../crates/processing/prysm-processor/src/frames/mod.rs"]
+#[path = "../../crates/processor/src/frames/mod.rs"]
 mod frames;
-#[path = "../../crates/processing/prysm-processor/src/nodes/spatial_sampler.rs"]
+#[path = "../../crates/processor/src/nodes/spatial_sampler.rs"]
 mod sampler;
 use detector::BlackBarDetector;
 use frames::{FrameView, Viewport};

@@ -1,39 +1,56 @@
 # Set up Prysm
 
-| Part | What you need |
-| --- | --- |
-| **Capture device** | HDMI capture card, or the **webOS capturer** on a rooted LG TV. |
-| **Prysm application** | Linux or macOS computer, including a Raspberry Pi. This is the **Prysm host**. |
-| **LED renderer** | WLED controller and LED strips. |
+Prysm reads the picture from a video source, works out a colour for each LED
+around the screen, and sends those colours to a [WLED](https://kno.wled.ge/)
+controller.
+
+## Choose a setup
+
+| Setup | Picture comes from | Prysm runs on | You need |
+| --- | --- | --- | --- |
+| **Capture card** | An HDMI capture card | A Linux or macOS computer, such as a Raspberry Pi | Capture card, computer, WLED |
+| **LG TV, full package** | The TV itself | The TV | Rooted LG webOS TV, WLED |
+| **LG TV, slim package** | The TV itself | A computer on your network; the TV only sends the picture | Rooted LG webOS TV, computer, WLED |
 
 ```text
-HDMI → capture card → Prysm host → WLED → LEDs
-Rooted LG TV → webOS capturer → Prysm host → WLED → LEDs
+HDMI → capture card → computer running Prysm → WLED → LEDs
+LG TV running Prysm (full) → WLED → LEDs
+LG TV (slim) → computer running Prysm → WLED → LEDs
 ```
 
-Both setups need a Prysm host. Keep all devices on a trusted LAN; Prysm has no login.
+Prysm cannot capture a computer's own desktop.
+
+Keep every device on a trusted home network. The Prysm web portal has no
+password: anyone who can reach it can control the lights.
+
+> **Status.** Prysm 1.x has not yet been verified on real hardware: capture
+> cards, WLED devices and both TV packages are still to be tested end to end.
+> Steps marked *not yet verified on hardware* may change.
 
 ## 1. Install the Prysm application
 
-Use the [latest release](https://github.com/ericschaal/prysm/releases):
+For the **capture card** or **slim TV** setup, install Prysm on a computer:
 
-| Host | Guide |
+| Computer | Guide |
 | --- | --- |
-| Raspberry Pi / Debian arm64 | [Debian package](debian.md) |
-| Docker | [Docker](docker.md) |
-| TrueNAS | [TrueNAS](truenas.md) |
-| Other Linux or macOS | [Build from source](../developers/README.md#build) |
+| Raspberry Pi OS 64-bit, Debian 12+, Ubuntu 22.04+ | [Debian package](debian.md) |
+| Any Linux with Docker | [Docker](docker.md) |
+| TrueNAS SCALE | [TrueNAS](truenas.md) |
+| macOS, or Linux from source | [Build from source](../developers/README.md#build-and-run) |
 
-## 2. Connect your capture device
+Packages come from the
+[GitHub releases](https://github.com/ericschaal/prysm/releases) tagged `v1.*`.
+
+For the **full TV** setup, skip this step and go to [LG TV](webos.md).
+
+## 2. Connect the picture
 
 - [HDMI capture card](quickstart.md)
-- [webOS capturer](webos.md)
-
-Prysm cannot capture your computer's desktop directly.
+- [LG TV](webos.md) (full or slim package)
 
 ## 3. Set up your lights
 
-[Connect WLED and start Screen sync](configuration.md) in the browser.
+Open the web portal and follow the [setup wizard](configuration.md).
 
-Then: [Preview and tuning](preview.md) · [Color calibration](calibration.md) ·
+Then: [Live preview](preview.md) · [Calibrate colours](calibration.md) ·
 [Troubleshooting](troubleshooting.md).

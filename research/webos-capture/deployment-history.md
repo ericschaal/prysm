@@ -105,8 +105,9 @@ wait while keeping DMA ownership, H.264 validation and software fallback.
 Deployed on the project TV after staged qualification; all 21 installed files
 match the IPK. The user requested starting the sender to the current computer;
 the receiver address was updated and the sender is enabled, connected and
-capturing with hardware H.264. Other settings were preserved. See
-[hardware details](../../docs/developers/hardware-h264.md).
+capturing with hardware H.264. Other settings were preserved. See the
+hardware details (`apps/prysm-webos-capture/HARDWARE-H264.md` in the tag
+`pre-1.0-consolidation`).
 Deployment evidence (local evidence at `work/webos-encoder-latency/deployment/evidence/deployment.json`; not distributed).
 
 Version 0.1.20 keeps hardware DMA buffers mapped and uploads native NV12 directly,
@@ -121,7 +122,9 @@ native NV12 encode wall time improved from 13.52–13.75 ms to 12.49 ms, with CP
 time during encode calls down from 3.25–3.29 ms to 2.01 ms. This is a short
 synthetic benchmark, not total worker CPU or live end-to-end latency. Output wait
 remained dominant at 12.13 ms; that version retained one-frame lookahead. Full hardware
-qualification passed. See [hardware details](../../docs/developers/hardware-h264.md)
+qualification passed. See the
+hardware details (`apps/prysm-webos-capture/HARDWARE-H264.md` in the tag
+`pre-1.0-consolidation`)
 and deployment evidence (local evidence at `work/webos-hardware-dma/deployment/evidence/deployment.json`; not distributed).
 
 Version 0.1.19 passes native video directly to the encoder whenever the UI is

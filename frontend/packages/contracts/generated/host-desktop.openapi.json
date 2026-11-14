@@ -1,0 +1,1163 @@
+{
+  "components": {
+    "schemas": {
+      "Behind": {
+        "description": "What makes Prysm fall behind its source: for several seconds the frame\nloop had no slack, and this step took the larger share. A source that\njust sends fewer frames is never this.",
+        "enum": [
+          "processing",
+          "output"
+        ],
+        "type": "string"
+      },
+      "BrightnessSmoothing": {
+        "description": "How brightness follows a change while colour is smoothed.",
+        "enum": [
+          "with_color",
+          "faster",
+          "limited"
+        ],
+        "type": "string"
+      },
+      "Calibration": {
+        "additionalProperties": false,
+        "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
+        "properties": {
+          "pattern": {
+            "$ref": "#/components/schemas/Pattern"
+          },
+          "uncorrected": {
+            "description": "Apply no color profile while the pattern shows, to compare.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern",
+          "uncorrected"
+        ],
+        "type": "object"
+      },
+      "Candidate": {
+        "description": "Something an adapter found that a person can pick instead of typing, one\nitem of `GET /api/v1/candidates/{section}/{kind}`.",
+        "properties": {
+          "detail": {
+            "description": "Where it is or what it has, such as `192.168.1.40, 120 LEDs`.",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "description": "The settings fields picking it fills, such as `{ \"path\": \"/dev/video0\" }`: part of the kind's settings, merged over what the person has.",
+            "type": "object"
+          },
+          "label": {
+            "description": "What a person recognises, such as the device's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "fields"
+        ],
+        "type": "object"
+      },
+      "CaptureSettings": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DeviceSettings"
+          },
+          {
+            "$ref": "#/components/schemas/FileSettings"
+          },
+          {
+            "$ref": "#/components/schemas/RemoteReceiverSettings"
+          }
+        ]
+      },
+      "ColorProfile": {
+        "additionalProperties": false,
+        "description": "A named color correction, such as one per console.",
+        "properties": {
+          "correction": {
+            "$ref": "#/components/schemas/CorrectionControls"
+          },
+          "id": {
+            "description": "Stable reference for `active_profile`; a UUID fits.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Without surrounding whitespace or control characters.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "correction"
+        ],
+        "type": "object"
+      },
+      "ColorsEvent": {
+        "description": "One server-sent event of the colors stream.",
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LedColors",
+                "description": "The colors last written to the LEDs, [`COLOR_SEGMENTS`] per edge\n(fewer when an edge has fewer samples). Sent only when they changed."
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "colors"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "The colors last written to the LEDs, [`COLOR_SEGMENTS`] per edge\n(fewer when an edge has fewer samples). Sent only when they changed."
+          },
+          {
+            "description": "The LEDs are not showing Prysm's colors: lights off, the device's own\neffects, a source without frames, or no frame processed yet.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "idle"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CorrectionControls": {
+        "additionalProperties": false,
+        "description": "Correction controls, each -100 to 100; all zero is no correction.",
+        "properties": {
+          "hue": {
+            "$ref": "#/components/schemas/HueControls"
+          },
+          "intensity": {
+            "description": "Positive saturates, negative desaturates.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "midtones": {
+            "description": "Positive lightens midtones, negative darkens them.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "tint": {
+            "description": "Positive adds magenta, negative adds green.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "warmth": {
+            "description": "Positive warms, negative cools.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "warmth",
+          "tint",
+          "midtones",
+          "intensity",
+          "hue"
+        ],
+        "type": "object"
+      },
+      "DeviceBrightness": {
+        "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor). Prysm reports it and never\nchanges it.",
+        "properties": {
+          "percent": {
+            "description": "The share of Prysm's brightness the lights show.",
+            "example": 40,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "percent"
+        ],
+        "type": "object"
+      },
+      "DeviceSettings": {
+        "additionalProperties": false,
+        "description": "`{ \"kind\": \"device\", \"path\": \"/dev/video0\", \"width\": 640, \"height\": 360, \"fps\": 30 }`\n\n`path` is a V4L2 device node on Linux and an AVFoundation device unique ID\non macOS. Size and rate default to 640×360 at 30 fps.",
+        "properties": {
+          "fps": {
+            "default": 30,
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 360,
+            "format": "int32",
+            "maximum": 2160,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "device"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "V4L2 device node on Linux, AVFoundation device unique ID on macOS.",
+            "example": "/dev/video0",
+            "minLength": 1,
+            "type": "string"
+          },
+          "width": {
+            "default": 640,
+            "format": "int32",
+            "maximum": 3840,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
+      "Failure": {
+        "description": "A stable failure body: the message a user can act on. An adapter failure\ncarries its cause chain (`context: cause: cause`), since the cause is what\nnames the problem (a device's error, a remote sender's reason).",
+        "properties": {
+          "current": {
+            "description": "The revision to retry against after `stale_revision`.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "description": "The rejected setting as a dotted path, such as `output.address`.",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FailureKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "section": {
+            "$ref": "#/components/schemas/FailureSection",
+            "description": "Which side an `adapter` failure came from, when the engine knows:\nthe capture source or the output."
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "FailureKind": {
+        "enum": [
+          "invalid",
+          "stale_revision",
+          "not_processed",
+          "faulted",
+          "adapter",
+          "unavailable",
+          "timeout",
+          "internal",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "bad_request",
+          "payload_too_large",
+          "unsupported_media_type",
+          "busy"
+        ],
+        "type": "string"
+      },
+      "FailureSection": {
+        "description": "The side of the signal path a failure came from.",
+        "enum": [
+          "capture",
+          "output"
+        ],
+        "type": "string"
+      },
+      "FileSettings": {
+        "additionalProperties": false,
+        "description": "`{ \"kind\": \"file\", \"path\": \"/home/me/clip.mkv\", \"width\": 640, \"height\": 360, \"fps\": 30, \"repeat\": false }`\n\nFFmpeg scales every frame to `width`×`height` and caps the rate at `fps`\n(a slower file keeps its own rate). Size and rate default to 640×360 at\n30 fps. Playback runs once unless `repeat` is set.",
+        "properties": {
+          "fps": {
+            "default": 30,
+            "description": "Upper bound on the delivered frame rate.",
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 360,
+            "format": "int32",
+            "maximum": 2160,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "file"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "Video file to play; any container and codec FFmpeg can decode.",
+            "example": "/home/me/Videos/clip.mkv",
+            "minLength": 1,
+            "type": "string"
+          },
+          "repeat": {
+            "default": false,
+            "description": "Loop the file forever instead of ending lighting at its end.",
+            "type": "boolean"
+          },
+          "width": {
+            "default": 640,
+            "format": "int32",
+            "maximum": 3840,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "type": "object"
+      },
+      "HueControls": {
+        "additionalProperties": false,
+        "description": "Hue shift per wheel anchor, each -100 to 100.",
+        "properties": {
+          "blue": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "cyan": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "green": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "magenta": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "red": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          },
+          "yellow": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": -100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "red",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "magenta"
+        ],
+        "type": "object"
+      },
+      "Input": {
+        "description": "Whether frames are arriving, and how fast.",
+        "properties": {
+          "behind": {
+            "$ref": "#/components/schemas/Behind",
+            "description": "Which step keeps Prysm from keeping up with its source, if one does.\nAbsent while it keeps up."
+          },
+          "fps": {
+            "description": "Frames per second over the last second, to one decimal.",
+            "example": 29.9,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "latency": {
+            "$ref": "#/components/schemas/Latency",
+            "description": "The mean time per frame along the path, in two parts, over the last\nsecond. Absent when no frame reached the output."
+          },
+          "receiving": {
+            "description": "At least one frame arrived in the last second. `false` right after\nlighting starts and while the source is quiet (no signal, no sender).",
+            "type": "boolean"
+          },
+          "sent_fps": {
+            "description": "Frames per second whose colours were written to the output over the\nlast second, to one decimal.",
+            "example": 29.9,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "fps",
+          "receiving"
+        ],
+        "type": "object"
+      },
+      "Latency": {
+        "description": "Mean milliseconds per frame along the path, measured by Prysm (not from\nthe screen, and not including the lights' own delay), in two parts.",
+        "properties": {
+          "capture_ms": {
+            "description": "From the source capturing the frame to Prysm receiving it; present\nonly when every frame flushed in the window carried a capture time\n(video devices on macOS, and on Linux with monotonic stamps).",
+            "example": 88,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "output_ms": {
+            "description": "From Prysm receiving the frame to the output write for its colours\nreturning.",
+            "example": 2.4,
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "output_ms"
+        ],
+        "type": "object"
+      },
+      "LedColor": {
+        "items": {},
+        "maxItems": 3,
+        "minItems": 3,
+        "prefixItems": [
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ],
+        "type": "array"
+      },
+      "LedColors": {
+        "description": "The colors written to the LEDs, in display (sRGB) space and screen\norientation: `top` and `bottom` left to right, `left` and `right` top to\nbottom. Each edge has entries spread evenly along it; how many depends on\nthe stream.",
+        "properties": {
+          "bottom": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "left": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "right": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          },
+          "top": {
+            "items": {
+              "$ref": "#/components/schemas/LedColor"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "type": "object"
+      },
+      "LedCounts": {
+        "additionalProperties": false,
+        "description": "LEDs per edge, as seen from the front of the screen. An omitted edge has\nnone. Together 1..=[`MAX_LEDS`].",
+        "properties": {
+          "bottom": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "left": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "right": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "top": {
+            "default": 0,
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "LightingTarget": {
+        "description": "What the user wants the LEDs to do.",
+        "enum": [
+          "off",
+          "processed",
+          "device_native"
+        ],
+        "type": "string"
+      },
+      "NullSettings": {
+        "additionalProperties": false,
+        "description": "The null output takes no settings.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "null"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "OutputIssue": {
+        "description": "Why the lights are not showing Prysm's colours. Prysm keeps sending; they\nfollow again once the device takes the colours.",
+        "enum": [
+          "off",
+          "overridden",
+          "not_live",
+          "other_sender",
+          "unreachable"
+        ],
+        "type": "string"
+      },
+      "OutputSettings": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/WledSettings"
+          },
+          {
+            "$ref": "#/components/schemas/NullSettings"
+          }
+        ]
+      },
+      "Pattern": {
+        "description": "A calibration pattern, by its TV clip name.",
+        "enum": [
+          "gray-192",
+          "red",
+          "yellow",
+          "green",
+          "cyan",
+          "blue",
+          "magenta",
+          "blue-pair",
+          "red-pair",
+          "green-pair",
+          "coast",
+          "garden",
+          "dusk",
+          "review-grid"
+        ],
+        "type": "string"
+      },
+      "Phase": {
+        "description": "Where a faulted session stopped making progress.",
+        "enum": [
+          "running",
+          "closing_source",
+          "idling_output",
+          "finishing"
+        ],
+        "type": "string"
+      },
+      "PreviewEvent": {
+        "description": "One server-sent event of the preview stream.",
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PreviewFrame",
+                "description": "A new processed frame and the colors written for it."
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "frame"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "A new processed frame and the colors written for it."
+          },
+          {
+            "description": "Nothing to show: no session runs or it has not processed a frame yet.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "idle"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The latest frame cannot be shown, such as an undecoded MJPEG frame.",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PreviewFrame": {
+        "description": "A downscaled JPEG of the captured frame, the sampled area and the colors.",
+        "properties": {
+          "colors": {
+            "$ref": "#/components/schemas/LedColors",
+            "description": "At most 256 colors per edge."
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "jpeg": {
+            "description": "Base64 (standard alphabet, padded) baseline JPEG.",
+            "type": "string"
+          },
+          "sequence": {
+            "description": "Increases with every new frame, across sessions; equal means unchanged.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_width": {
+            "description": "The captured frame's size in pixels; `viewport` is in these pixels.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/PreviewViewport",
+            "description": "The part of the frame that was sampled, after black-bar removal."
+          },
+          "width": {
+            "description": "The JPEG's size in pixels: the source scaled to at most 480 on its\nlonger side, keeping its aspect ratio.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence",
+          "source_width",
+          "source_height",
+          "width",
+          "height",
+          "viewport",
+          "colors",
+          "jpeg"
+        ],
+        "type": "object"
+      },
+      "PreviewViewport": {
+        "description": "A rectangle in source-frame pixels.",
+        "properties": {
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "x": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "y": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
+      "Processing": {
+        "additionalProperties": false,
+        "description": "Processing controls in plain units.",
+        "properties": {
+          "active_profile": {
+            "description": "The `id` of the applied profile; absent applies no correction.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "brightness_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "brightness_smoothing": {
+            "$ref": "#/components/schemas/BrightnessSmoothing"
+          },
+          "profiles": {
+            "description": "Saved color corrections; ids are unique.",
+            "items": {
+              "$ref": "#/components/schemas/ColorProfile"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "remove_black_bars": {
+            "type": "boolean"
+          },
+          "sample_density": {
+            "format": "int32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "shadow_lift_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "smoothing_response_percent": {
+            "description": "How much faster smoothing follows a large change than a small one;\n0 smooths every change at one rate.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "smoothing_seconds": {
+            "description": "Seconds; 0 disables smoothing.",
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "spatial_reach_percent": {
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "brightness_percent",
+          "shadow_lift_percent",
+          "smoothing_seconds",
+          "smoothing_response_percent",
+          "brightness_smoothing",
+          "sample_density",
+          "spatial_reach_percent",
+          "remove_black_bars"
+        ],
+        "type": "object"
+      },
+      "RemoteReceiverSettings": {
+        "additionalProperties": false,
+        "description": "The stream a receiver asks for, and the settings of kind `\"remote\"`:\n`{ \"kind\": \"remote\", \"width\": 320, \"height\": 180, \"fps\": 30,\n\"include_ui\": true, \"encoding\": \"h264_hardware\" }`, every field optional.\nThe sender captures at this size, rate and menu blending and encodes with\nexactly this encoding.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/components/schemas/StreamEncoding",
+            "default": "h264_hardware",
+            "description": "How the sender encodes the stream. It uses exactly this encoder; if\nthat fails, lighting stops with the sender's reason."
+          },
+          "fps": {
+            "default": 30,
+            "description": "Requested frames per second.",
+            "format": "int32",
+            "maximum": 60,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "height": {
+            "default": 180,
+            "description": "Requested picture height: even, 2 to 1080 (H.264: at least 16).",
+            "format": "int32",
+            "maximum": 1080,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
+          },
+          "include_ui": {
+            "default": true,
+            "description": "Capture on-screen menus over the video and, when nothing is playing\n(such as the Home screen), the TV's own screens; false: video only.",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "remote"
+            ],
+            "type": "string"
+          },
+          "width": {
+            "default": 320,
+            "description": "Requested picture width: even, 2 to 1920 (H.264: at least 16).",
+            "format": "int32",
+            "maximum": 1920,
+            "minimum": 2,
+            "multipleOf": 2,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "Session": {
+        "description": "What the runtime is actually doing.",
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "state": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The output shows its own effect.",
+            "properties": {
+              "state": {
+                "enum": [
+                  "native"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A session did not stop in time; only a restart recovers.",
+            "properties": {
+              "phase": {
+                "$ref": "#/components/schemas/Phase"
+              },
+              "state": {
+                "enum": [
+                  "faulted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Settings": {
+        "additionalProperties": false,
+        "description": "Everything a user can change at runtime; adapter sections are tagged by `kind`.",
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/CaptureSettings"
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputSettings"
+          },
+          "processing": {
+            "$ref": "#/components/schemas/Processing"
+          }
+        },
+        "required": [
+          "processing"
+        ],
+        "type": "object"
+      },
+      "SettingsReplaced": {
+        "description": "Reply to a successful settings replacement. Applying them may still fail;\nthat failure appears in the state's `failure`.",
+        "properties": {
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "SettingsRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/settings`: replace all settings if `expected` is current.",
+        "properties": {
+          "expected": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          }
+        },
+        "required": [
+          "expected",
+          "settings"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "description": "The observable runtime state, sent whole on every change.",
+        "properties": {
+          "calibration": {
+            "$ref": "#/components/schemas/Calibration",
+            "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Failure",
+                "description": "The last lighting failure. Every target change, settings apply,\nshutdown and session end replaces it, so the next one that succeeds\nclears it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/Input",
+            "description": "Frames arriving from the source, measured about once a second; absent\nwhile no session runs."
+          },
+          "output_brightness": {
+            "$ref": "#/components/schemas/DeviceBrightness",
+            "description": "The lights' own brightness while it scales Prysm's colours, from the\nsame checks; absent while it does not (WLED: \"Force max brightness\"\non), while the output cannot tell, and while no session runs."
+          },
+          "output_issue": {
+            "$ref": "#/components/schemas/OutputIssue",
+            "description": "Why the lights are not showing Prysm's colours while lighting runs,\nfrom the output's own checks (about once a second); absent while they\nshow them, while the output cannot tell, and while no session runs."
+          },
+          "revision": {
+            "description": "Pass back as `expected` when replacing settings.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/Settings"
+          },
+          "surface_failures": {
+            "description": "Surfaces that stopped. Lighting continues without them.",
+            "items": {
+              "$ref": "#/components/schemas/Failure"
+            },
+            "type": "array"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "target",
+          "session",
+          "settings",
+          "revision",
+          "failure",
+          "surface_failures"
+        ],
+        "type": "object"
+      },
+      "StreamEncoding": {
+        "description": "How the sender encodes the frames it sends. Exactly this encoder is used:\none that cannot start or fails ends the stream with a refusal, never a\nswitch to another.",
+        "enum": [
+          "h264_hardware",
+          "h264_software",
+          "raw"
+        ],
+        "type": "string"
+      },
+      "TargetRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /api/v1/target`.",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/LightingTarget"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "WledSettings": {
+        "additionalProperties": false,
+        "description": "Where the device is and how many LEDs each screen edge has:\n\n```json\n{ \"kind\": \"wled\", \"address\": \"wled.local\",\n  \"leds\": { \"top\": 96, \"right\": 54, \"bottom\": 96, \"left\": 54 } }\n```",
+        "properties": {
+          "address": {
+            "description": "Host name or unicast IP address of the device, with an optional HTTP\nport (default 80): `wled.local`, `192.168.1.50`, `wled.local:8080` or\n`[fe80::1]:8080`. No scheme or path; WLED serves plain HTTP. Names are\nresolved each time the output opens. Colours always go to UDP port 4048.",
+            "examples": [
+              "wled.local",
+              "192.168.1.50",
+              "wled.local:8080",
+              "[fe80::1]:8080"
+            ],
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "wled"
+            ],
+            "type": "string"
+          },
+          "leds": {
+            "$ref": "#/components/schemas/LedCounts"
+          }
+        },
+        "required": [
+          "kind",
+          "address",
+          "leds"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "JSON wire values and OpenAPI roots for Prysm surfaces",
+    "license": {
+      "identifier": "Apache-2.0",
+      "name": "Apache-2.0"
+    },
+    "title": "Prysm desktop host",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

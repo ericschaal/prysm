@@ -1,7 +1,27 @@
 #!/bin/sh
+# Creates the system user, then enables and starts prysm-headless.service
+# (the same steps debhelper's dh_installsystemd would generate).
 set -e
+unit=prysm-headless.service
+
 if [ "$1" = configure ]; then
-    systemd-sysusers /usr/lib/sysusers.d/prysm.conf
-    install -d -m 0700 -o prysm -g prysm /etc/prysm
+    systemd-sysusers prysm-headless.conf
 fi
-#DEBHELPER#
+
+case "$1" in
+configure | abort-upgrade | abort-deconfigure | abort-remove)
+    # Removes only the mask postrm sets on "remove".
+    deb-systemd-helper unmask "$unit" >/dev/null || true
+    # was-enabled is true on a fresh install, so the unit gets enabled; a
+    # unit the admin disabled stays disabled on reinstall.
+    if deb-systemd-helper --quiet was-enabled "$unit"; then
+        deb-systemd-helper enable "$unit" >/dev/null || true
+    else
+        deb-systemd-helper update-state "$unit" >/dev/null || true
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
+        deb-systemd-invoke start "$unit" >/dev/null || true
+    fi
+    ;;
+esac

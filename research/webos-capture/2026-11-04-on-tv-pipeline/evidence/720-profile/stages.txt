@@ -1,0 +1,11 @@
+profiled.log n= 675
+acquire          mean   0.71 med   0.68 p95   0.81 max   3.65
+convert          mean  11.10 med  10.79 p95  13.67 max  19.37
+processor        mean  47.50 med  46.28 p95  57.91 max  93.08
+DDP              mean   0.14 med   0.13 p95   0.18 max   1.50
+grid             mean  23.15 med  22.60 p95  26.35 max  34.64
+projection       mean  21.97 med  20.55 p95  30.29 max  66.31
+other_processor  mean   2.38 med   2.29 p95   2.92 max   5.37
+work             mean  59.45 med  58.09 p95  70.49 max 105.81
+interval         mean  59.50 med  58.14 p95  70.54 max 105.86
+late intervals >50ms: 675

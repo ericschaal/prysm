@@ -1,79 +1,71 @@
 # Docker
 
-Requires Docker on amd64 or arm64. The webOS capturer works with Docker Desktop;
-USB capture needs a Linux host. For TrueNAS, use [this guide](truenas.md).
+The `prysm-headless` image runs on Linux amd64 and arm64. For TrueNAS, use
+[this guide](truenas.md).
 
-## 1. Download Compose
+*Not yet verified on hardware:* the image is smoke-tested in CI without a
+capture card or WLED.
 
-```sh
-mkdir prysm && cd prysm
-curl -fsSLO https://github.com/ericschaal/prysm/releases/latest/download/compose.yaml
-```
+## 1. Start Prysm
 
-## 2. Start Prysm
-
-The [Compose file](../../compose.yaml) pins the released multi-platform image:
+Pick a version from a `v1.*` [release](https://github.com/ericschaal/prysm/releases)
+and use it in place of `VERSION`:
 
 ```sh
-docker compose pull
-docker compose up -d
+docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
+  -p 8787:8787 -v prysm-data:/data \
+  ghcr.io/ericschaal/prysm-headless:VERSION
 ```
 
-Open `http://localhost:8787`. Settings stay in the `prysm-config` volume.
+Open `http://localhost:8787`, or `http://DOCKER_HOST_IP:8787` from a phone.
+Keep it on a trusted network; the portal has no password.
 
-## Network and deployment options
+For Compose, start from the example
+[compose.yaml](../../packaging/docker/compose.yaml): set `image` to
+`ghcr.io/ericschaal/prysm-headless:VERSION`, then run `docker compose up -d`.
+To build the image yourself, see [packaging](../developers/packaging.md#docker).
 
-For a phone or webOS capturer, edit `services.prysm` in `compose.yaml`.
-Replace `192.168.1.20` with the Docker host's LAN IP:
+Then [set up your lights](configuration.md). Type WLED's IP address: a
+normal container cannot resolve names such as `wled.local`, and
+**Find lights** does not work without host networking.
 
-```yaml
-ports:
-  - "192.168.1.20:8787:8787"
-environment:
-  PRYSM_ALLOWED_HOSTS: "192.168.1.20:8787"
-```
+## Use a capture card
 
-Run `docker compose up -d`, then open `http://192.168.1.20:8787`.
-Keep this on a trusted LAN; Prysm has no login.
-
-Use WLED's IP address; `.local` names may not resolve in Docker.
-Allow HTTP/WebSocket and UDP 4048 from the container to WLED. No inbound UDP
-mapping is needed.
-
-## TV and USB capture
-
-- **LG TV:** [install the webOS capturer](webos.md) and enter Prysm's LAN URL.
-- **USB card on Linux:** add this under `services.prysm`:
-
-```yaml
-devices:
-  - /dev/video0:/dev/video0
-group_add:
-  - "44" # Replace with: stat -c '%g' /dev/video0
-```
-
-Run `docker compose up -d`. In Prysm, choose **USB capture device** and enter
-`/dev/video0`.
-
-Then [set up WLED and Screen sync](configuration.md).
-
-## Storage and maintenance
-
-The container uses user/group `10001:10001`. For a host directory instead of
-the named volume, use the [TrueNAS bind-mount example](../../packaging/docker/compose.truenas.yaml)
-and set its path and numeric user/group to ones with directory write access.
-Mount the whole directory at `/config`, not just `settings.json`.
-
-- Logs: `docker compose logs -f prysm`.
-- Stop: `docker compose down`. Adding `-v` deletes settings.
-- Upgrade: back up settings, update the image version in `compose.yaml`, then run:
+On a Linux host, map the device and its group into the container:
 
 ```sh
-docker compose pull
-docker compose up -d
+docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
+  -p 8787:8787 -v prysm-data:/data \
+  --device /dev/video0 --group-add "$(getent group video | cut -d: -f3)" \
+  ghcr.io/ericschaal/prysm-headless:VERSION
 ```
 
-Screen sync starts off after recreation. Turn lights off in the panel before
-stopping Prysm if you do not want WLED effects to resume.
+In Prysm, choose **Video capture device** and enter `/dev/video0`. See
+[capture card](quickstart.md).
 
-Video-file input needs FFmpeg 9+, which the image does not include.
+## Receive the picture from a TV (slim package)
+
+The TV sends its picture to the portal's port; allow the TV app to control
+this Prysm:
+
+```sh
+docker run -d --name prysm --restart unless-stopped --stop-timeout 30 \
+  -p 8787:8787 -v prysm-data:/data \
+  ghcr.io/ericschaal/prysm-headless:VERSION --allow-origin null
+```
+
+Arguments after the image name are passed to Prysm. Then follow the
+[slim TV steps](webos.md#slim-package-the-tv-sends-the-picture).
+
+## Settings and maintenance
+
+- Settings: `/data/settings.json` in the `prysm-data` volume. A host
+  directory used instead must be writable by user ID 10001
+  (`sudo chown 10001:10001 DIR`). Mount the whole directory, not the file.
+- Logs: `docker logs -f prysm`.
+- Start Screen sync with the container: add `--start` after the image name.
+- Stop: `docker stop prysm`. Prysm turns the lights off and exits.
+- Upgrade: back up the settings, remove the container, and start it again with
+  the new version. The lights start off.
+
+The image has no FFmpeg, so the video-file source does not work in it.

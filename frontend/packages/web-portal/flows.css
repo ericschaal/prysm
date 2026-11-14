@@ -1,0 +1,359 @@
+/*
+ * The setup and calibrate flows: one thing per step, visible progress, big
+ * targets, the step's actions within thumb reach on phones. No card around
+ * them: the page is the flow. Tokens come from tokens.css.
+ */
+
+/* ── Shared ───────────────────────────────────────────────────────────── */
+.setup,
+.calibrate,
+.connecting {
+  container-type: inline-size;
+  padding-top: var(--space-2);
+}
+.setup .card-heading,
+.calibrate .card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.setup .card-heading button,
+.calibrate .card-heading button {
+  flex: none;
+  margin-right: calc(-1 * var(--space-3));
+  font-size: var(--text-small);
+}
+.eyebrow {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--text-small);
+}
+.setup h2,
+.calibrate h2 {
+  margin-top: var(--space-8);
+  font-size: var(--text-display);
+  letter-spacing: -0.03em;
+  animation: step-in var(--duration-slow) var(--ease-out) both;
+}
+/* Focused for screen readers as a step opens; drawn like a page heading. */
+.setup h2:focus,
+.calibrate h2:focus {
+  outline: none;
+}
+.setup .intro,
+.calibrate .intro {
+  margin: var(--space-3) 0 var(--space-8);
+  max-width: 52ch;
+  color: var(--text-2);
+}
+.setup h2 + .intro {
+  animation: step-in var(--duration-slow) var(--ease-out) 40ms both;
+}
+.setup > .notice,
+.calibrate .notice {
+  margin-bottom: var(--space-4);
+}
+.setup .actions,
+.calibrate .actions {
+  margin-top: var(--space-8);
+}
+
+/* Progress: one bar per step, the current one named. */
+.setup-steps {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-small);
+  color: var(--text-3);
+}
+.setup-steps li {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.setup-steps li::before {
+  content: '';
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+  transition:
+    background-color var(--duration-slow) var(--ease-out),
+    box-shadow var(--duration-slow) var(--ease-out);
+}
+.setup-steps li.done::before {
+  background: var(--accent);
+  opacity: 0.55;
+}
+.setup-steps li[aria-current='step'] {
+  color: var(--text);
+}
+.setup-steps li[aria-current='step']::before {
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+}
+
+/* ── Setup review ─────────────────────────────────────────────────────── */
+.setup-review {
+  display: grid;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.review-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-4);
+  align-items: center;
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-5);
+  animation: fade-up var(--duration-slow) var(--ease-out) both;
+}
+.review-item + .review-item {
+  border-top: 1px solid var(--line);
+  animation-delay: 60ms;
+}
+.review-item h3 {
+  font-size: var(--text-small);
+  font-weight: var(--weight-regular);
+  color: var(--text-3);
+}
+.review-item p {
+  grid-column: 1;
+  overflow-wrap: anywhere;
+}
+.review-item strong {
+  font-weight: 500;
+}
+.review-item button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border-color: transparent;
+  color: var(--accent-text);
+}
+.review-detail {
+  display: block;
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+/* ── Connecting ───────────────────────────────────────────────────────── */
+.connecting {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding-top: 18vh;
+  text-align: center;
+}
+.connecting::before {
+  content: '';
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--space-4);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 40px var(--glow-3);
+  animation: breathe 2.4s var(--ease-in-out) infinite;
+}
+.connecting h2 {
+  font-size: var(--text-title);
+}
+.connecting p {
+  color: var(--text-2);
+  font-size: var(--text-small);
+}
+
+/* A page that failed to draw: no pulse, the way on, then the detail. */
+.connecting.problem::before {
+  display: none;
+}
+.connecting.problem button {
+  margin-top: var(--space-4);
+}
+.connecting.problem .detail {
+  margin-top: var(--space-4);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* ── Calibrate: attention on the TV ───────────────────────────────────── */
+.calibrate-pattern {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--text-2);
+}
+.calibrate-pattern::before {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--swatch, #c0c0c0);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.15) inset,
+    0 0 12px var(--swatch, transparent);
+}
+.calibrate-pattern[data-pattern='gray-192'] {
+  --swatch: #c0c0c0;
+}
+.calibrate-pattern[data-pattern='red'] {
+  --swatch: #f0373c;
+}
+.calibrate-pattern[data-pattern='yellow'] {
+  --swatch: #f5d93a;
+}
+.calibrate-pattern[data-pattern='green'] {
+  --swatch: #3ccf5a;
+}
+.calibrate-pattern[data-pattern='cyan'] {
+  --swatch: #3cd6e6;
+}
+.calibrate-pattern[data-pattern='blue'] {
+  --swatch: #3c5cf0;
+}
+.calibrate-pattern[data-pattern='magenta'] {
+  --swatch: #e04ad8;
+}
+.calibrate-pattern[data-pattern$='-pair']::before,
+.calibrate-pattern[data-pattern='coast']::before,
+.calibrate-pattern[data-pattern='garden']::before,
+.calibrate-pattern[data-pattern='dusk']::before,
+.calibrate-pattern[data-pattern='review-grid']::before {
+  background: linear-gradient(90deg, var(--swatch-a) 50%, var(--swatch-b) 50%);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.15) inset;
+}
+.calibrate-pattern[data-pattern='red-pair'] {
+  --swatch-a: #b45a5c;
+  --swatch-b: #f0373c;
+}
+.calibrate-pattern[data-pattern='green-pair'] {
+  --swatch-a: #5f9a68;
+  --swatch-b: #3ccf5a;
+}
+.calibrate-pattern[data-pattern='blue-pair'] {
+  --swatch-a: #5a68b0;
+  --swatch-b: #3c5cf0;
+}
+.calibrate-pattern[data-pattern='coast'] {
+  --swatch-a: #f2b49a;
+  --swatch-b: #2a9c9a;
+}
+.calibrate-pattern[data-pattern='garden'] {
+  --swatch-a: #d98aa0;
+  --swatch-b: #93ad8a;
+}
+.calibrate-pattern[data-pattern='dusk'] {
+  --swatch-a: #f0a53c;
+  --swatch-b: #7c4ad0;
+}
+.calibrate-pattern[data-pattern='review-grid'] {
+  --swatch-a: #f0373c;
+  --swatch-b: #3c5cf0;
+}
+.calibrate .help {
+  margin-bottom: var(--space-6);
+}
+.calibrate-controls {
+  margin-top: var(--space-2);
+}
+/* Larger thumbs: these sliders are used on a phone while looking at the TV. */
+.calibrate .range input {
+  height: 52px;
+}
+.calibrate .range input::-webkit-slider-thumb {
+  width: 30px;
+  height: 30px;
+  margin-top: -12px;
+}
+.calibrate .range input::-moz-range-thumb {
+  width: 30px;
+  height: 30px;
+}
+/* Tracks that show which way each slider turns the colour; no fill: 0 is the middle. */
+.slider-warmth input {
+  --track: linear-gradient(90deg, #8fb4ef, #e7e3e8, #f0bd73);
+}
+.slider-tint input {
+  --track: linear-gradient(90deg, #7fcf98, #e7e3e8, #e08fd2);
+}
+.slider-intensity input {
+  --track: linear-gradient(90deg, #8a8a92, #e04ad8);
+}
+.slider-hue-red input {
+  --track: linear-gradient(90deg, #e04ad8, #f0373c, #f5d93a);
+}
+.slider-hue-yellow input {
+  --track: linear-gradient(90deg, #f0373c, #f5d93a, #3ccf5a);
+}
+.slider-hue-green input {
+  --track: linear-gradient(90deg, #f5d93a, #3ccf5a, #3cd6e6);
+}
+.slider-hue-cyan input {
+  --track: linear-gradient(90deg, #3ccf5a, #3cd6e6, #3c5cf0);
+}
+.slider-hue-blue input {
+  --track: linear-gradient(90deg, #3cd6e6, #3c5cf0, #e04ad8);
+}
+.slider-hue-magenta input {
+  --track: linear-gradient(90deg, #3c5cf0, #e04ad8, #f0373c);
+}
+button.compare {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+button.compare[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.calibrate .actions > .primary,
+.setup .actions > .primary {
+  min-width: 140px;
+}
+
+/* ── Phones ───────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .setup h2,
+  .calibrate h2 {
+    margin-top: var(--space-6);
+  }
+  /* Only the current step is named; the others are bars. */
+  .setup-steps li:not([aria-current='step']) {
+    font-size: 0;
+  }
+  .setup-steps li[aria-current='step'] {
+    white-space: nowrap;
+  }
+  /* The step's actions stay at the bottom of the screen. */
+  .setup .actions,
+  .calibrate .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: var(--space-8) -20px 0;
+    padding: var(--space-3) 20px
+      max(var(--space-4), env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, var(--bg) 30%);
+  }
+  .setup .actions > button,
+  .calibrate .actions > button {
+    flex: 1 1 auto;
+  }
+  .setup .actions > .primary,
+  .calibrate .actions > .primary {
+    flex: 2 1 auto;
+  }
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}

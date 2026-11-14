@@ -1,0 +1,23 @@
+[package]
+name = "prysm-h264"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "H.264 for the remote frame stream: OpenH264 or the webOS hardware encoder, OpenH264 decoding to NV12"
+
+[features]
+# The webOS TV's rvenc encoder (`Backend::Hardware`). Its GStreamer code is
+# only compiled for 32-bit ARM Linux; elsewhere the backend fails to start.
+hardware = ["dep:prysm-h264-rvenc-sys"]
+
+[dependencies]
+prysm-core.workspace = true
+thiserror.workspace = true
+# Built from source (C++, via `cc`); see LICENSE.openh264.
+openh264 = "0.9.9"
+h264-reader = "0.9"
+prysm-h264-rvenc-sys = { path = "../h264-rvenc-sys", optional = true }
+
+[lints]
+workspace = true

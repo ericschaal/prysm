@@ -1,0 +1,27 @@
+[package]
+name = "prysm-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Local testing host: the terminal shows what the LEDs would, next to the web portal"
+
+[dependencies]
+prysm-host.workspace = true
+prysm-runtime.workspace = true
+prysm-web-portal.workspace = true
+prysm-capture-device.workspace = true
+prysm-capture-file.workspace = true
+prysm-capture-remote.workspace = true
+prysm-output-wled.workspace = true
+prysm-surface-tui.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+
+[dev-dependencies]
+prysm-ports.workspace = true
+prysm-settings-file.workspace = true
+prysm-version.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

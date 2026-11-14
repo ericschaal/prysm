@@ -1,0 +1,145 @@
+import assert from 'node:assert/strict';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, extname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
+import { build } from 'vite';
+import { bundledPackages, notices } from './licenses.mjs';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/** Files the portals serve as they are, next to the bundle. */
+const portalPublic = resolve(root, 'packages/web-portal/public');
+const mime = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+};
+
+const assemblies = [
+  { host: 'headless', surface: 'web-portal' },
+  { host: 'webos', surface: 'web-portal' },
+  { host: 'webos', surface: 'tv-ui' },
+  { host: 'webos-slim', surface: 'tv-ui' },
+];
+
+/**
+ * The TV app is a `file://` page in the TV's own browser. Keep the target of
+ * the root TV app: webOS 4.x runs Chromium 53, which cannot load ES modules,
+ * so TV bundles are one classic deferred script with Chromium 53 syntax.
+ */
+const tvBuild = {
+  target: 'chrome53',
+  modulePreload: false,
+  // One stylesheet file, never a style element injected by the script (CSP).
+  cssCodeSplit: false,
+  rolldownOptions: { output: { format: 'iife' } },
+};
+const classicScript = {
+  name: 'webos-classic-script',
+  apply: 'build',
+  transformIndexHtml: {
+    order: 'post',
+    handler: (html) =>
+      html
+        .replace(/type="module" crossorigin/g, 'defer')
+        .replace(/ crossorigin/g, ''),
+  },
+};
+
+/** The most a portal's script and styles may weigh, gzip-compressed. */
+const portalBudget = { '.js': 180_000, '.css': 16_000 };
+const portalBuild = {
+  rolldownOptions: {
+    // React Router marks its files "use client" for server rendering, which
+    // one browser bundle has no use for.
+    onwarn(warning, warn) {
+      if (warning.code !== 'MODULE_LEVEL_DIRECTIVE') warn(warning);
+    },
+  },
+};
+
+// Per host, the directories of the third-party packages its bundles contain.
+const bundled = new Map();
+
+for (const { host, surface } of assemblies) {
+  const outDir = resolve(root, 'dist', host, surface);
+  const tv = surface === 'tv-ui';
+  if (!bundled.has(host)) bundled.set(host, new Set());
+  await build({
+    configFile: false,
+    root: resolve(root, 'hosts', host, surface),
+    base: './',
+    // The portal's files served as they are (theme.js).
+    publicDir: tv ? false : portalPublic,
+    logLevel: 'warn',
+    plugins: [
+      ...(tv ? [classicScript] : []),
+      bundledPackages(bundled.get(host)),
+    ],
+    build: tv
+      ? { outDir, emptyOutDir: true, ...tvBuild }
+      : { outDir, emptyOutDir: true, target: 'es2020', ...portalBuild },
+  });
+  const files = (
+    await readdir(outDir, { recursive: true, withFileTypes: true })
+  )
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      resolve(entry.parentPath, entry.name).slice(outDir.length + 1),
+    )
+    .sort();
+  assert(files.includes('index.html'), `${host} is missing its entry page`);
+  const html = await readFile(resolve(outDir, 'index.html'), 'utf8');
+  for (const [, asset] of html.matchAll(/(?:src|href)="[./]*(assets\/.*?)"/g)) {
+    assert(
+      files.includes(asset),
+      `${host} references a missing asset: ${asset}`,
+    );
+  }
+  // TV assets are packaged with the app, never served by the Rust portal.
+  if (surface !== 'web-portal') continue;
+  const assets = [];
+  for (const file of files) {
+    const contentType = mime[extname(file)];
+    assert(contentType, `Add an explicit content type for ${file}`);
+    // These names come from Vite, not requests; reject names needing Rust escaping.
+    assert(
+      /^[a-zA-Z0-9_./-]+$/.test(file),
+      `Unexpected build filename: ${file}`,
+    );
+    // Vite names everything under assets/ by its content: kept for good.
+    const immutable = file.startsWith('assets/');
+    // Scripts and styles are also embedded compressed (the page is tiny).
+    let gzip = 'None';
+    if (immutable) {
+      const compressed = gzipSync(await readFile(resolve(outDir, file)), {
+        level: 9,
+      });
+      // What a phone downloads on its first visit. Raise the budget on
+      // purpose, with the reason, never by accident.
+      const budget = portalBudget[extname(file)];
+      assert(
+        compressed.length <= budget,
+        `${host}: ${file} is ${compressed.length} bytes compressed, over its ${budget} byte budget`,
+      );
+      await writeFile(resolve(outDir, `${file}.gz`), compressed);
+      gzip = `Some(include_bytes!("${file}.gz"))`;
+    }
+    assets.push(
+      `    prysm_web_portal::FrontendAsset { path: "/${file}", content_type: "${contentType}", bytes: include_bytes!("${file}"), gzip: ${gzip}, caching: prysm_web_portal::Caching::${immutable ? 'Immutable' : 'Revalidate'} },`,
+    );
+  }
+  await writeFile(
+    resolve(outDir, 'assets.rs'),
+    `// Generated by npm run build; do not edit.\n&[\n${assets.join('\n')}\n]\n`,
+  );
+}
+
+// dist/<host>/licenses.txt: notices for everything bundled in that host's
+// surfaces (outside the served directories; the TV packages copy it).
+for (const [host, packages] of bundled) {
+  await writeFile(
+    resolve(root, 'dist', host, 'licenses.txt'),
+    await notices(packages),
+  );
+}

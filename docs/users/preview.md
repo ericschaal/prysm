@@ -1,18 +1,29 @@
-# Preview and tune
+# Live preview
 
-![Prysm picture preview and settings](../images/preview-tuning.jpg)
+Live preview shows the picture Prysm captures with the colours it sends to each
+edge of the strip. Use it to tell a capture problem from a lighting problem.
 
-1. Turn on **Screen sync** in Overview. WLED must be configured.
-2. Choose **Preview → Open preview**.
-3. Open **Settings**, adjust a [picture setting](configuration.md#processing),
-   then **Save & apply**.
+1. Turn on **Screen sync** on Home.
+2. In **Settings**, open **Video source** and choose **See the picture** (or
+   open **Lights** and choose **Check placement**). The address is
+   `#/preview` on the portal.
+3. Change a [picture setting](configuration.md#processing) in Settings and
+   watch the result on the lights and in the preview.
 
-The dashed outline marks the picture inside black bars. The colored edges show
-the calculated LED colors. If the picture moves but the LEDs are wrong, check
-WLED and the LED layout.
+What you see:
 
-Start with brightness and smoothing. Change one setting at a time.
-For tint differences with an LG TV, use [color calibration](calibration.md).
+<img src="../images/portal-preview.webp" alt="Live preview of a sunset over the sea, with the colours sent to each edge of the LED strip drawn around the picture." width="640">
 
-Preview updates at up to 8 fps; judge smoothness on the lights. A stopped capture
-keeps the last image. Closing Preview or the browser leaves Screen sync running.
+- The captured picture, scaled down, with each edge's LED colours around it.
+- An outline of the area Prysm samples when it removes black bars.
+
+If the picture moves but the LEDs look wrong, check WLED and the LED counts.
+If the picture is missing or frozen, check the video source. While the lights
+are off the preview shows nothing.
+
+The preview updates at most 8 times a second; judge smoothness on the real
+lights. It runs only while the page is open and visible. Closing it leaves
+Screen sync running.
+
+Change one setting at a time; start with brightness and smoothing. For colour
+tint differences with an LG TV, use [Calibrate colours](calibration.md).

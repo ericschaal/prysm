@@ -1,0 +1,211 @@
+/// Controls ambient light processing. Start with [`Config::default()`]
+/// and change only the settings you need; black-bar detection uses built-in tuning.
+///
+/// ```
+/// use prysm_core::Config;
+///
+/// let config = Config {
+///     brightness_percent: prysm_core::BrightnessPercent(60),
+///     smoothing_seconds: prysm_core::SmoothingSeconds(0.2),
+///     sample_density: prysm_core::SampleDensity(150),
+///     ..Config::default()
+/// };
+/// ```
+/// Percentages for different settings cannot be interchanged:
+///
+/// ```compile_fail
+/// let config = prysm_core::Config {
+///     brightness_percent: prysm_core::SpatialReachPercent(60),
+///     ..prysm_core::Config::default()
+/// };
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Config {
+    /// Selected profile correction, independent of processing controls.
+    pub correction: crate::ColorCorrection,
+    /// Light output: 0 = off, 100 = full brightness. Default: 100.
+    /// Values above 100 are treated as 100.
+    pub brightness_percent: BrightnessPercent,
+
+    /// Boost dark colors without lighting black. Default: 0; clamped to 0–100.
+    pub shadow_lift_percent: ShadowLiftPercent,
+
+    /// Seconds to complete 95% of a color transition, independent of frame rate.
+    /// Higher values reduce flicker but make the lights respond more slowly.
+    /// Default: 0.1. Zero, negative, and non-finite values disable smoothing.
+    pub smoothing_seconds: SmoothingSeconds,
+
+    /// How much faster smoothing lets a large change through than a small one,
+    /// so cuts follow quickly while grain stays calm. Default: 0, one rate for
+    /// every change; clamped to 0–100.
+    pub smoothing_response_percent: SmoothingResponsePercent,
+
+    /// How brightness follows a change while colour is smoothed.
+    /// Default: together with colour.
+    pub brightness_smoothing: BrightnessSmoothing,
+
+    /// Color samples per 1000 pixels of cropped edge length. Default: 128.
+    /// Controls spatial detail independently of LED count; all picture pixels
+    /// still contribute. Each edge has at least one sample and at most one per pixel.
+    pub sample_density: SampleDensity,
+
+    /// Broad spatial influence radius, as a percentage of picture height after
+    /// cropping. A local peak uses one quarter of this radius. Default: 10; clamped to 1–100.
+    /// Higher values spread colors farther. Every picture pixel contributes.
+    pub spatial_reach_percent: SpatialReachPercent,
+
+    /// Follow the picture inside black bars instead of making the lights dark.
+    /// Default: true. Cropping waits for stable bars to avoid flicker.
+    pub remove_black_bars: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            correction: crate::ColorCorrection::default(),
+            brightness_percent: BrightnessPercent(100),
+            shadow_lift_percent: ShadowLiftPercent(0),
+            smoothing_seconds: SmoothingSeconds(0.1),
+            smoothing_response_percent: SmoothingResponsePercent(0),
+            brightness_smoothing: BrightnessSmoothing::WithColor,
+            sample_density: SampleDensity(128),
+            spatial_reach_percent: SpatialReachPercent(10),
+            remove_black_bars: true,
+        }
+    }
+}
+
+/// Light output in percent; values above 100 use full brightness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrightnessPercent(pub u8);
+
+impl BrightnessPercent {
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.min(100)) / 100.0
+    }
+}
+
+impl Default for BrightnessPercent {
+    fn default() -> Self {
+        Config::default().brightness_percent
+    }
+}
+
+/// Spatial influence radius in percent of picture height, clamped to 1–100.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpatialReachPercent(pub u8);
+
+impl SpatialReachPercent {
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.clamp(1, 100)) / 100.0
+    }
+}
+
+impl Default for SpatialReachPercent {
+    fn default() -> Self {
+        Config::default().spatial_reach_percent
+    }
+}
+
+/// Seconds to complete 95% of a transition; non-positive or non-finite values disable smoothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmoothingSeconds(pub f32);
+
+impl SmoothingSeconds {
+    #[must_use]
+    pub fn is_enabled(self) -> bool {
+        self.0.is_finite() && self.0 > 0.0
+    }
+}
+
+/// How much faster smoothing follows a large change than a small one, in
+/// percent, clamped to 0–100; zero smooths every change at one rate.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SmoothingResponsePercent(pub u8);
+
+impl SmoothingResponsePercent {
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.min(100)) / 100.0
+    }
+}
+
+/// How brightness follows a change while colour is smoothed. Each trades
+/// differently between a flash that follows the picture and one that dazzles.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum BrightnessSmoothing {
+    /// Brightness and colour blend together, in linear light.
+    #[default]
+    WithColor,
+    /// Brightness settles faster than colour, so a cut's light level follows
+    /// at once while its hue still eases in.
+    Faster,
+    /// Brightness changes no faster than a fixed pace, so a sudden flash
+    /// cannot dazzle; colour follows as usual.
+    Limited,
+}
+
+impl BrightnessSmoothing {
+    pub const ALL: [Self; 3] = [Self::WithColor, Self::Faster, Self::Limited];
+}
+
+/// Shadow boost strength; zero preserves the original output.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ShadowLiftPercent(pub u8);
+
+/// Sample density representing samples per 1000 pixels of edge length
+///
+/// Example: `SampleDensity(50)` means 50 samples per 1000px, so a 1920px edge gets ~96 samples
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SampleDensity(pub usize);
+
+impl SampleDensity {
+    /// Calculate samples, capped at one per pixel (at least one for empty edges).
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "sample counts use approximate geometry and saturate to the edge length"
+    )]
+    pub fn samples_for_length(self, length_px: usize) -> usize {
+        (((length_px as f32 / 1000.0) * self.0 as f32).max(1.0) as usize).min(length_px.max(1))
+    }
+
+    /// Get the raw density value (samples per 1000px)
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Default for SampleDensity {
+    fn default() -> Self {
+        Config::default().sample_density
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoothing_response_is_clamped_to_full() {
+        for (percent, ratio) in [(0, 0.0), (40, 0.4), (100, 1.0), (101, 1.0), (255, 1.0)] {
+            assert_eq!(SmoothingResponsePercent(percent).as_ratio(), ratio);
+        }
+    }
+
+    #[test]
+    fn defaults_keep_one_rate_and_brightness_with_color() {
+        let config = Config::default();
+        assert_eq!(config.smoothing_response_percent.as_ratio(), 0.0);
+        assert_eq!(config.brightness_smoothing, BrightnessSmoothing::WithColor);
+        assert_eq!(
+            BrightnessSmoothing::default(),
+            BrightnessSmoothing::WithColor
+        );
+    }
+}

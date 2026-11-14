@@ -1,76 +1,97 @@
 # Release Prysm
 
-Merge the Release Please PR to release a new version. Review its changelog and
-version first; there is no second publication approval.
+One path for every release: Release Please proposes the version and the
+changelog, merging its pull request creates the tag, and
+[release.yml](../../.github/workflows/release.yml) builds, checks and publishes
+the packages for that tag.
 
-## Automation
+## The version is one file
 
-- Pull requests and pushes to `main` run checks and package builds without publishing.
-- Pushes to `main` run Release Please, which maintains the release PR.
-- Merging that PR creates a `vMAJOR.MINOR.PATCH` tag and draft GitHub Release.
-- The tag runs all checks and packaging jobs at that exact commit. Once they pass,
-  the publisher uploads the Debian arm64 package, webOS IPK, pinned Compose file,
-  Docker digest, and checksums; pushes amd64/arm64 images to GHCR; and publishes
-  the release. Only the newest stable release updates the Docker `latest` tag.
+The product version is the [`VERSION`](../../VERSION) file and nothing else.
+Release Please (release-type `simple`) owns it and changes it in its release
+pull request, together with `CHANGELOG.md`, `.release-please-manifest.json` and
+the one pinned copy for users: the image tag in
+[compose.truenas.yaml](../../packaging/docker/compose.truenas.yaml)
+(`# x-release-please-version`).
 
-`VERSION` is the product version. Release Please updates it, the host manifest
-and lockfile, webOS app metadata, Compose image pins, and its own manifest
-together. Internal crates are not separately released. While on `0.x`, breaking
-changes bump the minor version; compatible fixes bump the patch version.
-Only stable three-part versions are supported.
+Everything else derives from it:
 
-The IPK always includes hardware H.264 support in both binaries. Runtime encoder
-selection is separate. Packages from one release form the supported host/TV pair.
+- The binaries compile it in through
+  [`prysm-version`](../../crates/version/src/lib.rs) (`include_str!`, so Cargo
+  rebuilds when it changes): `--version`, `prysm_build_info` in `/metrics`, and
+  the Luna manifests (`major.minor.patch`).
+- The packages read it: [build-deb.sh](../../packaging/debian/build-deb.sh)
+  (`-` becomes `~`: `1.0.0-alpha.0` → `1.0.0~alpha.0-1`, which sorts before
+  `1.0.0`) and [ipk.py](../../packaging/webos/ipk.py) (`appinfo.json` and the
+  IPK file names take only `major.minor.patch`, because `ares-package` accepts
+  nothing else).
 
-## Repository setup
+Nothing else carries it. The crates are `0.0.0` (`[workspace.package]`;
+they are never published), so `Cargo.toml` and `Cargo.lock` never change for a
+release. The OpenAPI documents' `info.version` is their API's own version
+(`1`), so generated contracts never change either.
+[scripts/check-release.py](../../scripts/check-release.py) checks this: VERSION
+is a semantic version, the crates are `0.0.0`, no Rust source uses
+`CARGO_PKG_VERSION`, and the TrueNAS pin equals VERSION; given a tag, also that
+the tag is `v` plus VERSION and the manifest has it. Its tests run in CI.
 
-Register a private GitHub App, disable its webhook, and grant repository
-**Contents**, **Issues**, and **Pull requests** read/write permissions. Install it
-only on this repository. Store its numeric App ID and downloaded private key:
+`.release-please-manifest.json` is Release Please's record of the last
+release. After 1.0.0, VERSION and the manifest both hold the last released
+version between releases. Until then VERSION is `1.0.0-alpha.0`, the version
+being built, while the manifest stays at `0.2.0`, the last release of the
+earlier implementation (tag `v0.2.0`): Release Please counts commits from that
+release, and its first release pull request sets both to `1.0.0`.
 
-```sh
-gh variable set RELEASE_APP_ID --body YOUR_APP_ID
-gh secret set RELEASE_APP_PRIVATE_KEY < /path/to/private-key.pem
-```
+## Cut a release
 
-The App creates PRs and tags so their events trigger CI. Publication uses the
-job-scoped `GITHUB_TOKEN` with contents/packages write permissions.
-Make the GHCR package public after its first push. Enable immutable GitHub
-Releases so published tags and assets cannot be replaced.
+1. Merge work to `main` with [Conventional Commit](guidelines.md#commits-and-pull-requests)
+   titles. [release-please.yml](../../.github/workflows/release-please.yml)
+   keeps a release pull request open with the next version and the changelog:
+   `fix:` bumps the patch, `feat:` the minor, a breaking change (`!`) the major.
+   To choose the version yourself, put `Release-As: 1.2.3` in the body of a
+   commit on `main`. **The first 1.x release:** from the 0.2.0 manifest, a
+   breaking squash title such as `feat!: …` already gives 1.0.0; also put
+   `Release-As: 1.0.0` in the squash-merge body, so the version does not
+   depend on the title.
+2. Review and merge the release pull request. Release Please then creates the
+   tag `v<version>` and a draft GitHub release with the changelog.
+3. The tag starts [release.yml](../../.github/workflows/release.yml):
+   - `prepare`: the tag's commit must be on `main`, and `check-release.py`
+     must pass for the tag;
+   - `build`: [ci.yml](../../.github/workflows/ci.yml) at that commit with
+     `release: true`, all jobs, including the image and Debian package on
+     amd64 and arm64 (smoke test, install and purge) and both IPKs;
+   - `publish`: [publish.sh](../../packaging/release/publish.sh) pushes
+     `ghcr.io/<owner>/prysm-headless:<version>-amd64` and `-arm64` and the
+     multi-arch `:<version>`, checks that each image is from the tag's commit,
+     attaches `prysm-headless_<deb version>_{amd64,arm64}.deb`,
+     `io.prysm.tv-full_<x.y.z>_all.ipk`, `io.prysm.tv-slim_<x.y.z>_all.ipk`,
+     `docker-image.txt` (the index digest) and `SHA256SUMS`, and publishes the
+     release.
 
-Allow only squash merges in repository settings and the `main` ruleset, with the
-PR title as the commit title. PR titles are checked
-against the [Conventional Commit rules](guidelines.md#commits-and-pull-requests).
-Actions are pinned to upstream commits; Dependabot proposes weekly updates.
-Workspace Rust dependencies use exact versions; update the manifest and lockfile
-together.
+A version with a suffix (`-rc.1`) is published as a pre-release. A stable
+release becomes "Latest", and the floating `:latest` image tag points at its
+image, only if it is the newest stable release; recovering an older one moves
+neither. Whether to keep `:latest` is not decided: it is one line in
+publish.sh, marked there.
 
-Package builds use Rust 1.99.1. Keep the webOS toolchain in `check.yml` and the
-Rust Bookworm image version/digest in that workflow and `Dockerfile` in sync.
+Packages from one release form a supported desktop/TV pair: the slim TV and
+the desktop receiver speak one wire version.
 
-## Recover a release
+## Recover a failed release
 
-Rerun failed jobs in the Release workflow to reuse its tested artifacts. Artifacts
-are retained for seven days. To retry an existing tag from scratch:
+Run **Release** (`workflow_dispatch`) with the existing tag. It rebuilds from
+the tag's commit if the release is not yet published; images already pushed
+are checked against the commit instead of pushed again. For a release that is
+already published it only checks the images and the "Latest" marker. The
+publish script comes from the workflow's own commit, so a fix on `main` can
+recover an older tag.
 
-```sh
-gh workflow run release.yml --ref main -f tag=v0.2.0
-```
+## Repository settings
 
-Manual recovery uses publication tooling and workflows from the workflow
-revision, while product source comes from the original release tag. Merge a
-publisher fix before dispatching recovery; the release tag stays in place.
-Recovery rebuilds the same source, but does not guarantee identical binaries:
-runner images and system packages can change, and newer workflows can use newer
-toolchains. Rerun failed jobs while artifacts remain available to reuse the
-original tested packages.
-
-The workflow rejects tag/version mismatches and commits outside `main`. Existing
-versioned images must identify the same source commit. Draft assets may be
-replaced during recovery; published assets are preserved. A published release
-retry only verifies its images and recovers stable-channel promotion.
-
-GHCR and GitHub Releases cannot publish atomically. If either publication fails,
-leave the tag in place and rerun; never move it to another commit. After
-publication, fixes require a new version. Back up settings before upgrading;
-restoring an older binary may also require restoring its settings backup.
+- Release Please uses a GitHub App token: variable `RELEASE_APP_ID` and secret
+  `RELEASE_APP_PRIVATE_KEY`. Tags created with the default `GITHUB_TOKEN`
+  would not start release.yml.
+- release.yml pushes to GHCR with `GITHUB_TOKEN` (`packages: write`). The
+  first push creates the `prysm-headless` package; make it public and link it
+  to this repository in its package settings.

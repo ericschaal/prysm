@@ -1,0 +1,21 @@
+MEAN_CPU_CORES 1.323
+2026-11-04T16:08:24.781312Z  INFO prysm_webos_local::native::vtcapture: video capture started width=640 height=360 includes_ui=true
+2026-11-04T16:08:29.625072Z  INFO prysm_webos_local: local DDP output frames=135 elapsed_ms=5006
+2026-11-04T16:08:34.633145Z  INFO prysm_webos_local: local DDP output frames=285 elapsed_ms=10014
+2026-11-04T16:08:39.637395Z  INFO prysm_webos_local: local DDP output frames=431 elapsed_ms=15018
+2026-11-04T16:08:44.637743Z  INFO prysm_webos_local: local DDP output frames=581 elapsed_ms=20019
+2026-11-04T16:08:49.638736Z  INFO prysm_webos_local: local DDP output frames=731 elapsed_ms=25020
+2026-11-04T16:08:54.671830Z  INFO prysm_webos_local: local DDP output frames=882 elapsed_ms=30053
+2026-11-04T16:08:59.672077Z  INFO prysm_webos_local: local DDP output frames=1032 elapsed_ms=35053
+2026-11-04T16:09:04.673000Z  INFO prysm_webos_local: local DDP output frames=1182 elapsed_ms=40054
+2026-11-04T16:09:09.673247Z  INFO prysm_webos_local: local DDP output frames=1332 elapsed_ms=45054
+2026-11-04T16:09:14.673370Z  INFO prysm_webos_local: local DDP output frames=1482 elapsed_ms=50054
+2026-11-04T16:09:19.691094Z  INFO prysm_webos_local: local DDP output frames=1632 elapsed_ms=55072
+2026-11-04T16:09:24.691450Z  INFO prysm_webos_local: local DDP output frames=1782 elapsed_ms=60072
+2026-11-04T16:09:29.693866Z  INFO prysm_webos_local: local DDP output frames=1932 elapsed_ms=65075
+2026-11-04T16:09:34.698863Z  INFO prysm_webos_local: local DDP output frames=2082 elapsed_ms=70080
+2026-11-04T16:09:39.714033Z  INFO prysm_webos_local: local DDP output frames=2232 elapsed_ms=75095
+2026-11-04T16:09:44.749234Z  INFO prysm_webos_local: local DDP output frames=2383 elapsed_ms=80130
+2026-11-04T16:09:49.751742Z  INFO prysm_webos_local: local DDP output frames=2533 elapsed_ms=85133
+2026-11-04T16:09:54.757673Z  INFO prysm_webos_local: local DDP output frames=2683 elapsed_ms=90139
+2026-11-04T16:09:54.834096Z  INFO prysm_webos_local: local capture stopped frames=2685 elapsed_ms=90215

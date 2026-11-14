@@ -1,62 +1,131 @@
-# webOS capturer
+# LG TV
 
-Requires a [rooted LG TV](https://www.webosbrew.org/rooting/) with Homebrew Channel root execution, a
-[Prysm host](README.md#1-install-the-prysm-application), and WLED.
-Experimental; tested on LG 43QNED87A6D.BEUFLJP, webOS 25 (10.3.2-34).
-Other models and firmware are unqualified.
+The Prysm app (`io.prysm.tv`) captures the picture of a rooted LG webOS TV.
+It comes in two packages; installing one replaces the other.
 
-## 1. Prepare Prysm
+| Package | The TV… | You also need |
+| --- | --- | --- |
+| **Full** | captures, works out the colours, drives WLED and serves the web portal | WLED |
+| **Slim** | captures and sends the picture to Prysm on a computer, which drives WLED | A computer running Prysm ([Debian](debian.md), [Docker](docker.md) or [TrueNAS](truenas.md)), WLED |
 
-Open Prysm using its LAN URL, such as `http://192.168.1.20:8787`.
-See [Debian](debian.md#2-open-the-control-panel) or
-[Docker](docker.md#network-and-deployment-options) for the commands.
+Choose **full** if you do not want another computer. Choose **slim** if you
+already run Prysm on a computer or NAS.
 
-In [browser setup](configuration.md), choose **webOS capturer**, 640 × 360,
-30 fps. Enter WLED and the LED layout, then **Finish setup**.
+> **Not yet verified on hardware.** Neither package has passed acceptance
+> testing on a TV yet: install, capture, standby and wake, cold boot and
+> removal are still to be tested. Expect rough edges.
 
-## 2. Install on the TV
+## Before you start
 
-Download `io.prysm.capture_*_all.ipk` from the
-[same release as the host](https://github.com/ericschaal/prysm/releases).
-The IPK includes hardware H.264 support. Or [build it](../developers/packaging.md#webos).
+You need:
 
-With Node.js 24/npm installed:
+- An LG webOS TV [rooted](https://www.webosbrew.org/rooting/) with the
+  Homebrew Channel, root execution, and SSH access as `root`.
+- A computer with a checkout of this repository, for the install helper.
+- WLED on the same network.
+
+> **Safety.** Prysm only installs its own app and service files. Never
+> overwrite the TV's system partitions (kernel, rootfs, tvservice) while
+> following these or any other instructions. A mistake there can make the TV
+> unusable.
+
+If the older **Prysm Capture** app (`io.prysm.capture`) is installed, remove
+it first: in that app choose **Service options → Remove service setup… →
+Remove setup**, then uninstall the app. Prysm 1.x does not detect or migrate
+it. Stop PicCap or any other capture app too.
+
+## 1. Install
+
+Download `io.prysm.tv-full_VERSION_all.ipk` or `io.prysm.tv-slim_VERSION_all.ipk`
+from a `v1.*` [release](https://github.com/ericschaal/prysm/releases), or
+[build it](../developers/packaging.md#webos). From the repository root,
+install it over SSH (replace `TV` with the TV's address; `--dry-run` only
+prints the steps):
 
 ```sh
-npm install --global @webos-tools/cli@3.2.6
-ares-setup-device
+packaging/webos/install-ipk.sh root@TV path/to/io.prysm.tv-full_VERSION_all.ipk
 ```
 
-Add your rooted TV's SSH connection as `TV`, then install from the download directory:
+The helper copies the package to the TV, installs it through the TV's install
+service and runs the service setup. `ares-install` does not work on webOS 10
+("Unable to exec"); use the helper.
 
-```sh
-ares-install --device TV ./io.prysm.capture_*_all.ipk
-```
+After every install or update the service must be set up again; the helper
+does this. If you installed another way, open **Prysm** on the TV and choose
+**Set up service**.
 
-Stop PicCap or any other capturer.
+<a id="processing-on-this-tv-experimental"></a>
 
-## 3. Connect
+## 2a. Full package: the TV drives the lights
 
-Open **Prysm Capture** on the TV:
+1. Open **Prysm** on the TV. If it says **Prysm needs setting up**, choose
+   **Set up service**.
+2. The TV shows the address of its web portal and a QR code. Open it on your
+   phone or computer and run the [setup wizard](configuration.md). The video
+   source is **This TV**. Under **Size and rate**, **Balanced** is right for
+   most setups; **Smooth** updates the lights twice as often and is more work
+   for the TV. **Include TV menus** decides whether on-screen menus light the
+   LEDs.
+3. Play video. Choose **Start screen sync** on the TV or turn on Screen sync
+   in the portal.
 
-1. **Set up service**, if prompted.
-2. **Prysm instance URL:** enter `http://YOUR_PRYSM_IP:8787`, then **Use this address**.
-3. Keep **Combined** and **LZ4**, then **Save changes**.
-4. Choose **Enable** or **Save and enable**.
+The portal stays available while the TV is awake, also with the lights off or
+the app closed. On the TV, the portal also accepts requests from web pages on
+other sites, so keep the TV on a trusted network.
 
-Combined includes on-screen menus; Video only excludes them. Closing the app
-leaves capture enabled. Enable **Enable with TV** only after testing standby/wake
-and cold boot.
+## 2b. Slim package: the TV sends the picture
 
-## 4. Start
+<a id="slim-package-the-tv-sends-the-picture"></a>
 
-Play video on the TV. In Prysm's browser panel, select **Screen sync** and turn
-the lights on. Check that [Preview](preview.md) moves and the LEDs follow it.
+1. On the computer, start Prysm with `--allow-origin null`, so the TV app may
+   use its portal ([Debian](debian.md#manage-the-service),
+   [Docker](docker.md#receive-the-picture-from-a-tv-slim-package),
+   [TrueNAS](truenas.md)). Without this option the TV app says how to allow it.
+2. In the computer's portal, choose the video source
+   **Capture-only TV (remote)**. Keep **Compressed by the TV's video chip
+   (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
+   30 fps) to start.
+3. On the TV, open **Prysm**. Set **Prysm address** to the computer's portal,
+   for example `http://192.168.1.20:8787`. The TV sends its picture to that
+   same address; nothing else needs to be reachable.
+4. Choose **Start capture**, then turn on Screen sync in the portal or on the
+   TV.
 
-For errors, see [troubleshooting](troubleshooting.md#webos-capturer).
-For tint matching, use [Calibrate Colors](calibration.md).
+Behind an HTTPS reverse proxy, give the TV the proxy's address, such as
+`https://prysm.example.com`: the picture then travels encrypted. The proxy
+must pass WebSockets on `/api/v1/capture/stream` and must not put that path
+behind a login, which the TV cannot do. The computer's LAN address is the
+lowest-delay choice.
+
+The TV captures only while the computer's lights are on; otherwise it shows
+**Paused by Prysm**. Picture size, rate, menus and encoding are set in the
+computer's portal, which sends them to the TV on each connection.
+
+If the TV cannot encode the stream, Screen sync stops with the reason. Choose
+**Software H.264** or **Uncompressed** under **Settings → Video source** in
+the portal. Uncompressed needs about ten times the network.
+
+## Daily use
+
+- Closing the app leaves the service running. On Back, the app asks before
+  closing.
+- **Start with TV** starts Screen sync (full) or capture (slim) when the TV
+  turns on. Turn it on only after you have tested standby, wake and a cold
+  boot.
+- **Service options** has **Set up or repair service**, **View diagnostics**
+  and **Remove service setup…**.
+- [Calibrate colours](calibration.md) from the app.
+
+TVs older than webOS 5 can run capture, but the app cannot control a portal;
+use the portal on a phone or computer instead.
+
+For problems, see [troubleshooting](troubleshooting.md#lg-tv).
 
 ## Remove
 
-Before uninstalling the app, choose **Service options → Remove service setup… →
-Remove setup**. Saved connection settings remain.
+1. In the app: **Service options → Remove service setup… → Remove setup**.
+   Capture stops and the service registration and autostart are removed.
+2. Then uninstall the app.
+
+Settings in `/var/lib/io.prysm.tv` on the TV stay. Removing the app first can
+leave the service registered, because the package has no removal script.
