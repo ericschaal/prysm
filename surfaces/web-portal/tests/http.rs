@@ -1,6 +1,6 @@
 //! The portal against a real engine with fake adapters, over loopback HTTP.
 use futures::StreamExt;
-use prysm_ports::{AdapterSettings, Settings};
+use prysm_ports::{AdapterSettings, Processing, Settings, Style, StyleValues};
 use prysm_runtime::fakes::{
     self, CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
@@ -1309,7 +1309,14 @@ async fn colors_are_idle_unless_lights_follow_the_screen_and_sent_only_when_chan
 #[tokio::test]
 async fn colors_cadence_is_capped_at_ten_per_second() {
     bounded(async {
-        // Black and white alternate every 50 ms: the colors never settle.
+        // Black and white alternate every 50 ms, eased in so the colors never
+        // settle. Taken at once, as a cut, they would alternate in step with
+        // the cadence and every other look would show the same color.
+        let defaults = fakes::settings();
+        let eased = StyleValues {
+            cut_response_percent: 0,
+            ..StyleValues::DEFAULT
+        };
         let blinking = Settings {
             capture: Some(AdapterSettings::new(
                 "fake",
@@ -1318,7 +1325,12 @@ async fn colors_cadence_is_capped_at_ten_per_second() {
                     ..Default::default()
                 },
             )),
-            ..fakes::settings()
+            processing: Processing {
+                style: Style::Custom,
+                custom_style: Some(eased),
+                ..defaults.processing.clone()
+            },
+            ..defaults
         };
         let portal = start(blinking, Duration::from_secs(5)).await;
         assert_eq!(portal.target("processed").await.0, StatusCode::NO_CONTENT);
