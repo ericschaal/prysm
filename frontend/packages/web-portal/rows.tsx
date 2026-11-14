@@ -183,12 +183,15 @@ export function RowChoice({
  * of the page, so nothing above it moves.
  */
 export function RowDisclosure({
+  heading,
   label,
   about,
   open,
   onToggle,
   children,
 }: {
+  /** The group's small heading: without one the row reads as an empty cell. */
+  heading: string;
   label: string;
   /** The line beneath the label, the same open or closed. */
   about: string;
@@ -199,7 +202,10 @@ export function RowDisclosure({
 }) {
   const id = useId();
   return (
-    <div className="disclosure">
+    <section className="group" aria-labelledby={`${id}-heading`}>
+      <h2 id={`${id}-heading`} className="overline">
+        {heading}
+      </h2>
       <div className="rows">
         <div className="row">
           <button
@@ -223,7 +229,7 @@ export function RowDisclosure({
       <div id={id} className="disclosure-body">
         {open ? children : null}
       </div>
-    </div>
+    </section>
   );
 }
 

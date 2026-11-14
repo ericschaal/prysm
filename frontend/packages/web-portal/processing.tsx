@@ -266,6 +266,7 @@ export function StyleSettings(props: LiveProps) {
         </ul>
       </section>
       <RowDisclosure
+        heading="Values"
         label="Adjust this style"
         about="Moving a slider switches to Custom."
         open={open}
