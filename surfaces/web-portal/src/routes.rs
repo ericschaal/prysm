@@ -9,6 +9,7 @@ use crate::response::{self, KEEPALIVE, KEEPALIVE_COMMENT, Response, failure};
 use bytes::Bytes;
 use futures::stream;
 use http_body_util::{BodyExt, Limited};
+use hyper::header::HeaderValue;
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
 use prysm_ports::{CAPTURE_STREAM_PATH, Calibration, Handoff, Processing, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
@@ -97,7 +98,7 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
     let path = request.uri().path().to_owned();
     // An enabled `/metrics` follows the API's origin policy.
     if !path.starts_with("/api/") && !(context.metrics && path == METRICS) {
-        return asset(context, &path, request.method());
+        return asset(context, &path, &request);
     }
     let mut response = match access::check(&context.access, request.headers()) {
         Err(denied) => *denied,
@@ -118,15 +119,55 @@ async fn route(context: &Context, request: Request<Incoming>) -> Response {
     response
 }
 
-fn asset(context: &Context, path: &str, method: &Method) -> Response {
-    if method != Method::GET {
+/// `GET` or `HEAD` of a bundle file: gzip-compressed for clients that accept
+/// it, kept for good when its name carries its hash, else checked every load.
+fn asset(context: &Context, path: &str, request: &Request<Incoming>) -> Response {
+    if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return not_found();
     }
     let path = if path == "/" { "/index.html" } else { path };
-    match context.assets.iter().find(|asset| asset.path == path) {
-        Some(asset) => response::bytes(StatusCode::OK, asset.content_type, asset.bytes),
-        None => not_found(),
+    let Some(asset) = context.assets.iter().find(|asset| asset.path == path) else {
+        return not_found();
+    };
+    let gzip = asset.gzip.filter(|_| accepts_gzip(request.headers()));
+    let mut response = response::bytes(
+        StatusCode::OK,
+        asset.content_type,
+        gzip.unwrap_or(asset.bytes),
+    );
+    let headers = response.headers_mut();
+    let cache = if asset.immutable {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    if asset.gzip.is_some() {
+        headers.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
     }
+    if gzip.is_some() {
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    }
+    response
+}
+
+/// Whether `Accept-Encoding` lists gzip (or `*`) without refusing it (`q=0`).
+fn accepts_gzip(headers: &header::HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|coding| {
+            let mut parts = coding.split(';').map(str::trim);
+            let name = parts.next().unwrap_or_default();
+            let refused = parts.any(|part| {
+                part.strip_prefix("q=")
+                    .and_then(|q| q.parse::<f32>().ok())
+                    .is_some_and(|q| q == 0.0)
+            });
+            (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
+        })
 }
 
 /// One API path's methods. A known path with another method is `405`, an

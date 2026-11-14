@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
  */
 export const scriptReplaced = (url: string) => async () => {
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(url, { method: 'HEAD', cache: 'no-store' });
     return response.status === 404;
   } catch {
     return false;

@@ -20,11 +20,16 @@ const ASSETS: &[FrontendAsset] = &[
         path: "/index.html",
         content_type: "text/html; charset=utf-8",
         bytes: b"<!doctype html><title>Prysm</title>",
+        gzip: None,
+        immutable: false,
     },
     FrontendAsset {
         path: "/assets/app.js",
         content_type: "text/javascript",
         bytes: b"console.log('prysm')",
+        // Stands in for the compressed script: the portal sends it as it is.
+        gzip: Some(b"compressed"),
+        immutable: true,
     },
 ];
 const LIMIT: Duration = Duration::from_secs(10);
@@ -193,16 +198,22 @@ async fn construction_rejects_bad_assets_and_origins() {
     }
 }
 
-/// Every response, asset or API, success or failure.
-fn assert_secure(response: &reqwest::Response) {
+/// Every response, asset or API, success or failure; `cache` is how long it
+/// may be kept.
+fn assert_secure_kept(response: &reqwest::Response, cache: &str) {
     let headers = response.headers();
-    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::CACHE_CONTROL], cache);
     assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(
         headers[header::CONTENT_SECURITY_POLICY],
         "default-src 'self'; frame-ancestors 'none'"
     );
     assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+}
+
+/// Everything but the bundle is never stored.
+fn assert_secure(response: &reqwest::Response) {
+    assert_secure_kept(response, "no-store");
 }
 
 #[tokio::test]
@@ -218,11 +229,47 @@ async fn asset_serving_and_unauthenticated_api() {
             page.headers()[header::CONTENT_TYPE],
             "text/html; charset=utf-8"
         );
-        assert_secure(&page);
+        // The page is checked on every load; it names the current script.
+        assert_secure_kept(&page, "no-cache");
+        assert!(!page.headers().contains_key(header::VARY));
         assert!(page.text().await.unwrap().contains("Prysm"));
+        // A script named by its hash is kept for good, compressed or not.
+        let kept = "public, max-age=31536000, immutable";
         let script = client.get(url("/assets/app.js")).send().await.unwrap();
         assert_eq!(script.headers()[header::CONTENT_TYPE], "text/javascript");
-        assert_secure(&script);
+        assert_secure_kept(&script, kept);
+        assert_eq!(script.headers()[header::VARY], "accept-encoding");
+        assert!(!script.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(script.text().await.unwrap(), "console.log('prysm')");
+        for accepted in ["gzip", "br;q=1.0, GZip;q=0.5", "*"] {
+            let script = client
+                .get(url("/assets/app.js"))
+                .header(header::ACCEPT_ENCODING, accepted)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(script.headers()[header::CONTENT_ENCODING], "gzip");
+            assert_secure_kept(&script, kept);
+            assert_eq!(script.bytes().await.unwrap().as_ref(), b"compressed");
+        }
+        for refused in ["br", "gzip;q=0", "identity"] {
+            let script = client
+                .get(url("/assets/app.js"))
+                .header(header::ACCEPT_ENCODING, refused)
+                .send()
+                .await
+                .unwrap();
+            assert!(!script.headers().contains_key(header::CONTENT_ENCODING));
+            assert_eq!(script.text().await.unwrap(), "console.log('prysm')");
+        }
+        // HEAD answers as GET does, without the body: is this file served?
+        let head = client.head(url("/assets/app.js")).send().await.unwrap();
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(head.headers()[header::CONTENT_LENGTH], "20");
+        assert_secure_kept(&head, kept);
+        assert!(head.bytes().await.unwrap().is_empty());
+        let gone = client.head(url("/assets/old.js")).send().await.unwrap();
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
         let missing = client.get(url("/missing")).send().await.unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_secure(&missing);

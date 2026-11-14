@@ -2785,3 +2785,11 @@ test('after Prysm is updated, every page offers a reload once it reconnects', as
     await portal.unmount();
   }
 });
+
+test('the script that sets the theme before the page is drawn reads the same key', async () => {
+  const script = await readFile(
+    new URL('../packages/web-portal/public/theme.js', import.meta.url),
+    'utf8',
+  );
+  assert(script.includes(`getItem('${themeStorageKey}')`));
+});

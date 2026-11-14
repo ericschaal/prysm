@@ -26,6 +26,11 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
+    // Served to the browser as it is.
+    files: ['packages/web-portal/public/**/*.js'],
+    languageOptions: { globals: globals.browser, sourceType: 'script' },
+  },
+  {
     files: ['**/*.{ts,tsx,mts,cts}'],
     extends: [tseslint.configs.recommendedTypeChecked],
     rules: { 'no-nested-ternary': 'error' },

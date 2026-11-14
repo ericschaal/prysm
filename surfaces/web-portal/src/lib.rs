@@ -34,6 +34,11 @@ pub struct FrontendAsset {
     pub path: &'static str,
     pub content_type: &'static str,
     pub bytes: &'static [u8],
+    /// `bytes` gzip-compressed, sent to clients that accept gzip.
+    pub gzip: Option<&'static [u8]>,
+    /// The path names the content (a hash in the file name), so clients may
+    /// keep it for good; otherwise they ask again on every load.
+    pub immutable: bool,
 }
 
 /// The portal surface. Construction validates the assets and access;

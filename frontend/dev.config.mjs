@@ -2,6 +2,8 @@
 // running Prysm, so the page works with hot reload. Start a host first, e.g.
 //   cargo run -p prysm-headless -- hosts/headless/settings.example.json
 // PRYSM names another one (the TV: PRYSM=http://192.168.1.5:8787).
+import { fileURLToPath } from 'node:url';
+
 const target = process.env.PRYSM ?? 'http://127.0.0.1:8787';
 
 /** The page's origin is the dev server's, which the portal would refuse. */
@@ -10,6 +12,10 @@ function sameOrigin(proxy) {
 }
 
 export default {
+  // The portal's files served as they are (theme.js).
+  publicDir: fileURLToPath(
+    new URL('./packages/web-portal/public', import.meta.url),
+  ),
   server: {
     proxy: {
       '/api': { target, changeOrigin: true, configure: sameOrigin },
