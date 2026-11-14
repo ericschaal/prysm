@@ -64,6 +64,8 @@ RUN apt-get update \
     && install -d -m 0700 -o prysm -g prysm /data
 COPY --from=build /out/prysm-headless /usr/bin/prysm-headless
 COPY LICENSE /usr/share/doc/prysm-headless/LICENSE
+# The binary includes OpenH264 (BSD 2-clause), built from source.
+COPY adapters/h264/LICENSE.openh264 /usr/share/doc/prysm-headless/LICENSE.openh264
 LABEL org.opencontainers.image.title="Prysm (v1 headless)" \
     org.opencontainers.image.description="Video capture to WLED with a web portal (Prysm v1 prysm-headless)" \
     org.opencontainers.image.source="https://github.com/ericschaal/prysm" \

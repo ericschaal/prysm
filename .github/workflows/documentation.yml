@@ -2,6 +2,7 @@ name: Documentation links
 
 on:
   push:
+    branches: [main]
     paths:
       - '**/*.md'
       - 'docs/users/examples/*.toml'
@@ -23,10 +24,8 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner's python3 (3.12 on ubuntu-24.04).
       - name: Link checker regression tests
         run: python3 -m unittest discover -s scripts/tests
       - name: Repository paths, images and anchors

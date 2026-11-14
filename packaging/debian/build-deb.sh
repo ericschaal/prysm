@@ -42,12 +42,17 @@ install -D -m 0644 "$repo/hosts/headless/settings.example.json" \
     "$root/usr/share/doc/$package/examples/settings.example.json"
 {
     printf 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n'
-    printf 'Upstream-Name: prysm\nSource: https://github.com/ericschaal/prysm\n\n'
+    printf 'Upstream-Name: prysm\nSource: https://github.com/ericschaal/prysm\n'
+    printf 'Comment: The binary includes OpenH264 (Cisco Systems), built from source and\n'
+    printf ' used under its BSD 2-clause licence; the notice is in\n'
+    printf ' /usr/share/doc/%s/LICENSE.openh264.\n\n' "$package"
     printf 'Files: *\nCopyright: 2025-2026 Prysm contributors\nLicense: Apache-2.0\n'
     printf ' On Debian systems, the full text of the Apache License, Version 2.0 can be\n'
     printf ' found in /usr/share/common-licenses/Apache-2.0.\n'
 } >"$work/copyright"
 install -D -m 0644 "$work/copyright" "$root/usr/share/doc/$package/copyright"
+install -D -m 0644 "$repo/adapters/h264/LICENSE.openh264" \
+    "$root/usr/share/doc/$package/LICENSE.openh264"
 # Outside the pipeline below so that a failing date stops the script (no pipefail in sh).
 changelog_date=$(date -R -u ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"})
 printf '%s (%s) unstable; urgency=medium\n\n  * Release %s.\n\n -- Eric Schaal <eric@schaal.dev>  %s\n' \
@@ -67,6 +72,7 @@ Architecture: $arch
 Maintainer: Eric Schaal <eric@schaal.dev>
 Installed-Size: $size
 Depends: $shlibs, systemd
+Conflicts: prysm-led
 Section: video
 Priority: optional
 Homepage: https://github.com/ericschaal/prysm

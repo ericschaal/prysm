@@ -15,7 +15,7 @@ when a `v1.*` tag is pushed.
 
 The workflow then:
 
-- runs the v1 gate ([v1.yml](../../.github/workflows/v1.yml)), which also
+- runs CI ([ci.yml](../../.github/workflows/ci.yml)), which also
   builds both IPKs with the pinned webOS SDK;
 - builds the image and Debian package on amd64 and arm64, smoke-tests the
   image and installs the package;

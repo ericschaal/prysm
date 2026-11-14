@@ -5,8 +5,8 @@
 # this file and release-please's tags at consolidation.
 #
 # A `v1.*` tag must equal "v" + the [workspace.package] version in
-# Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes the v1 gate
-# (v1.yml, which also builds the IPKs with the pinned webOS SDK); manual runs
+# Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes CI
+# (ci.yml, which also builds the IPKs with the pinned webOS SDK); manual runs
 # build and smoke-test both architectures and keep the image, .deb and IPKs as
 # workflow artifacts; only a tag publishes. The image and .deb are built by
 # packaging/docker/Dockerfile (its frontend stage runs npm ci and the bundle
@@ -30,7 +30,7 @@ env:
 
 jobs:
   ci:
-    uses: ./.github/workflows/v1.yml
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
@@ -121,7 +121,7 @@ jobs:
           PY
       - uses: actions/download-artifact@v4
         with:
-          # Images, .debs and IPKs; not v1.yml's frontend bundle.
+          # Images, .debs and IPKs; not ci.yml's frontend bundle.
           pattern: prysm-*
           path: ${{ runner.temp }}/artifacts
       - uses: docker/setup-buildx-action@v4

@@ -1,9 +1,9 @@
 # The portal end-to-end tests (frontend/e2e) where pull requests do not run
 # them: WebKit on macOS, the closest to Safari that Playwright gets, and
-# Firefox. v1.yml's `e2e` job runs Chromium and WebKit on Linux for every push.
+# Firefox. ci.yml's `e2e` job runs Chromium and WebKit on Linux for every push.
 #
 # GitHub runs schedules only from the default branch's copy of this file.
-name: V1 end-to-end nightly
+name: End-to-end nightly
 on:
   schedule:
     - cron: '23 3 * * *'
@@ -24,8 +24,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
@@ -34,9 +34,9 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          key: v1-e2e-nightly
+          key: e2e-nightly
       - run: npm --prefix frontend ci
       # The binary embeds the portal bundle: build the frontend first.
       - name: Frontend bundles
@@ -55,7 +55,7 @@ jobs:
           PRYSM_TEST_SENDER_BIN: ${{ github.workspace }}/target/debug/examples/test_sender
         run: npx playwright test -c e2e --project webkit --project firefox
       # The HTML report, and traces and videos of failed or retried tests.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: v1-e2e-nightly-report

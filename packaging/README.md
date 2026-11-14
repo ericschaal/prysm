@@ -104,7 +104,10 @@ with `video` for `/dev/video*`, keeps its state in `StateDirectory=prysm`,
 restarts on failure and is sandboxed (read-only system, no capabilities,
 only V4L2 devices, IPv4/IPv6/Unix sockets). `apt remove` stops and disables
 the service; `apt purge` also deletes `/var/lib/prysm`. The `prysm` user is
-kept.
+kept. The package conflicts with the earlier implementation's `prysm-led`
+(both would take the capture device and the portal port), and ships the
+OpenH264 notice next to its copyright file, as the image does in
+`/usr/share/doc/prysm-headless/`.
 
 The package does not depend on FFmpeg, so the development-only `file` source
 does not work with it; use `device` or `remote`.

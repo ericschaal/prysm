@@ -61,7 +61,7 @@ It plays once (`"repeat": true` loops it); at the end lighting stops cleanly.
 
 ## Check
 
-The same commands CI runs ([v1.yml](../../.github/workflows/v1.yml)):
+The same commands CI runs ([ci.yml](../../.github/workflows/ci.yml)):
 
 ```sh
 cargo fmt --all --check
