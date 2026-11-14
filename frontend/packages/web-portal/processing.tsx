@@ -1,5 +1,8 @@
 import { useId } from 'react';
-import type { Processing } from '@prysm/contracts/application';
+import type {
+  BrightnessSmoothing,
+  Processing,
+} from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
 import { CheckboxField, RangeField } from './fields';
 import {
@@ -10,6 +13,7 @@ import {
   type ProcessingControls,
 } from './live-processing';
 import { nameOf } from './profile-model';
+import { RowChoice } from './rows';
 import { useSaveReport } from './save-state';
 
 const percent = (value: number) => `${value}%`;
@@ -190,13 +194,70 @@ export function BlackBars(props: LiveProps) {
   );
 }
 
+/** How brightness follows a change, in the order offered; every one named. */
+const brightnessChoices = {
+  with_color: {
+    label: 'With colour',
+    about: 'Brightness eases in with the colour.',
+  },
+  faster: {
+    label: 'Faster than colour',
+    about: 'Brightness follows a cut at once; colour eases in.',
+  },
+  limited: {
+    label: 'Limited',
+    about: 'A sudden flash brightens gradually.',
+  },
+} as const satisfies Record<
+  BrightnessSmoothing,
+  { label: string; about: string }
+>;
+
+/** “Brightness follows”: one row each, the chosen one ticked. */
+function BrightnessChoice({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: BrightnessSmoothing;
+  disabled: boolean;
+  onChange: (next: BrightnessSmoothing) => void;
+}) {
+  const nameId = useId();
+  const legendId = useId();
+  return (
+    <fieldset
+      className="brightness-choice"
+      role="radiogroup"
+      aria-labelledby={legendId}
+    >
+      <legend id={legendId}>Brightness follows</legend>
+      <ul className="rows">
+        {(
+          Object.keys(brightnessChoices) as (keyof typeof brightnessChoices)[]
+        ).map((key) => (
+          <RowChoice
+            key={key}
+            name={nameId}
+            label={brightnessChoices[key].label}
+            about={brightnessChoices[key].about}
+            checked={value === key}
+            disabled={disabled}
+            onChoose={() => onChange(key)}
+          />
+        ))}
+      </ul>
+    </fieldset>
+  );
+}
+
 /**
  * Picture fine-tuning, on its own page: the rarely needed controls. They
  * apply live; a slider is tried on the lights while dragged and saved where
  * it is let go, as on Home.
  */
 export function FineTuning(props: LiveProps) {
-  const { live, slider } = useControls(props, 'fine-tuning');
+  const { live, slider, change } = useControls(props, 'fine-tuning');
   const value = live.value;
   return (
     <FieldScopeProvider value={live.scope}>
@@ -225,6 +286,18 @@ export function FineTuning(props: LiveProps) {
             slider('smoothing_seconds').onChange(Math.round(next * 100) / 100)
           }
           {...fineLimits.smoothing(value.smoothing_seconds)}
+        />
+        <RangeField
+          label="Response"
+          help="Lets big changes, such as a cut, through faster than small flicker."
+          format={percent}
+          {...slider('smoothing_response_percent')}
+          {...processingLimits.smoothing_response_percent}
+        />
+        <BrightnessChoice
+          value={value.brightness_smoothing}
+          disabled={live.scope.disabled}
+          onChange={(next) => change('brightness_smoothing', next)}
         />
         <RangeField
           label="Detail"

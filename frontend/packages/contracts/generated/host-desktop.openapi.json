@@ -9,6 +9,15 @@
         ],
         "type": "string"
       },
+      "BrightnessSmoothing": {
+        "description": "How brightness follows a change while colour is smoothed.",
+        "enum": [
+          "with_color",
+          "faster",
+          "limited"
+        ],
+        "type": "string"
+      },
       "Calibration": {
         "additionalProperties": false,
         "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
@@ -793,6 +802,9 @@
             "minimum": 0,
             "type": "integer"
           },
+          "brightness_smoothing": {
+            "$ref": "#/components/schemas/BrightnessSmoothing"
+          },
           "profiles": {
             "description": "Saved color corrections; ids are unique.",
             "items": {
@@ -815,6 +827,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "smoothing_response_percent": {
+            "description": "How much faster smoothing follows a large change than a small one;\n0 smooths every change at one rate.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
           "smoothing_seconds": {
             "description": "Seconds; 0 disables smoothing.",
             "format": "float",
@@ -832,6 +851,8 @@
           "brightness_percent",
           "shadow_lift_percent",
           "smoothing_seconds",
+          "smoothing_response_percent",
+          "brightness_smoothing",
           "sample_density",
           "spatial_reach_percent",
           "remove_black_bars"

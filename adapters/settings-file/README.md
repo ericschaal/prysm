@@ -39,6 +39,8 @@ the adapter's factory, not here.
     "brightness_percent": 80,
     "shadow_lift_percent": 0,
     "smoothing_seconds": 0.3,
+    "smoothing_response_percent": 0,
+    "brightness_smoothing": "with_color",
     "sample_density": 128,
     "spatial_reach_percent": 10,
     "remove_black_bars": true,

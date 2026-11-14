@@ -80,10 +80,23 @@ device.commands.configureProcessing(0, {
   brightness_percent: 80,
   shadow_lift_percent: 0,
   smoothing_seconds: 0.1,
+  smoothing_response_percent: 0,
+  brightness_smoothing: 'with_color',
   sample_density: 128,
   spatial_reach_percent: 10,
   // @ts-expect-error Processing fields are typed.
   remove_black_bars: 'yes',
+});
+device.commands.configureProcessing(0, {
+  brightness_percent: 80,
+  shadow_lift_percent: 0,
+  smoothing_seconds: 0.5,
+  smoothing_response_percent: 60,
+  // @ts-expect-error How brightness follows is a closed set of names.
+  brightness_smoothing: 'sometimes',
+  sample_density: 128,
+  spatial_reach_percent: 10,
+  remove_black_bars: true,
 });
 
 // The supervisor's state is one type for both packages.

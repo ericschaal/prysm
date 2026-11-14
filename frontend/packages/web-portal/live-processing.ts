@@ -11,7 +11,7 @@ import {
 } from './form';
 
 /**
- * What this panel owns: six controls plus the colour profiles and the active
+ * What this panel owns: eight controls plus the colour profiles and the active
  * one. Other processing fields are preserved.
  */
 export type ProcessingControls = Pick<
@@ -19,6 +19,8 @@ export type ProcessingControls = Pick<
   | 'brightness_percent'
   | 'shadow_lift_percent'
   | 'smoothing_seconds'
+  | 'smoothing_response_percent'
+  | 'brightness_smoothing'
   | 'sample_density'
   | 'spatial_reach_percent'
   | 'remove_black_bars'
@@ -36,6 +38,7 @@ export const processingLimits = {
   shadow_lift_percent: { min: 0, max: 100, step: 1 },
   spatial_reach_percent: { min: 1, max: 100, step: 1 },
   smoothing_seconds: { min: 0, step: 'any' },
+  smoothing_response_percent: { min: 0, max: 100, step: 1 },
   sample_density: { min: 1, max: 65535, step: 1 },
 } as const;
 
@@ -114,6 +117,8 @@ export function processingControls(processing: Processing): ProcessingControls {
       brightness_percent: processing.brightness_percent,
       shadow_lift_percent: processing.shadow_lift_percent,
       smoothing_seconds: processing.smoothing_seconds,
+      smoothing_response_percent: processing.smoothing_response_percent,
+      brightness_smoothing: processing.brightness_smoothing,
       sample_density: processing.sample_density,
       spatial_reach_percent: processing.spatial_reach_percent,
       remove_black_bars: processing.remove_black_bars,

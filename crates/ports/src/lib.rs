@@ -29,6 +29,8 @@ pub use profiles::{
     ColorProfile, CorrectionControls, HueControls, MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS,
     MAX_PROFILES,
 };
+/// The type of [`Processing::brightness_smoothing`], for callers without `prysm-core`.
+pub use prysm_core::BrightnessSmoothing;
 pub use registry::{Candidate, OutputFactory, Registry, SourceFactory};
 pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};

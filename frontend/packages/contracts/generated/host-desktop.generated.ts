@@ -11,6 +11,11 @@ export interface components {
          */
         Behind: "processing" | "output";
         /**
+         * @description How brightness follows a change while colour is smoothed.
+         * @enum {string}
+         */
+        BrightnessSmoothing: "with_color" | "faster" | "limited";
+        /**
          * @description A calibration pattern shown on the TV: the body of
          *     `PUT /api/v1/calibration` and `State.calibration`.
          */
@@ -377,6 +382,7 @@ export interface components {
             active_profile?: string;
             /** Format: int32 */
             brightness_percent: number;
+            brightness_smoothing: components["schemas"]["BrightnessSmoothing"];
             /** @description Saved color corrections; ids are unique. */
             profiles?: components["schemas"]["ColorProfile"][];
             remove_black_bars: boolean;
@@ -384,6 +390,12 @@ export interface components {
             sample_density: number;
             /** Format: int32 */
             shadow_lift_percent: number;
+            /**
+             * Format: int32
+             * @description How much faster smoothing follows a large change than a small one;
+             *     0 smooths every change at one rate.
+             */
+            smoothing_response_percent: number;
             /**
              * Format: float
              * @description Seconds; 0 disables smoothing.
@@ -547,6 +559,7 @@ export interface components {
     pathItems: never;
 }
 export type Behind = components['schemas']['Behind'];
+export type BrightnessSmoothing = components['schemas']['BrightnessSmoothing'];
 export type Calibration = components['schemas']['Calibration'];
 export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];

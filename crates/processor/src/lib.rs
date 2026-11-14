@@ -41,10 +41,7 @@ impl PrysmProcessor {
                 config.sample_density,
                 config.spatial_reach_percent.as_ratio(),
             ),
-            temporal_smoother: config
-                .smoothing_seconds
-                .is_enabled()
-                .then(|| TemporalSmoother::new(config.smoothing_seconds)),
+            temporal_smoother: TemporalSmoother::new(config),
             last_viewport: None,
             frame_layout: None,
         }
@@ -66,15 +63,10 @@ impl PrysmProcessor {
         if config.remove_black_bars != self.config.remove_black_bars {
             self.black_bar_detector = config.remove_black_bars.then(BlackBarDetector::new);
         }
-        if config.smoothing_seconds.is_enabled() {
-            if let Some(smoother) = &mut self.temporal_smoother {
-                smoother.configure(config.smoothing_seconds);
-            } else {
-                self.temporal_smoother = Some(TemporalSmoother::new(config.smoothing_seconds));
-            }
-        } else {
-            self.temporal_smoother = None;
-        }
+        self.temporal_smoother = match self.temporal_smoother.take() {
+            Some(smoother) => smoother.reconfigured(config),
+            None => TemporalSmoother::new(config),
+        };
         self.config = *config;
     }
 

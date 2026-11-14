@@ -139,8 +139,9 @@ supervisor in each of its states and play the phone's calibration part). See the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): black bars as a switch
     row, and Picture fine-tuning (`#/settings/picture`: shadow lift, edge
-    depth, smoothing 0 to 2 s, detail 1 to 512, all sliders in Home's one
-    slider style, widened to fit a saved value beyond), applied live (debounced 400 ms, sliders on
+    depth, smoothing 0 to 2 s, its response 0 to 100 %, detail 1 to 512, all
+    sliders in Home's one slider style, widened to fit a saved value beyond;
+    how brightness follows as a rows-pattern choice), applied live (debounced 400 ms, sliders on
     release) because processing-only changes reach a running session without
     restarting it. [Colour profiles](packages/web-portal/profiles.tsx)
     (`#/settings/profiles`): one row each ("In use" or "Not in use") opening

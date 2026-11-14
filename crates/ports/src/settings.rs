@@ -1,8 +1,8 @@
 use crate::ValidationError;
 use crate::profiles::{self, ColorProfile};
 use prysm_core::{
-    BrightnessPercent, ColorCorrection, Config, SampleDensity, ShadowLiftPercent, SmoothingSeconds,
-    SpatialReachPercent,
+    BrightnessPercent, BrightnessSmoothing, ColorCorrection, Config, SampleDensity,
+    ShadowLiftPercent, SmoothingResponsePercent, SmoothingSeconds, SpatialReachPercent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -94,6 +94,9 @@ pub struct Processing {
     pub brightness_percent: u8,
     pub shadow_lift_percent: u8,
     pub smoothing_seconds: f32,
+    pub smoothing_response_percent: u8,
+    #[serde(with = "BrightnessSmoothingName")]
+    pub brightness_smoothing: BrightnessSmoothing,
     pub sample_density: u16,
     pub spatial_reach_percent: u8,
     pub remove_black_bars: bool,
@@ -112,6 +115,8 @@ impl Default for Processing {
             brightness_percent: config.brightness_percent.0,
             shadow_lift_percent: config.shadow_lift_percent.0,
             smoothing_seconds: config.smoothing_seconds.0,
+            smoothing_response_percent: config.smoothing_response_percent.0,
+            brightness_smoothing: config.brightness_smoothing,
             sample_density: u16::try_from(config.sample_density.0).unwrap_or(u16::MAX),
             spatial_reach_percent: config.spatial_reach_percent.0,
             remove_black_bars: config.remove_black_bars,
@@ -134,6 +139,11 @@ impl Processing {
         };
         percent("brightness_percent", self.brightness_percent, 0)?;
         percent("shadow_lift_percent", self.shadow_lift_percent, 0)?;
+        percent(
+            "smoothing_response_percent",
+            self.smoothing_response_percent,
+            0,
+        )?;
         percent("spatial_reach_percent", self.spatial_reach_percent, 1)?;
         if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
             return Err(ValidationError::new(
@@ -178,11 +188,23 @@ impl Processing {
             brightness_percent: BrightnessPercent(self.brightness_percent),
             shadow_lift_percent: ShadowLiftPercent(self.shadow_lift_percent),
             smoothing_seconds: SmoothingSeconds(self.smoothing_seconds),
+            smoothing_response_percent: SmoothingResponsePercent(self.smoothing_response_percent),
+            brightness_smoothing: self.brightness_smoothing,
             sample_density: SampleDensity(usize::from(self.sample_density)),
             spatial_reach_percent: SpatialReachPercent(self.spatial_reach_percent),
             remove_black_bars: self.remove_black_bars,
         }
     }
+}
+
+/// The settings file's names for [`BrightnessSmoothing`]; `prysm-core` stays
+/// free of serialization. Serde checks this mirror covers every variant.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "BrightnessSmoothing", rename_all = "snake_case")]
+enum BrightnessSmoothingName {
+    WithColor,
+    Faster,
+    Limited,
 }
 
 /// Optimistic-concurrency token for settings. It starts at a random value in
@@ -253,6 +275,60 @@ mod tests {
             ..Processing::default()
         };
         assert!(invalid.validate().is_err());
+        let invalid = Processing {
+            smoothing_response_percent: 101,
+            ..Processing::default()
+        };
+        assert_eq!(
+            invalid.validate().unwrap_err().field,
+            "processing.smoothing_response_percent"
+        );
+    }
+
+    #[test]
+    fn adaptive_smoothing_round_trips_and_defaults_when_omitted() {
+        let omitted: Processing =
+            serde_json::from_value(serde_json::json!({ "smoothing_seconds": 0.5 })).unwrap();
+        assert_eq!(omitted.smoothing_response_percent, 0);
+        assert_eq!(omitted.brightness_smoothing, BrightnessSmoothing::WithColor);
+        assert_eq!(
+            omitted.config().smoothing_response_percent,
+            Config::default().smoothing_response_percent
+        );
+
+        for (brightness, name) in
+            BrightnessSmoothing::ALL
+                .into_iter()
+                .zip(["with_color", "faster", "limited"])
+        {
+            let present: Processing = serde_json::from_value(serde_json::json!({
+                "smoothing_response_percent": 60,
+                "brightness_smoothing": name,
+            }))
+            .unwrap();
+            present.validate().unwrap();
+            assert_eq!(present.brightness_smoothing, brightness);
+            let config = present.config();
+            assert_eq!(
+                config.smoothing_response_percent,
+                SmoothingResponsePercent(60)
+            );
+            assert_eq!(config.brightness_smoothing, brightness);
+            let written = serde_json::to_value(&present).unwrap();
+            assert_eq!(written["brightness_smoothing"], name);
+            assert_eq!(written["smoothing_response_percent"], 60);
+            assert_eq!(
+                serde_json::from_value::<Processing>(written).unwrap(),
+                present
+            );
+        }
+        // A closed set: an unknown name is refused, not defaulted.
+        assert!(
+            serde_json::from_value::<Processing>(
+                serde_json::json!({ "brightness_smoothing": "sometimes" })
+            )
+            .is_err()
+        );
     }
 
     #[test]

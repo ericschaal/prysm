@@ -11,6 +11,8 @@ export const defaultProcessing = {
   brightness_percent: 100,
   shadow_lift_percent: 0,
   smoothing_seconds: 0,
+  smoothing_response_percent: 0,
+  brightness_smoothing: 'with_color' as const,
   sample_density: 1,
   spatial_reach_percent: 10,
   remove_black_bars: false,

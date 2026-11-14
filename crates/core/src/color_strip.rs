@@ -116,24 +116,32 @@ impl ColorStrip {
 
     /// Blend two strips together with a ratio (0.0 = full self, 1.0 = full other)
     #[must_use]
+    pub fn blend(&self, other: &ColorStrip, ratio: f32) -> ColorStrip {
+        self.combine(other, |from, to| from.blend(&to, ratio))
+    }
+
+    /// Combine two strips sample by sample, both resampled to the longer one's count.
+    #[must_use]
     #[allow(
         clippy::missing_panics_doc,
         reason = "indices are within the output count"
     )]
-    pub fn blend(&self, other: &ColorStrip, ratio: f32) -> ColorStrip {
+    pub fn combine(
+        &self,
+        other: &ColorStrip,
+        mut combine: impl FnMut(LinearColor, LinearColor) -> LinearColor,
+    ) -> ColorStrip {
         let result_len = self.samples.len().max(other.samples.len());
-        let blended = (0..result_len)
+        let combined = (0..result_len)
             .map(|i| {
-                self.color_at(i, result_len)
-                    .expect("bounded strip index")
-                    .blend(
-                        &other.color_at(i, result_len).expect("bounded strip index"),
-                        ratio,
-                    )
+                combine(
+                    self.color_at(i, result_len).expect("bounded strip index"),
+                    other.color_at(i, result_len).expect("bounded strip index"),
+                )
             })
             .collect();
         Self {
-            samples: Arc::new(blended),
+            samples: Arc::new(combined),
         }
     }
 
@@ -208,11 +216,21 @@ impl EdgeColors {
     /// Blend two `EdgeColors` together with a ratio (0.0 = full self, 1.0 = full other)
     #[must_use]
     pub fn blend(&self, other: &EdgeColors, ratio: f32) -> EdgeColors {
+        self.combine(other, |from, to| from.blend(&to, ratio))
+    }
+
+    /// Combine two `EdgeColors` sample by sample, edge by edge (see [`ColorStrip::combine`]).
+    #[must_use]
+    pub fn combine(
+        &self,
+        other: &EdgeColors,
+        mut combine: impl FnMut(LinearColor, LinearColor) -> LinearColor,
+    ) -> EdgeColors {
         EdgeColors {
-            top: self.top.blend(&other.top, ratio),
-            right: self.right.blend(&other.right, ratio),
-            bottom: self.bottom.blend(&other.bottom, ratio),
-            left: self.left.blend(&other.left, ratio),
+            top: self.top.combine(&other.top, &mut combine),
+            right: self.right.combine(&other.right, &mut combine),
+            bottom: self.bottom.combine(&other.bottom, &mut combine),
+            left: self.left.combine(&other.left, &mut combine),
         }
     }
 }

@@ -76,6 +76,11 @@ pub struct ProcessingSchema {
     /// Seconds; 0 disables smoothing.
     #[schema(minimum = 0)]
     smoothing_seconds: f32,
+    /// How much faster smoothing follows a large change than a small one;
+    /// 0 smooths every change at one rate.
+    #[schema(minimum = 0, maximum = 100)]
+    smoothing_response_percent: u8,
+    brightness_smoothing: BrightnessSmoothingSchema,
     #[schema(minimum = 1)]
     sample_density: u16,
     #[schema(minimum = 1, maximum = 100)]
@@ -94,6 +99,20 @@ pub struct ProcessingSchema {
         pattern = "^[A-Za-z0-9_-]+$"
     )]
     active_profile: Option<String>,
+}
+
+// Mirrors `prysm_ports::Processing::brightness_smoothing`.
+/// How brightness follows a change while colour is smoothed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = BrightnessSmoothing)]
+#[serde(rename_all = "snake_case")]
+pub enum BrightnessSmoothingSchema {
+    /// Together with colour, in linear light.
+    WithColor,
+    /// Brightness settles three times as fast as colour.
+    Faster,
+    /// Brightness changes at most from black to white in a quarter second.
+    Limited,
 }
 
 // Mirrors `prysm_ports::ColorProfile`.
@@ -385,6 +404,7 @@ impl ToSchema for OutputSettings {}
     SettingsReplaced,
     SettingsSchema,
     ProcessingSchema,
+    BrightnessSmoothingSchema,
     ColorProfileSchema,
     CorrectionControlsSchema,
     HueControlsSchema,
@@ -599,6 +619,16 @@ mod tests {
             },
             ..Settings::default()
         });
+        for brightness_smoothing in ["with_color", "faster", "limited"] {
+            let processing = json!({
+                "smoothing_response_percent": 70,
+                "brightness_smoothing": brightness_smoothing,
+            });
+            same_shape::<Settings, SettingsSchema>(&Settings {
+                processing: serde_json::from_value(processing).unwrap(),
+                ..Settings::default()
+            });
+        }
         for target in LightingTarget::ALL {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
         }

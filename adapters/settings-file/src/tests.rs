@@ -16,6 +16,8 @@ fn sample() -> Settings {
         processing: Processing {
             brightness_percent: 80,
             smoothing_seconds: 0.3,
+            smoothing_response_percent: 40,
+            brightness_smoothing: prysm_ports::BrightnessSmoothing::Faster,
             ..Processing::default()
         },
     }
@@ -73,6 +75,10 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert!(text.ends_with("}\n"), "{text}");
     assert!(text.contains("\n  \"capture\": {\n"), "{text}");
     assert!(text.contains("\"smoothing_seconds\": 0.3,"), "{text}");
+    assert!(
+        text.contains("\"brightness_smoothing\": \"faster\","),
+        "{text}"
+    );
     // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();
