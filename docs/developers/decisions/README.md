@@ -3,6 +3,7 @@
 | Choice | Why |
 | --- | --- |
 | [One runtime, plain blocking adapters](2026-11-12-one-runtime-plain-adapters.md) | One place for concurrency and shutdown order; a new source or output is one trait. |
+| [Data-parallel sampling inside the processor](2026-11-14-parallel-sampling.md) | The sampler's per-cell work uses up to three of the TV's cores; not yet measured on the TV. |
 | [Settings file for run-time settings, command line for process options](2026-11-03-settings-ownership.md) | One owner per value; neither overrides the other. |
 | Ordered commands, replaceable frames | Keep commands without letting video latency build up. |
 | Close the source, then idle the output, on every exit | Late frames cannot undo the requested state; idle is the failure compensation. |

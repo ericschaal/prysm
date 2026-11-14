@@ -1,6 +1,9 @@
+use crate::Stage;
 use crate::frames::FrameView;
+use crate::workers::Workers;
 use color_focus::ColorFocus;
 use prysm_core::{ColorFocusPercent, ColorStrip, Edge, EdgeColors, LinearColor, SampleDensity};
+use std::ops::Range;
 
 mod color_focus;
 
@@ -99,6 +102,15 @@ fn sample_point(edge: Edge, index: usize, count: usize, width: u32, height: u32)
     }
 }
 
+/// Fewest cells a worker averages at a time: about 4,000 pixels at 640x360,
+/// so a small grid is not split into pieces that cost more to hand out than
+/// to compute.
+const CELL_CHUNK: usize = 64;
+/// Fewest samples a worker projects at a time: whole groups of [`GROUP`].
+const PROJECTION_CHUNK: usize = 4 * GROUP;
+/// Fewest colour focus samples a worker refines at a time.
+const FOCUS_CHUNK: usize = 8;
+
 /// Samples projected together, so each cell color is loaded once per group.
 const GROUP: usize = 4;
 /// Cells summed in `f32` before the partial sum is added in `f64`: keeps the
@@ -145,6 +157,34 @@ fn project(colors: &[LinearColor], rows: &[f32], out: &mut [LinearColor]) {
     for (out, [r, g, b]) in out.iter_mut().zip(total) {
         *out = LinearColor::new(r as f32, g as f32, b as f32);
     }
+}
+
+/// The parts of a chunk of the run of all edges' samples (edges in strip
+/// order, `counts[edge]` samples each) that starts at sample `offset` and
+/// holds `len`: for each edge it overlaps, the edge, the part's samples
+/// within the edge, and within the chunk.
+fn edge_parts(
+    counts: [usize; 4],
+    offset: usize,
+    len: usize,
+) -> impl Iterator<Item = (usize, Range<usize>, Range<usize>)> {
+    let ends = counts.into_iter().scan(0, |end, count| {
+        *end += count;
+        Some(*end)
+    });
+    ends.zip(counts)
+        .enumerate()
+        .filter_map(move |(edge, (end, count))| {
+            let start = end - count;
+            let (first, last) = (offset.max(start), (offset + len).min(end));
+            (first < last).then(|| {
+                (
+                    edge,
+                    first - start..last - start,
+                    first - offset..last - offset,
+                )
+            })
+        })
 }
 
 impl SpatialSampler {
@@ -256,11 +296,22 @@ impl SpatialSampler {
         self.dimensions = Some((width, height));
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "normalized weighted channel means fit the f32 color representation"
-    )]
+    /// [`Self::process_with`] on the caller's thread alone, unobserved.
+    #[cfg(test)]
     pub fn process(&mut self, view: &FrameView) -> EdgeColors {
+        self.process_with(view, &Workers::default(), &mut |_| {})
+    }
+
+    /// Reduces `view` to edge colours. Cells, projected samples and colour
+    /// focus samples are each independent of the others, so `workers` may compute them in chunks on its pool; the
+    /// result is the same, bit for bit, on any number of threads. `mark` is
+    /// told as each stage ends.
+    pub fn process_with(
+        &mut self,
+        view: &FrameView,
+        workers: &Workers,
+        mark: &mut impl FnMut(Stage),
+    ) -> EdgeColors {
         let (width, height) = (view.viewport_width(), view.viewport_height());
         if width == 0 || height == 0 {
             return EdgeColors::black(width as usize, height as usize, self.sample_density);
@@ -268,11 +319,31 @@ impl SpatialSampler {
         if self.dimensions != Some((width, height)) {
             self.prepare_geometry(width, height);
         }
-        let cells = self.cell_colors.iter_mut().zip(&self.cells);
-        let step = self.step;
-        cells.for_each(|(color, &[x0, y0, x1, y1])| {
-            *color = view.average_linear_every(x0, y0, x1, y1, step);
+        let (cells, step) = (&self.cells, self.step);
+        workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
+            for (color, &[x0, y0, x1, y1]) in colors.iter_mut().zip(&cells[offset..]) {
+                *color = view.average_linear_every(x0, y0, x1, y1, step);
+            }
         });
+        mark(Stage::CellAverages);
+
+        // The samples of all four edges, in strip order, as one run; each
+        // sample's weighted mean is independent of the others.
+        let (colors, weights) = (&self.cell_colors, &self.sample_weights);
+        let cell_count = colors.len();
+        let counts = weights.each_ref().map(|w| w.len() / cell_count);
+        let mut samples = vec![LinearColor::black(); counts.iter().sum()];
+        workers.for_each_chunk(&mut samples, PROJECTION_CHUNK, |offset, chunk| {
+            for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
+                let rows = &weights[edge][rows.start * cell_count..rows.end * cell_count];
+                let groups = chunk[out]
+                    .chunks_mut(GROUP)
+                    .zip(rows.chunks(GROUP * cell_count));
+                groups.for_each(|(out, rows)| project(colors, rows, out));
+            }
+        });
+        mark(Stage::Projection);
+
         let focus = self.color_focus.as_ratio();
         if focus > 0.0 {
             let geometry = Geometry {
@@ -285,19 +356,18 @@ impl SpatialSampler {
                 weights: &self.sample_weights,
             };
             self.focus.prepare_frame(&geometry, &self.cell_colors);
+            let focus_pass = &self.focus;
+            workers.for_each_chunk(&mut samples, FOCUS_CHUNK, |offset, chunk| {
+                for (edge, rows, out) in edge_parts(counts, offset, chunk.len()) {
+                    focus_pass.refine(edge, rows.start, focus, &mut chunk[out]);
+                }
+            });
+            mark(Stage::ColorFocus);
         }
-        let [top, right, bottom, left] = std::array::from_fn(|edge| {
-            let weights = &self.sample_weights[edge];
-            let cell_count = self.cell_colors.len();
-            let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
-            let groups = samples
-                .chunks_mut(GROUP)
-                .zip(weights.chunks(GROUP * cell_count));
-            groups.for_each(|(out, rows)| project(&self.cell_colors, rows, out));
-            if focus > 0.0 {
-                self.focus.refine(edge, focus, &mut samples);
-            }
-            ColorStrip::new(samples).expect("sample count is nonzero")
+
+        let mut rest = samples.into_iter();
+        let [top, right, bottom, left] = counts.map(|count| {
+            ColorStrip::new(rest.by_ref().take(count).collect()).expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
     }
@@ -460,6 +530,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn edge_parts_split_a_chunk_of_the_run_at_edge_boundaries() {
+        let parts = |offset, len| edge_parts([3, 2, 0, 4], offset, len).collect::<Vec<_>>();
+        assert_eq!(
+            parts(0, 9),
+            [(0, 0..3, 0..3), (1, 0..2, 3..5), (3, 0..4, 5..9)]
+        );
+        assert_eq!(
+            parts(2, 4),
+            [(0, 2..3, 0..1), (1, 0..2, 1..3), (3, 0..1, 3..4)]
+        );
+        assert_eq!(parts(6, 2), [(3, 1..3, 0..2)]);
+        assert!(parts(9, 0).is_empty());
     }
 
     #[test]

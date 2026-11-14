@@ -61,6 +61,14 @@ configuration (sRGB until read; see [`observe.rs`](../../adapters/output-wled/sr
 settings' chosen style is resolved to plain values when `Processing::config`
 builds the processor's `Config`; the processor never learns about styles.
 
+One exception to "concurrency lives in one runtime": inside its blocking
+call, the processor splits the sampler's independent per-cell and per-light
+loops across a small thread pool it owns (half the cores, at most three
+threads, never rayon's global pool) and joins them before returning; nothing is shared
+between frames, and the colours do not depend on the thread count. On the
+TV two threads take a 640x360 frame from 11 to 7 ms
+([decision](decisions/2026-11-14-parallel-sampling.md)).
+
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is
 idled to the device's own state and reopened at the next frame. While a

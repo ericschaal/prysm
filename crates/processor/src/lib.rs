@@ -1,10 +1,13 @@
 use frames::{FrameView, Viewport};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
 use prysm_core::{ColorCorrection, Config, EdgeColors, Frame, LinearColor, PixelFormat};
+use std::num::NonZeroUsize;
 use std::time::Instant;
+use workers::Workers;
 
 mod frames;
 mod nodes;
+mod workers;
 
 pub use nodes::cut_strength;
 
@@ -16,6 +19,11 @@ pub use nodes::cut_strength;
 /// Colour focus, when set, then lets each sample keep the hue next to it.
 /// Pictures above 640x360 are averaged on a lattice of every nth pixel and row
 /// and get the grid of 640x360, so sampling costs about the same at any capture size.
+///
+/// Cell averaging and colour focus may run on a small dedicated thread pool
+/// owned by the processor (see [`Self::with_threads`]); each call still
+/// returns only when its frame is done, with the same colours on any number
+/// of threads.
 #[derive(Debug)]
 pub struct PrysmProcessor {
     config: Config,
@@ -25,6 +33,25 @@ pub struct PrysmProcessor {
     temporal_smoother: Option<TemporalSmoother>,
     last_viewport: Option<Viewport>,
     frame_layout: Option<FrameLayout>,
+    workers: Workers,
+}
+
+/// A pipeline stage, as [`PrysmProcessor::process_frame_staged`] reports it.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// Black-bar detection, with bars removed.
+    BlackBars,
+    /// Each grid cell's mean linear colour: pixel decoding, linearising, sums.
+    CellAverages,
+    /// Each light's plain weighted mean of the cells.
+    Projection,
+    /// Colour focus, with focus above 0.
+    ColorFocus,
+    /// Temporal smoothing, with smoothing on.
+    Smoothing,
+    /// Colour boost, dark floor, calibration and brightness, when any is not neutral.
+    Output,
 }
 
 /// A layout change invalidates geometry and temporal history.
@@ -36,7 +63,21 @@ struct FrameLayout {
 }
 
 impl PrysmProcessor {
+    /// A processor that samples on up to three pool threads, one fewer than
+    /// the machine's cores, so the rest of the system keeps a core; on one
+    /// or two cores it uses the calling thread alone.
     pub fn new(config: &Config) -> Self {
+        Self::with_threads(config, Workers::automatic_threads())
+    }
+
+    /// A processor that samples on `threads` dedicated pool threads, never
+    /// rayon's global pool. With one thread it creates no pool and runs on
+    /// the calling thread. The pool's threads end when the processor is dropped.
+    pub fn with_threads(config: &Config, threads: NonZeroUsize) -> Self {
+        Self::with_workers(config, Workers::new(threads))
+    }
+
+    fn with_workers(config: &Config, workers: Workers) -> Self {
         let mut sampler = SpatialSampler::new(
             config.sample_density,
             config.spatial_reach_percent.as_ratio(),
@@ -49,6 +90,7 @@ impl PrysmProcessor {
             temporal_smoother: TemporalSmoother::new(config),
             last_viewport: None,
             frame_layout: None,
+            workers,
         }
     }
 
@@ -86,13 +128,27 @@ impl PrysmProcessor {
     /// Use a shared clock origin plus source timestamps when replaying video.
     /// Repeated or earlier times do not advance smoothing.
     pub fn process_frame_at(&mut self, frame: Frame, now: Instant) -> EdgeColors {
+        self.process_frame_staged(frame, now, |_| {})
+    }
+
+    /// [`Self::process_frame_at`], calling `mark` as each stage that ran
+    /// ends, in pipeline order: a timing hook for the processor benchmark.
+    #[doc(hidden)]
+    pub fn process_frame_staged(
+        &mut self,
+        frame: Frame,
+        now: Instant,
+        mut mark: impl FnMut(Stage),
+    ) -> EdgeColors {
         let layout = FrameLayout {
             width: frame.width(),
             height: frame.height(),
             format: frame.format(),
         };
         if self.frame_layout != Some(layout) {
-            *self = Self::new(&self.config);
+            // A new layout starts afresh, on the same threads.
+            let workers = std::mem::take(&mut self.workers);
+            *self = Self::with_workers(&self.config, workers);
             self.frame_layout = Some(layout);
         }
 
@@ -114,13 +170,15 @@ impl PrysmProcessor {
 
         if let Some(ref mut detector) = self.black_bar_detector {
             view = detector.process(view, now);
+            mark(Stage::BlackBars);
         }
 
         self.last_viewport = Some(view.viewport);
-        let mut edge_colors = self.sampler.process(&view);
+        let mut edge_colors = self.sampler.process_with(&view, &self.workers, &mut mark);
 
         if let Some(ref mut smoother) = self.temporal_smoother {
             edge_colors = smoother.process(edge_colors, now);
+            mark(Stage::Smoothing);
         }
 
         let config = &self.config;
@@ -138,6 +196,7 @@ impl PrysmProcessor {
             ] {
                 strip.map_colors(|color| output_color(config, color));
             }
+            mark(Stage::Output);
         }
         edge_colors
     }
@@ -156,6 +215,118 @@ fn output_color(config: &Config, color: LinearColor) -> LinearColor {
 impl Default for PrysmProcessor {
     fn default() -> Self {
         Self::new(&Config::default())
+    }
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use super::*;
+    use prysm_core::{
+        ColorFocusPercent, SampleDensity, SpatialReachPercent, YuvRange, YuvStandardMatrix,
+    };
+
+    /// A letterboxed NV12 picture of gradients and noise that moves with `seed`.
+    fn nv12(width: u32, height: u32, seed: u32) -> Frame {
+        let (w, h) = (width as usize, height as usize);
+        let mut state = 0x9E37_79B9_u32 ^ seed.wrapping_mul(0x85EB_CA6B);
+        let mut noise = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state.to_le_bytes()[0] & 31
+        };
+        let bar = h / 8;
+        let mut data = vec![128_u8; w * h * 3 / 2];
+        for y in 0..h {
+            for x in 0..w {
+                data[y * w + x] = if y < bar || y >= h - bar {
+                    16
+                } else {
+                    let level = (x * 160 / w + y * 40 / h + seed as usize) % 200;
+                    16 + u8::try_from(level).unwrap() + noise()
+                };
+            }
+        }
+        for (i, pair) in data[w * h..].as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let (x, y) = (i % (w / 2), i / (w / 2));
+            pair[0] = 16 + u8::try_from((x * 7 + seed as usize) % 200).unwrap() + noise() / 2;
+            pair[1] = 16 + u8::try_from((y * 5 + x) % 200).unwrap() + noise() / 2;
+        }
+        let format = PixelFormat::NV12 {
+            range: YuvRange::Limited,
+            matrix: YuvStandardMatrix::Bt709,
+        };
+        Frame::new(data, width, height, format).unwrap()
+    }
+
+    #[test]
+    fn three_threads_give_bit_identical_colours_to_one() {
+        let base = Config {
+            saturation_boost_percent: prysm_core::SaturationBoostPercent(30),
+            dark_floor_percent: prysm_core::DarkFloorPercent(3),
+            ..Config::default()
+        };
+        let configs = [
+            base,
+            Config {
+                color_focus_percent: ColorFocusPercent(10),
+                ..base
+            },
+            Config {
+                color_focus_percent: ColorFocusPercent(100),
+                spatial_reach_percent: SpatialReachPercent(100),
+                ..base
+            },
+            Config {
+                color_focus_percent: ColorFocusPercent(60),
+                sample_density: SampleDensity(2000),
+                remove_black_bars: false,
+                ..base
+            },
+        ];
+        let one = NonZeroUsize::MIN;
+        let three = NonZeroUsize::new(3).unwrap();
+        for config in configs {
+            for (width, height) in [(640, 360), (1280, 720), (96, 54)] {
+                let mut serial = PrysmProcessor::with_threads(&config, one);
+                let mut parallel = PrysmProcessor::with_threads(&config, three);
+                let start = Instant::now();
+                for seed in 0..6 {
+                    let frame = nv12(width, height, seed * 37);
+                    let now = start + std::time::Duration::from_millis(u64::from(seed) * 33);
+                    assert_eq!(
+                        parallel.process_frame_at(frame.clone(), now),
+                        serial.process_frame_at(frame, now),
+                        "{width}x{height} frame {seed}: {config:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stages_are_reported_in_pipeline_order() {
+        let config = Config {
+            color_focus_percent: ColorFocusPercent(50),
+            brightness_percent: prysm_core::BrightnessPercent(80),
+            ..Config::default()
+        };
+        let mut processor = PrysmProcessor::with_threads(&config, NonZeroUsize::MIN);
+        let mut stages = Vec::new();
+        let _ = processor.process_frame_staged(nv12(64, 36, 1), Instant::now(), |stage| {
+            stages.push(stage);
+        });
+        assert_eq!(
+            stages,
+            [
+                Stage::BlackBars,
+                Stage::CellAverages,
+                Stage::Projection,
+                Stage::ColorFocus,
+                Stage::Smoothing,
+                Stage::Output
+            ]
+        );
     }
 }
 

@@ -68,6 +68,8 @@ prysm-host = { path = "hosts/common" }
 # Only the features the hosts' help and usage errors need; no colour or suggestions.
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures = "0.3"
+# Data-parallel sampling on a dedicated pool (crates/processor/src/workers.rs).
+rayon = "1.11"
 libloading = "0.9"
 nix = "0.31"
 serde = { version = "1", features = ["derive"] }

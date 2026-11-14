@@ -340,15 +340,25 @@ impl ColorFocus {
         self.blocks.pool(cell_colors);
     }
 
-    /// Replaces each plain mean in `samples` (one edge, `edge` in strip
-    /// order 0..4) by its focused colour. Call after [`Self::prepare_frame`].
-    pub(super) fn refine(&self, edge: usize, strength: f32, samples: &mut [LinearColor]) {
+    /// Replaces each plain mean in `samples`, samples `first..` of `edge`
+    /// (strip order 0..4), by its focused colour. Call after
+    /// [`Self::prepare_frame`].
+    pub(super) fn refine(
+        &self,
+        edge: usize,
+        first: usize,
+        strength: f32,
+        samples: &mut [LinearColor],
+    ) {
         let Some(fields) = self.fields.get(edge) else {
             return;
         };
         // Without blocks `far` is empty, and so is the zip.
-        let far_rows = fields.far.chunks_exact(self.blocks.len().max(1));
-        let near_rows = fields.starts.windows(2);
+        let far_rows = fields
+            .far
+            .chunks_exact(self.blocks.len().max(1))
+            .skip(first);
+        let near_rows = fields.starts.windows(2).skip(first);
         for (sample, (near, far)) in samples.iter_mut().zip(near_rows.zip(far_rows)) {
             let near = fields.near.get(near[0]..near[1]).unwrap_or_default();
             *sample = self.focused(*sample, near, far, strength);
