@@ -1,5 +1,5 @@
 use crate::ValidationError;
-use crate::profiles::{self, ColorProfile};
+use crate::calibrations::{self, Calibration};
 use prysm_core::{
     BrightnessPercent, BrightnessRampSeconds, ColorCorrection, ColorFocusPercent, Config,
     CutResponsePercent, SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
@@ -16,10 +16,10 @@ use std::fmt;
 ///   "output": { "kind": "wled", "address": "wled.local", "leds": { "top": 96 } },
 ///   "processing": {
 ///     "brightness_percent": 80,
-///     "profiles": [
+///     "calibrations": [
 ///       { "id": "ps5", "name": "PS5", "correction": { "warmth": 12, "tint": -4 } }
 ///     ],
-///     "active_profile": "ps5"
+///     "active_calibration": "ps5"
 ///   }
 /// }
 /// ```
@@ -85,9 +85,9 @@ impl AdapterSettings {
     }
 }
 
-/// Processing controls in plain units, plus the saved color profiles and the
+/// Processing controls in plain units, plus the saved calibrations and the
 /// active one; converted to [`Config`] for the processor. Any change here,
-/// including to profiles, is applied to a running session at the next frame.
+/// including to calibrations, is applied to a running session at the next frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Processing {
@@ -101,12 +101,12 @@ pub struct Processing {
     pub spatial_reach_percent: u8,
     pub color_focus_percent: u8,
     pub remove_black_bars: bool,
-    /// At most [`MAX_PROFILES`](crate::MAX_PROFILES), with unique ids.
+    /// At most [`MAX_CALIBRATIONS`](crate::MAX_CALIBRATIONS), with unique ids.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub profiles: Vec<ColorProfile>,
-    /// The `id` of the profile whose correction is applied; none applies no correction.
+    pub calibrations: Vec<Calibration>,
+    /// The `id` of the calibration whose correction is applied; none applies no correction.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_profile: Option<String>,
+    pub active_calibration: Option<String>,
 }
 
 impl Default for Processing {
@@ -122,8 +122,8 @@ impl Default for Processing {
             spatial_reach_percent: config.spatial_reach_percent.0,
             color_focus_percent: config.color_focus_percent.0,
             remove_black_bars: config.remove_black_bars,
-            profiles: Vec::new(),
-            active_profile: None,
+            calibrations: Vec::new(),
+            active_calibration: None,
         }
     }
 }
@@ -169,27 +169,29 @@ impl Processing {
                 "must be at least 1",
             ));
         }
-        profiles::validate(
+        calibrations::validate(
             Section::Processing,
-            &self.profiles,
-            self.active_profile.as_deref(),
+            &self.calibrations,
+            self.active_calibration.as_deref(),
         )
     }
 
-    /// The active profile, if one is set and exists.
+    /// The active calibration, if one is set and exists.
     #[must_use]
-    pub fn active(&self) -> Option<&ColorProfile> {
-        let active = self.active_profile.as_deref()?;
-        self.profiles.iter().find(|profile| profile.id == active)
+    pub fn active(&self) -> Option<&Calibration> {
+        let active = self.active_calibration.as_deref()?;
+        self.calibrations
+            .iter()
+            .find(|calibration| calibration.id == active)
     }
 
-    /// The active profile's correction. No correction when none is active, or
-    /// when loaded settings name a missing or out-of-range profile (which
+    /// The active calibration's correction. No correction when none is active, or
+    /// when loaded settings name a missing or out-of-range calibration (which
     /// [`Processing::validate`] reports).
     #[must_use]
     pub fn correction(&self) -> ColorCorrection {
         self.active()
-            .and_then(|profile| profile.correction.to_core())
+            .and_then(|calibration| calibration.correction.to_core())
             .unwrap_or_default()
     }
 
@@ -382,13 +384,13 @@ mod tests {
     }
 
     #[test]
-    fn active_profile_sets_the_processor_correction() {
+    fn active_calibration_sets_the_processor_correction() {
         let processing: Processing = serde_json::from_value(serde_json::json!({
-            "profiles": [
+            "calibrations": [
                 { "id": "ps5", "name": "PS5", "correction": { "warmth": 40, "hue": { "red": -5 } } },
                 { "id": "apps", "name": "TV apps" }
             ],
-            "active_profile": "ps5"
+            "active_calibration": "ps5"
         }))
         .unwrap();
         processing.validate().unwrap();
@@ -398,7 +400,7 @@ mod tests {
         assert_eq!(processing.config().correction, expected);
         assert_eq!(
             Processing {
-                active_profile: Some("apps".into()),
+                active_calibration: Some("apps".into()),
                 ..processing.clone()
             }
             .config()
@@ -406,24 +408,27 @@ mod tests {
             ColorCorrection::default()
         );
         let missing = Processing {
-            active_profile: Some("gone".into()),
+            active_calibration: Some("gone".into()),
             ..processing.clone()
         };
         assert_eq!(
             missing.validate().unwrap_err().field,
-            "processing.active_profile"
+            "processing.active_calibration"
         );
         assert_eq!(missing.config().correction, ColorCorrection::default());
 
         // Every control is written, so the file shows what can be edited.
         let written = serde_json::to_value(&processing).unwrap();
-        assert_eq!(written["profiles"][1]["correction"]["hue"]["magenta"], 0);
+        assert_eq!(
+            written["calibrations"][1]["correction"]["hue"]["magenta"],
+            0
+        );
         assert_eq!(
             serde_json::from_value::<Processing>(written).unwrap(),
             processing
         );
-        // No profiles write nothing.
+        // No calibrations write nothing.
         let empty = serde_json::to_value(Processing::default()).unwrap();
-        assert!(empty.get("profiles").is_none() && empty.get("active_profile").is_none());
+        assert!(empty.get("calibrations").is_none() && empty.get("active_calibration").is_none());
     }
 }

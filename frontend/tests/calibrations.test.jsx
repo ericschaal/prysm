@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import {
-  newProfileId,
+  newCalibrationId,
   processingDelayMs,
-  profileLimits,
+  calibrationLimits,
   undoForMs,
 } from '@prysm/web-portal';
 import {
@@ -51,7 +51,7 @@ const enter = (element) =>
     ),
   );
 
-test('colour profiles are rows; each opens its page, saved live, deleted with Undo', async (t) => {
+test('calibrations are rows; each opens its page, saved live, deleted with Undo', async (t) => {
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -60,30 +60,30 @@ test('colour profiles are rows; each opens its page, saved live, deleted with Un
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          profiles: [
+          calibrations: [
             { id: 'movie', name: 'Movie night', correction: zero },
             { id: 'ps5', name: 'PS5' },
           ],
-          active_profile: 'movie',
+          active_calibration: 'movie',
         },
       },
     }),
   );
   const { fixture } = portal;
   try {
-    await openPage('Colour profiles');
-    assert.equal(window.location.hash, '#/settings/profiles');
+    await openPage('Calibrations');
+    assert.equal(window.location.hash, '#/settings/calibrations');
     assert.deepEqual(
       ['Movie night', 'PS5'].map((name) => valueOf(name)),
       ['In use', 'Not in use'],
     );
     assert.equal($('.save-status').textContent, 'All changes saved');
 
-    // A profile's page: its name, whether it is in use, its correction.
+    // A calibration's page: its name, whether it is in use, its correction.
     await openPage('PS5');
-    assert.equal(window.location.hash, '#/settings/profiles/ps5');
+    assert.equal(window.location.hash, '#/settings/calibrations/ps5');
     assert.equal($('.page-heading h2').textContent, 'PS5');
-    const name = field('processing.profiles[1].name');
+    const name = field('processing.calibrations[1].name');
     await edit(name, '');
     assert.equal(errorOf(name), 'Enter a name.');
     await edit(name, '  Game ');
@@ -92,82 +92,82 @@ test('colour profiles are rows; each opens its page, saved live, deleted with Un
     await enter(name);
     assert.equal(name.value, 'Game');
     await settle();
-    assert.equal(processing(fixture).profiles[1].name, 'Game');
+    assert.equal(processing(fixture).calibrations[1].name, 'Game');
 
-    const inUse = field('processing.active_profile');
+    const inUse = field('processing.active_calibration');
     assert.equal(inUse.checked, false);
     await click(inUse);
     await settle();
-    assert.equal(processing(fixture).active_profile, 'ps5');
-    const warmth = field('processing.profiles[1].correction.warmth');
+    assert.equal(processing(fixture).active_calibration, 'ps5');
+    const warmth = field('processing.calibrations[1].correction.warmth');
     assert.deepEqual(
       [warmth.type, warmth.min, warmth.max, warmth.step],
       ['range', '-100', '100', '1'],
     );
     await edit(warmth, 25);
-    await edit(field('processing.profiles[1].correction.hue.cyan'), -10);
+    await edit(field('processing.calibrations[1].correction.hue.cyan'), -10);
     assert.equal(
       warmth.parentElement.querySelector('output').textContent,
       '+25',
     );
     await settle();
-    assert.deepEqual(processing(fixture).profiles[1].correction, {
+    assert.deepEqual(processing(fixture).calibrations[1].correction, {
       ...zero,
       warmth: 25,
       hue: { ...zero.hue, cyan: -10 },
     });
 
     // Deleted from its page; the list keeps its row, with Undo.
-    await click(button('Colour profiles'));
+    await click(button('Calibrations'));
     await openPage('Movie night');
-    await click(button('Delete profile'));
+    await click(button('Delete calibration'));
     await settle();
-    assert.equal(window.location.hash, '#/settings/profiles');
+    assert.equal(window.location.hash, '#/settings/calibrations');
     assert.deepEqual(
-      processing(fixture).profiles.map((profile) => profile.name),
+      processing(fixture).calibrations.map((calibration) => calibration.name),
       ['Game'],
     );
     assert.equal(valueOf('Movie night'), 'Deleted. Undo');
     await click(button('Undo'));
     await settle();
     assert.deepEqual(
-      processing(fixture).profiles.map((profile) => profile.name),
+      processing(fixture).calibrations.map((calibration) => calibration.name),
       ['Movie night', 'Game'],
     );
-    assert.equal(processing(fixture).active_profile, 'ps5');
+    assert.equal(processing(fixture).active_calibration, 'ps5');
     assert.equal(valueOf('Movie night'), 'Not in use');
 
     // Undo is offered for a while; then the row only says what happened.
     await openPage('Game');
     t.mock.timers.enable({ apis: ['setTimeout'] });
-    await click(button('Delete profile'));
+    await click(button('Delete calibration'));
     await navigatedOn(t.mock.timers);
-    assert.equal(window.location.hash, '#/settings/profiles');
-    assert.equal(processing(fixture).active_profile, undefined);
+    assert.equal(window.location.hash, '#/settings/calibrations');
+    assert.equal(processing(fixture).active_calibration, undefined);
     await act(async () => t.mock.timers.tick(undoForMs));
     assert(!button('Undo'));
     assert.equal(valueOf('Game'), 'Deleted. ');
     t.mock.timers.reset();
     await settle();
 
-    // Removing the last profile leaves the list out, as the server does.
+    // Removing the last calibration leaves the list out, as the server does.
     await openPage('Movie night');
-    await click(button('Delete profile'));
+    await click(button('Delete calibration'));
     await settle();
-    assert.equal('profiles' in processing(fixture), false);
+    assert.equal('calibrations' in processing(fixture), false);
 
-    // New profiles come from the guided calibration.
-    await openPage('New profile (guided)');
+    // New calibrations come from the Calibrate page.
+    await openPage('New calibration');
     assert.equal(window.location.hash, '#/calibrate');
   } finally {
     await portal.unmount();
   }
 });
 
-test('profile errors land on their control; the list is capped', async () => {
-  const many = Array.from({ length: profileLimits.count }, (_, index) => ({
+test('calibration errors land on their control; the list is capped', async () => {
+  const many = Array.from({ length: calibrationLimits.count }, (_, index) => ({
     id: `p${index}`,
-    name: `Profile ${index}`,
+    name: `Calibration ${index}`,
     correction: zero,
   }));
   const portal = await renderPortal(
@@ -178,29 +178,29 @@ test('profile errors land on their control; the list is capped', async () => {
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          profiles: many,
-          active_profile: 'p3',
+          calibrations: many,
+          active_calibration: 'p3',
         },
       },
     }),
   );
   const { fixture } = portal;
   try {
-    await openPage('Colour profiles');
+    await openPage('Calibrations');
     assert.equal(
-      valueOf('New profile (guided)'),
+      valueOf('New calibration'),
       'You have the most Prysm keeps (32). Delete one first.',
     );
-    await openPage('New profile (guided)');
-    assert.equal(window.location.hash, '#/settings/profiles', 'stays');
+    await openPage('New calibration');
+    assert.equal(window.location.hash, '#/settings/calibrations', 'stays');
 
-    await openPage('Profile 3');
+    await openPage('Calibration 3');
     fixture.failNext({
       kind: 'invalid',
-      field: 'processing.profiles[3].correction.tint',
+      field: 'processing.calibrations[3].correction.tint',
       message: 'must be -100 to 100',
     });
-    const tint = field('processing.profiles[3].correction.tint');
+    const tint = field('processing.calibrations[3].correction.tint');
     await edit(tint, 40);
     await settle();
     assert.equal(errorOf(tint), 'Prysm can’t use this value.');
@@ -210,14 +210,17 @@ test('profile errors land on their control; the list is capped', async () => {
     await edit(tint, 30);
     await settle();
     assert.equal(saves(fixture), 2);
-    assert.equal(processing(fixture).profiles[3].correction.tint, 30);
+    assert.equal(processing(fixture).calibrations[3].correction.tint, 30);
     assert.equal(errorOf(tint), undefined);
 
-    await click(button('Delete profile'));
+    await click(button('Delete calibration'));
     await settle();
-    assert.equal(processing(fixture).profiles.length, profileLimits.count - 1);
     assert.equal(
-      valueOf('New profile (guided)'),
+      processing(fixture).calibrations.length,
+      calibrationLimits.count - 1,
+    );
+    assert.equal(
+      valueOf('New calibration'),
       'Test patterns on the TV, step by step',
     );
   } finally {
@@ -225,8 +228,8 @@ test('profile errors land on their control; the list is capped', async () => {
   }
 });
 
-test('new profile ids are UUIDs no other profile uses', () => {
-  const id = newProfileId();
+test('new calibration ids are UUIDs no other calibration uses', () => {
+  const id = newCalibrationId();
   assert.match(id, uuid);
-  assert.notEqual(newProfileId([id]), id);
+  assert.notEqual(newCalibrationId([id]), id);
 });

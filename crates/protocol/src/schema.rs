@@ -28,7 +28,8 @@ use crate::{
     TargetRequest,
 };
 use prysm_ports::{
-    MAX_PROFILE_ID_LEN, MAX_PROFILE_NAME_CHARS, MAX_PROFILES, OutputFactory, SourceFactory,
+    MAX_CALIBRATION_ID_LEN, MAX_CALIBRATION_NAME_CHARS, MAX_CALIBRATIONS, OutputFactory,
+    SourceFactory,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -59,9 +60,10 @@ pub struct SettingsSchema {
     processing: ProcessingSchema,
 }
 
-// `schema(...)` takes literals only: the profile and ramp limits below are spelled out.
-const _: () =
-    assert!(MAX_PROFILES == 32 && MAX_PROFILE_ID_LEN == 64 && MAX_PROFILE_NAME_CHARS == 64);
+// `schema(...)` takes literals only: the calibration and ramp limits below are spelled out.
+const _: () = assert!(
+    MAX_CALIBRATIONS == 32 && MAX_CALIBRATION_ID_LEN == 64 && MAX_CALIBRATION_NAME_CHARS == 64
+);
 const _: () = assert!(prysm_ports::Processing::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
 
 // Mirrors `prysm_ports::Processing`.
@@ -96,8 +98,8 @@ pub struct ProcessingSchema {
     /// Saved color corrections; ids are unique.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schema(max_items = 32)]
-    profiles: Vec<ColorProfileSchema>,
-    /// The `id` of the applied profile; absent applies no correction.
+    calibrations: Vec<CalibrationSchema>,
+    /// The `id` of the applied calibration; absent applies no correction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(
         nullable = false,
@@ -105,16 +107,16 @@ pub struct ProcessingSchema {
         max_length = 64,
         pattern = "^[A-Za-z0-9_-]+$"
     )]
-    active_profile: Option<String>,
+    active_calibration: Option<String>,
 }
 
-// Mirrors `prysm_ports::ColorProfile`.
+// Mirrors `prysm_ports::Calibration`.
 /// A named color correction, such as one per console.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[schema(as = ColorProfile)]
+#[schema(as = Calibration)]
 #[serde(deny_unknown_fields)]
-pub struct ColorProfileSchema {
-    /// Stable reference for `active_profile`; a UUID fits.
+pub struct CalibrationSchema {
+    /// Stable reference for `active_calibration`; a UUID fits.
     #[schema(min_length = 1, max_length = 64, pattern = "^[A-Za-z0-9_-]+$")]
     id: String,
     /// Without surrounding whitespace or control characters.
@@ -164,15 +166,15 @@ pub struct HueControlsSchema {
     magenta: i16,
 }
 
-// Mirrors `prysm_ports::Calibration`.
+// Mirrors `prysm_ports::CalibrationPattern`.
 /// A calibration pattern shown on the TV: the body of
 /// `PUT /api/v1/calibration` and `State.calibration`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = Calibration)]
+#[schema(as = CalibrationPattern)]
 #[serde(deny_unknown_fields)]
-pub struct CalibrationSchema {
+pub struct CalibrationPatternSchema {
     pattern: PatternSchema,
-    /// Apply no color profile while the pattern shows, to compare.
+    /// Apply no calibration while the pattern shows, to compare.
     uncorrected: bool,
 }
 
@@ -397,11 +399,11 @@ impl ToSchema for OutputSettings {}
     SettingsReplaced,
     SettingsSchema,
     ProcessingSchema,
-    ColorProfileSchema,
+    CalibrationSchema,
     CorrectionControlsSchema,
     HueControlsSchema,
     LightingTargetSchema,
-    CalibrationSchema,
+    CalibrationPatternSchema,
     PatternSchema,
     CaptureSettings,
     OutputSettings,
@@ -553,7 +555,7 @@ impl std::error::Error for SchemaConflict {}
 mod tests {
     use super::*;
     use prysm_ports::{
-        AdapterSettings, Behind, Calibration, Candidate, ColorProfile, CorrectionControls,
+        AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue,
         Pattern, Processing, Result, SessionPhase, Settings, ValidationError,
     };
@@ -588,8 +590,8 @@ mod tests {
         });
         same_shape::<Settings, SettingsSchema>(&Settings {
             processing: Processing {
-                profiles: vec![
-                    ColorProfile {
+                calibrations: vec![
+                    Calibration {
                         id: "ps5".into(),
                         name: "PS5".into(),
                         correction: CorrectionControls {
@@ -600,13 +602,13 @@ mod tests {
                             hue: HueControls::from_array([1, -2, 3, -4, 5, -6]),
                         },
                     },
-                    ColorProfile {
+                    Calibration {
                         id: "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f".into(),
                         name: "TV apps".into(),
                         correction: CorrectionControls::default(),
                     },
                 ],
-                active_profile: Some("ps5".into()),
+                active_calibration: Some("ps5".into()),
                 ..Processing::default()
             },
             ..Settings::default()
@@ -674,7 +676,7 @@ mod tests {
                 .detail("192.168.1.40, 120 LEDs"),
         );
         for (index, pattern) in Pattern::ALL.into_iter().enumerate() {
-            same_shape::<Calibration, CalibrationSchema>(&Calibration {
+            same_shape::<CalibrationPattern, CalibrationPatternSchema>(&CalibrationPattern {
                 pattern,
                 uncorrected: index % 2 == 0,
             });

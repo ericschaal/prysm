@@ -1388,7 +1388,7 @@ fieldset > .help {
 
 /*
  * The mode: two option cards side by side, each an icon, its name and one
- * line on what it does. Selected speaks the colour-profile chips' language:
+ * line on what it does. Selected speaks the calibration chips' language:
  * a light fill with dark ink; lit, the fill takes the light's own colours.
  * Off, the chosen card is only outlined: what Power will turn on, nothing
  * that runs. The other card is quiet but plainly a button.
@@ -1464,7 +1464,7 @@ fieldset > .help {
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.72) inset;
   color: var(--text);
 }
-/* Lit, it is filled, as a chosen profile is, in the light's colours. */
+/* Lit, it is filled, as a chosen calibration is, in the light's colours. */
 .light-card[data-lit='true']
   .modes[data-mode='processed']
   [data-target='processed'],
@@ -1576,13 +1576,13 @@ fieldset > .help {
   transition: --tint var(--duration-light-on) var(--ease-in-out);
 }
 
-/* Colour profiles: one tap each. */
+/* Calibrations: one tap each. */
 .chips-label {
   display: block;
   padding-top: var(--space-6);
   font-weight: var(--weight-strong);
 }
-/* The profiles wrap onto more rows: every chip whole, nothing cut. */
+/* The calibrations wrap onto more rows: every chip whole, nothing cut. */
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -2443,12 +2443,12 @@ fieldset > .help {
   margin-bottom: var(--space-6);
 }
 
-/* ── Fine-tuning and a profile: sliders in one column, as Home's ──────── */
+/* ── Fine-tuning and a calibration: sliders in one column, as Home's ──────── */
 .fine-tuning,
-.profile-page {
+.calibration-page {
   container-type: inline-size;
 }
-.profile-page > .rows {
+.calibration-page > .rows {
   margin-bottom: var(--space-6);
 }
 

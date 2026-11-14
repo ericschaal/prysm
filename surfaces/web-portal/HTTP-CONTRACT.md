@@ -69,8 +69,8 @@ into `@prysm/contracts/application`.
 `State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
-`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., profiles?: [{ id, name, correction }], active_profile? } }`.
-Color profiles are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
+`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., calibrations?: [{ id, name, correction }], active_calibration? } }`.
+Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 `failure` is the last lighting failure or `null`. Setting the target to
 `processed` opens the capture (a failure is the reply); the output is opened
 at the first frame, so an output that cannot open ends the session and appears
@@ -130,9 +130,9 @@ It applies whatever the target, so a session started meanwhile uses it.
 ## Calibration
 
 A calibration pattern is engine state like the target: never saved, not
-part of `settings`, and setting it changes no revision. Color profiles are
-edited as usual through `PUT /api/v1/settings` (`processing.profiles`,
-`active_profile`) and apply at the next frame; the pattern only says what the
+part of `settings`, and setting it changes no revision. Calibrations are
+edited as usual through `PUT /api/v1/settings` (`processing.calibrations`,
+`active_calibration`) and apply at the next frame; the pattern only says what the
 TV shows, so the TV app and the portal follow the same `State.calibration`
 on the state stream.
 
@@ -140,9 +140,9 @@ on the state stream.
   shows or switches the pattern. Both fields are required; unknown fields and
   patterns are `400`. It needs `target` `processed` and does not start
   lighting: otherwise `409 not_processed`.
-- While a pattern is set, the processor runs without smoothing, so a profile
-  change shows at once, and with `uncorrected: true` without any color
-  profile, to compare. Brightness, shadow lift, black bars and the saved
+- While a pattern is set, the processor runs without smoothing, so a
+  calibration change shows at once, and with `uncorrected: true` without any
+  calibration, to compare. Brightness, shadow lift, black bars and the saved
   settings are unchanged; both return to the settings when it clears.
 - It clears on `DELETE`, when the target leaves `processed` (`off`,
   `device_native`, or a file source ending), at shutdown, and 10 minutes
@@ -350,7 +350,7 @@ Source chains stay in the process; `message` is what the user can act on.
 | 409 | `not_processed` | A calibration pattern while the target is not `processed` |
 | 413 | `payload_too_large` | Body over 1 MiB |
 | 415 | `unsupported_media_type` | `PUT` without `Content-Type: application/json` |
-| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.profiles[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
+| 422 | `invalid` | Settings rejected by processing or adapter validation (`field`, e.g. `output.address` or `processing.calibrations[1].name`), an unknown adapter `kind` (`capture.kind`, also for candidates), undecodable adapter fields, or `Processed` without capture/output configured |
 | 429 | `busy` | More than 8 open state streams, more than 4 preview streams, or more than 8 colors streams |
 | 500 | `internal` | A panic or unexpected runtime failure |
 | 502 | `adapter` | A device or adapter failed to open, write or idle; `section` (`capture` or `output`) says which side, when the engine knows |

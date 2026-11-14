@@ -27,8 +27,8 @@ import {
   HomeRoute,
   PictureRoute,
   PreviewRoute,
-  ProfileRoute,
-  ProfilesRoute,
+  CalibrationRoute,
+  CalibrationsRoute,
   SettingsRoute,
 } from './pages';
 import {
@@ -42,7 +42,7 @@ import {
   type Portal,
   type WebPortalProps,
 } from './portal-context';
-import type { DeletedProfile } from './profiles';
+import type { DeletedCalibration } from './calibrations';
 import { pages } from './routes';
 import { SetupWizard } from './setup';
 import { useReplaced } from './replaced';
@@ -120,8 +120,8 @@ function PortalFrame() {
     capture: null,
     output: null,
   });
-  const [deletedProfiles, setDeletedProfiles] = useState<
-    Record<string, DeletedProfile>
+  const [deletedCalibrations, setDeletedCalibrations] = useState<
+    Record<string, DeletedCalibration>
   >({});
   const noticeRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -179,8 +179,8 @@ function PortalFrame() {
     },
     previous,
     setPrevious,
-    deletedProfiles,
-    setDeletedProfiles,
+    deletedCalibrations,
+    setDeletedCalibrations,
   };
   return (
     <ChromeContext value={chrome}>
@@ -238,8 +238,8 @@ const portalRoutes: RouteObject[] = [
       { path: pages.settings, element: <SettingsRoute /> },
       { path: pages.video, element: <EditorRoute section="capture" /> },
       { path: pages.lights, element: <EditorRoute section="output" /> },
-      { path: pages.profiles, element: <ProfilesRoute /> },
-      { path: pages.profile, element: <ProfileRoute /> },
+      { path: pages.calibrations, element: <CalibrationsRoute /> },
+      { path: pages.calibration, element: <CalibrationRoute /> },
       { path: pages.picture, element: <PictureRoute /> },
       { path: pages.appearance, element: <AppearanceRoute /> },
       { path: pages.about, element: <AboutRoute /> },
@@ -252,7 +252,7 @@ const portalRoutes: RouteObject[] = [
 
 /**
  * The browser portal. Home holds the light card (power, mode, brightness,
- * colour profile) and a summary of the setup; Settings (`#/settings`) holds
+ * calibration) and a summary of the setup; Settings (`#/settings`) holds
  * the picture tuning, the capture and lights forms, the live preview
  * (`#/preview`) and the technical details; the Calibrate page is at
  * `#/calibrate`; the guided setup takes over while capture or lights are

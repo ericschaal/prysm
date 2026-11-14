@@ -11,13 +11,41 @@
       },
       "Calibration": {
         "additionalProperties": false,
+        "description": "A named color correction, such as one per console.",
+        "properties": {
+          "correction": {
+            "$ref": "#/components/schemas/CorrectionControls"
+          },
+          "id": {
+            "description": "Stable reference for `active_calibration`; a UUID fits.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Without surrounding whitespace or control characters.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "correction"
+        ],
+        "type": "object"
+      },
+      "CalibrationPattern": {
+        "additionalProperties": false,
         "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
         "properties": {
           "pattern": {
             "$ref": "#/components/schemas/Pattern"
           },
           "uncorrected": {
-            "description": "Apply no color profile while the pattern shows, to compare.",
+            "description": "Apply no calibration while the pattern shows, to compare.",
             "type": "boolean"
           }
         },
@@ -62,34 +90,6 @@
             "$ref": "#/components/schemas/RemoteReceiverSettings"
           }
         ]
-      },
-      "ColorProfile": {
-        "additionalProperties": false,
-        "description": "A named color correction, such as one per console.",
-        "properties": {
-          "correction": {
-            "$ref": "#/components/schemas/CorrectionControls"
-          },
-          "id": {
-            "description": "Stable reference for `active_profile`; a UUID fits.",
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9_-]+$",
-            "type": "string"
-          },
-          "name": {
-            "description": "Without surrounding whitespace or control characters.",
-            "maxLength": 64,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "correction"
-        ],
-        "type": "object"
       },
       "ColorsEvent": {
         "description": "One server-sent event of the colors stream.",
@@ -780,8 +780,8 @@
         "additionalProperties": false,
         "description": "Processing controls in plain units.",
         "properties": {
-          "active_profile": {
-            "description": "The `id` of the applied profile; absent applies no correction.",
+          "active_calibration": {
+            "description": "The `id` of the applied calibration; absent applies no correction.",
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[A-Za-z0-9_-]+$",
@@ -800,6 +800,14 @@
             "minimum": 0,
             "type": "number"
           },
+          "calibrations": {
+            "description": "Saved color corrections; ids are unique.",
+            "items": {
+              "$ref": "#/components/schemas/Calibration"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
           "color_focus_percent": {
             "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
             "format": "int32",
@@ -813,14 +821,6 @@
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
-          },
-          "profiles": {
-            "description": "Saved color corrections; ids are unique.",
-            "items": {
-              "$ref": "#/components/schemas/ColorProfile"
-            },
-            "maxItems": 32,
-            "type": "array"
           },
           "remove_black_bars": {
             "type": "boolean"
@@ -1037,7 +1037,7 @@
         "description": "The observable runtime state, sent whole on every change.",
         "properties": {
           "calibration": {
-            "$ref": "#/components/schemas/Calibration",
+            "$ref": "#/components/schemas/CalibrationPattern",
             "description": "The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;\nabsent while not calibrating. Never saved."
           },
           "failure": {

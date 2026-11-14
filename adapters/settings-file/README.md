@@ -45,7 +45,7 @@ the adapter's factory, not here.
     "spatial_reach_percent": 10,
     "color_focus_percent": 0,
     "remove_black_bars": true,
-    "profiles": [
+    "calibrations": [
       {
         "id": "ps5",
         "name": "PS5",
@@ -58,16 +58,16 @@ the adapter's factory, not here.
         }
       }
     ],
-    "active_profile": "ps5"
+    "active_calibration": "ps5"
   }
 }
 ```
 
-`processing.profiles` holds up to 32 saved color corrections with unique ids
-(1-64 ASCII letters, digits, `-` or `_`) and names (1-64 characters, no
-surrounding whitespace or control characters); every control is -100 to 100 and
-omitted ones are 0. `active_profile` names the applied profile; without it no
-correction is applied. Both are omitted when empty.
+`processing.calibrations` holds up to 32 saved calibrations (colour
+corrections) with unique ids (1-64 ASCII letters, digits, `-` or `_`) and names
+(1-64 characters, no surrounding whitespace or control characters); every
+control is -100 to 100 and omitted ones are 0. `active_calibration` names the
+applied calibration; without it no correction is applied. Both are omitted when empty.
 
 `load` returns `None` only when the file does not exist; an empty or malformed
 file is an error, never silently treated as unconfigured.

@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import type { AdapterSection, AdapterUis } from './adapters';
-import type { DeletedProfile } from './profiles';
+import type { DeletedCalibration } from './calibrations';
 import { pages, pathTo, type Place } from './routes';
 import type { PathState } from './setup-card';
 
@@ -114,9 +114,11 @@ export interface Portal {
    */
   previous: { capture: Section | null; output: Section | null };
   setPrevious: (previous: Portal['previous']) => void;
-  /** Profiles deleted on this visit, shown in their places with Undo. */
-  deletedProfiles: Record<string, DeletedProfile>;
-  setDeletedProfiles: Dispatch<SetStateAction<Record<string, DeletedProfile>>>;
+  /** Calibrations deleted on this visit, shown in their places with Undo. */
+  deletedCalibrations: Record<string, DeletedCalibration>;
+  setDeletedCalibrations: Dispatch<
+    SetStateAction<Record<string, DeletedCalibration>>
+  >;
 }
 
 /** What every page shows, connected or not: the header's line and notices. */

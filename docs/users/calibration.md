@@ -1,7 +1,7 @@
 # Calibrate colours
 
-Calibration saves a **colour profile** that makes the light on the wall match
-the colours on the TV. You match by eye: the TV shows test patterns and you
+Calibrating saves a **calibration**: it matches the lights’ colours on the wall
+to the colours on the TV. You match by eye: the TV shows test patterns and you
 adjust sliders on your phone.
 
 It needs the Prysm app on an LG TV ([full or slim package](webos.md)), working
@@ -15,10 +15,10 @@ have not been tested on a TV with Prysm 1.x.
 1. On the TV, open **Prysm** and choose **Calibrate colours**. Screen sync
    turns on and the TV shows a QR code. If the row is greyed out, the TV says
    why (for example, the lights are not using this TV's picture).
-2. Scan the QR code with your phone. It opens the portal's calibration page.
-   You can also open **Settings → Colour profiles → New profile (guided)** in
-   the portal.
-3. Start a new profile, or start from a copy of a saved one.
+2. Scan the QR code with your phone. It opens the portal's Calibrate page.
+   You can also open **Settings → Calibrations → New calibration** in the
+   portal.
+3. Start a new calibration, or start from a copy of a saved one.
 4. Follow the steps. Each shows a pattern on the TV:
    - **White balance:** make the wall as neutral as the grey on the TV with
      **Warmth** and **Tint**. Ignore brightness.
@@ -26,22 +26,22 @@ have not been tested on a TV with Prysm 1.x.
      colour.
    - **Intensity:** compare each half of the TV with the wall behind it.
    - **Mixed colours:** check that colours stay distinct side by side.
-   - **Review:** name the profile and finish.
+   - **Review:** name the calibration and finish.
 5. Press Back on the TV to leave. The lights stay on.
 
 Changes show on the wall as you move a slider. A button compares the wall
-without the profile.
+without the calibration.
 
-**Cancel** deletes the new profile and brings back the profile you used
-before. If calibration ends on the TV side, the phone offers to resume and
+**Cancel** deletes the new calibration and brings back the one you used
+before. If calibrating ends on the TV side, the phone offers to resume and
 keeps your draft. A pattern left on the TV clears itself after 10 minutes.
 
-## Use profiles
+## Use calibrations
 
-- **Home:** tap a profile to use it, or **No correction**.
-- **Settings → Colour profiles:** choose a profile to rename it, adjust its
-  colours or delete it; make a new one with **New profile (guided)**.
+- **Home:** tap a calibration to use it, or **No correction**.
+- **Settings → Calibrations:** choose a calibration to rename it, adjust its
+  colours or delete it; make a new one with **New calibration**.
 
-Profiles do not change brightness, smoothing or other picture settings, and do
-not switch with the TV's input. Check the result with the content you usually
-watch.
+Calibrations do not change brightness, smoothing or other picture settings,
+and do not switch with the TV's input. Check the result with the content you
+usually watch.

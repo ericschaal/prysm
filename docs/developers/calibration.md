@@ -1,9 +1,9 @@
 # Calibration
 
-Calibration is two small pieces, not a session:
+Calibrating uses two small pieces, not a session:
 
-- **Colour profiles** are ordinary settings: `processing.profiles` (at most 32)
-  and `processing.active_profile`, saved through `PUT /api/v1/settings` and
+- **Calibrations** are ordinary settings: `processing.calibrations` (at most
+  32) and `processing.active_calibration`, saved through `PUT /api/v1/settings` and
   applied at the next frame. The correction maths is in `prysm-core`
   ([correction.rs](../../crates/core/src/correction.rs)) and runs
   after shadow lift, before brightness, for the LEDs and the preview alike.
@@ -11,7 +11,7 @@ Calibration is two small pieces, not a session:
   `PUT /api/v1/calibration` with `{ pattern, uncorrected }`, cleared by
   `DELETE`. It needs Screen sync on (`409 not_processed` otherwise) and never
   starts it. While set, the processor runs without smoothing, and without the
-  profile when `uncorrected` is true. It clears when the target leaves
+  active calibration when `uncorrected` is true. It clears when the target leaves
   Screen sync, at shutdown, and 10 minutes after the last `PUT`.
 
 There are no tokens, leases or locks. The TV app and the phone both follow
@@ -23,8 +23,8 @@ There are no tokens, leases or locks. The TV app and the phone both follow
 1. The TV app (either package) turns Screen sync on and shows a QR code of
    `<portal>/#/calibrate`: its own portal (full) or the desktop portal (slim).
 2. The phone wizard ([calibrate.tsx](../../frontend/packages/web-portal/calibrate.tsx))
-   creates a draft profile, makes it active, sets one pattern per step and
-   saves slider changes live. Finish names the profile; Cancel deletes it and
+   creates a draft calibration, makes it active, sets one pattern per step and
+   saves slider changes live. Finish names it; Cancel deletes it and
    restores the previous one.
 3. The TV plays the chosen pattern full screen from bundled H.264 fragments
    through Media Source Extensions ([patterns.ts](../../frontend/packages/tv-ui/patterns.ts)).

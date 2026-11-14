@@ -79,7 +79,7 @@ export function useFieldErrors() {
   }, []);
   const edited = useCallback((path: string) => {
     // An edit also answers an error on its group, e.g. `output.leds`, and
-    // replacing a group (`processing.profiles`) answers errors inside it.
+    // replacing a group (`processing.calibrations`) answers errors inside it.
     const within = (inner: string, outer: string) =>
       inner === outer ||
       inner.startsWith(`${outer}.`) ||

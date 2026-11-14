@@ -15,7 +15,7 @@ import { useDeviceName } from './device-name';
 import { CheckboxField } from './fields';
 import { FieldScopeProvider, useFieldErrors, useFieldScope } from './form';
 import { BlackBars } from './processing';
-import { nameOf } from './profile-model';
+import { nameOf } from './calibration-model';
 import { Group, RowFact, RowLink, RowSwitch } from './rows';
 import { currentTheme, themeChoices } from './theme';
 
@@ -23,7 +23,7 @@ import { currentTheme, themeChoices } from './theme';
 export type SettingsPlace =
   | 'video'
   | 'lights'
-  | 'profiles'
+  | 'calibrations'
   | 'picture'
   | 'appearance'
   | 'about'
@@ -92,7 +92,7 @@ export interface SettingsPageProps<
 
 /**
  * Settings: one column of rows in three groups. Setup (the video source and
- * the lights, each changed on its own page), Picture (profiles, fine-tuning,
+ * the lights, each changed on its own page), Picture (calibrations, fine-tuning,
  * black bars) and this device. Everything here saves as it changes.
  */
 export function SettingsPage<
@@ -113,11 +113,13 @@ export function SettingsPage<
   const capture = settings.capture ?? null;
   const output = settings.output ?? null;
   const processing = settings.processing;
-  const profiles = processing.profiles ?? [];
-  const active = profiles.find(({ id }) => id === processing.active_profile);
-  let profileLine = 'None yet';
-  if (profiles.length)
-    profileLine = `${profiles.length} ${profiles.length === 1 ? 'profile' : 'profiles'} · ${active ? `${nameOf(active)} in use` : 'none in use'}`;
+  const calibrations = processing.calibrations ?? [];
+  const active = calibrations.find(
+    ({ id }) => id === processing.active_calibration,
+  );
+  let calibrationLine = 'None yet';
+  if (calibrations.length)
+    calibrationLine = `${calibrations.length} ${calibrations.length === 1 ? 'calibration' : 'calibrations'} · ${active ? `${nameOf(active)} in use` : 'none in use'}`;
   const theme = themeChoices.find(({ value }) => value === currentTheme());
   return (
     <>
@@ -157,9 +159,9 @@ export function SettingsPage<
       </Group>
       <Group title="Picture">
         <RowLink
-          label="Colour profiles"
-          value={profileLine}
-          onClick={() => open('profiles')}
+          label="Calibrations"
+          value={calibrationLine}
+          onClick={() => open('calibrations')}
         />
         <RowLink
           label="Fine-tuning"

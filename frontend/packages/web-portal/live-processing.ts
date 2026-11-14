@@ -11,7 +11,7 @@ import {
 } from './form';
 
 /**
- * What this panel owns: nine controls plus the colour profiles and the active
+ * What this panel owns: nine controls plus the calibrations and the active
  * one. Other processing fields are preserved.
  */
 export type ProcessingControls = Pick<
@@ -25,8 +25,8 @@ export type ProcessingControls = Pick<
   | 'spatial_reach_percent'
   | 'color_focus_percent'
   | 'remove_black_bars'
-  | 'profiles'
-  | 'active_profile'
+  | 'calibrations'
+  | 'active_calibration'
 >;
 
 /**
@@ -115,7 +115,7 @@ export function throttled<T>(intervalMs: number) {
 }
 
 export function processingControls(processing: Processing): ProcessingControls {
-  return withProfiles(
+  return withCalibrations(
     {
       brightness_percent: processing.brightness_percent,
       shadow_lift_percent: processing.shadow_lift_percent,
@@ -127,30 +127,30 @@ export function processingControls(processing: Processing): ProcessingControls {
       color_focus_percent: processing.color_focus_percent,
       remove_black_bars: processing.remove_black_bars,
     },
-    processing.profiles,
-    processing.active_profile,
+    processing.calibrations,
+    processing.active_calibration,
   );
 }
 
 /**
- * `controls` with `profiles` and `active_profile` as the server sends them:
+ * `controls` with `calibrations` and `active_calibration` as the server sends them:
  * absent when empty or none, so a saved draft equals the state that follows.
  */
-export function withProfiles<T extends object>(
+export function withCalibrations<T extends object>(
   controls: T,
-  profiles: Processing['profiles'],
+  calibrations: Processing['calibrations'],
   active: string | undefined,
-): Omit<T, 'profiles' | 'active_profile'> &
-  Pick<Processing, 'profiles' | 'active_profile'> {
+): Omit<T, 'calibrations' | 'active_calibration'> &
+  Pick<Processing, 'calibrations' | 'active_calibration'> {
   const rest = { ...controls } as Partial<
-    Pick<Processing, 'profiles' | 'active_profile'>
+    Pick<Processing, 'calibrations' | 'active_calibration'>
   >;
-  delete rest.profiles;
-  delete rest.active_profile;
+  delete rest.calibrations;
+  delete rest.active_calibration;
   return {
-    ...(rest as Omit<T, 'profiles' | 'active_profile'>),
-    ...(profiles?.length ? { profiles } : {}),
-    ...(active === undefined ? {} : { active_profile: active }),
+    ...(rest as Omit<T, 'calibrations' | 'active_calibration'>),
+    ...(calibrations?.length ? { calibrations } : {}),
+    ...(active === undefined ? {} : { active_calibration: active }),
   };
 }
 
@@ -239,9 +239,9 @@ export function useLiveProcessing({
     invalid ||
     (failed !== null && same(failed, draft.draft));
 
-  // `value` decides the profiles: an absent one was removed.
+  // `value` decides the calibrations: an absent one was removed.
   const whole = (value: ProcessingControls): Processing => ({
-    ...withProfiles(processing, undefined, undefined),
+    ...withCalibrations(processing, undefined, undefined),
     ...value,
   });
 

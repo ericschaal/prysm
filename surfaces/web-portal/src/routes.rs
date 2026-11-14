@@ -11,7 +11,7 @@ use futures::stream;
 use http_body_util::{BodyExt, Limited};
 use hyper::header::HeaderValue;
 use hyper::{Method, Request, StatusCode, body::Frame, body::Incoming, header};
-use prysm_ports::{CAPTURE_STREAM_PATH, Calibration, Handoff, Processing, Result, Section};
+use prysm_ports::{CAPTURE_STREAM_PATH, CalibrationPattern, Handoff, Processing, Result, Section};
 use prysm_protocol::{FailureKind, SettingsReplaced, SettingsRequest, State, TargetRequest};
 use prysm_runtime::{EngineHandle, Shutdown};
 use serde::de::DeserializeOwned;
@@ -208,7 +208,7 @@ async fn api(context: &Context, path: &str, request: Request<Incoming>) -> Respo
             Err(response) => *response,
         },
         "/api/v1/calibration" if method == Method::PUT => {
-            match decode::<Calibration>(request).await {
+            match decode::<CalibrationPattern>(request).await {
                 Ok(body) => applied(command(context.engine.set_calibration(Some(body))).await),
                 Err(response) => *response,
             }

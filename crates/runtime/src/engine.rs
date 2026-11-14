@@ -5,9 +5,9 @@ use crate::session::{Session, SessionEnd};
 use crate::stats::{Counters, Stats};
 use prysm_core::Config;
 use prysm_ports::{
-    AdapterSettings, Calibration, Candidate, Error, IdleMode, Input, LightingTarget, Processing,
-    Registry, Result, Revision, Section, SessionPhase, SessionState, Settings, SettingsStore,
-    Snapshot, ValidationError,
+    AdapterSettings, CalibrationPattern, Candidate, Error, IdleMode, Input, LightingTarget,
+    Processing, Registry, Result, Revision, Section, SessionPhase, SessionState, Settings,
+    SettingsStore, Snapshot, ValidationError,
 };
 use std::hash::{BuildHasher, RandomState};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -25,7 +25,7 @@ enum Command {
         settings: Box<Settings>,
         reply: Reply<Revision>,
     },
-    SetCalibration(Option<Calibration>, Reply<()>),
+    SetCalibration(Option<CalibrationPattern>, Reply<()>),
     TryProcessing(Box<Processing>, Reply<()>),
     SurfaceFailed(Error),
     Shutdown(Reply<()>),
@@ -84,7 +84,7 @@ impl EngineHandle {
     /// # Errors
     /// A pattern while the target is not `Processed` (field `target`), or a
     /// faulted or stopped engine.
-    pub async fn set_calibration(&self, calibration: Option<Calibration>) -> Result<()> {
+    pub async fn set_calibration(&self, calibration: Option<CalibrationPattern>) -> Result<()> {
         self.call(|reply| Command::SetCalibration(calibration, reply))
             .await
     }
@@ -606,7 +606,7 @@ impl Core {
         result
     }
 
-    fn set_calibration(&mut self, calibration: Option<Calibration>) -> Result<()> {
+    fn set_calibration(&mut self, calibration: Option<CalibrationPattern>) -> Result<()> {
         self.faulted()?;
         if calibration.is_some() && self.state.borrow().target != LightingTarget::Processed {
             return Err(Error::NotProcessed);
@@ -624,7 +624,7 @@ impl Core {
 
     /// Publish `calibration`, restart its timeout and give a running session
     /// the processing config it implies.
-    fn calibrate(&mut self, calibration: Option<Calibration>) {
+    fn calibrate(&mut self, calibration: Option<CalibrationPattern>) {
         self.calibration_expires = calibration.map(|_| Instant::now() + CALIBRATION_TIMEOUT);
         self.reconfigure(|core| {
             core.state.send_if_modified(|s| {

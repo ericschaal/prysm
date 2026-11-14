@@ -5,8 +5,8 @@
 //! ports cannot carry: a tagged session state, a failure body, and the
 //! request/response bodies. It has no HTTP or runtime dependencies.
 use prysm_ports::{
-    Calibration, DeviceBrightness, Error, Input, LightingTarget, OutputIssue, Revision, Section,
-    SessionPhase, SessionState, Settings, Snapshot,
+    CalibrationPattern, DeviceBrightness, Error, Input, LightingTarget, OutputIssue, Revision,
+    Section, SessionPhase, SessionState, Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,9 +56,9 @@ pub struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schema(value_type = Option<schema::CalibrationSchema>, nullable = false)
+        schema(value_type = Option<schema::CalibrationPatternSchema>, nullable = false)
     )]
-    pub calibration: Option<Calibration>,
+    pub calibration: Option<CalibrationPattern>,
     #[cfg_attr(feature = "schema", schema(value_type = schema::SettingsSchema))]
     pub settings: Settings,
     /// Pass back as `expected` when replacing settings.
@@ -314,7 +314,7 @@ mod tests {
             ..Snapshot::default()
         };
         let running = Snapshot {
-            calibration: Some(Calibration {
+            calibration: Some(CalibrationPattern {
                 pattern: prysm_ports::Pattern::BluePair,
                 uncorrected: true,
             }),

@@ -35,7 +35,7 @@ origin. Keep the portal on a trusted LAN, or bind it to `127.0.0.1` with
 ## Settings ownership
 
 - The settings file holds everything a user changes at run time: `capture`,
-  `output`, `processing` (with colour profiles). Format:
+  `output`, `processing` (with calibrations). Format:
   [settings-file](../../adapters/settings-file/README.md).
 - Process options (settings path, `--listen`, `--allow-origin`, `--metrics`,
   `--start`, `--log-file`) are command-line only and never in the file. There

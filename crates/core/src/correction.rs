@@ -1,6 +1,6 @@
 use crate::LinearColor;
 
-/// Profile correction in linear light.
+/// A calibration's correction in linear light.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorCorrection {
     gains: [f32; 3],

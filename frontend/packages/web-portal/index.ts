@@ -22,14 +22,14 @@ export {
   useLiveProcessing,
   type ProcessingControls,
 } from './live-processing';
-export { undoForMs } from './profiles';
+export { undoForMs } from './calibrations';
 export { developerStorageKey, saveDeveloper } from './developer';
 export {
   correctionLimits,
   hueLimits,
-  newProfileId,
-  profileLimits,
-} from './profile-model';
+  newCalibrationId,
+  calibrationLimits,
+} from './calibration-model';
 export { PictureChoice } from './picture-choice';
 export {
   allPicturePresets,

@@ -23,7 +23,7 @@ live mode over HTTP. Both must be allowed between Prysm and WLED.
 The portal works from a phone on the same network; no extra setting is
 needed. When Prysm starts it prints the address in its log.
 
-<img src="../images/portal-home-phone.webp" alt="Prysm web portal Home on a phone: the light card with On, Screen sync, brightness and colour profiles above the setup card." width="260">
+<img src="../images/portal-home-phone.webp" alt="Prysm web portal Home on a phone: the light card with On, Screen sync, brightness and calibrations above the setup card." width="260">
 
 ## 3. Run the setup wizard
 
@@ -58,16 +58,16 @@ counts.
 
 Home has two cards.
 
-<img src="../images/portal-home.webp" alt="Prysm web portal Home: the light card shows On, Screen sync, 80% brightness and the Movie night profile; the setup card shows TV, Prysm and WLED with 96 LEDs around the TV." width="768">
+<img src="../images/portal-home.webp" alt="Prysm web portal Home: the light card shows On, Screen sync, 80% brightness and the Movie night calibration; the setup card shows TV, Prysm and WLED with 96 LEDs around the TV." width="768">
 
 - **The light card**: whether the lights are **Off**, **On** or **Stopped**,
   the power button, the two modes **Screen sync** (the lights follow the
   screen) and **WLED effects** (WLED plays its own patterns), brightness, and
-  your colour profiles. A line under **Off** / **On** says what is happening,
+  your calibrations. A line under **Off** / **On** says what is happening,
   for example what Power turns on, or that the lights follow the screen.
   While the lights are off the chosen mode is only outlined; choosing one
-  while off turns the lights on in that mode. With WLED effects, brightness and colour
-  profiles do not apply (WLED controls its own effects), so they are dimmed
+  while off turns the lights on in that mode. With WLED effects, brightness and
+  calibrations do not apply (WLED controls its own effects), so they are dimmed
   until the lights follow the screen again. Problems show here in plain words, with the
   action that fixes them. **Open WLED** opens WLED's own page.
 - **Your setup**: the path from the video source through Prysm to the lights,
@@ -92,15 +92,15 @@ Good to know:
 ## 5. Change settings
 
 Open **Settings** (top right on Home). It is one list in three groups:
-**Setup** (Video source, Lights), **Picture** (Colour profiles, Fine-tuning,
+**Setup** (Video source, Lights), **Picture** (Calibrations, Fine-tuning,
 Remove black bars) and **This device** (Appearance, About this Prysm, Start
 over with setup). Each row shows its current value; choose it to open its
 page. The line under the title says whether everything is saved: **All
 changes saved**, **Saving…** or **Not saved**; a change that could not be
 saved also says so at its control, with **Try again**. Brightness and the
-colour profile in use are chosen on Home.
+calibration in use are chosen on Home.
 
-<img src="../images/portal-settings.webp" alt="The Settings list: Video source and Lights under Setup; Colour profiles, Fine-tuning and Remove black bars under Picture; Appearance, About this Prysm and Start over with setup under This device." width="560">
+<img src="../images/portal-settings.webp" alt="The Settings list: Video source and Lights under Setup; Calibrations, Fine-tuning and Remove black bars under Picture; Appearance, About this Prysm and Start over with setup under This device." width="560">
 
 <a id="processing"></a>
 
@@ -126,10 +126,11 @@ a Smoothing of about 0.5 s. Colour focus has not yet been tried on a TV either;
 compare 0% with 50% and 100% on a scene with two strong colours. On a TV it
 is heavy work for now: use it with a capture rate of 30 fps, not 60.
 
-**Colour profiles** lists your profiles. Choose one to rename it, switch it
-**In use**, adjust its colours or delete it; after **Delete profile** the list
-offers **Undo** for a few seconds. **New profile (guided)** makes one with test patterns on
-the TV; see [Calibrate colours](calibration.md).
+**Calibrations** lists your calibrations: each matches the lights’ colours to
+your screen and wall. Choose one to rename it, switch it **In use**, adjust its
+colours or delete it; after **Delete calibration** the list offers **Undo** for
+a few seconds. **New calibration** makes one with test patterns on the TV; see
+[Calibrate colours](calibration.md).
 
 Use [Live preview](preview.md) to check a change: **See the picture** on the
 Video source page, or **Check placement** on the Lights page.

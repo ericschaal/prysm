@@ -47,10 +47,10 @@ const patterns = (fixture) =>
   fixture.calls.filter((call) => call.startsWith('calibration:'));
 const heading = () => $('.calibrate h2').textContent;
 
-/** Screen sync running, optionally with saved profiles; opens the Calibrate page. */
+/** Screen sync running, optionally with saved calibrations; opens the Calibrate page. */
 async function openCalibrate({
   target = 'processed',
-  profiles,
+  calibrations,
   Host = HeadlessWebPortal,
 } = {}) {
   const portal = await renderPortal(Host, { capture, output }, (snapshot) => ({
@@ -60,12 +60,14 @@ async function openCalibrate({
       ...snapshot.settings,
       processing: {
         ...snapshot.settings.processing,
-        ...(profiles ? { profiles, active_profile: profiles[0].id } : {}),
+        ...(calibrations
+          ? { calibrations, active_calibration: calibrations[0].id }
+          : {}),
       },
     },
   }));
-  await openPage('Colour profiles');
-  await openPage('New profile (guided)');
+  await openPage('Calibrations');
+  await openPage('New calibration');
   return portal;
 }
 
@@ -77,10 +79,10 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       assert.equal(heading(), 'Match the lights to your TV');
       assert.equal(document.activeElement, $('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
-      assert(!field('calibration.from'), 'no question without profiles');
+      assert(!field('calibration.from'), 'no question without calibrations');
       await press(button('Leave'));
       assert(!$('.calibrate'));
-      assert(row('New profile (guided)'), 'back in Colour profiles');
+      assert(row('New calibration'), 'back in Calibrations');
       assert.deepEqual(patterns(portal.fixture), []);
     } finally {
       await portal.unmount();
@@ -105,18 +107,18 @@ test("the TV's link opens Calibrate directly; leaving returns Home", async () =>
   }
 });
 
-test('a new profile is calibrated step by step and finished under its name', async () => {
+test('a new calibration is made step by step and finished under its name', async () => {
   const portal = await openCalibrate();
   const { fixture } = portal;
   try {
     await press(button('Start'));
-    const [draft] = processing(fixture).profiles;
+    const [draft] = processing(fixture).calibrations;
     assert.deepEqual(draft, {
       id: draft.id,
       name: 'Calibrated',
       correction: zero,
     });
-    assert.equal(processing(fixture).active_profile, draft.id);
+    assert.equal(processing(fixture).active_calibration, draft.id);
     assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
     assert.deepEqual(fixture.snapshot().calibration, {
       pattern: 'gray-192',
@@ -125,11 +127,11 @@ test('a new profile is calibrated step by step and finished under its name', asy
     assert.equal(heading(), 'Find a natural white');
     assert.equal($('.calibrate-pattern').textContent, 'On your TV: light gray');
 
-    // Slider edits are live saves on the draft profile.
-    await edit(field('processing.profiles[0].correction.warmth'), 20);
-    await edit(field('processing.profiles[0].correction.tint'), -5);
+    // Slider edits are live saves on the draft calibration.
+    await edit(field('processing.calibrations[0].correction.warmth'), 20);
+    await edit(field('processing.calibrations[0].correction.tint'), -5);
     await settle();
-    assert.deepEqual(processing(fixture).profiles[0].correction, {
+    assert.deepEqual(processing(fixture).calibrations[0].correction, {
       ...zero,
       warmth: 20,
       tint: -5,
@@ -153,11 +155,11 @@ test('a new profile is calibrated step by step and finished under its name', asy
       $('.calibrate-pattern').textContent,
       'On your TV: red (1 of 6)',
     );
-    await edit(field('processing.profiles[0].correction.hue.red'), 8);
+    await edit(field('processing.calibrations[0].correction.hue.red'), 8);
     await settle();
-    assert.equal(processing(fixture).profiles[0].correction.hue.red, 8);
+    assert.equal(processing(fixture).calibrations[0].correction.hue.red, 8);
     for (let step = 0; step < 12; step++) await press(button('Next'));
-    assert.equal(heading(), 'Name your profile');
+    assert.equal(heading(), 'Name your calibration');
     assert(!button('Next'));
     await press(button('Back'));
     assert.equal(heading(), 'Check colours together');
@@ -185,7 +187,7 @@ test('a new profile is calibrated step by step and finished under its name', asy
     await edit(name, '  Movie night ');
     await press(button('Finish'));
     await act(async () => sleep(5));
-    assert.deepEqual(processing(fixture).profiles, [
+    assert.deepEqual(processing(fixture).calibrations, [
       {
         id: draft.id,
         name: 'Movie night',
@@ -197,7 +199,7 @@ test('a new profile is calibrated step by step and finished under its name', asy
         },
       },
     ]);
-    assert.equal(processing(fixture).active_profile, draft.id);
+    assert.equal(processing(fixture).active_calibration, draft.id);
     assert.equal(patterns(fixture).at(-1), 'calibration:end');
     assert.equal('calibration' in fixture.snapshot(), false);
     assert.equal(heading(), 'Calibration finished');
@@ -209,27 +211,27 @@ test('a new profile is calibrated step by step and finished under its name', asy
   }
 });
 
-test('starting from a profile calibrates a copy; Cancel deletes it and restores the previous one', async () => {
-  const portal = await openCalibrate({ profiles: [ps5] });
+test('starting from a saved calibration works on a copy; Cancel deletes it and restores the previous one', async () => {
+  const portal = await openCalibrate({ calibrations: [ps5] });
   const { fixture } = portal;
   try {
     await edit(field('calibration.from'), 'ps5');
     await press(button('Start'));
-    const [, copy] = processing(fixture).profiles;
+    const [, copy] = processing(fixture).calibrations;
     assert.notEqual(copy.id, 'ps5');
     assert.deepEqual(copy, {
       id: copy.id,
       name: 'PS5 calibrated',
       correction: ps5.correction,
     });
-    assert.equal(processing(fixture).active_profile, copy.id);
+    assert.equal(processing(fixture).active_calibration, copy.id);
     assert.deepEqual(patterns(fixture), ['calibration:gray-192']);
 
     await press(button('Next'));
     await press(button('Cancel calibration'));
     await act(async () => sleep(5));
-    assert.deepEqual(processing(fixture).profiles, [ps5]);
-    assert.equal(processing(fixture).active_profile, 'ps5');
+    assert.deepEqual(processing(fixture).calibrations, [ps5]);
+    assert.equal(processing(fixture).active_calibration, 'ps5');
     assert.equal(patterns(fixture).at(-1), 'calibration:end');
     assert.equal('calibration' in fixture.snapshot(), false);
     assert.equal(heading(), 'Calibration cancelled');
@@ -263,7 +265,7 @@ test('without screen sync on the TV the page says what to do and shows no patter
       ),
       true,
     );
-    assert.equal(processing(refused.fixture).profiles, undefined);
+    assert.equal(processing(refused.fixture).calibrations, undefined);
     assert.equal(heading(), 'Match the lights to your TV');
   } finally {
     await refused.unmount();
@@ -276,7 +278,7 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
   try {
     await press(button('Start'));
     await press(button('Next'));
-    const [draft] = processing(fixture).profiles;
+    const [draft] = processing(fixture).calibrations;
 
     // The engine's 10-minute timeout, or the TV leaving the pattern screen.
     await act(async () => {
@@ -299,8 +301,8 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     assert(text().includes('Open Prysm on the TV and choose Calibrate.'));
     await press(button('Leave'));
     assert(!$('.calibrate'));
-    assert.deepEqual(processing(fixture).profiles, [draft]);
-    assert.equal(processing(fixture).active_profile, draft.id);
+    assert.deepEqual(processing(fixture).calibrations, [draft]);
+    assert.equal(processing(fixture).active_calibration, draft.id);
   } finally {
     await portal.unmount();
   }

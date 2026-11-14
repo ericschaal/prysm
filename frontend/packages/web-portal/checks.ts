@@ -1,4 +1,4 @@
-/** Why `name` cannot be saved (`ColorProfile.name` rules), or `null`. */
+/** Why `name` cannot be saved (`Calibration.name` rules), or `null`. */
 export function nameProblem(name: string, maxChars: number) {
   if (!name) return 'Enter a name.';
   if ([...name].length > maxChars) return `Use at most ${maxChars} characters.`;

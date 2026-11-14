@@ -1,4 +1,4 @@
-use crate::{Calibration, DeviceBrightness, Error, OutputIssue, Revision, Settings};
+use crate::{CalibrationPattern, DeviceBrightness, Error, OutputIssue, Revision, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -95,7 +95,7 @@ pub struct Snapshot {
     /// The calibration pattern shown, while the target is `Processed`. Not
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.
-    pub calibration: Option<Calibration>,
+    pub calibration: Option<CalibrationPattern>,
     /// The last lighting failure. Every target change, settings apply,
     /// shutdown and session end replaces it, so the next one that succeeds
     /// clears it.

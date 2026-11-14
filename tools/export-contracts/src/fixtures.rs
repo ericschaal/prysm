@@ -6,7 +6,7 @@ use prysm_capture_remote::{RemoteReceiver, StreamEncoding, StreamRequest};
 use prysm_capture_webos::{WebosCapture, WebosSettings};
 use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
-    AdapterSettings, Behind, Calibration, Candidate, ColorProfile, CorrectionControls, Error,
+    AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls, Error,
     HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision,
     Section, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
 };
@@ -88,12 +88,12 @@ fn luna() -> Value {
     })
 }
 
-/// Two saved color profiles, the first active.
-fn with_profiles() -> Settings {
+/// Two saved calibrations, the first active.
+fn with_calibrations() -> Settings {
     Settings {
         processing: Processing {
-            profiles: vec![
-                ColorProfile {
+            calibrations: vec![
+                Calibration {
                     id: "ps5".into(),
                     name: "PS5".into(),
                     correction: CorrectionControls {
@@ -107,13 +107,13 @@ fn with_profiles() -> Settings {
                         },
                     },
                 },
-                ColorProfile {
+                Calibration {
                     id: "0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f".into(),
                     name: "TV apps".into(),
                     correction: CorrectionControls::default(),
                 },
             ],
-            active_profile: Some("ps5".into()),
+            active_calibration: Some("ps5".into()),
             ..Processing::default()
         },
         ..Settings::default()
@@ -162,8 +162,8 @@ fn states() -> Vec<State> {
         Snapshot {
             target: LightingTarget::Processed,
             session: SessionState::Running,
-            settings: with_profiles(),
-            calibration: Some(Calibration {
+            settings: with_calibrations(),
+            calibration: Some(CalibrationPattern {
                 pattern: Pattern::Gray192,
                 uncorrected: false,
             }),
@@ -263,18 +263,18 @@ fn application() -> Value {
         "Failure": failures(),
         "TargetRequest": [TargetRequest { target: LightingTarget::Processed }],
         // Every pattern, as `PUT /api/v1/calibration` bodies.
-        "Calibration": Pattern::ALL
+        "CalibrationPattern": Pattern::ALL
             .into_iter()
             .enumerate()
-            .map(|(index, pattern)| Calibration { pattern, uncorrected: index % 2 == 1 })
+            .map(|(index, pattern)| CalibrationPattern { pattern, uncorrected: index % 2 == 1 })
             .collect::<Vec<_>>(),
         "SettingsRequest": [
             SettingsRequest { expected: Revision(0), settings: Settings::default() },
             SettingsRequest { expected: Revision(7), settings: configured() },
-            SettingsRequest { expected: Revision(8), settings: with_profiles() },
+            SettingsRequest { expected: Revision(8), settings: with_calibrations() },
         ],
         "SettingsReplaced": [SettingsReplaced { revision: Revision(8) }],
-        "Settings": [Settings::default(), with_profiles()],
+        "Settings": [Settings::default(), with_calibrations()],
         "Candidate": [
             Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
             Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))

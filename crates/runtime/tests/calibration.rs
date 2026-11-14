@@ -1,15 +1,15 @@
 //! Calibration patterns: engine state beside the target, never saved. While
 //! one shows, processing runs without smoothing and, when `uncorrected`,
-//! without the active profile; settings stay as saved.
+//! without the active calibration; settings stay as saved.
 //!
 //! The fake source fills its frames with gray, so the correction shows in the
 //! preview: equal red and blue is neutral, less red than blue is the cool
-//! profile. Smoothing is long (60 s) and blends frame content (before the
+//! calibration. Smoothing is long (60 s) and blends frame content (before the
 //! correction), so a source blinking between two grays shows only those two
 //! levels while a pattern switches smoothing off.
 use prysm_ports::{
-    AdapterSettings, Calibration, ColorProfile, CorrectionControls, Error, LightingTarget, Pattern,
-    Processing, Registry, Settings,
+    AdapterSettings, Calibration, CalibrationPattern, CorrectionControls, Error, LightingTarget,
+    Pattern, Processing, Registry, Settings,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -35,7 +35,7 @@ fn source(fill: u8, end_after: Option<u32>) -> FakeSourceSettings {
     }
 }
 
-/// Gray frames, 60 s smoothing, a cool profile.
+/// Gray frames, 60 s smoothing, a cool calibration.
 fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
     Settings {
         capture: Some(AdapterSettings::new("fake", source)),
@@ -48,7 +48,7 @@ fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
         )),
         processing: Processing {
             smoothing_seconds: 60.0,
-            profiles: vec![ColorProfile {
+            calibrations: vec![Calibration {
                 id: "cool".into(),
                 name: "Cool".into(),
                 correction: CorrectionControls {
@@ -56,7 +56,7 @@ fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
                     ..CorrectionControls::default()
                 },
             }],
-            active_profile: active.map(Into::into),
+            active_calibration: active.map(Into::into),
             ..Processing::default()
         },
     }
@@ -73,14 +73,14 @@ async fn start(store: &MemoryStore) -> (EngineHandle, Engine, CallLog) {
     (handle, engine, log)
 }
 
-const fn pattern(pattern: Pattern, uncorrected: bool) -> Option<Calibration> {
-    Some(Calibration {
+const fn pattern(pattern: Pattern, uncorrected: bool) -> Option<CalibrationPattern> {
+    Some(CalibrationPattern {
         pattern,
         uncorrected,
     })
 }
 
-fn calibration(handle: &EngineHandle) -> Option<Calibration> {
+fn calibration(handle: &EngineHandle) -> Option<CalibrationPattern> {
     handle.snapshot().borrow().calibration
 }
 
@@ -174,28 +174,28 @@ async fn set_switch_and_clear_leave_settings_and_revision_untouched() {
 }
 
 #[tokio::test]
-async fn uncorrected_shows_at_once_without_the_profile_and_clearing_restores_it() {
+async fn uncorrected_shows_at_once_without_the_calibration_and_clearing_restores_it() {
     within(async {
         let store = MemoryStore::with(settings(Some("cool"), &source(128, None)));
         let (handle, engine, _) = start(&store).await;
         handle.set_target(LightingTarget::Processed).await.unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
-        // Uncorrected: no profile and no smoothing, so exactly neutral at once.
+        // Uncorrected: no calibration and no smoothing, so exactly neutral at once.
         handle
             .set_calibration(pattern(Pattern::Gray192, true))
             .await
             .unwrap();
         wait_for_cast(&handle, "neutral", neutral).await;
 
-        // Corrected again: the profile is back.
+        // Corrected again: the calibration is back.
         handle
             .set_calibration(pattern(Pattern::Gray192, false))
             .await
             .unwrap();
         wait_for_cast(&handle, "cool", cool).await;
 
-        // Uncorrected, then cleared: the profile and its smoothing return.
+        // Uncorrected, then cleared: the calibration and its smoothing return.
         handle
             .set_calibration(pattern(Pattern::Gray192, true))
             .await
@@ -242,7 +242,10 @@ async fn smoothing_is_off_while_a_pattern_shows_and_returns_after() {
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert_eq!(green_levels(&handle).await, 2, "no smoothing");
-        assert!(cool(cast(&handle).unwrap()), "the profile still applies");
+        assert!(
+            cool(cast(&handle).unwrap()),
+            "the calibration still applies"
+        );
 
         handle.set_calibration(None).await.unwrap();
         // The restarted smoother passes its first frame unblended.

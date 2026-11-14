@@ -4,7 +4,7 @@ import './portal.test.jsx';
 import './setup.test.jsx';
 import './preview.test.jsx';
 import './colors.test.jsx';
-import './profiles.test.jsx';
+import './calibrations.test.jsx';
 import './tv.test.jsx';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

@@ -65,7 +65,7 @@ and WLED's own effects, watch a [live preview](docs/users/preview.md) of the
 picture and the LED colours, and change settings.
 
 <p align="center">
-  <img src="docs/images/portal-home.webp" alt="Prysm web portal Home in dark mode: the lights are On in Screen sync at 80% brightness with the Movie night profile, next to the setup from TV through Prysm to a WLED with 96 LEDs." width="768">
+  <img src="docs/images/portal-home.webp" alt="Prysm web portal Home in dark mode: the lights are On in Screen sync at 80% brightness with the Movie night calibration, next to the setup from TV through Prysm to a WLED with 96 LEDs." width="768">
 </p>
 
 ## Develop Prysm

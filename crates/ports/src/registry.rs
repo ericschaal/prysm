@@ -107,7 +107,7 @@ impl Registry {
         assert!(previous.is_none(), "duplicate output kind `{}`", F::KIND);
     }
 
-    /// Validate processing (including color profiles and the active profile)
+    /// Validate processing (including calibrations and the active calibration)
     /// and every configured adapter against its factory.
     ///
     /// # Errors

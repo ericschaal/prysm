@@ -305,7 +305,7 @@ export function SetupCard({
   transports,
   discovery,
   path,
-  profile,
+  calibration,
   openSettings,
 }: {
   capture: SetupPart;
@@ -315,8 +315,8 @@ export function SetupCard({
   transports: { capture?: Transport; output?: Transport };
   discovery: DiscoveryClient | null;
   path: PathState;
-  /** The active colour profile's name, or `null` for no correction. */
-  profile: string | null;
+  /** The active calibration's name, or `null` for no correction. */
+  calibration: string | null;
   openSettings: () => void;
 }) {
   const headingId = useId();
@@ -400,9 +400,9 @@ export function SetupCard({
           title="Processing"
           icon={<PrysmIcon />}
           name="Prysm"
-          // Only a positive fact: the active profile. Nothing when none.
-          // The profile by its name: the fps figure beside it must not cut it.
-          fact={profile ?? undefined}
+          // Only a positive fact: the active calibration. Nothing when none.
+          // The calibration by its name: the fps figure beside it must not cut it.
+          fact={calibration ?? undefined}
           figure={processed}
           failed={path.kind === 'failed' && failedAt === null}
           behind={behind === 'processing'}

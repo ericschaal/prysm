@@ -1,12 +1,12 @@
-//! Color profiles: the active profile's correction reaches the processor, a
-//! profile change while lighting is a frame-boundary hot-swap, and invalid
-//! profiles never reach the store.
+//! Calibrations: the active calibration's correction reaches the processor, a
+//! calibration change while lighting is a frame-boundary hot-swap, and invalid
+//! calibrations never reach the store.
 //!
 //! The fake source fills its frames with gray (`fill`), so the correction is
 //! observable in the preview colors: without correction red equals blue, a
-//! cool profile (warmth -100) attenuates red, a warm one (warmth 100) blue.
+//! cool calibration (warmth -100) attenuates red, a warm one (warmth 100) blue.
 use prysm_ports::{
-    AdapterSettings, ColorProfile, CorrectionControls, Error, LightingTarget, MAX_PROFILES,
+    AdapterSettings, Calibration, CorrectionControls, Error, LightingTarget, MAX_CALIBRATIONS,
     Processing, Registry, Settings, SettingsStore,
 };
 use prysm_runtime::Engine;
@@ -25,8 +25,8 @@ async fn within<T>(test: impl Future<Output = T>) -> T {
         .expect("test timed out")
 }
 
-fn profile(id: &str, warmth: i16) -> ColorProfile {
-    ColorProfile {
+fn calibration(id: &str, warmth: i16) -> Calibration {
+    Calibration {
         id: id.into(),
         name: id.to_uppercase(),
         correction: CorrectionControls {
@@ -36,7 +36,7 @@ fn profile(id: &str, warmth: i16) -> ColorProfile {
     }
 }
 
-/// Gray fake frames, no smoothing, a cool and a warm profile.
+/// Gray fake frames, no smoothing, a cool and a warm calibration.
 fn with_active(active: Option<&str>) -> Settings {
     Settings {
         capture: Some(AdapterSettings::new(
@@ -56,8 +56,8 @@ fn with_active(active: Option<&str>) -> Settings {
         )),
         processing: Processing {
             smoothing_seconds: 0.0,
-            profiles: vec![profile("cool", -100), profile("warm", 100)],
-            active_profile: active.map(Into::into),
+            calibrations: vec![calibration("cool", -100), calibration("warm", 100)],
+            active_calibration: active.map(Into::into),
             ..Processing::default()
         },
     }
@@ -109,7 +109,7 @@ fn revision(handle: &EngineHandle) -> prysm_ports::Revision {
 }
 
 #[tokio::test]
-async fn active_profile_is_applied_at_start_and_none_is_neutral() {
+async fn active_calibration_is_applied_at_start_and_none_is_neutral() {
     within(async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
@@ -128,7 +128,7 @@ async fn active_profile_is_applied_at_start_and_none_is_neutral() {
 }
 
 #[tokio::test]
-async fn switching_the_active_profile_while_running_keeps_source_and_output_open() {
+async fn switching_the_active_calibration_while_running_keeps_source_and_output_open() {
     within(async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
@@ -143,16 +143,16 @@ async fn switching_the_active_profile_while_running_keeps_source_and_output_open
             .unwrap();
         wait_for_cast(&handle, Cast::Warm).await;
 
-        // Editing the active profile's values is the same hot-swap.
+        // Editing the active calibration's values is the same hot-swap.
         let mut cooled = warm;
-        cooled.processing.profiles[1].correction.warmth = -100;
+        cooled.processing.calibrations[1].correction.warmth = -100;
         handle
             .replace_settings(replaced, cooled.clone())
             .await
             .unwrap();
         wait_for_cast(&handle, Cast::Cool).await;
 
-        // Clearing the active profile removes the correction.
+        // Clearing the active calibration removes the correction.
         let cleared = with_active(None);
         handle
             .replace_settings(revision(&handle), cleared.clone())
@@ -172,7 +172,7 @@ async fn switching_the_active_profile_while_running_keeps_source_and_output_open
 }
 
 #[tokio::test]
-async fn profile_change_while_off_waits_for_the_next_start() {
+async fn calibration_change_while_off_waits_for_the_next_start() {
     within(async {
         let log = CallLog::new();
         let store = MemoryStore::with(with_active(Some("cool")));
@@ -191,7 +191,7 @@ async fn profile_change_while_off_waits_for_the_next_start() {
 }
 
 #[tokio::test]
-async fn invalid_profiles_are_rejected_before_persistence() {
+async fn invalid_calibrations_are_rejected_before_persistence() {
     within(async {
         let log = CallLog::new();
         let initial = with_active(Some("cool"));
@@ -202,28 +202,31 @@ async fn invalid_profiles_are_rejected_before_persistence() {
         let current = revision(&handle);
 
         let mut duplicate = initial.clone();
-        duplicate.processing.profiles[1].id = "cool".into();
+        duplicate.processing.calibrations[1].id = "cool".into();
         let mut unknown_active = initial.clone();
-        unknown_active.processing.active_profile = Some("gone".into());
+        unknown_active.processing.active_calibration = Some("gone".into());
         let mut out_of_range = initial.clone();
-        out_of_range.processing.profiles[1].correction.hue.blue = 101;
+        out_of_range.processing.calibrations[1].correction.hue.blue = 101;
         let mut too_many = initial.clone();
-        too_many.processing.profiles = (0..=MAX_PROFILES)
-            .map(|i| profile(&format!("p{i}"), 0))
+        too_many.processing.calibrations = (0..=MAX_CALIBRATIONS)
+            .map(|i| calibration(&format!("c{i}"), 0))
             .collect();
-        too_many.processing.active_profile = None;
+        too_many.processing.active_calibration = None;
         let mut bad_name = initial.clone();
-        bad_name.processing.profiles[0].name = " padded".into();
+        bad_name.processing.calibrations[0].name = " padded".into();
         let mut bad_id = initial.clone();
-        bad_id.processing.profiles[1].id = "no spaces".into();
+        bad_id.processing.calibrations[1].id = "no spaces".into();
 
         for (settings, field) in [
-            (duplicate, "processing.profiles[1].id"),
-            (unknown_active, "processing.active_profile"),
-            (out_of_range, "processing.profiles[1].correction.hue.blue"),
-            (too_many, "processing.profiles"),
-            (bad_name, "processing.profiles[0].name"),
-            (bad_id, "processing.profiles[1].id"),
+            (duplicate, "processing.calibrations[1].id"),
+            (unknown_active, "processing.active_calibration"),
+            (
+                out_of_range,
+                "processing.calibrations[1].correction.hue.blue",
+            ),
+            (too_many, "processing.calibrations"),
+            (bad_name, "processing.calibrations[0].name"),
+            (bad_id, "processing.calibrations[1].id"),
         ] {
             let error = handle
                 .replace_settings(current, settings)
@@ -245,7 +248,7 @@ async fn invalid_profiles_are_rejected_before_persistence() {
 }
 
 #[tokio::test]
-async fn profiles_round_trip_through_the_store_and_a_restart() {
+async fn calibrations_round_trip_through_the_store_and_a_restart() {
     within(async {
         let log = CallLog::new();
         let store = MemoryStore::new();

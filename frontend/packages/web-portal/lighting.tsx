@@ -266,7 +266,7 @@ function effectsLine(effects: string | undefined) {
 
 /**
  * Your lights: the state as one word and the power button, then three
- * labelled controls (what the lights follow, brightness, colour profile),
+ * labelled controls (what the lights follow, brightness, calibration),
  * over a light that drifts while the lights are on. Each control sets a `LightingTarget`; the state
  * stream, not the click, decides what is shown as on.
  */

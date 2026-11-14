@@ -155,7 +155,7 @@ impl Default for PrysmProcessor {
 mod correction_tests {
     use super::*;
     #[test]
-    fn live_profile_changes_precede_brightness_and_do_not_retain_previous_correction() {
+    fn live_calibration_changes_precede_brightness_and_do_not_retain_previous_correction() {
         let mut config = Config {
             remove_black_bars: false,
             smoothing_seconds: prysm_core::SmoothingSeconds(0.0),

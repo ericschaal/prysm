@@ -16,8 +16,8 @@ import { useNav, usePortal } from './portal-context';
 import type { Place } from './routes';
 import { PreviewPanel } from './preview';
 import { FineTuning, QuickPicture } from './processing';
-import { nameOf } from './profile-model';
-import { ProfileList, ProfilePage } from './profiles';
+import { nameOf } from './calibration-model';
+import { CalibrationList, CalibrationPage } from './calibrations';
 import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionEditor } from './section-editor';
 import { SetupCard, type PathState } from './setup-card';
@@ -25,10 +25,10 @@ import { AboutPage, SettingsPage } from './settings-page';
 import { stepCopy } from './step-copy';
 import { ThemeChoice } from './theme-choice';
 
-/** The active colour profile's name, or `null` without one. */
-function activeProfile(processing: Processing) {
-  const active = processing.profiles?.find(
-    (profile) => profile.id === processing.active_profile,
+/** The active calibration's name, or `null` without one. */
+function activeCalibration(processing: Processing) {
+  const active = processing.calibrations?.find(
+    (calibration) => calibration.id === processing.active_calibration,
   );
   return active ? nameOf(active) : null;
 }
@@ -221,50 +221,55 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
   );
 }
 
-export function ProfilesRoute() {
+export function CalibrationsRoute() {
   const portal = usePortal();
   const nav = useNav();
   return (
     <LivePage
-      className="profiles-page"
-      title="Prysm colour profiles"
-      name="Colour profiles"
-      heading="Colour profiles"
+      className="calibrations-page"
+      title="Prysm calibrations"
+      name="Calibrations"
+      heading="Calibrations"
     >
-      <ProfileList
+      <CalibrationList
         {...useLiveProps()}
-        deleted={portal.deletedProfiles}
-        setDeleted={portal.setDeletedProfiles}
-        open={(id) => nav.go({ profile: id })}
+        deleted={portal.deletedCalibrations}
+        setDeleted={portal.setDeletedCalibrations}
+        open={(id) => nav.go({ calibration: id })}
         calibrate={() => nav.go('calibrate')}
       />
     </LivePage>
   );
 }
 
-export function ProfileRoute() {
+export function CalibrationRoute() {
   const portal = usePortal();
   const nav = useNav();
   const live = useLiveProps();
   const id = useParams().id ?? '';
-  const profile = live.processing.profiles?.find((item) => item.id === id);
-  const heading = profile ? nameOf(profile) : 'Colour profile';
+  const calibration = live.processing.calibrations?.find(
+    (item) => item.id === id,
+  );
+  const heading = calibration ? nameOf(calibration) : 'Calibration';
   return (
     <LivePage
-      className="profile-page"
-      title="Prysm colour profile"
+      className="calibration-page"
+      title="Prysm calibration"
       name={heading}
       heading={heading}
-      to="profiles"
-      backLabel="Colour profiles"
+      to="calibrations"
+      backLabel="Calibrations"
     >
-      <ProfilePage
+      <CalibrationPage
         {...live}
         id={id}
         deleted={(gone) =>
-          portal.setDeletedProfiles((current) => ({ ...current, [id]: gone }))
+          portal.setDeletedCalibrations((current) => ({
+            ...current,
+            [id]: gone,
+          }))
         }
-        leave={() => nav.back('profiles')}
+        leave={() => nav.back('calibrations')}
       />
     </LivePage>
   );
@@ -356,13 +361,11 @@ export function CalibrateRoute() {
         processing={snapshot.settings.processing}
         revision={snapshot.revision}
         target={snapshot.target}
-        calibration={snapshot.calibration}
+        shown={snapshot.calibration}
         disabled={!online}
         save={saveProcessing}
-        setCalibration={(calibration) =>
-          dispatch(commands.setCalibration(calibration))
-        }
-        // Back where it was opened (Home, or the profiles), else Home.
+        setCalibration={(pattern) => dispatch(commands.setCalibration(pattern))}
+        // Back where it was opened (Home, or the calibrations), else Home.
         leave={nav.backToOpener}
       />
     </Page>
@@ -370,7 +373,7 @@ export function CalibrateRoute() {
 }
 
 /**
- * Home: the light card (power, mode, brightness, colour profile) and, once
+ * Home: the light card (power, mode, brightness, calibration) and, once
  * set up, the path the light takes. `gridRef` takes the live LED colours.
  */
 function HomePage<C extends AdapterSection, O extends AdapterSection>({
@@ -461,7 +464,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
           }}
           discovery={discovery}
           path={path}
-          profile={activeProfile(settings.processing)}
+          calibration={activeCalibration(settings.processing)}
           openSettings={() => {
             if (path.kind === 'failed' && path.at === 'capture') go('video');
             else if (path.kind === 'failed' && path.at === 'output')

@@ -10,13 +10,21 @@ export interface components {
          * @enum {string}
          */
         Behind: "processing" | "output";
+        /** @description A named color correction, such as one per console. */
+        Calibration: {
+            correction: components["schemas"]["CorrectionControls"];
+            /** @description Stable reference for `active_calibration`; a UUID fits. */
+            id: string;
+            /** @description Without surrounding whitespace or control characters. */
+            name: string;
+        };
         /**
          * @description A calibration pattern shown on the TV: the body of
          *     `PUT /api/v1/calibration` and `State.calibration`.
          */
-        Calibration: {
+        CalibrationPattern: {
             pattern: components["schemas"]["Pattern"];
-            /** @description Apply no color profile while the pattern shows, to compare. */
+            /** @description Apply no calibration while the pattern shows, to compare. */
             uncorrected: boolean;
         };
         /**
@@ -37,14 +45,6 @@ export interface components {
             kind: string;
         } & {
             [key: string]: unknown;
-        };
-        /** @description A named color correction, such as one per console. */
-        ColorProfile: {
-            correction: components["schemas"]["CorrectionControls"];
-            /** @description Stable reference for `active_profile`; a UUID fits. */
-            id: string;
-            /** @description Without surrounding whitespace or control characters. */
-            name: string;
         };
         /** @description One server-sent event of the colors stream. */
         ColorsEvent: (components["schemas"]["LedColors"] & {
@@ -283,8 +283,8 @@ export interface components {
         };
         /** @description Processing controls in plain units. */
         Processing: {
-            /** @description The `id` of the applied profile; absent applies no correction. */
-            active_profile?: string;
+            /** @description The `id` of the applied calibration; absent applies no correction. */
+            active_calibration?: string;
             /** Format: int32 */
             brightness_percent: number;
             /**
@@ -292,6 +292,8 @@ export interface components {
              * @description Seconds, the least time from dark to full brightness; 0 sets no limit.
              */
             brightness_ramp_seconds: number;
+            /** @description Saved color corrections; ids are unique. */
+            calibrations?: components["schemas"]["Calibration"][];
             /**
              * Format: int32
              * @description How much each light keeps the colour next to it, taking less from the
@@ -304,8 +306,6 @@ export interface components {
              *     like any other change.
              */
             cut_response_percent: number;
-            /** @description Saved color corrections; ids are unique. */
-            profiles?: components["schemas"]["ColorProfile"][];
             remove_black_bars: boolean;
             /** Format: int32 */
             sample_density: number;
@@ -360,7 +360,7 @@ export interface components {
              * @description The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
              *     absent while not calibrating. Never saved.
              */
-            calibration?: components["schemas"]["Calibration"];
+            calibration?: components["schemas"]["CalibrationPattern"];
             failure: components["schemas"]["Failure"] | null;
             /**
              * @description Frames arriving from the source, measured about once a second; absent
@@ -403,9 +403,9 @@ export interface components {
 }
 export type Behind = components['schemas']['Behind'];
 export type Calibration = components['schemas']['Calibration'];
+export type CalibrationPattern = components['schemas']['CalibrationPattern'];
 export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];
-export type ColorProfile = components['schemas']['ColorProfile'];
 export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type DeviceBrightness = components['schemas']['DeviceBrightness'];

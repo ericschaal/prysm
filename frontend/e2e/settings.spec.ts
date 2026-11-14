@@ -16,7 +16,7 @@ test('Settings lists its groups in order, and says whether it is saved', async (
   ]);
   const status = page.getByText('All changes saved');
   await expect(status).toBeVisible();
-  // Brightness and the profile choice are on Home only.
+  // Brightness and the calibration choice are on Home only.
   await expect(page.getByRole('slider', { name: 'Brightness' })).toHaveCount(0);
 
   const bars = page

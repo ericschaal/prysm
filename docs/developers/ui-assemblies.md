@@ -71,9 +71,9 @@ feedback in one RTK store per frontend.
 
 The [shared portal](../../frontend/packages/web-portal/portal.tsx) has three pages.
 Home shows the light card (power, Screen sync or the output's own effects
-such as "WLED effects", brightness and the colour profiles as one-tap chips)
+such as "WLED effects", brightness and the calibrations as one-tap chips)
 and a summary of the setup with the LEDs per edge. Settings (`#/settings`)
-holds the live picture controls with colour profiles, Calibrate colours, Run
+holds the live picture controls with calibrations, Calibrate colours, Run
 setup again, the live preview (`#/preview`), one Save form each for capture
 and output, the theme and the technical details. Both browser hosts
 pass `httpPreviewClient()` (same `baseUrl` option as the application client)
@@ -89,7 +89,7 @@ instead of overwritten ([saving settings](../../frontend/README.md#saving-settin
 Both browser hosts also have the Calibrate page at `#/calibrate` (the TV
 links its QR code there; the main page has a "Calibrate colours" entry): a
 phone wizard that shows one pattern at a time on the TV through
-`PUT /api/v1/calibration` while it edits a draft colour profile with the
+`PUT /api/v1/calibration` while it edits a draft calibration with the
 Picture panel's live save. It needs screen sync running on the TV and never
 starts lighting itself.
 UI teardown releases the state stream only; it never turns lighting off.

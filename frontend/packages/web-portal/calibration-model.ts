@@ -1,14 +1,14 @@
 import type {
-  ColorProfile,
+  Calibration,
   CorrectionControls,
   HueControls,
 } from '@prysm/contracts/application';
 
 /**
- * From the generated schemas: `Processing.profiles` `maxItems`
- * (`MAX_PROFILES`) and `ColorProfile.name` `maxLength` (characters).
+ * From the generated schemas: `Processing.calibrations` `maxItems`
+ * (`MAX_CALIBRATIONS`) and `Calibration.name` `maxLength` (characters).
  */
-export const profileLimits = { count: 32, name: 64 } as const;
+export const calibrationLimits = { count: 32, name: 64 } as const;
 
 const control = { min: -100, max: 100, step: 1 } as const;
 /** Each correction control, from the generated `CorrectionControls` schema. */
@@ -44,9 +44,9 @@ export const noCorrection: CorrectionControls = {
   hue: noHue,
 };
 
-/** A profile's correction with absent controls as 0, as the engine reads it. */
-export function correctionOf(profile: ColorProfile): CorrectionControls {
-  const correction: Partial<CorrectionControls> = profile.correction ?? {};
+/** A calibration's correction with absent controls as 0, as the engine reads it. */
+export function correctionOf(calibration: Calibration): CorrectionControls {
+  const correction: Partial<CorrectionControls> = calibration.correction ?? {};
   return {
     ...noCorrection,
     ...correction,
@@ -59,7 +59,7 @@ export function correctionOf(profile: ColorProfile): CorrectionControls {
  * which a portal on the LAN over plain HTTP is not; `getRandomValues` is not
  * restricted.
  */
-export function newProfileId(taken: readonly string[] = []): string {
+export function newCalibrationId(taken: readonly string[] = []): string {
   for (;;) {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
@@ -73,14 +73,14 @@ export function newProfileId(taken: readonly string[] = []): string {
   }
 }
 
-/** `base`, else `base 2`, `base 3`, … — the first no profile uses, within the length limit. */
-export function freeName(base: string, profiles: readonly ColorProfile[]) {
-  const names = new Set(profiles.map((profile) => profile.name));
+/** `base`, else `base 2`, `base 3`, … — the first no calibration uses, within the length limit. */
+export function freeName(base: string, calibrations: readonly Calibration[]) {
+  const names = new Set(calibrations.map((calibration) => calibration.name));
   for (let count = 1; ; count++) {
     const suffix = count === 1 ? '' : ` ${count}`;
     const name =
       [...base]
-        .slice(0, profileLimits.name - suffix.length)
+        .slice(0, calibrationLimits.name - suffix.length)
         .join('')
         .trim() + suffix;
     if (!names.has(name)) return name;
@@ -88,8 +88,8 @@ export function freeName(base: string, profiles: readonly ColorProfile[]) {
 }
 
 /** Names are required, but a list edited by hand may lack one. */
-export const nameOf = (profile: ColorProfile): string =>
-  profile.name ?? profile.id;
+export const nameOf = (calibration: Calibration): string =>
+  calibration.name ?? calibration.id;
 
 export const signed = (value: number) =>
   value > 0 ? `+${value}` : String(value);

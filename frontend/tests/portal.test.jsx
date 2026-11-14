@@ -13,7 +13,7 @@ import {
   processingDelayMs,
   processingLimits,
   picturePresets,
-  profileLimits,
+  calibrationLimits,
   rebased,
   saveDeveloper,
   savedForMs,
@@ -91,7 +91,7 @@ const info = () =>
   $('.light-info').dataset.shown === 'true'
     ? $('.light-info > div > p').textContent
     : null;
-const chip = (id) => $(`[data-profile="${id}"]`);
+const chip = (id) => $(`[data-calibration="${id}"]`);
 /** The card's calm line: what Power will do, a pause that lasts, what runs. */
 const note = () => $('.light-calm').textContent || null;
 const hint = (element) =>
@@ -718,14 +718,14 @@ test('a stale picture change keeps both changes: mine where I changed, theirs el
     brightness_percent: 60,
   });
   // A removed list stays removed; an untouched one follows theirs.
-  const profiles = [{ id: 'a', name: 'A' }];
+  const calibrations = [{ id: 'a', name: 'A' }];
   assert.deepEqual(
-    rebased({ ...base, profiles }, { ...base, profiles }, base),
+    rebased({ ...base, calibrations }, { ...base, calibrations }, base),
     base,
   );
-  assert.deepEqual(rebased({ ...base, profiles }, base, base), {
+  assert.deepEqual(rebased({ ...base, calibrations }, base, base), {
     ...base,
-    profiles,
+    calibrations,
   });
 });
 
@@ -852,8 +852,8 @@ test('Open WLED derives http://host[:port]/ from the saved address', () => {
   );
 });
 
-test('Settings keeps brightness and the profile choice on Home; the picture saves live', async () => {
-  const profiles = [{ id: 'ps5', name: 'PS5' }];
+test('Settings keeps brightness and the calibration choice on Home; the picture saves live', async () => {
+  const calibrations = [{ id: 'ps5', name: 'PS5' }];
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -862,8 +862,8 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          profiles,
-          active_profile: 'ps5',
+          calibrations,
+          active_calibration: 'ps5',
         },
       },
     }),
@@ -874,11 +874,11 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
     ['type', 'value', 'min', 'max', 'step'].map((name) => element[name] ?? '');
   try {
     await openSettings();
-    // Only black bars here: brightness and the profile choice live on Home.
+    // Only black bars here: brightness and the calibration choice live on Home.
     assert.equal(control('brightness_percent'), null);
-    assert.equal(control('active_profile'), null);
+    assert.equal(control('active_calibration'), null);
     assert.equal(control('remove_black_bars').checked, false);
-    assert.equal(valueOf('Colour profiles'), '1 profile · PS5 in use');
+    assert.equal(valueOf('Calibrations'), '1 calibration · PS5 in use');
     await click(control('remove_black_bars'));
     await settle();
     assert.equal(saves(fixture), 1);
@@ -971,8 +971,8 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       cut_response_percent: 60,
       brightness_ramp_seconds: 0.5,
       remove_black_bars: true,
-      profiles,
-      active_profile: 'ps5',
+      calibrations,
+      active_calibration: 'ps5',
     });
 
     // A field rejected by the server is marked and not retried until edited.
@@ -1536,11 +1536,11 @@ test('fields the forms do not show are preserved on every save', async () => {
     (snapshot) => ({
       settings: {
         ...snapshot.settings,
-        colour: { profile: 'warm' },
+        colour: { calibration: 'warm' },
         processing: {
           ...snapshot.settings.processing,
-          active_profile: 'ps5',
-          profiles: [{ id: 'ps5' }],
+          active_calibration: 'ps5',
+          calibrations: [{ id: 'ps5' }],
         },
       },
     }),
@@ -1567,10 +1567,10 @@ test('fields the forms do not show are preserved on every save', async () => {
       processing: {
         ...defaultProcessing,
         spatial_reach_percent: 20,
-        active_profile: 'ps5',
-        profiles: [{ id: 'ps5' }],
+        active_calibration: 'ps5',
+        calibrations: [{ id: 'ps5' }],
       },
-      colour: { profile: 'warm' },
+      colour: { calibration: 'warm' },
     });
   } finally {
     await portal.unmount();
@@ -2067,12 +2067,12 @@ test('limits and defaults written in the panels match the generated schemas', as
       assert.equal(value, schema.properties[name].default, name);
   }
   assert.equal(
-    profileLimits.count,
-    application.Processing.properties.profiles.maxItems,
+    calibrationLimits.count,
+    application.Processing.properties.calibrations.maxItems,
   );
   assert.equal(
-    profileLimits.name,
-    application.ColorProfile.properties.name.maxLength,
+    calibrationLimits.name,
+    application.Calibration.properties.name.maxLength,
   );
   for (const name of Object.keys(
     application.CorrectionControls.properties,
@@ -2117,7 +2117,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          profiles: [{ id: 'movie', name: 'Movie night' }],
+          calibrations: [{ id: 'movie', name: 'Movie night' }],
         },
       },
     }),
@@ -2171,7 +2171,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
       [
         'Video source',
         'Lights',
-        'Colour profiles',
+        'Calibrations',
         'Fine-tuning',
         'Remove black bars',
         'Appearance',
@@ -2242,7 +2242,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     // Names, not ids; one quiet fact each; the LED count said once.
     assert.deepEqual(stops(), [
       ['Elgato Cam Link 4K', '640 × 360'],
-      // Nothing negative: without a profile the line stays empty.
+      // Nothing negative: without a calibration the line stays empty.
       ['Prysm', '\u00a0'],
       // A non-breaking hyphen: never split at it.
       ['WLED\u2011Gledopto', '300 LEDs'],
@@ -2641,8 +2641,8 @@ test('discovered names are kept in this browser: shown at once next time, droppe
   }
 });
 
-test('colour profiles swap with one tap on Home, applied at once', async () => {
-  const profiles = [
+test('calibrations swap with one tap on Home, applied at once', async () => {
+  const calibrations = [
     { id: 'tv', name: 'TV' },
     { id: 'ps5', name: 'PS5' },
   ];
@@ -2654,8 +2654,8 @@ test('colour profiles swap with one tap on Home, applied at once', async () => {
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          profiles,
-          active_profile: 'tv',
+          calibrations,
+          active_calibration: 'tv',
         },
       },
     }),
@@ -2675,29 +2675,38 @@ test('colour profiles swap with one tap on Home, applied at once', async () => {
     await press(chip('ps5'));
     assert.deepEqual(pressed(), ['PS5']);
     assert.equal(saves(fixture), 1, 'no wait');
-    assert.equal(fixture.snapshot().settings.processing.active_profile, 'ps5');
-    assert.deepEqual(fixture.snapshot().settings.processing.profiles, profiles);
+    assert.equal(
+      fixture.snapshot().settings.processing.active_calibration,
+      'ps5',
+    );
+    assert.deepEqual(
+      fixture.snapshot().settings.processing.calibrations,
+      calibrations,
+    );
 
     await press(chip('ps5'));
     assert.equal(saves(fixture), 1, 'the active one again saves nothing');
     await press(chip('tv'));
-    assert.equal(fixture.snapshot().settings.processing.active_profile, 'tv');
+    assert.equal(
+      fixture.snapshot().settings.processing.active_calibration,
+      'tv',
+    );
     await press(chip(''));
     assert.deepEqual(pressed(), ['No correction']);
     assert.equal(
-      'active_profile' in fixture.snapshot().settings.processing,
+      'active_calibration' in fixture.snapshot().settings.processing,
       false,
     );
     assert.equal(saves(fixture), 3);
 
-    // Profiles correct the screen's colours: quiet for the lights' effects.
+    // Calibrations correct the screen's colours: quiet for the lights' effects.
     assert.equal($('.picture-controls').hasAttribute('inert'), false);
     await press(mode('device_native'));
     assert.equal($('.picture-controls').hasAttribute('inert'), true);
   } finally {
     await portal.unmount();
   }
-  // Without profiles, Home offers to make one.
+  // Without calibrations, Home offers to make one.
   const empty = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     assert.deepEqual(

@@ -47,7 +47,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     what Power turns on; on, "Following the screen." or "WLED effects are
     showing." or, for the lights' own effects, "WLED controls its own
     effects." with Open WLED; a start or a wait for the picture once it
-    lasts), then the mode, Brightness and the colour profiles as chips, 32
+    lasts), then the mode, Brightness and the calibrations as chips, 32
     px apart. The mode is a radio group ("Mode") of two option cards about
     72 px tall: an icon, the name ("Screen sync", the output's effects name)
     and one line written to fit a phone's half card, never cut ("Follows the
@@ -57,7 +57,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     choice; no transitions with reduced motion) and [Your setup](packages/web-portal/setup-card.tsx)
     (the video source and lights from the adapters' `summary`, a kind named
     without its qualifier such as "(development only)", Prysm by its active
-    profile's name beside the frame rate, the LEDs per edge
+    calibration's name beside the frame rate, the LEDs per edge
     from an output's `edges` in a drawing that fills the card, and a
     "Change setup" row at its foot). Problems show in the light card in plain
     words with the action that fixes them ("Set up Prysm"); the card keeps
@@ -68,11 +68,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     ([save status](packages/web-portal/save-status.tsx)), then one column
     of [rows](packages/web-portal/rows.tsx) in groups with a small heading:
     Setup (Video source, Lights: name and facts, or the live problem in the
-    same line in red), Picture (Colour profiles, Fine-tuning, the Remove
+    same line in red), Picture (Calibrations, Fine-tuning, the Remove
     black bars switch) and This device (Appearance, About this Prysm, Start
     over with setup). A row is a label, its value beneath and a chevron; the
     whole row is the link; a switch only for plain on/off. The pages under
-    Settings (editors, profiles, fine-tuning, appearance, about, preview)
+    Settings (editors, calibrations, fine-tuning, appearance, about, preview)
     have the same width, heading and back link, and one line under the
     heading in the same place: the save status where things save live, else
     how the page saves ("Saved when you choose …", "Kept in this browser").
@@ -83,7 +83,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     (`#/settings/appearance`) is System, Light or Dark as rows (kept per
     browser in `localStorage`, never sent to Prysm); About this Prysm
     (`#/settings/about`) shows lights, status, frames per second and settings
-    version, and holds Developer options. Brightness and choosing the profile
+    version, and holds Developer options. Brightness and choosing the calibration
     are on Home only; Open WLED stays on Home.
   - Developer options ([developer](packages/web-portal/developer.ts)): an
     adapter marked `developer` (the video file, no lights) is offered only
@@ -97,7 +97,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     (`device_native`, named by the output's `lighting().effects`, e.g. "WLED
     effects"), and a choice made while off turns that mode on; after a
     failure it retries. A mode that cannot work is disabled with the reason.
-    Brightness and the profiles are Prysm's processing, which only a running
+    Brightness and the calibrations are Prysm's processing, which only a running
     session applies (the engine stops the session and idles the output for
     `device_native`), so with the lights' own effects they stay in place,
     dimmed and inert, and the card's line says "WLED controls its own
@@ -129,7 +129,7 @@ supervisor in each of its states and play the phone's calibration part). See the
     are known the Lights stop's line says their sum instead of the LED count
     ("90 ms behind", summed in the portal); the count stays in that stop's
     tooltip and screen-reader text. The frame rate (`Input.fps`, the frames Prysm takes
-    and sends) is said once, on the Prysm stop after the active profile;
+    and sends) is said once, on the Prysm stop after the active calibration;
     `sent_fps` stays in the API and `/metrics` but is not shown.
     When `Input.behind` names the step that keeps Prysm from keeping up
     (`processing` or `output`), that stop or link turns orange (`--behind`),
@@ -143,17 +143,17 @@ supervisor in each of its states and play the phone's calibration part). See the
     100 %, brightness ramp 0 to 2 s, detail 1 to 512, all sliders in Home's
     one slider style, widened to fit a saved value beyond), applied live (debounced 400 ms, sliders on
     release) because processing-only changes reach a running session without
-    restarting it. [Colour profiles](packages/web-portal/profiles.tsx)
-    (`#/settings/profiles`): one row each ("In use" or "Not in use") opening
-    the profile's page (`#/settings/profiles/<id>`: name, an "In use" switch,
-    correction and hue shift, Reset, Delete). A deleted profile keeps its row
+    restarting it. [Calibrations](packages/web-portal/calibrations.tsx)
+    (`#/settings/calibrations`): one row each ("In use" or "Not in use") opening
+    the calibration's page (`#/settings/calibrations/<id>`: name, an "In use" switch,
+    correction and hue shift, Reset, Delete). A deleted calibration keeps its row
     in the list with Undo for 5 s (kept by the portal across the two pages);
-    the "New profile (guided)" row opens Calibrate. Home's brightness changes
+    the "New calibration" row opens Calibrate. Home's brightness changes
     the lights while it is dragged (pointer or keys): each value is tried
     unsaved (`PUT /api/v1/processing/trial`), throttled to one every 100 ms
     with one request in flight and the latest value winning, and the value
     where it is let go is saved once; a failed step shows nothing, only the
-    save's failure. A profile chip saves at once.
+    save's failure. A calibration chip saves at once.
   - [Preview](packages/web-portal/preview.tsx): the captured picture drawn on
     a canvas with each edge's colours around it and the sampled area outlined
     when black bars are removed, on its own page (`#/preview`, from
@@ -185,14 +185,14 @@ supervisor in each of its states and play the phone's calibration part). See the
     until the end, which saves both sections with one request and can start
     screen sync; a refused field returns to its step.
   - [Calibrate](packages/web-portal/calibrate.tsx): the page at
-    `#/calibrate` ("New profile (guided)" in Colour profiles, which it
-    returns to; Home's chip while there are no profiles; the TV's QR code
-    points there, and leaving returns Home). Start creates a draft profile (new, or a copy of
+    `#/calibrate` ("New calibration" in Calibrations, which it
+    returns to; Home's chip while there are no calibrations; the TV's QR code
+    points there, and leaving returns Home). Start creates a draft calibration (new, or a copy of
     one) and makes it active; white balance (`gray-192`), one hue per colour,
     intensity (`red-pair`, `green-pair`, `blue-pair`), mixed colours and a
     review each show their pattern on the TV (`setCalibration`); sliders
-    save live through `useLiveProcessing`, as the profiles page does. Finish names
-    the profile, Cancel deletes it and restores the previous active one;
+    save live through `useLiveProcessing`, as the calibrations page does. Finish names
+    it, Cancel deletes it and restores the previous active one;
     both end calibration. Without screen sync it says to choose Calibrate on
     the TV; if calibration ends elsewhere it offers Resume and keeps the draft.
   - [Find devices](packages/web-portal/discovery.tsx): "Find devices" in the
@@ -259,7 +259,7 @@ supervisor in each of its states and play the phone's calibration part). See the
 
 | Section | When it is sent | Conflict check |
 | --- | --- | --- |
-| Picture (`processing`) | 400 ms after the last change; a slider where it is let go (tried on the lights while held); a profile name when it is committed with Enter or by leaving the field. Saves never overlap: one asked for meanwhile follows at once. A refused value is not retried until edited | None asked: a refused stale save waits for the newer settings, puts the user's changed controls on them and saves again |
+| Picture (`processing`) | 400 ms after the last change; a slider where it is let go (tried on the lights while held); a calibration name when it is committed with Enter or by leaving the field. Saves never overlap: one asked for meanwhile follows at once. A refused value is not retried until edited | None asked: a refused stale save waits for the newer settings, puts the user's changed controls on them and saves again |
 | Video source, Lights (`capture`, `output`) | The editor's one button; Cancel discards the draft | The section must still match what the editor started from; otherwise the user chooses theirs or mine |
 
 Every save copies the latest observed settings, replaces one section and sends
@@ -272,8 +272,8 @@ sentence (`AdapterUi.problems`) in place of its help, and move focus to it; a
 field the form does not show is reported in the form's status line. Limits come from the generated schemas
 and are checked against them in [tests](tests/portal.test.jsx); where a schema
 has no maximum the panel uses the Rust type bound (`sample_density` `u16`,
-file `fps` `u32`, device `fps` `i32` for AVFoundation). Profile limits (32
-profiles, 64-character names, -100 to 100 per control) are checked the same way.
+file `fps` `u32`, device `fps` `i32` for AVFoundation). Calibration limits (32
+calibrations, 64-character names, -100 to 100 per control) are checked the same way.
 
 ## Contracts
 

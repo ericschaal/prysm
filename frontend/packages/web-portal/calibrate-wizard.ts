@@ -34,13 +34,13 @@ export const screens: readonly Screen[] = [
 ];
 
 export type WizardPhase =
-  /** Before the start: the profile to copy (`''` for a new one). */
+  /** Before the start: the calibration to copy (`''` for a new one). */
   | { kind: 'start'; from: string }
   | {
       kind: 'calibrating';
-      /** The draft profile being calibrated. */
+      /** The draft calibration. */
       draftId: string;
-      /** The active profile before the start, for Cancel. */
+      /** The active calibration before the start, for Cancel. */
       previous: string | undefined;
       /** Index into {@link screens}. */
       screen: number;

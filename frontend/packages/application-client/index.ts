@@ -1,5 +1,5 @@
 import type {
-  Calibration,
+  CalibrationPattern,
   Candidate,
   ColorsEvent,
   Failure,
@@ -14,7 +14,7 @@ import type {
 } from '@prysm/contracts/application';
 
 export type {
-  Calibration,
+  CalibrationPattern,
   Candidate,
   ColorsEvent,
   Failure,
@@ -156,7 +156,7 @@ export interface ApplicationClient<C, O> {
    * Show a calibration pattern, or end calibration with `null`. Needs the
    * target `processed`; the engine ends it after ten minutes without a call.
    */
-  setCalibration(calibration: Calibration | null): Promise<void>;
+  setCalibration(calibration: CalibrationPattern | null): Promise<void>;
   /** Returns the new settings revision. */
   replaceSettings(expected: number, settings: Settings<C, O>): Promise<number>;
   /**

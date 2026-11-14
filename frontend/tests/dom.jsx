@@ -119,7 +119,7 @@ export const openSettings = () =>
     await navigated();
   });
 
-/** A row on Settings by its label: `Video source`, `Colour profiles`. */
+/** A row on Settings by its label: `Video source`, `Calibrations`. */
 export const row = (label) =>
   $$('.row').find((item) => $('.row-label', item)?.textContent === label);
 
@@ -129,7 +129,7 @@ export const radio = (label) => $('input[type="radio"]', row(label));
 /** A row's value line: its facts, or its live problem in their place. */
 export const valueOf = (label) => $('.row-value', row(label)).textContent;
 
-/** Open a page from Settings by its row: `Colour profiles`, `Fine-tuning`. */
+/** Open a page from Settings by its row: `Calibrations`, `Fine-tuning`. */
 export async function openPage(label) {
   if (!row(label)) await openSettings();
   await act(async () => {

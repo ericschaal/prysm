@@ -191,7 +191,7 @@ pub struct EngineHandle { /* mpsc::Sender<Command>, watch::Receiver<Snapshot>, p
   closed), resume and keyframe. An encoder failure is not a wait: it fails
   `send`, so the worker exits and the supervisor's backoff applies. There is
   no automatic switch between encoders (`prysm-3jx.12.2`).
-- Calibration is not a session: color profiles are edited through settings
+- Calibration is not a session: calibrations are edited through settings
   as usual, and `Snapshot::calibration` (the TV's pattern, and whether to
   compare uncorrected) is ephemeral state beside the target. While set, the
   session's config has no smoothing (and no correction when uncorrected);

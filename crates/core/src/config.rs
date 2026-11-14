@@ -21,7 +21,7 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Config {
-    /// Selected profile correction, independent of processing controls.
+    /// The active calibration's correction, independent of processing controls.
     pub correction: crate::ColorCorrection,
     /// Light output: 0 = off, 100 = full brightness. Default: 100.
     /// Values above 100 are treated as 100.

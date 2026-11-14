@@ -6,10 +6,10 @@ import {
   fineLimits,
   processingLimits,
   useLiveProcessing,
-  withProfiles,
+  withCalibrations,
   type ProcessingControls,
 } from './live-processing';
-import { nameOf } from './profile-model';
+import { nameOf } from './calibration-model';
 import { useSaveReport } from './save-state';
 
 const percent = (value: number) => `${value}%`;
@@ -43,7 +43,7 @@ function Problem({ failure, retry }: { failure: string; retry?: () => void }) {
 
 /**
  * The everyday screen sync controls in the light card: brightness, and the
- * colour profiles as one-tap chips. Dragging brightness changes the lights as
+ * calibrations as one-tap chips. Dragging brightness changes the lights as
  * it moves (unsaved) and saves where it is let go; a chip applies at once.
  */
 export function QuickPicture({
@@ -54,7 +54,7 @@ export function QuickPicture({
   calibrate,
   tryProcessing,
 }: PictureProps & {
-  /** Opens the calibration, offered while there are no profiles. */
+  /** Opens Calibrate, offered while there are no calibrations. */
   calibrate: () => void;
   /** Light with a processing section unsaved, while brightness is dragged. */
   tryProcessing: (processing: Processing) => Promise<unknown>;
@@ -67,14 +67,17 @@ export function QuickPicture({
     tryProcessing,
   });
   const headingId = useId();
-  const profilesId = useId();
+  const calibrationsId = useId();
   const value = live.value;
-  const profiles = value.profiles ?? [];
-  const active = profiles.some(({ id }) => id === value.active_profile)
-    ? value.active_profile
+  const calibrations = value.calibrations ?? [];
+  const active = calibrations.some(({ id }) => id === value.active_calibration)
+    ? value.active_calibration
     : undefined;
   const choices = [
-    ...profiles.map((profile) => ({ id: profile.id, label: nameOf(profile) })),
+    ...calibrations.map((calibration) => ({
+      id: calibration.id,
+      label: nameOf(calibration),
+    })),
     { id: undefined, label: 'No correction' },
   ];
   return (
@@ -102,9 +105,13 @@ export function QuickPicture({
           />
         </div>
       </FieldScopeProvider>
-      <div className="profile-chips" role="group" aria-labelledby={profilesId}>
-        <span id={profilesId} className="chips-label">
-          Colour profile
+      <div
+        className="calibration-chips"
+        role="group"
+        aria-labelledby={calibrationsId}
+      >
+        <span id={calibrationsId} className="chips-label">
+          Calibration
         </span>
         <div className="chips">
           {choices.map((choice) => (
@@ -112,21 +119,21 @@ export function QuickPicture({
               type="button"
               key={choice.id ?? ''}
               className="chip"
-              data-profile={choice.id ?? ''}
+              data-calibration={choice.id ?? ''}
               aria-pressed={choice.id === active}
               disabled={disabled}
               onClick={() => {
                 if (choice.id !== active)
                   void live.commit(
-                    withProfiles(live.value, [...profiles], choice.id),
-                    'processing.active_profile',
+                    withCalibrations(live.value, [...calibrations], choice.id),
+                    'processing.active_calibration',
                   );
               }}
             >
               {choice.label}
             </button>
           ))}
-          {profiles.length ? null : (
+          {calibrations.length ? null : (
             <button
               type="button"
               className="chip add"

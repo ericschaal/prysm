@@ -61,7 +61,7 @@ test('schemas reject unknown targets, untagged sections and incomplete failures'
     false,
   );
   assert.equal(
-    validate('Settings')({ ...state.settings, profiles: [] }),
+    validate('Settings')({ ...state.settings, calibrations: [] }),
     false,
   );
   assert.equal(

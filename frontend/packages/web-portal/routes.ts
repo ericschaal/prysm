@@ -9,8 +9,8 @@ export const pages = {
   settings: '/settings',
   video: '/settings/video',
   lights: '/settings/lights',
-  profiles: '/settings/profiles',
-  profile: '/settings/profiles/:id',
+  calibrations: '/settings/calibrations',
+  calibration: '/settings/calibrations/:id',
   picture: '/settings/picture',
   appearance: '/settings/appearance',
   about: '/settings/about',
@@ -20,11 +20,11 @@ export const pages = {
 
 export type PageId = keyof typeof pages;
 
-/** A page to open: by its id, or one colour profile's page by the profile. */
-export type Place = Exclude<PageId, 'profile'> | { profile: string };
+/** A page to open: by its id, or one calibration's page by the calibration. */
+export type Place = Exclude<PageId, 'calibration'> | { calibration: string };
 
 /** The router path of `place`: `'settings'` → `/settings`. */
 export const pathTo = (place: Place) =>
   typeof place === 'string'
     ? pages[place]
-    : generatePath(pages.profile, { id: place.profile });
+    : generatePath(pages.calibration, { id: place.calibration });

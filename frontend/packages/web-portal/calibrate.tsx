@@ -1,12 +1,12 @@
 import { useEffect, useId, useReducer, useRef, type ReactNode } from 'react';
 import {
   failureOf,
-  type Calibration,
+  type CalibrationPattern,
   type LightingTarget,
   type Pattern,
 } from '@prysm/application-client';
 import type {
-  ColorProfile,
+  Calibration,
   CorrectionControls,
   Processing,
 } from '@prysm/contracts/application';
@@ -22,7 +22,7 @@ import {
 import { nameProblem } from './checks';
 import { RangeField, SelectField, TextField } from './fields';
 import { FieldScopeProvider, type FieldScope } from './form';
-import { useLiveProcessing, withProfiles } from './live-processing';
+import { useLiveProcessing, withCalibrations } from './live-processing';
 import {
   correctionLimits,
   correctionOf,
@@ -31,11 +31,11 @@ import {
   hueLimits,
   hues,
   nameOf,
-  newProfileId,
+  newCalibrationId,
   noCorrection,
-  profileLimits,
+  calibrationLimits,
   signed,
-} from './profile-model';
+} from './calibration-model';
 
 /** What the TV shows for each pattern. */
 const patternLabels: Record<Pattern, string> = {
@@ -81,8 +81,8 @@ const sections: Record<
   },
   review: {
     label: 'Review',
-    title: 'Name your profile',
-    lead: 'Check the glow around the whole screen. When it looks right, name the profile and finish.',
+    title: 'Name your calibration',
+    lead: 'Check the glow around the whole screen. When it looks right, name it and finish.',
   },
 };
 const sectionOrder = Object.keys(sections) as Section[];
@@ -110,10 +110,10 @@ export interface CalibrateProps {
   revision: number;
   target: LightingTarget;
   /** The pattern the TV shows, absent while not calibrating. */
-  calibration: Calibration | undefined;
+  shown: CalibrationPattern | undefined;
   disabled: boolean;
   save: (expected: number, processing: Processing) => Promise<number>;
-  setCalibration: (calibration: Calibration | null) => Promise<unknown>;
+  setCalibration: (pattern: CalibrationPattern | null) => Promise<unknown>;
   /** Go back to the portal's main page. */
   leave: () => void;
 }
@@ -121,35 +121,37 @@ export interface CalibrateProps {
 /**
  * The Calibrate page, used on a phone while the TV shows patterns: a guided
  * walk through white balance, hues, intensity and mixed colours on a draft
- * profile. The draft is an ordinary profile, created and made active at the
+ * calibration. The draft is an ordinary calibration, created and made active at the
  * start and saved live like the Picture panel; Finish names it, Cancel
- * deletes it and makes the previous profile active again.
+ * deletes it and makes the previous calibration active again.
  */
 export function CalibrateWizard({
   processing,
   revision,
   target,
-  calibration,
+  shown,
   disabled,
   save,
   setCalibration,
   leave,
 }: CalibrateProps) {
   const live = useLiveProcessing({ processing, revision, disabled, save });
-  const profiles = live.value.profiles ?? [];
+  const calibrations = live.value.calibrations ?? [];
   const [state, dispatch] = useReducer(wizardReducer, initialWizard);
   const { phase, busy, problem } = state;
-  if (calibration && !state.seen) dispatch({ type: 'patternSeen' });
+  if (shown && !state.seen) dispatch({ type: 'patternSeen' });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
 
   const calibrating = phase.kind === 'calibrating' ? phase : null;
   const draftIndex = calibrating
-    ? profiles.findIndex((profile) => profile.id === calibrating.draftId)
+    ? calibrations.findIndex(
+        (calibration) => calibration.id === calibrating.draftId,
+      )
     : -1;
-  const draft = draftIndex >= 0 ? profiles[draftIndex] : undefined;
+  const draft = draftIndex >= 0 ? calibrations[draftIndex] : undefined;
   const screen = calibrating?.screen ?? 0;
-  const ended = !!calibrating && state.seen && !calibration && !busy;
+  const ended = !!calibrating && state.seen && !shown && !busy;
   const locked = disabled || busy || live.saving;
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -177,18 +179,24 @@ export function CalibrateWizard({
   async function start(from: string) {
     dispatch({ type: 'patternRequested' });
     if (!(await show(screens[0]!.pattern))) return;
-    const source = profiles.find((profile) => profile.id === from);
-    const id = newProfileId(profiles.map((profile) => profile.id));
-    const profile = {
+    const source = calibrations.find((calibration) => calibration.id === from);
+    const id = newCalibrationId(
+      calibrations.map((calibration) => calibration.id),
+    );
+    const calibration = {
       id,
       name: freeName(
         source ? `${nameOf(source)} calibrated` : 'Calibrated',
-        profiles,
+        calibrations,
       ),
       correction: source ? correctionOf(source) : noCorrection,
     };
-    const previous = live.value.active_profile;
-    if (await live.commit(withProfiles(live.value, [...profiles, profile], id)))
+    const previous = live.value.active_calibration;
+    if (
+      await live.commit(
+        withCalibrations(live.value, [...calibrations, calibration], id),
+      )
+    )
       dispatch({ type: 'started', draftId: id, previous });
   }
   async function end(title: string, message: string) {
@@ -207,30 +215,36 @@ export function CalibrateWizard({
       correction: { ...correctionOf(draft), ...change },
     };
     live.replace(
-      withProfiles(
+      withCalibrations(
         live.value,
-        profiles.map((profile, at) => (at === draftIndex ? next : profile)),
-        live.value.active_profile,
+        calibrations.map((calibration, at) =>
+          at === draftIndex ? next : calibration,
+        ),
+        live.value.active_calibration,
       ),
     );
   }
   async function finish(typedName: string | null) {
     if (!draft) return;
     const typed = (typedName ?? nameOf(draft)).trim();
-    const invalid = nameProblem(typed, profileLimits.name);
+    const invalid = nameProblem(typed, calibrationLimits.name);
     if (invalid) {
       dispatch({ type: 'refused', problem: invalid });
       return;
     }
-    const others = profiles.filter((profile) => profile.id !== draft.id);
+    const others = calibrations.filter(
+      (calibration) => calibration.id !== draft.id,
+    );
     const final = freeName(typed, others);
     if (final !== draft.name) {
-      const renamed = profiles.map((profile) =>
-        profile.id === draft.id ? { ...profile, name: final } : profile,
+      const renamed = calibrations.map((calibration) =>
+        calibration.id === draft.id
+          ? { ...calibration, name: final }
+          : calibration,
       );
       if (
         !(await live.commit(
-          withProfiles(live.value, renamed, live.value.active_profile),
+          withCalibrations(live.value, renamed, live.value.active_calibration),
         ))
       )
         return;
@@ -238,14 +252,16 @@ export function CalibrateWizard({
     await end('Calibration finished', `“${final}” is saved and active.`);
   }
   async function cancel(draftId: string, previous: string | undefined) {
-    const rest = profiles.filter((profile) => profile.id !== draftId);
-    const back = rest.some((profile) => profile.id === previous)
+    const rest = calibrations.filter(
+      (calibration) => calibration.id !== draftId,
+    );
+    const back = rest.some((calibration) => calibration.id === previous)
       ? previous
       : undefined;
-    if (!(await live.commit(withProfiles(live.value, rest, back)))) return;
+    if (!(await live.commit(withCalibrations(live.value, rest, back)))) return;
     await end(
       'Calibration cancelled',
-      'The draft profile was deleted; your colours are as before.',
+      'The new calibration was deleted; your colours are as before.',
     );
   }
 
@@ -296,7 +312,7 @@ export function CalibrateWizard({
       <StartScreen
         heading={heading}
         notices={notices}
-        profiles={profiles}
+        calibrations={calibrations}
         from={phase.from}
         choose={(from) => dispatch({ type: 'sourceChosen', from })}
         scope={live.scope}
@@ -315,11 +331,11 @@ export function CalibrateWizard({
         current={screens[phase.screen] ?? screens[0]!}
         screen={phase.screen}
         draft={draft}
-        path={`processing.profiles[${draftIndex}].correction`}
+        path={`processing.calibrations[${draftIndex}].correction`}
         name={phase.name}
         ended={ended}
         target={target}
-        uncorrected={calibration?.uncorrected ?? false}
+        uncorrected={shown?.uncorrected ?? false}
         locked={locked}
         live={live}
         dispatch={dispatch}
@@ -347,7 +363,7 @@ export function CalibrateWizard({
 function StartScreen({
   heading,
   notices,
-  profiles,
+  calibrations,
   from,
   choose,
   scope,
@@ -359,7 +375,7 @@ function StartScreen({
 }: {
   heading: (title: string) => ReactNode;
   notices: ReactNode;
-  profiles: readonly ColorProfile[];
+  calibrations: readonly Calibration[];
   from: string;
   choose: (from: string) => void;
   scope: FieldScope;
@@ -369,7 +385,7 @@ function StartScreen({
   start: () => void;
   leave: () => void;
 }) {
-  const full = profiles.length >= profileLimits.count;
+  const full = calibrations.length >= calibrationLimits.count;
   return (
     <>
       <div className="card-heading">
@@ -380,8 +396,8 @@ function StartScreen({
       </div>
       {heading('Match the lights to your TV')}
       <p className="intro">
-        The TV shows test patterns while you adjust a colour profile here. Look
-        at the screen and the wall, not at this phone.
+        The TV shows test patterns while you adjust the colours here. Look at
+        the screen and the wall, not at this phone.
       </p>
       <p className="help">
         Patterns are compared in the TV’s current picture mode, so calibrate in
@@ -394,22 +410,22 @@ function StartScreen({
       ) : null}
       {full ? (
         <p className="notice warning">
-          You have the most profiles Prysm keeps ({profileLimits.count}). Delete
-          one to calibrate.
+          You have the most calibrations Prysm keeps ({calibrationLimits.count}
+          ). Delete one to calibrate.
         </p>
       ) : null}
       <FieldScopeProvider value={scope}>
-        {profiles.length ? (
+        {calibrations.length ? (
           <SelectField
             path="calibration.from"
             label="Start from"
-            help="Calibration works on a copy; the original profile stays as it is."
+            help="Calibrating works on a copy; the original stays as it is."
             value={from}
             options={[
-              { value: '', label: 'New profile' },
-              ...profiles.map((profile) => ({
-                value: profile.id,
-                label: nameOf(profile),
+              { value: '', label: 'New calibration' },
+              ...calibrations.map((calibration) => ({
+                value: calibration.id,
+                label: nameOf(calibration),
               })),
             ]}
             onChange={choose}
@@ -457,7 +473,7 @@ function StepScreen({
   notices: ReactNode;
   current: Screen;
   screen: number;
-  draft: ColorProfile | undefined;
+  draft: Calibration | undefined;
   /** The draft's correction in the processing section. */
   path: string;
   name: string | null;
@@ -525,7 +541,7 @@ function StepScreen({
           {heading('Calibration ended')}
           <p className="notice warning" role="alert">
             The TV no longer shows the patterns. Your changes so far are kept in
-            “{draft ? nameOf(draft) : 'your profile'}”.
+            “{draft ? nameOf(draft) : 'your calibration'}”.
             {target !== 'processed' ? ` ${tvInstruction}` : ''}
           </p>
           {notices}
@@ -589,7 +605,7 @@ function StepScreen({
                 {current.section === 'review' ? (
                   <TextField
                     path="calibration.name"
-                    label="Profile name"
+                    label="Name"
                     help="A name you will recognise, such as Movie night or PS5."
                     value={name ?? nameOf(draft)}
                     required
@@ -602,8 +618,7 @@ function StepScreen({
             </FieldScopeProvider>
           ) : (
             <p className="notice warning">
-              The profile being calibrated was deleted elsewhere. Cancel to
-              finish.
+              This calibration was deleted elsewhere. Cancel to finish.
             </p>
           )}
           <button

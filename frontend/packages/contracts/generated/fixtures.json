@@ -1,5 +1,5 @@
 {
-  "Calibration": [
+  "CalibrationPattern": [
     {
       "pattern": "gray-192",
       "uncorrected": false
@@ -273,12 +273,10 @@
     },
     {
       "processing": {
-        "active_profile": "ps5",
+        "active_calibration": "ps5",
         "brightness_percent": 100,
         "brightness_ramp_seconds": 0,
-        "color_focus_percent": 0,
-        "cut_response_percent": 0,
-        "profiles": [
+        "calibrations": [
           {
             "correction": {
               "hue": {
@@ -316,6 +314,8 @@
             "name": "TV apps"
           }
         ],
+        "color_focus_percent": 0,
+        "cut_response_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
         "shadow_lift_percent": 0,
@@ -378,12 +378,10 @@
       "expected": 8,
       "settings": {
         "processing": {
-          "active_profile": "ps5",
+          "active_calibration": "ps5",
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "profiles": [
+          "calibrations": [
             {
               "correction": {
                 "hue": {
@@ -421,6 +419,8 @@
               "name": "TV apps"
             }
           ],
+          "color_focus_percent": 0,
+          "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
           "shadow_lift_percent": 0,
@@ -515,12 +515,10 @@
       },
       "settings": {
         "processing": {
-          "active_profile": "ps5",
+          "active_calibration": "ps5",
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "profiles": [
+          "calibrations": [
             {
               "correction": {
                 "hue": {
@@ -558,6 +556,8 @@
               "name": "TV apps"
             }
           ],
+          "color_focus_percent": 0,
+          "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
           "shadow_lift_percent": 0,

@@ -1,12 +1,12 @@
 import { useEffect } from 'react';
 import type {
-  ColorProfile,
+  Calibration,
   CorrectionControls,
   Processing,
 } from '@prysm/contracts/application';
 import { CheckboxField, FieldMessage, NameField, RangeField } from './fields';
 import { FieldScopeProvider } from './form';
-import { useLiveProcessing, withProfiles } from './live-processing';
+import { useLiveProcessing, withCalibrations } from './live-processing';
 import {
   correctionLimits,
   correctionOf,
@@ -15,18 +15,18 @@ import {
   hues,
   nameOf,
   noCorrection,
-  profileLimits,
+  calibrationLimits,
   signed,
-} from './profile-model';
+} from './calibration-model';
 import { Group, RowLink, RowSwitch } from './rows';
 import { useSaveReport } from './save-state';
 
-/** How long a deleted profile can be brought back. */
+/** How long a deleted calibration can be brought back. */
 export const undoForMs = 5000;
 
-/** A profile deleted from its page: kept in the list's place, to undo for a while. */
-export interface DeletedProfile {
-  profile: ColorProfile;
+/** A calibration deleted from its page: kept in the list's place, to undo for a while. */
+export interface DeletedCalibration {
+  calibration: Calibration;
   index: number;
   wasActive: boolean;
   undoable: boolean;
@@ -43,18 +43,18 @@ interface LiveProps {
 }
 
 /** The processing section saved live, reported to the page's save status. */
-function useProfiles(props: LiveProps) {
+function useCalibrations(props: LiveProps) {
   const live = useLiveProcessing(props);
-  useSaveReport('profiles', live.state);
+  useSaveReport('calibrations', live.state);
   return live;
 }
 
 /**
- * The colour profiles as rows: each opens its own page; one deleted there
+ * The calibrations as rows: each opens its own page; one deleted there
  * keeps its place here with Undo for a few seconds, so nothing moves. A new
- * profile comes from the guided calibration.
+ * one comes from the Calibrate page.
  */
-export function ProfileList({
+export function CalibrationList({
   deleted,
   setDeleted,
   open,
@@ -62,33 +62,37 @@ export function ProfileList({
   ...props
 }: LiveProps & {
   /** Deleted on this visit, by id; kept by the portal across pages. */
-  deleted: Record<string, DeletedProfile>;
+  deleted: Record<string, DeletedCalibration>;
   setDeleted: (
     change: (
-      deleted: Record<string, DeletedProfile>,
-    ) => Record<string, DeletedProfile>,
+      deleted: Record<string, DeletedCalibration>,
+    ) => Record<string, DeletedCalibration>,
   ) => void;
-  /** Open a profile's page. */
+  /** Open a calibration's page. */
   open: (id: string) => void;
-  /** Make a new profile with the guided calibration. */
+  /** Make a new calibration on the Calibrate page. */
   calibrate: () => void;
 }) {
-  const live = useProfiles(props);
-  const profiles = live.value.profiles ?? [];
-  const active = live.value.active_profile;
-  const full = profiles.length >= profileLimits.count;
+  const live = useCalibrations(props);
+  const calibrations = live.value.calibrations ?? [];
+  const active = live.value.active_calibration;
+  const full = calibrations.length >= calibrationLimits.count;
 
-  function undo(gone: DeletedProfile) {
+  function undo(gone: DeletedCalibration) {
     setDeleted((current) =>
       Object.fromEntries(
-        Object.entries(current).filter(([id]) => id !== gone.profile.id),
+        Object.entries(current).filter(([id]) => id !== gone.calibration.id),
       ),
     );
-    const next = [...profiles];
-    next.splice(Math.min(gone.index, next.length), 0, gone.profile);
+    const next = [...calibrations];
+    next.splice(Math.min(gone.index, next.length), 0, gone.calibration);
     void live.commit(
-      withProfiles(live.value, next, gone.wasActive ? gone.profile.id : active),
-      'processing.profiles',
+      withCalibrations(
+        live.value,
+        next,
+        gone.wasActive ? gone.calibration.id : active,
+      ),
+      'processing.calibrations',
     );
   }
   // Undo is offered for a while; the row then just says it was deleted.
@@ -110,25 +114,31 @@ export function ProfileList({
     return () => clearTimeout(timer);
   }, [undoable.length, setDeleted]);
 
-  // The rows: the profiles, with deleted ones back in their places.
-  const rows: ({ profile: ColorProfile } | { gone: DeletedProfile })[] =
-    profiles.map((profile) => ({ profile }));
+  // The rows: the calibrations, with deleted ones back in their places.
+  const rows: ({ calibration: Calibration } | { gone: DeletedCalibration })[] =
+    calibrations.map((calibration) => ({ calibration }));
   for (const gone of Object.values(deleted).sort((a, b) => a.index - b.index))
     rows.splice(Math.min(gone.index, rows.length), 0, { gone });
 
   return (
     <FieldScopeProvider value={live.scope}>
       <p className="page-intro">
-        A profile corrects the colours for one source, such as a games console.
-        Choose the one in use on Home.
+        A calibration matches the lights’ colours to your screen and wall. Make
+        one per source, such as a games console, and choose the one in use on
+        Home.
       </p>
       {rows.length ? (
-        <Group title="Profiles">
+        <Group title="Saved">
           {rows.map((row) =>
             'gone' in row ? (
-              <li className="row row-fact" key={`gone-${row.gone.profile.id}`}>
+              <li
+                className="row row-fact"
+                key={`gone-${row.gone.calibration.id}`}
+              >
                 <span className="row-text">
-                  <span className="row-label">{nameOf(row.gone.profile)}</span>
+                  <span className="row-label">
+                    {nameOf(row.gone.calibration)}
+                  </span>
                   <span className="row-value" role="status">
                     Deleted.{' '}
                     {row.gone.undoable ? (
@@ -146,10 +156,10 @@ export function ProfileList({
               </li>
             ) : (
               <RowLink
-                key={row.profile.id}
-                label={nameOf(row.profile)}
-                value={row.profile.id === active ? 'In use' : 'Not in use'}
-                onClick={() => open(row.profile.id)}
+                key={row.calibration.id}
+                label={nameOf(row.calibration)}
+                value={row.calibration.id === active ? 'In use' : 'Not in use'}
+                onClick={() => open(row.calibration.id)}
               />
             ),
           )}
@@ -157,10 +167,10 @@ export function ProfileList({
       ) : null}
       <Group title="New">
         <RowLink
-          label="New profile (guided)"
+          label="New calibration"
           value={
             full
-              ? `You have the most Prysm keeps (${profileLimits.count}). Delete one first.`
+              ? `You have the most Prysm keeps (${calibrationLimits.count}). Delete one first.`
               : 'Test patterns on the TV, step by step'
           }
           onClick={() => {
@@ -168,16 +178,16 @@ export function ProfileList({
           }}
         />
       </Group>
-      <FieldMessage path="processing.profiles" touched />
+      <FieldMessage path="processing.calibrations" touched />
     </FieldScopeProvider>
   );
 }
 
 /**
- * One profile on its own page: its name, whether it is in use, its colour
+ * One calibration on its own page: its name, whether it is in use, its colour
  * correction and hue shift, and Delete (back to the list, with Undo there).
  */
-export function ProfilePage({
+export function CalibrationPage({
   id,
   deleted,
   leave,
@@ -185,32 +195,32 @@ export function ProfilePage({
 }: LiveProps & {
   id: string;
   /** It was deleted: the list shows it in its place, with Undo. */
-  deleted: (gone: DeletedProfile) => void;
+  deleted: (gone: DeletedCalibration) => void;
   /** Back to the list. */
   leave: () => void;
 }) {
-  const live = useProfiles(props);
-  const profiles = live.value.profiles ?? [];
-  const active = live.value.active_profile;
-  const index = profiles.findIndex((profile) => profile.id === id);
-  const profile = profiles[index];
-  if (!profile)
+  const live = useCalibrations(props);
+  const calibrations = live.value.calibrations ?? [];
+  const active = live.value.active_calibration;
+  const index = calibrations.findIndex((calibration) => calibration.id === id);
+  const calibration = calibrations[index];
+  if (!calibration)
     return (
       <p className="page-intro">
-        This profile is not there any more.{' '}
+        This calibration is not there any more.{' '}
         <button type="button" className="link" onClick={leave}>
-          Back to the profiles
+          Back to the calibrations
         </button>
       </p>
     );
-  const path = `processing.profiles[${index}]`;
-  const correction = correctionOf(profile);
+  const path = `processing.calibrations[${index}]`;
+  const correction = correctionOf(calibration);
   const inUse = active === id;
-  function update(change: Partial<ColorProfile>, at: string) {
+  function update(change: Partial<Calibration>, at: string) {
     live.slider.slide(
-      withProfiles(
+      withCalibrations(
         live.value,
-        profiles.map((item) =>
+        calibrations.map((item) =>
           item.id === id ? { ...item, ...change } : item,
         ),
         active,
@@ -221,16 +231,16 @@ export function ProfilePage({
   function correct(change: Partial<CorrectionControls>, at: string) {
     update({ correction: { ...correction, ...change } }, at);
   }
-  const shown = profile;
+  const shown = calibration;
   function remove() {
-    deleted({ profile: shown, index, wasActive: inUse, undoable: true });
+    deleted({ calibration: shown, index, wasActive: inUse, undoable: true });
     void live.commit(
-      withProfiles(
+      withCalibrations(
         live.value,
-        profiles.filter((item) => item.id !== id),
+        calibrations.filter((item) => item.id !== id),
         inUse ? undefined : active,
       ),
-      'processing.profiles',
+      'processing.calibrations',
     );
     leave();
   }
@@ -242,26 +252,30 @@ export function ProfilePage({
   });
   return (
     <FieldScopeProvider value={live.scope}>
-      <div className="profile-page" key={live.generation}>
+      <div className="calibration-page" key={live.generation}>
         <NameField
           path={`${path}.name`}
           label="Name"
           help="Saved when you leave the field or press Enter."
-          value={profile.name ?? ''}
-          maxChars={profileLimits.name}
+          value={calibration.name ?? ''}
+          maxChars={calibrationLimits.name}
           onChange={(name) => update({ name }, `${path}.name`)}
         />
         <ul className="rows">
           <RowSwitch>
             <CheckboxField
-              path="processing.active_profile"
+              path="processing.active_calibration"
               label="In use"
               help="Its correction shows on the lights. Off: no correction."
               checked={inUse}
               onChange={(on) =>
                 void live.commit(
-                  withProfiles(live.value, profiles, on ? id : undefined),
-                  'processing.active_profile',
+                  withCalibrations(
+                    live.value,
+                    calibrations,
+                    on ? id : undefined,
+                  ),
+                  'processing.active_calibration',
                 )
               }
             />
@@ -324,7 +338,7 @@ export function ProfilePage({
               disabled={props.disabled}
               onClick={remove}
             >
-              Delete profile
+              Delete calibration
             </button>
           </div>
         </div>

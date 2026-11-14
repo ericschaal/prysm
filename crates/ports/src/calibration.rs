@@ -2,18 +2,18 @@ use prysm_core::{ColorCorrection, Config, SmoothingSeconds};
 use serde::{Deserialize, Serialize};
 
 /// The calibration pattern a TV is showing, so the lights can be compared
-/// with it while color profiles are edited. Engine state like the target:
+/// with it while calibrations are edited. Engine state like the target:
 /// never persisted and not part of [`Settings`](crate::Settings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Calibration {
+pub struct CalibrationPattern {
     pub pattern: Pattern,
-    /// Apply no color profile while the pattern shows, to compare against
+    /// Apply no calibration while the pattern shows, to compare against
     /// the uncorrected colors.
     pub uncorrected: bool,
 }
 
-impl Calibration {
+impl CalibrationPattern {
     /// The processing config while this pattern shows: no smoothing, so a
     /// change shows at once, and with `uncorrected` no color correction.
     /// Brightness, shadow lift and black bars stay as configured.
@@ -58,7 +58,7 @@ pub enum Pattern {
     Garden,
     /// Amber left, violet right: mixed colors.
     Dusk,
-    /// A grid of colors to review the profile at each corner.
+    /// A grid of colors to review the calibration at each corner.
     ReviewGrid,
 }
 
@@ -129,7 +129,7 @@ mod tests {
             remove_black_bars: true,
             ..Config::default()
         };
-        let corrected = Calibration {
+        let corrected = CalibrationPattern {
             pattern: Pattern::Gray192,
             uncorrected: false,
         }
@@ -141,7 +141,7 @@ mod tests {
                 ..configured
             }
         );
-        let uncorrected = Calibration {
+        let uncorrected = CalibrationPattern {
             pattern: Pattern::Gray192,
             uncorrected: true,
         }
@@ -155,7 +155,7 @@ mod tests {
             }
         );
         assert!(
-            serde_json::from_value::<Calibration>(
+            serde_json::from_value::<CalibrationPattern>(
                 serde_json::json!({ "pattern": "red", "uncorrected": false, "x": 1 })
             )
             .is_err()

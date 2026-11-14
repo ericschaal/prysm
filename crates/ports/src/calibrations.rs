@@ -1,20 +1,20 @@
-//! Saved color-correction profiles, in the controls a user edits.
+//! Saved calibrations, in the controls a user edits.
 use crate::{Section, ValidationError};
 use prysm_core::ColorCorrection;
 use serde::{Deserialize, Serialize};
 
-/// Most profiles one settings file may hold.
-pub const MAX_PROFILES: usize = 32;
-/// Longest profile id, in bytes (ids are ASCII).
-pub const MAX_PROFILE_ID_LEN: usize = 64;
-/// Longest profile name, in characters.
-pub const MAX_PROFILE_NAME_CHARS: usize = 64;
+/// Most calibrations one settings file may hold.
+pub const MAX_CALIBRATIONS: usize = 32;
+/// Longest calibration id, in bytes (ids are ASCII).
+pub const MAX_CALIBRATION_ID_LEN: usize = 64;
+/// Longest calibration name, in characters.
+pub const MAX_CALIBRATION_NAME_CHARS: usize = 64;
 
 /// A named correction the user can make active, such as one per console.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ColorProfile {
-    /// Stable reference for `active_profile`: 1–64 ASCII letters, digits,
+pub struct Calibration {
+    /// Stable reference for `active_calibration`: 1–64 ASCII letters, digits,
     /// `-` or `_` (a UUID fits). Unique within the list.
     pub id: String,
     /// Shown to the user: 1–64 characters, no surrounding whitespace or
@@ -155,57 +155,60 @@ fn control(value: f32) -> i16 {
     value.round().clamp(-100.0, 100.0) as i16
 }
 
-/// Check a profile list and its active reference. Fields are named under
-/// `section`, for example `processing.profiles[2].name`.
+/// Check a calibration list and its active reference. Fields are named under
+/// `section`, for example `processing.calibrations[2].name`.
 pub(crate) fn validate(
     section: Section,
-    profiles: &[ColorProfile],
+    calibrations: &[Calibration],
     active: Option<&str>,
 ) -> Result<(), ValidationError> {
-    if profiles.len() > MAX_PROFILES {
+    if calibrations.len() > MAX_CALIBRATIONS {
         return Err(ValidationError::new(
-            format!("{section}.profiles"),
-            format!("at most {MAX_PROFILES} profiles are allowed"),
+            format!("{section}.calibrations"),
+            format!("at most {MAX_CALIBRATIONS} calibrations are allowed"),
         ));
     }
-    for (index, profile) in profiles.iter().enumerate() {
-        let field = |name: &str| format!("{section}.profiles[{index}].{name}");
-        if !valid_id(&profile.id) {
+    for (index, calibration) in calibrations.iter().enumerate() {
+        let field = |name: &str| format!("{section}.calibrations[{index}].{name}");
+        if !valid_id(&calibration.id) {
             return Err(ValidationError::new(
                 field("id"),
-                format!("must be 1-{MAX_PROFILE_ID_LEN} ASCII letters, digits, '-' or '_'"),
+                format!("must be 1-{MAX_CALIBRATION_ID_LEN} ASCII letters, digits, '-' or '_'"),
             ));
         }
-        if let Some(first) = profiles[..index].iter().position(|p| p.id == profile.id) {
+        if let Some(first) = calibrations[..index]
+            .iter()
+            .position(|c| c.id == calibration.id)
+        {
             return Err(ValidationError::new(
                 field("id"),
-                format!("duplicates profiles[{first}].id `{}`", profile.id),
+                format!("duplicates calibrations[{first}].id `{}`", calibration.id),
             ));
         }
-        if !valid_name(&profile.name) {
+        if !valid_name(&calibration.name) {
             return Err(ValidationError::new(
                 field("name"),
                 format!(
-                    "must be 1-{MAX_PROFILE_NAME_CHARS} characters without surrounding \
+                    "must be 1-{MAX_CALIBRATION_NAME_CHARS} characters without surrounding \
                      whitespace or control characters"
                 ),
             ));
         }
-        profile.correction.validate(&field("correction"))?;
+        calibration.correction.validate(&field("correction"))?;
     }
     if let Some(active) = active
-        && !profiles.iter().any(|p| p.id == active)
+        && !calibrations.iter().any(|c| c.id == active)
     {
         return Err(ValidationError::new(
-            format!("{section}.active_profile"),
-            format!("no profile has id `{active}`"),
+            format!("{section}.active_calibration"),
+            format!("no calibration has id `{active}`"),
         ));
     }
     Ok(())
 }
 
 fn valid_id(id: &str) -> bool {
-    (1..=MAX_PROFILE_ID_LEN).contains(&id.len())
+    (1..=MAX_CALIBRATION_ID_LEN).contains(&id.len())
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -214,7 +217,7 @@ fn valid_id(id: &str) -> bool {
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name == name.trim()
-        && name.chars().count() <= MAX_PROFILE_NAME_CHARS
+        && name.chars().count() <= MAX_CALIBRATION_NAME_CHARS
         && !name.chars().any(char::is_control)
 }
 
@@ -222,16 +225,16 @@ fn valid_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn profile(id: &str, name: &str) -> ColorProfile {
-        ColorProfile {
+    fn calibration(id: &str, name: &str) -> Calibration {
+        Calibration {
             id: id.into(),
             name: name.into(),
             correction: CorrectionControls::default(),
         }
     }
 
-    fn field(profiles: &[ColorProfile], active: Option<&str>) -> String {
-        validate(Section::Processing, profiles, active)
+    fn field(calibrations: &[Calibration], active: Option<&str>) -> String {
+        validate(Section::Processing, calibrations, active)
             .unwrap_err()
             .field
     }
@@ -296,48 +299,53 @@ mod tests {
     }
 
     #[test]
-    fn profile_lists_are_bounded_unique_named_and_referenced() {
+    fn calibration_lists_are_bounded_unique_named_and_referenced() {
         validate(Section::Processing, &[], None).unwrap();
-        let two = [profile("ps5", "PS5"), profile("tv-apps", "TV apps")];
+        let two = [calibration("ps5", "PS5"), calibration("tv-apps", "TV apps")];
         validate(Section::Processing, &two, Some("tv-apps")).unwrap();
-        let uuid = profile("0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f", "x");
+        let uuid = calibration("0b6f2c1e-1d2a-4c3b-9f4e-5a6b7c8d9e0f", "x");
         validate(Section::Processing, &[uuid], None).unwrap();
 
         assert_eq!(
             field(&two, Some("gone")),
-            "processing.active_profile",
+            "processing.active_calibration",
             "unknown active id"
         );
         assert_eq!(
-            field(&[profile("a", "A"), profile("a", "B")], None),
-            "processing.profiles[1].id"
+            field(&[calibration("a", "A"), calibration("a", "B")], None),
+            "processing.calibrations[1].id"
         );
         for id in ["", "has space", "ünï", &"x".repeat(65)] {
             assert_eq!(
-                field(&[profile(id, "A")], None),
-                "processing.profiles[0].id"
+                field(&[calibration(id, "A")], None),
+                "processing.calibrations[0].id"
             );
         }
         for name in ["", " ", " lead", "trail ", "line\nbreak", &"é".repeat(65)] {
             assert_eq!(
-                field(&[profile("a", name)], None),
-                "processing.profiles[0].name",
+                field(&[calibration("a", name)], None),
+                "processing.calibrations[0].name",
                 "{name:?}"
             );
         }
-        validate(Section::Processing, &[profile("a", &"é".repeat(64))], None).unwrap();
+        validate(
+            Section::Processing,
+            &[calibration("a", &"é".repeat(64))],
+            None,
+        )
+        .unwrap();
 
-        let mut out_of_range = profile("a", "A");
+        let mut out_of_range = calibration("a", "A");
         out_of_range.correction.hue.magenta = -101;
         assert_eq!(
-            field(&[profile("b", "B"), out_of_range], None),
-            "processing.profiles[1].correction.hue.magenta"
+            field(&[calibration("b", "B"), out_of_range], None),
+            "processing.calibrations[1].correction.hue.magenta"
         );
 
-        let many: Vec<_> = (0..=MAX_PROFILES)
-            .map(|i| profile(&i.to_string(), "P"))
+        let many: Vec<_> = (0..=MAX_CALIBRATIONS)
+            .map(|i| calibration(&i.to_string(), "C"))
             .collect();
-        validate(Section::Processing, &many[..MAX_PROFILES], None).unwrap();
-        assert_eq!(field(&many, None), "processing.profiles");
+        validate(Section::Processing, &many[..MAX_CALIBRATIONS], None).unwrap();
+        assert_eq!(field(&many, None), "processing.calibrations");
     }
 }
