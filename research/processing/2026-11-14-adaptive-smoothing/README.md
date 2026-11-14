@@ -167,6 +167,34 @@ frame and is gone on the next, as unsmoothed. A ramp holds the flash to a few pe
 on the lights; how long they take to come back follows the smoothed colour underneath,
 so it is as without the ramp.
 
+## The cut detector on a real film
+
+Added the same day, after the synthetic runs: the detector alone, over all 17 620 frames
+of Tears of Steel (24 fps, letterboxed into 640×360 as a TV would capture it, black-bar
+removal on), compared with ffmpeg's scene score (a cut where `scene > 0.3`).
+[`cutrun.rs`](cutrun.rs) prints the detector's strength for every frame.
+
+| | Count |
+| --- | --- |
+| Reference cuts (ffmpeg) | 136 |
+| Detected at more than half strength | 128 (94 %) |
+| Detected at partial strength | 5 |
+| Missed | 3 |
+| Events the detector fired on without a reference cut | 24 (10 of them above half strength for more than one frame) |
+
+The four largest events without a reference cut were looked at frame by frame: a cut
+followed by a dissolve to white, a hologram flickering over a robot, a violent camera
+shake in an attack (19 frames), and gunfire with muzzle flashes (27 frames). All are
+fast changes of the whole picture, not grain or slow motion. With Scene cuts above 0
+the lights therefore follow such passages nearly unsmoothed; a brightness ramp softens
+the flashes among them. Not covered: grainy or noisy dark footage (this film is clean),
+other films, and a judgement of how it looks.
+
+```sh
+ffmpeg -i film.mov -vf "scale=640:-2,pad=640:360:(ow-iw)/2:(oh-ih)/2" -pix_fmt rgb24 -f rawvideo - | cutrun 24
+ffmpeg -i film.mov -vf "scale=640:-2,select='gte(scene,0)',metadata=print:file=scene.txt" -an -f null -
+```
+
 ## What the numbers cannot show
 
 - The pictures are synthetic and the grain is a model (uniform block offsets); real film
