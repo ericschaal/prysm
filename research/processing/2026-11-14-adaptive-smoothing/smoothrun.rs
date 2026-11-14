@@ -1,5 +1,6 @@
 //! Drives the real `PrysmProcessor` with synthetic, deterministic pictures and
-//! timestamps and prints the tables of the adaptive-smoothing study as Markdown.
+//! timestamps and prints the tables of the smoothing study (fixed rate, scene
+//! cuts, brightness ramp) as Markdown.
 //!
 //! Usage: smoothrun > results.md
 //!
@@ -10,10 +11,10 @@
 //! Every distance is Oklab, in just-noticeable steps (JND = 0.02).
 
 use prysm_core::{
-    BrightnessSmoothing, Config, Frame, LinearColor, Oklab, PixelFormat, SmoothingResponsePercent,
-    SmoothingSeconds,
+    BrightnessRampSeconds, Config, CutResponsePercent, EdgeColors, Frame, LinearColor, Oklab,
+    PixelFormat, SmoothingSeconds,
 };
-use prysm_processor::PrysmProcessor;
+use prysm_processor::{PrysmProcessor, cut_strength};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,27 @@ fn panorama(offset: f32) -> Picture {
     })
 }
 
+/// The forest with a bright red block, a fifth of the screen wide, at `x`
+/// (0 to 1) along the top edge: motion that changes one edge only.
+fn local_motion(x: f32) -> Picture {
+    let base = forest();
+    let (left, right) = (x * 0.8, x * 0.8 + 0.2);
+    base.into_iter()
+        .enumerate()
+        .map(|(index, pixel)| {
+            let (px, py) = (
+                (index % WIDTH) as f32 / WIDTH as f32,
+                (index / WIDTH) as f32 / HEIGHT as f32,
+            );
+            if (left..right).contains(&px) && py < 0.15 {
+                [230, 40, 30]
+            } else {
+                pixel
+            }
+        })
+        .collect()
+}
+
 /// SplitMix64: a fixed seed gives the same grain on every run.
 struct Seeded(u64);
 
@@ -168,8 +190,8 @@ impl Sequence {
     }
 }
 
-/// The LEDs of each frame, in Oklab.
-fn run(config: &Config, sequence: &Sequence) -> Vec<Vec<Oklab>> {
+/// The processor's output for each frame.
+fn edges(config: &Config, sequence: &Sequence) -> Vec<EdgeColors> {
     let mut processor = PrysmProcessor::new(config);
     let origin = Instant::now();
     sequence
@@ -178,7 +200,16 @@ fn run(config: &Config, sequence: &Sequence) -> Vec<Vec<Oklab>> {
         .enumerate()
         .map(|(index, frame)| {
             let now = origin + Duration::from_secs_f64(sequence.time(index));
-            let edges = processor.process_frame_at(frame.clone(), now);
+            processor.process_frame_at(frame.clone(), now)
+        })
+        .collect()
+}
+
+/// The LEDs of each frame, in Oklab.
+fn run(config: &Config, sequence: &Sequence) -> Vec<Vec<Oklab>> {
+    edges(config, sequence)
+        .iter()
+        .map(|edges| {
             [&edges.top, &edges.right, &edges.bottom, &edges.left]
                 .into_iter()
                 .zip(LEDS)
@@ -189,6 +220,18 @@ fn run(config: &Config, sequence: &Sequence) -> Vec<Vec<Oklab>> {
                 .collect()
         })
         .collect()
+}
+
+/// The cut detector on the unsmoothed input, frame to frame: how many frames
+/// it fires on (strength above 0), and its largest strength.
+fn detections(raw_config: &Config, sequence: &Sequence) -> (usize, f32) {
+    let input = edges(raw_config, sequence);
+    let strengths: Vec<f32> = input
+        .windows(2)
+        .map(|pair| cut_strength(&pair[0], &pair[1]))
+        .collect();
+    let fired = strengths.iter().filter(|&&strength| strength > 0.0).count();
+    (fired, strengths.into_iter().fold(0.0, f32::max))
 }
 
 // ── Measures ────────────────────────────────────────────────────────────────
@@ -220,6 +263,26 @@ fn lag(leds: &[Vec<Oklab>], target: &[Oklab], sequence: &Sequence, cut: usize) -
         .collect();
     let worst = percentile(&mut lags, 1.0);
     (percentile(&mut lags, 0.5), worst)
+}
+
+/// A one-frame flash at `at`: how much of the way to the flash the median
+/// LED shows on its frame (percent, in Oklab), and seconds after it until
+/// every LED is back within one step of the picture before.
+fn flash_shown(leds: &[Vec<Oklab>], flash: &[Oklab], sequence: &Sequence, at: usize) -> (f32, f32) {
+    let before = &leds[at - 1];
+    let mut shown: Vec<f32> = (0..flash.len())
+        .filter_map(|led| {
+            let way = before[led].distance(flash[led]);
+            (way >= JND).then(|| 100.0 * (1.0 - leds[at][led].distance(flash[led]) / way))
+        })
+        .collect();
+    let back = (at + 1..leds.len())
+        .find(|&k| (0..flash.len()).all(|led| leds[k][led].distance(before[led]) < JND))
+        .unwrap_or(leds.len() - 1);
+    (
+        percentile(&mut shown, 0.5),
+        (sequence.time(back) - sequence.time(at)) as f32,
+    )
 }
 
 /// Every LED's change from one frame to the next from `from` on, in steps.
@@ -254,18 +317,18 @@ struct Setting {
     config: Config,
 }
 
-fn setting(seconds: f32, response: u8, brightness: BrightnessSmoothing) -> Setting {
-    let name = match brightness {
-        BrightnessSmoothing::WithColor => "with colour",
-        BrightnessSmoothing::Faster => "faster",
-        BrightnessSmoothing::Limited => "limited",
+fn setting(seconds: f32, cut: u8, ramp: f32) -> Setting {
+    let ramp_name = if ramp > 0.0 {
+        format!(", ramp {ramp} s")
+    } else {
+        String::new()
     };
     Setting {
-        name: format!("{seconds} s, response {response} %, {name}"),
+        name: format!("{seconds} s, cuts {cut} %{ramp_name}"),
         config: Config {
             smoothing_seconds: SmoothingSeconds(seconds),
-            smoothing_response_percent: SmoothingResponsePercent(response),
-            brightness_smoothing: brightness,
+            cut_response_percent: CutResponsePercent(cut),
+            brightness_ramp_seconds: BrightnessRampSeconds(ramp),
             remove_black_bars: false,
             ..Config::default()
         },
@@ -276,13 +339,16 @@ fn settings() -> Vec<Setting> {
     let mut all = vec![
         Setting {
             name: "off (raw)".into(),
-            ..setting(0.0, 0, BrightnessSmoothing::WithColor)
+            ..setting(0.0, 0, 0.0)
         },
-        setting(0.1, 0, BrightnessSmoothing::WithColor),
+        Setting {
+            name: "**today: 0.1 s, cuts 0 %**".into(),
+            ..setting(0.1, 0, 0.0)
+        },
     ];
-    for brightness in BrightnessSmoothing::ALL {
-        for response in [0, 25, 50, 100] {
-            all.push(setting(0.5, response, brightness));
+    for ramp in [0.0, 0.5, 1.0] {
+        for cut in [0, 50, 100] {
+            all.push(setting(0.5, cut, ramp));
         }
     }
     all
@@ -295,7 +361,17 @@ fn main() {
     for fps in [30, 60] {
         let cut_at = 1.0;
         let cut = Sequence::new(fps, 3.0, |t| if t < cut_at { sunset() } else { forest() });
-        let bang = Sequence::new(fps, 3.0, |t| if t < cut_at { night() } else { flash() });
+        let bright = Sequence::new(fps, 3.0, |t| if t < cut_at { night() } else { flash() });
+        let flash_frame = (cut_at * fps as f32).round() as usize;
+        let mut index = 0;
+        let one_frame = Sequence::new(fps, 3.0, |_| {
+            index += 1;
+            if index - 1 == flash_frame {
+                flash()
+            } else {
+                night()
+            }
+        });
         // Three code values of grain, fine (8 px blocks, 16 px at 640x360)
         // and blotchy (32 px), on the sunset and on the dark room.
         let grain = |base: Picture, seed: u64, block: usize| {
@@ -312,28 +388,46 @@ fn main() {
         });
         // Half a screen width per second.
         let pan = Sequence::new(fps, 4.0, |t| panorama(t * WIDTH as f32 / 2.0));
+        // Across the top edge and back in 4 s.
+        let local = Sequence::new(fps, 4.0, |t| local_motion(1.0 - (1.0 - t / 2.0).abs()));
 
         let raw = |sequence: &Sequence| run(raw_config, sequence);
-        let (cut_raw, bang_raw, fade_raw, pan_raw) = (raw(&cut), raw(&bang), raw(&fade), raw(&pan));
+        let (cut_raw, bright_raw, one_frame_raw) = (raw(&cut), raw(&bright), raw(&one_frame));
+        let (fade_raw, pan_raw, local_raw) = (raw(&fade), raw(&pan), raw(&local));
         let settle = |sequence: &Sequence| sequence.index(1.0);
+        let ms = |seconds: f32| seconds * 1000.0;
 
         let mut transitions = String::new();
+        let mut motion = String::new();
         let mut grains = String::new();
         for Setting { name, config } in &settings {
-            let cut_leds = run(config, &cut);
-            let (cut_median, cut_worst) = lag(
-                &cut_leds,
-                cut_raw.last().unwrap(),
-                &cut,
-                cut.index(cut_at.into()),
+            let at = cut.index(cut_at.into());
+            let (cut_median, cut_worst) =
+                lag(&run(config, &cut), cut_raw.last().unwrap(), &cut, at);
+            let (bright_median, bright_worst) = lag(
+                &run(config, &bright),
+                bright_raw.last().unwrap(),
+                &bright,
+                at,
             );
-            let bang_leds = run(config, &bang);
-            let (bang_median, bang_worst) = lag(
-                &bang_leds,
-                bang_raw.last().unwrap(),
-                &bang,
-                bang.index(cut_at.into()),
+            let (shown, back) = flash_shown(
+                &run(config, &one_frame),
+                &one_frame_raw[flash_frame],
+                &one_frame,
+                flash_frame,
             );
+            writeln!(
+                transitions,
+                "| {name} | {:.0} / {:.0} | {:.0} / {:.0} | {:.0} / {:.0} |",
+                ms(cut_median),
+                ms(cut_worst),
+                ms(bright_median),
+                ms(bright_worst),
+                shown,
+                ms(back),
+            )
+            .unwrap();
+
             let fade_leds = run(config, &fade);
             let fading = fade.index(0.5)..fade.index(3.5);
             let mut fade_behind = behind(&fade_leds, &fade_raw, fading.clone());
@@ -341,22 +435,22 @@ fn main() {
             let pan_leds = run(config, &pan);
             let mut pan_behind = behind(&pan_leds, &pan_raw, settle(&pan)..pan.frames.len());
             let mut pan_steps = changes(&pan_leds, settle(&pan));
-            let ms = |seconds: f32| seconds * 1000.0;
+            let local_leds = run(config, &local);
+            let mut local_behind = behind(&local_leds, &local_raw, 0..local.frames.len());
             writeln!(
-                transitions,
-                "| {name} | {:.0} / {:.0} | {:.0} / {:.0} | {:.2} / {:.2} | {:.2} | {:.2} / {:.2} | {:.2} |",
-                ms(cut_median),
-                ms(cut_worst),
-                ms(bang_median),
-                ms(bang_worst),
+                motion,
+                "| {name} | {:.2} / {:.2} | {:.2} | {:.2} / {:.2} | {:.2} | {:.2} / {:.2} |",
                 mean(&fade_behind),
                 percentile(&mut fade_behind, 1.0),
                 percentile(&mut fade_steps, 1.0),
                 mean(&pan_behind),
                 percentile(&mut pan_behind, 1.0),
                 percentile(&mut pan_steps, 1.0),
+                mean(&local_behind),
+                percentile(&mut local_behind, 1.0),
             )
             .unwrap();
+
             write!(grains, "| {name} |").unwrap();
             for sequence in [&fine, &blotchy, &dark] {
                 let mut steps = changes(&run(config, sequence), settle(sequence));
@@ -370,14 +464,48 @@ fn main() {
             }
             writeln!(grains).unwrap();
         }
+
+        let mut detector = String::new();
+        for (name, sequence, expected) in [
+            ("Cut", &cut, "1"),
+            ("Bright cut", &bright, "1"),
+            ("One-frame flash", &one_frame, "2"),
+            ("Pan", &pan, "0"),
+            ("Fade", &fade, "0"),
+            ("Grain, bright fine", &fine, "0"),
+            ("Grain, bright blotchy", &blotchy, "0"),
+            ("Grain, dark blotchy", &dark, "0"),
+            ("Local motion", &local, "0"),
+        ] {
+            let (fired, strongest) = detections(raw_config, sequence);
+            writeln!(
+                detector,
+                "| {name} | {} | {expected} | {fired} | {strongest:.2} |",
+                sequence.frames.len() - 1
+            )
+            .unwrap();
+        }
+
         writeln!(out, "### Transitions, {fps} fps\n").unwrap();
         writeln!(
             out,
-            "| Setting | Cut: 90 % done, median / worst LED (ms) | Flash: 90 % done, median / worst (ms) | Fade: behind, mean / max (steps) | Fade: largest step | Pan: behind, mean / max (steps) | Pan: largest step |"
+            "| Setting | Cut: 90 % done, median / worst LED (ms) | Bright cut: 90 % done, median / worst (ms) | One-frame flash: shown (% of the way, median) / back within 1 step (ms) |"
         )
         .unwrap();
-        writeln!(out, "| --- | --- | --- | --- | --- | --- | --- |").unwrap();
+        writeln!(out, "| --- | --- | --- | --- |").unwrap();
         out.push_str(&transitions);
+        writeln!(
+            out,
+            "\n### Motion, {fps} fps: behind the unsmoothed LEDs (steps)\n"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "| Setting | Fade: behind, mean / max | Fade: largest step | Pan: behind, mean / max | Pan: largest step | Local motion: behind, mean / max |"
+        )
+        .unwrap();
+        writeln!(out, "| --- | --- | --- | --- | --- | --- |").unwrap();
+        out.push_str(&motion);
         writeln!(
             out,
             "\n### Grain, {fps} fps: frame-to-frame LED change, mean / p95 (steps)\n"
@@ -390,6 +518,18 @@ fn main() {
         .unwrap();
         writeln!(out, "| --- | --- | --- | --- |").unwrap();
         out.push_str(&grains);
+        writeln!(
+            out,
+            "\n### Cut detector, {fps} fps: frames it fires on (the same for every setting)\n"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "| Sequence | Frame changes | Cuts in it | Detector fired | Largest strength |"
+        )
+        .unwrap();
+        writeln!(out, "| --- | --- | --- | --- | --- |").unwrap();
+        out.push_str(&detector);
         writeln!(out).unwrap();
     }
     print!("{out}");

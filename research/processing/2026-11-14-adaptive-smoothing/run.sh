@@ -1,5 +1,5 @@
 #!/bin/sh
-# Reproduces the adaptive-smoothing tables from the working tree. Nothing is
+# Reproduces the smoothing tables from the working tree. Nothing is
 # downloaded and nothing is written to the repository: the harness builds in
 # $WORK and prints Markdown.
 #   WORK=/some/scratch/dir sh run.sh > results.md

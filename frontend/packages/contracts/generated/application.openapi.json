@@ -9,15 +9,6 @@
         ],
         "type": "string"
       },
-      "BrightnessSmoothing": {
-        "description": "How brightness follows a change while colour is smoothed.",
-        "enum": [
-          "with_color",
-          "faster",
-          "limited"
-        ],
-        "type": "string"
-      },
       "Calibration": {
         "additionalProperties": false,
         "description": "A calibration pattern shown on the TV: the body of\n`PUT /api/v1/calibration` and `State.calibration`.",
@@ -660,8 +651,19 @@
             "minimum": 0,
             "type": "integer"
           },
-          "brightness_smoothing": {
-            "$ref": "#/components/schemas/BrightnessSmoothing"
+          "brightness_ramp_seconds": {
+            "description": "Seconds, the least time from dark to full brightness; 0 sets no limit.",
+            "format": "float",
+            "maximum": 2,
+            "minimum": 0,
+            "type": "number"
+          },
+          "cut_response_percent": {
+            "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
           },
           "profiles": {
             "description": "Saved color corrections; ids are unique.",
@@ -685,13 +687,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "smoothing_response_percent": {
-            "description": "How much faster smoothing follows a large change than a small one;\n0 smooths every change at one rate.",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 0,
-            "type": "integer"
-          },
           "smoothing_seconds": {
             "description": "Seconds; 0 disables smoothing.",
             "format": "float",
@@ -709,8 +704,8 @@
           "brightness_percent",
           "shadow_lift_percent",
           "smoothing_seconds",
-          "smoothing_response_percent",
-          "brightness_smoothing",
+          "cut_response_percent",
+          "brightness_ramp_seconds",
           "sample_density",
           "spatial_reach_percent",
           "remove_black_bars"

@@ -35,14 +35,14 @@ pub struct Config {
     /// Default: 0.1. Zero, negative, and non-finite values disable smoothing.
     pub smoothing_seconds: SmoothingSeconds,
 
-    /// How much faster smoothing lets a large change through than a small one,
-    /// so cuts follow quickly while grain stays calm. Default: 0, one rate for
-    /// every change; clamped to 0–100.
-    pub smoothing_response_percent: SmoothingResponsePercent,
+    /// How much of a scene cut the lights take at once: 0 eases a cut in like
+    /// any other change, 100 shows it in one frame. Ordinary motion is never a
+    /// cut. Default: 0; clamped to 0–100.
+    pub cut_response_percent: CutResponsePercent,
 
-    /// How brightness follows a change while colour is smoothed.
-    /// Default: together with colour.
-    pub brightness_smoothing: BrightnessSmoothing,
+    /// The least time the lights take from dark to full brightness, whatever
+    /// smoothing and cuts allow. Default: 0, no limit.
+    pub brightness_ramp_seconds: BrightnessRampSeconds,
 
     /// Color samples per 1000 pixels of cropped edge length. Default: 128.
     /// Controls spatial detail independently of LED count; all picture pixels
@@ -66,8 +66,8 @@ impl Default for Config {
             brightness_percent: BrightnessPercent(100),
             shadow_lift_percent: ShadowLiftPercent(0),
             smoothing_seconds: SmoothingSeconds(0.1),
-            smoothing_response_percent: SmoothingResponsePercent(0),
-            brightness_smoothing: BrightnessSmoothing::WithColor,
+            cut_response_percent: CutResponsePercent(0),
+            brightness_ramp_seconds: BrightnessRampSeconds(0.0),
             sample_density: SampleDensity(128),
             spatial_reach_percent: SpatialReachPercent(10),
             remove_black_bars: true,
@@ -120,35 +120,28 @@ impl SmoothingSeconds {
     }
 }
 
-/// How much faster smoothing follows a large change than a small one, in
-/// percent, clamped to 0–100; zero smooths every change at one rate.
+/// How much of a scene cut the lights take at once, in percent, clamped to
+/// 0–100; zero eases a cut in like any other change.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct SmoothingResponsePercent(pub u8);
+pub struct CutResponsePercent(pub u8);
 
-impl SmoothingResponsePercent {
+impl CutResponsePercent {
     #[must_use]
     pub fn as_ratio(self) -> f32 {
         f32::from(self.0.min(100)) / 100.0
     }
 }
 
-/// How brightness follows a change while colour is smoothed. Each trades
-/// differently between a flash that follows the picture and one that dazzles.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum BrightnessSmoothing {
-    /// Brightness and colour blend together, in linear light.
-    #[default]
-    WithColor,
-    /// Brightness settles faster than colour, so a cut's light level follows
-    /// at once while its hue still eases in.
-    Faster,
-    /// Brightness changes no faster than a fixed pace, so a sudden flash
-    /// cannot dazzle; colour follows as usual.
-    Limited,
-}
+/// The least seconds from dark to full brightness; zero, negative and
+/// non-finite values set no limit.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct BrightnessRampSeconds(pub f32);
 
-impl BrightnessSmoothing {
-    pub const ALL: [Self; 3] = [Self::WithColor, Self::Faster, Self::Limited];
+impl BrightnessRampSeconds {
+    #[must_use]
+    pub fn is_enabled(self) -> bool {
+        self.0.is_finite() && self.0 > 0.0
+    }
 }
 
 /// Shadow boost strength; zero preserves the original output.
@@ -192,20 +185,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn smoothing_response_is_clamped_to_full() {
+    fn cut_response_is_clamped_to_full() {
         for (percent, ratio) in [(0, 0.0), (40, 0.4), (100, 1.0), (101, 1.0), (255, 1.0)] {
-            assert_eq!(SmoothingResponsePercent(percent).as_ratio(), ratio);
+            assert_eq!(CutResponsePercent(percent).as_ratio(), ratio);
         }
     }
 
     #[test]
-    fn defaults_keep_one_rate_and_brightness_with_color() {
+    fn only_a_finite_positive_ramp_limits_brightness() {
+        for seconds in [0.0, -0.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!BrightnessRampSeconds(seconds).is_enabled(), "{seconds}");
+        }
+        for seconds in [f32::MIN_POSITIVE, 0.5, 2.0] {
+            assert!(BrightnessRampSeconds(seconds).is_enabled(), "{seconds}");
+        }
+    }
+
+    #[test]
+    fn defaults_take_no_cut_at_once_and_set_no_ramp() {
         let config = Config::default();
-        assert_eq!(config.smoothing_response_percent.as_ratio(), 0.0);
-        assert_eq!(config.brightness_smoothing, BrightnessSmoothing::WithColor);
-        assert_eq!(
-            BrightnessSmoothing::default(),
-            BrightnessSmoothing::WithColor
-        );
+        assert_eq!(config.cut_response_percent.as_ratio(), 0.0);
+        assert!(!config.brightness_ramp_seconds.is_enabled());
     }
 }

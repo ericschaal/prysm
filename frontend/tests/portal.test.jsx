@@ -893,7 +893,8 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
         'shadow_lift_percent',
         'spatial_reach_percent',
         'smoothing_seconds',
-        'smoothing_response_percent',
+        'cut_response_percent',
+        'brightness_ramp_seconds',
         'sample_density',
       ].map((name) => attributes(control(name))),
       [
@@ -902,6 +903,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
         // Smoothing and detail as sliders over the range worth tuning.
         ['range', '0', '0', '2', '0.05'],
         ['range', '0', '0', '100', '1'],
+        ['range', '0', '0', '2', '0.1'],
         ['range', '1', '1', '512', '1'],
       ],
     );
@@ -909,17 +911,19 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         'shadow_lift_percent',
         'spatial_reach_percent',
-        'smoothing_response_percent',
+        'smoothing_seconds',
+        'cut_response_percent',
+        'brightness_ramp_seconds',
         'sample_density',
       ].map((name) => control(name).labels[0].textContent),
-      ['Shadow lift', 'Edge depth', 'Response', 'Detail'],
-    );
-    // How brightness follows: one choice, with colour by default.
-    assert.deepEqual(
-      ['With colour', 'Faster than colour', 'Limited'].map(
-        (label) => radio(label).checked,
-      ),
-      [true, false, false],
+      [
+        'Shadow lift',
+        'Edge depth',
+        'Smoothing',
+        'Scene cuts',
+        'Brightness ramp',
+        'Detail',
+      ],
     );
 
     // Two quick changes are applied once, after the user stops.
@@ -935,15 +939,18 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       $('output', control('smoothing_seconds').closest('.field')).textContent,
       '0.5\u00a0s',
     );
-    await edit(control('smoothing_response_percent'), 60);
+    await edit(control('cut_response_percent'), 60);
     assert.equal(
-      $('output', control('smoothing_response_percent').closest('.field'))
+      $('output', control('cut_response_percent').closest('.field'))
         .textContent,
       '60%',
     );
-    await click(radio('Faster than colour'));
-    assert.equal(radio('Faster than colour').checked, true);
-    assert.equal(radio('With colour').checked, false);
+    await edit(control('brightness_ramp_seconds'), 0.5);
+    assert.equal(
+      $('output', control('brightness_ramp_seconds').closest('.field'))
+        .textContent,
+      '0.5\u00a0s',
+    );
     await settle();
     assert.equal(saves(fixture), 3);
     assert.deepEqual(fixture.snapshot().settings.processing, {
@@ -951,8 +958,8 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       spatial_reach_percent: 20,
       sample_density: 128,
       smoothing_seconds: 0.5,
-      smoothing_response_percent: 60,
-      brightness_smoothing: 'faster',
+      cut_response_percent: 60,
+      brightness_ramp_seconds: 0.5,
       remove_black_bars: true,
       profiles,
       active_profile: 'ps5',
@@ -2967,36 +2974,38 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
   }
 });
 
-test('dragging Response on Fine-tuning lights as it moves and saves where it is let go', async () => {
-  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
-  const { fixture, dom } = portal;
-  const slider = () => field('processing.smoothing_response_percent');
-  const fire = (type) =>
-    act(async () =>
-      slider().dispatchEvent(new dom.window.Event(type, { bubbles: true })),
-    );
-  const trials = () =>
-    fixture.calls.filter((call) => call.startsWith('trial:')).length;
-  try {
-    await press(mode('processed'));
-    await openSettings();
-    await openPage('Fine-tuning');
-    await fire('pointerdown');
-    await edit(slider(), 70);
-    await flush();
-    assert.equal(trials(), 1, 'tried on the lights at once');
-    assert.equal(saves(fixture), 0, 'not saved while held');
-    await fire('pointerup');
-    await flush();
-    assert.equal(saves(fixture), 1);
-    assert.equal(
-      fixture.snapshot().settings.processing.smoothing_response_percent,
-      70,
-    );
-  } finally {
-    await portal.unmount();
-  }
-});
+for (const [name, label, value] of [
+  ['cut_response_percent', 'Scene cuts', 70],
+  ['brightness_ramp_seconds', 'Brightness ramp', 1.2],
+]) {
+  test(`dragging ${label} on Fine-tuning lights as it moves and saves where it is let go`, async () => {
+    const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+    const { fixture, dom } = portal;
+    const slider = () => field(`processing.${name}`);
+    const fire = (type) =>
+      act(async () =>
+        slider().dispatchEvent(new dom.window.Event(type, { bubbles: true })),
+      );
+    const trials = () =>
+      fixture.calls.filter((call) => call.startsWith('trial:')).length;
+    try {
+      await press(mode('processed'));
+      await openSettings();
+      await openPage('Fine-tuning');
+      await fire('pointerdown');
+      await edit(slider(), value);
+      await flush();
+      assert.equal(trials(), 1, 'tried on the lights at once');
+      assert.equal(saves(fixture), 0, 'not saved while held');
+      await fire('pointerup');
+      await flush();
+      assert.equal(saves(fixture), 1);
+      assert.equal(fixture.snapshot().settings.processing[name], value);
+    } finally {
+      await portal.unmount();
+    }
+  });
+}
 
 test('a page that fails to draw says so and offers a reload', async (t) => {
   // React reports the failure it caught; not this test's news.

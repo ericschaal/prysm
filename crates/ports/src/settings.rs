@@ -1,8 +1,8 @@
 use crate::ValidationError;
 use crate::profiles::{self, ColorProfile};
 use prysm_core::{
-    BrightnessPercent, BrightnessSmoothing, ColorCorrection, Config, SampleDensity,
-    ShadowLiftPercent, SmoothingResponsePercent, SmoothingSeconds, SpatialReachPercent,
+    BrightnessPercent, BrightnessRampSeconds, ColorCorrection, Config, CutResponsePercent,
+    SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -94,9 +94,9 @@ pub struct Processing {
     pub brightness_percent: u8,
     pub shadow_lift_percent: u8,
     pub smoothing_seconds: f32,
-    pub smoothing_response_percent: u8,
-    #[serde(with = "BrightnessSmoothingName")]
-    pub brightness_smoothing: BrightnessSmoothing,
+    pub cut_response_percent: u8,
+    /// At most [`Processing::MAX_BRIGHTNESS_RAMP_SECONDS`]; 0 sets no limit.
+    pub brightness_ramp_seconds: f32,
     pub sample_density: u16,
     pub spatial_reach_percent: u8,
     pub remove_black_bars: bool,
@@ -115,8 +115,8 @@ impl Default for Processing {
             brightness_percent: config.brightness_percent.0,
             shadow_lift_percent: config.shadow_lift_percent.0,
             smoothing_seconds: config.smoothing_seconds.0,
-            smoothing_response_percent: config.smoothing_response_percent.0,
-            brightness_smoothing: config.brightness_smoothing,
+            cut_response_percent: config.cut_response_percent.0,
+            brightness_ramp_seconds: config.brightness_ramp_seconds.0,
             sample_density: u16::try_from(config.sample_density.0).unwrap_or(u16::MAX),
             spatial_reach_percent: config.spatial_reach_percent.0,
             remove_black_bars: config.remove_black_bars,
@@ -127,6 +127,10 @@ impl Default for Processing {
 }
 
 impl Processing {
+    /// The longest brightness ramp: slower than this, a cut to a bright
+    /// scene looks like a fade rather than a cut.
+    pub const MAX_BRIGHTNESS_RAMP_SECONDS: f32 = 2.0;
+
     /// # Errors
     /// Rejects values the processor would silently clamp or ignore.
     pub fn validate(&self) -> Result<(), ValidationError> {
@@ -139,16 +143,21 @@ impl Processing {
         };
         percent("brightness_percent", self.brightness_percent, 0)?;
         percent("shadow_lift_percent", self.shadow_lift_percent, 0)?;
-        percent(
-            "smoothing_response_percent",
-            self.smoothing_response_percent,
-            0,
-        )?;
+        percent("cut_response_percent", self.cut_response_percent, 0)?;
         percent("spatial_reach_percent", self.spatial_reach_percent, 1)?;
         if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
             return Err(ValidationError::new(
                 path("smoothing_seconds"),
                 "must be a finite number of seconds, 0 to disable",
+            ));
+        }
+        if !(0.0..=Self::MAX_BRIGHTNESS_RAMP_SECONDS).contains(&self.brightness_ramp_seconds) {
+            return Err(ValidationError::new(
+                path("brightness_ramp_seconds"),
+                format!(
+                    "must be 0 to {} seconds, 0 for no limit",
+                    Self::MAX_BRIGHTNESS_RAMP_SECONDS
+                ),
             ));
         }
         if self.sample_density == 0 {
@@ -188,23 +197,13 @@ impl Processing {
             brightness_percent: BrightnessPercent(self.brightness_percent),
             shadow_lift_percent: ShadowLiftPercent(self.shadow_lift_percent),
             smoothing_seconds: SmoothingSeconds(self.smoothing_seconds),
-            smoothing_response_percent: SmoothingResponsePercent(self.smoothing_response_percent),
-            brightness_smoothing: self.brightness_smoothing,
+            cut_response_percent: CutResponsePercent(self.cut_response_percent),
+            brightness_ramp_seconds: BrightnessRampSeconds(self.brightness_ramp_seconds),
             sample_density: SampleDensity(usize::from(self.sample_density)),
             spatial_reach_percent: SpatialReachPercent(self.spatial_reach_percent),
             remove_black_bars: self.remove_black_bars,
         }
     }
-}
-
-/// The settings file's names for [`BrightnessSmoothing`]; `prysm-core` stays
-/// free of serialization. Serde checks this mirror covers every variant.
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "BrightnessSmoothing", rename_all = "snake_case")]
-enum BrightnessSmoothingName {
-    WithColor,
-    Faster,
-    Limited,
 }
 
 /// Optimistic-concurrency token for settings. It starts at a random value in
@@ -276,59 +275,71 @@ mod tests {
         };
         assert!(invalid.validate().is_err());
         let invalid = Processing {
-            smoothing_response_percent: 101,
+            cut_response_percent: 101,
             ..Processing::default()
         };
         assert_eq!(
             invalid.validate().unwrap_err().field,
-            "processing.smoothing_response_percent"
+            "processing.cut_response_percent"
         );
+        for seconds in [-0.1, 2.01, f32::NAN, f32::INFINITY] {
+            let invalid = Processing {
+                brightness_ramp_seconds: seconds,
+                ..Processing::default()
+            };
+            assert_eq!(
+                invalid.validate().unwrap_err().field,
+                "processing.brightness_ramp_seconds",
+                "{seconds}"
+            );
+        }
     }
 
     #[test]
-    fn adaptive_smoothing_round_trips_and_defaults_when_omitted() {
+    fn cut_response_and_brightness_ramp_round_trip_and_default_when_omitted() {
         let omitted: Processing =
             serde_json::from_value(serde_json::json!({ "smoothing_seconds": 0.5 })).unwrap();
-        assert_eq!(omitted.smoothing_response_percent, 0);
-        assert_eq!(omitted.brightness_smoothing, BrightnessSmoothing::WithColor);
+        assert_eq!(omitted.cut_response_percent, 0);
+        assert_eq!(omitted.brightness_ramp_seconds, 0.0);
+        let config = omitted.config();
         assert_eq!(
-            omitted.config().smoothing_response_percent,
-            Config::default().smoothing_response_percent
+            config.cut_response_percent,
+            Config::default().cut_response_percent
+        );
+        assert_eq!(
+            config.brightness_ramp_seconds,
+            Config::default().brightness_ramp_seconds
         );
 
-        for (brightness, name) in
-            BrightnessSmoothing::ALL
-                .into_iter()
-                .zip(["with_color", "faster", "limited"])
-        {
+        for (percent, seconds) in [(0, 0.0), (60, 0.5), (100, 2.0)] {
             let present: Processing = serde_json::from_value(serde_json::json!({
-                "smoothing_response_percent": 60,
-                "brightness_smoothing": name,
+                "cut_response_percent": percent,
+                "brightness_ramp_seconds": seconds,
             }))
             .unwrap();
             present.validate().unwrap();
-            assert_eq!(present.brightness_smoothing, brightness);
             let config = present.config();
+            assert_eq!(config.cut_response_percent, CutResponsePercent(percent));
             assert_eq!(
-                config.smoothing_response_percent,
-                SmoothingResponsePercent(60)
+                config.brightness_ramp_seconds,
+                BrightnessRampSeconds(seconds)
             );
-            assert_eq!(config.brightness_smoothing, brightness);
             let written = serde_json::to_value(&present).unwrap();
-            assert_eq!(written["brightness_smoothing"], name);
-            assert_eq!(written["smoothing_response_percent"], 60);
+            assert_eq!(written["cut_response_percent"], percent);
+            assert_eq!(written["brightness_ramp_seconds"], f64::from(seconds));
             assert_eq!(
                 serde_json::from_value::<Processing>(written).unwrap(),
                 present
             );
         }
-        // A closed set: an unknown name is refused, not defaulted.
-        assert!(
-            serde_json::from_value::<Processing>(
-                serde_json::json!({ "brightness_smoothing": "sometimes" })
-            )
-            .is_err()
-        );
+        // Fields that no longer exist are refused rather than ignored.
+        for removed in ["smoothing_response_percent", "brightness_smoothing"] {
+            let text = format!(r#"{{ "{removed}": 0 }}"#);
+            assert!(
+                serde_json::from_str::<Processing>(&text).is_err(),
+                "{removed}"
+            );
+        }
     }
 
     #[test]

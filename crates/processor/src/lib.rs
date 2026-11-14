@@ -6,6 +6,8 @@ use std::time::Instant;
 mod frames;
 mod nodes;
 
+pub use nodes::cut_strength;
+
 /// Stateful frame processor.
 ///
 /// Detection keeps the raw capture format; sampling reads RGB and NV12 in place

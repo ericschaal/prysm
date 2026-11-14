@@ -19,8 +19,8 @@ pub use capture_resolution::CaptureResolution;
 pub use color::Color;
 pub use color_strip::{ColorStrip, EdgeColors, EmptyColorStrip};
 pub use config::{
-    BrightnessPercent, BrightnessSmoothing, Config, SampleDensity, ShadowLiftPercent,
-    SmoothingResponsePercent, SmoothingSeconds, SpatialReachPercent,
+    BrightnessPercent, BrightnessRampSeconds, Config, CutResponsePercent, SampleDensity,
+    ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
 };
 pub use linear::LinearColor;
 pub use oklab::Oklab;

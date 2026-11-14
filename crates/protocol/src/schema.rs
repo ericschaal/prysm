@@ -59,9 +59,10 @@ pub struct SettingsSchema {
     processing: ProcessingSchema,
 }
 
-// `schema(...)` takes literals only: the profile limits below are spelled out.
+// `schema(...)` takes literals only: the profile and ramp limits below are spelled out.
 const _: () =
     assert!(MAX_PROFILES == 32 && MAX_PROFILE_ID_LEN == 64 && MAX_PROFILE_NAME_CHARS == 64);
+const _: () = assert!(prysm_ports::Processing::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
 
 // Mirrors `prysm_ports::Processing`.
 /// Processing controls in plain units.
@@ -76,11 +77,13 @@ pub struct ProcessingSchema {
     /// Seconds; 0 disables smoothing.
     #[schema(minimum = 0)]
     smoothing_seconds: f32,
-    /// How much faster smoothing follows a large change than a small one;
-    /// 0 smooths every change at one rate.
+    /// How much of a scene cut the lights take at once; 0 eases a cut in
+    /// like any other change.
     #[schema(minimum = 0, maximum = 100)]
-    smoothing_response_percent: u8,
-    brightness_smoothing: BrightnessSmoothingSchema,
+    cut_response_percent: u8,
+    /// Seconds, the least time from dark to full brightness; 0 sets no limit.
+    #[schema(minimum = 0, maximum = 2)]
+    brightness_ramp_seconds: f32,
     #[schema(minimum = 1)]
     sample_density: u16,
     #[schema(minimum = 1, maximum = 100)]
@@ -99,20 +102,6 @@ pub struct ProcessingSchema {
         pattern = "^[A-Za-z0-9_-]+$"
     )]
     active_profile: Option<String>,
-}
-
-// Mirrors `prysm_ports::Processing::brightness_smoothing`.
-/// How brightness follows a change while colour is smoothed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[schema(as = BrightnessSmoothing)]
-#[serde(rename_all = "snake_case")]
-pub enum BrightnessSmoothingSchema {
-    /// Together with colour, in linear light.
-    WithColor,
-    /// Brightness settles three times as fast as colour.
-    Faster,
-    /// Brightness changes at most from black to white in a quarter second.
-    Limited,
 }
 
 // Mirrors `prysm_ports::ColorProfile`.
@@ -404,7 +393,6 @@ impl ToSchema for OutputSettings {}
     SettingsReplaced,
     SettingsSchema,
     ProcessingSchema,
-    BrightnessSmoothingSchema,
     ColorProfileSchema,
     CorrectionControlsSchema,
     HueControlsSchema,
@@ -619,16 +607,14 @@ mod tests {
             },
             ..Settings::default()
         });
-        for brightness_smoothing in ["with_color", "faster", "limited"] {
-            let processing = json!({
-                "smoothing_response_percent": 70,
-                "brightness_smoothing": brightness_smoothing,
-            });
-            same_shape::<Settings, SettingsSchema>(&Settings {
-                processing: serde_json::from_value(processing).unwrap(),
-                ..Settings::default()
-            });
-        }
+        same_shape::<Settings, SettingsSchema>(&Settings {
+            processing: Processing {
+                cut_response_percent: 70,
+                brightness_ramp_seconds: 0.5,
+                ..Processing::default()
+            },
+            ..Settings::default()
+        });
         for target in LightingTarget::ALL {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
         }

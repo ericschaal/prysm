@@ -116,12 +116,12 @@ Picture changes apply while you move the control; there is no Save button.
 | Shadow lift | 0% | Brightens dark colours; black stays off. |
 | Edge depth | 10% | How far into the picture each light looks. |
 | Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
-| Response | 0% | Lets big changes, such as a cut, through faster than small flicker, so a longer Smoothing calms grain without the lights lagging behind cuts. 0% treats every change alike. |
-| Brightness follows | With colour | **With colour**: brightness eases in with the colour. **Faster than colour**: brightness follows a cut at once while the colour eases in. **Limited**: a sudden flash brightens over about a quarter of a second. |
+| Scene cuts | 0% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
+| Brightness ramp | 0 s | The least time the lights take from dark to full brightness, so a sudden flash does not dazzle. 0 follows at once. The slider goes to 2 s. |
 | Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
 
-Response and Brightness follows have not yet been compared on a TV; try them
-with a Smoothing of about 0.5 s.
+Scene cuts and Brightness ramp have not yet been tried on a TV; try them with
+a Smoothing of about 0.5 s.
 
 **Colour profiles** lists your profiles. Choose one to rename it, switch it
 **In use**, adjust its colours or delete it; after **Delete profile** the list

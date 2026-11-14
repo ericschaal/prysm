@@ -54,6 +54,12 @@ impl ColorStrip {
         self.samples.len()
     }
 
+    /// The samples in order along the edge.
+    #[must_use]
+    pub fn samples(&self) -> &[LinearColor] {
+        &self.samples
+    }
+
     /// Check if the strip is empty (should never be true)
     #[must_use]
     pub fn is_empty(&self) -> bool {
