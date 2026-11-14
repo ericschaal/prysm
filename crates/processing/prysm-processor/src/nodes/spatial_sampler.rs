@@ -1,7 +1,5 @@
 use crate::frames::FrameView;
 use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity};
-#[cfg(feature = "parallel-projection")]
-use rayon::prelude::*;
 
 /// Most pixels cell averaging reads per frame: every pixel of a 640x360
 /// picture. Larger pictures are read on a lattice of every `step`th pixel and
@@ -208,9 +206,6 @@ impl SpatialSampler {
         } else {
             None
         };
-        #[cfg(feature = "parallel-projection")]
-        let cells = self.cell_colors.par_iter_mut().zip(&self.cells);
-        #[cfg(not(feature = "parallel-projection"))]
         let cells = self.cell_colors.iter_mut().zip(&self.cells);
         let step = self.step;
         cells.for_each(|(color, &[x0, y0, x1, y1])| {
@@ -219,11 +214,6 @@ impl SpatialSampler {
         let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
             let cell_count = self.cell_colors.len();
             let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
-            #[cfg(feature = "parallel-projection")]
-            let groups = samples
-                .par_chunks_mut(GROUP)
-                .zip(weights.par_chunks(GROUP * cell_count));
-            #[cfg(not(feature = "parallel-projection"))]
             let groups = samples
                 .chunks_mut(GROUP)
                 .zip(weights.chunks(GROUP * cell_count));

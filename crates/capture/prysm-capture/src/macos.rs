@@ -50,7 +50,7 @@ const FAILURE_POLL: Duration = Duration::from_millis(50);
 struct CaptureState {
     sink: Arc<dyn CaptureSink>,
     pool: FramePool,
-    stats: prysm_metrics::TraceStats,
+    stats: crate::trace_stats::TraceStats,
 }
 
 struct DelegateIvars {
@@ -134,7 +134,7 @@ impl Delegate {
         *this.ivars().capture.lock().expect("capture mutex poisoned") = Some(CaptureState {
             sink,
             pool: FramePool::default(),
-            stats: prysm_metrics::TraceStats::new("avfoundation_copy"),
+            stats: crate::trace_stats::TraceStats::new("avfoundation_copy"),
         });
         this
     }

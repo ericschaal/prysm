@@ -10,10 +10,8 @@ categories.workspace = true
 description = "Camera, file and webOS video capture for Prysm"
 
 [features]
-default = ["remote"]
 # `DeviceCapture`: device capture on its own thread behind tokio channels.
 async = ["dep:futures", "dep:tokio", "dep:tokio-util"]
-remote = ["async", "dep:axum", "dep:prysm-webos-protocol", "dep:yuv"]
 
 [lints]
 workspace = true
@@ -28,20 +26,15 @@ name = "linux_recovery"
 required-features = ["async"]
 
 [dependencies]
-axum = { workspace = true, features = ["ws"], optional = true }
 prysm-core = { path = "../../common/prysm-core" }
-prysm-metrics = { path = "../../common/prysm-metrics" }
 futures = { workspace = true, optional = true }
-yuv = { workspace = true, default-features = true, features = ["fast_mode"], optional = true }
 tracing.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros", "net", "io-util", "time"], optional = true }
 tokio-util = { workspace = true, optional = true }
-prysm-webos-protocol = { path = "../prysm-webos-protocol", features = ["h264"], optional = true }
 
 [dev-dependencies]
-tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true
 

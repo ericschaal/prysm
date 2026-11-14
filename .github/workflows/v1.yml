@@ -37,10 +37,8 @@ on:
       - 'Cargo.toml'
       - 'clippy.toml'
       - 'crates/common/prysm-core/**'
-      - 'crates/common/prysm-metrics/**'
       - 'crates/processing/prysm-processor/**'
       - 'crates/capture/prysm-capture/**'
-      - 'crates/capture/prysm-webos-protocol/**'
       - 'crates/rendering/prysm-renderer-wled/**'
       - '.github/workflows/v1.yml'
   pull_request:
@@ -50,10 +48,8 @@ on:
       - 'Cargo.toml'
       - 'clippy.toml'
       - 'crates/common/prysm-core/**'
-      - 'crates/common/prysm-metrics/**'
       - 'crates/processing/prysm-processor/**'
       - 'crates/capture/prysm-capture/**'
-      - 'crates/capture/prysm-webos-protocol/**'
       - 'crates/rendering/prysm-renderer-wled/**'
       - '.github/workflows/v1.yml'
   workflow_call:

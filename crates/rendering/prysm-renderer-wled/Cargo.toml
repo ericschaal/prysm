@@ -13,6 +13,5 @@ description = "WLED DDP lighting output for Prysm"
 workspace = true
 
 [dependencies]
-prysm-metrics = { path = "../../common/prysm-metrics" }
 ddp-rs.workspace = true
 prysm-core = { path = "../../common/prysm-core" }

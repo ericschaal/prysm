@@ -283,7 +283,7 @@ pub(crate) fn run(
         stream.start().context("failed to start capture stream")?;
         sink.ready();
         let mut pool = FramePool::default();
-        let mut stats = prysm_metrics::TraceStats::new("v4l_capture");
+        let mut stats = crate::trace_stats::TraceStats::new("v4l_capture");
         loop {
             if stopped() {
                 return Ok(());

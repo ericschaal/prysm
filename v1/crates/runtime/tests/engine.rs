@@ -546,7 +546,8 @@ async fn each_engine_starts_at_its_own_revision_so_old_revisions_are_stale() {
     .await;
 }
 
-// Scenarios ported from the shipping controller (`apps/prysm/tests/controller.rs`).
+// Scenarios ported from the earlier controller (`apps/prysm/tests/controller.rs`
+// in the tag `pre-1.0-consolidation`).
 
 #[tokio::test]
 async fn output_change_while_off_neither_opens_nor_powers_the_new_output() {

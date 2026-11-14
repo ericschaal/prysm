@@ -2,10 +2,8 @@
 resolver = "3"
 members = [
     "crates/capture/prysm-capture",
-    "crates/capture/prysm-webos-protocol",
     "crates/processing/prysm-processor",
     "crates/common/prysm-core",
-    "crates/common/prysm-metrics",
     "crates/rendering/prysm-renderer-wled",
 ]
 
@@ -33,36 +31,19 @@ missing_errors_doc = "allow"
 [workspace.dependencies]
 anyhow = "=1.0.104"
 av-foundation = "=0.8.1"
-axum = "=0.8.9"
 core-foundation = { version = "=0.10.1", default-features = false }
 core-media = { version = "=0.8.1", default-features = false }
 core-video = { version = "=0.6.1", default-features = false }
 ddp-rs = "=1.3.0"
 dispatch2 = "=0.3.1"
 futures = "=0.3.34"
-h264-reader = "=0.9.0"
 libc = "=0.2.191"
 rustix = { version = "=1.1.6", default-features = false }
-lz4_flex = { version = "=0.14.0", default-features = false }
 objc2 = "=0.6.5"
 objc2-foundation = "=0.3.2"
-openh264 = "=0.9.9"
-prometheus-client = "=0.25.2"
-rayon = "=1.12.0"
-serde = "=1.0.229"
-serde_json = "=1.0.154"
-sysinfo = { version = "=0.40.1", default-features = false }
 thiserror = "=2.0.21"
-tiny_http = { version = "=0.12.0", default-features = false }
 tokio = "=1.54.1"
-tokio-tungstenite = { version = "=0.30.0", features = ["rustls-tls-native-roots"] }
 tokio-util = "=0.7.20"
 tracing = "=0.1.44"
 tracing-subscriber = "=0.3.23"
-url = "=2.5.8"
-utoipa = "=6.0.0"
 yuv = { version = "=0.8.20", default-features = false }
-
-# shortcut: Axum 0.8.9 still uses tungstenite 0.29; remove when a release includes 0.30.
-[patch.crates-io]
-axum = { git = "https://github.com/tokio-rs/axum", rev = "dcfd5e3442b2a8b021ccc954501157ebd602d2a2" }

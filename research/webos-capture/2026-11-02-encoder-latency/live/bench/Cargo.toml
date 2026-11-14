@@ -1,3 +1,5 @@
+# Historical harness: its path dependencies (prysm-webos-protocol, prysm-metrics)
+# exist only up to the tag `pre-1.0-consolidation`; build it from that checkout.
 [package]
 name = "prysm-encoder-latency-bench"
 version = "0.0.0"

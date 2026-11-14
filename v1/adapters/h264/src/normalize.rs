@@ -1,6 +1,7 @@
 //! SPS-only repair for rvenc's progressive Baseline Annex B output. Ported
 //! unchanged in behaviour from the qualified
-//! `crates/capture/prysm-webos-protocol/src/h264/hardware.rs`.
+//! `crates/capture/prysm-webos-protocol/src/h264/hardware.rs` (tag
+//! `pre-1.0-consolidation`).
 use crate::{FrameKind, H264Error, MAX_ACCESS_UNIT_BYTES, ensure};
 use h264_reader::nal::{Nal, RefNal, sps::SeqParameterSet};
 

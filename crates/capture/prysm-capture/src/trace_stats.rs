@@ -1,4 +1,5 @@
-//! Allocation-free counters with bounded log frequency, independent of Prometheus.
+//! Allocation-free frame counters for the capture threads, logged at INFO on
+//! `prysm::stats` with bounded frequency.
 use prysm_core::FramePoolStats;
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,6 @@ struct Window {
     frames: u64,
     bytes: u64,
     failures: u64,
-    cached: u64,
     elapsed: Duration,
     maximum: Duration,
 }
@@ -18,19 +18,18 @@ struct Window {
 /// Emits INFO on `prysm::stats` every 30 seconds of activity and on drop.
 /// Read durations include I/O waits. Pool counters are cumulative snapshots.
 /// This adds no per-frame allocation, lock or background task.
-pub struct TraceStats {
+pub(crate) struct TraceStats {
     stage: &'static str,
     enabled: bool,
     since: Instant,
     window: Window,
     total_frames: u64,
     total_failures: u64,
-    total_cached: u64,
     pool: Option<FramePoolStats>,
 }
 impl TraceStats {
     #[must_use]
-    pub fn new(stage: &'static str) -> Self {
+    pub(crate) fn new(stage: &'static str) -> Self {
         Self {
             stage,
             enabled: tracing::enabled!(target: "prysm::stats", tracing::Level::INFO),
@@ -38,17 +37,21 @@ impl TraceStats {
             window: Window::default(),
             total_frames: 0,
             total_failures: 0,
-            total_cached: 0,
             pool: None,
         }
     }
     /// Start a measurement only when summary logging is enabled.
     #[must_use]
-    pub fn start(&self) -> Option<Instant> {
+    pub(crate) fn start(&self) -> Option<Instant> {
         self.enabled.then(Instant::now)
     }
     /// Record one successful operation; bytes refer to this stage's payload.
-    pub fn record(&mut self, started: Option<Instant>, bytes: usize, pool: Option<FramePoolStats>) {
+    pub(crate) fn record(
+        &mut self,
+        started: Option<Instant>,
+        bytes: usize,
+        pool: Option<FramePoolStats>,
+    ) {
         let Some(started) = started else {
             return;
         };
@@ -64,21 +67,12 @@ impl TraceStats {
     }
     /// Count a failed operation. Returns true for the first failure in this window.
     /// Callers can use this to avoid repeating the same warning every frame.
-    pub fn failure(&mut self) -> bool {
+    pub(crate) fn failure(&mut self) -> bool {
         self.report_if_due(Instant::now());
         let first = self.window.failures == 0;
         self.window.failures += 1;
         self.total_failures += 1;
         first
-    }
-    /// Count a preview response served from the encoded cache, without a new encode.
-    pub fn cache_hit(&mut self) {
-        if !self.enabled {
-            return;
-        }
-        self.window.cached += 1;
-        self.total_cached += 1;
-        self.report_if_due(Instant::now());
     }
     fn report_if_due(&mut self, now: Instant) {
         if now.saturating_duration_since(self.since) >= INTERVAL {
@@ -101,10 +95,9 @@ impl TraceStats {
             bytes = self.window.bytes,
             mean_ms = self.window.elapsed.as_secs_f64() * 1000.0 / frames.max(1.0),
             max_ms = self.window.maximum.as_secs_f64() * 1000.0,
-            failures = self.window.failures, cached = self.window.cached,
+            failures = self.window.failures,
             total_frames = self.total_frames,
             total_failures = self.total_failures,
-            total_cached = self.total_cached,
             pool = ?self.pool,
             "frame statistics"
             );
@@ -115,7 +108,7 @@ impl TraceStats {
 }
 impl Drop for TraceStats {
     fn drop(&mut self) {
-        if self.total_frames + self.total_failures + self.total_cached > 0 {
+        if self.total_frames + self.total_failures > 0 {
             self.report(Instant::now(), true);
         }
     }
@@ -160,7 +153,6 @@ mod tests {
             stats.report_if_due(stats.since + INTERVAL);
             assert_eq!(stats.window.frames, 0);
             assert_eq!(stats.total_frames, 1);
-            stats.cache_hit();
             assert!(stats.failure());
             assert!(!stats.failure());
             drop(stats);
@@ -172,7 +164,6 @@ mod tests {
             "final_report=true",
             "frames=1",
             "bytes=24",
-            "cached=1",
             "failures=2",
             "total_frames=1",
             "created: 1",
@@ -196,7 +187,6 @@ mod tests {
             let mut stats = TraceStats::new("disabled");
             assert!(stats.start().is_none());
             stats.record(stats.start(), 100, None);
-            stats.cache_hit();
             assert_eq!(stats.total_frames, 0);
             assert!(stats.failure());
             assert!(!stats.failure());

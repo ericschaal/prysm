@@ -20,7 +20,6 @@ use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
 use ddp_rs::protocol::{ID, PixelConfig, PixelFormat};
 use prysm_core::{Color, EdgeColors};
-use prysm_metrics::{BytesKind, Format, FrameStage, Stage, WledEvent};
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket};
 
@@ -42,11 +41,6 @@ impl Rgb8Payload {
     fn clear_reserve(&mut self, pixels: usize) {
         self.0.clear();
         self.0.reserve(pixels * 3);
-    }
-}
-impl From<&Rgb8Payload> for Format {
-    fn from(_: &Rgb8Payload) -> Self {
-        Self::Rgb24
     }
 }
 
@@ -96,12 +90,7 @@ impl WledRenderer {
         for &color in colors {
             self.rgb.push(color);
         }
-        let _time = prysm_metrics::timer(Stage::WledWrite);
-        self.connection
-            .write(&self.rgb.0)
-            .inspect_err(|_| prysm_metrics::event(WledEvent::WriteFailed))?;
-        prysm_metrics::frame(FrameStage::WledTransmitted, (&self.rgb).into());
-        prysm_metrics::bytes(BytesKind::WledPayload, self.rgb.0.len());
+        self.connection.write(&self.rgb.0)?;
         Ok(())
     }
 
@@ -144,12 +133,7 @@ impl WledRenderer {
                 self.rgb.push(color);
             }
         }
-        let _time = prysm_metrics::timer(Stage::WledWrite);
-        self.connection
-            .write(&self.rgb.0)
-            .inspect_err(|_| prysm_metrics::event(WledEvent::WriteFailed))?;
-        prysm_metrics::frame(FrameStage::WledTransmitted, (&self.rgb).into());
-        prysm_metrics::bytes(BytesKind::WledPayload, self.rgb.0.len());
+        self.connection.write(&self.rgb.0)?;
         Ok(())
     }
 
@@ -211,7 +195,6 @@ mod tests {
         );
         let packet = PacketRef::from_bytes(&bytes).unwrap();
         assert_eq!(packet.header.pixel_config, Rgb8Payload::config());
-        assert_eq!(Format::from(&renderer.rgb), Format::Rgb24);
         assert_eq!(packet.header.pixel_config.data_type, DataType::RGB);
         assert_eq!(
             packet.header.pixel_config.data_size,
