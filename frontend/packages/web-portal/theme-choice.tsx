@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { RowChoice } from './rows';
 import {
   applyTheme,
   saveTheme,
@@ -6,19 +7,6 @@ import {
   themeChoices,
   type Theme,
 } from './theme';
-
-function CheckIcon() {
-  return (
-    <svg
-      className="row-check"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M5 12.5 10 17.5 19 7" />
-    </svg>
-  );
-}
 
 /**
  * System, Light or Dark: one row each, in the rows pattern, the chosen one
@@ -40,22 +28,14 @@ export function ThemeChoice() {
       </h2>
       <ul className="rows" role="radiogroup" aria-labelledby={headingId}>
         {themeChoices.map((choice) => (
-          <li key={choice.value} className="row row-choice">
-            <label>
-              <input
-                type="radio"
-                name={nameId}
-                value={choice.value}
-                checked={theme === choice.value}
-                onChange={() => choose(choice.value)}
-              />
-              <span className="row-text">
-                <span className="row-label">{choice.label}</span>
-                <span className="row-value">{choice.about}</span>
-              </span>
-              <CheckIcon />
-            </label>
-          </li>
+          <RowChoice
+            key={choice.value}
+            name={nameId}
+            label={choice.label}
+            about={choice.about}
+            checked={theme === choice.value}
+            onChoose={() => choose(choice.value)}
+          />
         ))}
       </ul>
     </section>

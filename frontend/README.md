@@ -204,6 +204,14 @@ supervisor in each of its states and play the phone's calibration part). See the
     network. Hosts pass `httpDiscoveryClient()`; without one there is no button.
   - [Fields](packages/web-portal/fields.tsx): labelled inputs that show the
     server's `Failure.field` errors and their own range checks.
+  - [Size and rate](packages/web-portal/picture-choice.tsx): every capture
+    editor's width, height and frame rate as one choice in the rows pattern
+    ([presets](packages/web-portal/picture-presets.ts)): Balanced
+    (640 × 360, 30 fps), Smooth (60 fps; only for the TV sources, a device
+    or file may not do it), Efficient (320 × 180, 30 fps) and Custom, which
+    opens the number fields below the list. Nothing extra is stored: the
+    ticked row follows from the saved numbers, and a refused size or rate
+    opens Custom.
 - [Desktop host](hosts/headless/web-portal/app.tsx) (served by `prysm-headless`
   and `prysm-tui`) and [webOS browser host](hosts/webos/web-portal/app.tsx)
   register their kinds as `AdapterUis` maps; the types are exhaustive over the

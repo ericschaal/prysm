@@ -62,8 +62,10 @@ does this. If you installed another way, open **Prysm** on the TV and choose
    **Set up service**.
 2. The TV shows the address of its web portal and a QR code. Open it on your
    phone or computer and run the [setup wizard](configuration.md). The video
-   source is **This TV** (640 × 360 at 30 fps by default; **Include TV menus**
-   decides whether on-screen menus light the LEDs).
+   source is **This TV**. Under **Size and rate**, **Balanced** is right for
+   most setups; **Smooth** updates the lights twice as often and is more work
+   for the TV. **Include TV menus** decides whether on-screen menus light the
+   LEDs.
 3. Play video. Choose **Start screen sync** on the TV or turn on Screen sync
    in the portal.
 
@@ -80,8 +82,9 @@ other sites, so keep the TV on a trusted network.
    [Docker](docker.md#receive-the-picture-from-a-tv-slim-package),
    [TrueNAS](truenas.md)). Without this option the TV app says how to allow it.
 2. In the computer's portal, choose the video source
-   **Capture-only TV (remote)**. Keep **Hardware H.264 (recommended)** and
-   320 × 180 at 30 fps to start.
+   **Capture-only TV (remote)**. Keep **Compressed by the TV's video chip
+   (recommended)** and, under **Size and rate**, **Efficient** (320 × 180 at
+   30 fps) to start.
 3. On the TV, open **Prysm**. Set **Prysm address** to the computer's portal,
    for example `http://192.168.1.20:8787`. The TV sends its picture to that
    same address; nothing else needs to be reachable.

@@ -7,7 +7,7 @@ import {
 import { DeviceEditor } from './editor';
 import { deviceDefaults } from './settings';
 
-export { deviceDefaults, deviceLimits } from './settings';
+export { deviceDefaults, deviceLimits, devicePresets } from './settings';
 
 export const deviceCapture: AdapterUi<DeviceSettings> = {
   label: 'Video capture device',

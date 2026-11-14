@@ -22,8 +22,10 @@ Prysm can see, or type the device yourself:
 | macOS | The device's unique ID. **Find devices** fills it in. Allow camera access when macOS asks. |
 | Docker on Linux | The path mapped into the container, such as `/dev/video0`. See [Docker](docker.md#use-a-capture-card). |
 
-Leave the picture at 640 × 360 and 30 fps to start; the card must support the
-mode you choose. On Linux the card must offer YUYV, RGB3 or BGR3; cards that
+Under **Size and rate**, keep **Balanced** (640 × 360 at 30 fps) to start;
+the card must support the size and rate you choose. **Efficient** (320 × 180
+at 30 fps) is less work for the computer; **Custom** takes any size and rate
+the card offers. On Linux the card must offer YUYV, RGB3 or BGR3; cards that
 only offer MJPEG do not work.
 
 Continue with [setting up your lights](configuration.md).

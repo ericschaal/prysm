@@ -7,7 +7,7 @@ import {
 import { FileEditor } from './editor';
 import { fileDefaults } from './settings';
 
-export { fileDefaults, fileLimits } from './settings';
+export { fileDefaults, fileLimits, filePresets } from './settings';
 
 export const fileCapture: AdapterUi<FileSettings> = {
   // For development: it needs FFmpeg, which the packaged builds leave out.

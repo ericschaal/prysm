@@ -18,6 +18,7 @@ import {
   openEditor,
   openPage,
   openSettings,
+  radio,
   renderPortal,
   sleep,
   submit,
@@ -106,6 +107,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     );
 
     await edit(field('capture.path'), ' /dev/video2 ');
+    await click(radio('Custom'));
     await edit(field('capture.width'), 1280);
     await next();
     assert.equal(heading(), 'Your lights');
@@ -316,7 +318,8 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
   const { fixture } = portal;
   try {
     assert(!field('capture.kind'));
-    assert.equal(field('capture.width').value, '640');
+    assert.equal(radio('Balanced').checked, true);
+    assert(!field('capture.width'), 'the size fields wait for Custom');
     await next();
     assert(!field('output.kind'));
     await edit(field('output.address'), '192.0.2.4');
@@ -337,10 +340,46 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
   }
 });
 
+test('setup offers the same size-and-rate choice and saves the chosen preset', async () => {
+  const portal = await renderPortal(WebosWebPortal, {});
+  const { fixture } = portal;
+  const label = (input) =>
+    document.getElementById(input.getAttribute('aria-labelledby')).textContent;
+  try {
+    const rows = $$('input[type="radio"]', $('[role="radiogroup"]', wizard()));
+    assert.deepEqual(rows.map(label), [
+      'Balanced',
+      'Smooth',
+      'Efficient',
+      'Custom',
+    ]);
+    assert.equal(radio('Balanced').checked, true);
+    await click(radio('Efficient'));
+    await next();
+    await edit(field('output.address'), '192.0.2.4');
+    await edit(field('output.leds.top'), 20);
+    await next();
+    assert.equal(
+      plain($$('.review-item p')[0]),
+      'This TV320 × 180 at 30 fps, with menus',
+    );
+    await next();
+    assert.deepEqual(fixture.snapshot().settings.capture, {
+      kind: 'webos',
+      width: 320,
+      height: 180,
+      fps: 30,
+    });
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('setup shows the same quiet size hint above 640 × 360', async () => {
   const portal = await renderPortal(WebosWebPortal, {});
   try {
     assert(!$('[data-size-hint]', wizard()));
+    await click(radio('Custom'));
     await edit(field('capture.width'), 1280);
     await edit(field('capture.height'), 720);
     assert.match(

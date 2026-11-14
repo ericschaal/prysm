@@ -6,11 +6,13 @@ import { act } from 'react';
 import { HeadlessWebPortal } from '../hosts/headless/web-portal/app';
 import { WebosWebPortal } from '../hosts/webos/web-portal/app';
 import {
+  allPicturePresets,
   correctionLimits,
   deviceNamesKey,
   hueLimits,
   processingDelayMs,
   processingLimits,
+  picturePresets,
   profileLimits,
   rebased,
   saveDeveloper,
@@ -32,8 +34,12 @@ import {
   normalizeWledAddress,
   wledUrl,
 } from '@prysm/output-wled-ui';
-import { deviceDefaults, deviceLimits } from '@prysm/capture-device-ui';
-import { fileDefaults, fileLimits } from '@prysm/capture-file-ui';
+import {
+  deviceDefaults,
+  deviceLimits,
+  devicePresets,
+} from '@prysm/capture-device-ui';
+import { fileDefaults, fileLimits, filePresets } from '@prysm/capture-file-ui';
 import {
   includeMenusHelp,
   largeSizeHint,
@@ -60,6 +66,7 @@ import {
   openEditor,
   openPage,
   openSettings,
+  radio,
   row,
   valueOf,
   renderPortal,
@@ -1039,6 +1046,7 @@ test('server field errors land on their control and clear when it is edited', as
   const { fixture } = portal;
   try {
     await openEditor('Video source');
+    await click(radio('Custom'));
     fixture.failNext({
       kind: 'invalid',
       field: 'capture.height',
@@ -1502,6 +1510,7 @@ test('fields the forms do not show are preserved on every save', async () => {
     // A video file and no lights are developer options.
     await act(async () => saveDeveloper(true));
     await openEditor('Video source');
+    await click(radio('Custom'));
     await edit(field('capture.fps'), 50);
     await submit(form('Video source'));
     await leaveEditor();
@@ -1545,7 +1554,8 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
     const shown = () => $('[data-size-hint]', form('Video source'));
     try {
       await openEditor('Video source');
-      assert.equal(shown(), null, 'not at the default size');
+      assert(!shown(), 'not at the default size');
+      await click(radio('Custom'));
       assert.match(hint, wording);
       assert.match(hint, /^640\u00a0×\u00a0360 is enough for the lights\./);
       for (const [width, height, expected] of [
@@ -1589,6 +1599,187 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
   }
 });
 
+/** The size-and-rate choice in the open editor: its rows and the ticked one. */
+const presetRows = () =>
+  $$('input[type="radio"]', $('[role="radiogroup"]', form('Video source')));
+const presetLabel = (input) =>
+  document.getElementById(input.getAttribute('aria-labelledby')).textContent;
+const ticked = () =>
+  presetRows()
+    .filter((input) => input.checked)
+    .map(presetLabel);
+const sizeFields = () =>
+  ['width', 'height', 'fps'].map((name) => field(`capture.${name}`)?.value);
+
+test('the saved size and rate tick their preset, omitted fields at their defaults; anything else ticks Custom', async () => {
+  const path = '/dev/video0';
+  const tv = ['Balanced', 'Smooth', 'Efficient', 'Custom'];
+  // A device or a file may not do 60 fps: Smooth is not offered there.
+  const local = ['Balanced', 'Efficient', 'Custom'];
+  for (const [Host, saved, rows, expected] of [
+    [WebosWebPortal, { kind: 'webos' }, tv, 'Balanced'],
+    [WebosWebPortal, { kind: 'webos', fps: 60 }, tv, 'Smooth'],
+    [
+      WebosWebPortal,
+      { kind: 'webos', width: 320, height: 180 },
+      tv,
+      'Efficient',
+    ],
+    [
+      WebosWebPortal,
+      { kind: 'webos', width: 640, height: 360, fps: 30 },
+      tv,
+      'Balanced',
+    ],
+    [WebosWebPortal, { kind: 'webos', fps: 25 }, tv, 'Custom'],
+    [WebosWebPortal, { kind: 'webos', width: 1280, height: 720 }, tv, 'Custom'],
+    // A capture-only TV's defaults are 320 × 180 at 30 fps.
+    [HeadlessWebPortal, { kind: 'remote' }, tv, 'Efficient'],
+    [
+      HeadlessWebPortal,
+      { kind: 'remote', width: 640, height: 360 },
+      tv,
+      'Balanced',
+    ],
+    [HeadlessWebPortal, { kind: 'device', path }, local, 'Balanced'],
+    [HeadlessWebPortal, { kind: 'device', path, fps: 60 }, local, 'Custom'],
+    [
+      HeadlessWebPortal,
+      { kind: 'file', path: '/clip.mkv', width: 320, height: 180 },
+      local,
+      'Efficient',
+    ],
+  ]) {
+    const portal = await renderPortal(Host, { capture: saved, output });
+    const name = JSON.stringify(saved);
+    try {
+      await openEditor('Video source');
+      assert.deepEqual(presetRows().map(presetLabel), rows, name);
+      assert.deepEqual(ticked(), [expected], name);
+      const defaults =
+        saved.kind === 'remote' ? [320, 180, 30] : [640, 360, 30];
+      assert.deepEqual(
+        sizeFields(),
+        expected === 'Custom'
+          ? [
+              saved.width ?? defaults[0],
+              saved.height ?? defaults[1],
+              saved.fps ?? defaults[2],
+            ].map(String)
+          : [undefined, undefined, undefined],
+        `${name}: the fields only under Custom`,
+      );
+    } finally {
+      await portal.unmount();
+    }
+  }
+});
+
+test('the size-and-rate choice is a labelled radio group whose rows describe their trade and numbers', async () => {
+  const portal = await renderPortal(WebosWebPortal, {
+    capture: { kind: 'webos' },
+    output,
+  });
+  const described = (input) =>
+    input
+      .getAttribute('aria-describedby')
+      .split(' ')
+      .map((id) =>
+        document.getElementById(id).textContent.replace(/\u00a0/g, ' '),
+      );
+  try {
+    await openEditor('Video source');
+    const group = $('[role="radiogroup"]', form('Video source'));
+    assert.equal(
+      document.getElementById(group.getAttribute('aria-labelledby'))
+        .textContent,
+      'Size and rate',
+    );
+    const rows = presetRows();
+    assert.equal(new Set(rows.map((input) => input.name)).size, 1, 'one group');
+    assert.deepEqual(rows.map(described), [
+      ['Right for most setups.', '640 × 360 · 30 fps'],
+      [
+        'The lights update twice as often. More work for the processor.',
+        '640 × 360 · 60 fps',
+      ],
+      [
+        'Less work for the processor. Slightly softer colours.',
+        '320 × 180 · 30 fps',
+      ],
+      ['Your own size and rate.'],
+    ]);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('choosing a preset saves exactly its size and rate; Custom keeps the numbers and opens the fields', async () => {
+  const portal = await renderPortal(WebosWebPortal, {
+    capture: { kind: 'webos', include_ui: false },
+    output,
+  });
+  const { fixture } = portal;
+  const saved = () => fixture.snapshot().settings.capture;
+  const hint = () => $('[data-size-hint]', form('Video source'));
+  try {
+    await openEditor('Video source');
+    for (const [label, width, height, fps] of [
+      ['Smooth', 640, 360, 60],
+      ['Efficient', 320, 180, 30],
+      ['Balanced', 640, 360, 30],
+    ]) {
+      await click(radio(label));
+      assert.deepEqual(ticked(), [label]);
+      await submit(form('Video source'));
+      assert.deepEqual(saved(), {
+        kind: 'webos',
+        include_ui: false,
+        width,
+        height,
+        fps,
+      });
+    }
+    const before = saves(fixture);
+
+    // Custom: the numbers stay and the fields open with them; nothing to save.
+    await click(radio('Custom'));
+    assert.deepEqual(ticked(), ['Custom']);
+    assert.deepEqual(sizeFields(), ['640', '360', '30']);
+    assert(!button('Use this video source', form('Video source')));
+    // Typing a preset's numbers keeps Custom open.
+    await edit(field('capture.width'), 320);
+    await edit(field('capture.height'), 180);
+    assert.deepEqual(ticked(), ['Custom']);
+    assert(field('capture.width'));
+    // The large-size hint belongs to Custom only.
+    await edit(field('capture.width'), 1280);
+    await edit(field('capture.height'), 720);
+    assert(hint());
+    await click(radio('Balanced'));
+    assert(!hint());
+    assert(!field('capture.width'));
+    assert.equal(saves(fixture), before, 'nothing saved by choosing');
+
+    // A refused size opens Custom, where it can be corrected.
+    await click(radio('Efficient'));
+    fixture.failNext({
+      kind: 'invalid',
+      field: 'capture.width',
+      message: 'unsupported size',
+    });
+    await submit(form('Video source'));
+    assert.deepEqual(ticked(), ['Custom']);
+    assert.equal(field('capture.width').getAttribute('aria-invalid'), 'true');
+    assert(document.activeElement === field('capture.width'));
+    await click(radio('Efficient'));
+    assert.deepEqual(ticked(), ['Efficient']);
+    assert(!field('capture.width'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('the webOS portal edits TV capture within the adapter limits', async () => {
   const portal = await renderPortal(WebosWebPortal, {
     capture: { kind: 'webos' },
@@ -1600,6 +1791,7 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
     await openEditor('Video source');
     assert(!field('capture.kind'));
     assert.equal($('.page-heading h2').textContent, 'Video source');
+    await click(radio('Custom'));
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
         input(name).value,
@@ -1651,6 +1843,9 @@ test('the remote capture form asks the TV for a stream with the same picture fie
     element.closest('.field').querySelector('.help')?.textContent;
   try {
     await openEditor('Video source');
+    // A capture-only TV's default, 320 × 180 at 30 fps, is Efficient.
+    assert.equal(radio('Efficient').checked, true);
+    await click(radio('Custom'));
     // Defaults shown for omitted fields; the shared fields' limits and labels.
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
@@ -1856,6 +2051,21 @@ test('limits and defaults written in the panels match the generated schemas', as
     encodingChoices.map((choice) => choice.value),
     desktop.StreamEncoding.enum,
   );
+  // Every preset a source offers is within that source's limits.
+  for (const [presets, limits] of [
+    [allPicturePresets, tvPictureLimits],
+    [devicePresets, deviceLimits],
+    [filePresets, fileLimits],
+  ])
+    for (const preset of presets)
+      for (const name of ['width', 'height', 'fps']) {
+        const value = picturePresets[preset][name];
+        const { min, max, step } = limits[name];
+        assert(
+          value >= min && value <= max && (value - min) % step === 0,
+          `${preset} ${name}`,
+        );
+      }
 });
 
 test('Home holds the light card and the setup; the rest is in Settings', async () => {

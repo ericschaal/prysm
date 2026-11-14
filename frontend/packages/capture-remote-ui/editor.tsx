@@ -32,9 +32,8 @@ export function RemoteEditor({
       />
       <p className="help">
         The TV sends its picture to this computer, at the address of this page:
-        give the TV that address. {'320\u00a0×\u00a0180'} at 30 fps is plenty
-        for lighting. If the TV can’t send it, Home says why; then change how it
-        sends the picture, or its size, here.
+        give the TV that address. If the TV can’t send it, Home says why; then
+        change how it sends the picture, or its size, here.
       </p>
     </>
   );

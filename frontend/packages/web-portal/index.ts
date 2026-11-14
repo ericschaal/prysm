@@ -30,6 +30,14 @@ export {
   newProfileId,
   profileLimits,
 } from './profile-model';
+export { PictureChoice } from './picture-choice';
+export {
+  allPicturePresets,
+  customPicture,
+  picturePresets,
+  presetOf,
+  type PicturePreset,
+} from './picture-presets';
 export { PreviewPanel } from './preview';
 export { colorsRetryMs, ledProperties, ledValues } from './live-colors';
 export { deviceNamesKey } from './device-name';

@@ -123,6 +123,9 @@ export const openSettings = () =>
 export const row = (label) =>
   $$('.row').find((item) => $('.row-label', item)?.textContent === label);
 
+/** A choice's radio by its row's label: `Balanced`, `Custom`, `Dark`. */
+export const radio = (label) => $('input[type="radio"]', row(label));
+
 /** A row's value line: its facts, or its live problem in their place. */
 export const valueOf = (label) => $('.row-value', row(label)).textContent;
 

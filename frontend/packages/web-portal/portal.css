@@ -2376,6 +2376,24 @@ fieldset > .help {
 .row-choice input:checked ~ .row-check {
   opacity: 1;
 }
+/* A choice's line is read whole: it wraps instead of being cut. */
+.row-choice .row-text > .row-value {
+  white-space: normal;
+}
+/* What a choice sets, as quiet as its line, beside its label. */
+.row-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+}
+.row-heading .row-value {
+  font-variant-numeric: tabular-nums;
+}
+/* The Custom size fields' hint reads as their note, before the next field. */
+.picture-custom > .help {
+  margin: calc(-1 * var(--space-3)) 0 var(--space-3);
+}
 /*
  * A page's end: its actions under a divider, from the left, the main one
  * first and a destructive one last and quiet. What happened sits beside

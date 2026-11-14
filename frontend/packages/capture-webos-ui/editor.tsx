@@ -1,7 +1,8 @@
 import type { WebosSettings } from '@prysm/contracts/host-webos';
 import {
+  allPicturePresets,
   CheckboxField,
-  NumberField,
+  PictureChoice,
   type EditorProps,
 } from '@prysm/web-portal';
 import {
@@ -16,7 +17,8 @@ import {
 /**
  * Size, rate and “include menus” of a TV's picture, shared by this TV's
  * capture and a capture-only TV's stream request. `defaults` are what Rust
- * uses for an omitted field of that section.
+ * uses for an omitted field of that section. Both can capture 60 fps
+ * (seen on the TV), so Smooth is offered.
  */
 export function TvPictureFields<V extends TvPicture>({
   value,
@@ -25,7 +27,7 @@ export function TvPictureFields<V extends TvPicture>({
   sizeHint = largeSizeHint,
 }: EditorProps<V> & {
   defaults: Required<TvPicture>;
-  /** Help shown while the size is above 640 × 360. */
+  /** Help shown under Custom while the size is above 640 × 360. */
   sizeHint?: string;
 }) {
   const large =
@@ -33,37 +35,20 @@ export function TvPictureFields<V extends TvPicture>({
     enoughPixels;
   return (
     <>
-      <div className="grid three">
-        <NumberField
-          path="capture.width"
-          label="Width"
-          unit="pixels"
-          value={value.width ?? defaults.width}
-          onChange={(width) => onChange({ ...value, width })}
-          {...tvPictureLimits.width}
-        />
-        <NumberField
-          path="capture.height"
-          label="Height"
-          unit="pixels"
-          value={value.height ?? defaults.height}
-          onChange={(height) => onChange({ ...value, height })}
-          {...tvPictureLimits.height}
-        />
-        <NumberField
-          path="capture.fps"
-          label="Frame rate"
-          unit="fps"
-          value={value.fps ?? defaults.fps}
-          onChange={(fps) => onChange({ ...value, fps })}
-          {...tvPictureLimits.fps}
-        />
-      </div>
-      {large ? (
-        <p className="help" data-size-hint>
-          {sizeHint}
-        </p>
-      ) : null}
+      <PictureChoice
+        value={value}
+        defaults={defaults}
+        onChange={onChange}
+        presets={allPicturePresets}
+        limits={tvPictureLimits}
+        customNote={
+          large ? (
+            <p className="help" data-size-hint>
+              {sizeHint}
+            </p>
+          ) : null
+        }
+      />
       <CheckboxField
         path="capture.include_ui"
         label="Include TV menus"
@@ -79,10 +64,7 @@ export function WebosEditor(props: EditorProps<WebosSettings>) {
   return (
     <>
       <TvPictureFields {...props} defaults={webosDefaults} />
-      <p className="help">
-        Video comes directly from this TV. Start with 640 × 360 at 30 fps; sizes
-        must be even and the rate at most 60 fps.
-      </p>
+      <p className="help">Video comes directly from this TV.</p>
     </>
   );
 }

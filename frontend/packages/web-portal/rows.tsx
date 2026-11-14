@@ -101,6 +101,82 @@ export function RowFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg
+      className="row-check"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M5 12.5 10 17.5 19 7" />
+    </svg>
+  );
+}
+
+/**
+ * One option of a choice in the rows pattern: a radio drawn as a tick in
+ * the chevron's place. Its label names it; the line beneath (and `facts`
+ * beside the label, if given) describe it, so a screen reader reads the
+ * name first and the trade after it.
+ */
+export function RowChoice({
+  name,
+  label,
+  about,
+  facts,
+  checked,
+  disabled = false,
+  onChoose,
+}: {
+  /** The radio group's name: one per choice. */
+  name: string;
+  label: string;
+  about: string;
+  /** What the option sets, quietly beside its label: `640 × 360 · 30 fps`. */
+  facts?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChoose: () => void;
+}) {
+  const id = useId();
+  return (
+    <li className="row row-choice">
+      <label>
+        <input
+          type="radio"
+          name={name}
+          checked={checked}
+          disabled={disabled}
+          aria-labelledby={`${id}-label`}
+          aria-describedby={facts ? `${id}-about ${id}-facts` : `${id}-about`}
+          onChange={onChoose}
+        />
+        <span className="row-text">
+          {facts ? (
+            <span className="row-heading">
+              <span className="row-label" id={`${id}-label`}>
+                {label}
+              </span>
+              <span className="row-value" id={`${id}-facts`}>
+                {facts}
+              </span>
+            </span>
+          ) : (
+            <span className="row-label" id={`${id}-label`}>
+              {label}
+            </span>
+          )}
+          <span className="row-value" id={`${id}-about`}>
+            {about}
+          </span>
+        </span>
+        <CheckIcon />
+      </label>
+    </li>
+  );
+}
+
 /** A row holding one plain on/off switch (a `CheckboxField`). */
 export function RowSwitch({ children }: { children: ReactNode }) {
   return <li className="row row-switch">{children}</li>;
