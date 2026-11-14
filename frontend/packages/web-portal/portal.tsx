@@ -720,6 +720,7 @@ function HomePage<C extends AdapterSection, O extends AdapterSection>({
         session={session}
         failure={snapshot.failure}
         outputIssue={snapshot.output_issue}
+        outputBrightness={snapshot.output_brightness}
         input={snapshot.input}
         hasCapture={!!capture}
         hasOutput={!!output}

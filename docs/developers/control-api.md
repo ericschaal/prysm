@@ -63,6 +63,8 @@ failed start. A failure leaves the target as requested. Without frames for 3 s
 the output returns to the device's own state until frames return; WLED
 problems while running (switched off, live override, another sender, no
 answer) show as `output_issue`, and Prysm does not switch WLED back.
+`output_brightness` (`{"percent": 40}`) is WLED's own brightness while it
+scales Prysm's colours; Prysm reports it and never changes it.
 
 On SIGINT or SIGTERM the host stops the session (output idled off), lets open
 requests finish for up to 5 s, and exits non-zero if shutdown failed.

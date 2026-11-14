@@ -17,7 +17,7 @@ import {
   type Session,
   plainFailure,
 } from '@prysm/application-client';
-import type { Input } from '@prysm/contracts/application';
+import type { DeviceBrightness, Input } from '@prysm/contracts/application';
 import type { OutputLighting } from './adapters';
 
 /** What the lights show while on: screen sync or the output's own effects. */
@@ -29,6 +29,8 @@ export interface LightingProps {
   failure: Failure | null;
   /** Why the lights are not showing screen sync while it runs. */
   outputIssue?: OutputIssue;
+  /** The lights' own brightness while it scales screen sync's colours. */
+  outputBrightness?: DeviceBrightness;
   /** Whether frames arrive, while screen sync runs. */
   input?: Input;
   hasCapture: boolean;
@@ -42,6 +44,14 @@ export interface LightingProps {
   /** The screen sync picture controls, under the mode tiles. */
   children?: ReactNode;
 }
+
+/**
+ * Below this share the lights' own brightness is named on the card. The
+ * lights show Prysm's brightness times theirs; above about three quarters
+ * the difference is hard to see (perceived lightness stays near 90 %), while
+ * WLED's own default (128 of 255, 50 %) halves every colour unexplained.
+ */
+export const deviceBrightnessNoteBelow = 75;
 
 /**
  * The mode the power button turns on: a per-browser preference, like the
@@ -283,6 +293,7 @@ export function LightCard({
   session,
   failure,
   outputIssue,
+  outputBrightness,
   input,
   hasCapture,
   hasOutput,
@@ -397,6 +408,21 @@ export function LightCard({
   else if (faulted) info = { tone: 'problem', text: status, retry: false };
   else if (outputIssue && session.state === 'running')
     info = { tone: 'warning', text: describeOutputIssue(outputIssue) };
+  // Screen sync shows at the lights' own brightness too: a low one is named
+  // in place of "Following the screen.", so Prysm at 100 % that looks dim
+  // has its reason. Prysm never changes the lights' setting.
+  else if (
+    outputBrightness &&
+    outputBrightness.percent < deviceBrightnessNoteBelow &&
+    lit &&
+    target === 'processed' &&
+    session.state === 'running' &&
+    input?.receiving
+  )
+    info = {
+      tone: 'note',
+      text: `${output?.effects?.replace(/ effects$/, '') ?? 'The lights'} limits brightness to ${outputBrightness.percent}%.`,
+    };
 
   const calm = calmLine({
     info,

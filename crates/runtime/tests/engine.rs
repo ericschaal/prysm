@@ -1,6 +1,6 @@
 use prysm_ports::{
-    AdapterSettings, Behind, Error, Latency, LightingTarget, OutputIssue, Processing, Registry,
-    Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
+    AdapterSettings, Behind, DeviceBrightness, Error, Latency, LightingTarget, OutputIssue,
+    Processing, Registry, Revision, Section, SessionPhase, SessionState, Settings, Snapshot,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -860,6 +860,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
             FakeOutputSettings {
                 name: "o".into(),
                 overridden_after: Some(20),
+                brightness: Some(40),
                 ..Default::default()
             },
         );
@@ -867,6 +868,11 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
         handle.set_target(LightingTarget::Processed).await.unwrap();
         let reported = snapshot_until(&handle, |s| s.output_issue.is_some()).await;
         assert_eq!(reported.output_issue, Some(OutputIssue::Overridden));
+        assert_eq!(
+            reported.output_brightness,
+            Some(DeviceBrightness { percent: 40 }),
+            "the device's own brightness goes with the issue"
+        );
         assert_eq!(reported.session, SessionState::Running);
         assert!(reported.failure.is_none());
         let writes = log.count("output.write:o");
@@ -877,6 +883,7 @@ async fn output_issues_are_reported_while_lighting_keeps_running() {
 
         handle.set_target(LightingTarget::Off).await.unwrap();
         assert_eq!(handle.snapshot().borrow().output_issue, None);
+        assert_eq!(handle.snapshot().borrow().output_brightness, None);
         engine.shutdown().await.unwrap();
     })
     .await;

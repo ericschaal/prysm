@@ -1,8 +1,9 @@
 //! The session's hold on its output: opened at the first frame, released
 //! after a quiet spell, left in the stop's idle mode at the end.
+use crate::session::Observed;
 use crate::stats::Stats;
 use prysm_core::EdgeColors;
-use prysm_ports::{IdleMode, LedOutput, OutputIssue, Result};
+use prysm_ports::{IdleMode, LedOutput, Result};
 use std::time::Instant;
 
 /// Opens the session's output. Called on the session thread at the first
@@ -52,10 +53,13 @@ impl Leds {
     }
 
     /// What a held output last learned about its device.
-    pub(crate) fn observe(&mut self) -> Option<OutputIssue> {
+    pub(crate) fn observe(&mut self) -> Observed {
         match self {
-            Self::Held(output) => output.observe(),
-            Self::Untouched | Self::Left(_) | Self::Unknown => None,
+            Self::Held(output) => Observed {
+                issue: output.observe(),
+                brightness: output.brightness(),
+            },
+            Self::Untouched | Self::Left(_) | Self::Unknown => Observed::default(),
         }
     }
 

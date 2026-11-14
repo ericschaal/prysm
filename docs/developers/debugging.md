@@ -12,7 +12,8 @@
    for the Debian package, `docker logs -f prysm` for Docker.
 4. Read the state. `failure` has the last lighting failure with its `kind`,
    `section` and `field`; `input` has the measured rate, whether frames arrive
-   and the latency; `output_issue` says why WLED is not showing the colours.
+   and the latency; `output_issue` says why WLED is not showing the colours,
+   and `output_brightness` how far WLED's own brightness dims them.
 
    ```sh
    curl http://127.0.0.1:8787/api/v1/state

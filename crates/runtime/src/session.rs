@@ -6,7 +6,8 @@ use crate::stats::{FrameTimes, Stats};
 use crate::worker::{Flags, Pumped, Worker};
 use prysm_core::{Config, EdgeColors, Frame};
 use prysm_ports::{
-    Error, FrameSource, IdleMode, LatestSlot, OutputIssue, Result, Section, SessionPhase,
+    DeviceBrightness, Error, FrameSource, IdleMode, LatestSlot, OutputIssue, Result, Section,
+    SessionPhase,
 };
 use prysm_processor::PrysmProcessor;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,9 +60,17 @@ struct Control {
     /// A config was offered and not yet taken.
     config_offered: AtomicBool,
     idle: Mutex<IdleMode>,
-    /// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe);
-    /// read by the engine about once a second.
-    issue: Mutex<Option<OutputIssue>>,
+    /// What the held output last learned about its device; read by the
+    /// engine about once a second.
+    observed: Mutex<Observed>,
+}
+
+/// The held output's latest [`LedOutput::observe`](prysm_ports::LedOutput::observe)
+/// and [`LedOutput::brightness`](prysm_ports::LedOutput::brightness).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Observed {
+    pub issue: Option<OutputIssue>,
+    pub brightness: Option<DeviceBrightness>,
 }
 
 impl Control {
@@ -107,22 +116,22 @@ struct SessionLoop {
     previous: Option<Instant>,
     open_output: OpenOutput,
     control: Arc<Control>,
-    /// What [`Control::issue`] holds, so it is written only on a change.
-    reported: Option<OutputIssue>,
+    /// What [`Control::observed`] holds, so it is written only on a change.
+    reported: Observed,
     feeds: Feeds,
     stats: Arc<Stats>,
 }
 
 impl SessionLoop {
     /// Publish what the output knows about its device, if that changed.
-    fn report(&mut self, issue: Option<OutputIssue>) {
-        if issue != self.reported {
-            self.reported = issue;
+    fn report(&mut self, observed: Observed) {
+        if observed != self.reported {
+            self.reported = observed;
             *self
                 .control
-                .issue
+                .observed
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner) = issue;
+                .unwrap_or_else(PoisonError::into_inner) = observed;
         }
     }
 
@@ -148,8 +157,8 @@ impl SessionLoop {
             written: write.as_ref().ok().copied(),
         });
         let written = write.map_err(lights)?;
-        let issue = self.leds.observe();
-        self.report(issue);
+        let observed = self.leds.observe();
+        self.report(observed);
         self.feeds
             .publish(&colors, shown, self.processor.viewport());
         self.last = Some((colors, written));
@@ -163,7 +172,7 @@ impl SessionLoop {
         let now = Instant::now();
         if now - self.last_frame >= VIDEO_GRACE {
             self.last = None;
-            self.report(None);
+            self.report(Observed::default());
             // The device shows its own state now, not these colors.
             self.feeds.clear_colors();
             return self.leds.release(RELEASE).map_err(lights);
@@ -175,8 +184,8 @@ impl SessionLoop {
                 .leds
                 .write(colors, now, &mut self.open_output, &self.stats)
                 .map_err(lights)?;
-            let issue = self.leds.observe();
-            self.report(issue);
+            let observed = self.leds.observe();
+            self.report(observed);
         }
         Ok(())
     }
@@ -184,7 +193,7 @@ impl SessionLoop {
     fn finish(mut self, pumped: Pumped, source: Box<dyn FrameSource>, flags: &Flags) -> SessionEnd {
         let ended = matches!(pumped, Pumped::Ended);
         let failure = pumped.failure();
-        self.report(None);
+        self.report(Observed::default());
         self.feeds.clear();
         flags.set_phase(SessionPhase::ClosingSource);
         let released = source.close();
@@ -229,7 +238,7 @@ impl Session {
             config: LatestSlot::new(),
             config_offered: AtomicBool::new(false),
             idle: Mutex::new(IdleMode::Off),
-            issue: Mutex::new(None),
+            observed: Mutex::default(),
         });
         let session = SessionLoop {
             processor: PrysmProcessor::new(&config),
@@ -239,7 +248,7 @@ impl Session {
             previous: None,
             open_output,
             control: control.clone(),
-            reported: None,
+            reported: Observed::default(),
             feeds,
             stats,
         };
@@ -263,12 +272,13 @@ impl Session {
         self.control.offer_config(config);
     }
 
-    /// Why the held output's LEDs are not showing the session's colours.
+    /// What the held output last learned about its device: why its LEDs are
+    /// not showing the session's colours, and its own brightness.
     #[must_use]
-    pub fn output_issue(&self) -> Option<OutputIssue> {
+    pub fn observed(&self) -> Observed {
         *self
             .control
-            .issue
+            .observed
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }

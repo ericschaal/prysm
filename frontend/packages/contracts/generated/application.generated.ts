@@ -79,6 +79,19 @@ export interface components {
             warmth: number;
         };
         /**
+         * @description The lights' own brightness while it scales Prysm's colours (WLED: its
+         *     master brightness and brightness factor). Prysm reports it and never
+         *     changes it.
+         */
+        DeviceBrightness: {
+            /**
+             * Format: int32
+             * @description The share of Prysm's brightness the lights show.
+             * @example 40
+             */
+            percent: number;
+        };
+        /**
          * @description A stable failure body: the message a user can act on. An adapter failure
          *     carries its cause chain (`context: cause: cause`), since the cause is what
          *     names the problem (a device's error, a remote sender's reason).
@@ -338,6 +351,12 @@ export interface components {
              */
             input?: components["schemas"]["Input"];
             /**
+             * @description The lights' own brightness while it scales Prysm's colours, from the
+             *     same checks; absent while it does not (WLED: "Force max brightness"
+             *     on), while the output cannot tell, and while no session runs.
+             */
+            output_brightness?: components["schemas"]["DeviceBrightness"];
+            /**
              * @description Why the lights are not showing Prysm's colours while lighting runs,
              *     from the output's own checks (about once a second); absent while they
              *     show them, while the output cannot tell, and while no session runs.
@@ -372,6 +391,7 @@ export type CaptureSettings = components['schemas']['CaptureSettings'];
 export type ColorProfile = components['schemas']['ColorProfile'];
 export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
+export type DeviceBrightness = components['schemas']['DeviceBrightness'];
 export type Failure = components['schemas']['Failure'];
 export type FailureKind = components['schemas']['FailureKind'];
 export type FailureSection = components['schemas']['FailureSection'];

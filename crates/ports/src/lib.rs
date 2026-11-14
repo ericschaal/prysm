@@ -16,7 +16,9 @@ mod settings;
 mod slot;
 mod snapshot;
 
-pub use adapter::{FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore};
+pub use adapter::{
+    DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore,
+};
 pub use calibration::{Calibration, Pattern};
 pub use error::{Error, Result, ValidationError, chain};
 pub use handoff::{

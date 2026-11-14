@@ -126,7 +126,10 @@ answer); the session calls it after every write, so it must not wait, and the
 engine republishes it as `Snapshot::output_issue` once a second. WLED checks
 its state about once a second and reports power off, live override, no live
 mode, another sender or no answer; Prysm keeps sending and does not switch
-WLED back. The session opens the
+WLED back. `brightness()` (read right after `observe()`) reports the device's
+own brightness while it scales the colours, as `Snapshot::output_brightness`;
+WLED's comes from `bri` in its state and, every 30th check instead of the
+state, `if.live.maxbri` and `light.scale-bri` from `/json/cfg`. The session opens the
 output at the source's first frame, not at start, and idles it `Native` (the
 device's own state) after `VIDEO_GRACE` (3 s) without frames, opening it again
 at the next frame; a source that never delivers never takes the device over. Register it with

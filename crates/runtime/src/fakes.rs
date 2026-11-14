@@ -3,9 +3,9 @@
 use crate::{EngineHandle, Shutdown};
 use prysm_core::{EdgeColors, Frame, PixelFormat};
 use prysm_ports::{
-    AdapterSettings, Candidate, Error, FrameSink, FrameSource, IdleMode, LedOutput, LightingTarget,
-    OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore, SourceFactory,
-    ValidationError,
+    AdapterSettings, Candidate, DeviceBrightness, Error, FrameSink, FrameSource, IdleMode,
+    LedOutput, LightingTarget, OutputFactory, OutputIssue, Pull, Result, Settings, SettingsStore,
+    SourceFactory, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -220,6 +220,9 @@ pub struct FakeOutputSettings {
     pub invalid: bool,
     /// `observe` reports the device overridden after this many writes.
     pub overridden_after: Option<u32>,
+    /// `brightness` reports the device's own brightness at this percent
+    /// once a frame was written.
+    pub brightness: Option<u8>,
     /// Each `write` takes this long, like a slow device.
     pub write_delay_ms: u64,
 }
@@ -286,6 +289,13 @@ impl LedOutput for FakeOutput {
             .overridden_after
             .is_some_and(|n| self.writes >= n)
             .then_some(OutputIssue::Overridden)
+    }
+
+    fn brightness(&self) -> Option<DeviceBrightness> {
+        self.settings
+            .brightness
+            .filter(|_| self.writes > 0)
+            .map(|percent| DeviceBrightness { percent })
     }
 
     fn idle(self: Box<Self>, mode: IdleMode) -> Result<()> {

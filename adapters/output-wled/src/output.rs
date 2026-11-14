@@ -4,8 +4,8 @@ use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
 use prysm_ports::{
-    Candidate, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError,
-    system_lookup,
+    Candidate, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result,
+    ValidationError, system_lookup,
 };
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -175,5 +175,9 @@ impl LedOutput for WledOutput {
 
     fn observe(&mut self) -> Option<OutputIssue> {
         self.observer.poll()
+    }
+
+    fn brightness(&self) -> Option<DeviceBrightness> {
+        self.observer.brightness()
     }
 }

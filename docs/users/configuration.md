@@ -83,6 +83,11 @@ Good to know:
 - When no picture arrives for about 3 seconds, WLED goes back to what it was
   showing before. Screen sync takes over again when the picture returns.
 - Closing the browser leaves Prysm running.
+- The lights show Prysm's brightness times WLED's own: Prysm at 100% with
+  WLED at 40% gives 40%. When WLED's brightness is below 75%, the line under
+  **On** says so, for example **WLED limits brightness to 40%**. Prysm does
+  not change it; raise it in WLED, or turn on **Force max brightness** in
+  WLED's **Sync Interfaces** so screen sync ignores it.
 
 ## 5. Change settings
 

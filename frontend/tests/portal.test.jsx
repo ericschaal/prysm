@@ -137,6 +137,54 @@ test('the lighting card says why the lights are not showing screen sync', async 
   }
 });
 
+test('the lighting card names a low WLED brightness while screen sync shows', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  try {
+    const running = {
+      target: 'processed',
+      session: { state: 'running' },
+      input: { fps: 30, receiving: true },
+    };
+    await act(async () =>
+      fixture.publish({ ...running, output_brightness: { percent: 40 } }),
+    );
+    // In place of the calm line, calm itself: a note, not a warning.
+    assert.equal(info(), 'WLED limits brightness to 40%.');
+    assert.equal($('.light-info').dataset.tone, 'note');
+    assert.equal($('.light-calm').dataset.shown, 'false');
+
+    // High enough to hardly see: nothing to say.
+    await act(async () =>
+      fixture.publish({ output_brightness: { percent: 80 } }),
+    );
+    assert.equal(info(), null);
+    assert.equal($('.light-calm').dataset.shown, 'true');
+
+    // A device that does not show the colours says that instead.
+    await act(async () =>
+      fixture.publish({
+        output_brightness: { percent: 40 },
+        output_issue: 'overridden',
+      }),
+    );
+    assert.match(info(), /^Live override is on/);
+
+    // WLED's own effects use its brightness anyway: no note.
+    await act(async () =>
+      fixture.publish({
+        target: 'device_native',
+        session: { state: 'native' },
+        input: undefined,
+        output_issue: undefined,
+      }),
+    );
+    assert.equal(info(), null);
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('Home says when video is awaited; the capture rate is in the technical details', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
@@ -2025,7 +2073,8 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       $$('.path-numbers')[0].title,
       /^adds the time from the camera capturing a frame to Prysm receiving it/,
     );
-    // Under a millisecond is said, not rounded away.
+    // Under a millisecond is said, not rounded away, and without the "+":
+    // "+<1 ms" reads as two operators.
     await act(async () =>
       portal.fixture.publish({
         input: {
@@ -2038,7 +2087,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
     );
     assert.deepEqual(links(), [
       ['flowing', undefined],
-      ['flowing', '+<1 ms'],
+      ['flowing', '<1 ms'],
     ]);
     // No frame flushed in the window: the rate only, no number made up.
     await act(async () =>

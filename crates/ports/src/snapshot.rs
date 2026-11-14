@@ -1,4 +1,4 @@
-use crate::{Calibration, Error, OutputIssue, Revision, Settings};
+use crate::{Calibration, DeviceBrightness, Error, OutputIssue, Revision, Settings};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -87,6 +87,11 @@ pub struct Snapshot {
     /// own checks; republished with `input`. `None` while they show them,
     /// while the output cannot tell, and while no session holds the output.
     pub output_issue: Option<OutputIssue>,
+    /// The device's own brightness while it scales the session's colours,
+    /// from the same checks and republished with them. `None` while it does
+    /// not, while the output cannot tell, and while no session holds the
+    /// output.
+    pub output_brightness: Option<DeviceBrightness>,
     /// The calibration pattern shown, while the target is `Processed`. Not
     /// persisted; while set, processing runs without smoothing (and without
     /// correction when `uncorrected`), leaving `settings` untouched.

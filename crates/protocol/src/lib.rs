@@ -5,8 +5,8 @@
 //! ports cannot carry: a tagged session state, a failure body, and the
 //! request/response bodies. It has no HTTP or runtime dependencies.
 use prysm_ports::{
-    Calibration, Error, Input, LightingTarget, OutputIssue, Revision, Section, SessionPhase,
-    SessionState, Settings, Snapshot,
+    Calibration, DeviceBrightness, Error, Input, LightingTarget, OutputIssue, Revision, Section,
+    SessionPhase, SessionState, Settings, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,15 @@ pub struct State {
         schema(value_type = Option<schema::OutputIssueSchema>, nullable = false)
     )]
     pub output_issue: Option<OutputIssue>,
+    /// The lights' own brightness while it scales Prysm's colours, from the
+    /// same checks; absent while it does not (WLED: "Force max brightness"
+    /// on), while the output cannot tell, and while no session runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schema(value_type = Option<schema::DeviceBrightnessSchema>, nullable = false)
+    )]
+    pub output_brightness: Option<DeviceBrightness>,
     /// The calibration pattern the TV shows, set by `PUT /api/v1/calibration`;
     /// absent while not calibrating. Never saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +80,7 @@ impl From<&Snapshot> for State {
             session: snapshot.session.into(),
             input: snapshot.input,
             output_issue: snapshot.output_issue,
+            output_brightness: snapshot.output_brightness,
             calibration: snapshot.calibration,
             settings: snapshot.settings.clone(),
             revision: snapshot.revision,
@@ -282,6 +292,10 @@ mod tests {
         assert!(value.get("input").is_none(), "absent while stopped");
         assert!(value.get("output_issue").is_none(), "absent while stopped");
         assert!(
+            value.get("output_brightness").is_none(),
+            "absent while stopped"
+        );
+        assert!(
             value.get("calibration").is_none(),
             "absent while not calibrating"
         );
@@ -296,6 +310,7 @@ mod tests {
                 ..Input::default()
             }),
             output_issue: Some(OutputIssue::OtherSender),
+            output_brightness: Some(DeviceBrightness { percent: 40 }),
             ..Snapshot::default()
         };
         let running = Snapshot {
@@ -318,6 +333,7 @@ mod tests {
         );
         assert_eq!(value["input"]["receiving"], true);
         assert_eq!(value["output_issue"], "other_sender");
+        assert_eq!(value["output_brightness"], json!({ "percent": 40 }));
         assert!((value["input"]["fps"].as_f64().unwrap() - 29.9).abs() < 1e-4);
     }
 

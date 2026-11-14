@@ -178,6 +178,23 @@
         ],
         "type": "object"
       },
+      "DeviceBrightness": {
+        "description": "The lights' own brightness while it scales Prysm's colours (WLED: its\nmaster brightness and brightness factor). Prysm reports it and never\nchanges it.",
+        "properties": {
+          "percent": {
+            "description": "The share of Prysm's brightness the lights show.",
+            "example": 40,
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "percent"
+        ],
+        "type": "object"
+      },
       "Failure": {
         "description": "A stable failure body: the message a user can act on. An adapter failure\ncarries its cause chain (`context: cause: cause`), since the cause is what\nnames the problem (a device's error, a remote sender's reason).",
         "properties": {
@@ -819,6 +836,10 @@
           "input": {
             "$ref": "#/components/schemas/Input",
             "description": "Frames arriving from the source, measured about once a second; absent\nwhile no session runs."
+          },
+          "output_brightness": {
+            "$ref": "#/components/schemas/DeviceBrightness",
+            "description": "The lights' own brightness while it scales Prysm's colours, from the\nsame checks; absent while it does not (WLED: \"Force max brightness\"\non), while the output cannot tell, and while no session runs."
           },
           "output_issue": {
             "$ref": "#/components/schemas/OutputIssue",

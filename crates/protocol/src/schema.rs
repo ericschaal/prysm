@@ -278,6 +278,18 @@ pub enum OutputIssueSchema {
     Unreachable,
 }
 
+// Mirrors `prysm_ports::DeviceBrightness`.
+/// The lights' own brightness while it scales Prysm's colours (WLED: its
+/// master brightness and brightness factor). Prysm reports it and never
+/// changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = DeviceBrightness)]
+pub struct DeviceBrightnessSchema {
+    /// The share of Prysm's brightness the lights show.
+    #[schema(minimum = 0, maximum = 100, example = 40)]
+    percent: u8,
+}
+
 // Mirrors `prysm_ports::Candidate`.
 /// Something an adapter found that a person can pick instead of typing, one
 /// item of `GET /api/v1/candidates/{section}/{kind}`.
@@ -362,6 +374,7 @@ impl ToSchema for OutputSettings {}
     LatencySchema,
     BehindSchema,
     OutputIssueSchema,
+    DeviceBrightnessSchema,
     Session,
     PhaseSchema,
     Failure,
@@ -529,8 +542,8 @@ mod tests {
     use super::*;
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, Candidate, ColorProfile, CorrectionControls,
-        FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing,
-        Result, SessionPhase, Settings, ValidationError,
+        DeviceBrightness, FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue,
+        Pattern, Processing, Result, SessionPhase, Settings, ValidationError,
     };
     use serde_json::json;
 
@@ -620,6 +633,7 @@ mod tests {
         ] {
             same_shape::<OutputIssue, OutputIssueSchema>(&issue);
         }
+        same_shape::<DeviceBrightness, DeviceBrightnessSchema>(&DeviceBrightness { percent: 40 });
         for phase in [
             SessionPhase::Running,
             SessionPhase::ClosingSource,

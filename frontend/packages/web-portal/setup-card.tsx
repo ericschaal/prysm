@@ -193,9 +193,14 @@ function Stop({
 /** Whole milliseconds, "<1 ms" below one. */
 const millis = (ms: number) => `${ms < 1 ? '<1' : Math.round(ms)} ms`;
 
-/** What a link adds to the lag: "+88 ms", "+<1 ms". */
-const delay = (ms: number | undefined) =>
-  ms === undefined ? undefined : `+${millis(ms)}`;
+/**
+ * What a link adds to the lag: "+88 ms", and "<1 ms" below one millisecond
+ * (no "+": "+<1" reads as two operators).
+ */
+function delay(ms: number | undefined) {
+  if (ms === undefined) return undefined;
+  return ms < 1 ? millis(ms) : `+${millis(ms)}`;
+}
 
 /** A rate to whole frames, with the tenth only when it matters: `29.9 fps`. */
 function frameRate(fps: number) {

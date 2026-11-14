@@ -4,7 +4,8 @@ use crate::observe::Observer;
 use crate::{LedCounts, MAX_LEDS, Wled, WledSettings, http::RequestError};
 use prysm_core::{ColorStrip, EdgeColors, LinearColor};
 use prysm_ports::{
-    AdapterSettings, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Registry,
+    AdapterSettings, DeviceBrightness, Error, IdleMode, LedOutput, OutputFactory, OutputIssue,
+    Registry,
 };
 use serde_json::{Value, json};
 use std::error::Error as _;
@@ -88,15 +89,29 @@ impl Device {
         }
     }
 
+    /// An observer that only checks the state.
     fn observer(&self) -> Observer {
+        self.observer_with_config().state_only()
+    }
+
+    /// An observer that also reads the configuration, as an open output's.
+    fn observer_with_config(&self) -> Observer {
         let device = SocketAddr::from(([127, 0, 0, 1], self.http_port));
         Observer::new(device, &self.address("127.0.0.1"), Duration::ZERO)
     }
 
     /// The next request must be a state check.
     fn check_request(&self) {
-        let (head, _) = self.calls.recv_timeout(WAIT).expect("no state check");
-        assert!(head.starts_with("GET /json/si HTTP/1.1\r\n"), "{head}");
+        self.get_request("/json/si");
+    }
+
+    /// The next request must be `GET path`.
+    fn get_request(&self, path: &str) {
+        let (head, _) = self.calls.recv_timeout(WAIT).expect("no check");
+        assert!(
+            head.starts_with(&format!("GET {path} HTTP/1.1\r\n")),
+            "{head}"
+        );
         let host = format!("\r\nHost: {}\r\n", self.address("127.0.0.1"));
         assert!(head.contains(&host), "{head}");
     }
@@ -828,4 +843,141 @@ fn findings_survive_until_the_next_check_and_idle_still_restores() {
     device.check_request();
     output.idle(IdleMode::Off).unwrap();
     device.expect(&[release(), off()]);
+}
+
+/// A `/json/cfg` reply with WLED's realtime and LED brightness settings.
+fn cfg(body: Value) -> Reply {
+    let body = body.to_string();
+    Reply::Raw(format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    ))
+}
+/// WLED showing Prysm's DDP at master brightness `bri`.
+fn at(bri: u8) -> Reply {
+    si(
+        json!({"on": true, "lor": 0, "bri": bri}),
+        json!({"live": true, "lm": "DDP", "lip": "127.0.0.1"}),
+    )
+}
+fn percent(percent: u8) -> Option<DeviceBrightness> {
+    Some(DeviceBrightness { percent })
+}
+
+#[test]
+fn wled_brightness_is_reported_once_its_configuration_says_it_applies() {
+    let cases = [
+        // WLED's defaults: master brightness applies, factor 100 %.
+        (
+            cfg(
+                json!({"if": {"live": {"en": true, "maxbri": false}}, "light": {"scale-bri": 100}}),
+            ),
+            102,
+            percent(40),
+        ),
+        // A configuration without the fields takes WLED's defaults.
+        (cfg(json!({"if": {"live": {}}})), 102, percent(40)),
+        // "Force max brightness": realtime colours ignore `bri`.
+        (
+            cfg(json!({"if": {"live": {"maxbri": true}}, "light": {"scale-bri": 100}})),
+            102,
+            percent(100),
+        ),
+        // The brightness factor scales either way, capped at full.
+        (
+            cfg(json!({"if": {"live": {"maxbri": true}}, "light": {"scale-bri": 50}})),
+            255,
+            percent(50),
+        ),
+        (
+            cfg(json!({"if": {"live": {"maxbri": false}}, "light": {"scale-bri": 200}})),
+            102,
+            percent(80),
+        ),
+        (
+            cfg(json!({"if": {"live": {"maxbri": false}}, "light": {"scale-bri": 200}})),
+            200,
+            percent(100),
+        ),
+        // Behind WLED's settings PIN: nothing to go on, nothing reported.
+        (
+            Reply::Raw("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".into()),
+            102,
+            None,
+        ),
+    ];
+    for (index, (config, bri, expected)) in cases.into_iter().enumerate() {
+        let device = Device::new(vec![at(bri), config, at(bri)]);
+        let mut observer = device.observer_with_config();
+        assert_eq!(check(&mut observer), None, "case {index}");
+        assert_eq!(
+            observer.brightness(),
+            None,
+            "case {index}: no configuration yet"
+        );
+        device.check_request();
+        // The second check reads the configuration, leaving the finding.
+        assert_eq!(check(&mut observer), None, "case {index}");
+        device.get_request("/json/cfg");
+        assert_eq!(observer.brightness(), expected, "case {index}");
+        assert_eq!(check(&mut observer), None, "case {index}");
+        device.check_request();
+        assert_eq!(observer.brightness(), expected, "case {index}");
+    }
+}
+
+#[test]
+fn wled_brightness_follows_the_state_and_goes_with_an_unanswered_check() {
+    let device = Device::new(vec![
+        at(255),
+        cfg(json!({"if": {"live": {"maxbri": false}}})),
+        at(64),
+        Reply::Raw(String::new()),
+    ]);
+    let mut observer = device.observer_with_config();
+    check(&mut observer);
+    check(&mut observer);
+    assert_eq!(observer.brightness(), percent(100));
+    check(&mut observer);
+    assert_eq!(observer.brightness(), percent(25), "64 of 255");
+    assert_eq!(check(&mut observer), Some(OutputIssue::Unreachable));
+    assert_eq!(observer.brightness(), None, "no state, no brightness");
+}
+
+#[test]
+fn an_open_output_reports_wled_brightness() {
+    let device = Device::new(vec![
+        Reply::Json(OK),
+        Reply::Json(OK),
+        at(102),
+        cfg(json!({"if": {"live": {"maxbri": false}}})),
+        Reply::Json(OK),
+        Reply::Json(OK),
+    ]);
+    let mut output = device.open(one_each()).unwrap();
+    device.expect(&[release(), live()]);
+    let deadline = Instant::now() + WAIT;
+    while output.brightness().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "WLED brightness was not reported"
+        );
+        output.write(&EdgeColors::default()).unwrap();
+        assert_eq!(output.observe(), None);
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(output.brightness(), percent(40));
+    device.check_request();
+    device.get_request("/json/cfg");
+    output.idle(IdleMode::Off).unwrap();
+    device.expect(&[release(), off()]);
+}
+
+#[test]
+fn device_brightness_rounds_to_whole_percent_and_a_lit_device_is_never_zero() {
+    assert_eq!(DeviceBrightness::of(255, 255).percent, 100);
+    assert_eq!(DeviceBrightness::of(128, 255).percent, 50);
+    assert_eq!(DeviceBrightness::of(1, 255).percent, 1);
+    assert_eq!(DeviceBrightness::of(0, 255).percent, 0);
+    assert_eq!(DeviceBrightness::of(300, 255).percent, 100);
 }

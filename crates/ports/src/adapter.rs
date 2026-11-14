@@ -72,6 +72,37 @@ pub trait LedOutput: Send {
     fn observe(&mut self) -> Option<OutputIssue> {
         None
     }
+    /// The device's own brightness, as far as it last said, while it scales
+    /// the written colours; `None` while it does not or the output cannot
+    /// tell. Learned by the same checks as [`observe`](Self::observe), read
+    /// right after it and as cheap.
+    fn brightness(&self) -> Option<DeviceBrightness> {
+        None
+    }
+}
+
+/// The device's own brightness while it scales Prysm's colours: the LEDs
+/// show them at `percent` of the brightness Prysm asks for. Prysm reports it
+/// and never changes it; the device's owner sets it there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceBrightness {
+    /// 0 to 100.
+    pub percent: u8,
+}
+
+impl DeviceBrightness {
+    /// `level` of `full` (WLED: 0–255), rounded to a whole percent; a lit
+    /// device never reads 0 %.
+    #[must_use]
+    pub fn of(level: u32, full: u32) -> Self {
+        let level = level.min(full);
+        let percent = (level * 100 + full / 2)
+            .checked_div(full)
+            .map_or(100, |percent| percent.max(u32::from(level > 0)));
+        Self {
+            percent: u8::try_from(percent).unwrap_or(100),
+        }
+    }
 }
 
 /// Why the LEDs are not showing Prysm's colours although lighting runs.

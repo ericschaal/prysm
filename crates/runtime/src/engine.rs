@@ -387,11 +387,14 @@ impl Core {
             return;
         };
         let input = Some(running.meter.sample(&self.stats));
-        let issue = running.session.output_issue();
+        let observed = running.session.observed();
         self.state.send_if_modified(|s| {
-            let changed = s.input != input || s.output_issue != issue;
+            let changed = s.input != input
+                || s.output_issue != observed.issue
+                || s.output_brightness != observed.brightness;
             s.input = input;
-            s.output_issue = issue;
+            s.output_issue = observed.issue;
+            s.output_brightness = observed.brightness;
             changed
         });
     }
@@ -413,6 +416,7 @@ impl Core {
             s.session = session;
             s.input = None;
             s.output_issue = None;
+            s.output_brightness = None;
             s.failure = failure;
             if ended {
                 s.target = LightingTarget::Off;
@@ -576,6 +580,7 @@ impl Core {
             s.session = state;
             s.input = None;
             s.output_issue = None;
+            s.output_brightness = None;
         });
         result.and_then(SessionEnd::result)
     }
