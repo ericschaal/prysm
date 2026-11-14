@@ -64,6 +64,7 @@ import {
   valueOf,
   renderPortal,
   sleep,
+  navigated,
   submit,
   text,
 } from './dom';
@@ -92,10 +93,12 @@ const hint = (element) =>
 const status = () => $('.form-status').textContent;
 const saves = (fixture) =>
   fixture.calls.filter((call) => call === 'replaceSettings').length;
+/** Home's address: none when first opened, `#/` when gone back to. */
+const atHome = () => ['', '#/'].includes(window.location.hash);
 const press = (element) =>
   act(async () => {
     element.click();
-    await sleep(0);
+    await navigated();
   });
 const settle = () => act(async () => sleep(processingDelayMs + 100));
 /** Another client replaces the settings. */
@@ -123,7 +126,7 @@ test('the lighting card says why the lights are not showing screen sync', async 
     );
     assert.match(info(), /^Live override is on/);
     assert.equal($('.light-info').dataset.tone, 'warning');
-    assert.equal($('.light-card [role="alert"]'), null, 'not a failure');
+    assert(!$('.light-card [role="alert"]'), 'not a failure');
 
     await act(async () => fixture.publish({ output_issue: 'off' }));
     assert.match(info(), /switched off on the device/);
@@ -674,7 +677,7 @@ test('modes that cannot work are disabled and say why; before setup only the pro
       'Its own patterns',
     );
     assert.equal(power().disabled, false);
-    assert.equal($('.device-link'), null, 'no device to open');
+    assert(!$('.device-link'), 'no device to open');
   } finally {
     await portal.unmount();
   }
@@ -685,10 +688,10 @@ test('modes that cannot work are disabled and say why; before setup only the pro
       // A calm card: the prompt and its one action, nothing disabled to puzzle over.
       assert.equal($$('[data-target]').length, 0);
       assert.equal(power(), null);
-      assert.equal($('.light-card input'), null);
-      assert.equal($('.chip'), null);
+      assert(!$('.light-card input'));
+      assert(!$('.chip'));
       assert.equal(button('Set up Prysm').disabled, false);
-      assert.equal($('.setup-card'), null);
+      assert(!$('.setup-card'));
       assert.equal(word(), 'Off');
     } finally {
       await unset.unmount();
@@ -1053,7 +1056,7 @@ test('server field errors land on their control and clear when it is edited', as
     assert.equal(status(), 'Not saved. Check the marked field.');
     await edit(field('capture.height'), 1080);
     assert.equal(errorOf(field('capture.height')), undefined);
-    assert.equal(field('capture.height').getAttribute('aria-invalid'), null);
+    assert(!field('capture.height').getAttribute('aria-invalid'));
 
     await leaveEditor();
     await openEditor('Lights');
@@ -1224,7 +1227,7 @@ test('new lights are checked after saving; failing ones can be swapped back', as
     assert.equal(status(), 'Saved. Waiting for the picture…');
     await act(async () => sleep(workingAfterMs + 100));
     assert.equal(status(), 'Saved. The picture is arriving.');
-    assert.equal(button('Go back to the previous video source'), undefined);
+    assert(!button('Go back to the previous video source'));
     await click(button('Done'));
     assert.equal(window.location.hash, '#/settings');
   } finally {
@@ -1280,7 +1283,7 @@ test('a video file and no lights are developer options; a saved one still shows'
     await leaveEditor();
     // WLED is then the only lights: no choice to make.
     await openEditor('Lights');
-    assert.equal(field('output.kind'), null);
+    assert(!field('output.kind'));
     await leaveEditor();
     // On in About this Prysm, for this browser.
     await openPage('About this Prysm');
@@ -1314,9 +1317,9 @@ test('kind selectors swap panels without losing drafts', async () => {
       ],
     );
     await edit(field('capture.kind'), 'remote');
-    assert.equal(field('capture.path'), null);
+    assert(!field('capture.path'));
     // The TV reaches this computer at the portal's address: no address field.
-    assert.equal(field('capture.listen'), null);
+    assert(!field('capture.listen'));
     await edit(field('capture.kind'), 'device');
     assert.equal(field('capture.path').value, '/dev/video0');
     await edit(field('capture.kind'), 'file');
@@ -1357,7 +1360,7 @@ test('kind selectors swap panels without losing drafts', async () => {
     // Home: no WLED link, and these lights have no effects of their own.
     await leaveEditor();
     await click(button('Home'));
-    assert.equal($('.device-link'), null);
+    assert(!$('.device-link'));
     assert.equal(mode('device_native').disabled, true);
   } finally {
     await portal.unmount();
@@ -1595,7 +1598,7 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
   const input = (name) => field(`capture.${name}`);
   try {
     await openEditor('Video source');
-    assert.equal(field('capture.kind'), null);
+    assert(!field('capture.kind'));
     assert.equal($('.page-heading h2').textContent, 'Video source');
     assert.deepEqual(
       ['width', 'height', 'fps'].map((name) => [
@@ -1631,7 +1634,7 @@ test('the webOS portal edits TV capture within the adapter limits', async () => 
     assert.deepEqual(fixture.snapshot().settings.output, output);
     await leaveEditor();
     await openEditor('Lights');
-    assert.equal(field('output.kind'), null);
+    assert(!field('output.kind'));
   } finally {
     await portal.unmount();
   }
@@ -1873,11 +1876,11 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
   try {
     assert.equal($$('form').length, 0, 'no forms on Home');
     // One headline, the lights' state; off, it says what Power will do.
-    assert.equal($('.display'), null);
+    assert(!$('.display'));
     assert.equal($('.light-calm').textContent, 'Power turns on Screen sync.');
     assert.equal($('.header-link').textContent, 'Settings');
-    assert.equal($('.diagnostics'), null);
-    assert.equal($('.preview'), null, 'no preview on Home');
+    assert(!$('.diagnostics'));
+    assert(!$('.preview'), 'no preview on Home');
     assert.deepEqual(
       $$('.light-card input').map((control) => control.name),
       ['processing.brightness_percent'],
@@ -1931,7 +1934,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
       'Video capture device · 640\u00a0×\u00a0360 · 30 fps',
     );
     assert.equal(valueOf('Lights'), 'WLED · 14 LEDs');
-    assert.equal($('.settings a'), null, 'Open WLED stays on Home');
+    assert(!$('.settings a'), 'Open WLED stays on Home');
     await openEditor('Video source');
     assert.equal(window.location.hash, '#/settings/video');
     assert.equal(document.activeElement.textContent, 'Video source');
@@ -1943,7 +1946,7 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
     await leaveEditor();
     assert.equal(window.location.hash, '#/settings');
     await click(button('Home'));
-    assert.equal(window.location.hash, '');
+    assert(atHome(), window.location.hash);
     assert($('.light-card'));
     await act(async () =>
       fixture.publish({
@@ -1995,7 +1998,7 @@ test('the setup card names devices and sets their facts neatly, never a raw id',
       ['WLED\u2011Gledopto', '300 LEDs'],
     ]);
     assert(!$('.setup-card').textContent.includes(id), 'no raw device id');
-    assert.equal($('.led-map-total'), null, 'the count is not repeated');
+    assert(!$('.led-map-total'), 'the count is not repeated');
     const links = () =>
       $$('.path-link').map((link) => [
         link.dataset.state,
@@ -2454,7 +2457,7 @@ test('colour profiles swap with one tap on Home, applied at once', async () => {
     await press(button('Calibrate colours'));
     assert.equal(window.location.hash, '#/calibrate');
     await press(button('Leave'));
-    assert.equal(window.location.hash, '');
+    assert(atHome(), window.location.hash);
   } finally {
     await empty.unmount();
   }
@@ -2469,7 +2472,13 @@ test('the theme choice sets data-theme, is kept in this browser and works withou
     assert.equal(window.location.hash, '#/settings/appearance');
     const choice = (label) => $('input', row(label));
     assert.equal(choice('System').checked, true);
-    // An about:blank page has no storage: the choice still applies.
+    // Storage refused (a private window, blocked site data): the choice
+    // still applies.
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new window.DOMException('Blocked', 'SecurityError');
+      },
+    });
     await click(choice('Dark'));
     assert.equal(document.documentElement.getAttribute('data-theme'), 'dark');
     assert.equal(choice('Dark').checked, true);

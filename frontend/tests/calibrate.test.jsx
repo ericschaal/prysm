@@ -77,13 +77,9 @@ test('Calibrate opens from the portal at #/calibrate on both hosts', async () =>
       assert.equal(heading(), 'Match the lights to your TV');
       assert.equal(document.activeElement, $('.calibrate h2'));
       assert(text().includes('calibrate in the mode you watch in'));
-      assert.equal(
-        field('calibration.from'),
-        null,
-        'no question without profiles',
-      );
+      assert(!field('calibration.from'), 'no question without profiles');
       await press(button('Leave'));
-      assert.equal($('.calibrate'), null);
+      assert(!$('.calibrate'));
       assert(row('New profile (guided)'), 'back in Colour profiles');
       assert.deepEqual(patterns(portal.fixture), []);
     } finally {
@@ -101,8 +97,8 @@ test("the TV's link opens Calibrate directly; leaving returns Home", async () =>
     });
     assert.equal(heading(), 'Match the lights to your TV');
     await press(button('Leave'));
-    assert.equal($('.calibrate'), null);
-    assert.equal(window.location.hash, '');
+    assert(!$('.calibrate'));
+    assert(['', '#/'].includes(window.location.hash), 'Home');
     assert($('.light-card'), 'Home');
   } finally {
     await portal.unmount();
@@ -162,7 +158,7 @@ test('a new profile is calibrated step by step and finished under its name', asy
     assert.equal(processing(fixture).profiles[0].correction.hue.red, 8);
     for (let step = 0; step < 12; step++) await press(button('Next'));
     assert.equal(heading(), 'Name your profile');
-    assert.equal(button('Next'), undefined);
+    assert(!button('Next'));
     await press(button('Back'));
     assert.equal(heading(), 'Check colours together');
     await press(button('Next'));
@@ -207,7 +203,7 @@ test('a new profile is calibrated step by step and finished under its name', asy
     assert.equal(heading(), 'Calibration finished');
     assert(text().includes('“Movie night” is saved and active.'));
     await press(button('Back to Prysm'));
-    assert.equal($('.calibrate'), null);
+    assert(!$('.calibrate'));
   } finally {
     await portal.unmount();
   }
@@ -302,7 +298,7 @@ test('calibration ending elsewhere keeps the draft and offers to resume', async 
     assert.equal(heading(), 'Calibration ended');
     assert(text().includes('Open Prysm on the TV and choose Calibrate.'));
     await press(button('Leave'));
-    assert.equal($('.calibrate'), null);
+    assert(!$('.calibrate'));
     assert.deepEqual(processing(fixture).profiles, [draft]);
     assert.equal(processing(fixture).active_profile, draft.id);
   } finally {

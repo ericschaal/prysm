@@ -1,9 +1,5 @@
 export * from './adapters';
-export {
-  calibrateRoute,
-  CalibrateWizard,
-  type CalibrateProps,
-} from './calibrate';
+export { CalibrateWizard, type CalibrateProps } from './calibrate';
 export * from './checks';
 export { FindDevices } from './discovery';
 export * from './fields';
@@ -50,15 +46,16 @@ export { SetupWizard, type SetupWizardProps } from './setup';
 export {
   aboutRoute,
   appearanceRoute,
+  calibrateRoute,
   lightsRoute,
   pictureRoute,
   previewRoute,
   profilesRoute,
   settingsRoute,
   videoRoute,
-  WebPortal,
-  type WebPortalProps,
-} from './portal';
+} from './routes';
+export { WebPortal } from './portal';
+export type { WebPortalProps } from './portal-context';
 export {
   applyTheme,
   saveTheme,

@@ -1499,10 +1499,7 @@ test('full: the lights card says why the lights do not follow the picture', asyn
     tv.text('lighting-status'),
     'Another program is sending colours to the lights. Stop it to see screen sync alone.',
   );
-  assert.equal(
-    tv.el('lighting-status').querySelector('.visually-hidden'),
-    null,
-  );
+  assert(!tv.el('lighting-status').querySelector('.visually-hidden'));
   assert.match(document.querySelector('.card.lighting').className, /attention/);
   await act(async () => tv.application.publish({ output_issue: undefined }));
   assert.equal(tv.text('lighting-status'), 'Screen sync is running.');

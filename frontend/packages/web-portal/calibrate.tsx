@@ -37,9 +37,6 @@ import {
   signed,
 } from './profile-model';
 
-/** The hash route of the Calibrate page; the TV shows a QR code of it. */
-export const calibrateRoute = '#/calibrate';
-
 /** What the TV shows for each pattern. */
 const patternLabels: Record<Pattern, string> = {
   'gray-192': 'light gray',

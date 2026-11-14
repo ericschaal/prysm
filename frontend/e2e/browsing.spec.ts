@@ -53,7 +53,10 @@ function watch() {
   }
   const record = () => {
     const line = document.querySelector('.save-status')?.textContent ?? '';
-    const text = `${location.hash} ${line}`;
+    // By the page drawn, not the address: the address changes just before.
+    const heading =
+      document.querySelector('.page-heading h2')?.textContent ?? '';
+    const text = `${heading}: ${line}`;
     if (seen.lines.at(-1) !== text) seen.lines.push(text);
     requestAnimationFrame(record);
   };
@@ -91,6 +94,9 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await mark(page, 'to Settings');
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page).toHaveURL(/#\/settings$/);
+  await expect(
+    page.getByRole('heading', { name: 'Settings', exact: true }),
+  ).toBeVisible();
   // The same nodes after several ticks: nothing remounted.
   const nodes = await page.evaluateHandle(() => [
     document.querySelector('.page-heading h2'),
@@ -122,11 +128,12 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await mark(page, 'to About');
   await page.getByRole('button', { name: /^About this Prysm/ }).click();
   await expect(page).toHaveURL(/#\/settings\/about$/);
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  // The address changes just before the page is drawn.
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await mark(page, 'back to Settings');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page).toHaveURL(/#\/settings$/);
-  expect(await page.evaluate(() => window.scrollY)).toBe(listPlace);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(listPlace);
 
   // A save started on Settings is not Fine-tuning's: that page says all saved.
   await mark(page, 'scroll to top');
@@ -141,8 +148,8 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await page.waitForTimeout(2500);
   const { lines, shifts } = await seen(page);
   expect(
-    lines.filter((line) => line.startsWith('#/settings/picture ')),
-  ).toEqual(['#/settings/picture All changes saved']);
+    lines.filter((line) => line.startsWith('Picture fine-tuning: ')),
+  ).toEqual(['Picture fine-tuning: All changes saved']);
 
   // Nothing moved by itself on the way (Chromium measures layout shift).
   if (shifts !== null) expect(shifts).toEqual([]);

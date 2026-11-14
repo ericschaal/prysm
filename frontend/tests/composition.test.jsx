@@ -64,9 +64,8 @@ test('TV assemblies show their package: Luna for the TV, HTTP for the lights', a
           ? 'http://192.168.1.5:8787'
           : slimPreferences.instance,
       );
-      assert.equal(
-        document.getElementById('capture'),
-        null,
+      assert(
+        !document.getElementById('capture'),
         'capture is set in the portal only',
       );
       assert.equal(!!document.getElementById('instance'), flavor === 'slim');

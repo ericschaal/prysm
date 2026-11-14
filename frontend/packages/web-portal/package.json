@@ -12,6 +12,7 @@
   "dependencies": {
     "@prysm/application-client": "1.0.0-alpha.0",
     "@prysm/application-react": "1.0.0-alpha.0",
-    "@prysm/application-state": "1.0.0-alpha.0"
+    "@prysm/application-state": "1.0.0-alpha.0",
+    "react-router": "8.5.1"
   }
 }

@@ -5,10 +5,16 @@ import { createApplicationRuntime } from '@prysm/application-state';
 import { saveDeveloper } from '@prysm/web-portal';
 import { fakeApplicationPort } from '../testkit/application';
 
+/** Kept before a test mocks timers: navigation must still land. */
+const realSetTimeout = globalThis.setTimeout;
+
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function mountDom(html = '<div id="root"></div>') {
-  const dom = new JSDOM(html);
+  // An address of its own, as served: the portal's hash router needs one.
+  const dom = new JSDOM(html, { url: 'http://prysm.test/' });
+  // jsdom draws nothing, so there is nothing to scroll.
+  dom.window.scrollTo = () => {};
   Object.assign(globalThis, {
     window: dom.window,
     document: dom.window.document,
@@ -80,13 +86,26 @@ export async function edit(element, value) {
   });
 }
 
-export const click = (element) => act(async () => element.click());
+/**
+ * Let a navigation land: going back is a history traversal, which jsdom
+ * (like a browser) delivers a couple of tasks after the click.
+ */
+export async function navigated() {
+  for (let task = 0; task < 3; task += 1)
+    await new Promise((resolve) => realSetTimeout(resolve, 0));
+}
+
+export const click = (element) =>
+  act(async () => {
+    element.click();
+    await navigated();
+  });
 
 /** Open Settings from Home, the way a user would. */
 export const openSettings = () =>
   act(async () => {
     $('.header-link').click();
-    await sleep(0);
+    await navigated();
   });
 
 /** A row on Settings by its label: `Video source`, `Colour profiles`. */
@@ -101,7 +120,7 @@ export async function openPage(label) {
   if (!row(label)) await openSettings();
   await act(async () => {
     $('.row-link', row(label)).click();
-    await sleep(0);
+    await navigated();
   });
 }
 
@@ -112,7 +131,7 @@ export const openEditor = openPage;
 export const leaveEditor = () =>
   act(async () => {
     $('.page-heading button').click();
-    await sleep(0);
+    await navigated();
   });
 
 export async function submit(element) {

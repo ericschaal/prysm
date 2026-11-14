@@ -110,7 +110,7 @@ test('setup steps keep the drafts, check each step and save both sections with o
     await next();
     assert.equal(heading(), 'Your lights');
     assert.equal(document.activeElement, $('h2', wizard()));
-    assert.equal($('[role="alert"]', wizard()), null);
+    assert(!$('[role="alert"]', wizard()));
     await next();
     assert.equal(errorOf(field('output.address')), 'Enter a value.');
     await edit(field('output.address'), 'http://wled.local/');
@@ -315,10 +315,10 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
   const portal = await renderPortal(WebosWebPortal, {});
   const { fixture } = portal;
   try {
-    assert.equal(field('capture.kind'), null);
+    assert(!field('capture.kind'));
     assert.equal(field('capture.width').value, '640');
     await next();
-    assert.equal(field('output.kind'), null);
+    assert(!field('output.kind'));
     await edit(field('output.address'), '192.0.2.4');
     await edit(field('output.leds.top'), 20);
     await next();
@@ -340,7 +340,7 @@ test('the webOS portal sets up this TV without a kind choice', async () => {
 test('setup shows the same quiet size hint above 640 × 360', async () => {
   const portal = await renderPortal(WebosWebPortal, {});
   try {
-    assert.equal($('[data-size-hint]', wizard()), null);
+    assert(!$('[data-size-hint]', wizard()));
     await edit(field('capture.width'), 1280);
     await edit(field('capture.height'), 720);
     assert.match(
@@ -348,11 +348,7 @@ test('setup shows the same quiet size hint above 640 × 360', async () => {
       /is enough for the lights/,
     );
     await next();
-    assert.equal(
-      field('output.kind'),
-      null,
-      'the hint does not stop the next step',
-    );
+    assert(!field('output.kind'), 'the hint does not stop the next step');
   } finally {
     await portal.unmount();
   }
@@ -431,7 +427,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
   });
   try {
     // This TV's capture has nothing to find: no button.
-    assert.equal(button('Find devices'), undefined);
+    assert(!button('Find devices'));
     await next();
     await press(button('Find lights'));
     assert.equal(
@@ -456,7 +452,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
 test('without a discovery client the editors offer only typed fields', async () => {
   const portal = await renderPortal(HeadlessWebPortal, {});
   try {
-    assert.equal(button('Find devices'), undefined);
+    assert(!button('Find devices'));
     assert.equal(field('capture.path').value, '');
   } finally {
     await portal.unmount();

@@ -1,69 +1,63 @@
-import type { ApplicationRuntime } from '@prysm/application-state';
-import type { Processing } from '@prysm/contracts/application';
+import type { ApplicationSnapshot } from '@prysm/application-client';
+import { plainFailure } from '@prysm/application-client';
+import { createContext, use, useEffect, useRef, useState } from 'react';
 import {
-  plainFailure,
-  type ApplicationSnapshot,
-  type LightingTarget,
-  type ColorsClient,
-  type DiscoveryClient,
-  type PreviewClient,
-} from '@prysm/application-client';
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from 'react';
+  createHashRouter,
+  Outlet,
+  RouterProvider,
+  ScrollRestoration,
+  useLocation,
+  useMatches,
+  type RouteObject,
+} from 'react-router';
 import {
   useApplication,
   useApplicationDispatch,
 } from '@prysm/application-react';
-import { adapterFor, type AdapterSection, type AdapterUis } from './adapters';
-import { calibrateRoute, CalibrateWizard } from './calibrate';
-import { DeveloperContext, useDeveloper } from './developer';
+import type { AdapterSection } from './adapters';
+import { useDeveloper } from './developer';
 import { DiscoveryContext } from './discovery-context';
-import { LightCard } from './lighting';
 import { useLingering } from './lingering';
 import { useLiveColors, usePageVisible } from './live-colors';
-import { PreviewPanel } from './preview';
-import { FineTuning, QuickPicture } from './processing';
-import { ProfileList, ProfilePage, type DeletedProfile } from './profiles';
-import { SaveStatus, SaveStatusProvider } from './save-status';
-import { SectionEditor } from './section-editor';
-import { stepCopy } from './step-copy';
+import { Page } from './page';
+import {
+  AboutRoute,
+  AppearanceRoute,
+  CalibrateRoute,
+  EditorRoute,
+  HomeRoute,
+  PictureRoute,
+  PreviewRoute,
+  ProfileRoute,
+  ProfilesRoute,
+  SettingsRoute,
+} from './pages';
+import {
+  PortalContext,
+  RefsContext,
+  useNav,
+  type Chrome,
+  type Host,
+  type Portal,
+  type WebPortalProps,
+} from './portal-context';
+import type { DeletedProfile } from './profiles';
+import {
+  aboutRoute,
+  appearanceRoute,
+  calibrateRoute,
+  lightsRoute,
+  pictureRoute,
+  previewRoute,
+  profilesRoute,
+  settingsRoute,
+  videoRoute,
+} from './routes';
 import { SetupWizard } from './setup';
-import { nameOf } from './profile-model';
-import { SetupCard, type PathState } from './setup-card';
-import { AboutPage, SettingsPage, type SettingsPlace } from './settings-page';
-import { ThemeChoice } from './theme-choice';
+import type { PathState } from './setup-card';
 import './tokens.css';
 import './portal.css';
 import './flows.css';
-
-export interface WebPortalProps<
-  C extends AdapterSection,
-  O extends AdapterSection,
-> {
-  application: ApplicationRuntime<C, O>;
-  /** The capture kinds this host registers, in display order. */
-  captures: AdapterUis<NoInfer<C>>;
-  /** The output kinds this host registers, in display order. */
-  outputs: AdapterUis<NoInfer<O>>;
-  /** The live preview; without one the portal shows no preview. */
-  preview?: PreviewClient;
-  /**
-   * The LEDs' colours, for the glow Home casts while screen sync runs;
-   * without one the glow is the designed one.
-   */
-  colors?: ColorsClient;
-  /**
-   * Finds devices to choose from in the capture and lights editors; without
-   * one they offer only typed fields.
-   */
-  discovery?: DiscoveryClient;
-}
 
 /**
  * How long the connection may be missing before the page says so: the first
@@ -73,112 +67,10 @@ export interface WebPortalProps<
  */
 export const connectionGraceMs = 1000;
 
-/** The hash route of the Settings page. */
-export const settingsRoute = '#/settings';
-/** The hash route of the live preview, opened from Settings. */
-export const previewRoute = '#/preview';
-/** The hash routes of the video source and lights editors, under Settings. */
-export const videoRoute = '#/settings/video';
-export const lightsRoute = '#/settings/lights';
-/** The hash routes of the colour profiles and picture fine-tuning pages. */
-export const profilesRoute = '#/settings/profiles';
-export const pictureRoute = '#/settings/picture';
-/** The hash routes of the appearance and about pages. */
-export const appearanceRoute = '#/settings/appearance';
-export const aboutRoute = '#/settings/about';
-
-type Route =
-  | 'home'
-  | 'settings'
-  | 'calibrate'
-  | 'preview'
-  | 'video'
-  | 'lights'
-  | 'profiles'
-  | 'picture'
-  | 'appearance'
-  | 'about'
-  | 'profile';
-
-/**
- * Which page the hash names (Home, `#/settings`, `#/calibrate`,
- * `#/preview`), a way to go to another, and a way back. The hash keeps the
- * portal's own address and history.
- *
- * Each page keeps its own scroll place: going to a page starts it at the
- * top; going back (its back button, or the browser's) returns to where it
- * was left. The browser's own restoration is off, because it would scroll
- * before the arriving page is drawn, against the leaving page's height.
- */
-function useRoute() {
-  const [hash, setHash] = useState(() => window.location.hash);
-  /** Where each page was scrolled when it was left. */
-  const placesRef = useRef(new Map<string, number>());
-  /** The page shown, for remembering its place as it is left. */
-  const shownRef = useRef(hash);
-  /** Whether the next arrival goes back to the page's place. */
-  const returningRef = useRef(false);
-  useEffect(() => {
-    if ('scrollRestoration' in window.history)
-      window.history.scrollRestoration = 'manual';
-    // The browser's back and forward buttons return to a page's place.
-    const sync = () => {
-      if (window.location.hash === shownRef.current) return;
-      placesRef.current.set(shownRef.current, window.scrollY);
-      returningRef.current = true;
-      setHash(window.location.hash);
-    };
-    window.addEventListener('hashchange', sync);
-    return () => window.removeEventListener('hashchange', sync);
-  }, []);
-  // Before the arriving page is painted, so it never shows at the old place.
-  useLayoutEffect(() => {
-    if (shownRef.current === hash) return;
-    shownRef.current = hash;
-    const place = returningRef.current ? (placesRef.current.get(hash) ?? 0) : 0;
-    returningRef.current = false;
-    window.scrollTo(0, place);
-  }, [hash]);
-  function move(next: string, back: boolean) {
-    if (next === shownRef.current) return;
-    placesRef.current.set(shownRef.current, window.scrollY);
-    returningRef.current = back;
-    setHash(next);
-    window.location.hash = next;
-  }
-  const go = (next: string) => move(next, false);
-  const back = (next: string) => move(next, true);
-  let route: Route = routes[hash] ?? 'home';
-  if (route === 'home' && hash.startsWith(`${profilesRoute}/`))
-    route = 'profile';
-  return [route, go, hash, back] as const;
-}
-
-/** The page each fixed hash names; a profile's page is under its route. */
-const routes: Readonly<Record<string, Route | undefined>> = {
-  [calibrateRoute]: 'calibrate',
-  [settingsRoute]: 'settings',
-  [previewRoute]: 'preview',
-  [videoRoute]: 'video',
-  [lightsRoute]: 'lights',
-  [profilesRoute]: 'profiles',
-  [pictureRoute]: 'picture',
-  [appearanceRoute]: 'appearance',
-  [aboutRoute]: 'about',
-};
-
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-      <circle cx="15" cy="7" r="2" />
-      <circle cx="9" cy="17" r="2" />
-    </svg>
-  );
-}
+type Snapshot = ApplicationSnapshot<AdapterSection, AdapterSection>;
 
 /** What the signal path is doing, from the state alone. */
-function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
+function pathOf(snapshot: Snapshot): PathState {
   const { target, session, failure, input } = snapshot;
   if (session.state === 'faulted') return { kind: 'failed', at: null };
   if (target !== 'off' && failure) {
@@ -204,34 +96,19 @@ function pathOf(snapshot: ApplicationSnapshot<unknown, unknown>): PathState {
   return { kind: 'off' };
 }
 
-/** The active colour profile's name, or `null` without one. */
-function activeProfile(processing: Processing) {
-  const active = processing.profiles?.find(
-    (profile) => profile.id === processing.active_profile,
-  );
-  return active ? nameOf(active) : null;
-}
-
 /**
- * The browser portal. Home holds the light card (power, mode, brightness,
- * colour profile) and a summary of the setup; Settings (`#/settings`) holds
- * the picture tuning, the capture and lights forms, the live preview
- * (`#/preview`) and the technical details; the Calibrate page is at
- * `#/calibrate`; the guided setup takes over while capture or lights are
- * missing. The host chooses which capture and output kinds exist.
+ * The frame of every page: the state, setup when it takes over, and the page
+ * the hash names. Each page is its own: a new one mounts in place of the
+ * last (keyed by its address), so nothing a page holds carries over to the
+ * next. The router keeps each history entry's scroll place: a new page
+ * starts at its top, going back returns to where it was.
  */
-export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
-  application,
-  captures,
-  outputs,
-  preview,
-  colors,
-  discovery,
-}: WebPortalProps<C, O>) {
+function PortalFrame({ host }: { host: Host }) {
+  const { application, discovery, colors } = host;
   const connection = useApplication(application);
-  const dispatch = useApplicationDispatch<C, O>();
+  const dispatch = useApplicationDispatch<AdapterSection, AdapterSection>();
   // Keep showing the last state (and every draft) while reconnecting.
-  const [last, setLast] = useState<ApplicationSnapshot<C, O> | null>(null);
+  const [last, setLast] = useState<Snapshot | null>(null);
   if (connection.snapshot && connection.snapshot !== last)
     setLast(connection.snapshot);
   const snapshot = connection.snapshot ?? last;
@@ -242,45 +119,33 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     setSetup(
       snapshot.settings.capture && snapshot.settings.output ? 'closed' : 'open',
     );
-  /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
-  const noticeRef = useRef<HTMLParagraphElement>(null);
-  const [hashRoute, go, hash, back] = useRoute();
   const developer = useDeveloper();
-  // Without a preview client there is no Preview page: Home instead.
-  const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
-  /**
-   * What each editor saved over last, offered back until it is replaced,
-   * also after leaving the editor.
-   */
-  const [previous, setPrevious] = useState<{
-    capture: C | null;
-    output: O | null;
-  }>({ capture: null, output: null });
-  /** Profiles deleted on this visit, shown in their places with Undo. */
+  const nav = useNav();
+  const location = useLocation();
+  const matches = useMatches();
+  const page = matches[matches.length - 1]?.id;
+  const home = page === 'home' || page === 'elsewhere';
+  const [previous, setPrevious] = useState<Portal['previous']>({
+    capture: null,
+    output: null,
+  });
   const [deletedProfiles, setDeletedProfiles] = useState<
     Record<string, DeletedProfile>
   >({});
-  /** Where Calibrate returns to: Settings when opened from there. */
-  const [calibrateFrom, setCalibrateFrom] = useState('');
-  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const homeGridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (setupNotice) noticeRef.current?.focus();
   }, [setupNotice]);
-  // Arriving in Settings or Preview: its heading, for screen readers and keyboards.
-  useEffect(() => {
-    if (route !== 'home' && route !== 'calibrate')
-      pageHeadingRef.current?.focus({ preventScroll: true });
-  }, [route, hash]);
 
   // Home's glow takes the LEDs' colours while screen sync runs and is seen.
-  const homeGridRef = useRef<HTMLDivElement>(null);
   const visible = usePageVisible();
   const syncing =
     snapshot?.target === 'processed' && snapshot.session.state === 'running';
   useLiveColors(
     colors,
-    route === 'home' && setup === 'closed' && online && visible && syncing,
+    home && setup === 'closed' && online && visible && syncing,
     homeGridRef,
   );
 
@@ -290,537 +155,165 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
   else if (snapshot) connectionLabel = 'Reconnecting…';
-  const header = (
-    <header className="portal-header">
-      <span className="brand">
-        <svg
-          className="brand-mark"
-          viewBox="0 0 32 32"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path className="brand-prism" d="M16 4 28.5 26.5h-25Z" />
-          <path
-            className="brand-ray"
-            d="M16 4l3.6 22.5M3.5 26.5 18.2 15 28.5 26.5"
-          />
-        </svg>
-        prysm<span aria-hidden="true">.</span>
-      </span>
-      <span className="header-end">
-        <span
-          className={`connection ${outOfTouch ? 'offline' : 'online'}`}
-          role="status"
-        >
-          {connectionLabel}
-        </span>
-        {route === 'home' && snapshot && setup !== 'open' ? (
-          <button
-            type="button"
-            className="header-link"
-            onClick={() => go(settingsRoute)}
-          >
-            <SettingsIcon />
-            Settings
-          </button>
-        ) : null}
-      </span>
-    </header>
-  );
-  /**
-   * Each page is its own: a new one mounts in place of the last, so nothing
-   * a page holds (its save line and the saves it waits for, a draft, the
-   * heading) carries over to the next, even where two pages share parts.
-   * Setup and Calibrate take over whatever the hash says.
-   */
-  let pageKey: string = route === 'profile' ? hash : route;
-  if (setup === 'open' && route !== 'calibrate') pageKey = 'setup';
-  const page = (
-    className: string,
-    title: string,
-    content: ReactNode,
-    wide = false,
-  ) => (
-    <div className={wide ? 'portal wide' : 'portal'}>
-      {header}
-      <main key={pageKey} id="content" className={className}>
-        <h1 className="visually-hidden">{title}</h1>
-        <DeveloperContext value={developer}>{content}</DeveloperContext>
-      </main>
-    </div>
-  );
-  /** A page under Settings: its title and the way back. */
-  const pageHeading = (title: string, to: string, backLabel: string) => (
-    <div className="page-heading">
-      <button type="button" className="back quiet" onClick={() => back(to)}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M15 5.5 8.5 12l6.5 6.5" />
-        </svg>
-        {backLabel}
-      </button>
-      <h2 ref={pageHeadingRef} tabIndex={-1}>
-        {title}
-      </h2>
-    </div>
-  );
+  const chrome: Chrome = {
+    connectionLabel,
+    outOfTouch,
+    settingsLink:
+      home && snapshot && setup !== 'open' ? () => nav.go(settingsRoute) : null,
+    developer,
+  };
+
   if (!snapshot)
-    return page(
-      'portal-flow',
-      'Prysm',
-      <section className="connecting">
-        <h2>Connecting to Prysm</h2>
-        <p>{connection.error?.message ?? 'Waiting for the current state…'}</p>
-      </section>,
+    return (
+      <PortalContext value={{ portal: null, chrome }}>
+        <Page className="portal-flow" title="Prysm">
+          <section className="connecting">
+            <h2>Connecting to Prysm</h2>
+            <p>
+              {connection.error?.message ?? 'Waiting for the current state…'}
+            </p>
+          </section>
+        </Page>
+      </PortalContext>
     );
 
-  const { settings, revision, session } = snapshot;
-  const output = settings.output ?? null;
   const offline = outOfTouch ? (
     <p className="notice warning" role="alert">
       Lost the connection to Prysm. Reconnecting; your changes are kept.
     </p>
   ) : null;
-  const openSetup = () => {
-    setSetupNotice('');
-    setSetup('open');
-  };
-  const notices = (
-    <>
-      {offline}
-      {setupNotice ? (
-        <p className="notice" role="status" tabIndex={-1} ref={noticeRef}>
-          {setupNotice}
-        </p>
-      ) : null}
-    </>
-  );
-  const saveProcessing = (
-    expected: number,
-    processing: (typeof settings)['processing'],
-  ) => dispatch(application.commands.configureProcessing(expected, processing));
-
-  if (route === 'calibrate')
-    return page(
-      'portal-flow portal-flow-narrow',
-      'Prysm calibration',
-      <>
-        {offline}
-        <CalibrateWizard
-          processing={settings.processing}
-          revision={revision}
-          target={snapshot.target}
-          calibration={snapshot.calibration}
-          disabled={!online}
-          save={saveProcessing}
-          setCalibration={(calibration) =>
-            dispatch(application.commands.setCalibration(calibration))
-          }
-          leave={() => {
-            back(calibrateFrom);
-            setCalibrateFrom('');
-          }}
-        />
-      </>,
-    );
-  if (setup === 'open')
-    return page(
-      'portal-flow',
-      'Prysm setup',
-      <>
-        {offline}
-        <DiscoveryContext value={discovery ?? null}>
-          <SetupWizard
-            captures={captures}
-            outputs={outputs}
-            capture={settings.capture ?? null}
-            output={output}
-            revision={revision}
-            disabled={!online}
-            save={(expected, capture, value) =>
-              dispatch(
-                application.commands.configureSetup(expected, capture, value),
-              )
-            }
-            start={() => dispatch(application.commands.setTarget('processed'))}
-            close={(notice) => {
-              setSetup('closed');
-              setSetupNotice(notice);
-            }}
-          />
-        </DiscoveryContext>
-      </>,
-    );
-
   const path = pathOf(snapshot);
-  /** The live problem of one side, in plain words; `null` while it works. */
-  const problemAt = (section: 'capture' | 'output') =>
-    path.kind === 'failed' && path.at === section && snapshot.failure
-      ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
-      : null;
-  const startSync = () => dispatch(application.commands.setTarget('processed'));
-  const editorProps = {
-    revision,
-    disabled: !online,
-    target: snapshot.target,
+  const { commands } = application;
+  const portal: Portal = {
+    host,
+    snapshot,
+    online,
+    commands,
+    dispatch,
+    nav,
     path,
-    failure: snapshot.failure ?? null,
-    startSync,
-    leave: () => back(settingsRoute),
-    showPreview: preview ? () => go(previewRoute) : undefined,
+    problemAt: (section) =>
+      path.kind === 'failed' && path.at === section && snapshot.failure
+        ? plainFailure(snapshot.failure, snapshot.target, 'Device effects')
+        : null,
+    saveProcessing: (expected, processing) =>
+      dispatch(commands.configureProcessing(expected, processing)),
+    tryProcessing: (processing) => dispatch(commands.tryProcessing(processing)),
+    offline,
+    setupNotice,
+    openSetup: () => {
+      setSetupNotice('');
+      setSetup('open');
+    },
+    previous,
+    setPrevious,
+    deletedProfiles,
+    setDeletedProfiles,
   };
-  if (route === 'video' || route === 'lights')
-    return page(
-      'portal-page section-page',
-      route === 'video' ? 'Prysm video source' : 'Prysm lights',
-      <>
-        {pageHeading(
-          stepCopy[route === 'video' ? 'capture' : 'output'].title,
-          settingsRoute,
-          'Settings',
-        )}
-        {/* In the save line's place: how this page saves. */}
-        <p className="save-status" data-phase="local">
-          Saved when you choose “
-          {stepCopy[route === 'video' ? 'capture' : 'output'].use}”
-        </p>
-        {offline}
-        <DiscoveryContext value={discovery ?? null}>
-          {route === 'video' ? (
-            <SectionEditor
-              section="capture"
-              adapters={captures}
-              saved={settings.capture ?? null}
-              previous={previous.capture}
-              setPrevious={(capture) => setPrevious({ ...previous, capture })}
-              save={(expected, capture) =>
-                dispatch(
-                  application.commands.configureCapture(expected, capture),
-                )
-              }
-              {...editorProps}
-            />
-          ) : (
-            <SectionEditor
-              section="output"
-              adapters={outputs}
-              saved={output}
-              previous={previous.output}
-              setPrevious={(value) =>
-                setPrevious({ ...previous, output: value })
-              }
-              save={(expected, value) =>
-                dispatch(application.commands.configureOutput(expected, value))
-              }
-              {...editorProps}
-            />
-          )}
-        </DiscoveryContext>
-      </>,
-    );
-
-  const tryProcessing = (processing: Processing) =>
-    dispatch(application.commands.tryProcessing(processing));
-  /** A page under Settings that saves as it changes: its title and status. */
-  const livePage = (
-    className: string,
-    title: string,
-    heading: string,
-    content: ReactNode,
-    to = settingsRoute,
-    backLabel = 'Settings',
-    /** Instead of the save status, for a page with nothing to save. */
-    note?: string,
-  ) =>
-    page(
-      `portal-page ${className}`,
-      title,
-      <SaveStatusProvider>
-        {pageHeading(heading, to, backLabel)}
-        {/* Choices kept in this browser have nothing to save: said so, in
-            the same place, so every page starts alike. */}
-        {note !== undefined ? (
-          <p className="save-status" data-phase="local">
-            {note}
-          </p>
+  const { settings, revision } = snapshot;
+  return (
+    <PortalContext value={{ portal, chrome }}>
+      <RefsContext value={{ notice: noticeRef, homeGrid: homeGridRef }}>
+        <ScrollRestoration />
+        {/* Setup takes over whatever the hash says, except Calibrate. */}
+        {setup === 'open' && page !== 'calibrate' ? (
+          <Page className="portal-flow" title="Prysm setup" name="Setup">
+            {offline}
+            <DiscoveryContext value={discovery ?? null}>
+              <SetupWizard
+                captures={host.captures}
+                outputs={host.outputs}
+                capture={settings.capture ?? null}
+                output={settings.output ?? null}
+                revision={revision}
+                disabled={!online}
+                save={(expected, capture, value) =>
+                  dispatch(commands.configureSetup(expected, capture, value))
+                }
+                start={() => dispatch(commands.setTarget('processed'))}
+                close={(notice) => {
+                  setSetup('closed');
+                  setSetupNotice(notice);
+                }}
+              />
+            </DiscoveryContext>
+          </Page>
         ) : (
-          <SaveStatus online={online} />
+          <Outlet key={location.pathname} />
         )}
-        {content}
-      </SaveStatusProvider>,
-    );
-  const places: Record<SettingsPlace, () => void> = {
-    video: () => go(videoRoute),
-    lights: () => go(lightsRoute),
-    profiles: () => go(profilesRoute),
-    picture: () => go(pictureRoute),
-    appearance: () => go(appearanceRoute),
-    about: () => go(aboutRoute),
-    setup: openSetup,
-  };
-
-  const liveProps = {
-    processing: settings.processing,
-    revision,
-    disabled: !online,
-    save: saveProcessing,
-    tryProcessing,
-  };
-  if (route === 'profiles')
-    return livePage(
-      'profiles-page',
-      'Prysm colour profiles',
-      'Colour profiles',
-      <ProfileList
-        {...liveProps}
-        deleted={deletedProfiles}
-        setDeleted={setDeletedProfiles}
-        open={(id) => go(`${profilesRoute}/${encodeURIComponent(id)}`)}
-        calibrate={() => {
-          setCalibrateFrom(profilesRoute);
-          go(calibrateRoute);
-        }}
-      />,
-    );
-  if (route === 'profile') {
-    const id = decodeURIComponent(hash.slice(profilesRoute.length + 1));
-    const profile = settings.processing.profiles?.find(
-      (item) => item.id === id,
-    );
-    return livePage(
-      'profile-page',
-      'Prysm colour profile',
-      profile ? nameOf(profile) : 'Colour profile',
-      <ProfilePage
-        {...liveProps}
-        id={id}
-        deleted={(gone) =>
-          setDeletedProfiles((current) => ({ ...current, [id]: gone }))
-        }
-        leave={() => back(profilesRoute)}
-      />,
-      profilesRoute,
-      'Colour profiles',
-    );
-  }
-  if (route === 'appearance')
-    return livePage(
-      'appearance-page',
-      'Prysm appearance',
-      'Appearance',
-      <ThemeChoice />,
-      settingsRoute,
-      'Settings',
-      'Kept in this browser',
-    );
-  if (route === 'about')
-    return livePage(
-      'about-page',
-      'About this Prysm',
-      'About this Prysm',
-      <AboutPage snapshot={snapshot} />,
-      settingsRoute,
-      'Settings',
-      '',
-    );
-  if (route === 'picture')
-    return livePage(
-      'picture-page',
-      'Prysm picture fine-tuning',
-      'Picture fine-tuning',
-      <FineTuning
-        processing={settings.processing}
-        revision={revision}
-        disabled={!online}
-        save={saveProcessing}
-        tryProcessing={tryProcessing}
-      />,
-    );
-
-  if (route === 'settings')
-    return page(
-      'portal-page settings',
-      'Prysm settings',
-      <SaveStatusProvider>
-        {pageHeading('Settings', '', 'Home')}
-        <SaveStatus online={online} />
-        {setupNotice ? (
-          <p className="notice" role="status" tabIndex={-1} ref={noticeRef}>
-            {setupNotice}
-          </p>
-        ) : null}
-        {snapshot.surface_failures.length ? (
-          <p className="notice warning">
-            Part of Prysm’s web service stopped. The lights keep working.
-          </p>
-        ) : null}
-        <SettingsPage
-          captures={captures}
-          outputs={outputs}
-          snapshot={snapshot}
-          online={online}
-          discovery={discovery ?? null}
-          problemAt={problemAt}
-          save={saveProcessing}
-          tryProcessing={tryProcessing}
-          open={(place) => places[place]()}
-        />
-      </SaveStatusProvider>,
-    );
-
-  if (route === 'preview' && preview)
-    return page(
-      'portal-page preview-page',
-      'Prysm live preview',
-      <>
-        {pageHeading('Live preview', settingsRoute, 'Settings')}
-        {/* In the save line's place, so every page starts alike. */}
-        <p className="save-status" data-phase="local">
-          Live while this page is open
-        </p>
-        <p className="page-intro">
-          What Prysm captures, with the colours it sends to each edge around it.
-          Check black bars and LED placement here.
-        </p>
-        {offline}
-        <PreviewPanel
-          client={preview}
-          online={online}
-          target={snapshot.target}
-          session={session}
-        />
-      </>,
-    );
-
-  return page(
-    'portal-page home',
-    'Prysm',
-    <>
-      {notices}
-      <HomePage
-        snapshot={snapshot}
-        captures={captures}
-        outputs={outputs}
-        discovery={discovery ?? null}
-        hasColors={!!colors}
-        gridRef={homeGridRef}
-        online={online}
-        path={path}
-        setTarget={(target) => dispatch(application.commands.setTarget(target))}
-        save={saveProcessing}
-        tryProcessing={tryProcessing}
-        openSetup={openSetup}
-        calibrate={() => {
-          setCalibrateFrom('');
-          go(calibrateRoute);
-        }}
-        go={go}
-      />
-    </>,
-    true,
+      </RefsContext>
+    </PortalContext>
   );
 }
 
+/** The host's props, for the frame the router renders. */
+const HostContext = createContext<Host | null>(null);
+
+function Frame() {
+  const host = use(HostContext);
+  if (!host) throw new Error('Outside the portal.');
+  return <PortalFrame host={host} />;
+}
+
+/** A `#/…` route as a path under the frame. */
+const at = (route: string) => route.slice(2);
+
+/** Every page, by its address under the hash; anything else is Home. */
+const portalRoutes: RouteObject[] = [
+  {
+    element: <Frame />,
+    children: [
+      { id: 'home', index: true, element: <HomeRoute /> },
+      { id: 'settings', path: at(settingsRoute), element: <SettingsRoute /> },
+      {
+        id: 'video',
+        path: at(videoRoute),
+        element: <EditorRoute section="capture" />,
+      },
+      {
+        id: 'lights',
+        path: at(lightsRoute),
+        element: <EditorRoute section="output" />,
+      },
+      { id: 'profiles', path: at(profilesRoute), element: <ProfilesRoute /> },
+      {
+        id: 'profile',
+        path: `${at(profilesRoute)}/:id`,
+        element: <ProfileRoute />,
+      },
+      { id: 'picture', path: at(pictureRoute), element: <PictureRoute /> },
+      {
+        id: 'appearance',
+        path: at(appearanceRoute),
+        element: <AppearanceRoute />,
+      },
+      { id: 'about', path: at(aboutRoute), element: <AboutRoute /> },
+      { id: 'preview', path: at(previewRoute), element: <PreviewRoute /> },
+      {
+        id: 'calibrate',
+        path: at(calibrateRoute),
+        element: <CalibrateRoute />,
+      },
+      { id: 'elsewhere', path: '*', element: <HomeRoute /> },
+    ],
+  },
+];
+
 /**
- * Home: the light card (power, mode, brightness, colour profile) and, once
- * set up, the path the light takes. `gridRef` takes the live LED colours.
+ * The browser portal. Home holds the light card (power, mode, brightness,
+ * colour profile) and a summary of the setup; Settings (`#/settings`) holds
+ * the picture tuning, the capture and lights forms, the live preview
+ * (`#/preview`) and the technical details; the Calibrate page is at
+ * `#/calibrate`; the guided setup takes over while capture or lights are
+ * missing. The host chooses which capture and output kinds exist.
  */
-function HomePage<C extends AdapterSection, O extends AdapterSection>({
-  snapshot,
-  captures,
-  outputs,
-  discovery,
-  hasColors,
-  gridRef,
-  online,
-  path,
-  setTarget,
-  save,
-  tryProcessing,
-  openSetup,
-  calibrate,
-  go,
-}: {
-  snapshot: ApplicationSnapshot<C, O>;
-  captures: AdapterUis<C>;
-  outputs: AdapterUis<O>;
-  discovery: DiscoveryClient | null;
-  /** Whether this host streams the LEDs' colours at all. */
-  hasColors: boolean;
-  gridRef: RefObject<HTMLDivElement | null>;
-  online: boolean;
-  path: PathState;
-  setTarget: (target: LightingTarget) => Promise<unknown>;
-  save: (expected: number, processing: Processing) => Promise<number>;
-  tryProcessing: (processing: Processing) => Promise<unknown>;
-  openSetup: () => void;
-  calibrate: () => void;
-  go: (route: string) => void;
-}) {
-  const { settings, revision, session } = snapshot;
-  const capture = settings.capture ?? null;
-  const output = settings.output ?? null;
-  const captureUi = capture ? adapterFor(captures, capture.kind) : undefined;
-  const outputUi = output ? adapterFor(outputs, output.kind) : undefined;
+export function WebPortal<C extends AdapterSection, O extends AdapterSection>(
+  props: WebPortalProps<C, O>,
+) {
+  const [router] = useState(() => createHashRouter(portalRoutes));
   return (
-    <div
-      className="home-grid"
-      ref={gridRef}
-      data-colors={hasColors ? 'stream' : 'none'}
-    >
-      <LightCard
-        target={snapshot.target}
-        session={session}
-        failure={snapshot.failure}
-        outputIssue={snapshot.output_issue}
-        outputBrightness={snapshot.output_brightness}
-        input={snapshot.input}
-        hasCapture={!!capture}
-        hasOutput={!!output}
-        output={output ? (outputUi?.lighting?.(output) ?? {}) : null}
-        disabled={!online}
-        setTarget={setTarget}
-        openSetup={openSetup}
-      >
-        <QuickPicture
-          processing={settings.processing}
-          revision={revision}
-          disabled={!online}
-          save={save}
-          calibrate={calibrate}
-          tryProcessing={tryProcessing}
-        />
-      </LightCard>
-      {/* Before setup the light card's prompt says it all. */}
-      {capture && output ? (
-        <SetupCard
-          capture={{
-            section: 'capture',
-            saved: capture,
-            label: captureUi?.label ?? capture.kind,
-            facts: captureUi?.facts?.(capture) ?? [],
-          }}
-          output={{
-            section: 'output',
-            saved: output,
-            label: outputUi?.label ?? output.kind,
-            facts: outputUi?.facts?.(output) ?? [],
-          }}
-          edges={outputUi?.edges?.(output)}
-          transports={{
-            capture: captureUi?.transport?.(capture),
-            output: outputUi?.transport?.(output),
-          }}
-          discovery={discovery}
-          path={path}
-          profile={activeProfile(settings.processing)}
-          openSettings={() => {
-            if (path.kind === 'failed' && path.at === 'capture') go(videoRoute);
-            else if (path.kind === 'failed' && path.at === 'output')
-              go(lightsRoute);
-            else go(settingsRoute);
-          }}
-        />
-      ) : null}
-    </div>
+    <HostContext value={props as unknown as Host}>
+      <RouterProvider router={router} />
+    </HostContext>
   );
 }

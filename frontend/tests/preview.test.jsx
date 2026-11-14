@@ -111,7 +111,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
   const canvas = fakeCanvas(portal.dom.window);
   const message = () => $('.preview-message')?.textContent;
   try {
-    assert.equal($('.preview'), null, 'not on Home');
+    assert(!$('.preview'), 'not on Home');
     assert.equal(preview.opened(), 0, 'no viewer on Home');
 
     // From the video source's page.
@@ -194,7 +194,7 @@ test('the preview has its own page, reached from Settings, and streams only whil
     await click(button('Settings'));
     assert.equal(window.location.hash, '#/settings');
     assert.equal(preview.open(), 0);
-    assert.equal($('.preview-canvas'), null);
+    assert(!$('.preview-canvas'));
     await openEditor('Video source');
     await click($('.row-link', row('See the picture')));
     assert.equal(preview.open(), 1);
@@ -282,16 +282,16 @@ test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
     await openEditor('Video source');
-    assert.equal(row('See the picture'), undefined);
+    assert(!row('See the picture'));
     await leaveEditor();
     await openEditor('Lights');
-    assert.equal(row('Check placement'), undefined);
+    assert(!row('Check placement'));
     await leaveEditor();
     await act(async () => {
       window.location.hash = '#/preview';
       await sleep(0);
     });
-    assert.equal($('.preview'), null);
+    assert(!$('.preview'));
     assert($('.light-card'), 'Home instead');
   } finally {
     await portal.unmount();
