@@ -34,6 +34,13 @@ export function SaveStatusProvider({ children }: { children: ReactNode }) {
     statesRef.current = { ...statesRef.current, [source]: state };
     setStates(statesRef.current);
   }, []);
+  const forget = useCallback((source: string) => {
+    if (!(source in statesRef.current)) return;
+    const rest = { ...statesRef.current };
+    delete rest[source];
+    statesRef.current = rest;
+    setStates(rest);
+  }, []);
   useEffect(() => {
     if (!justSaved) return;
     const timer = setTimeout(() => setJustSaved(false), savedForMs);
@@ -43,7 +50,10 @@ export function SaveStatusProvider({ children }: { children: ReactNode }) {
   let phase: SavePhase = justSaved ? 'saved' : 'all-saved';
   if (all.includes('failed')) phase = 'failed';
   else if (all.includes('saving')) phase = 'saving';
-  const value = useMemo(() => ({ report, phase }), [report, phase]);
+  const value = useMemo(
+    () => ({ report, forget, phase }),
+    [report, forget, phase],
+  );
   return <SaveContext value={value}>{children}</SaveContext>;
 }
 

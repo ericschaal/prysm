@@ -187,10 +187,12 @@ small {
   stroke-width: 1.6;
   stroke-linecap: round;
 }
-.header-link:hover:enabled {
-  border-color: transparent;
-  background: var(--accent-soft);
-  color: var(--text);
+@media (hover: hover) {
+  .header-link:hover:enabled {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: var(--text);
+  }
 }
 
 /* ── Buttons ──────────────────────────────────────────────────────────── */
@@ -217,9 +219,11 @@ button {
     opacity var(--duration) var(--ease-out),
     transform var(--duration-fast) var(--ease-out);
 }
-button:hover:enabled {
-  background: var(--accent-soft);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  button:hover:enabled {
+    background: var(--accent-soft);
+    border-color: var(--line-strong);
+  }
 }
 button:active:enabled {
   transform: scale(0.98);
@@ -234,23 +238,29 @@ button.primary {
   color: var(--on-accent);
   font-weight: var(--weight-strong);
 }
-button.primary:hover:enabled {
-  border-color: transparent;
-  background: var(--accent-fill-hover);
+@media (hover: hover) {
+  button.primary:hover:enabled {
+    border-color: transparent;
+    background: var(--accent-fill-hover);
+  }
 }
 button.quiet {
   border-color: transparent;
   color: var(--accent-text);
   padding-inline: var(--space-3);
 }
-button.quiet:hover:enabled {
-  border-color: transparent;
+@media (hover: hover) {
+  button.quiet:hover:enabled {
+    border-color: transparent;
+  }
 }
 button.danger {
   color: var(--danger);
 }
-button.danger:hover:enabled {
-  background: var(--danger-soft);
+@media (hover: hover) {
+  button.danger:hover:enabled {
+    background: var(--danger-soft);
+  }
 }
 button[aria-busy='true'] {
   cursor: progress;
@@ -330,10 +340,12 @@ legend {
   input:not([type='checkbox'], [type='range'], [type='radio'])::placeholder {
   color: var(--text-3);
 }
-.field
-  input:not([type='checkbox'], [type='range'], [type='radio']):hover:enabled,
-.field select:hover:enabled {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .field
+    input:not([type='checkbox'], [type='range'], [type='radio']):hover:enabled,
+  .field select:hover:enabled {
+    border-color: var(--line-strong);
+  }
 }
 .field input:not([type='checkbox'], [type='range'], [type='radio']):focus,
 .field select:focus {
@@ -359,9 +371,13 @@ legend {
   opacity: 0.5;
   cursor: default;
 }
-.field [aria-invalid='true'],
-.field [aria-invalid='true']:hover:enabled {
+.field [aria-invalid='true'] {
   border-color: var(--danger);
+}
+@media (hover: hover) {
+  .field [aria-invalid='true']:hover:enabled {
+    border-color: var(--danger);
+  }
 }
 /*
  * The line under a control: help, or in its place the problem. Both share
@@ -1204,9 +1220,11 @@ fieldset > .help {
 .light-info button::after {
   inset: -5px -1px;
 }
-.light-info button:hover:enabled {
-  border-color: rgb(255 255 255 / 0.36);
-  background: rgb(255 255 255 / 0.08);
+@media (hover: hover) {
+  .light-info button:hover:enabled {
+    border-color: rgb(255 255 255 / 0.36);
+    background: rgb(255 255 255 / 0.08);
+  }
 }
 
 /* The power button: a dark ring when off, a lit lamp when on. */
@@ -1260,10 +1278,12 @@ fieldset > .help {
   stroke-width: 1.75;
   stroke-linecap: round;
 }
-.power:hover:enabled {
-  border-color: rgb(255 255 255 / 0.4);
-  background: rgb(255 255 255 / 0.08);
-  color: var(--text);
+@media (hover: hover) {
+  .power:hover:enabled {
+    border-color: rgb(255 255 255 / 0.4);
+    background: rgb(255 255 255 / 0.08);
+    color: var(--text);
+  }
 }
 .power:active:enabled {
   transform: scale(0.95);
@@ -1281,9 +1301,11 @@ fieldset > .help {
   /* The lamp lights first and softly; the room's light follows. */
   transition: opacity var(--duration-slow) var(--ease-out);
 }
-.light-card[data-lit='true'] .power:hover:enabled {
-  background: transparent;
-  color: #1d1934;
+@media (hover: hover) {
+  .light-card[data-lit='true'] .power:hover:enabled {
+    background: transparent;
+    color: #1d1934;
+  }
 }
 /* On but stopped: the button still turns it off, without the glow. */
 .light-card[data-mood='problem'] .power[aria-pressed='true'] {
@@ -1333,8 +1355,10 @@ fieldset > .help {
   cursor: pointer;
   color: var(--text-2);
 }
-.light-details summary:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .light-details summary:hover {
+    color: var(--text);
+  }
 }
 .light-details p {
   padding-top: 0;
@@ -1412,10 +1436,12 @@ fieldset > .help {
   font-size: 0.8125rem;
   white-space: nowrap;
 }
-.mode:hover:enabled {
-  border-color: rgb(255 255 255 / 0.36);
-  background: rgb(255 255 255 / 0.08);
-  color: var(--text);
+@media (hover: hover) {
+  .mode:hover:enabled {
+    border-color: rgb(255 255 255 / 0.36);
+    background: rgb(255 255 255 / 0.08);
+    color: var(--text);
+  }
 }
 .mode:active:enabled {
   transform: scale(0.98);
@@ -1567,10 +1593,12 @@ fieldset > .help {
   line-height: calc(var(--hit) - 2px);
   scroll-snap-align: start;
 }
-.chip:hover:enabled {
-  border-color: rgb(255 255 255 / 0.36);
-  background: rgb(255 255 255 / 0.08);
-  color: var(--text);
+@media (hover: hover) {
+  .chip:hover:enabled {
+    border-color: rgb(255 255 255 / 0.36);
+    background: rgb(255 255 255 / 0.08);
+    color: var(--text);
+  }
 }
 .chip[aria-pressed='true'] {
   border-color: transparent;
@@ -1578,9 +1606,11 @@ fieldset > .help {
   color: #1d1934;
   font-weight: var(--weight-strong);
 }
-.chip[aria-pressed='true']:hover:enabled {
-  background: #fff;
-  color: #1d1934;
+@media (hover: hover) {
+  .chip[aria-pressed='true']:hover:enabled {
+    background: #fff;
+    color: #1d1934;
+  }
 }
 .chip.add {
   /* An action, not a name: never cut short. */
@@ -1610,8 +1640,10 @@ fieldset > .help {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.device-link:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .device-link:hover {
+    color: var(--text);
+  }
 }
 .device-link::after {
   content: '↗';
@@ -2226,12 +2258,16 @@ fieldset > .help {
   text-align: left;
   cursor: pointer;
 }
-.row-link:hover:enabled {
-  background: none;
+@media (hover: hover) {
+  .row-link:hover:enabled {
+    background: none;
+  }
 }
-.row-link:hover:enabled .row-label,
-.row-choice label:hover .row-label {
-  color: var(--accent-text);
+@media (hover: hover) {
+  .row-link:hover:enabled .row-label,
+  .row-choice label:hover .row-label {
+    color: var(--accent-text);
+  }
 }
 .row-link:focus-visible,
 .row-choice label:has(input:focus-visible) {
@@ -2354,10 +2390,15 @@ fieldset > .help {
 .page-actions button.danger.quiet {
   color: var(--text-2);
 }
-.page-actions button.danger.quiet:hover:enabled,
 .page-actions button.danger.quiet:focus-visible {
   background: var(--danger-soft);
   color: var(--danger);
+}
+@media (hover: hover) {
+  .page-actions button.danger.quiet:hover:enabled {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
 }
 @media (max-width: 640px) {
   .page-actions > .actions {

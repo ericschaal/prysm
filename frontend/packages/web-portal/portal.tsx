@@ -10,6 +10,7 @@ import {
 } from '@prysm/application-client';
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -24,6 +25,7 @@ import { calibrateRoute, CalibrateWizard } from './calibrate';
 import { DeveloperContext, useDeveloper } from './developer';
 import { DiscoveryContext } from './discovery-context';
 import { LightCard } from './lighting';
+import { useLingering } from './lingering';
 import { useLiveColors, usePageVisible } from './live-colors';
 import { PreviewPanel } from './preview';
 import { FineTuning, QuickPicture } from './processing';
@@ -63,6 +65,14 @@ export interface WebPortalProps<
   discovery?: DiscoveryClient;
 }
 
+/**
+ * How long the connection may be missing before the page says so: the first
+ * state usually arrives within a few hundred milliseconds of loading (more
+ * from a TV), and a restart reconnects in about as long. Saying it at once
+ * would flash a warning and swap the header's Settings button in and out.
+ */
+export const connectionGraceMs = 1000;
+
 /** The hash route of the Settings page. */
 export const settingsRoute = '#/settings';
 /** The hash route of the live preview, opened from Settings. */
@@ -92,24 +102,56 @@ type Route =
 
 /**
  * Which page the hash names (Home, `#/settings`, `#/calibrate`,
- * `#/preview`) and a way to go to another. The hash keeps the portal's own
- * address and history.
+ * `#/preview`), a way to go to another, and a way back. The hash keeps the
+ * portal's own address and history.
+ *
+ * Each page keeps its own scroll place: going to a page starts it at the
+ * top; going back (its back button, or the browser's) returns to where it
+ * was left. The browser's own restoration is off, because it would scroll
+ * before the arriving page is drawn, against the leaving page's height.
  */
 function useRoute() {
   const [hash, setHash] = useState(() => window.location.hash);
+  /** Where each page was scrolled when it was left. */
+  const placesRef = useRef(new Map<string, number>());
+  /** The page shown, for remembering its place as it is left. */
+  const shownRef = useRef(hash);
+  /** Whether the next arrival goes back to the page's place. */
+  const returningRef = useRef(false);
   useEffect(() => {
-    const sync = () => setHash(window.location.hash);
+    if ('scrollRestoration' in window.history)
+      window.history.scrollRestoration = 'manual';
+    // The browser's back and forward buttons return to a page's place.
+    const sync = () => {
+      if (window.location.hash === shownRef.current) return;
+      placesRef.current.set(shownRef.current, window.scrollY);
+      returningRef.current = true;
+      setHash(window.location.hash);
+    };
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
-  function go(next: string) {
+  // Before the arriving page is painted, so it never shows at the old place.
+  useLayoutEffect(() => {
+    if (shownRef.current === hash) return;
+    shownRef.current = hash;
+    const place = returningRef.current ? (placesRef.current.get(hash) ?? 0) : 0;
+    returningRef.current = false;
+    window.scrollTo(0, place);
+  }, [hash]);
+  function move(next: string, back: boolean) {
+    if (next === shownRef.current) return;
+    placesRef.current.set(shownRef.current, window.scrollY);
+    returningRef.current = back;
     setHash(next);
     window.location.hash = next;
   }
+  const go = (next: string) => move(next, false);
+  const back = (next: string) => move(next, true);
   let route: Route = routes[hash] ?? 'home';
   if (route === 'home' && hash.startsWith(`${profilesRoute}/`))
     route = 'profile';
-  return [route, go, hash] as const;
+  return [route, go, hash, back] as const;
 }
 
 /** The page each fixed hash names; a profile's page is under its route. */
@@ -203,7 +245,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   /** How setup ended; focused when shown. */
   const [setupNotice, setSetupNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
-  const [hashRoute, go, hash] = useRoute();
+  const [hashRoute, go, hash, back] = useRoute();
   const developer = useDeveloper();
   // Without a preview client there is no Preview page: Home instead.
   const route = hashRoute === 'preview' && !preview ? 'home' : hashRoute;
@@ -229,7 +271,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   useEffect(() => {
     if (route !== 'home' && route !== 'calibrate')
       pageHeadingRef.current?.focus({ preventScroll: true });
-  }, [route]);
+  }, [route, hash]);
 
   // Home's glow takes the LEDs' colours while screen sync runs and is seen.
   const homeGridRef = useRef<HTMLDivElement>(null);
@@ -242,6 +284,8 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     homeGridRef,
   );
 
+  // Disabled at once while offline, but said only once it lasts.
+  const outOfTouch = useLingering(!online, connectionGraceMs, 0);
   let connectionLabel = 'Offline';
   if (online) connectionLabel = 'Connected';
   else if (connection.status === 'connecting') connectionLabel = 'Connecting…';
@@ -265,7 +309,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </span>
       <span className="header-end">
         <span
-          className={`connection ${online ? 'online' : 'offline'}`}
+          className={`connection ${outOfTouch ? 'offline' : 'online'}`}
           role="status"
         >
           {connectionLabel}
@@ -283,6 +327,14 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       </span>
     </header>
   );
+  /**
+   * Each page is its own: a new one mounts in place of the last, so nothing
+   * a page holds (its save line and the saves it waits for, a draft, the
+   * heading) carries over to the next, even where two pages share parts.
+   * Setup and Calibrate take over whatever the hash says.
+   */
+  let pageKey: string = route === 'profile' ? hash : route;
+  if (setup === 'open' && route !== 'calibrate') pageKey = 'setup';
   const page = (
     className: string,
     title: string,
@@ -291,16 +343,16 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
   ) => (
     <div className={wide ? 'portal wide' : 'portal'}>
       {header}
-      <main id="content" className={className}>
+      <main key={pageKey} id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
         <DeveloperContext value={developer}>{content}</DeveloperContext>
       </main>
     </div>
   );
   /** A page under Settings: its title and the way back. */
-  const pageHeading = (title: string, back: string, backLabel: string) => (
+  const pageHeading = (title: string, to: string, backLabel: string) => (
     <div className="page-heading">
-      <button type="button" className="back quiet" onClick={() => go(back)}>
+      <button type="button" className="back quiet" onClick={() => back(to)}>
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M15 5.5 8.5 12l6.5 6.5" />
         </svg>
@@ -323,7 +375,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
 
   const { settings, revision, session } = snapshot;
   const output = settings.output ?? null;
-  const offline = !online ? (
+  const offline = outOfTouch ? (
     <p className="notice warning" role="alert">
       Lost the connection to Prysm. Reconnecting; your changes are kept.
     </p>
@@ -364,7 +416,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
             dispatch(application.commands.setCalibration(calibration))
           }
           leave={() => {
-            go(calibrateFrom);
+            back(calibrateFrom);
             setCalibrateFrom('');
           }}
         />
@@ -413,7 +465,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     path,
     failure: snapshot.failure ?? null,
     startSync,
-    leave: () => go(settingsRoute),
+    leave: () => back(settingsRoute),
     showPreview: preview ? () => go(previewRoute) : undefined,
   };
   if (route === 'video' || route === 'lights')
@@ -474,7 +526,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
     title: string,
     heading: string,
     content: ReactNode,
-    back = settingsRoute,
+    to = settingsRoute,
     backLabel = 'Settings',
     /** Instead of the save status, for a page with nothing to save. */
     note?: string,
@@ -483,7 +535,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
       `portal-page ${className}`,
       title,
       <SaveStatusProvider>
-        {pageHeading(heading, back, backLabel)}
+        {pageHeading(heading, to, backLabel)}
         {/* Choices kept in this browser have nothing to save: said so, in
             the same place, so every page starts alike. */}
         {note !== undefined ? (
@@ -544,7 +596,7 @@ export function WebPortal<C extends AdapterSection, O extends AdapterSection>({
         deleted={(gone) =>
           setDeletedProfiles((current) => ({ ...current, [id]: gone }))
         }
-        leave={() => go(profilesRoute)}
+        leave={() => back(profilesRoute)}
       />,
       profilesRoute,
       'Colour profiles',

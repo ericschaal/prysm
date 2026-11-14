@@ -137,6 +137,54 @@ test('the lighting card says why the lights are not showing screen sync', async 
   }
 });
 
+test('a state tick leaves Settings in place; each page has its own save line', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const running = (fps) =>
+    act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        input: { fps, receiving: true, latency: { output_ms: fps / 10 } },
+      }),
+    );
+  try {
+    await running(30);
+    await openSettings();
+    const nodes = () => [
+      $('.page-heading h2'),
+      $('.save-status'),
+      $('.row-link', row('Lights')),
+      $('input[type="checkbox"]', row('Remove black bars')),
+    ];
+    const before = nodes();
+    // The engine republishes what it measures about once a second.
+    await running(29.9);
+    await running(30.1);
+    nodes().forEach((node, index) =>
+      assert.equal(node, before[index], `node ${index} kept across ticks`),
+    );
+    assert.equal($('.save-status').textContent, 'All changes saved');
+
+    // A save still on its way when Settings is left is not the next page's.
+    const release = fixture.holdSaves();
+    await click($('input[type="checkbox"]', row('Remove black bars')));
+    assert.equal($('.save-status').textContent, 'Saving…');
+    await openPage('Fine-tuning');
+    assert.notEqual($('.page-heading h2'), before[0], 'a page of its own');
+    assert.equal($('.save-status').textContent, 'All changes saved');
+    release();
+    await act(async () => sleep(50));
+    assert.equal(
+      $('.save-status').textContent,
+      'All changes saved',
+      'leaving a save is not saving it',
+    );
+  } finally {
+    await portal.unmount();
+  }
+});
+
 test('the lighting card names a low WLED brightness while screen sync shows', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;

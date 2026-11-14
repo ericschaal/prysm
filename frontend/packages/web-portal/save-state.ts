@@ -14,14 +14,20 @@ export const savedForMs = 2000;
 
 export const SaveContext = createContext<{
   report: (source: string, state: SaveState) => void;
+  /** `source` is gone: it no longer counts, and says nothing on leaving. */
+  forget: (source: string) => void;
   phase: SavePhase;
 } | null>(null);
 
 /** Tell the page where `source` stands; nothing without a provider. */
 export function useSaveReport(source: string, state: SaveState) {
-  const report = use(SaveContext)?.report;
+  const context = use(SaveContext);
+  const report = context?.report;
+  const forget = context?.forget;
   useEffect(() => {
     report?.(source, state);
   }, [report, source, state]);
-  useEffect(() => () => report?.(source, 'idle'), [report, source]);
+  // Leaving is not saving: a part that goes while its save is on its way
+  // must not make the page say "Saved".
+  useEffect(() => () => forget?.(source), [forget, source]);
 }
