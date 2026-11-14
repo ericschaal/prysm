@@ -86,6 +86,7 @@ test('Settings stays put under state ticks and pages keep their own place and sa
     .getByRole('region', { name: 'Your lights' })
     .getByRole('button', { name: 'Power' })
     .click();
+  await expect(page).toHaveTitle('Prysm');
   await sender.waitFor('connected');
   await expect
     .poll(async () => (await prysm.state()).session.state)
@@ -97,6 +98,7 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await expect(
     page.getByRole('heading', { name: 'Settings', exact: true }),
   ).toBeVisible();
+  await expect(page).toHaveTitle('Settings · Prysm');
   // The same nodes after several ticks: nothing remounted.
   const nodes = await page.evaluateHandle(() => [
     document.querySelector('.page-heading h2'),
@@ -128,6 +130,7 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await mark(page, 'to About');
   await page.getByRole('button', { name: /^About this Prysm/ }).click();
   await expect(page).toHaveURL(/#\/settings\/about$/);
+  await expect(page).toHaveTitle('About this Prysm · Prysm');
   // The address changes just before the page is drawn.
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await mark(page, 'back to Settings');
