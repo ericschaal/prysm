@@ -12,6 +12,8 @@ edge of the strip. Use it to tell a capture problem from a lighting problem.
 
 What you see:
 
+<img src="../images/portal-preview.webp" alt="Live preview of a sunset over the sea, with the colours sent to each edge of the LED strip drawn around the picture." width="640">
+
 - The captured picture, scaled down, with each edge's LED colours around it.
 - An outline of the area Prysm samples when it removes black bars.
 

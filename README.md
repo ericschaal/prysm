@@ -64,6 +64,10 @@ In the web portal you turn the lights on or off, switch between Screen sync
 and WLED's own effects, watch a [live preview](docs/users/preview.md) of the
 picture and the LED colours, and change settings.
 
+<p align="center">
+  <img src="docs/images/portal-home.webp" alt="Prysm web portal Home in dark mode: the lights are On in Screen sync at 80% brightness with the Movie night profile, next to the setup from TV through Prysm to a WLED with 96 LEDs." width="768">
+</p>
+
 ## Develop Prysm
 
 [Build and check](docs/developers/README.md) · [Architecture](docs/developers/architecture.md) ·

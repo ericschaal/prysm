@@ -23,6 +23,8 @@ live mode over HTTP. Both must be allowed between Prysm and WLED.
 The portal works from a phone on the same network; no extra setting is
 needed. When Prysm starts it prints the address in its log.
 
+<img src="../images/portal-home-phone.webp" alt="Prysm web portal Home on a phone: the light card with On, Screen sync, brightness and colour profiles above the setup card." width="260">
+
 ## 3. Run the setup wizard
 
 The portal opens the wizard until a video source and lights are saved.
@@ -55,6 +57,8 @@ counts.
 ## 4. Daily use
 
 Home has two cards.
+
+<img src="../images/portal-home.webp" alt="Prysm web portal Home: the light card shows On, Screen sync, 80% brightness and the Movie night profile; the setup card shows TV, Prysm and WLED with 96 LEDs around the TV." width="768">
 
 - **The light card**: whether the lights are **Off**, **On** or **Stopped**,
   the power button, the two modes **Screen sync** (the lights follow the
@@ -91,6 +95,8 @@ changes saved**, **Saving…** or **Not saved**; a change that could not be
 saved also says so at its control, with **Try again**. Brightness and the
 colour profile in use are chosen on Home.
 
+<img src="../images/portal-settings.webp" alt="The Settings list: Video source and Lights under Setup; Colour profiles, Fine-tuning and Remove black bars under Picture; Appearance, About this Prysm and Start over with setup under This device." width="560">
+
 <a id="processing"></a>
 
 ### Picture
@@ -123,6 +129,8 @@ yet** and opens the same page. **Use this video
 source** or **Use these lights** saves; **Cancel** leaves without saving. A
 problem with either shows in its row, in red, and **Change setup** on Home
 opens the part that has the problem.
+
+<img src="../images/portal-lights.webp" alt="The Lights page: the WLED address and the LEDs per edge (30 top, 18 right, 30 bottom, 18 left) drawn around the screen, starting at the bottom-left corner and running clockwise." width="480">
 
 Saving restarts Screen sync if it is on, and Prysm then checks the change: it
 says when the picture arrives or the lights work, or that they don't. Until
