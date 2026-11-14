@@ -27,7 +27,7 @@ Story frames only (credits and title cards left out):
 
 | | Tears of Steel (live action, muted) | Big Buck Bunny (animation, colourful) |
 | --- | --- | --- |
-| Frames | 41 | 40 |
+| Frames | 41 | 39 |
 | Colourfulness kept, median LED | 86 % | 88 % |
 | Colourfulness kept, lowest tenth of LEDs | 57 % | 60 % |
 | LEDs keeping less than half | 6.8 % | 5.6 % |
