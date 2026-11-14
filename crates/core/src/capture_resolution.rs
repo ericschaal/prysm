@@ -17,11 +17,6 @@ impl CaptureResolution {
     pub const fn dimensions(self) -> [u32; 2] {
         self.0
     }
-
-    #[must_use]
-    pub fn rgb24_bytes(self) -> usize {
-        self.0[0] as usize * self.0[1] as usize * 3
-    }
 }
 
 impl Default for CaptureResolution {
@@ -48,9 +43,7 @@ mod tests {
         }
         let uhd = CaptureResolution::new(3840, 2160).unwrap();
         assert_eq!(uhd.dimensions(), [3840, 2160]);
-        assert_eq!(uhd.rgb24_bytes(), 24_883_200);
         let resolution = CaptureResolution::new(3, 2).unwrap();
         assert_eq!(resolution.dimensions(), [3, 2]);
-        assert_eq!(resolution.rgb24_bytes(), 18);
     }
 }

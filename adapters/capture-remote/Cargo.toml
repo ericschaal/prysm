@@ -22,8 +22,10 @@ thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 tungstenite = { workspace = true, features = ["handshake", "rustls-tls-native-roots"] }
-# Only to pick ring as the TLS crypto provider.
+# wss: ring as the crypto provider, and the system's certificate
+# authorities, loaded once per process.
 rustls.workspace = true
+rustls-native-certs.workspace = true
 utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]

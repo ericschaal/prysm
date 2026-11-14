@@ -11,11 +11,12 @@ use prysm_h264::{Encoder, EncoderSettings, H264Error};
 use prysm_ports::{CAPTURE_PROTOCOL, Error, FrameSink, Result, chain};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tungstenite::HandshakeError;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderValue, StatusCode, Uri, header};
 use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Connector, HandshakeError};
 
 /// How long `connect` waits for the connection, the upgrade (and TLS), and
 /// then for the receiver's request.
@@ -347,9 +348,21 @@ fn upgrade(url: &Uri, socket: TcpStream) -> Result<Link<MaybeTlsStream<TcpStream
         header::SEC_WEBSOCKET_PROTOCOL,
         HeaderValue::from_static(CAPTURE_PROTOCOL),
     );
+    let connector = match url.scheme_str() {
+        Some("wss") => Some(Connector::Rustls(authorities().ok_or_else(|| {
+            Error::adapter(
+                format!("cannot open {url}"),
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "the system has no certificate authorities",
+                ),
+            )
+        })?)),
+        _ => None,
+    };
     // A request or a control is the longest message this end reads.
     let config = Some(link::config(MAX_TEXT_BYTES));
-    match tungstenite::client_tls_with_config(request, socket, config, None) {
+    match tungstenite::client_tls_with_config(request, socket, config, connector) {
         Ok((socket, _)) => Ok(Link::new(socket)),
         Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {
             let status = response.status();
@@ -364,6 +377,33 @@ fn upgrade(url: &Uri, socket: TcpStream) -> Result<Link<MaybeTlsStream<TcpStream
         }
         Err(error) => Err(Error::adapter(format!("cannot open {url}"), error)),
     }
+}
+
+/// TLS verification against the system's certificate authorities, loaded
+/// once per process (`None`: there are none). Loading is the slow part of a
+/// `wss://` connect: on macOS it asks the trust daemon about every keychain
+/// certificate, which takes seconds; elsewhere it parses the system bundle.
+/// `SSL_CERT_FILE` and `SSL_CERT_DIR` replace the system's set, read here.
+fn authorities() -> Option<Arc<rustls::ClientConfig>> {
+    static CONFIG: OnceLock<Option<Arc<rustls::ClientConfig>>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let loaded = rustls_native_certs::load_native_certs();
+            if !loaded.errors.is_empty() {
+                tracing::warn!(errors = ?loaded.errors, "some certificate authorities did not load");
+            }
+            let mut roots = rustls::RootCertStore::empty();
+            let (added, ignored) = roots.add_parsable_certificates(loaded.certs);
+            tracing::debug!(added, ignored, "certificate authorities loaded");
+            (added > 0).then(|| {
+                Arc::new(
+                    rustls::ClientConfig::builder()
+                        .with_root_certificates(roots)
+                        .with_no_client_auth(),
+                )
+            })
+        })
+        .clone()
 }
 
 /// The receiver's first message: its request. A peer that closes or stays

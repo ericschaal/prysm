@@ -28,7 +28,8 @@ fn buffer(index: u32) -> v4l2_buffer {
         index,
         type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
         memory: v4l2_memory_V4L2_MEMORY_MMAP,
-        // SAFETY: V4L2 buffer fields are plain integers/unions initialized by the ioctl.
+        // SAFETY: every field is an integer, a raw pointer or a union of them,
+        // for which all-zero bytes are valid (and V4L2 wants reserved fields zero).
         ..unsafe { std::mem::zeroed() }
     }
 }
@@ -50,8 +51,12 @@ impl Stream {
         }
         Ok(stream)
     }
-    fn ioctl<T>(&self, request: v4l2::vidioc::_IOC_TYPE, value: &mut T) -> io::Result<()> {
-        // SAFETY: callers pair each ioctl with its matching initialized V4L2 structure.
+    /// # Safety
+    /// `value` is the structure `request` takes, so the kernel reads and
+    /// writes only within it.
+    unsafe fn ioctl<T>(&self, request: v4l2::vidioc::_IOC_TYPE, value: &mut T) -> io::Result<()> {
+        // SAFETY: the caller pairs `request` with its structure; the fd is open
+        // for as long as `self.handle` lives.
         unsafe { v4l2::ioctl(self.handle.fd(), request, std::ptr::from_mut(value).cast()) }
     }
     fn request_buffers(&self, count: u32) -> io::Result<u32> {
@@ -59,10 +64,12 @@ impl Stream {
             count,
             type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
             memory: v4l2_memory_V4L2_MEMORY_MMAP,
-            // SAFETY: all reserved fields must be zero for VIDIOC_REQBUFS.
+            // SAFETY: the remaining fields are integers, for which zero is valid
+            // (and V4L2 wants reserved fields zero).
             ..unsafe { std::mem::zeroed() }
         };
-        self.ioctl(v4l2::vidioc::VIDIOC_REQBUFS, &mut request)?;
+        // SAFETY: REQBUFS takes a `v4l2_requestbuffers`.
+        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_REQBUFS, &mut request) }?;
         Ok(request.count)
     }
     fn allocate(&mut self) -> io::Result<()> {
@@ -73,11 +80,14 @@ impl Stream {
         }
         for index in 0..count {
             let mut info = buffer(index);
-            self.ioctl(v4l2::vidioc::VIDIOC_QUERYBUF, &mut info)?;
+            // SAFETY: QUERYBUF takes a `v4l2_buffer`.
+            unsafe { self.ioctl(v4l2::vidioc::VIDIOC_QUERYBUF, &mut info) }?;
             if info.length == 0 {
                 return Err(io::Error::other("capture device returned an empty buffer"));
             }
-            // SAFETY: QUERYBUF supplies this buffer's mmap offset and length for this fd.
+            // SAFETY: for MMAP memory QUERYBUF sets `m.offset`, the union member
+            // read; mapping `length` bytes at that offset of this device is what
+            // V4L2 defines, and the mapping lives until `release` unmaps it.
             let pointer = unsafe {
                 v4l2::mmap(
                     std::ptr::null_mut(),
@@ -96,21 +106,24 @@ impl Stream {
         Ok(())
     }
     fn queue(&self, index: u32) -> io::Result<()> {
-        self.ioctl(v4l2::vidioc::VIDIOC_QBUF, &mut buffer(index))
+        // SAFETY: QBUF takes a `v4l2_buffer`.
+        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_QBUF, &mut buffer(index)) }
     }
     pub fn start(&mut self) -> io::Result<()> {
         for index in 0..self.buffers.len() {
             self.queue(u32::try_from(index).expect("V4L buffer index"))?;
         }
         let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        self.ioctl(v4l2::vidioc::VIDIOC_STREAMON, &mut kind)?;
+        // SAFETY: STREAMON takes the buffer type, a `u32`.
+        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_STREAMON, &mut kind) }?;
         self.active = true;
         Ok(())
     }
     pub fn stop(&mut self) -> io::Result<()> {
         if self.active {
             let mut kind = v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            self.ioctl(v4l2::vidioc::VIDIOC_STREAMOFF, &mut kind)?;
+            // SAFETY: STREAMOFF takes the buffer type, a `u32`.
+            unsafe { self.ioctl(v4l2::vidioc::VIDIOC_STREAMOFF, &mut kind) }?;
             self.active = false;
         }
         Ok(())
@@ -120,7 +133,8 @@ impl Stream {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "VIDIOC_DQBUF"));
         }
         let mut info = buffer(0);
-        self.ioctl(v4l2::vidioc::VIDIOC_DQBUF, &mut info)?;
+        // SAFETY: DQBUF takes a `v4l2_buffer`.
+        unsafe { self.ioctl(v4l2::vidioc::VIDIOC_DQBUF, &mut info) }?;
         let mapping = self
             .buffers
             .get(info.index as usize)
@@ -130,7 +144,10 @@ impl Stream {
         let result = if length > mapping.length {
             Err(io::Error::other("capture frame exceeds its mapped buffer"))
         } else {
-            // SAFETY: this buffer is dequeued and owned by userspace until queue below.
+            // SAFETY: `pointer` maps `mapping.length >= length` readable bytes
+            // (unmapped only by `release`, which needs `&mut self`); the buffer is
+            // dequeued, so the driver does not write it until it is queued again
+            // below, after `copy` (which cannot keep the slice) returns.
             Ok(copy(
                 unsafe { std::slice::from_raw_parts(mapping.pointer.as_ptr(), length) },
                 &info,
@@ -142,9 +159,11 @@ impl Stream {
     pub fn release(&mut self) -> io::Result<()> {
         let fd = self.handle.fd();
         self.release_with(
-            // SAFETY: release_with supplies only STREAMOFF and REQBUFS with their matching structs.
+            // SAFETY: `release_with` passes only STREAMOFF with the buffer type and
+            // REQBUFS with a `v4l2_requestbuffers`, each the structure its request takes.
             |request, value| unsafe { v4l2::ioctl(fd, request, value) },
-            // SAFETY: each mapping carries the exact pointer/length returned by mmap.
+            // SAFETY: `release_with` passes each mapping's pointer and length as
+            // `mmap` returned them, once: a mapping unmapped is removed from its slot.
             |pointer, length| unsafe { v4l2::munmap(pointer, length) },
         )
     }
@@ -181,7 +200,8 @@ impl Stream {
                 count: 0,
                 type_: v4l2_buf_type_V4L2_BUF_TYPE_VIDEO_CAPTURE,
                 memory: v4l2_memory_V4L2_MEMORY_MMAP,
-                // SAFETY: reserved fields are required to be zero by V4L2.
+                // SAFETY: the remaining fields are integers, for which zero is valid
+                // (and V4L2 wants reserved fields zero).
                 ..unsafe { std::mem::zeroed() }
             };
             match ioctl(

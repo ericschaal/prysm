@@ -1,11 +1,5 @@
 //! Native device capture as one blocking call. The caller owns the thread;
 //! readiness and release never depend on frame consumption.
-#[cfg(feature = "async")]
-mod channels;
-
-#[cfg(feature = "async")]
-pub use channels::{CaptureExit, CaptureWorker, DeviceCapture};
-
 use crate::{CaptureError, Frame, Result};
 use std::num::NonZeroU32;
 use std::sync::Arc;

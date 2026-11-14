@@ -76,7 +76,9 @@ fn yuv_colorimetry(
 
 fn negotiated_colorimetry(device: &Device) -> Result<(YuvRange, YuvStandardMatrix)> {
     // v4l::Format omits ycbcr_enc, so read the complete negotiated kernel format.
-    // SAFETY: G_FMT writes an initialized VideoCapture structure for a live device fd.
+    // SAFETY: all-zero bytes are a valid `v4l2_format` (integers, and a union
+    // of integer arrays and raw pointers); G_FMT takes exactly this structure
+    // and, for the capture type set here, fills its `pix` member, the one read.
     let format = unsafe {
         let mut format = v4l::v4l_sys::v4l2_format {
             type_: Type::VideoCapture as u32,
@@ -90,12 +92,10 @@ fn negotiated_colorimetry(device: &Device) -> Result<(YuvRange, YuvStandardMatri
         .context("failed to read negotiated capture colorimetry")?;
         format.fmt.pix
     };
-    // SAFETY: ycbcr_enc is the active union member for a YUYV capture format.
-    yuv_colorimetry(
-        format.colorspace,
-        unsafe { format.__bindgen_anon_1.ycbcr_enc },
-        format.quantization,
-    )
+    // SAFETY: both members of this union (`ycbcr_enc`, `hsv_enc`) are `u32`,
+    // so either read is defined; for a YUV format the kernel sets `ycbcr_enc`.
+    let encoding = unsafe { format.__bindgen_anon_1.ycbcr_enc };
+    yuv_colorimetry(format.colorspace, encoding, format.quantization)
 }
 
 fn configure_frame_rate(device: &Device, refresh_rate_hz: NonZeroU32) -> anyhow::Result<()> {

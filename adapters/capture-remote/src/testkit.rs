@@ -8,7 +8,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -178,13 +178,15 @@ pub fn test_ca() -> PathBuf {
     tls_fixture("ca.pem")
 }
 
-/// Set in the process [`in_test_ca_process`] starts.
-const TEST_CA_PROCESS: &str = "PRYSM_TEST_CA_PROCESS";
+/// Set, to the authority's name, in the processes [`in_test_ca_process`]
+/// and [`in_other_ca_process`] start.
+const CA_PROCESS: &str = "PRYSM_TEST_CA_PROCESS";
 
-/// Whether this is the process that trusts only [`test_ca`]. If not, runs
-/// the test named `test` again in such a process (this test binary with
-/// `SSL_CERT_FILE` set to the test CA and `SSL_CERT_DIR` removed), asserts
-/// it passed and returns `false`.
+/// Whether this is the process that trusts only [`test_ca`]. In the
+/// test's first process, runs the test named `test` again in such a process
+/// (this test binary with `SSL_CERT_FILE` set to the test CA and
+/// `SSL_CERT_DIR` removed), asserts it passed and returns `false`; in a
+/// process [`in_other_ca_process`] started, returns `false`.
 ///
 /// A test cannot change its own environment safely, and the presence of
 /// `SSL_CERT_FILE` says nothing: Cargo on Linux sets it (and `SSL_CERT_DIR`)
@@ -194,17 +196,33 @@ const TEST_CA_PROCESS: &str = "PRYSM_TEST_CA_PROCESS";
 /// The run in the test CA's process failed.
 #[must_use]
 pub fn in_test_ca_process(test: &str) -> bool {
-    if std::env::var_os(TEST_CA_PROCESS).is_some() {
-        return true;
+    in_process_trusting(test, "test", &test_ca())
+}
+
+/// As [`in_test_ca_process`], for a process that trusts only an authority
+/// that signed nothing here, so [`tls_proxy`]'s certificate is refused.
+/// Neither process reads the system's authorities, which on macOS takes
+/// seconds.
+///
+/// # Panics
+/// The run in that process failed.
+#[must_use]
+pub fn in_other_ca_process(test: &str) -> bool {
+    in_process_trusting(test, "other", &tls_fixture("other-ca.pem"))
+}
+
+fn in_process_trusting(test: &str, name: &str, authority: &Path) -> bool {
+    if let Some(running) = std::env::var_os(CA_PROCESS) {
+        return running == name;
     }
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
-        .env(TEST_CA_PROCESS, "1")
-        .env("SSL_CERT_FILE", test_ca())
+        .env(CA_PROCESS, name)
+        .env("SSL_CERT_FILE", authority)
         .env_remove("SSL_CERT_DIR")
         .status()
         .unwrap();
-    assert!(status.success(), "{test} failed with the test CA");
+    assert!(status.success(), "{test} failed trusting the {name} CA");
     false
 }
 
@@ -239,12 +257,23 @@ pub fn tls_proxy(upstream: SocketAddr) -> SocketAddr {
     addr
 }
 
-/// Copy decrypted bytes to `upstream` and back until either side ends.
-fn pump(client: TcpStream, upstream: SocketAddr, config: Arc<rustls::ServerConfig>) {
-    let tick = Some(Duration::from_millis(2));
-    let Ok(connection) = rustls::ServerConnection::new(config) else {
+/// Complete the TLS handshake (within [`BOUND`]), then connect to
+/// `upstream` and copy decrypted bytes both ways until either side ends.
+/// Upstream is not involved before the handshake, so a slow client or one
+/// that refuses the certificate never reaches the portal.
+fn pump(mut client: TcpStream, upstream: SocketAddr, config: Arc<rustls::ServerConfig>) {
+    let Ok(mut connection) = rustls::ServerConnection::new(config) else {
         return;
     };
+    if client.set_read_timeout(Some(BOUND)).is_err() {
+        return;
+    }
+    while connection.is_handshaking() {
+        if connection.complete_io(&mut client).is_err() {
+            return;
+        }
+    }
+    let tick = Some(Duration::from_millis(2));
     if client.set_read_timeout(tick).is_err() {
         return;
     }

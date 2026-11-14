@@ -1,10 +1,8 @@
 //! Capture interfaces, latest-frame delivery, and platform adapters.
-pub use prysm_core::{
-    Frame, FrameError, FramePool, PixelFormat, YuvRange, YuvStandardMatrix, yuyv,
-};
+pub use prysm_core::Frame;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 mod device;
-#[cfg(feature = "async")]
-pub use device::{CaptureExit, CaptureWorker, DeviceCapture};
 pub use device::{CaptureSink, DeviceInfo, capture, list_devices};
 
 /// Terminal capture failures. Cancellation closes the stream successfully.

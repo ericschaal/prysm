@@ -83,6 +83,7 @@ tungstenite = { version = "0.30", default-features = false }
 http = "1"
 bytes = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 utoipa = "6"
 

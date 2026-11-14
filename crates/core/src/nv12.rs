@@ -1,11 +1,9 @@
 //! NV12 (planar 4:2:0) sampling without converting the whole frame.
 use crate::yuyv::ConversionError;
 use crate::{Frame, PixelFormat, YuvToRgb};
-use std::ops::Range;
 
 /// Borrowed NV12 planes plus the frame's precomputed color conversion.
-/// Reads only the pixels asked for. Rows are independent, so callers can
-/// split work by row (or replace [`Self::row`] with a vector kernel).
+/// Reads only the pixels asked for.
 #[derive(Debug, Clone, Copy)]
 pub struct Nv12View<'a> {
     y: &'a [u8],
@@ -44,27 +42,6 @@ impl<'a> Nv12View<'a> {
         let chroma = (y as usize / 2) * width + (x as usize & !1);
         self.convert.rgb(luma, self.uv[chroma], self.uv[chroma + 1])
     }
-
-    /// Pixels `columns` of row `y`, left to right, clipped to the frame.
-    pub fn row(&self, y: u32, columns: Range<u32>) -> impl Iterator<Item = (u8, u8, u8)> + 'a {
-        let width = self.width as usize;
-        let (start, end) = if y < self.height {
-            (
-                columns.start.min(self.width) as usize,
-                columns.end.min(self.width) as usize,
-            )
-        } else {
-            (0, 0)
-        };
-        let start = start.min(end);
-        let row = y as usize * width;
-        let chroma = (y as usize / 2) * width;
-        let (luma, uv, convert) = (self.y, self.uv, self.convert);
-        (start..end).map(move |x| {
-            let pair = chroma + (x & !1);
-            convert.rgb(luma[row + x], uv[pair], uv[pair + 1])
-        })
-    }
 }
 
 /// Converts a whole NV12 frame to RGB24 with the `yuv` crate's SIMD path.
@@ -73,31 +50,21 @@ impl<'a> Nv12View<'a> {
 ///
 /// # Errors
 /// Returns an error for a non-NV12 frame, RGB size overflow, or a decoder failure.
+/// Empty frames give an empty buffer.
 pub fn nv12_to_rgb(frame: &Frame) -> Result<Vec<u8>, ConversionError> {
-    let mut rgb = Vec::new();
-    nv12_to_rgb_into(frame, &mut rgb)?;
-    Ok(rgb)
-}
-
-/// Like [`nv12_to_rgb`], but reuses the output allocation. Empty frames clear it.
-///
-/// # Errors
-/// Returns an error for a non-NV12 frame, RGB size overflow, or a decoder failure.
-pub fn nv12_to_rgb_into(frame: &Frame, rgb_out: &mut Vec<u8>) -> Result<(), ConversionError> {
     let PixelFormat::NV12 { range, matrix } = frame.format() else {
         return Err(ConversionError::NotNv12);
     };
     let (width, height) = (frame.width(), frame.height());
     if width == 0 || height == 0 {
-        rgb_out.clear();
-        return Ok(());
+        return Ok(Vec::new());
     }
     let (y_plane, uv_plane) = frame.nv12_planes().ok_or(ConversionError::NotNv12)?;
     let rgb_size = PixelFormat::RGB24
         .expected_size(width, height)
         .map_err(|_| ConversionError::SizeOverflow)?
         .ok_or(ConversionError::SizeOverflow)?;
-    rgb_out.resize(rgb_size, 0);
+    let mut rgb = vec![0; rgb_size];
     yuv::yuv_nv12_to_rgb(
         &yuv::YuvBiPlanarImage {
             y_plane,
@@ -107,13 +74,14 @@ pub fn nv12_to_rgb_into(frame: &Frame, rgb_out: &mut Vec<u8>) -> Result<(), Conv
             width,
             height,
         },
-        rgb_out,
+        &mut rgb,
         width.checked_mul(3).ok_or(ConversionError::SizeOverflow)?,
         range,
         matrix,
         yuv::YuvConversionMode::Balanced,
     )
-    .map_err(ConversionError::Decode)
+    .map_err(ConversionError::Decode)?;
+    Ok(rgb)
 }
 
 #[cfg(test)]
@@ -143,10 +111,8 @@ mod tests {
                 let view = Nv12View::new(&frame).unwrap();
                 let full = nv12_to_rgb(&frame).unwrap();
                 for y in 0..10 {
-                    let row: Vec<_> = view.row(y, 0..18).collect();
                     for x in 0..18 {
                         let (r, g, b) = view.pixel(x, y);
-                        assert_eq!(row[x as usize], (r, g, b));
                         let at = ((y * 18 + x) * 3) as usize;
                         for (actual, expected) in [r, g, b].into_iter().zip(&full[at..at + 3]) {
                             assert!(
@@ -173,8 +139,6 @@ mod tests {
         assert_eq!(view.pixel(1, 0), (255, 255, 255));
         assert_eq!(view.pixel(0, 1), (255, 255, 255));
         assert_eq!(view.pixel(2, 0), (0, 0, 0));
-        assert_eq!(view.row(0, 1..9).count(), 1);
-        assert_eq!(view.row(2, 0..2).count(), 0);
         // Red chroma tints both pixels of a pair, on both rows of the pair.
         let red = Frame::new(
             vec![128; 4].into_iter().chain([128, 220]).collect(),
@@ -200,8 +164,6 @@ mod tests {
             matrix: YuvStandardMatrix::Bt601,
         };
         let empty = Frame::new(vec![], 0, 2, format).unwrap();
-        let mut out = vec![1; 3];
-        nv12_to_rgb_into(&empty, &mut out).unwrap();
-        assert_eq!(out, [] as [u8; 0]);
+        assert_eq!(nv12_to_rgb(&empty).unwrap(), [] as [u8; 0]);
     }
 }

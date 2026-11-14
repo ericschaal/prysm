@@ -1758,15 +1758,12 @@ dependencies = [
  "core-media",
  "core-video",
  "dispatch2",
- "futures",
  "libc",
  "objc2",
  "objc2-foundation",
  "prysm-core",
  "rustix 1.1.6",
  "thiserror 2.0.21",
- "tokio",
- "tokio-util",
  "tracing",
  "tracing-subscriber",
  "v4l",
@@ -1798,6 +1795,7 @@ dependencies = [
  "prysm-ports",
  "prysm-runtime",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1946,7 +1944,6 @@ dependencies = [
 name = "prysm-processor"
 version = "0.0.0"
 dependencies = [
- "futures",
  "prysm-core",
  "tracing",
 ]

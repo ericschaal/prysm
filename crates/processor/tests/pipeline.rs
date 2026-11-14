@@ -235,25 +235,6 @@ fn dim_gray_and_colored_edges_are_picture_not_black_bars() {
 }
 
 #[test]
-fn stream_preserves_typed_source_errors() {
-    use futures::StreamExt;
-    futures::executor::block_on(async {
-        let frames = futures::stream::iter([
-            Ok(rgb(2, 2, 255)),
-            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
-        ]);
-        let colors = PrysmProcessor::default().into_stream(frames);
-        futures::pin_mut!(colors);
-        assert!(colors.next().await.unwrap().is_ok());
-        assert_eq!(
-            colors.next().await.unwrap().unwrap_err().kind(),
-            std::io::ErrorKind::PermissionDenied
-        );
-        assert!(colors.next().await.is_none());
-    });
-}
-
-#[test]
 fn wide_black_bands_crop_each_axis_independently() {
     let config = Config {
         brightness_percent: BrightnessPercent(100),

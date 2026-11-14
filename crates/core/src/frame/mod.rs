@@ -87,8 +87,7 @@ impl PixelFormat {
     /// Returns the bytes per pixel for packed formats.
     /// Returns None for planar NV12 (1.5 bytes per pixel) and for
     /// variable-size formats like MJPEG.
-    #[must_use]
-    pub fn bytes_per_pixel(&self) -> Option<usize> {
+    fn bytes_per_pixel(&self) -> Option<usize> {
         match self {
             PixelFormat::RGB24 | PixelFormat::BGR24 => Some(3),
             PixelFormat::YUYV { .. } => Some(2),
@@ -158,20 +157,6 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Validate and copy one capture payload, removing row padding.
-    /// Repeated capture should use [`FramePool::copy_from_strided`] to reuse storage.
-    #[must_use]
-    pub fn from_strided_buffer(
-        data: &[u8],
-        width: u32,
-        height: u32,
-        format: PixelFormat,
-        stride: usize,
-        corrupted: bool,
-    ) -> Option<Self> {
-        FramePool::default().copy_from_strided(data, width, height, format, stride, corrupted)
-    }
-
     /// Creates a new frame with the given data, dimensions, and pixel format.
     /// YUYV color metadata is required by its format variant.
     ///
@@ -287,6 +272,17 @@ impl Frame {
 mod tests {
     use super::*;
 
+    fn strided(
+        data: &[u8],
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        stride: usize,
+        corrupted: bool,
+    ) -> Option<Frame> {
+        FramePool::default().copy_from_strided(data, width, height, format, stride, corrupted)
+    }
+
     #[test]
     fn dummy_frame_supports_odd_rgb_dimensions() {
         let frame = Frame::dummy(3, 2).unwrap();
@@ -304,7 +300,7 @@ mod tests {
             matrix: YuvStandardMatrix::Bt709,
         };
         let bytes = [16, 128, 235, 128, 0, 0, 16, 128, 235, 128];
-        let frame = Frame::from_strided_buffer(&bytes, 2, 2, format, 6, false).unwrap();
+        let frame = strided(&bytes, 2, 2, format, 6, false).unwrap();
         assert_eq!(frame.format(), format);
         assert_eq!(frame.as_slice(), [16, 128, 235, 128].repeat(2));
         for (data, stride, corrupted) in [
@@ -313,10 +309,10 @@ mod tests {
             (&bytes[..], 3, false),
             (&bytes[..], usize::MAX, false),
         ] {
-            assert!(Frame::from_strided_buffer(data, 2, 2, format, stride, corrupted).is_none());
+            assert!(strided(data, 2, 2, format, stride, corrupted).is_none());
         }
-        assert!(Frame::from_strided_buffer(&bytes, 1, 2, format, 6, false).is_none());
-        assert!(Frame::from_strided_buffer(&bytes, 2, 0, format, 6, false).is_none());
+        assert!(strided(&bytes, 1, 2, format, 6, false).is_none());
+        assert!(strided(&bytes, 2, 0, format, 6, false).is_none());
     }
 
     #[test]
@@ -342,9 +338,9 @@ mod tests {
         assert!(Frame::dummy(2, 2).unwrap().nv12_planes().is_none());
         // Stride padding is removed from both planes.
         let padded = [1, 2, 9, 3, 4, 9, 5, 6];
-        let frame = Frame::from_strided_buffer(&padded, 2, 2, format, 3, false).unwrap();
+        let frame = strided(&padded, 2, 2, format, 3, false).unwrap();
         assert_eq!(frame.as_slice(), [1, 2, 3, 4, 5, 6]);
-        assert!(Frame::from_strided_buffer(&padded[..7], 2, 2, format, 3, false).is_none());
+        assert!(strided(&padded[..7], 2, 2, format, 3, false).is_none());
         assert!(Frame::fill(0, 2, 3, format).is_err());
     }
 

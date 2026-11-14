@@ -2,21 +2,65 @@
 
 //! Use a dedicated v4l2loopback device with no other readers or writers:
 //! `sudo modprobe v4l2loopback video_nr=42 exclusive_caps=1`
-//! `PRYSM_TEST_VIDEO_DEVICE=/dev/video42 cargo test -p prysm-capture-device-sys --all-features --test linux_recovery -- --ignored`
+//! `PRYSM_TEST_VIDEO_DEVICE=/dev/video42 cargo test -p prysm-capture-device-sys --test linux_recovery -- --ignored`
 
-use anyhow::{Context, Result, ensure};
-use futures::StreamExt;
-use prysm_capture_device_sys::DeviceCapture;
+use anyhow::{Context, Result, bail, ensure};
+use prysm_capture_device_sys::{CaptureSink, Frame, capture};
 use std::io::Write;
-use std::time::Duration;
-use tokio::time::{interval, timeout};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
 use v4l::control::{Control, Value};
 use v4l::video::Output;
 use v4l::{Device, Format, FourCC};
 
-#[tokio::test]
+/// The newest frame and whether to stop, as a host's source keeps them.
+#[derive(Default)]
+struct Latest {
+    state: Mutex<(Option<Frame>, bool)>,
+    changed: Condvar,
+}
+
+impl Latest {
+    fn lock(&self) -> MutexGuard<'_, (Option<Frame>, bool)> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The newest frame, waiting up to `wait` for one.
+    fn take(&self, wait: Duration) -> Option<Frame> {
+        let (mut state, _) = self
+            .changed
+            .wait_timeout_while(self.lock(), wait, |(frame, _)| frame.is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        state.0.take()
+    }
+
+    fn stop(&self) {
+        self.lock().1 = true;
+        self.changed.notify_all();
+    }
+}
+
+impl CaptureSink for Latest {
+    fn ready(&self) {}
+
+    fn frame(&self, frame: Frame) {
+        self.lock().0 = Some(frame);
+        self.changed.notify_all();
+    }
+
+    fn should_stop(&self, wait: Duration) -> bool {
+        self.changed
+            .wait_timeout_while(self.lock(), wait, |(_, stop)| !*stop)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0
+            .1
+    }
+}
+
+#[test]
 #[ignore = "requires a dedicated v4l2loopback device in PRYSM_TEST_VIDEO_DEVICE"]
-async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
+fn stalled_producer_recovers_and_capture_stops() -> Result<()> {
     let path = std::env::var("PRYSM_TEST_VIDEO_DEVICE")
         .context("Set PRYSM_TEST_VIDEO_DEVICE to a dedicated v4l2loopback device")?;
     let mut producer = Device::with_path(&path)?;
@@ -39,62 +83,53 @@ async fn stalled_producer_recovers_and_capture_cancels() -> Result<()> {
     );
     producer.write_all(&[16, 128, 16, 128].repeat(64 * 48 / 2))?;
 
-    let capture = DeviceCapture::open(Some(&path), 64, 48, 30.try_into().unwrap())?;
-    let mut worker = capture.worker;
-    let frames = futures::stream::unfold(capture.frames, |mut frames| async {
-        loop {
-            frames.changed().await.ok()?;
-            let frame = frames.borrow_and_update().clone();
-            if let Some(frame) = frame {
-                return Some((Ok::<_, anyhow::Error>(frame), frames));
-            }
-        }
-    });
-    futures::pin_mut!(frames);
+    let latest = Arc::new(Latest::default());
+    let sink: Arc<dyn CaptureSink> = latest.clone();
+    let device = path.clone();
+    let capturing =
+        thread::spawn(move || capture(Some(&device), 64, 48, 30.try_into().unwrap(), &sink));
     for luma in [16, 235] {
         let pixels = [luma, 128, luma, 128].repeat(64 * 48 / 2);
-        timeout(Duration::from_secs(5), async {
-            let mut tick = interval(Duration::from_millis(30));
-            loop {
-                tokio::select! {
-                    frame = frames.next() => {
-                        let frame = frame.context("Capture closed before the producer's new frame arrived")??;
-                        if frame.as_slice() == pixels { return Ok::<_, anyhow::Error>(()); }
-                    }
-                    _ = tick.tick() => producer.write_all(&pixels)?,
-                }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "Capture did not receive the producer's new frame"
+            );
+            ensure!(
+                !capturing.is_finished(),
+                "Capture ended before the producer's new frame arrived"
+            );
+            if latest
+                .take(Duration::from_millis(30))
+                .is_some_and(|frame| frame.as_slice() == pixels)
+            {
+                break;
             }
-        }).await.context("Capture did not receive the producer's new frame")??;
+            producer.write_all(&pixels)?;
+        }
 
-        // Drain queued frames while the producer pauses through two one-second capture timeouts.
-        let ended = timeout(Duration::from_millis(2200), async {
-            while let Some(frame) = frames.next().await {
-                frame?;
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await;
+        // The producer pauses through two one-second capture timeouts.
+        thread::sleep(Duration::from_millis(2200));
         ensure!(
-            ended.is_err(),
-            "Capture closed while the producer was paused"
+            !capturing.is_finished(),
+            "Capture ended while the producer was paused"
         );
     }
-    worker.cancel();
-    timeout(Duration::from_secs(2), async {
-        while let Some(frame) = frames.next().await {
-            frame?;
+
+    latest.stop();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !capturing.is_finished() {
+        if Instant::now() >= deadline {
+            bail!("Stopping did not end the stalled capture");
         }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .context("Cancellation did not close the stalled capture")??;
-    let exit = timeout(Duration::from_secs(2), worker.join())
-        .await
-        .context("Capture worker did not release the stalled device")??;
-    if let Some(error) = exit.failure {
-        return Err(error.into());
+        thread::sleep(Duration::from_millis(10));
     }
-    // Reconfiguration must succeed immediately after worker completion.
+    match capturing.join() {
+        Ok(result) => result.context("capture failed or did not release the device")?,
+        Err(_) => bail!("capture panicked"),
+    }
+    // Reconfiguration must succeed immediately after capture returns.
     Device::with_path(&path)?.set_format(&format)?;
     Ok(())
 }

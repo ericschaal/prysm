@@ -1,5 +1,4 @@
 use frames::{FrameView, Viewport};
-use futures::{Stream, StreamExt};
 use nodes::{BlackBarDetector, SpatialSampler, TemporalSmoother};
 use prysm_core::{Config, EdgeColors, Frame, PixelFormat};
 use std::time::Instant;
@@ -145,22 +144,6 @@ impl PrysmProcessor {
             }
         }
         edge_colors
-    }
-
-    /// Convert into a stream processor
-    ///
-    /// Consumes the processor and transforms a frame stream into an edge color stream.
-    ///
-    /// # Arguments
-    /// * `input` - Input frame stream
-    ///
-    /// # Returns
-    /// Stream of `EdgeColors`, preserving source errors
-    pub fn into_stream<E: Send + 'static>(
-        mut self,
-        input: impl Stream<Item = Result<Frame, E>> + Send + 'static,
-    ) -> impl Stream<Item = Result<EdgeColors, E>> + Send + 'static {
-        input.map(move |frame| frame.map(|frame| self.process_frame(frame)))
     }
 }
 

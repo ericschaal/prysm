@@ -1,6 +1,5 @@
 use crate::{LinearColor, SampleDensity};
 use std::num::NonZeroUsize;
-use std::ops::{Add, Mul};
 use std::sync::Arc;
 
 /// Gradient of colors along an edge, in linear RGB space.
@@ -152,46 +151,6 @@ impl Default for ColorStrip {
     }
 }
 
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "strip addition resamples both operands at normalized floating-point positions"
-)]
-impl Add for ColorStrip {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        let result_len = self.samples.len().max(other.samples.len());
-        let summed: Vec<LinearColor> = (0..result_len)
-            .map(|i| {
-                let pos = if result_len == 1 {
-                    0.5
-                } else {
-                    i as f32 / (result_len - 1) as f32
-                };
-                self.sample_at(pos) + other.sample_at(pos)
-            })
-            .collect();
-        Self {
-            samples: Arc::new(summed),
-        }
-    }
-}
-
-impl Mul<f32> for ColorStrip {
-    type Output = Self;
-
-    #[allow(
-        clippy::float_cmp,
-        reason = "exact identity avoids copying shared samples"
-    )]
-    fn mul(mut self, scalar: f32) -> Self {
-        if scalar != 1.0 {
-            self.map_colors(|color| color * scalar);
-        }
-        self
-    }
-}
-
 /// Color strips for all four screen edges, in linear RGB space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeColors {
@@ -264,32 +223,6 @@ impl Default for EdgeColors {
     }
 }
 
-impl Add for EdgeColors {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self {
-            top: self.top + other.top,
-            right: self.right + other.right,
-            bottom: self.bottom + other.bottom,
-            left: self.left + other.left,
-        }
-    }
-}
-
-impl Mul<f32> for EdgeColors {
-    type Output = Self;
-
-    fn mul(self, scalar: f32) -> Self {
-        Self {
-            top: self.top * scalar,
-            right: self.right * scalar,
-            bottom: self.bottom * scalar,
-            left: self.left * scalar,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,8 +230,6 @@ mod tests {
     #[test]
     fn adjustments_reuse_unique_storage_and_preserve_shared_samples() {
         let original = ColorStrip::new(vec![LinearColor::new(0.02, 0.01, 0.0); 7]).unwrap();
-        let unchanged = original.clone() * 1.0;
-        assert!(Arc::ptr_eq(&original.samples, &unchanged.samples));
         let mut adjusted = original.clone();
         adjusted.map_colors(|color| color.lift_shadows(crate::ShadowLiftPercent(30)) * 0.5);
         assert_eq!(original.samples[0], LinearColor::new(0.02, 0.01, 0.0));
@@ -307,7 +238,7 @@ mod tests {
             original.samples[0].lift_shadows(crate::ShadowLiftPercent(30)) * 0.5
         );
         let allocation = adjusted.samples.as_ptr();
-        let adjusted = adjusted * 0.5;
+        adjusted.map_colors(|color| color * 0.5);
         assert_eq!(adjusted.samples.as_ptr(), allocation);
     }
 

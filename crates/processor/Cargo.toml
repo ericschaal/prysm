@@ -7,7 +7,6 @@ publish.workspace = true
 description = "Video edge colour sampling and smoothing for Prysm"
 
 [dependencies]
-futures.workspace = true
 prysm-core.workspace = true
 tracing.workspace = true
 

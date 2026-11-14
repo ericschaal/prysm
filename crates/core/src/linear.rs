@@ -1,5 +1,5 @@
 use crate::Color;
-use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use core::ops::{AddAssign, Div, Mul};
 
 /// Color in linear RGB space (0.0-1.0 normalized).
 /// All processing math (blending, averaging, scaling) uses this type.
@@ -129,41 +129,11 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
     (srgb * 255.0 + 0.5) as u8
 }
 
-// Arithmetic trait implementations
-
-impl Add for LinearColor {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self {
-            r: self.r + other.r,
-            g: self.g + other.g,
-            b: self.b + other.b,
-        }
-    }
-}
-
 impl AddAssign for LinearColor {
     fn add_assign(&mut self, other: Self) {
-        *self = *self + other;
-    }
-}
-
-impl Sub for LinearColor {
-    type Output = Self;
-
-    fn sub(self, other: Self) -> Self {
-        Self {
-            r: self.r - other.r,
-            g: self.g - other.g,
-            b: self.b - other.b,
-        }
-    }
-}
-
-impl SubAssign for LinearColor {
-    fn sub_assign(&mut self, other: Self) {
-        *self = *self - other;
+        self.r += other.r;
+        self.g += other.g;
+        self.b += other.b;
     }
 }
 
@@ -179,12 +149,6 @@ impl Mul<f32> for LinearColor {
     }
 }
 
-impl MulAssign<f32> for LinearColor {
-    fn mul_assign(&mut self, scalar: f32) {
-        *self = *self * scalar;
-    }
-}
-
 impl Div<f32> for LinearColor {
     type Output = Self;
 
@@ -194,12 +158,6 @@ impl Div<f32> for LinearColor {
             g: self.g / scalar,
             b: self.b / scalar,
         }
-    }
-}
-
-impl DivAssign<f32> for LinearColor {
-    fn div_assign(&mut self, scalar: f32) {
-        *self = *self / scalar;
     }
 }
 
@@ -292,18 +250,16 @@ mod tests {
 
     #[test]
     fn arithmetic_ops() {
-        let a = LinearColor::new(0.2, 0.3, 0.4);
-        let b = LinearColor::new(0.1, 0.2, 0.3);
-
-        let sum = a + b;
+        let mut sum = LinearColor::new(0.2, 0.3, 0.4);
+        sum += LinearColor::new(0.1, 0.2, 0.3);
         assert!((sum.r - 0.3).abs() < 1e-6);
         assert!((sum.g - 0.5).abs() < 1e-6);
         assert!((sum.b - 0.7).abs() < 1e-6);
 
-        let scaled = a * 2.0;
-        assert!((scaled.r - 0.4).abs() < 1e-6);
+        let scaled = sum * 2.0;
+        assert!((scaled.r - 0.6).abs() < 1e-6);
 
-        let divided = a / 2.0;
-        assert!((divided.r - 0.1).abs() < 1e-6);
+        let divided = sum / 2.0;
+        assert!((divided.r - 0.15).abs() < 1e-6);
     }
 }

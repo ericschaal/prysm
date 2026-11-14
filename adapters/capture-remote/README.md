@@ -173,13 +173,19 @@ origin policy refuses their `Origin`); the TV's worker sends none. Behind an
 HTTPS reverse proxy the stream is encrypted (`wss://`) up to the proxy.
 
 **Certificates:** for `wss://` the sender trusts the system's authorities,
-loaded at every connection by tungstenite through `rustls-native-certs`.
+loaded through `rustls-native-certs` at the first `wss://` connection and kept
+for the process (on macOS loading asks the trust daemon about every keychain
+certificate, which takes seconds; verification itself is rustls/webpki in
+process, with no revocation or network fetches). A change to the system's
+authorities applies after a restart.
 `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` replace them when set. On
 Linux they are otherwise the first bundle found of
 `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt` and
 the other usual paths, plus the files in `/etc/ssl/certs` and
-`/etc/pki/tls/certs`; on macOS, the keychains. Finding none fails the
-connection with "no native root CA certificates found". Where webOS keeps its
-authorities has not been checked on a TV. Tests trust the test CA through
-`testkit::in_test_ca_process`; note that Cargo on Linux sets `SSL_CERT_FILE`
-and `SSL_CERT_DIR` to the system bundle for the processes it starts.
+`/etc/pki/tls/certs`; on macOS, the keychains. Finding none fails every
+`wss://` connection with "the system has no certificate authorities". Where
+webOS keeps its authorities has not been checked on a TV. Tests run
+themselves again trusting only the test CA (`testkit::in_test_ca_process`)
+or only an unrelated one (`testkit::in_other_ca_process`), so they never read
+the system's set; note that Cargo on Linux sets `SSL_CERT_FILE` and
+`SSL_CERT_DIR` to the system bundle for the processes it starts.

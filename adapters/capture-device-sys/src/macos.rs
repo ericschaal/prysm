@@ -75,6 +75,9 @@ define_class!(
             sample_buffer: CMSampleBufferRef,
             _connection: &AVCaptureConnection,
         ) {
+            // SAFETY: AVFoundation passes a valid sample buffer that it keeps
+            // alive for this call; the Get-rule wrapper retains it for as long
+            // as the wrapper lives and releases only that retain.
             let sample_buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(sample_buffer) };
             let captured = captured_at(sample_buffer.get_presentation_time_stamp());
             let Some(image_buffer) = sample_buffer.get_image_buffer() else {
@@ -123,6 +126,9 @@ define_class!(
                 capture: Mutex::new(None),
                 error: Mutex::new(None),
             });
+            // SAFETY: `this` is a fresh allocation with its ivars set, and
+            // NSObject's `init` returns the receiver (retained) or nil, as the
+            // `Option<Retained<Self>>` return type says.
             unsafe { msg_send![super(this), init] }
         }
     }
@@ -130,6 +136,9 @@ define_class!(
 
 impl Delegate {
     fn new(sink: Arc<dyn CaptureSink>) -> Retained<Self> {
+        // SAFETY: `init` is the method defined above, which takes the fresh
+        // allocation and returns it initialised; NSObject's `init` never
+        // returns nil, so the non-optional `Retained` holds.
         let this: Retained<Self> = unsafe { msg_send![Self::alloc(), init] };
         *this.ivars().capture.lock().expect("capture mutex poisoned") = Some(CaptureState {
             sink,
@@ -223,6 +232,8 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
     let width = pixel_buffer.get_width();
     let height = pixel_buffer.get_height();
     let stride = pixel_buffer.get_bytes_per_row();
+    // SAFETY: the base address is locked above and read only until the
+    // unlock below; null (no data) is handled.
     let base = unsafe { pixel_buffer.get_base_address() }
         .cast_const()
         .cast::<u8>();
@@ -246,13 +257,17 @@ fn frame_from_pixel_buffer(pixel_buffer: &CVPixelBuffer, pool: &mut FramePool) -
                 )
                 .ok()?;
             if stride == row_size {
-                // SAFETY: the locked packed plane contains exactly these pixel bytes.
+                // SAFETY: `base` is the locked packed plane of at least
+                // `stride * height` bytes; without padding, `size` is
+                // `height * row_size`, all within it and the frame's length.
                 frame
                     .as_mut_slice()
                     .copy_from_slice(unsafe { slice::from_raw_parts(base, size) });
             } else {
                 for (row, target) in frame.as_mut_slice().chunks_exact_mut(row_size).enumerate() {
-                    // SAFETY: row bounds were checked above; skip native padding bytes.
+                    // SAFETY: `row < height`, so `row * stride + row_size <= size`,
+                    // which lies within the locked plane (checked above, at most
+                    // `isize::MAX`); the padding after each row is skipped.
                     let pixels = unsafe { slice::from_raw_parts(base.add(row * stride), row_size) };
                     target.copy_from_slice(pixels);
                 }
@@ -270,10 +285,16 @@ fn video_settings(width: u32, height: u32) -> Retained<NSDictionary<NSString, NS
         Retained::into_super(Retained::into_super(number))
     }
 
-    // The kCVPixelBuffer* keys are CFStrings, toll-free bridged to NSString.
-    let pixel_format_key = unsafe { &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>() };
-    let width_key = unsafe { &*kCVPixelBufferWidthKey.cast::<NSString>() };
-    let height_key = unsafe { &*kCVPixelBufferHeightKey.cast::<NSString>() };
+    // SAFETY: the kCVPixelBuffer* keys are non-null constant CFStrings that
+    // CoreVideo defines for the process's life; CFString is toll-free bridged
+    // to NSString, so each is a valid `&'static NSString`.
+    let (pixel_format_key, width_key, height_key) = unsafe {
+        (
+            &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>(),
+            &*kCVPixelBufferWidthKey.cast::<NSString>(),
+            &*kCVPixelBufferHeightKey.cast::<NSString>(),
+        )
+    };
 
     NSDictionary::from_retained_objects(
         &[pixel_format_key, width_key, height_key],
@@ -303,7 +324,9 @@ impl Drop for RunningSession {
             .expect("capture mutex poisoned")
             .take();
         self.session.stop_running();
-        // SAFETY: clearing the native delegate prevents future callback scheduling.
+        // SAFETY: `setSampleBufferDelegate:queue:` exists on this output with
+        // two nullable object arguments and no result; nil for both clears
+        // the delegate, so no callback is scheduled after this.
         unsafe {
             let _: () = msg_send![&*self.output, setSampleBufferDelegate: std::ptr::null::<AnyObject>(), queue: std::ptr::null::<AnyObject>()];
         }
@@ -370,6 +393,7 @@ fn start_session(
     }
     let device = match device_uid {
         Some(uid) => AVCaptureDevice::device_with_unique_id(&NSString::from_str(uid)),
+        // SAFETY: a constant NSString AVFoundation defines for the process's life.
         None => AVCaptureDevice::default_device_with_media_type(unsafe { AVMediaTypeVideo }),
     }
     .ok_or_else(|| CaptureError::DeviceNotFound {
@@ -454,6 +478,7 @@ fn start_session(
 }
 
 pub(crate) fn list_devices() -> Vec<crate::DeviceInfo> {
+    // SAFETY: a constant NSString AVFoundation defines for the process's life.
     AVCaptureDevice::devices_with_media_type(unsafe { AVMediaTypeVideo })
         .iter()
         .map(|device| crate::DeviceInfo {
@@ -551,9 +576,11 @@ mod tests {
             assert!(delegate.failed());
             let error = delegate.ivars().error.lock().unwrap().take().unwrap();
             assert!(error.to_string().contains(&name.to_string()));
+            // SAFETY: a constant NSString AVFoundation defines for the process's life.
+            let disconnected = name == unsafe { AVCaptureDeviceWasDisconnectedNotification };
             assert_eq!(
                 matches!(error, CaptureError::Disconnected { .. }),
-                name == unsafe { AVCaptureDeviceWasDisconnectedNotification },
+                disconnected
             );
             drop(delegate);
             assert_eq!(

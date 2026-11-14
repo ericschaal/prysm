@@ -6,30 +6,13 @@ license.workspace = true
 publish.workspace = true
 description = "V4L2 and AVFoundation video capture threads behind a safe callback API"
 
-[features]
-# `DeviceCapture`: device capture on its own thread behind tokio channels.
-async = ["dep:futures", "dep:tokio", "dep:tokio-util"]
-
-[[example]]
-name = "capture_smoke"
-test = true
-required-features = ["async"]
-
-[[test]]
-name = "linux_recovery"
-required-features = ["async"]
-
 [dependencies]
 anyhow = "1.0.104"
-futures = { workspace = true, optional = true }
 prysm-core.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "macros", "time"], optional = true }
-tokio-util = { version = "0.7.20", optional = true }
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -54,3 +37,4 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
