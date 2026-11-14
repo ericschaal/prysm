@@ -6,6 +6,7 @@
 import {
   useEffect,
   useEffectEvent,
+  useSyncExternalStore,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -57,22 +58,42 @@ export interface TvAppProps {
   patterns?: PatternPlayer;
 }
 
-/** Visible pages hold the subscriptions; hidden ones release them. */
+/** Set by `pagehide`, which comes before `document.hidden` says so. */
+let pageHidden = false;
+
+function watchVisibility(changed: () => void) {
+  const hide = () => {
+    pageHidden = true;
+    changed();
+  };
+  const show = () => {
+    pageHidden = false;
+    changed();
+  };
+  document.addEventListener('visibilitychange', show);
+  window.addEventListener('pagehide', hide);
+  window.addEventListener('pageshow', show);
+  // The TV can show the page with no visibility event; focus still arrives.
+  window.addEventListener('focus', show);
+  return () => {
+    document.removeEventListener('visibilitychange', show);
+    window.removeEventListener('pagehide', hide);
+    window.removeEventListener('pageshow', show);
+    window.removeEventListener('focus', show);
+  };
+}
+
+/**
+ * Visible pages hold the subscriptions; hidden ones release them. The TV
+ * starts the page hidden and may show it before any listener is attached,
+ * so the present state is read, not only later events: React reads it again
+ * once subscribed. Missing that left the app on "Connecting…" for ever.
+ */
 function useVisible() {
-  const [visible, setVisible] = useState(() => !document.hidden);
-  useEffect(() => {
-    const update = () => setVisible(!document.hidden);
-    const hide = () => setVisible(false);
-    document.addEventListener('visibilitychange', update);
-    window.addEventListener('pagehide', hide);
-    window.addEventListener('pageshow', update);
-    return () => {
-      document.removeEventListener('visibilitychange', update);
-      window.removeEventListener('pagehide', hide);
-      window.removeEventListener('pageshow', update);
-    };
-  }, []);
-  return visible;
+  return useSyncExternalStore(
+    watchVisibility,
+    () => !document.hidden && !pageHidden,
+  );
 }
 
 /** Milliseconds since `since` (a `Date.now()`), updated every second; 0 for `null`. */

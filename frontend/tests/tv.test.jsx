@@ -1301,6 +1301,28 @@ test('hiding the page releases the subscriptions; showing it subscribes again', 
   );
 });
 
+test('a page shown without a visibility event subscribes when it is focused', async (t) => {
+  // The TV starts the page hidden and can show it with no event the app
+  // sees; it stayed on "Connecting…" for ever.
+  const tv = await mountTv(t);
+  Object.defineProperty(document, 'hidden', {
+    value: true,
+    configurable: true,
+  });
+  await act(async () =>
+    document.dispatchEvent(new tv.dom.window.Event('visibilitychange')),
+  );
+  await settle();
+  assert.equal(tv.supervisor.subscribers(), 0);
+  Object.defineProperty(document, 'hidden', {
+    value: false,
+    configurable: true,
+  });
+  await act(async () => window.dispatchEvent(new tv.dom.window.Event('focus')));
+  await settle();
+  assert.equal(tv.supervisor.subscribers(), 1);
+});
+
 test('a lost subscription recovers after 3 s without losing the draft', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const tv = await mountTv(t, {
