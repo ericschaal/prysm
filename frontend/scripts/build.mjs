@@ -46,6 +46,8 @@ const classicScript = {
   },
 };
 
+/** The most a portal's script and styles may weigh, gzip-compressed. */
+const portalBudget = { '.js': 180_000, '.css': 16_000 };
 const portalBuild = {
   rolldownOptions: {
     // React Router marks its files "use client" for server rendering, which
@@ -110,10 +112,17 @@ for (const { host, surface } of assemblies) {
     // Scripts and styles are also embedded compressed (the page is tiny).
     let gzip = 'None';
     if (immutable) {
-      await writeFile(
-        resolve(outDir, `${file}.gz`),
-        gzipSync(await readFile(resolve(outDir, file)), { level: 9 }),
+      const compressed = gzipSync(await readFile(resolve(outDir, file)), {
+        level: 9,
+      });
+      // What a phone downloads on its first visit. Raise the budget on
+      // purpose, with the reason, never by accident.
+      const budget = portalBudget[extname(file)];
+      assert(
+        compressed.length <= budget,
+        `${host}: ${file} is ${compressed.length} bytes compressed, over its ${budget} byte budget`,
       );
+      await writeFile(resolve(outDir, `${file}.gz`), compressed);
       gzip = `Some(include_bytes!("${file}.gz"))`;
     }
     assets.push(

@@ -107,7 +107,8 @@ The build creates `dist/headless/web-portal` (both desktop hosts), `dist/webos/w
 `dist/webos/tv-ui` and `dist/webos-slim/tv-ui`. Browser bundles also produce a
 Rust `assets.rs` list for `WebPortal`: the script and stylesheet are named by
 their content, so the portal lets browsers keep them for good and also embeds
-them gzip-compressed; the page itself is checked on every load. `theme.js`
+them gzip-compressed (the build fails over the size budget in
+`scripts/build.mjs`); the page itself is checked on every load. `theme.js`
 (from `packages/web-portal/public`) is a plain script the page runs before it
 is drawn, so a theme chosen in the browser never flashes the other one first.
 TV bundles are packaged with the app:
