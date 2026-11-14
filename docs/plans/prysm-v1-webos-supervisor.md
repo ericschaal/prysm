@@ -3,11 +3,13 @@
 Status: revised 2026-11-12 after the user's decisions (beads `prysm-3jx.17`,
 hosts half of `prysm-3jx.9`); steps 1–6 of §11 are implemented and tested on
 the development host. Replaces the root
-[Luna supervisor](../../apps/prysm-webos-service/README.md) with v1 hosts. No
+Luna supervisor (`apps/prysm-webos-service`) with v1 hosts. No
 backward compatibility: settings, Luna names, paths and the worker protocol are
 new. **Clean slate:** the old `io.prysm.capture` app, its settings and any
 earlier install are assumed removed before a v1 package is installed; nothing
 detects, migrates or converges from them. Builds on the [simplified runtime](prysm-v1-simplified-runtime.md).
+Paths under `apps/`, `crates/web/`, `xtask/` and the root `packaging/` name the
+earlier implementation, removed after the tag `pre-1.0-consolidation`.
 
 **Constraint.** A hung LG capture call is recovered only by killing the process
 that made it. Capture therefore runs in a worker process; the process that owns
@@ -36,10 +38,10 @@ the Luna registration observes, restarts and kills it.
 
 ## 2. Inventory of the current supervisor
 
-Sources: [supervisor.rs](../../apps/prysm-webos-service/src/supervisor.rs),
-[application.rs](../../apps/prysm-webos-service/src/application.rs),
-[luna.rs](../../apps/prysm-webos-service/src/luna.rs),
-[files.rs](../../apps/prysm-webos-service/src/files.rs),
+Sources: `apps/prysm-webos-service/src/supervisor.rs`,
+`apps/prysm-webos-service/src/application.rs`,
+`apps/prysm-webos-service/src/luna.rs`,
+`apps/prysm-webos-service/src/files.rs`,
 [lifecycle notes](../developers/webos.md).
 
 | Responsibility today | v1 |
@@ -272,7 +274,7 @@ are tagged, so a TV-side step would be one added variant.
 
 ## 7. TV UI parity checklist
 
-From [crates/web/prysm-webos](../../crates/web/prysm-webos/src/App.tsx).
+From `crates/web/prysm-webos/src/App.tsx`.
 **Present** = the supervisor or an existing API serves it now.
 
 | Current TV UI item | v1 | Status |
@@ -321,23 +323,23 @@ installing one replaces the other.
   permission files) and `<app>.worker.json` (roleFiles `worker.role.json`).
 - Worker role: `exeName` the installed worker, `allowedNames`
   `com.webos.service.capture.client*` and `com.webos.rm.client.*`, outbound as
-  [capture.role.json](../../packaging/webos/service/capture.role.json).
+  `packaging/webos/service/capture.role.json`.
   Supervisor role: its service name; outbound `com.webos.service.tvpower`,
   `com.webos.service.videooutput`. `supervisor.service` execs the supervisor without arguments.
 - `setup.sh`: `exec "$(dirname "$0")/prysm-webos-service" setup`. Setup writes both
   manifests and `/var/lib/webosbrew/init.d/io.prysm.tv` (refusing unrelated
   content; re-running it on the same install succeeds), rescans (10 s bound) and activates with `luna-send … getState`
   (10 s bound, `returnValue` checked). The boot hook runs the same `setup`.
-- To change: [build-ipk.sh](../../packaging/webos/build-ipk.sh) builds
+- To change: `packaging/webos/build-ipk.sh` builds
   `-p prysm-webos -p prysm-webos-service` or the slim pair from `v1/Cargo.toml`
   after the v1 frontend, one IPK each, renaming the binaries to the shared
   installed names above, and drops `--hardware-h264`,
   `--embedded-prysm`, the generated embedded role and GStreamer/OpenH264
   licences; `secure-ipk.py` and `packaging/webos/tests` get the two payload
-  allowlists; [xtask](../../xtask/src/main.rs) `package webos` gets a
+  allowlists; `xtask/src/main.rs` `package webos` gets a
   `--slim` choice and drops the TV feature flags; `codegen` drops
   `Contract::Webos` and moves the bindgen step to `webos-luna-sys`;
-  [native-smoke.py](../../packaging/webos/tests/native-smoke.py) uses the new
+  `packaging/webos/tests/native-smoke.py` uses the new
   names and `run --sandbox`. Docs: rewrite [webOS lifecycle](../developers/webos.md)
   and [TV setup](../users/webos.md) on ship.
 

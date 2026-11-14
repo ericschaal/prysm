@@ -59,7 +59,7 @@ Eight hardware phase histograms expose conversion, upload, synchronization start
 and end, submission, output wait, collection and normalization. Grafana's
 expanded **Hardware H.264** section below stream health separates preparation
 and collection from output wait, so the smaller phases remain readable.
-The [metric catalog](../../observability/CATALOG.md) defines their boundaries.
+The metric catalog (`observability/CATALOG.md` in the tag `pre-1.0-consolidation`) defines their boundaries.
 
 On the project TV, a baseline → updated → baseline experiment used the same
 changing 640×360 inputs, 30 FPS and 2 Mbit/s. Each format had five warmup inputs

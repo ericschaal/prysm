@@ -2,12 +2,11 @@
  * Calibration patterns as real video on the TV's video plane, never drawn by
  * the app: one Media Source Extensions stream of half-second H.264 fragments
  * (each a complete MP4 starting on a keyframe), appended in sequence mode, so
- * switching patterns never restarts the TV's video pipeline. Ported from the
- * root TV app (crates/web/prysm-webos/src/patternStream.ts).
+ * switching patterns never restarts the TV's video pipeline.
  *
- * `pattern-fragments.json` is a copy of the root
- * crates/web/prysm-webos/src/pattern-fragments.json without `gray-64` (made by
- * scripts/calibration-patterns.py); delete the root file at consolidation.
+ * `pattern-fragments.json` holds the clips the earlier TV app shipped (its
+ * generator, scripts/calibration-patterns.py, is in the tag
+ * `pre-1.0-consolidation`), without `gray-64`.
  */
 import type { Pattern } from '@prysm/application-client';
 import bundled from './pattern-fragments.json';

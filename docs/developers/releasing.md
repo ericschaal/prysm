@@ -37,9 +37,9 @@ the desktop receiver speak one wire version.
 PR titles follow [Conventional Commits](guidelines.md#commits-and-pull-requests)
 and are checked in CI.
 
-## Pre-v1 release automation
+## Release Please
 
-Release Please ([release-please.yml](../../.github/workflows/release-please.yml),
-[release.yml](../../.github/workflows/release.yml)) and the root `VERSION` file
-still release the earlier implementation on other `v*` tags and ignore
-`v1.*` tags. They do not build anything in `v1/`.
+[release-please.yml](../../.github/workflows/release-please.yml) and the root
+`VERSION` file released the earlier implementation, whose build and publish
+workflow has been removed. They are being folded into one 1.x release path
+together with this workflow.

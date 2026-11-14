@@ -2075,19 +2075,10 @@ test('an independent decoder reads every QR version and mask the encoder writes'
   }
 });
 
-test('the pattern fragments are the shipped clips, one per pattern of the contract', () => {
+test('the pattern fragments are MP4 clips, one per pattern of the contract', () => {
   const fragments = JSON.parse(
     readFileSync(
       resolve(process.cwd(), 'packages/tv-ui/pattern-fragments.json'),
-      'utf8',
-    ),
-  );
-  const root = JSON.parse(
-    readFileSync(
-      resolve(
-        process.cwd(),
-        '../../crates/web/prysm-webos/src/pattern-fragments.json',
-      ),
       'utf8',
     ),
   );
@@ -2105,7 +2096,11 @@ test('the pattern fragments are the shipped clips, one per pattern of the contra
     openapi.components.schemas.Pattern.enum,
   );
   for (const [name, fragment] of Object.entries(fragments))
-    assert.equal(fragment, root[name], name);
+    assert.equal(
+      Buffer.from(fragment, 'base64').subarray(4, 8).toString('latin1'),
+      'ftyp',
+      name,
+    );
 });
 
 test('the pattern stream appends the requested pattern in sequence mode and stops on a stall', (t) => {

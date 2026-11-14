@@ -1,5 +1,4 @@
-// The root eslint.config.mjs rule set for the v1 workspace, which installs its
-// own packages (the root config ignores v1/**). Merge the two at consolidation.
+// Lint rules for the frontend workspace.
 import js from '@eslint/js';
 import { defineConfig } from 'eslint/config';
 import tseslint from 'typescript-eslint';

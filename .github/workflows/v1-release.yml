@@ -1,8 +1,8 @@
 # Release of the v1 prysm-headless host: a multi-arch image on GHCR
 # (ghcr.io/<owner>/prysm-headless) and Debian packages attached to a GitHub
-# release, together with the two webOS TV packages (IPKs). Separate from the
-# shipping product's release in release.yml, which publishes ghcr.io/<owner>/prysm
-# on its own tags and ignores v1.* tags.
+# release, together with the two webOS TV packages (IPKs). The earlier
+# implementation's release workflow is gone; one release path for 1.x replaces
+# this file and release-please's tags at consolidation.
 #
 # A `v1.*` tag must equal "v" + the [workspace.package] version in
 # v1/Cargo.toml (e.g. v1.0.0-alpha.0). Every run first passes the v1 gate
@@ -153,8 +153,8 @@ jobs:
           for flavour in full slim; do
             cp "$ARTIFACTS/prysm-tv-ipk-$flavour"/io.prysm.tv-"$flavour"_*_all.ipk "$RUNNER_TEMP/ipk/"
           done
-          # A pre-release version is a GitHub pre-release. Never "Latest": that
-          # stays the shipping product's release until v1 replaces it.
+          # A pre-release version is a GitHub pre-release. Not "Latest" until the
+          # unified 1.x release path decides it.
           prerelease=false
           case "$GITHUB_REF_NAME" in *-*) prerelease=true ;; esac
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then

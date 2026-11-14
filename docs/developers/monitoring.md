@@ -20,10 +20,9 @@ portal's state instead.
 
 ## Dashboards
 
-The Grafana and Prometheus stack in [`observability/`](../../observability/README.md)
-was built for the metric names of the earlier implementation and has not
-been updated for Prysm 1.x. Its dashboards will show no data for v1 hosts
-until they are.
+There is no dashboard for these metrics. The Grafana and Prometheus stack of
+the earlier implementation (`observability/` in the tag
+`pre-1.0-consolidation`) used other metric names and was removed.
 
 ## Read measurements
 

@@ -26,7 +26,7 @@ Relevant code:
 - [Density and color strip interpolation](../crates/common/prysm-core/src/color_strip.rs)
 - [Processor configuration](../crates/common/prysm-core/src/config.rs)
 - [Temporal smoothing](../crates/processing/prysm-processor/src/nodes/temporal_smoother.rs)
-- [Video playback](../apps/prysm/runtime/src/video.rs)
+- `apps/prysm/runtime/src/video.rs` (in the tag `pre-1.0-consolidation`)
 - [Desktop rendering](https://github.com/ericschaal/prysm/blob/343b0c698a68ff0efe268c7cc73987c2e57545e8/crates/rendering/prysm-renderer-desktop/src/lib.rs)
 - [Existing pipeline regression tests](../crates/processing/prysm-processor/tests/pipeline.rs)
 

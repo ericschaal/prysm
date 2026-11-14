@@ -1,6 +1,6 @@
 # Resume the on-TV Prysm experiment
 
-Checkpoint from November 4, 2026. The rooted LG TV captured 1280×720 frames, processed them with the active lighting profile and sent DDP directly to WLED. The final build sustained 29.97 FPS on the brightness clip and 29.86 FPS on the moving clip. An 18-frame replay matched the original pipeline byte for byte at the converted RGB and DDP boundaries. The installed service and foreground app were restored after testing. [Build instructions, profiles and results](../../../apps/prysm-webos-capture/local/README.md)
+Checkpoint from November 4, 2026. The rooted LG TV captured 1280×720 frames, processed them with the active lighting profile and sent DDP directly to WLED. The final build sustained 29.97 FPS on the brightness clip and 29.86 FPS on the moving clip. An 18-frame replay matched the original pipeline byte for byte at the converted RGB and DDP boundaries. The installed service and foreground app were restored after testing. `apps/prysm-webos-capture/local/README.md` (in the tag `pre-1.0-consolidation`)
 
 ## Starting points
 

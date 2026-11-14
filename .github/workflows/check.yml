@@ -1,24 +1,19 @@
-name: Check and package
+# The crates at the repository root that the v1 workspace still path-depends
+# on (until they move into it), plus repository-wide checks: Markdown links and
+# GitHub Actions workflows. v1.yml gates the v1 workspace.
+name: Check
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      ref:
-        type: string
-        default: ''
-      release:
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-checks
-  cancel-in-progress: ${{ !inputs.release }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,8 +25,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
       - name: Rust formatting
         run: |
           rustup update stable --no-self-update
@@ -41,172 +34,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck packaging/release/publish.sh packaging/debian/preinst packaging/debian/postinst packaging/debian/postrm packaging/debian/prerm crates/capture/prysm-capture/video_test.sh packaging/webos/linker.sh packaging/webos/build-ipk.sh packaging/webos/service/setup.sh
-      - name: Debian upgrade script tests
-        run: python3 -m unittest discover -s packaging/debian/tests
+          shellcheck crates/capture/prysm-capture/video_test.sh
       - name: Documentation checker tests and repository links
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
           python3 -m unittest discover -s scripts/tests
           python3 scripts/check-doc-links.py
-      - name: Release versions
-        run: python3 scripts/check-release.py
       - name: GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-
-  frontend:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            crates/web/prysm-web/control-ui/package-lock.json
-            crates/web/prysm-webos/package-lock.json
-      - name: Update Rust
-        run: rustup update stable --no-self-update && rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          key: frontend
-      - name: Install frontend dependencies
-        run: cargo xtask setup
-      - name: Generated contracts, frontend and packaging checks
-        run: cargo xtask check frontend
-
-  docker:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build deployment image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          load: true
-          tags: prysm:local
-          labels: org.opencontainers.image.revision=${{ inputs.ref || github.sha }}
-          cache-from: type=gha,scope=prysm-docker-${{ runner.arch }}
-          cache-to: type=gha,mode=max,scope=prysm-docker-${{ runner.arch }}
-      - name: Validate Compose and smoke-test the image
-        run: |
-          docker compose config --quiet
-          docker compose -f packaging/docker/compose.truenas.yaml config --quiet
-          python3 packaging/docker/smoke.py prysm:local
-      - name: Export tested release image
-        if: inputs.release
-        run: docker image save --output "${{ runner.temp }}/prysm-${{ matrix.arch }}.tar" prysm:local
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: inputs.release
-        with:
-          name: prysm-image-${{ matrix.arch }}
-          path: ${{ runner.temp }}/prysm-${{ matrix.arch }}.tar
-          retention-days: 7
-          compression-level: 0
-
-  webos-arm:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_LINKER: arm-linux-gnueabi-gcc
-      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABI_RUNNER: qemu-arm -L /usr/arm-linux-gnueabi
-      CXX_armv7_unknown_linux_gnueabi: arm-linux-gnueabi-g++
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - name: ARM soft-float toolchain and emulator
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++-arm-linux-gnueabi qemu-user
-          rustup update stable --no-self-update
-          rustup target add armv7-unknown-linux-gnueabi --toolchain stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          key: webos-arm
-      - name: ARM32 native ABI, exception boundary, pixels and transport tests
-        run: cargo +stable test --locked -p prysm-webos-capture -p prysm-webos-protocol -p prysm-webos-service --target armv7-unknown-linux-gnueabi
-
-  webos-package:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      RUSTUP_TOOLCHAIN: 1.99.1
-      WEBOS_SDK: ${{ github.workspace }}/.webos-sdk/arm-webos-linux-gnueabi_sdk-buildroot
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-      - name: webOS build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential file python3
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target armv7-unknown-linux-gnueabi --no-self-update
-          npm install --global @webos-tools/cli@3.2.6
-      - name: Install pinned webOS SDK
-        run: |
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/webos-sdk.tar.gz" \
-            https://github.com/openlgtv/buildroot-nc4/releases/download/2026.08-webos/arm-webos-linux-gnueabi_sdk-buildroot-aarch64.tar.gz
-          echo "3a9330f3789f8008ece7c8a48f58c3a71d0307a9a1f81896db938b785524c3ce  $RUNNER_TEMP/webos-sdk.tar.gz" | sha256sum --check
-          mkdir -p "$(dirname "$WEBOS_SDK")"
-          tar -xzf "$RUNNER_TEMP/webos-sdk.tar.gz" -C "$(dirname "$WEBOS_SDK")"
-          "$WEBOS_SDK/relocate-sdk.sh"
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          key: webos-package-2026.08-webos
-      - name: Install frontend dependencies
-        run: cargo xtask setup
-      - name: Build and validate webOS app package
-        run: cargo xtask package webos
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name != 'pull_request'
-        with:
-          name: prysm-webos-armv7
-          path: target/webos-ipk/*.ipk
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  miri:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64-unknown-linux-gnu, armv7-unknown-linux-gnueabi]
-    env:
-      MIRI_TOOLCHAIN: nightly-2026-11-01
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - name: Install pinned Miri toolchain
-        run: rustup toolchain install "$MIRI_TOOLCHAIN" --profile minimal --component miri,rust-src --no-self-update
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          key: miri-${{ matrix.target }}
-      - name: Interpret Luna ownership and callback tests
-        run: cargo +"$MIRI_TOOLCHAIN" miri test --locked -p prysm-webos-service --target ${{ matrix.target }}
 
   rust:
     strategy:
@@ -217,15 +53,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            crates/web/prysm-web/control-ui/package-lock.json
       - name: Update Rust
         run: |
           rustup update stable --no-self-update
@@ -234,12 +61,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          sudo apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: rust
-      - name: Install host UI dependencies
-        run: cargo +stable xtask setup host
       - name: Default workspace tests and doctests
         run: cargo +stable test --locked --workspace --no-default-features
       - name: All-feature workspace tests and doctests
@@ -252,86 +77,3 @@ jobs:
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
         run: cargo +stable doc --locked --workspace --all-features --no-deps
-      - name: Install FFmpeg
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          fi
-          brew install ffmpeg
-          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
-      - name: Real FFmpeg playback and controller tests
-        run: |
-          ffmpeg -version
-          cargo +stable test --locked -p prysm-runtime --all-features --lib video::tests::file_stream_preserves_ordered_eof_and_decoder_failure -- --ignored --exact
-          cargo +stable test --locked -p prysm --all-features --test controller file_capture_live_settings_restart_and_shutdown -- --ignored --exact
-
-  debian-arm64:
-    runs-on: ubuntu-24.04-arm
-    container: rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            crates/web/prysm-web/control-ui/package-lock.json
-      - name: Linux build dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends clang libclang-dev libudev-dev pkg-config dpkg-dev
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          key: debian-arm64
-      - name: Packaging tool
-        run: cargo install cargo-deb --version 3.8.0 --locked
-      - name: Install host UI dependencies
-        run: cargo xtask setup host
-      - name: Verify Rust on arm64
-        run: cargo test --locked --workspace --no-default-features
-      - name: Test experimental embedded processing and mode switching
-        run: >-
-          cargo test --locked -p prysm-webos-service -p prysm-webos-local
-          --features prysm-webos-service/embedded-prysm,prysm-webos-local/embedded-prysm
-      - name: Verify contracts and build package
-        run: cargo xtask package deb
-      - name: Inspect package and verify configuration lifecycle
-        run: |
-          dpkg-deb --info target/debian/*.deb
-          dpkg-deb --contents target/debian/*.deb
-          dpkg-deb --fsys-tarfile target/debian/*.deb | tar -tf - > /tmp/prysm-package-files
-          grep -Eq '^\./usr/bin/prysm$' /tmp/prysm-package-files
-          grep -Eq '/prysm\.service$' /tmp/prysm-package-files
-          if grep -Eq '/prysm-web(\.service)?$' /tmp/prysm-package-files; then
-            echo 'Standalone web proxy must not be packaged' >&2
-            exit 1
-          fi
-          apt-get install -y ./target/debian/*.deb
-          test ! -e /etc/prysm/settings.json
-          if runuser -u prysm -- prysm --config /etc/prysm/settings.json check > /tmp/prysm-check-output 2>&1; then
-            echo 'check must reject incomplete settings without creating a file' >&2
-            exit 1
-          fi
-          grep -q 'settings are incomplete' /tmp/prysm-check-output
-          test ! -e /etc/prysm/settings.json
-          test "$(stat -c '%U:%G %a' /etc/prysm)" = "prysm:prysm 700"
-          runuser -u prysm -- sh -c 'umask 077; printf "%s\n" "{}" > /etc/prysm/settings.json'
-          test "$(stat -c '%U:%G %a' /etc/prysm/settings.json)" = "prysm:prysm 600"
-          sha256sum /etc/prysm/settings.json > /tmp/prysm-config.sha256
-          apt-get install -y --reinstall ./target/debian/*.deb
-          sha256sum --check /tmp/prysm-config.sha256
-          apt-get remove -y prysm-led
-          sha256sum --check /tmp/prysm-config.sha256
-          apt-get purge -y prysm-led
-          test ! -e /etc/prysm/settings.json
-          test ! -d /etc/prysm
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name != 'pull_request'
-        with:
-          name: prysm-debian-arm64
-          path: target/debian/*.deb
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0

@@ -2,7 +2,8 @@
 
 Status: implemented in [v1](../../v1/README.md) for the desktop hosts
 (`prysm-headless`, `prysm-tui`), 2026-11-12; the webOS hosts are not built yet.
-Supersedes the runtime model of the [v1 architecture proposal](prysm-v1-architecture.md).
+Supersedes the runtime model of the earlier v1 architecture proposal
+(`docs/plans/prysm-v1-architecture.md` in the tag `pre-1.0-consolidation`).
 The code is authoritative where the snippets below differ in detail.
 
 ## Why revise
