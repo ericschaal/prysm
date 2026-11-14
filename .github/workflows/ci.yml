@@ -76,7 +76,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck adapters/capture-device-sys/video_test.sh
+          shellcheck adapters/capture-device-sys/video_test.sh \
+            packaging/debian/build-deb.sh packaging/debian/postinst \
+            packaging/debian/prerm packaging/debian/postrm \
+            packaging/docker/smoke.sh packaging/release/publish.sh \
+            packaging/webos/build-ipk.sh packaging/webos/env.sh \
+            packaging/webos/install-ipk.sh packaging/webos/linker.sh \
+            packaging/webos/service/setup.sh \
+            packaging/webos/tests/tv-acceptance.sh
       - name: Documentation checker tests and repository links
         run: |
           python3 -m unittest discover -s scripts/tests
