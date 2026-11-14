@@ -78,16 +78,17 @@ device.commands.configureOutput('0', {
 });
 device.commands.configureProcessing(0, {
   brightness_percent: 80,
-  saturation_boost_percent: 0,
-  dark_floor_percent: 0,
-  smoothing_seconds: 0.1,
-  cut_response_percent: 0,
-  brightness_ramp_seconds: 0,
+  style: { kind: 'natural' },
   sample_density: 128,
-  spatial_reach_percent: 10,
-  color_focus_percent: 0,
   // @ts-expect-error Processing fields are typed.
   remove_black_bars: 'yes',
+});
+device.commands.configureProcessing(0, {
+  brightness_percent: 80,
+  // @ts-expect-error A style is one of the named kinds.
+  style: { kind: 'cinema' },
+  sample_density: 128,
+  remove_black_bars: true,
 });
 
 // The supervisor's state is one type for both packages.

@@ -1,6 +1,8 @@
 //! Build-only entry point for `npm run codegen`: prints the named OpenAPI
-//! documents, or with `--fixtures` actual Rust serializations the frontend
-//! tests validate against them.
+//! documents, with `--fixtures` actual Rust serializations the frontend
+//! tests validate against them, or with `--constants` server-known values
+//! the frontends use as they are.
+mod constants;
 mod fixtures;
 use clap::Parser;
 use prysm_capture_device::DeviceSource;
@@ -51,13 +53,19 @@ fn webos() -> Contract {
 #[derive(Debug, Parser)]
 struct Cli {
     /// Print Rust serializations the frontend tests validate instead
-    #[arg(long)]
+    #[arg(long, conflicts_with = "constants")]
     fixtures: bool,
+    /// Print the constants the frontends use, such as the built-in styles, instead
+    #[arg(long)]
+    constants: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let output = if Cli::parse().fixtures {
+    let cli = Cli::parse();
+    let output = if cli.fixtures {
         fixtures::serialized()
+    } else if cli.constants {
+        constants::serialized()?
     } else {
         serde_json::to_value(documents()?)?
     };

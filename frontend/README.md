@@ -68,11 +68,11 @@ supervisor in each of its states and play the phone's calibration part). See the
     ([save status](packages/web-portal/save-status.tsx)), then one column
     of [rows](packages/web-portal/rows.tsx) in groups with a small heading:
     Setup (Video source, Lights: name and facts, or the live problem in the
-    same line in red), Picture (Calibrations, Fine-tuning, the Remove
+    same line in red), Picture (Style, Calibrations, Detail, the Remove
     black bars switch) and This device (Appearance, About this Prysm, Start
     over with setup). A row is a label, its value beneath and a chevron; the
     whole row is the link; a switch only for plain on/off. The pages under
-    Settings (editors, calibrations, fine-tuning, appearance, about, preview)
+    Settings (editors, style, calibrations, detail, appearance, about, preview)
     have the same width, heading and back link, and one line under the
     heading in the same place: the save status where things save live, else
     how the page saves ("Saved when you choose …", "Kept in this browser").
@@ -138,12 +138,18 @@ supervisor in each of its states and play the phone's calibration part). See the
     failure's `section`, else `field`) in red. On a wide card the TV drawing with the
     LED band follows in the light's colours.
   - [Picture](packages/web-portal/processing.tsx): black bars as a switch
-    row, and Picture fine-tuning (`#/settings/picture`: dark-scene glow 0 to
-    20 %, edge depth, colour focus and colour boost 0 to 100 %, smoothing 0 to 2 s, scene cuts 0 to
-    100 %, brightness ramp 0 to 2 s, detail 1 to 512, all sliders in Home's
-    one slider style, widened to fit a saved value beyond), applied live (debounced 400 ms, sliders on
-    release) because processing-only changes reach a running session without
-    restarting it. [Calibrations](packages/web-portal/calibrations.tsx)
+    row; Style (`#/settings/style`): one [row choice](packages/web-portal/rows.tsx)
+    per [style](packages/web-portal/styles.ts) (Natural, Calm, Vivid, Game,
+    Custom), the saved `processing.style` ticked and applied at once; Custom
+    opens its sliders below the list (dark-scene glow 0 to 20 %, edge depth,
+    colour focus and colour boost 0 to 100 %, smoothing 0 to 2 s, scene cuts
+    0 to 100 %, brightness ramp 0 to 2 s), which write `processing.custom_style`.
+    A first Custom starts from the ticked style's values, generated from Rust
+    (`@prysm/contracts/constants`); later it returns to the kept values. Detail
+    (`#/settings/detail`: 1 to 512) stays outside styles. All sliders are in
+    Home's one slider style, widened to fit a saved value beyond, and apply
+    live (debounced 400 ms, sliders on release) because processing-only
+    changes reach a running session without restarting it. [Calibrations](packages/web-portal/calibrations.tsx)
     (`#/settings/calibrations`): one row each ("In use" or "Not in use") opening
     the calibration's page (`#/settings/calibrations/<id>`: name, an "In use" switch,
     correction and hue shift, Reset, Delete). A deleted calibration keeps its row
@@ -281,8 +287,10 @@ calibrations, 64-character names, -100 to 100 per control) are checked the same 
 the `application` document (state, session, failures, requests, settings), one
 `host-*` document per set of hosts with their adapter sections typed
 (`host-desktop`, `host-webos`), the TV supervisor's `luna` document, and Rust
-serialization fixtures; [codegen](scripts/codegen.mjs)
-turns each document into `packages/contracts/generated/<name>.generated.ts`.
+serialization fixtures and the constants the frontends use as they are
+(the built-in styles' values); [codegen](scripts/codegen.mjs)
+turns each document into `packages/contracts/generated/<name>.generated.ts`
+and the constants into `constants.generated.ts`.
 Generated files are checked in; never edit them.
 
 ```sh

@@ -15,7 +15,7 @@ import { OfflineNotice, Page, PageHeading, SetupNotice } from './page';
 import { useNav, usePortal } from './portal-context';
 import type { Place } from './routes';
 import { PreviewPanel } from './preview';
-import { FineTuning, QuickPicture } from './processing';
+import { Detail, QuickPicture, StyleSettings } from './processing';
 import { nameOf } from './calibration-model';
 import { CalibrationList, CalibrationPage } from './calibrations';
 import { SaveStatus, SaveStatusProvider } from './save-status';
@@ -275,15 +275,28 @@ export function CalibrationRoute() {
   );
 }
 
-export function PictureRoute() {
+export function StyleRoute() {
   return (
     <LivePage
-      className="picture-page"
-      title="Prysm picture fine-tuning"
-      name="Fine-tuning"
-      heading="Picture fine-tuning"
+      className="style-page"
+      title="Prysm style"
+      name="Style"
+      heading="Style"
     >
-      <FineTuning {...useLiveProps()} />
+      <StyleSettings {...useLiveProps()} />
+    </LivePage>
+  );
+}
+
+export function DetailRoute() {
+  return (
+    <LivePage
+      className="detail-page"
+      title="Prysm detail"
+      name="Detail"
+      heading="Detail"
+    >
+      <Detail {...useLiveProps()} />
     </LivePage>
   );
 }

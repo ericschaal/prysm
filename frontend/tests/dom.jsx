@@ -129,7 +129,7 @@ export const radio = (label) => $('input[type="radio"]', row(label));
 /** A row's value line: its facts, or its live problem in their place. */
 export const valueOf = (label) => $('.row-value', row(label)).textContent;
 
-/** Open a page from Settings by its row: `Calibrations`, `Fine-tuning`. */
+/** Open a page from Settings by its row: `Calibrations`, `Style`. */
 export async function openPage(label) {
   if (!row(label)) await openSettings();
   await act(async () => {

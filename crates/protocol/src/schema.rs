@@ -64,8 +64,8 @@ pub struct SettingsSchema {
 const _: () = assert!(
     MAX_CALIBRATIONS == 32 && MAX_CALIBRATION_ID_LEN == 64 && MAX_CALIBRATION_NAME_CHARS == 64
 );
-const _: () = assert!(prysm_ports::Processing::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
-const _: () = assert!(prysm_ports::Processing::MAX_DARK_FLOOR_PERCENT == 20);
+const _: () = assert!(prysm_ports::StyleValues::MAX_BRIGHTNESS_RAMP_SECONDS == 2.0);
+const _: () = assert!(prysm_ports::StyleValues::MAX_DARK_FLOOR_PERCENT == 20);
 
 // Mirrors `prysm_ports::Processing`.
 /// Processing controls in plain units.
@@ -75,31 +75,14 @@ const _: () = assert!(prysm_ports::Processing::MAX_DARK_FLOOR_PERCENT == 20);
 pub struct ProcessingSchema {
     #[schema(minimum = 0, maximum = 100)]
     brightness_percent: u8,
-    /// Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
-    #[schema(minimum = 0, maximum = 100)]
-    saturation_boost_percent: u8,
-    /// The least luminance the lights keep, as a neutral white glow, in
-    /// percent of full light; 0 lets them go fully dark.
-    #[schema(minimum = 0, maximum = 20)]
-    dark_floor_percent: u8,
-    /// Seconds; 0 disables smoothing.
-    #[schema(minimum = 0)]
-    smoothing_seconds: f32,
-    /// How much of a scene cut the lights take at once; 0 eases a cut in
-    /// like any other change.
-    #[schema(minimum = 0, maximum = 100)]
-    cut_response_percent: u8,
-    /// Seconds, the least time from dark to full brightness; 0 sets no limit.
-    #[schema(minimum = 0, maximum = 2)]
-    brightness_ramp_seconds: f32,
+    style: ChosenStyleSchema,
+    /// The user's own values, applied while the style is `custom` and kept
+    /// while another is chosen; absent until first tuned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    custom_style: Option<StyleValuesSchema>,
     #[schema(minimum = 1)]
     sample_density: u16,
-    #[schema(minimum = 1, maximum = 100)]
-    spatial_reach_percent: u8,
-    /// How much each light keeps the colour next to it, taking less from the
-    /// rest of the picture; 0 is the plain average.
-    #[schema(minimum = 0, maximum = 100)]
-    color_focus_percent: u8,
     remove_black_bars: bool,
     /// Saved color corrections; ids are unique.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -114,6 +97,62 @@ pub struct ProcessingSchema {
         pattern = "^[A-Za-z0-9_-]+$"
     )]
     active_calibration: Option<String>,
+}
+
+// Mirrors `prysm_ports::Style`.
+/// A style by name: a built-in set of the picture-taste knobs, or `custom`,
+/// the user's own values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = Style)]
+#[serde(rename_all = "snake_case")]
+pub enum StyleSchema {
+    Natural,
+    Calm,
+    Vivid,
+    Game,
+    Custom,
+}
+
+// Mirrors `prysm_ports::style::as_object`.
+/// The chosen style, as `Processing.style`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = ChosenStyle)]
+#[serde(deny_unknown_fields)]
+pub struct ChosenStyleSchema {
+    kind: StyleSchema,
+}
+
+// Mirrors `prysm_ports::StyleValues`.
+/// The picture-taste knobs a style sets, in plain units.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
+#[schema(as = StyleValues)]
+#[serde(deny_unknown_fields)]
+pub struct StyleValuesSchema {
+    /// Seconds; 0 disables smoothing.
+    #[schema(minimum = 0)]
+    smoothing_seconds: f32,
+    /// How much of a scene cut the lights take at once; 0 eases a cut in
+    /// like any other change.
+    #[schema(minimum = 0, maximum = 100)]
+    cut_response_percent: u8,
+    /// Seconds, the least time from dark to full brightness; 0 sets no limit.
+    #[schema(minimum = 0, maximum = 2)]
+    brightness_ramp_seconds: f32,
+    /// Edge depth: how far into the picture each light looks, in percent of
+    /// the picture's height.
+    #[schema(minimum = 1, maximum = 100)]
+    spatial_reach_percent: u8,
+    /// How much each light keeps the colour next to it, taking less from the
+    /// rest of the picture; 0 is the plain average.
+    #[schema(minimum = 0, maximum = 100)]
+    color_focus_percent: u8,
+    /// Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
+    #[schema(minimum = 0, maximum = 100)]
+    saturation_boost_percent: u8,
+    /// The least luminance the lights keep, as a neutral white glow, in
+    /// percent of full light; 0 lets them go fully dark.
+    #[schema(minimum = 0, maximum = 20)]
+    dark_floor_percent: u8,
 }
 
 // Mirrors `prysm_ports::Calibration`.
@@ -405,6 +444,9 @@ impl ToSchema for OutputSettings {}
     SettingsReplaced,
     SettingsSchema,
     ProcessingSchema,
+    StyleSchema,
+    ChosenStyleSchema,
+    StyleValuesSchema,
     CalibrationSchema,
     CorrectionControlsSchema,
     HueControlsSchema,
@@ -563,7 +605,7 @@ mod tests {
     use prysm_ports::{
         AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls,
         DeviceBrightness, FrameSource, HueControls, Input, Latency, LightingTarget, OutputIssue,
-        Pattern, Processing, Result, SessionPhase, Settings, ValidationError,
+        Pattern, Processing, Result, SessionPhase, Settings, Style, StyleValues, ValidationError,
     };
     use serde_json::json;
 
@@ -621,15 +663,25 @@ mod tests {
         });
         same_shape::<Settings, SettingsSchema>(&Settings {
             processing: Processing {
-                cut_response_percent: 70,
-                brightness_ramp_seconds: 0.5,
-                color_focus_percent: 60,
-                saturation_boost_percent: 40,
-                dark_floor_percent: 10,
+                style: Style::Custom,
+                custom_style: Some(StyleValues {
+                    cut_response_percent: 70,
+                    brightness_ramp_seconds: 0.5,
+                    color_focus_percent: 60,
+                    saturation_boost_percent: 40,
+                    dark_floor_percent: 10,
+                    ..StyleValues::DEFAULT
+                }),
                 ..Processing::default()
             },
             ..Settings::default()
         });
+        for style in Style::BUILT_IN.into_iter().chain([Style::Custom]) {
+            same_shape::<Style, StyleSchema>(&style);
+        }
+        for style in Style::BUILT_IN {
+            same_shape::<StyleValues, StyleValuesSchema>(&style.built_in().unwrap());
+        }
         for target in LightingTarget::ALL {
             same_shape::<LightingTarget, LightingTargetSchema>(&target);
         }

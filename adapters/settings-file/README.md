@@ -37,14 +37,17 @@ the adapter's factory, not here.
   },
   "processing": {
     "brightness_percent": 80,
-    "saturation_boost_percent": 0,
-    "dark_floor_percent": 0,
-    "smoothing_seconds": 0.3,
-    "cut_response_percent": 0,
-    "brightness_ramp_seconds": 0,
+    "style": { "kind": "calm" },
+    "custom_style": {
+      "smoothing_seconds": 0.5,
+      "cut_response_percent": 60,
+      "brightness_ramp_seconds": 0.5,
+      "spatial_reach_percent": 15,
+      "color_focus_percent": 0,
+      "saturation_boost_percent": 20,
+      "dark_floor_percent": 5
+    },
     "sample_density": 128,
-    "spatial_reach_percent": 10,
-    "color_focus_percent": 0,
     "remove_black_bars": true,
     "calibrations": [
       {
@@ -64,10 +67,48 @@ the adapter's factory, not here.
 }
 ```
 
-`processing.saturation_boost_percent` (0-100) scales the lights' chroma by
-1 + p/100; `processing.dark_floor_percent` (0-20) is the neutral white glow, in
-percent of full light, that the lights keep in dark scenes. Both default to 0,
-which changes nothing; neither has been tried on a TV yet.
+`processing.style` is the chosen style: `{ "kind": "natural" }` (the
+default), `"calm"`, `"vivid"`, `"game"` or `"custom"`. A built-in style stores
+only its name; its values are the table in
+[`Style::built_in`](../../crates/ports/src/style.rs), so an update can retune
+it. `processing.custom_style` holds the user's own values, applied while the
+kind is `custom` and kept while another style is chosen; it is omitted until
+first tuned, and `custom` without it is refused. Every one of its seven
+fields is required:
+
+| Field | Range | Effect |
+| --- | --- | --- |
+| `smoothing_seconds` | 0 or more | Seconds to complete most of a change; 0 disables smoothing |
+| `cut_response_percent` | 0-100 | How much of a scene cut the lights take at once |
+| `brightness_ramp_seconds` | 0-2 | The least time from dark to full brightness; 0 sets no limit |
+| `spatial_reach_percent` | 1-100 | Edge depth: how far into the picture each light looks |
+| `color_focus_percent` | 0-100 | How much each light keeps the colour next to it |
+| `saturation_boost_percent` | 0-100 | Scales the lights' chroma by 1 + p/100 |
+| `dark_floor_percent` | 0-20 | The neutral white glow, in percent of full light, kept in dark scenes |
+
+A refused value names its path, such as
+`processing.custom_style.dark_floor_percent`. `brightness_percent`,
+`sample_density`, `remove_black_bars` and the calibrations are outside
+styles.
+
+With a custom style:
+
+```json
+{
+  "processing": {
+    "style": { "kind": "custom" },
+    "custom_style": {
+      "smoothing_seconds": 0.1,
+      "cut_response_percent": 0,
+      "brightness_ramp_seconds": 0,
+      "spatial_reach_percent": 10,
+      "color_focus_percent": 0,
+      "saturation_boost_percent": 0,
+      "dark_floor_percent": 0
+    }
+  }
+}
+```
 
 `processing.calibrations` holds up to 32 saved calibrations (colour
 corrections) with unique ids (1-64 ASCII letters, digits, `-` or `_`) and names

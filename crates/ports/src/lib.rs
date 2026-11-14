@@ -15,6 +15,7 @@ mod resolve;
 mod settings;
 mod slot;
 mod snapshot;
+mod style;
 
 pub use adapter::{
     DeviceBrightness, FrameSink, FrameSource, IdleMode, LedOutput, OutputIssue, Pull, SettingsStore,
@@ -34,3 +35,4 @@ pub use resolve::{Lookup, Resolver, system_lookup};
 pub use settings::{AdapterSettings, Processing, Revision, Section, Settings};
 pub use slot::LatestSlot;
 pub use snapshot::{Behind, Input, Latency, LightingTarget, SessionPhase, SessionState, Snapshot};
+pub use style::{Style, StyleValues};

@@ -138,21 +138,21 @@ test('Settings stays put under state ticks and pages keep their own place and sa
   await expect(page).toHaveURL(/#\/settings$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(listPlace);
 
-  // A save started on Settings is not Fine-tuning's: that page says all saved.
+  // A save started on Settings is not Style's: that page says all saved.
   await mark(page, 'scroll to top');
   await page.evaluate(() => window.scrollTo(0, 0));
   await page
     .getByRole('region', { name: 'Picture' })
     .getByRole('checkbox', { name: 'Remove black bars' })
     .click();
-  await mark(page, 'to Fine-tuning');
-  await page.getByRole('button', { name: /^Fine-tuning/ }).click();
-  await expect(page).toHaveURL(/#\/settings\/picture$/);
+  await mark(page, 'to Style');
+  await page.getByRole('button', { name: /^Style/ }).click();
+  await expect(page).toHaveURL(/#\/settings\/style$/);
   await page.waitForTimeout(2500);
   const { lines, shifts } = await seen(page);
-  expect(
-    lines.filter((line) => line.startsWith('Picture fine-tuning: ')),
-  ).toEqual(['Picture fine-tuning: All changes saved']);
+  expect(lines.filter((line) => line.startsWith('Style: '))).toEqual([
+    'Style: All changes saved',
+  ]);
 
   // Nothing moved by itself on the way (Chromium measures layout shift).
   if (shifts !== null) expect(shifts).toEqual([]);

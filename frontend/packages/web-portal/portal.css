@@ -2443,10 +2443,14 @@ fieldset > .help {
   margin-bottom: var(--space-6);
 }
 
-/* ── Fine-tuning and a calibration: sliders in one column, as Home's ──────── */
-.fine-tuning,
+/* ── Style, Detail and a calibration: sliders in one column, as Home's ──── */
+.sliders,
 .calibration-page {
   container-type: inline-size;
+}
+/* Custom's sliders under the styles, spaced as the capture presets' fields. */
+.style-custom {
+  margin-top: var(--space-6);
 }
 .calibration-page > .rows {
   margin-bottom: var(--space-6);

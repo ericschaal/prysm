@@ -1,5 +1,7 @@
 use super::SettingsFile;
-use prysm_ports::{AdapterSettings, Error, Processing, Settings, SettingsStore};
+use prysm_ports::{
+    AdapterSettings, Error, Processing, Settings, SettingsStore, Style, StyleValues,
+};
 use serde_json::json;
 use std::{error::Error as _, fs, path::Path};
 
@@ -15,12 +17,17 @@ fn sample() -> Settings {
         )),
         processing: Processing {
             brightness_percent: 80,
-            smoothing_seconds: 0.3,
-            cut_response_percent: 40,
-            brightness_ramp_seconds: 0.5,
-            color_focus_percent: 60,
-            saturation_boost_percent: 40,
-            dark_floor_percent: 10,
+            // A built-in style is chosen; the custom values are kept.
+            style: Style::Calm,
+            custom_style: Some(StyleValues {
+                smoothing_seconds: 0.3,
+                cut_response_percent: 40,
+                brightness_ramp_seconds: 0.5,
+                spatial_reach_percent: 20,
+                color_focus_percent: 60,
+                saturation_boost_percent: 40,
+                dark_floor_percent: 10,
+            }),
             ..Processing::default()
         },
     }
@@ -77,11 +84,15 @@ fn save_then_load_round_trips_as_pretty_json() {
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.ends_with("}\n"), "{text}");
     assert!(text.contains("\n  \"capture\": {\n"), "{text}");
+    assert!(
+        text.contains("\"style\": {\n      \"kind\": \"calm\"\n    },"),
+        "{text}"
+    );
+    assert!(text.contains("\"custom_style\": {\n"), "{text}");
     assert!(text.contains("\"smoothing_seconds\": 0.3,"), "{text}");
     assert!(text.contains("\"brightness_ramp_seconds\": 0.5,"), "{text}");
     assert!(text.contains("\"color_focus_percent\": 60,"), "{text}");
-    assert!(text.contains("\"saturation_boost_percent\": 40,"), "{text}");
-    assert!(text.contains("\"dark_floor_percent\": 10,"), "{text}");
+    assert!(text.contains("\"dark_floor_percent\": 10\n"), "{text}");
     // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();

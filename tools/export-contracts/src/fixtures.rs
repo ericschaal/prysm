@@ -8,7 +8,7 @@ use prysm_output_wled::{LedCounts, Wled, WledSettings};
 use prysm_ports::{
     AdapterSettings, Behind, Calibration, CalibrationPattern, Candidate, CorrectionControls, Error,
     HueControls, Input, Latency, LightingTarget, OutputIssue, Pattern, Processing, Revision,
-    Section, SessionPhase, SessionState, Settings, Snapshot, ValidationError,
+    Section, SessionPhase, SessionState, Settings, Snapshot, Style, StyleValues, ValidationError,
 };
 use prysm_ports::{OutputFactory, SourceFactory};
 use prysm_protocol::{
@@ -114,6 +114,27 @@ fn with_calibrations() -> Settings {
                 },
             ],
             active_calibration: Some("ps5".into()),
+            ..Processing::default()
+        },
+        ..Settings::default()
+    }
+}
+
+/// The user's own style values, applied with `custom` and kept with
+/// another style.
+fn with_custom_style(style: Style) -> Settings {
+    Settings {
+        processing: Processing {
+            style,
+            custom_style: Some(StyleValues {
+                smoothing_seconds: 0.5,
+                cut_response_percent: 70,
+                brightness_ramp_seconds: 0.5,
+                spatial_reach_percent: 15,
+                color_focus_percent: 60,
+                saturation_boost_percent: 40,
+                dark_floor_percent: 10,
+            }),
             ..Processing::default()
         },
         ..Settings::default()
@@ -274,7 +295,14 @@ fn application() -> Value {
             SettingsRequest { expected: Revision(8), settings: with_calibrations() },
         ],
         "SettingsReplaced": [SettingsReplaced { revision: Revision(8) }],
-        "Settings": [Settings::default(), with_calibrations()],
+        "Settings": [
+            Settings::default(),
+            with_calibrations(),
+            with_custom_style(Style::Custom),
+            with_custom_style(Style::Vivid),
+        ],
+        "Style": Style::BUILT_IN.into_iter().chain([Style::Custom]).collect::<Vec<_>>(),
+        "StyleValues": Style::BUILT_IN.into_iter().filter_map(Style::built_in).collect::<Vec<_>>(),
         "Candidate": [
             Candidate::new("USB Video", &json!({ "path": "/dev/video0" })).detail("/dev/video0"),
             Candidate::new("Living room", &json!({ "address": "192.168.1.40" }))

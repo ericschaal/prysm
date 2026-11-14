@@ -16,6 +16,9 @@ import {
   calibrationLimits,
   rebased,
   saveDeveloper,
+  styleLimits,
+  styleOrder,
+  styleValues,
   savedForMs,
   throttled,
   trialIntervalMs,
@@ -180,7 +183,7 @@ test('a state tick leaves Settings in place; each page has its own save line', a
     const release = fixture.holdSaves();
     await click($('input[type="checkbox"]', row('Remove black bars')));
     assert.equal($('.save-status').textContent, 'Saving…');
-    await openPage('Fine-tuning');
+    await openPage('Style');
     assert.notEqual($('.page-heading h2'), before[0], 'a page of its own');
     assert.equal($('.save-status').textContent, 'All changes saved');
     release();
@@ -708,12 +711,19 @@ test('modes that cannot work are disabled and say why; before setup only the pro
 
 test('a stale picture change keeps both changes: mine where I changed, theirs elsewhere', () => {
   const base = { ...defaultProcessing, brightness_percent: 80 };
-  const mine = { ...base, dark_floor_percent: 10, brightness_percent: 60 };
-  const theirs = { ...base, smoothing_seconds: 0.5, brightness_percent: 90 };
+  const custom_style = { ...styleValues.natural, dark_floor_percent: 10 };
+  const mine = {
+    ...base,
+    style: { kind: 'custom' },
+    custom_style,
+    brightness_percent: 60,
+  };
+  const theirs = { ...base, sample_density: 200, brightness_percent: 90 };
   assert.deepEqual(rebased(theirs, base, mine), {
     ...base,
-    dark_floor_percent: 10,
-    smoothing_seconds: 0.5,
+    style: { kind: 'custom' },
+    custom_style,
+    sample_density: 200,
     // The same control on both: the value the user sees wins.
     brightness_percent: 60,
   });
@@ -736,10 +746,10 @@ test('Settings has one save status; a refused stale change is saved again on the
   try {
     await openSettings();
     assert.equal(status(), 'All changes saved');
-    await openPage('Fine-tuning');
-    assert.equal(window.location.hash, '#/settings/picture');
+    await openPage('Detail');
+    assert.equal(window.location.hash, '#/settings/detail');
     assert.equal(status(), 'All changes saved');
-    await edit(field('processing.dark_floor_percent'), 10);
+    await edit(field('processing.sample_density'), 100);
     assert.equal(status(), 'Saving…');
     await settle();
     assert.equal(status(), 'Saved');
@@ -752,23 +762,25 @@ test('Settings has one save status; a refused stale change is saved again on the
       message: 'settings revision 1 is stale; current is 2',
       current: 2,
     });
-    await edit(field('processing.dark_floor_percent'), 15);
+    await edit(field('processing.sample_density'), 150);
     await settle();
     assert.equal(saves(fixture), 2);
     assert.equal(status(), 'Saving…', 'waits for the newer settings');
     await elsewhere(fixture, {
       processing: {
         ...fixture.snapshot().settings.processing,
-        smoothing_seconds: 0.5,
+        style: { kind: 'calm' },
       },
     });
     await settle();
     const saved = fixture.snapshot().settings.processing;
-    assert.equal(saved.dark_floor_percent, 15);
-    assert.equal(saved.smoothing_seconds, 0.5);
-    assert.equal(field('processing.smoothing_seconds').value, '0.5');
+    assert.equal(saved.sample_density, 150);
+    assert.deepEqual(saved.style, { kind: 'calm' });
     assert.equal(status(), 'Saved');
     assert(!text().includes('changed elsewhere'));
+    await leaveEditor();
+    await openPage('Style');
+    assert.equal(radio('Calm').checked, true);
   } finally {
     await portal.unmount();
   }
@@ -887,41 +899,90 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
       true,
     );
 
-    await openPage('Fine-tuning');
+    // Detail stays outside the styles, on a page of its own.
+    await openPage('Detail');
+    assert.deepEqual(attributes(control('sample_density')), [
+      'range',
+      '1',
+      '1',
+      '512',
+      '1',
+    ]);
+    assert.equal(control('sample_density').labels[0].textContent, 'Detail');
+    // Two quick changes are applied once, after the user stops.
+    await edit(control('sample_density'), 64);
+    await edit(control('sample_density'), 128);
+    assert.equal(saves(fixture), 1);
+    await settle();
+    assert.equal(saves(fixture), 2);
+    assert.equal(fixture.snapshot().settings.processing.sample_density, 128);
+
+    // One row per style, the saved one ticked; no sliders until Custom.
+    await leaveEditor();
+    await openPage('Style');
+    assert.deepEqual(
+      $$('.row-choice').map((choice) => [
+        $('.row-label', choice).textContent,
+        $('.row-value', choice).textContent,
+      ]),
+      [
+        ['Natural', 'Calm in quiet scenes, follows cuts at once.'],
+        ['Calm', 'A slow, soft glow. Nothing sudden.'],
+        ['Vivid', 'Stronger colours, follows the action.'],
+        ['Game', 'Reacts at once, with the least delay.'],
+        ['Custom', 'Your own values.'],
+      ],
+    );
+    assert.equal(radio('Natural').checked, true);
+    assert.equal($$('input[type="range"]').length, 0);
+
+    // A style applies at once, by name only.
+    await click(radio('Calm'));
+    assert.equal(saves(fixture), 3);
+    assert.deepEqual(fixture.snapshot().settings.processing.style, {
+      kind: 'calm',
+    });
+    assert.equal(
+      fixture.snapshot().settings.processing.custom_style,
+      undefined,
+    );
+    assert.equal(radio('Calm').checked, true);
+
+    // The first Custom starts from the style that was ticked.
+    await click(radio('Custom'));
+    assert.equal(saves(fixture), 4);
     assert.deepEqual(
       [
-        'dark_floor_percent',
-        'spatial_reach_percent',
-        'color_focus_percent',
-        'saturation_boost_percent',
-        'smoothing_seconds',
-        'cut_response_percent',
-        'brightness_ramp_seconds',
-        'sample_density',
-      ].map((name) => attributes(control(name))),
+        fixture.snapshot().settings.processing.style,
+        fixture.snapshot().settings.processing.custom_style,
+      ],
+      [{ kind: 'custom' }, styleValues.calm],
+    );
+    const knob = (name) => control(`custom_style.${name}`);
+    const knobs = [
+      'dark_floor_percent',
+      'spatial_reach_percent',
+      'color_focus_percent',
+      'saturation_boost_percent',
+      'smoothing_seconds',
+      'cut_response_percent',
+      'brightness_ramp_seconds',
+    ];
+    assert.deepEqual(
+      knobs.map((name) => attributes(knob(name))),
       [
         ['range', '0', '0', '20', '1'],
-        ['range', '10', '1', '100', '1'],
+        ['range', '20', '1', '100', '1'],
         ['range', '0', '0', '100', '1'],
         ['range', '0', '0', '100', '1'],
-        // Smoothing and detail as sliders over the range worth tuning.
-        ['range', '0', '0', '2', '0.05'],
+        // Smoothing as a slider over the range worth tuning.
+        ['range', '0.8', '0', '2', '0.05'],
         ['range', '0', '0', '100', '1'],
-        ['range', '0', '0', '2', '0.1'],
-        ['range', '1', '1', '512', '1'],
+        ['range', '1', '0', '2', '0.1'],
       ],
     );
     assert.deepEqual(
-      [
-        'dark_floor_percent',
-        'spatial_reach_percent',
-        'color_focus_percent',
-        'saturation_boost_percent',
-        'smoothing_seconds',
-        'cut_response_percent',
-        'brightness_ramp_seconds',
-        'sample_density',
-      ].map((name) => control(name).labels[0].textContent),
+      knobs.map((name) => knob(name).labels[0].textContent),
       [
         'Dark-scene glow',
         'Edge depth',
@@ -930,86 +991,87 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
         'Smoothing',
         'Scene cuts',
         'Brightness ramp',
-        'Detail',
       ],
     );
 
-    // Two quick changes are applied once, after the user stops.
-    await edit(control('spatial_reach_percent'), 30);
-    await edit(control('spatial_reach_percent'), 20);
-    assert.equal(saves(fixture), 1);
-    await settle();
-    assert.equal(saves(fixture), 2);
-
-    await edit(control('sample_density'), 128);
-    await edit(control('color_focus_percent'), 40);
+    // The sliders write the user's own values, after the user stops.
+    await edit(knob('color_focus_percent'), 40);
     assert.equal(
-      $('output', control('color_focus_percent').closest('.field')).textContent,
+      $('output', knob('color_focus_percent').closest('.field')).textContent,
       '40%',
     );
-    await edit(control('saturation_boost_percent'), 25);
+    await edit(knob('saturation_boost_percent'), 25);
+    await edit(knob('dark_floor_percent'), 8);
     assert.equal(
-      $('output', control('saturation_boost_percent').closest('.field'))
-        .textContent,
-      '25%',
-    );
-    await edit(control('dark_floor_percent'), 8);
-    assert.equal(
-      $('output', control('dark_floor_percent').closest('.field')).textContent,
+      $('output', knob('dark_floor_percent').closest('.field')).textContent,
       '8%',
     );
-    await edit(control('smoothing_seconds'), 0.5);
+    await edit(knob('smoothing_seconds'), 0.5);
     assert.equal(
-      $('output', control('smoothing_seconds').closest('.field')).textContent,
-      '0.5\u00a0s',
+      $('output', knob('smoothing_seconds').closest('.field')).textContent,
+      '0.5 s',
     );
-    await edit(control('cut_response_percent'), 60);
-    assert.equal(
-      $('output', control('cut_response_percent').closest('.field'))
-        .textContent,
-      '60%',
-    );
-    await edit(control('brightness_ramp_seconds'), 0.5);
-    assert.equal(
-      $('output', control('brightness_ramp_seconds').closest('.field'))
-        .textContent,
-      '0.5\u00a0s',
-    );
+    await edit(knob('cut_response_percent'), 60);
+    await edit(knob('brightness_ramp_seconds'), 0.5);
+    await edit(knob('spatial_reach_percent'), 30);
+    assert.equal(saves(fixture), 4);
     await settle();
-    assert.equal(saves(fixture), 3);
-    assert.deepEqual(fixture.snapshot().settings.processing, {
-      ...defaultProcessing,
-      spatial_reach_percent: 20,
-      sample_density: 128,
-      color_focus_percent: 40,
-      saturation_boost_percent: 25,
-      dark_floor_percent: 8,
+    assert.equal(saves(fixture), 5);
+    const mine = {
       smoothing_seconds: 0.5,
       cut_response_percent: 60,
       brightness_ramp_seconds: 0.5,
+      spatial_reach_percent: 30,
+      color_focus_percent: 40,
+      saturation_boost_percent: 25,
+      dark_floor_percent: 8,
+    };
+    assert.deepEqual(fixture.snapshot().settings.processing, {
+      ...defaultProcessing,
+      style: { kind: 'custom' },
+      custom_style: mine,
+      sample_density: 128,
       remove_black_bars: true,
       calibrations,
       active_calibration: 'ps5',
     });
 
-    // A field rejected by the server is marked and not retried until edited.
+    // Another style keeps them; Custom returns to them.
+    await click(radio('Vivid'));
+    assert.equal($$('input[type="range"]').length, 0);
+    assert.deepEqual(fixture.snapshot().settings.processing.style, {
+      kind: 'vivid',
+    });
+    assert.deepEqual(fixture.snapshot().settings.processing.custom_style, mine);
+    await click(radio('Custom'));
+    assert.deepEqual(fixture.snapshot().settings.processing.custom_style, mine);
+    assert.equal(knob('dark_floor_percent').value, '8');
+    await leaveEditor();
+    assert.equal(valueOf('Style'), 'Custom');
+    await openPage('Style');
+
+    // A value rejected by the server is marked and not retried until edited.
+    const saved = saves(fixture);
     fixture.failNext({
       kind: 'invalid',
-      field: 'processing.dark_floor_percent',
+      field: 'processing.custom_style.dark_floor_percent',
       message: 'must be 0-20',
     });
-    await edit(control('dark_floor_percent'), 12);
+    await edit(knob('dark_floor_percent'), 12);
     await settle();
     assert.equal(
-      errorOf(control('dark_floor_percent')),
+      errorOf(knob('dark_floor_percent')),
       'Prysm can’t use this value.',
     );
     await settle();
-    assert.equal(saves(fixture), 4);
-    await edit(control('dark_floor_percent'), 5);
+    assert.equal(saves(fixture), saved + 1);
+    await edit(knob('dark_floor_percent'), 5);
     await settle();
-    assert.equal(saves(fixture), 5);
-    assert.equal(fixture.snapshot().settings.processing.dark_floor_percent, 5);
+    assert.equal(saves(fixture), saved + 2);
+    assert.equal(
+      fixture.snapshot().settings.processing.custom_style.dark_floor_percent,
+      5,
+    );
   } finally {
     await portal.unmount();
   }
@@ -1572,15 +1634,15 @@ test('fields the forms do not show are preserved on every save', async () => {
     await edit(field('output.leds.right'), 6);
     await submit(form('Your lights'));
     await leaveEditor();
-    await openPage('Fine-tuning');
-    await edit(field('processing.spatial_reach_percent'), 20);
+    await openPage('Detail');
+    await edit(field('processing.sample_density'), 20);
     await settle();
     assert.deepEqual(fixture.snapshot().settings, {
       capture: { ...capture, future_option: 1, fps: 50 },
       output: { ...output, leds: { ...output.leds, right: 6 } },
       processing: {
         ...defaultProcessing,
-        spatial_reach_percent: 20,
+        sample_density: 20,
         active_calibration: 'ps5',
         calibrations: [{ id: 'ps5' }],
       },
@@ -2061,6 +2123,7 @@ test('limits and defaults written in the panels match the generated schemas', as
   );
   for (const [schema, limits, defaults] of [
     [application.Processing, processingLimits, {}],
+    [application.StyleValues, styleLimits, {}],
     [application.CorrectionControls, correctionLimits, {}],
     [application.HueControls, hueLimits, {}],
     [desktop.DeviceSettings, deviceLimits, deviceDefaults],
@@ -2094,6 +2157,20 @@ test('limits and defaults written in the panels match the generated schemas', as
     assert(name in correctionLimits, `${name} has a control`);
   for (const name of Object.keys(application.HueControls.properties))
     assert(name in hueLimits, `${name} has a control`);
+  for (const name of Object.keys(application.StyleValues.properties))
+    assert(name in styleLimits, `${name} has a slider`);
+  // Every style has words, in the order Rust offers them, Custom last; the
+  // built-in ones have generated values within the sliders' limits.
+  assert.deepEqual(styleOrder, application.Style.enum);
+  assert.deepEqual(
+    Object.keys(styleValues).sort(),
+    styleOrder.filter((style) => style !== 'custom').sort(),
+  );
+  for (const values of Object.values(styleValues))
+    for (const [name, value] of Object.entries(values)) {
+      const { min, max = Infinity } = styleLimits[name];
+      assert(value >= min && value <= max, name);
+    }
   for (const schema of [webos.WebosSettings, desktop.RemoteReceiverSettings])
     for (const name of ['width', 'height'])
       assert.equal(
@@ -2185,8 +2262,9 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
       [
         'Video source',
         'Lights',
+        'Style',
         'Calibrations',
-        'Fine-tuning',
+        'Detail',
         'Remove black bars',
         'Appearance',
         'About this Prysm',
@@ -2198,6 +2276,11 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
       'Video capture device · 640\u00a0×\u00a0360 · 30 fps',
     );
     assert.equal(valueOf('Lights'), 'WLED · 14 LEDs');
+    assert.equal(valueOf('Style'), 'Natural');
+    assert.equal(
+      valueOf('Detail'),
+      'How closely the lights follow small details',
+    );
     assert(!$('.settings a'), 'Open WLED stays on Home');
     await openEditor('Video source');
     assert.equal(window.location.hash, '#/settings/video');
@@ -3012,10 +3095,24 @@ for (const [name, label, value] of [
   ['cut_response_percent', 'Scene cuts', 70],
   ['brightness_ramp_seconds', 'Brightness ramp', 1.2],
 ]) {
-  test(`dragging ${label} on Fine-tuning lights as it moves and saves where it is let go`, async () => {
-    const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  test(`dragging ${label} under Custom lights as it moves and saves where it is let go`, async () => {
+    const custom_style = { ...styleValues.natural };
+    const portal = await renderPortal(
+      HeadlessWebPortal,
+      { capture, output },
+      (snapshot) => ({
+        settings: {
+          ...snapshot.settings,
+          processing: {
+            ...snapshot.settings.processing,
+            style: { kind: 'custom' },
+            custom_style,
+          },
+        },
+      }),
+    );
     const { fixture, dom } = portal;
-    const slider = () => field(`processing.${name}`);
+    const slider = () => field(`processing.custom_style.${name}`);
     const fire = (type) =>
       act(async () =>
         slider().dispatchEvent(new dom.window.Event(type, { bubbles: true })),
@@ -3025,7 +3122,7 @@ for (const [name, label, value] of [
     try {
       await press(mode('processed'));
       await openSettings();
-      await openPage('Fine-tuning');
+      await openPage('Style');
       await fire('pointerdown');
       await edit(slider(), value);
       await flush();
@@ -3034,7 +3131,10 @@ for (const [name, label, value] of [
       await fire('pointerup');
       await flush();
       assert.equal(saves(fixture), 1);
-      assert.equal(fixture.snapshot().settings.processing[name], value);
+      assert.deepEqual(fixture.snapshot().settings.processing.custom_style, {
+        ...custom_style,
+        [name]: value,
+      });
     } finally {
       await portal.unmount();
     }

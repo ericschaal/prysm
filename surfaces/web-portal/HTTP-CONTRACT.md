@@ -69,7 +69,8 @@ into `@prysm/contracts/application`.
 `State` is `{ target, session, input?, output_issue?, calibration?, settings, revision, failure, surface_failures }`.
 `session` is `{ "state": "stopped" | "running" | "native" }` or
 `{ "state": "faulted", "phase": "running" | "closing_source" | "idling_output" | "finishing" }`.
-`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., calibrations?: [{ id, name, correction }], active_calibration? } }`.
+`settings` is the settings file format: `{ capture?: { kind, ... }, output?: { kind, ... }, processing: { ..., style: { kind }, custom_style?, calibrations?: [{ id, name, correction }], active_calibration? } }`.
+`processing.style.kind` is `natural`, `calm`, `vivid`, `game` or `custom`; a built-in style is stored by name only, and `custom` applies `processing.custom_style` (all seven knobs, required with `custom`, kept while another style is chosen). The built-in styles' values are not sent: the portal is built with them (`@prysm/contracts/constants`), and the [settings file](../../adapters/settings-file/README.md) describes the fields.
 Calibrations are part of `processing`: changing them, or which one is active, while lighting runs is applied at the next frame without reopening capture or output.
 `failure` is the last lighting failure or `null`. Setting the target to
 `processed` opens the capture (a failure is the reply); the output is opened

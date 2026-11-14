@@ -11,20 +11,16 @@ import {
 } from './form';
 
 /**
- * What this panel owns: ten controls plus the calibrations and the active
- * one. Other processing fields are preserved.
+ * What this panel owns: brightness, the style and the user's own style
+ * values, detail, black bars, plus the calibrations and the active one.
+ * Other processing fields are preserved.
  */
 export type ProcessingControls = Pick<
   Processing,
   | 'brightness_percent'
-  | 'saturation_boost_percent'
-  | 'dark_floor_percent'
-  | 'smoothing_seconds'
-  | 'cut_response_percent'
-  | 'brightness_ramp_seconds'
+  | 'style'
+  | 'custom_style'
   | 'sample_density'
-  | 'spatial_reach_percent'
-  | 'color_focus_percent'
   | 'remove_black_bars'
   | 'calibrations'
   | 'active_calibration'
@@ -32,19 +28,23 @@ export type ProcessingControls = Pick<
 
 /**
  * Limits from the generated `Processing` schema (`minimum`/`maximum`),
- * checked against it in tests/contracts.test.mjs. Where the schema has no
+ * checked against it in tests/portal.test.jsx. Where the schema has no
  * maximum, the Rust field type bounds it: `sample_density` is a `u16`.
  */
 export const processingLimits = {
   brightness_percent: { min: 0, max: 100, step: 1 },
-  saturation_boost_percent: { min: 0, max: 100, step: 1 },
-  dark_floor_percent: { min: 0, max: 20, step: 1 },
-  spatial_reach_percent: { min: 1, max: 100, step: 1 },
-  color_focus_percent: { min: 0, max: 100, step: 1 },
+  sample_density: { min: 1, max: 65535, step: 1 },
+} as const;
+
+/** The style knobs' limits, from the generated `StyleValues` schema likewise. */
+export const styleLimits = {
   smoothing_seconds: { min: 0, step: 'any' },
   cut_response_percent: { min: 0, max: 100, step: 1 },
   brightness_ramp_seconds: { min: 0, max: 2, step: 0.1 },
-  sample_density: { min: 1, max: 65535, step: 1 },
+  spatial_reach_percent: { min: 1, max: 100, step: 1 },
+  color_focus_percent: { min: 0, max: 100, step: 1 },
+  saturation_boost_percent: { min: 0, max: 100, step: 1 },
+  dark_floor_percent: { min: 0, max: 20, step: 1 },
 } as const;
 
 /**
@@ -53,7 +53,7 @@ export const processingLimits = {
  */
 export const fineLimits = {
   smoothing: (value: number) => ({
-    min: processingLimits.smoothing_seconds.min,
+    min: styleLimits.smoothing_seconds.min,
     max: Math.max(2, value),
     step: 0.05,
   }),
@@ -120,14 +120,12 @@ export function processingControls(processing: Processing): ProcessingControls {
   return withCalibrations(
     {
       brightness_percent: processing.brightness_percent,
-      saturation_boost_percent: processing.saturation_boost_percent,
-      dark_floor_percent: processing.dark_floor_percent,
-      smoothing_seconds: processing.smoothing_seconds,
-      cut_response_percent: processing.cut_response_percent,
-      brightness_ramp_seconds: processing.brightness_ramp_seconds,
+      style: processing.style,
+      // Absent until first tuned, as the server sends it.
+      ...(processing.custom_style
+        ? { custom_style: processing.custom_style }
+        : {}),
       sample_density: processing.sample_density,
-      spatial_reach_percent: processing.spatial_reach_percent,
-      color_focus_percent: processing.color_focus_percent,
       remove_black_bars: processing.remove_black_bars,
     },
     processing.calibrations,

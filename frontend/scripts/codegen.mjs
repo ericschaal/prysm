@@ -65,6 +65,24 @@ export async function renderDocuments(documents) {
   return files;
 }
 
+/**
+ * Server-known values as `export const` declarations, `as const` so each
+ * value is also its own literal type; the names must be TypeScript-safe.
+ */
+export function renderConstants(constants) {
+  return (
+    banner +
+    Object.entries(constants)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, value]) => {
+        if (!/^[a-z][A-Za-z0-9]*$/.test(name))
+          throw new Error(`Invalid constant name: ${name}`);
+        return `export const ${name} = ${JSON.stringify(value, null, 2)} as const;\n`;
+      })
+      .join('\n')
+  );
+}
+
 async function generate(check) {
   const cargoArgs = [
     'run',
@@ -82,6 +100,9 @@ async function generate(check) {
     });
   const documents = JSON.parse(run(cargoArgs));
   const files = await renderDocuments(documents);
+  files['constants.generated.ts'] = renderConstants(
+    JSON.parse(run([...cargoArgs, '--', '--constants'])),
+  );
   files['fixtures.json'] =
     JSON.stringify(
       JSON.parse(run([...cargoArgs, '--', '--fixtures'])),

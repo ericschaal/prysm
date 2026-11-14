@@ -3,7 +3,9 @@
 //!
 //! The fake source fills its frames with gray and smoothing is off, so the
 //! brightness shows in the preview's green at once.
-use prysm_ports::{AdapterSettings, Error, LightingTarget, Processing, Registry, Settings};
+use prysm_ports::{
+    AdapterSettings, Error, LightingTarget, Processing, Registry, Settings, Style, StyleValues,
+};
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
 };
@@ -38,7 +40,11 @@ fn settings() -> Settings {
             },
         )),
         processing: Processing {
-            smoothing_seconds: 0.0,
+            style: Style::Custom,
+            custom_style: Some(StyleValues {
+                smoothing_seconds: 0.0,
+                ..StyleValues::DEFAULT
+            }),
             brightness_percent: 100,
             ..Processing::default()
         },

@@ -92,7 +92,7 @@ Good to know:
 ## 5. Change settings
 
 Open **Settings** (top right on Home). It is one list in three groups:
-**Setup** (Video source, Lights), **Picture** (Calibrations, Fine-tuning,
+**Setup** (Video source, Lights), **Picture** (Style, Calibrations, Detail,
 Remove black bars) and **This device** (Appearance, About this Prysm, Start
 over with setup). Each row shows its current value; choose it to open its
 page. The line under the title says whether everything is saved: **All
@@ -107,26 +107,47 @@ calibration in use are chosen on Home.
 ### Picture
 
 Picture changes apply while you move the control; there is no Save button.
-**Remove black bars** is a switch in the Picture group; the rest is under
-**Fine-tuning**.
 
-| Setting | Default | Effect |
+**Style** sets how the lights follow the picture, in one choice. Choose it to
+see the styles; the ticked one is in use.
+
+| Style | What it is like |
+| --- | --- |
+| Natural (the default) | Calm in quiet scenes, follows cuts at once. |
+| Calm | A slow, soft glow. Nothing sudden: cuts and flashes are eased in. |
+| Vivid | Stronger colours, follows the action. |
+| Game | Reacts at once, with the least delay. |
+| Custom | Your own values. |
+
+The styles' values are first guesses and have not yet been tuned on a TV;
+they may change in an update.
+
+**Custom** shows the sliders below the list. The first time, they start from
+the style that was ticked; after that, Custom returns to your own values,
+which are kept while another style is chosen.
+
+| Slider | Natural | Effect |
 | --- | --- | --- |
-| Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 | Dark-scene glow | 0% | A faint white glow the lights keep while the picture is dark, instead of going fully dark. The percentage is of full light; the slider goes to 20%. 0% lets them go fully dark. |
 | Edge depth | 10% | How far into the picture each light looks. |
 | Colour focus | 0% | Each light keeps the colour next to it and takes less from the rest of the picture, so two different colours side by side do not mix into a duller one. Brightness stays as it is. 0% is off. |
 | Colour boost | 0% | Makes the lights’ colours stronger; 100% is up to twice as strong, as far as the lights can show. Brightness and hue stay as they are. 0% leaves them as they are. |
-| Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
-| Scene cuts | 0% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
+| Smoothing | 0.3 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
+| Scene cuts | 100% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
 | Brightness ramp | 0 s | The least time the lights take from dark to full brightness, so a sudden flash does not dazzle. 0 follows at once. The slider goes to 2 s. |
-| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
 
-Scene cuts and Brightness ramp have not yet been tried on a TV; try them with
-a Smoothing of about 0.5 s. Colour focus has not yet been tried on a TV either;
-compare 0% with 50% and 100% on a scene with two strong colours. On a TV it
-is heavy work for now: use it with a capture rate of 30 fps, not 60.
-Colour boost and Dark-scene glow have not yet been tried on a TV.
+Scene cuts and Brightness ramp have not yet been tried on a TV. Colour focus
+has not yet been tried on a TV either; compare 0% with 50% and 100% on a scene
+with two strong colours. On a TV it is heavy work for now: use it with a
+capture rate of 30 fps, not 60. Colour boost and Dark-scene glow have not yet
+been tried on a TV.
+
+The rest of the Picture group stays as it is whichever style is chosen:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
+| Remove black bars | On | A switch: ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 
 **Calibrations** lists your calibrations: each matches the lights’ colours to
 your screen and wall. Choose one to rename it, switch it **In use**, adjust its

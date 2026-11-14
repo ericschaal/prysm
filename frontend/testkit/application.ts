@@ -9,14 +9,8 @@ import {
 
 export const defaultProcessing = {
   brightness_percent: 100,
-  saturation_boost_percent: 0,
-  dark_floor_percent: 0,
-  smoothing_seconds: 0,
-  cut_response_percent: 0,
-  brightness_ramp_seconds: 0,
+  style: { kind: 'natural' as const },
   sample_density: 1,
-  spatial_reach_percent: 10,
-  color_focus_percent: 0,
   remove_black_bars: false,
 };
 

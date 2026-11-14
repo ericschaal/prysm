@@ -53,7 +53,9 @@ The session thread pulls the newest frame from the source, runs the
 `PrysmProcessor` (black-bar detection, sampling, smoothing, colour boost,
 dark-scene glow, colour correction, brightness) and writes `EdgeColors` to the output. Sources
 replace untaken frames instead of queueing them, so latency does not build up.
-Processing assumes sRGB; the file source tone-maps HDR before it.
+Processing assumes sRGB; the file source tone-maps HDR before it. The
+settings' chosen style is resolved to plain values when `Processing::config`
+builds the processor's `Config`; the processor never learns about styles.
 
 The output is opened at the first frame, not when lighting starts, so a source
 without video never takes WLED over. After 3 s without frames the output is

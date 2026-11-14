@@ -25,5 +25,5 @@ The preview updates at most 8 times a second; judge smoothness on the real
 lights. It runs only while the page is open and visible. Closing it leaves
 Screen sync running.
 
-Change one setting at a time; start with brightness and smoothing. For colour
+Change one setting at a time; start with brightness and the style. For colour
 tint differences with an LG TV, use [Calibrate colours](calibration.md).

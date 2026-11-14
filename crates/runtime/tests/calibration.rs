@@ -9,7 +9,7 @@
 //! levels while a pattern switches smoothing off.
 use prysm_ports::{
     AdapterSettings, Calibration, CalibrationPattern, CorrectionControls, Error, LightingTarget,
-    Pattern, Processing, Registry, Settings,
+    Pattern, Processing, Registry, Settings, Style, StyleValues,
 };
 use prysm_runtime::fakes::{
     CallLog, FakeOutputSettings, FakeOutputs, FakeSourceSettings, FakeSources, MemoryStore,
@@ -47,7 +47,13 @@ fn settings(active: Option<&str>, source: &FakeSourceSettings) -> Settings {
             },
         )),
         processing: Processing {
-            smoothing_seconds: 60.0,
+            // Slow and without cuts, so only the pattern's own config is quick.
+            style: Style::Custom,
+            custom_style: Some(StyleValues {
+                smoothing_seconds: 60.0,
+                cut_response_percent: 0,
+                ..StyleValues::DEFAULT
+            }),
             calibrations: vec![Calibration {
                 id: "cool".into(),
                 name: "Cool".into(),

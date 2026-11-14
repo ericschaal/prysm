@@ -1,16 +1,19 @@
 import { useId } from 'react';
-import type { Processing } from '@prysm/contracts/application';
+import type { Processing, StyleValues } from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
 import { CheckboxField, RangeField } from './fields';
 import {
   fineLimits,
   processingLimits,
+  styleLimits,
   useLiveProcessing,
   withCalibrations,
   type ProcessingControls,
 } from './live-processing';
 import { nameOf } from './calibration-model';
+import { RowChoice } from './rows';
 import { useSaveReport } from './save-state';
+import { chooseStyle, styleOrder, styles } from './styles';
 
 const percent = (value: number) => `${value}%`;
 const seconds = (value: number) => `${value}\u00a0s`;
@@ -198,74 +201,137 @@ export function BlackBars(props: LiveProps) {
 }
 
 /**
- * Picture fine-tuning, on its own page: the rarely needed controls. They
- * apply live; a slider is tried on the lights while dragged and saved where
- * it is let go, as on Home.
+ * The style, on its own page: one row per style, the chosen one ticked,
+ * applied at once. Custom opens its sliders below the list, so nothing
+ * above them moves; they apply live, tried on the lights while dragged and
+ * saved where they are let go, as on Home. A first Custom starts from the
+ * style that was ticked; later it returns to the kept values.
  */
-export function FineTuning(props: LiveProps) {
-  const { live, slider } = useControls(props, 'fine-tuning');
+export function StyleSettings(props: LiveProps) {
+  const { live } = useControls(props, 'style');
+  const nameId = useId();
+  const headingId = useId();
   const value = live.value;
+  const chosen = value.style.kind;
+  const custom = chosen === 'custom' ? value.custom_style : undefined;
+  /** A custom slider's props: it changes one value of `custom_style`. */
+  const knob = <K extends keyof StyleValues>(key: K, values: StyleValues) => {
+    const path = `processing.custom_style.${key}`;
+    return {
+      path,
+      value: values[key],
+      onChange: (next: number) =>
+        live.slider.slide(
+          { ...live.value, custom_style: { ...values, [key]: next } },
+          path,
+        ),
+      onPress: live.slider.press,
+      onRelease: live.slider.release,
+    };
+  };
   return (
     <FieldScopeProvider value={live.scope}>
-      <div className="fine-tuning" key={live.generation}>
-        <RangeField
-          label="Dark-scene glow"
-          help="A faint white glow the lights keep while the picture is dark. 0% lets them go fully dark."
-          format={percent}
-          {...slider('dark_floor_percent')}
-          {...processingLimits.dark_floor_percent}
-        />
-        <RangeField
-          label="Edge depth"
-          help="How far into the picture each light looks."
-          format={percent}
-          {...slider('spatial_reach_percent')}
-          {...processingLimits.spatial_reach_percent}
-        />
-        <RangeField
-          label="Colour focus"
-          help="Each light keeps the colour next to it and takes less from the rest of the picture. 0 is off."
-          format={percent}
-          {...slider('color_focus_percent')}
-          {...processingLimits.color_focus_percent}
-        />
-        <RangeField
-          label="Colour boost"
-          help="Makes the lights’ colours stronger. 0% leaves them as they are."
-          format={percent}
-          {...slider('saturation_boost_percent')}
-          {...processingLimits.saturation_boost_percent}
-        />
-        <RangeField
-          label="Smoothing"
-          help="Softens quick changes. 0 turns it off."
-          format={seconds}
-          {...slider('smoothing_seconds')}
-          // Steps of 0.05 s; a saved value above the usual 2 s still fits.
-          onChange={(next) =>
-            slider('smoothing_seconds').onChange(Math.round(next * 100) / 100)
-          }
-          {...fineLimits.smoothing(value.smoothing_seconds)}
-        />
-        <RangeField
-          label="Scene cuts"
-          help="How much of a scene cut the lights take at once. 0 eases cuts in like everything else."
-          format={percent}
-          {...slider('cut_response_percent')}
-          {...processingLimits.cut_response_percent}
-        />
-        <RangeField
-          label="Brightness ramp"
-          help="The least time from dark to full brightness. 0 follows at once."
-          format={seconds}
-          {...slider('brightness_ramp_seconds')}
-          {...processingLimits.brightness_ramp_seconds}
-        />
+      <section className="group" aria-labelledby={headingId}>
+        <h2 id={headingId} className="overline">
+          Styles
+        </h2>
+        <ul className="rows" role="radiogroup" aria-labelledby={headingId}>
+          {styleOrder.map((style) => (
+            <RowChoice
+              key={style}
+              name={nameId}
+              label={styles[style].label}
+              about={styles[style].about}
+              checked={chosen === style}
+              disabled={props.disabled}
+              onChoose={() => {
+                if (style !== chosen)
+                  void live.commit(
+                    chooseStyle(live.value, style),
+                    'processing.style',
+                  );
+              }}
+            />
+          ))}
+        </ul>
+      </section>
+      {custom ? (
+        <div className="style-custom sliders" key={live.generation}>
+          <RangeField
+            label="Dark-scene glow"
+            help="A faint white glow the lights keep while the picture is dark. 0% lets them go fully dark."
+            format={percent}
+            {...knob('dark_floor_percent', custom)}
+            {...styleLimits.dark_floor_percent}
+          />
+          <RangeField
+            label="Edge depth"
+            help="How far into the picture each light looks."
+            format={percent}
+            {...knob('spatial_reach_percent', custom)}
+            {...styleLimits.spatial_reach_percent}
+          />
+          <RangeField
+            label="Colour focus"
+            help="Each light keeps the colour next to it and takes less from the rest of the picture. 0 is off."
+            format={percent}
+            {...knob('color_focus_percent', custom)}
+            {...styleLimits.color_focus_percent}
+          />
+          <RangeField
+            label="Colour boost"
+            help="Makes the lights’ colours stronger. 0% leaves them as they are."
+            format={percent}
+            {...knob('saturation_boost_percent', custom)}
+            {...styleLimits.saturation_boost_percent}
+          />
+          <RangeField
+            label="Smoothing"
+            help="Softens quick changes. 0 turns it off."
+            format={seconds}
+            {...knob('smoothing_seconds', custom)}
+            // Steps of 0.05 s; a saved value above the usual 2 s still fits.
+            onChange={(next) =>
+              knob('smoothing_seconds', custom).onChange(
+                Math.round(next * 100) / 100,
+              )
+            }
+            {...fineLimits.smoothing(custom.smoothing_seconds)}
+          />
+          <RangeField
+            label="Scene cuts"
+            help="How much of a scene cut the lights take at once. 0 eases cuts in like everything else."
+            format={percent}
+            {...knob('cut_response_percent', custom)}
+            {...styleLimits.cut_response_percent}
+          />
+          <RangeField
+            label="Brightness ramp"
+            help="The least time from dark to full brightness. 0 follows at once."
+            format={seconds}
+            {...knob('brightness_ramp_seconds', custom)}
+            {...styleLimits.brightness_ramp_seconds}
+          />
+        </div>
+      ) : null}
+    </FieldScopeProvider>
+  );
+}
+
+/**
+ * Detail, on its own page: how closely the lights follow small details,
+ * outside the styles. Applies live like the style's sliders.
+ */
+export function Detail(props: LiveProps) {
+  const { live, slider } = useControls(props, 'detail');
+  return (
+    <FieldScopeProvider value={live.scope}>
+      <div className="sliders" key={live.generation}>
         <RangeField
           label="Detail"
           help="Higher follows small details more closely but works the computer harder. 128 suits most screens."
           {...slider('sample_density')}
-          {...fineLimits.detail(value.sample_density)}
+          {...fineLimits.detail(live.value.sample_density)}
         />
       </div>
     </FieldScopeProvider>

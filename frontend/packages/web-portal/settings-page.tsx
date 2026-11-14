@@ -17,6 +17,7 @@ import { FieldScopeProvider, useFieldErrors, useFieldScope } from './form';
 import { BlackBars } from './processing';
 import { nameOf } from './calibration-model';
 import { Group, RowFact, RowLink, RowSwitch } from './rows';
+import { styles } from './styles';
 import { currentTheme, themeChoices } from './theme';
 
 /** Where a row of the Settings page goes. */
@@ -24,7 +25,8 @@ export type SettingsPlace =
   | 'video'
   | 'lights'
   | 'calibrations'
-  | 'picture'
+  | 'style'
+  | 'detail'
   | 'appearance'
   | 'about'
   | 'setup';
@@ -92,8 +94,8 @@ export interface SettingsPageProps<
 
 /**
  * Settings: one column of rows in three groups. Setup (the video source and
- * the lights, each changed on its own page), Picture (calibrations, fine-tuning,
- * black bars) and this device. Everything here saves as it changes.
+ * the lights, each changed on its own page), Picture (style, calibrations,
+ * detail, black bars) and this device. Everything here saves as it changes.
  */
 export function SettingsPage<
   C extends AdapterSection,
@@ -159,14 +161,19 @@ export function SettingsPage<
       </Group>
       <Group title="Picture">
         <RowLink
+          label="Style"
+          value={styles[processing.style.kind].label}
+          onClick={() => open('style')}
+        />
+        <RowLink
           label="Calibrations"
           value={calibrationLine}
           onClick={() => open('calibrations')}
         />
         <RowLink
-          label="Fine-tuning"
-          value="Glow, colour boost, smoothing, detail"
-          onClick={() => open('picture')}
+          label="Detail"
+          value="How closely the lights follow small details"
+          onClick={() => open('detail')}
         />
         <RowSwitch>
           <BlackBars

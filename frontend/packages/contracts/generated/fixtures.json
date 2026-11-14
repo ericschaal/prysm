@@ -261,22 +261,17 @@
     {
       "processing": {
         "brightness_percent": 100,
-        "brightness_ramp_seconds": 0,
-        "color_focus_percent": 0,
-        "cut_response_percent": 0,
-        "dark_floor_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
-        "saturation_boost_percent": 0,
-        "smoothing_seconds": 0.10000000149011612,
-        "spatial_reach_percent": 10
+        "style": {
+          "kind": "natural"
+        }
       }
     },
     {
       "processing": {
         "active_calibration": "ps5",
         "brightness_percent": 100,
-        "brightness_ramp_seconds": 0,
         "calibrations": [
           {
             "correction": {
@@ -315,14 +310,49 @@
             "name": "TV apps"
           }
         ],
-        "color_focus_percent": 0,
-        "cut_response_percent": 0,
-        "dark_floor_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
-        "saturation_boost_percent": 0,
-        "smoothing_seconds": 0.10000000149011612,
-        "spatial_reach_percent": 10
+        "style": {
+          "kind": "natural"
+        }
+      }
+    },
+    {
+      "processing": {
+        "brightness_percent": 100,
+        "custom_style": {
+          "brightness_ramp_seconds": 0.5,
+          "color_focus_percent": 60,
+          "cut_response_percent": 70,
+          "dark_floor_percent": 10,
+          "saturation_boost_percent": 40,
+          "smoothing_seconds": 0.5,
+          "spatial_reach_percent": 15
+        },
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "style": {
+          "kind": "custom"
+        }
+      }
+    },
+    {
+      "processing": {
+        "brightness_percent": 100,
+        "custom_style": {
+          "brightness_ramp_seconds": 0.5,
+          "color_focus_percent": 60,
+          "cut_response_percent": 70,
+          "dark_floor_percent": 10,
+          "saturation_boost_percent": 40,
+          "smoothing_seconds": 0.5,
+          "spatial_reach_percent": 15
+        },
+        "remove_black_bars": true,
+        "sample_density": 128,
+        "style": {
+          "kind": "vivid"
+        }
       }
     }
   ],
@@ -337,15 +367,11 @@
       "settings": {
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       }
     },
@@ -366,15 +392,11 @@
         },
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       }
     },
@@ -384,7 +406,6 @@
         "processing": {
           "active_calibration": "ps5",
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
           "calibrations": [
             {
               "correction": {
@@ -423,14 +444,11 @@
               "name": "TV apps"
             }
           ],
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       }
     }
@@ -445,15 +463,11 @@
       "settings": {
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [],
@@ -491,15 +505,11 @@
         },
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [
@@ -524,7 +534,6 @@
         "processing": {
           "active_calibration": "ps5",
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
           "calibrations": [
             {
               "correction": {
@@ -563,14 +572,11 @@
               "name": "TV apps"
             }
           ],
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [],
@@ -585,15 +591,11 @@
       "settings": {
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [],
@@ -624,15 +626,11 @@
         },
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [],
@@ -651,19 +649,60 @@
       "settings": {
         "processing": {
           "brightness_percent": 100,
-          "brightness_ramp_seconds": 0,
-          "color_focus_percent": 0,
-          "cut_response_percent": 0,
-          "dark_floor_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
-          "saturation_boost_percent": 0,
-          "smoothing_seconds": 0.10000000149011612,
-          "spatial_reach_percent": 10
+          "style": {
+            "kind": "natural"
+          }
         }
       },
       "surface_failures": [],
       "target": "off"
+    }
+  ],
+  "Style": [
+    "natural",
+    "calm",
+    "vivid",
+    "game",
+    "custom"
+  ],
+  "StyleValues": [
+    {
+      "brightness_ramp_seconds": 0,
+      "color_focus_percent": 0,
+      "cut_response_percent": 100,
+      "dark_floor_percent": 0,
+      "saturation_boost_percent": 0,
+      "smoothing_seconds": 0.30000001192092896,
+      "spatial_reach_percent": 10
+    },
+    {
+      "brightness_ramp_seconds": 1,
+      "color_focus_percent": 0,
+      "cut_response_percent": 0,
+      "dark_floor_percent": 0,
+      "saturation_boost_percent": 0,
+      "smoothing_seconds": 0.800000011920929,
+      "spatial_reach_percent": 20
+    },
+    {
+      "brightness_ramp_seconds": 0,
+      "color_focus_percent": 0,
+      "cut_response_percent": 100,
+      "dark_floor_percent": 0,
+      "saturation_boost_percent": 30,
+      "smoothing_seconds": 0.15000000596046448,
+      "spatial_reach_percent": 8
+    },
+    {
+      "brightness_ramp_seconds": 0,
+      "color_focus_percent": 0,
+      "cut_response_percent": 100,
+      "dark_floor_percent": 0,
+      "saturation_boost_percent": 0,
+      "smoothing_seconds": 0.05000000074505806,
+      "spatial_reach_percent": 6
     }
   ],
   "TargetRequest": [

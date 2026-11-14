@@ -1,5 +1,6 @@
 use crate::ValidationError;
 use crate::calibrations::{self, Calibration};
+use crate::style::{self, Style, StyleValues};
 use prysm_core::{
     BrightnessPercent, BrightnessRampSeconds, ColorCorrection, ColorFocusPercent, Config,
     CutResponsePercent, DarkFloorPercent, SampleDensity, SaturationBoostPercent, SmoothingSeconds,
@@ -17,6 +18,7 @@ use std::fmt;
 ///   "output": { "kind": "wled", "address": "wled.local", "leds": { "top": 96 } },
 ///   "processing": {
 ///     "brightness_percent": 80,
+///     "style": { "kind": "calm" },
 ///     "calibrations": [
 ///       { "id": "ps5", "name": "PS5", "correction": { "warmth": 12, "tint": -4 } }
 ///     ],
@@ -86,23 +88,22 @@ impl AdapterSettings {
     }
 }
 
-/// Processing controls in plain units, plus the saved calibrations and the
-/// active one; converted to [`Config`] for the processor. Any change here,
-/// including to calibrations, is applied to a running session at the next frame.
+/// Processing controls in plain units: brightness, the chosen style and the
+/// user's own style values, detail, black bars, and the saved calibrations
+/// with the active one. Converted to [`Config`] for the processor, which
+/// never learns about styles. Any change here, including to calibrations, is
+/// applied to a running session at the next frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Processing {
     pub brightness_percent: u8,
-    pub saturation_boost_percent: u8,
-    /// At most [`Processing::MAX_DARK_FLOOR_PERCENT`].
-    pub dark_floor_percent: u8,
-    pub smoothing_seconds: f32,
-    pub cut_response_percent: u8,
-    /// At most [`Processing::MAX_BRIGHTNESS_RAMP_SECONDS`]; 0 sets no limit.
-    pub brightness_ramp_seconds: f32,
+    #[serde(with = "style::as_object")]
+    pub style: Style,
+    /// The user's own values, applied while [`Style::Custom`] is chosen and
+    /// kept while another style is; absent until first tuned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_style: Option<StyleValues>,
     pub sample_density: u16,
-    pub spatial_reach_percent: u8,
-    pub color_focus_percent: u8,
     pub remove_black_bars: bool,
     /// At most [`MAX_CALIBRATIONS`](crate::MAX_CALIBRATIONS), with unique ids.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -117,14 +118,9 @@ impl Default for Processing {
         let config = Config::default();
         Self {
             brightness_percent: config.brightness_percent.0,
-            saturation_boost_percent: config.saturation_boost_percent.0,
-            dark_floor_percent: config.dark_floor_percent.0,
-            smoothing_seconds: config.smoothing_seconds.0,
-            cut_response_percent: config.cut_response_percent.0,
-            brightness_ramp_seconds: config.brightness_ramp_seconds.0,
+            style: Style::default(),
+            custom_style: None,
             sample_density: u16::try_from(config.sample_density.0).unwrap_or(u16::MAX),
-            spatial_reach_percent: config.spatial_reach_percent.0,
-            color_focus_percent: config.color_focus_percent.0,
             remove_black_bars: config.remove_black_bars,
             calibrations: Vec::new(),
             active_calibration: None,
@@ -133,53 +129,28 @@ impl Default for Processing {
 }
 
 impl Processing {
-    /// The longest brightness ramp: slower than this, a cut to a bright
-    /// scene looks like a fade rather than a cut.
-    pub const MAX_BRIGHTNESS_RAMP_SECONDS: f32 = 2.0;
-
-    /// The brightest dark-scene glow, in percent.
-    pub const MAX_DARK_FLOOR_PERCENT: u8 = DarkFloorPercent::MAX;
-
     /// # Errors
-    /// Rejects values the processor would silently clamp or ignore.
+    /// Rejects values the processor would silently clamp or ignore, and a
+    /// custom style without values.
     pub fn validate(&self) -> Result<(), ValidationError> {
         let path = |field: &str| format!("{}.{field}", Section::Processing);
-        let percent = |field: &str, value: u8, min: u8, max: u8| {
-            (min..=max)
-                .contains(&value)
-                .then_some(())
-                .ok_or_else(|| ValidationError::new(path(field), format!("must be {min}-{max}")))
-        };
-        percent("brightness_percent", self.brightness_percent, 0, 100)?;
-        percent(
-            "saturation_boost_percent",
-            self.saturation_boost_percent,
-            0,
-            100,
-        )?;
-        percent(
-            "dark_floor_percent",
-            self.dark_floor_percent,
-            0,
-            Self::MAX_DARK_FLOOR_PERCENT,
-        )?;
-        percent("cut_response_percent", self.cut_response_percent, 0, 100)?;
-        percent("spatial_reach_percent", self.spatial_reach_percent, 1, 100)?;
-        percent("color_focus_percent", self.color_focus_percent, 0, 100)?;
-        if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
+        if self.brightness_percent > 100 {
             return Err(ValidationError::new(
-                path("smoothing_seconds"),
-                "must be a finite number of seconds, 0 to disable",
+                path("brightness_percent"),
+                "must be 0-100",
             ));
         }
-        if !(0.0..=Self::MAX_BRIGHTNESS_RAMP_SECONDS).contains(&self.brightness_ramp_seconds) {
-            return Err(ValidationError::new(
-                path("brightness_ramp_seconds"),
-                format!(
-                    "must be 0 to {} seconds, 0 for no limit",
-                    Self::MAX_BRIGHTNESS_RAMP_SECONDS
-                ),
-            ));
+        match (self.style, &self.custom_style) {
+            (Style::Custom, None) => {
+                return Err(ValidationError::new(
+                    path("custom_style"),
+                    "must be set when the style is custom",
+                ));
+            }
+            // Kept values are checked whichever style is chosen: they are
+            // what Custom applies when it is chosen again.
+            (_, Some(values)) => values.validate(&path("custom_style"))?,
+            (_, None) => {}
         }
         if self.sample_density == 0 {
             return Err(ValidationError::new(
@@ -192,6 +163,17 @@ impl Processing {
             &self.calibrations,
             self.active_calibration.as_deref(),
         )
+    }
+
+    /// The chosen style's values. A custom style without values, which
+    /// [`Processing::validate`] refuses, uses the default style's.
+    #[must_use]
+    pub fn style_values(&self) -> StyleValues {
+        match self.style {
+            Style::Custom => self.custom_style,
+            built_in => built_in.built_in(),
+        }
+        .unwrap_or(StyleValues::DEFAULT)
     }
 
     /// The active calibration, if one is set and exists.
@@ -213,19 +195,21 @@ impl Processing {
             .unwrap_or_default()
     }
 
+    /// The processor's config, with the chosen style resolved to its values.
     #[must_use]
     pub fn config(&self) -> Config {
+        let style = self.style_values();
         Config {
             correction: self.correction(),
             brightness_percent: BrightnessPercent(self.brightness_percent),
-            saturation_boost_percent: SaturationBoostPercent(self.saturation_boost_percent),
-            dark_floor_percent: DarkFloorPercent(self.dark_floor_percent),
-            smoothing_seconds: SmoothingSeconds(self.smoothing_seconds),
-            cut_response_percent: CutResponsePercent(self.cut_response_percent),
-            brightness_ramp_seconds: BrightnessRampSeconds(self.brightness_ramp_seconds),
+            saturation_boost_percent: SaturationBoostPercent(style.saturation_boost_percent),
+            dark_floor_percent: DarkFloorPercent(style.dark_floor_percent),
+            smoothing_seconds: SmoothingSeconds(style.smoothing_seconds),
+            cut_response_percent: CutResponsePercent(style.cut_response_percent),
+            brightness_ramp_seconds: BrightnessRampSeconds(style.brightness_ramp_seconds),
             sample_density: SampleDensity(usize::from(self.sample_density)),
-            spatial_reach_percent: SpatialReachPercent(self.spatial_reach_percent),
-            color_focus_percent: ColorFocusPercent(self.color_focus_percent),
+            spatial_reach_percent: SpatialReachPercent(style.spatial_reach_percent),
+            color_focus_percent: ColorFocusPercent(style.color_focus_percent),
             remove_black_bars: self.remove_black_bars,
         }
     }
@@ -263,7 +247,6 @@ mod tests {
         assert_eq!(capture.kind, "device");
         assert_eq!(capture.fields["path"], "/dev/video0");
         assert_eq!(settings.processing, Processing::default());
-        assert_eq!(settings.processing.config(), Config::default());
 
         let round = serde_json::to_value(&settings).unwrap();
         assert_eq!(round["capture"]["kind"], "device");
@@ -284,169 +267,189 @@ mod tests {
         }
     }
 
+    /// The style knobs of `config`, to compare with a style's values.
+    fn knobs(config: Config) -> StyleValues {
+        StyleValues {
+            smoothing_seconds: config.smoothing_seconds.0,
+            cut_response_percent: config.cut_response_percent.0,
+            brightness_ramp_seconds: config.brightness_ramp_seconds.0,
+            spatial_reach_percent: config.spatial_reach_percent.0,
+            color_focus_percent: config.color_focus_percent.0,
+            saturation_boost_percent: config.saturation_boost_percent.0,
+            dark_floor_percent: config.dark_floor_percent.0,
+        }
+    }
+
+    /// Values unlike every built-in style's.
+    const MINE: StyleValues = StyleValues {
+        smoothing_seconds: 0.5,
+        cut_response_percent: 40,
+        brightness_ramp_seconds: 0.5,
+        spatial_reach_percent: 30,
+        color_focus_percent: 60,
+        saturation_boost_percent: 40,
+        dark_floor_percent: 10,
+    };
+
     #[test]
     fn processing_rejects_out_of_range_values() {
         let invalid = Processing {
-            spatial_reach_percent: 0,
+            brightness_percent: 101,
             ..Processing::default()
         };
         assert_eq!(
             invalid.validate().unwrap_err().field,
-            "processing.spatial_reach_percent"
+            "processing.brightness_percent"
         );
         let invalid = Processing {
-            smoothing_seconds: f32::NAN,
-            ..Processing::default()
-        };
-        assert!(invalid.validate().is_err());
-        let invalid = Processing {
-            cut_response_percent: 101,
+            sample_density: 0,
             ..Processing::default()
         };
         assert_eq!(
             invalid.validate().unwrap_err().field,
-            "processing.cut_response_percent"
+            "processing.sample_density"
         );
-        let invalid = Processing {
-            color_focus_percent: 101,
-            ..Processing::default()
-        };
-        assert_eq!(
-            invalid.validate().unwrap_err().field,
-            "processing.color_focus_percent"
-        );
-        let invalid = Processing {
-            saturation_boost_percent: 101,
-            ..Processing::default()
-        };
-        assert_eq!(
-            invalid.validate().unwrap_err().field,
-            "processing.saturation_boost_percent"
-        );
-        let invalid = Processing {
-            dark_floor_percent: 21,
-            ..Processing::default()
-        };
-        let error = invalid.validate().unwrap_err();
-        assert_eq!(error.field, "processing.dark_floor_percent");
-        assert_eq!(error.reason, "must be 0-20");
-        for (boost, floor) in [(100, 20), (0, 0)] {
-            Processing {
-                saturation_boost_percent: boost,
-                dark_floor_percent: floor,
+    }
+
+    #[test]
+    fn each_built_in_style_sets_its_values_in_the_config() {
+        for style in Style::BUILT_IN {
+            let processing = Processing {
+                style,
+                // Kept, but not applied while a built-in style is chosen.
+                custom_style: Some(MINE),
                 ..Processing::default()
-            }
-            .validate()
-            .unwrap();
+            };
+            processing.validate().unwrap();
+            let config = processing.config();
+            assert_eq!(Some(knobs(config)), style.built_in(), "{style:?}");
+            // What stays outside styles is untouched.
+            assert_eq!(
+                config.brightness_percent,
+                Config::default().brightness_percent
+            );
+            assert_eq!(config.sample_density, Config::default().sample_density);
         }
-        for seconds in [-0.1, 2.01, f32::NAN, f32::INFINITY] {
+        // Natural is the default; it is not the processor's own default.
+        let natural = Processing::default().config();
+        assert_eq!(Some(knobs(natural)), Style::Natural.built_in());
+        assert_eq!(natural.cut_response_percent, CutResponsePercent(100));
+        assert_eq!(natural.smoothing_seconds, SmoothingSeconds(0.3));
+    }
+
+    #[test]
+    fn custom_sets_the_users_values_and_needs_them() {
+        let custom = Processing {
+            style: Style::Custom,
+            custom_style: Some(MINE),
+            ..Processing::default()
+        };
+        custom.validate().unwrap();
+        assert_eq!(knobs(custom.config()), MINE);
+
+        let missing = Processing {
+            style: Style::Custom,
+            ..Processing::default()
+        };
+        let error = missing.validate().unwrap_err();
+        assert_eq!(error.field, "processing.custom_style");
+        assert_eq!(error.reason, "must be set when the style is custom");
+        // Applied as the default style until corrected.
+        assert_eq!(knobs(missing.config()), StyleValues::DEFAULT);
+    }
+
+    #[test]
+    fn out_of_range_custom_values_are_refused_at_their_path_whichever_style_is_chosen() {
+        for style in [Style::Custom, Style::Calm] {
             let invalid = Processing {
-                brightness_ramp_seconds: seconds,
+                style,
+                custom_style: Some(StyleValues {
+                    cut_response_percent: 101,
+                    ..MINE
+                }),
                 ..Processing::default()
             };
             assert_eq!(
                 invalid.validate().unwrap_err().field,
-                "processing.brightness_ramp_seconds",
-                "{seconds}"
+                "processing.custom_style.cut_response_percent"
             );
         }
+        let invalid = Processing {
+            style: Style::Custom,
+            custom_style: Some(StyleValues {
+                dark_floor_percent: 21,
+                ..MINE
+            }),
+            ..Processing::default()
+        };
+        let error = invalid.validate().unwrap_err();
+        assert_eq!(error.field, "processing.custom_style.dark_floor_percent");
+        assert_eq!(error.reason, "must be 0-20");
     }
 
     #[test]
-    fn cut_response_and_brightness_ramp_round_trip_and_default_when_omitted() {
+    fn the_style_is_stored_by_name_and_custom_values_are_kept() {
+        // Omitted: Natural, with no values of its own written.
         let omitted: Processing =
-            serde_json::from_value(serde_json::json!({ "smoothing_seconds": 0.5 })).unwrap();
-        assert_eq!(omitted.cut_response_percent, 0);
-        assert_eq!(omitted.brightness_ramp_seconds, 0.0);
-        let config = omitted.config();
-        assert_eq!(
-            config.cut_response_percent,
-            Config::default().cut_response_percent
-        );
-        assert_eq!(
-            config.brightness_ramp_seconds,
-            Config::default().brightness_ramp_seconds
-        );
+            serde_json::from_value(serde_json::json!({ "brightness_percent": 80 })).unwrap();
+        assert_eq!(omitted.style, Style::Natural);
+        let written = serde_json::to_value(&omitted).unwrap();
+        assert_eq!(written["style"], serde_json::json!({ "kind": "natural" }));
+        assert!(written.get("custom_style").is_none(), "{written}");
 
-        for (percent, seconds) in [(0, 0.0), (60, 0.5), (100, 2.0)] {
-            let present: Processing = serde_json::from_value(serde_json::json!({
-                "cut_response_percent": percent,
-                "brightness_ramp_seconds": seconds,
-            }))
-            .unwrap();
-            present.validate().unwrap();
-            let config = present.config();
-            assert_eq!(config.cut_response_percent, CutResponsePercent(percent));
-            assert_eq!(
-                config.brightness_ramp_seconds,
-                BrightnessRampSeconds(seconds)
-            );
-            let written = serde_json::to_value(&present).unwrap();
-            assert_eq!(written["cut_response_percent"], percent);
-            assert_eq!(written["brightness_ramp_seconds"], f64::from(seconds));
-            assert_eq!(
-                serde_json::from_value::<Processing>(written).unwrap(),
-                present
-            );
+        let calm: Processing = serde_json::from_value(serde_json::json!({
+            "style": { "kind": "calm" },
+            "custom_style": serde_json::to_value(MINE).unwrap(),
+        }))
+        .unwrap();
+        calm.validate().unwrap();
+        assert_eq!((calm.style, calm.custom_style), (Style::Calm, Some(MINE)));
+        let written = serde_json::to_value(&calm).unwrap();
+        assert_eq!(written["custom_style"]["color_focus_percent"], 60);
+        assert_eq!(serde_json::from_value::<Processing>(written).unwrap(), calm);
+
+        for (style, refusal) in [
+            (
+                serde_json::json!({ "kind": "cinema" }),
+                "unknown variant `cinema`",
+            ),
+            (
+                serde_json::json!({ "kind": "calm", "id": "x" }),
+                "unknown field `id`",
+            ),
+            (
+                serde_json::json!("calm"),
+                r#"expected a style such as { "kind": "natural" }"#,
+            ),
+            (serde_json::json!({}), "missing field `kind`"),
+        ] {
+            let error = serde_json::from_value::<Processing>(serde_json::json!({ "style": style }))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(refusal), "{error}");
         }
-        // Fields that no longer exist are refused rather than ignored.
-        for removed in ["smoothing_response_percent", "brightness_smoothing"] {
+        // A custom style says every value; partial values are refused.
+        assert!(
+            serde_json::from_value::<Processing>(serde_json::json!({
+                "style": { "kind": "custom" },
+                "custom_style": { "smoothing_seconds": 0.2 },
+            }))
+            .is_err()
+        );
+        // The knobs are no longer flat processing fields.
+        for removed in [
+            "smoothing_seconds",
+            "cut_response_percent",
+            "brightness_ramp_seconds",
+            "spatial_reach_percent",
+            "color_focus_percent",
+            "saturation_boost_percent",
+            "dark_floor_percent",
+        ] {
             let text = format!(r#"{{ "{removed}": 0 }}"#);
             assert!(
                 serde_json::from_str::<Processing>(&text).is_err(),
                 "{removed}"
-            );
-        }
-    }
-
-    #[test]
-    fn boost_and_floor_round_trip_and_default_when_omitted() {
-        let omitted: Processing =
-            serde_json::from_value(serde_json::json!({ "brightness_percent": 80 })).unwrap();
-        assert_eq!(omitted.saturation_boost_percent, 0);
-        assert_eq!(omitted.dark_floor_percent, 0);
-        assert_eq!(
-            omitted.config().saturation_boost_percent,
-            SaturationBoostPercent(0)
-        );
-        assert_eq!(omitted.config().dark_floor_percent, DarkFloorPercent(0));
-        let present: Processing = serde_json::from_value(serde_json::json!({
-            "saturation_boost_percent": 40,
-            "dark_floor_percent": 10,
-        }))
-        .unwrap();
-        present.validate().unwrap();
-        let config = present.config();
-        assert_eq!(config.saturation_boost_percent, SaturationBoostPercent(40));
-        assert_eq!(config.dark_floor_percent, DarkFloorPercent(10));
-        let written = serde_json::to_value(&present).unwrap();
-        assert_eq!(written["saturation_boost_percent"], 40);
-        assert_eq!(written["dark_floor_percent"], 10);
-    }
-
-    #[test]
-    fn color_focus_round_trips_and_defaults_when_omitted() {
-        let omitted: Processing =
-            serde_json::from_value(serde_json::json!({ "spatial_reach_percent": 20 })).unwrap();
-        assert_eq!(omitted.color_focus_percent, 0);
-        assert_eq!(
-            omitted.config().color_focus_percent,
-            Config::default().color_focus_percent
-        );
-        for percent in [0, 50, 100] {
-            let present: Processing =
-                serde_json::from_value(serde_json::json!({ "color_focus_percent": percent }))
-                    .unwrap();
-            present.validate().unwrap();
-            assert_eq!(
-                present.config().color_focus_percent,
-                ColorFocusPercent(percent)
-            );
-            let written = serde_json::to_value(&present).unwrap();
-            assert_eq!(written["color_focus_percent"], percent);
-            assert_eq!(
-                serde_json::from_value::<Processing>(written).unwrap(),
-                present
             );
         }
     }

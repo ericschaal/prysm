@@ -46,6 +46,10 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description The chosen style, as `Processing.style`. */
+        ChosenStyle: {
+            kind: components["schemas"]["Style"];
+        };
         /** @description One server-sent event of the colors stream. */
         ColorsEvent: (components["schemas"]["LedColors"] & {
             /** @enum {string} */
@@ -287,46 +291,17 @@ export interface components {
             active_calibration?: string;
             /** Format: int32 */
             brightness_percent: number;
-            /**
-             * Format: float
-             * @description Seconds, the least time from dark to full brightness; 0 sets no limit.
-             */
-            brightness_ramp_seconds: number;
             /** @description Saved color corrections; ids are unique. */
             calibrations?: components["schemas"]["Calibration"][];
             /**
-             * Format: int32
-             * @description How much each light keeps the colour next to it, taking less from the
-             *     rest of the picture; 0 is the plain average.
+             * @description The user's own values, applied while the style is `custom` and kept
+             *     while another is chosen; absent until first tuned.
              */
-            color_focus_percent: number;
-            /**
-             * Format: int32
-             * @description How much of a scene cut the lights take at once; 0 eases a cut in
-             *     like any other change.
-             */
-            cut_response_percent: number;
-            /**
-             * Format: int32
-             * @description The least luminance the lights keep, as a neutral white glow, in
-             *     percent of full light; 0 lets them go fully dark.
-             */
-            dark_floor_percent: number;
+            custom_style?: components["schemas"]["StyleValues"];
             remove_black_bars: boolean;
             /** Format: int32 */
             sample_density: number;
-            /**
-             * Format: int32
-             * @description Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
-             */
-            saturation_boost_percent: number;
-            /**
-             * Format: float
-             * @description Seconds; 0 disables smoothing.
-             */
-            smoothing_seconds: number;
-            /** Format: int32 */
-            spatial_reach_percent: number;
+            style: components["schemas"]["ChosenStyle"];
         };
         /** @description What the runtime is actually doing. */
         Session: {
@@ -399,6 +374,54 @@ export interface components {
             surface_failures: components["schemas"]["Failure"][];
             target: components["schemas"]["LightingTarget"];
         };
+        /**
+         * @description A style by name: a built-in set of the picture-taste knobs, or `custom`,
+         *     the user's own values.
+         * @enum {string}
+         */
+        Style: "natural" | "calm" | "vivid" | "game" | "custom";
+        /** @description The picture-taste knobs a style sets, in plain units. */
+        StyleValues: {
+            /**
+             * Format: float
+             * @description Seconds, the least time from dark to full brightness; 0 sets no limit.
+             */
+            brightness_ramp_seconds: number;
+            /**
+             * Format: int32
+             * @description How much each light keeps the colour next to it, taking less from the
+             *     rest of the picture; 0 is the plain average.
+             */
+            color_focus_percent: number;
+            /**
+             * Format: int32
+             * @description How much of a scene cut the lights take at once; 0 eases a cut in
+             *     like any other change.
+             */
+            cut_response_percent: number;
+            /**
+             * Format: int32
+             * @description The least luminance the lights keep, as a neutral white glow, in
+             *     percent of full light; 0 lets them go fully dark.
+             */
+            dark_floor_percent: number;
+            /**
+             * Format: int32
+             * @description Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.
+             */
+            saturation_boost_percent: number;
+            /**
+             * Format: float
+             * @description Seconds; 0 disables smoothing.
+             */
+            smoothing_seconds: number;
+            /**
+             * Format: int32
+             * @description Edge depth: how far into the picture each light looks, in percent of
+             *     the picture's height.
+             */
+            spatial_reach_percent: number;
+        };
         /** @description `PUT /api/v1/target`. */
         TargetRequest: {
             target: components["schemas"]["LightingTarget"];
@@ -415,6 +438,7 @@ export type Calibration = components['schemas']['Calibration'];
 export type CalibrationPattern = components['schemas']['CalibrationPattern'];
 export type Candidate = components['schemas']['Candidate'];
 export type CaptureSettings = components['schemas']['CaptureSettings'];
+export type ChosenStyle = components['schemas']['ChosenStyle'];
 export type ColorsEvent = components['schemas']['ColorsEvent'];
 export type CorrectionControls = components['schemas']['CorrectionControls'];
 export type DeviceBrightness = components['schemas']['DeviceBrightness'];
@@ -440,6 +464,8 @@ export type Settings = components['schemas']['Settings'];
 export type SettingsReplaced = components['schemas']['SettingsReplaced'];
 export type SettingsRequest = components['schemas']['SettingsRequest'];
 export type State = components['schemas']['State'];
+export type Style = components['schemas']['Style'];
+export type StyleValues = components['schemas']['StyleValues'];
 export type TargetRequest = components['schemas']['TargetRequest'];
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;

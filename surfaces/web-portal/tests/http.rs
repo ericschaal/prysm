@@ -824,10 +824,22 @@ async fn settings_replace_succeeds_conflicts_and_validates() {
         );
 
         let mut range = settings.clone();
-        range["processing"]["spatial_reach_percent"] = json!(0);
+        range["processing"]["style"] = json!({ "kind": "custom" });
+        range["processing"]["custom_style"] = json!({
+            "smoothing_seconds": 0.3,
+            "cut_response_percent": 100,
+            "brightness_ramp_seconds": 0.0,
+            "spatial_reach_percent": 0,
+            "color_focus_percent": 0,
+            "saturation_boost_percent": 0,
+            "dark_floor_percent": 0,
+        });
         let (status, body) = replace(next, range).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["field"], "processing.spatial_reach_percent");
+        assert_eq!(
+            body["field"],
+            "processing.custom_style.spatial_reach_percent"
+        );
 
         let mut unknown = settings.clone();
         unknown["output"] = json!({ "kind": "laser" });

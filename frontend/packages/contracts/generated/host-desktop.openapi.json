@@ -91,6 +91,19 @@
           }
         ]
       },
+      "ChosenStyle": {
+        "additionalProperties": false,
+        "description": "The chosen style, as `Processing.style`.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/Style"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
       "ColorsEvent": {
         "description": "One server-sent event of the colors stream.",
         "oneOf": [
@@ -793,13 +806,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "brightness_ramp_seconds": {
-            "description": "Seconds, the least time from dark to full brightness; 0 sets no limit.",
-            "format": "float",
-            "maximum": 2,
-            "minimum": 0,
-            "type": "number"
-          },
           "calibrations": {
             "description": "Saved color corrections; ids are unique.",
             "items": {
@@ -808,26 +814,9 @@
             "maxItems": 32,
             "type": "array"
           },
-          "color_focus_percent": {
-            "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "cut_response_percent": {
-            "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "dark_floor_percent": {
-            "description": "The least luminance the lights keep, as a neutral white glow, in\npercent of full light; 0 lets them go fully dark.",
-            "format": "int32",
-            "maximum": 20,
-            "minimum": 0,
-            "type": "integer"
+          "custom_style": {
+            "$ref": "#/components/schemas/StyleValues",
+            "description": "The user's own values, applied while the style is `custom` and kept\nwhile another is chosen; absent until first tuned."
           },
           "remove_black_bars": {
             "type": "boolean"
@@ -837,36 +826,14 @@
             "minimum": 1,
             "type": "integer"
           },
-          "saturation_boost_percent": {
-            "description": "Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "smoothing_seconds": {
-            "description": "Seconds; 0 disables smoothing.",
-            "format": "float",
-            "minimum": 0,
-            "type": "number"
-          },
-          "spatial_reach_percent": {
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
+          "style": {
+            "$ref": "#/components/schemas/ChosenStyle"
           }
         },
         "required": [
           "brightness_percent",
-          "saturation_boost_percent",
-          "dark_floor_percent",
-          "smoothing_seconds",
-          "cut_response_percent",
-          "brightness_ramp_seconds",
+          "style",
           "sample_density",
-          "spatial_reach_percent",
-          "color_focus_percent",
           "remove_black_bars"
         ],
         "type": "object"
@@ -1113,6 +1080,81 @@
           "raw"
         ],
         "type": "string"
+      },
+      "Style": {
+        "description": "A style by name: a built-in set of the picture-taste knobs, or `custom`,\nthe user's own values.",
+        "enum": [
+          "natural",
+          "calm",
+          "vivid",
+          "game",
+          "custom"
+        ],
+        "type": "string"
+      },
+      "StyleValues": {
+        "additionalProperties": false,
+        "description": "The picture-taste knobs a style sets, in plain units.",
+        "properties": {
+          "brightness_ramp_seconds": {
+            "description": "Seconds, the least time from dark to full brightness; 0 sets no limit.",
+            "format": "float",
+            "maximum": 2,
+            "minimum": 0,
+            "type": "number"
+          },
+          "color_focus_percent": {
+            "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cut_response_percent": {
+            "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dark_floor_percent": {
+            "description": "The least luminance the lights keep, as a neutral white glow, in\npercent of full light; 0 lets them go fully dark.",
+            "format": "int32",
+            "maximum": 20,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "saturation_boost_percent": {
+            "description": "Scales each light's chroma by 1 + p/100; 0 leaves colours as they are.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "smoothing_seconds": {
+            "description": "Seconds; 0 disables smoothing.",
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "spatial_reach_percent": {
+            "description": "Edge depth: how far into the picture each light looks, in percent of\nthe picture's height.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "smoothing_seconds",
+          "cut_response_percent",
+          "brightness_ramp_seconds",
+          "spatial_reach_percent",
+          "color_focus_percent",
+          "saturation_boost_percent",
+          "dark_floor_percent"
+        ],
+        "type": "object"
       },
       "TargetRequest": {
         "additionalProperties": false,

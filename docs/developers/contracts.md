@@ -5,11 +5,11 @@ are generated from OpenAPI documents the Rust exporter prints.
 
 | Owner | Declares | Frontend import |
 | --- | --- | --- |
-| `prysm-ports` | `Settings`, `Processing`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file format). No OpenAPI dependency. | — |
+| `prysm-ports` | `Settings`, `Processing`, `Style`, `StyleValues`, `AdapterSettings`, `LightingTarget`, `Revision`, `Calibration`, `Pattern`, `Candidate` and their serde shape (the settings file format); the built-in styles' values (`Style::built_in`). No OpenAPI dependency. | — |
 | [`prysm-protocol`](../../crates/protocol/src/lib.rs) | `State`, `Session`, `Failure`, request/response bodies; schema mirrors of the ports types and the adapter-schema hook ([`schema.rs`](../../crates/protocol/src/schema.rs), feature `schema`) | `@prysm/contracts/application` |
 | Adapter crates | Their settings type and its `utoipa::ToSchema` behind feature `schema` | `@prysm/contracts/host-desktop` (device, remote, wled, null), `@prysm/contracts/host-webos` (webos, wled) |
 | [`prysm-webos-service`](../../hosts/webos-service/src/schema.rs) | The TV supervisor's Luna values: `State`, `Preferences` (no picture settings: those are the portals'), request and reply bodies; schema mirrors of `Video`, `SlimEncoding`, `FailureKind`, `LightingTarget` (feature `schema`) | `@prysm/contracts/luna` |
-| [`prysm-export-contracts`](../../tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures | Module names |
+| [`prysm-export-contracts`](../../tools/export-contracts/src/main.rs) | Which documents exist and which adapters each host document registers; serialization fixtures; [constants](../../tools/export-contracts/src/constants.rs) the frontends use as they are (the built-in styles' values) | Module names, `@prysm/contracts/constants` |
 
 Ports types are the wire types: the portal sends `prysm_ports::Settings` as is.
 `prysm-protocol` describes them with schema-only mirrors, and its tests keep each
@@ -93,7 +93,10 @@ mechanically; it has no type mappings or adapter branches. Generated files are
 checked in; `codegen:check` fails on missing, changed or obsolete files without
 writing. `fixtures.json` holds actual Rust serializations of every root, which
 the [contract tests](../../frontend/tests/contracts.test.mjs) validate against the
-generated schemas.
+generated schemas. `constants.generated.ts` holds server-known values as
+`export const … as const` (`builtInStyles`), so a frontend built with the
+backend keeps no copy of them; the portal types them with the generated
+schemas.
 
 The documents contain schemas only. Routes, status codes and limits are in the
 [portal HTTP contract](../../surfaces/web-portal/HTTP-CONTRACT.md).

@@ -10,9 +10,8 @@ test.use({
     output: { kind: 'null' },
     processing: {
       brightness_percent: 50,
-      smoothing_seconds: 0.1,
+      style: { kind: 'natural' },
       sample_density: 128,
-      spatial_reach_percent: 10,
       remove_black_bars: true,
     },
   },

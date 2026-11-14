@@ -17,6 +17,7 @@ export {
   processingDelayMs,
   processingLimits,
   rebased,
+  styleLimits,
   throttled,
   trialIntervalMs,
   useLiveProcessing,
@@ -31,6 +32,13 @@ export {
   calibrationLimits,
 } from './calibration-model';
 export { PictureChoice } from './picture-choice';
+export {
+  chooseStyle,
+  styleOrder,
+  styleValues,
+  styles,
+  type BuiltInStyle,
+} from './styles';
 export {
   allPicturePresets,
   customPicture,

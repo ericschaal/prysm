@@ -7,7 +7,7 @@
 //! cool calibration (warmth -100) attenuates red, a warm one (warmth 100) blue.
 use prysm_ports::{
     AdapterSettings, Calibration, CorrectionControls, Error, LightingTarget, MAX_CALIBRATIONS,
-    Processing, Registry, Settings, SettingsStore,
+    Processing, Registry, Settings, SettingsStore, Style, StyleValues,
 };
 use prysm_runtime::Engine;
 use prysm_runtime::EngineHandle;
@@ -55,7 +55,11 @@ fn with_active(active: Option<&str>) -> Settings {
             },
         )),
         processing: Processing {
-            smoothing_seconds: 0.0,
+            style: Style::Custom,
+            custom_style: Some(StyleValues {
+                smoothing_seconds: 0.0,
+                ..StyleValues::DEFAULT
+            }),
             calibrations: vec![calibration("cool", -100), calibration("warm", 100)],
             active_calibration: active.map(Into::into),
             ..Processing::default()
