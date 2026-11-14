@@ -127,19 +127,21 @@ see the styles; the ticked one is in use.
 The styles' values are first guesses and have not yet been tuned on a TV;
 they may change in an update.
 
-**Custom** shows the sliders below the list. The first time, they start from
-the style that was ticked; after that, Custom returns to your own values,
-which are kept while another style is chosen.
+**Adjust this style**, under the list, opens the ticked style's sliders; it
+is open while Custom is chosen. Moving a slider switches to Custom, starting
+from that style's values with your change, and replaces your earlier Custom
+values. Choosing Custom returns to your own values, which are kept while
+another style is chosen; the first time, they start from the ticked style.
 
 | Slider | Natural | Effect |
 | --- | --- | --- |
-| Dark-scene glow | 0% | A faint white glow the lights keep while the picture is dark, instead of going fully dark. The percentage is of full light; the slider goes to 20%. 0% lets them go fully dark. |
-| Edge depth | 10% | How far into the picture each light looks. |
-| Colour focus | 0% | Each light keeps the colour next to it and takes less from the rest of the picture, so two different colours side by side do not mix into a duller one. Brightness stays as it is. 0% is off. |
-| Colour boost | 0% | Makes the lights’ colours stronger; 100% is up to twice as strong, as far as the lights can show. Brightness and hue stay as they are. 0% leaves them as they are. |
 | Smoothing | 0.3 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
 | Scene cuts | 100% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
 | Brightness ramp | 0 s | The least time the lights take from dark to full brightness, so a sudden flash does not dazzle. 0 follows at once. The slider goes to 2 s. |
+| Edge depth | 10% | How far into the picture each light looks. |
+| Colour focus | 0% | Each light keeps the colour next to it and takes less from the rest of the picture, so two different colours side by side do not mix into a duller one. Brightness stays as it is. 0% is off. |
+| Colour boost | 0% | Makes the lights’ colours stronger; 100% is up to twice as strong, as far as the lights can show. Brightness and hue stay as they are. 0% leaves them as they are. |
+| Dark-scene glow | 0% | A faint white glow the lights keep while the picture is dark, instead of going fully dark. The percentage is of full light; the slider goes to 20%. 0% lets them go fully dark. |
 
 Scene cuts and Brightness ramp have not yet been tried on a TV. Colour focus
 has not yet been tried on a TV either; compare 0% with 50% and 100% on a scene

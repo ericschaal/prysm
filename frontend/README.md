@@ -140,12 +140,15 @@ supervisor in each of its states and play the phone's calibration part). See the
   - [Picture](packages/web-portal/processing.tsx): black bars as a switch
     row; Style (`#/settings/style`): one [row choice](packages/web-portal/rows.tsx)
     per [style](packages/web-portal/styles.ts) (Natural, Calm, Vivid, Game,
-    Custom), the saved `processing.style` ticked and applied at once; Custom
-    opens its sliders below the list (dark-scene glow 0 to 20 %, edge depth,
-    colour focus and colour boost 0 to 100 %, smoothing 0 to 2 s, scene cuts
-    0 to 100 %, brightness ramp 0 to 2 s), which write `processing.custom_style`.
-    A first Custom starts from the ticked style's values, generated from Rust
-    (`@prysm/contracts/constants`); later it returns to the kept values. Detail
+    Custom), the saved `processing.style` ticked and applied at once. Below
+    the list one disclosure row, "Adjust this style" (closed, open while Custom
+    is chosen), holds the ticked style's sliders (smoothing 0 to 2 s, scene
+    cuts 0 to 100 %, brightness ramp 0 to 2 s, edge depth, colour focus and
+    colour boost 0 to 100 %, dark-scene glow 0 to 20 %); moving one on a
+    built-in style saves `style.kind = custom` with that style's values plus
+    the change in `processing.custom_style`. A first Custom starts from the
+    ticked style's values, generated from Rust (`@prysm/contracts/constants`);
+    later it returns to the kept values. Detail
     (`#/settings/detail`: 1 to 512) stays outside styles. All sliders are in
     Home's one slider style, widened to fit a saved value beyond, and apply
     live (debounced 400 ms, sliders on release) because processing-only

@@ -2225,6 +2225,13 @@ fieldset > .help {
   stroke-linejoin: round;
   transition: transform var(--duration) var(--ease-out);
 }
+/* A row that opens below: its chevron points down, and up while open. */
+.row-toggle .chevron {
+  transform: rotate(90deg);
+}
+.row-toggle[aria-expanded='true'] .chevron {
+  transform: rotate(-90deg);
+}
 
 /* The video source or lights editor, under Settings. */
 .section-editor {
@@ -2352,6 +2359,17 @@ fieldset > .help {
 .row-switch .field.check {
   row-gap: 2px;
 }
+/*
+ * The switch spans the label and its line, so it sits centred on the row
+ * as a chevron does, not on the label alone.
+ */
+.row-switch .field.check input {
+  grid-row: 1 / span 2;
+}
+.row-switch .field.check .field-note {
+  grid-row: 2;
+  grid-column: 1;
+}
 .row-switch .field.check label {
   font-weight: 500;
 }
@@ -2448,8 +2466,8 @@ fieldset > .help {
 .calibration-page {
   container-type: inline-size;
 }
-/* Custom's sliders under the styles, spaced as the capture presets' fields. */
-.style-custom {
+/* What a disclosure row opens starts a group's gap below it. */
+.disclosure-body > * {
   margin-top: var(--space-6);
 }
 .calibration-page > .rows {

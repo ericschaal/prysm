@@ -917,7 +917,7 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     assert.equal(saves(fixture), 2);
     assert.equal(fixture.snapshot().settings.processing.sample_density, 128);
 
-    // One row per style, the saved one ticked; no sliders until Custom.
+    // One row per style, the saved one ticked; the sliders closed under them.
     await leaveEditor();
     await openPage('Style');
     assert.deepEqual(
@@ -934,6 +934,12 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
       ],
     );
     assert.equal(radio('Natural').checked, true);
+    const adjust = () => $('button', row('Adjust this style'));
+    assert.equal(adjust().getAttribute('aria-expanded'), 'false');
+    assert.equal(
+      valueOf('Adjust this style'),
+      'Moving a slider switches to Custom.',
+    );
     assert.equal($$('input[type="range"]').length, 0);
 
     // A style applies at once, by name only.
@@ -948,9 +954,11 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     );
     assert.equal(radio('Calm').checked, true);
 
-    // The first Custom starts from the style that was ticked.
+    // The first Custom starts from the style that was ticked, and opens the
+    // sliders.
     await click(radio('Custom'));
     assert.equal(saves(fixture), 4);
+    assert.equal(adjust().getAttribute('aria-expanded'), 'true');
     assert.deepEqual(
       [
         fixture.snapshot().settings.processing.style,
@@ -960,37 +968,42 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
     );
     const knob = (name) => control(`custom_style.${name}`);
     const knobs = [
-      'dark_floor_percent',
-      'spatial_reach_percent',
-      'color_focus_percent',
-      'saturation_boost_percent',
       'smoothing_seconds',
       'cut_response_percent',
       'brightness_ramp_seconds',
+      'spatial_reach_percent',
+      'color_focus_percent',
+      'saturation_boost_percent',
+      'dark_floor_percent',
     ];
+    // In the page's order: timing first, then where and how colour is taken.
+    assert.deepEqual(
+      $$('input[type="range"]').map((input) => input.name),
+      knobs.map((name) => `processing.custom_style.${name}`),
+    );
     assert.deepEqual(
       knobs.map((name) => attributes(knob(name))),
       [
-        ['range', '0', '0', '20', '1'],
-        ['range', '20', '1', '100', '1'],
-        ['range', '0', '0', '100', '1'],
-        ['range', '0', '0', '100', '1'],
         // Smoothing as a slider over the range worth tuning.
         ['range', '0.8', '0', '2', '0.05'],
         ['range', '0', '0', '100', '1'],
         ['range', '1', '0', '2', '0.1'],
+        ['range', '20', '1', '100', '1'],
+        ['range', '0', '0', '100', '1'],
+        ['range', '0', '0', '100', '1'],
+        ['range', '0', '0', '20', '1'],
       ],
     );
     assert.deepEqual(
       knobs.map((name) => knob(name).labels[0].textContent),
       [
-        'Dark-scene glow',
-        'Edge depth',
-        'Colour focus',
-        'Colour boost',
         'Smoothing',
         'Scene cuts',
         'Brightness ramp',
+        'Edge depth',
+        'Colour focus',
+        'Colour boost',
+        'Dark-scene glow',
       ],
     );
 
@@ -1036,16 +1049,24 @@ test('Settings keeps brightness and the calibration choice on Home; the picture 
       active_calibration: 'ps5',
     });
 
-    // Another style keeps them; Custom returns to them.
+    // Another style keeps them, and the open sliders show its own values;
+    // Custom returns to the kept ones.
     await click(radio('Vivid'));
-    assert.equal($$('input[type="range"]').length, 0);
+    assert.equal(adjust().getAttribute('aria-expanded'), 'true');
     assert.deepEqual(fixture.snapshot().settings.processing.style, {
       kind: 'vivid',
     });
     assert.deepEqual(fixture.snapshot().settings.processing.custom_style, mine);
+    assert.deepEqual(
+      knobs.map((name) => Number(knob(name).value)),
+      knobs.map((name) => styleValues.vivid[name]),
+    );
     await click(radio('Custom'));
     assert.deepEqual(fixture.snapshot().settings.processing.custom_style, mine);
-    assert.equal(knob('dark_floor_percent').value, '8');
+    assert.deepEqual(
+      knobs.map((name) => Number(knob(name).value)),
+      knobs.map((name) => mine[name]),
+    );
     await leaveEditor();
     assert.equal(valueOf('Style'), 'Custom');
     await openPage('Style');
@@ -3086,6 +3107,91 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
     assert.equal(slider().value, '40', 'the thumb stays where it was let go');
   } finally {
     t.mock.timers.reset();
+    await portal.unmount();
+  }
+});
+
+test('Adjust this style opens by hand on a built-in style; moving a slider there makes it Custom from that style', async () => {
+  const kept = { ...styleValues.calm, dark_floor_percent: 15 };
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    (snapshot) => ({
+      settings: {
+        ...snapshot.settings,
+        processing: {
+          ...snapshot.settings.processing,
+          style: { kind: 'vivid' },
+          custom_style: kept,
+        },
+      },
+    }),
+  );
+  const { fixture } = portal;
+  const adjust = () => $('button', row('Adjust this style'));
+  const knob = (name) => field(`processing.custom_style.${name}`);
+  const ticked = () =>
+    $$('.row-choice')
+      .filter((choice) => $('input', choice).checked)
+      .map((choice) => $('.row-label', choice).textContent);
+  try {
+    await openPage('Style');
+    // Closed on a built-in style; a real button, opened and closed by hand.
+    assert.equal(adjust().getAttribute('aria-expanded'), 'false');
+    const body = () =>
+      document.getElementById(adjust().getAttribute('aria-controls'));
+    assert(body(), 'the button names what it opens');
+    assert.equal($$('input[type="range"]', body()).length, 0);
+    await click(adjust());
+    assert.equal(adjust().getAttribute('aria-expanded'), 'true');
+    assert.equal($$('input[type="range"]', body()).length, 7);
+    await click(adjust());
+    assert.equal(adjust().getAttribute('aria-expanded'), 'false');
+    assert.equal($$('input[type="range"]').length, 0);
+    await click(adjust());
+
+    // Open, it shows the ticked style's own values; nothing is saved.
+    for (const [name, value] of Object.entries(styleValues.vivid))
+      assert.equal(Number(knob(name).value), value, name);
+    assert.equal(saves(fixture), 0);
+
+    // Moving one makes it Custom: Vivid's values with the change, one save
+    // that replaces the kept values. The tick moves; the sliders stay open.
+    await edit(knob('spatial_reach_percent'), 42);
+    assert.deepEqual(ticked(), ['Custom']);
+    assert.equal(adjust().getAttribute('aria-expanded'), 'true');
+    await settle();
+    assert.equal(saves(fixture), 1);
+    const changed = { ...styleValues.vivid, spatial_reach_percent: 42 };
+    assert.deepEqual(
+      [
+        fixture.snapshot().settings.processing.style,
+        fixture.snapshot().settings.processing.custom_style,
+      ],
+      [{ kind: 'custom' }, changed],
+    );
+    assert.equal(knob('spatial_reach_percent').value, '42');
+
+    // Arriving with Custom chosen, the sliders are open on the kept values.
+    await leaveEditor();
+    await openPage('Style');
+    assert.equal(adjust().getAttribute('aria-expanded'), 'true');
+    assert.equal(knob('spatial_reach_percent').value, '42');
+
+    // A built-in style and back: Custom returns to the values kept now.
+    await click(radio('Game'));
+    assert.equal(
+      Number(knob('spatial_reach_percent').value),
+      styleValues.game.spatial_reach_percent,
+    );
+    await click(radio('Custom'));
+    assert.deepEqual(ticked(), ['Custom']);
+    assert.deepEqual(
+      fixture.snapshot().settings.processing.custom_style,
+      changed,
+    );
+    assert.equal(knob('spatial_reach_percent').value, '42');
+  } finally {
     await portal.unmount();
   }
 });

@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import type { Processing, StyleValues } from '@prysm/contracts/application';
 import { FieldScopeProvider } from './form';
 import { CheckboxField, RangeField } from './fields';
@@ -11,9 +11,9 @@ import {
   type ProcessingControls,
 } from './live-processing';
 import { nameOf } from './calibration-model';
-import { RowChoice } from './rows';
+import { RowChoice, RowDisclosure } from './rows';
 import { useSaveReport } from './save-state';
-import { chooseStyle, styleOrder, styles } from './styles';
+import { chooseStyle, styleOrder, styleValues, styles } from './styles';
 
 const percent = (value: number) => `${value}%`;
 const seconds = (value: number) => `${value}\u00a0s`;
@@ -202,10 +202,13 @@ export function BlackBars(props: LiveProps) {
 
 /**
  * The style, on its own page: one row per style, the chosen one ticked,
- * applied at once. Custom opens its sliders below the list, so nothing
- * above them moves; they apply live, tried on the lights while dragged and
- * saved where they are let go, as on Home. A first Custom starts from the
- * style that was ticked; later it returns to the kept values.
+ * applied at once. Under the list, “Adjust this style” opens the sliders of
+ * the ticked style; it is open while Custom is chosen and otherwise closed
+ * until opened, so nothing above it moves. Moving a slider of a built-in
+ * style makes it Custom, from that style's values with the change. The
+ * sliders apply live, tried on the lights while dragged and saved where they
+ * are let go, as on Home. Choosing Custom returns to the kept values; a
+ * first Custom starts from the style that was ticked.
  */
 export function StyleSettings(props: LiveProps) {
   const { live } = useControls(props, 'style');
@@ -213,8 +216,10 @@ export function StyleSettings(props: LiveProps) {
   const headingId = useId();
   const value = live.value;
   const chosen = value.style.kind;
-  const custom = chosen === 'custom' ? value.custom_style : undefined;
-  /** A custom slider's props: it changes one value of `custom_style`. */
+  const [open, setOpen] = useState(chosen === 'custom');
+  /** What the sliders show: the kept values, or the ticked style's own. */
+  const shown = chosen === 'custom' ? value.custom_style : styleValues[chosen];
+  /** A slider's props: it saves Custom with `values` and its own change. */
   const knob = <K extends keyof StyleValues>(key: K, values: StyleValues) => {
     const path = `processing.custom_style.${key}`;
     return {
@@ -222,7 +227,11 @@ export function StyleSettings(props: LiveProps) {
       value: values[key],
       onChange: (next: number) =>
         live.slider.slide(
-          { ...live.value, custom_style: { ...values, [key]: next } },
+          {
+            ...live.value,
+            style: { kind: 'custom' },
+            custom_style: { ...values, [key]: next },
+          },
           path,
         ),
       onPress: live.slider.press,
@@ -245,6 +254,7 @@ export function StyleSettings(props: LiveProps) {
               checked={chosen === style}
               disabled={props.disabled}
               onChoose={() => {
+                if (style === 'custom') setOpen(true);
                 if (style !== chosen)
                   void live.commit(
                     chooseStyle(live.value, style),
@@ -255,65 +265,72 @@ export function StyleSettings(props: LiveProps) {
           ))}
         </ul>
       </section>
-      {custom ? (
-        <div className="style-custom sliders" key={live.generation}>
-          <RangeField
-            label="Dark-scene glow"
-            help="A faint white glow the lights keep while the picture is dark. 0% lets them go fully dark."
-            format={percent}
-            {...knob('dark_floor_percent', custom)}
-            {...styleLimits.dark_floor_percent}
-          />
-          <RangeField
-            label="Edge depth"
-            help="How far into the picture each light looks."
-            format={percent}
-            {...knob('spatial_reach_percent', custom)}
-            {...styleLimits.spatial_reach_percent}
-          />
-          <RangeField
-            label="Colour focus"
-            help="Each light keeps the colour next to it and takes less from the rest of the picture. 0 is off."
-            format={percent}
-            {...knob('color_focus_percent', custom)}
-            {...styleLimits.color_focus_percent}
-          />
-          <RangeField
-            label="Colour boost"
-            help="Makes the lights’ colours stronger. 0% leaves them as they are."
-            format={percent}
-            {...knob('saturation_boost_percent', custom)}
-            {...styleLimits.saturation_boost_percent}
-          />
-          <RangeField
-            label="Smoothing"
-            help="Softens quick changes. 0 turns it off."
-            format={seconds}
-            {...knob('smoothing_seconds', custom)}
-            // Steps of 0.05 s; a saved value above the usual 2 s still fits.
-            onChange={(next) =>
-              knob('smoothing_seconds', custom).onChange(
-                Math.round(next * 100) / 100,
-              )
-            }
-            {...fineLimits.smoothing(custom.smoothing_seconds)}
-          />
-          <RangeField
-            label="Scene cuts"
-            help="How much of a scene cut the lights take at once. 0 eases cuts in like everything else."
-            format={percent}
-            {...knob('cut_response_percent', custom)}
-            {...styleLimits.cut_response_percent}
-          />
-          <RangeField
-            label="Brightness ramp"
-            help="The least time from dark to full brightness. 0 follows at once."
-            format={seconds}
-            {...knob('brightness_ramp_seconds', custom)}
-            {...styleLimits.brightness_ramp_seconds}
-          />
-        </div>
-      ) : null}
+      <RowDisclosure
+        label="Adjust this style"
+        about="Moving a slider switches to Custom."
+        open={open}
+        onToggle={() => setOpen(!open)}
+      >
+        {shown ? (
+          <div className="sliders" key={live.generation}>
+            <RangeField
+              label="Smoothing"
+              help="Softens quick changes. 0 turns it off."
+              format={seconds}
+              {...knob('smoothing_seconds', shown)}
+              // Steps of 0.05 s; a saved value above the usual 2 s still fits.
+              onChange={(next) =>
+                knob('smoothing_seconds', shown).onChange(
+                  Math.round(next * 100) / 100,
+                )
+              }
+              {...fineLimits.smoothing(shown.smoothing_seconds)}
+            />
+            <RangeField
+              label="Scene cuts"
+              help="How much of a scene cut the lights take at once. 0 eases cuts in like everything else."
+              format={percent}
+              {...knob('cut_response_percent', shown)}
+              {...styleLimits.cut_response_percent}
+            />
+            <RangeField
+              label="Brightness ramp"
+              help="The least time from dark to full brightness. 0 follows at once."
+              format={seconds}
+              {...knob('brightness_ramp_seconds', shown)}
+              {...styleLimits.brightness_ramp_seconds}
+            />
+            <RangeField
+              label="Edge depth"
+              help="How far into the picture each light looks."
+              format={percent}
+              {...knob('spatial_reach_percent', shown)}
+              {...styleLimits.spatial_reach_percent}
+            />
+            <RangeField
+              label="Colour focus"
+              help="Each light keeps the colour next to it and takes less from the rest of the picture. 0 is off."
+              format={percent}
+              {...knob('color_focus_percent', shown)}
+              {...styleLimits.color_focus_percent}
+            />
+            <RangeField
+              label="Colour boost"
+              help="Makes the lights’ colours stronger. 0% leaves them as they are."
+              format={percent}
+              {...knob('saturation_boost_percent', shown)}
+              {...styleLimits.saturation_boost_percent}
+            />
+            <RangeField
+              label="Dark-scene glow"
+              help="A faint white glow the lights keep while the picture is dark. 0% lets them go fully dark."
+              format={percent}
+              {...knob('dark_floor_percent', shown)}
+              {...styleLimits.dark_floor_percent}
+            />
+          </div>
+        ) : null}
+      </RowDisclosure>
     </FieldScopeProvider>
   );
 }

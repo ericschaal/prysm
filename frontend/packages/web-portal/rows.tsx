@@ -177,6 +177,56 @@ export function RowChoice({
   );
 }
 
+/**
+ * A row that shows or hides what follows it, below the row: a chevron in
+ * the link's place points down, and up while open. Opening adds to the end
+ * of the page, so nothing above it moves.
+ */
+export function RowDisclosure({
+  label,
+  about,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  /** The line beneath the label, the same open or closed. */
+  about: string;
+  open: boolean;
+  onToggle: () => void;
+  /** Drawn only while open. */
+  children: ReactNode;
+}) {
+  const id = useId();
+  return (
+    <div className="disclosure">
+      <div className="rows">
+        <div className="row">
+          <button
+            type="button"
+            className="row-link row-toggle"
+            aria-expanded={open}
+            aria-controls={id}
+            aria-describedby={`${id}-about`}
+            onClick={onToggle}
+          >
+            <span className="row-text">
+              <span className="row-label">{label}</span>
+              <span className="row-value" id={`${id}-about`}>
+                {about}
+              </span>
+            </span>
+            <ChevronIcon />
+          </button>
+        </div>
+      </div>
+      <div id={id} className="disclosure-body">
+        {open ? children : null}
+      </div>
+    </div>
+  );
+}
+
 /** A row holding one plain on/off switch (a `CheckboxField`). */
 export function RowSwitch({ children }: { children: ReactNode }) {
   return <li className="row row-switch">{children}</li>;
