@@ -39,6 +39,8 @@ export function fakeApplicationPort<C, O>(initial: {
   };
   const subscribers = new Set<(value: ApplicationSnapshot<C, O>) => void>();
   const calls: string[] = [];
+  /** Ends each open stream, as a lost connection does. */
+  const streams = new Set<() => void>();
   /** The next command fails with this instead of running. */
   let nextFailure: Failure | null = null;
   /** Trials wait for this before answering; trials fail while `trialFailure`. */
@@ -75,10 +77,12 @@ export function fakeApplicationPort<C, O>(initial: {
         closed = true;
         calls.push('unsubscribe');
         subscribers.delete(push);
+        streams.delete(close);
         signal.removeEventListener('abort', close);
         wake?.();
       }
       subscribers.add(push);
+      streams.add(close);
       signal.addEventListener('abort', close, { once: true });
       if (signal.aborted) close();
       return {
@@ -176,6 +180,10 @@ export function fakeApplicationPort<C, O>(initial: {
     snapshot: () => snapshot,
     /** Simulate another client or the engine changing state. */
     publish,
+    /** Lose the connection: every open stream ends; the client reconnects. */
+    drop: () => {
+      for (const close of [...streams]) close();
+    },
     failNext: (failure: Failure) => {
       nextFailure = failure;
     },

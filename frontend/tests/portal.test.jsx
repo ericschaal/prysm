@@ -2733,3 +2733,55 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
     await portal.unmount();
   }
 });
+
+test('a page that fails to draw says so and offers a reload', async (t) => {
+  // React reports the failure it caught; not this test's news.
+  t.mock.method(console, 'error', () => {});
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    // A state no page can draw.
+    await act(async () => portal.fixture.publish({ settings: null }));
+    assert.equal($('h2').textContent, 'Something went wrong');
+    assert(button('Reload'), 'the way on');
+    assert($('.detail').textContent, 'what failed, for a report');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('after Prysm is updated, every page offers a reload once it reconnects', async () => {
+  let replaced = false;
+  let asked = 0;
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    {
+      replaced: async () => {
+        asked += 1;
+        return replaced;
+      },
+    },
+  );
+  const reconnect = async () => {
+    await act(async () => portal.fixture.drop());
+    await act(async () => sleep(400));
+    assert.equal($('.connection').textContent, 'Connected');
+  };
+  try {
+    assert.equal(asked, 0, 'not asked while the connection holds');
+    // A restart without an update: asked, nothing shown.
+    await reconnect();
+    assert.equal(asked, 1);
+    assert(!$('.notice.updated'));
+    // An update: said on every page, with the way on.
+    replaced = true;
+    await reconnect();
+    assert.equal($('.notice.updated p').textContent, 'Prysm was updated.');
+    assert(button('Reload'));
+    await openSettings();
+    assert($('.notice.updated'), 'on Settings too');
+  } finally {
+    await portal.unmount();
+  }
+});

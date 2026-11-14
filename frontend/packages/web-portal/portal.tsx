@@ -54,6 +54,8 @@ import {
   videoRoute,
 } from './routes';
 import { SetupWizard } from './setup';
+import { useReplaced } from './replaced';
+import { PortalError } from './update';
 import type { PathState } from './setup-card';
 import './tokens.css';
 import './portal.css';
@@ -161,6 +163,7 @@ function PortalFrame({ host }: { host: Host }) {
     settingsLink:
       home && snapshot && setup !== 'open' ? () => nav.go(settingsRoute) : null,
     developer,
+    updated: useReplaced(online, host.replaced),
   };
 
   if (!snapshot)
@@ -262,6 +265,7 @@ const at = (route: string) => route.slice(2);
 const portalRoutes: RouteObject[] = [
   {
     element: <Frame />,
+    errorElement: <PortalError />,
     children: [
       { id: 'home', index: true, element: <HomeRoute /> },
       { id: 'settings', path: at(settingsRoute), element: <SettingsRoute /> },

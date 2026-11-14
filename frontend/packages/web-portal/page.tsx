@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { DeveloperContext } from './developer';
 import { useChrome, usePortal, usePortalRefs } from './portal-context';
+import { UpdatedNotice } from './update';
 
 function SettingsIcon() {
   return (
@@ -70,13 +71,14 @@ export function Page({
   wide?: boolean;
   children: ReactNode;
 }) {
-  const { developer } = useChrome();
+  const { developer, updated } = useChrome();
   return (
     <div className={wide ? 'portal wide' : 'portal'}>
       <title>{name ? `${name} · Prysm` : 'Prysm'}</title>
       <Header />
       <main id="content" className={className}>
         <h1 className="visually-hidden">{title}</h1>
+        {updated ? <UpdatedNotice /> : null}
         <DeveloperContext value={developer}>{children}</DeveloperContext>
       </main>
     </div>

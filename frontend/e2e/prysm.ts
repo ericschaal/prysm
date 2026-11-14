@@ -177,6 +177,8 @@ export interface Prysm {
   state(): Promise<State>;
   /** The settings file as it is on disk now. */
   savedSettings(): Promise<Settings>;
+  /** Stop Prysm and start it again at the same address, as an update does. */
+  restart(): Promise<void>;
 }
 
 export interface Sender {
@@ -200,7 +202,8 @@ export const test = base.extend<{
     const dir = await mkdtemp(path.join(tmpdir(), 'prysm-e2e-'));
     const file = path.join(dir, 'settings.json');
     await writeFile(file, JSON.stringify(settings));
-    const host = new Process(headlessBin, [file, '--listen', '127.0.0.1:0']);
+    let host = new Process(headlessBin, [file, '--listen', '127.0.0.1:0']);
+    const logs: string[] = [];
     let code: number | null;
     try {
       const line = await host.waitFor('portal http://');
@@ -215,11 +218,21 @@ export const test = base.extend<{
           expect(response.status).toBe(200);
           return (await response.json()) as State;
         },
+        restart: async () => {
+          expect(await host.stop(), 'exits cleanly before a restart').toBe(0);
+          logs.push(...host.lines, '(restart)');
+          host = new Process(headlessBin, [
+            file,
+            '--listen',
+            new URL(url).host,
+          ]);
+          await host.waitFor('portal http://');
+        },
       });
     } finally {
       code = await host.stop();
       await testInfo.attach('prysm-headless.log', {
-        body: host.lines.join('\n'),
+        body: [...logs, ...host.lines].join('\n'),
         contentType: 'text/plain',
       });
       await rm(dir, { recursive: true, force: true });

@@ -20,11 +20,13 @@ export function WebosWebPortal({
   preview,
   colors,
   discovery,
+  replaced,
 }: {
   application: ApplicationRuntime<WebosCapture, WebosOutput>;
   preview?: PreviewClient;
   colors?: ColorsClient;
   discovery?: DiscoveryClient;
+  replaced?: () => Promise<boolean>;
 }) {
   return (
     <ApplicationProvider application={application}>
@@ -34,6 +36,7 @@ export function WebosWebPortal({
         preview={preview}
         colors={colors}
         discovery={discovery}
+        replaced={replaced}
         outputs={webosOutputs}
       />
     </ApplicationProvider>

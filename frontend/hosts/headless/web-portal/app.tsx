@@ -20,11 +20,13 @@ export function HeadlessWebPortal({
   preview,
   colors,
   discovery,
+  replaced,
 }: {
   application: ApplicationRuntime<HeadlessCapture, HeadlessOutput>;
   preview?: PreviewClient;
   colors?: ColorsClient;
   discovery?: DiscoveryClient;
+  replaced?: () => Promise<boolean>;
 }) {
   return (
     <ApplicationProvider application={application}>
@@ -34,6 +36,7 @@ export function HeadlessWebPortal({
         preview={preview}
         colors={colors}
         discovery={discovery}
+        replaced={replaced}
         outputs={headlessOutputs}
       />
     </ApplicationProvider>

@@ -55,6 +55,7 @@ export {
   videoRoute,
 } from './routes';
 export { WebPortal } from './portal';
+export { scriptReplaced } from './replaced';
 export type { WebPortalProps } from './portal-context';
 export {
   applyTheme,

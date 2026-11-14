@@ -5,6 +5,7 @@ import {
   httpPreviewClient,
 } from '@prysm/application-client/http';
 import { createApplicationRuntime } from '@prysm/application-state';
+import { scriptReplaced } from '@prysm/web-portal';
 import { createRoot } from 'react-dom/client';
 import { WebosWebPortal, type WebosCapture, type WebosOutput } from './app';
 
@@ -20,5 +21,6 @@ createRoot(root).render(
     preview={httpPreviewClient()}
     colors={httpColorsClient()}
     discovery={httpDiscoveryClient()}
+    replaced={scriptReplaced(import.meta.url)}
   />,
 );

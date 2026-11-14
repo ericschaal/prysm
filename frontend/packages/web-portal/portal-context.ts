@@ -42,6 +42,11 @@ export interface WebPortalProps<
    * one they offer only typed fields.
    */
   discovery?: DiscoveryClient;
+  /**
+   * Whether Prysm now serves another build of this page, asked when the
+   * connection returns (`scriptReplaced`); without one it is never asked.
+   */
+  replaced?: () => Promise<boolean>;
 }
 
 type Section = AdapterSection;
@@ -113,6 +118,8 @@ export interface Chrome {
   /** Home's Settings button, while Home shows the set-up portal. */
   settingsLink: (() => void) | null;
   developer: boolean;
+  /** Prysm was updated under this page: every page offers a reload. */
+  updated: boolean;
 }
 
 /** The elements the frame reaches into: kept apart from what renders. */

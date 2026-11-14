@@ -167,6 +167,19 @@
   font-size: var(--text-small);
 }
 
+/* A page that failed to draw: no pulse, the way on, then the detail. */
+.connecting.problem::before {
+  display: none;
+}
+.connecting.problem button {
+  margin-top: var(--space-4);
+}
+.connecting.problem .detail {
+  margin-top: var(--space-4);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
 /* ── Calibrate: attention on the TV ───────────────────────────────────── */
 .calibrate-pattern {
   display: inline-flex;
