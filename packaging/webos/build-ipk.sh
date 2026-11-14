@@ -38,7 +38,7 @@ done
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$here/../.." && pwd)
-# shellcheck source=env.sh
+# shellcheck source=packaging/webos/env.sh
 . "$here/env.sh"
 for tool in ares-package python3 cargo; do
   command -v "$tool" >/dev/null || { echo "build-ipk.sh: $tool is required" >&2; exit 1; }

@@ -81,6 +81,8 @@ run() {
 copy() {
     echo "+ ssh $host 'mkdir -p $TEMP && cat > $remote' < $ipk" >&2
     if [ "$dry_run" = false ]; then
+        # The paths are chosen here, so they expand here.
+        # shellcheck disable=SC2029
         ssh "$host" "mkdir -p $TEMP && cat > $remote" < "$ipk"
     fi
 }
@@ -97,6 +99,8 @@ held() {
         sleep $((seconds + 2)) > "$pipe" &
         holder=$!
         result=0
+        # The command is built here and sent whole.
+        # shellcheck disable=SC2029
         ssh "$host" "$*" < "$pipe" || result=$?
         kill "$holder" 2>/dev/null
         # Killed: 143, which `set -e` would take for a failure.
