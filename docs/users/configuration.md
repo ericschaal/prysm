@@ -115,13 +115,16 @@ Picture changes apply while you move the control; there is no Save button.
 | Remove black bars | On | Ignores letterbox and pillarbox bars. Takes a second or two to settle after the picture changes. |
 | Shadow lift | 0% | Brightens dark colours; black stays off. |
 | Edge depth | 10% | How far into the picture each light looks. |
+| Colour focus | 0% | Each light keeps the colour next to it and takes less from the rest of the picture, so two different colours side by side do not mix into a duller one. Brightness stays as it is. 0% is off. |
 | Smoothing | 0.1 s | Softens quick changes. 0 reacts at once. The slider goes to 2 s. |
 | Scene cuts | 0% | How much of a scene cut the lights take at once. 0% eases a cut in like everything else; 100% shows it in one frame. Movement in the picture is not a cut. Lets a longer Smoothing calm flicker without the lights lagging behind cuts. |
 | Brightness ramp | 0 s | The least time the lights take from dark to full brightness, so a sudden flash does not dazzle. 0 follows at once. The slider goes to 2 s. |
 | Detail | 128 | Higher follows small details more closely but works the computer harder. Leave it at 128 to start. The slider goes to 512. |
 
 Scene cuts and Brightness ramp have not yet been tried on a TV; try them with
-a Smoothing of about 0.5 s.
+a Smoothing of about 0.5 s. Colour focus has not yet been tried on a TV either;
+compare 0% with 50% and 100% on a scene with two strong colours. On a TV it
+is heavy work for now: use it with a capture rate of 30 fps, not 60.
 
 **Colour profiles** lists your profiles. Choose one to rename it, switch it
 **In use**, adjust its colours or delete it; after **Delete profile** the list

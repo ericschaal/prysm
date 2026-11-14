@@ -84,6 +84,7 @@ device.commands.configureProcessing(0, {
   brightness_ramp_seconds: 0,
   sample_density: 128,
   spatial_reach_percent: 10,
+  color_focus_percent: 0,
   // @ts-expect-error Processing fields are typed.
   remove_black_bars: 'yes',
 });

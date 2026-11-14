@@ -1,8 +1,8 @@
 use crate::ValidationError;
 use crate::profiles::{self, ColorProfile};
 use prysm_core::{
-    BrightnessPercent, BrightnessRampSeconds, ColorCorrection, Config, CutResponsePercent,
-    SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
+    BrightnessPercent, BrightnessRampSeconds, ColorCorrection, ColorFocusPercent, Config,
+    CutResponsePercent, SampleDensity, ShadowLiftPercent, SmoothingSeconds, SpatialReachPercent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -99,6 +99,7 @@ pub struct Processing {
     pub brightness_ramp_seconds: f32,
     pub sample_density: u16,
     pub spatial_reach_percent: u8,
+    pub color_focus_percent: u8,
     pub remove_black_bars: bool,
     /// At most [`MAX_PROFILES`](crate::MAX_PROFILES), with unique ids.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -119,6 +120,7 @@ impl Default for Processing {
             brightness_ramp_seconds: config.brightness_ramp_seconds.0,
             sample_density: u16::try_from(config.sample_density.0).unwrap_or(u16::MAX),
             spatial_reach_percent: config.spatial_reach_percent.0,
+            color_focus_percent: config.color_focus_percent.0,
             remove_black_bars: config.remove_black_bars,
             profiles: Vec::new(),
             active_profile: None,
@@ -145,6 +147,7 @@ impl Processing {
         percent("shadow_lift_percent", self.shadow_lift_percent, 0)?;
         percent("cut_response_percent", self.cut_response_percent, 0)?;
         percent("spatial_reach_percent", self.spatial_reach_percent, 1)?;
+        percent("color_focus_percent", self.color_focus_percent, 0)?;
         if !(self.smoothing_seconds.is_finite() && self.smoothing_seconds >= 0.0) {
             return Err(ValidationError::new(
                 path("smoothing_seconds"),
@@ -201,6 +204,7 @@ impl Processing {
             brightness_ramp_seconds: BrightnessRampSeconds(self.brightness_ramp_seconds),
             sample_density: SampleDensity(usize::from(self.sample_density)),
             spatial_reach_percent: SpatialReachPercent(self.spatial_reach_percent),
+            color_focus_percent: ColorFocusPercent(self.color_focus_percent),
             remove_black_bars: self.remove_black_bars,
         }
     }
@@ -282,6 +286,14 @@ mod tests {
             invalid.validate().unwrap_err().field,
             "processing.cut_response_percent"
         );
+        let invalid = Processing {
+            color_focus_percent: 101,
+            ..Processing::default()
+        };
+        assert_eq!(
+            invalid.validate().unwrap_err().field,
+            "processing.color_focus_percent"
+        );
         for seconds in [-0.1, 2.01, f32::NAN, f32::INFINITY] {
             let invalid = Processing {
                 brightness_ramp_seconds: seconds,
@@ -338,6 +350,33 @@ mod tests {
             assert!(
                 serde_json::from_str::<Processing>(&text).is_err(),
                 "{removed}"
+            );
+        }
+    }
+
+    #[test]
+    fn color_focus_round_trips_and_defaults_when_omitted() {
+        let omitted: Processing =
+            serde_json::from_value(serde_json::json!({ "spatial_reach_percent": 20 })).unwrap();
+        assert_eq!(omitted.color_focus_percent, 0);
+        assert_eq!(
+            omitted.config().color_focus_percent,
+            Config::default().color_focus_percent
+        );
+        for percent in [0, 50, 100] {
+            let present: Processing =
+                serde_json::from_value(serde_json::json!({ "color_focus_percent": percent }))
+                    .unwrap();
+            present.validate().unwrap();
+            assert_eq!(
+                present.config().color_focus_percent,
+                ColorFocusPercent(percent)
+            );
+            let written = serde_json::to_value(&present).unwrap();
+            assert_eq!(written["color_focus_percent"], percent);
+            assert_eq!(
+                serde_json::from_value::<Processing>(written).unwrap(),
+                present
             );
         }
     }

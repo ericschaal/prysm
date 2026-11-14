@@ -1,5 +1,10 @@
 use crate::frames::FrameView;
-use prysm_core::{ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity};
+use color_focus::ColorFocus;
+use prysm_core::{
+    ColorFocusPercent, ColorStrip, Edge, EdgeColors, LinearColor, PixelFormat, SampleDensity,
+};
+
+mod color_focus;
 
 /// Most pixels cell averaging reads per frame: every pixel of a 640x360
 /// picture. Larger pictures are read on a lattice of every `step`th pixel and
@@ -16,18 +21,85 @@ pub(crate) fn lattice_step(width: u32, height: u32) -> u32 {
     step
 }
 
-/// Projects the whole picture onto the perimeter using a smooth distance falloff.
+/// Projects the whole picture onto the perimeter using a smooth distance
+/// falloff, then optionally lets each sample keep the colour next to it
+/// ([`ColorFocus`]).
 #[derive(Debug)]
 pub struct SpatialSampler {
     sample_density: SampleDensity,
     reach_ratio: f32,
+    color_focus: ColorFocusPercent,
     dimensions: Option<(u32, u32)>,
     step: u32,
+    // Cell rectangles `[x0, y0, x1, y1]`, row by row, `columns` to a row.
     cells: Vec<[u32; 4]>,
+    columns: usize,
     cell_colors: Vec<LinearColor>,
     rgb: Vec<u8>,
+    // The kernel radius in pixels, and where each output sample sits on the
+    // picture's edge, in strip order.
+    radius: f32,
+    sample_points: [Vec<[f32; 2]>; 4],
     // One row of normalized cell weights per output sample, in strip order.
     sample_weights: [Vec<f32>; 4],
+    focus: ColorFocus,
+}
+
+/// The sampler's geometry, as the colour focus pass reads it.
+struct Geometry<'a> {
+    width: u32,
+    height: u32,
+    cells: &'a [[u32; 4]],
+    columns: usize,
+    radius: f32,
+    points: &'a [Vec<[f32; 2]>; 4],
+    weights: &'a [Vec<f32>; 4],
+}
+
+/// The kernel's broad tail at a squared distance in radii: it carries the scene.
+fn broad_tail(distance_squared: f32) -> f32 {
+    1.0 / (1.0 + distance_squared)
+}
+
+/// The kernel's local lobe, a peak at a quarter radius: it restores local contrast.
+fn local_lobe(distance_squared: f32) -> f32 {
+    let local = 1.0 + 16.0 * distance_squared;
+    64.0 / (local * local)
+}
+
+/// Squared distance from a cell's centre to `point`, in kernel radii.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "cell coordinates are bounded by u32 dimensions; weights use approximate f32 geometry"
+)]
+fn distance_squared([x0, y0, x1, y1]: [u32; 4], [x, y]: [f32; 2], radius: f32) -> f32 {
+    let dx = ((x0 as f32).midpoint(x1 as f32) - x) / radius;
+    let dy = ((y0 as f32).midpoint(y1 as f32) - y) / radius;
+    dx * dx + dy * dy
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "cell sides are bounded by u32 dimensions; weights use approximate f32 geometry"
+)]
+fn cell_area([x0, y0, x1, y1]: [u32; 4]) -> f32 {
+    (x1 - x0) as f32 * (y1 - y0) as f32
+}
+
+/// Where sample `index` of `count` sits on `edge` of a `width` x `height`
+/// picture, keeping the left-to-right / top-to-bottom strip coordinates.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "sample counts and dimensions are far below f32's exact integer range"
+)]
+fn sample_point(edge: Edge, index: usize, count: usize, width: u32, height: u32) -> [f32; 2] {
+    let position = (index as f32 + 0.5) / count as f32;
+    match edge {
+        Edge::Top => [position * width as f32, 0.0],
+        Edge::Right => [width as f32, position * height as f32],
+        Edge::Bottom => [position * width as f32, height as f32],
+        Edge::Left => [0.0, position * height as f32],
+    }
 }
 
 /// Samples projected together, so each cell color is loaded once per group.
@@ -83,13 +155,24 @@ impl SpatialSampler {
         Self {
             sample_density,
             reach_ratio,
+            color_focus: ColorFocusPercent(0),
             dimensions: None,
             step: 1,
             cells: Vec::new(),
+            columns: 0,
             cell_colors: Vec::new(),
             rgb: Vec::new(),
+            radius: 0.0,
+            sample_points: std::array::from_fn(|_| Vec::new()),
             sample_weights: std::array::from_fn(|_| Vec::new()),
+            focus: ColorFocus::default(),
         }
+    }
+
+    /// How much each sample keeps the colour next to it; 0 is the plain
+    /// weighted mean, exactly. Geometry is kept.
+    pub fn set_color_focus(&mut self, color_focus: ColorFocusPercent) {
+        self.color_focus = color_focus;
     }
 
     #[allow(
@@ -146,33 +229,25 @@ impl SpatialSampler {
         }
         self.cell_colors
             .resize(self.cells.len(), LinearColor::black());
+        self.columns = columns as usize;
         let radius = height as f32 * self.reach_ratio;
-        for (weights, (edge, count)) in self.sample_weights.iter_mut().zip([
+        self.radius = radius;
+        let edges = self.sample_weights.iter_mut().zip(&mut self.sample_points);
+        for ((weights, points), (edge, count)) in edges.zip([
             (Edge::Top, horizontal),
             (Edge::Right, vertical),
             (Edge::Bottom, horizontal),
             (Edge::Left, vertical),
         ]) {
             weights.clear();
-            for i in 0..count {
-                let position = (i as f32 + 0.5) / count as f32;
-                // Preserve the existing left-to-right / top-to-bottom strip coordinates.
-                let (sample_x, sample_y) = match edge {
-                    Edge::Top => (position * width as f32, 0.0),
-                    Edge::Right => (width as f32, position * height as f32),
-                    Edge::Bottom => (position * width as f32, height as f32),
-                    Edge::Left => (0.0, position * height as f32),
-                };
+            points.clear();
+            points.extend((0..count).map(|i| sample_point(edge, i, count, width, height)));
+            for &point in points.iter() {
                 let start = weights.len();
-                for &[x0, y0, x1, y1] in &self.cells {
-                    let dx = ((x0 as f32).midpoint(x1 as f32) - sample_x) / radius;
-                    let dy = ((y0 as f32).midpoint(y1 as f32) - sample_y) / radius;
-                    let area = (x1 - x0) as f32 * (y1 - y0) as f32;
-                    let distance_squared = dx * dx + dy * dy;
-                    // A peak at radius/4 restores local contrast; the broad tail carries the scene.
-                    let local = 1.0 + 16.0 * distance_squared;
-                    weights.push(area * (1.0 / (1.0 + distance_squared) + 64.0 / (local * local)));
-                }
+                weights.extend(self.cells.iter().map(|&cell| {
+                    let distance_squared = distance_squared(cell, point, radius);
+                    cell_area(cell) * (broad_tail(distance_squared) + local_lobe(distance_squared))
+                }));
                 // Geometry-only normalization keeps black and small highlights proportional.
                 let total: f64 = weights[start..].iter().map(|&w| f64::from(w)).sum();
                 for weight in &mut weights[start..] {
@@ -180,6 +255,7 @@ impl SpatialSampler {
                 }
             }
         }
+        self.focus.invalidate();
         self.step = lattice_step(width, height);
         self.dimensions = Some((width, height));
     }
@@ -211,13 +287,30 @@ impl SpatialSampler {
         cells.for_each(|(color, &[x0, y0, x1, y1])| {
             *color = view.average_linear_every(x0, y0, x1, y1, rgb, step);
         });
-        let [top, right, bottom, left] = self.sample_weights.each_ref().map(|weights| {
+        let focus = self.color_focus.as_ratio();
+        if focus > 0.0 {
+            let geometry = Geometry {
+                width,
+                height,
+                cells: &self.cells,
+                columns: self.columns,
+                radius: self.radius,
+                points: &self.sample_points,
+                weights: &self.sample_weights,
+            };
+            self.focus.prepare_frame(&geometry, &self.cell_colors);
+        }
+        let [top, right, bottom, left] = std::array::from_fn(|edge| {
+            let weights = &self.sample_weights[edge];
             let cell_count = self.cell_colors.len();
             let mut samples = vec![LinearColor::black(); weights.len() / cell_count];
             let groups = samples
                 .chunks_mut(GROUP)
                 .zip(weights.chunks(GROUP * cell_count));
             groups.for_each(|(out, rows)| project(&self.cell_colors, rows, out));
+            if focus > 0.0 {
+                self.focus.refine(edge, focus, &mut samples);
+            }
             ColorStrip::new(samples).expect("sample count is nonzero")
         });
         EdgeColors::new(top, right, bottom, left)
@@ -231,7 +324,11 @@ mod tests {
     use prysm_core::Color;
     use prysm_core::{Frame, PixelFormat};
 
-    fn picture(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 3]) -> FrameView {
+    pub(super) fn picture(
+        width: u32,
+        height: u32,
+        pixel: impl Fn(u32, u32) -> [u8; 3],
+    ) -> FrameView {
         let mut data = Vec::new();
         for y in 0..height {
             for x in 0..width {
@@ -241,7 +338,7 @@ mod tests {
         FrameView::new(Frame::new(data, width, height, PixelFormat::RGB24).unwrap())
     }
 
-    fn strips(colors: &EdgeColors) -> [&ColorStrip; 4] {
+    pub(super) fn strips(colors: &EdgeColors) -> [&ColorStrip; 4] {
         [&colors.top, &colors.right, &colors.bottom, &colors.left]
     }
 

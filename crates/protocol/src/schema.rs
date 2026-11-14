@@ -88,6 +88,10 @@ pub struct ProcessingSchema {
     sample_density: u16,
     #[schema(minimum = 1, maximum = 100)]
     spatial_reach_percent: u8,
+    /// How much each light keeps the colour next to it, taking less from the
+    /// rest of the picture; 0 is the plain average.
+    #[schema(minimum = 0, maximum = 100)]
+    color_focus_percent: u8,
     remove_black_bars: bool,
     /// Saved color corrections; ids are unique.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -611,6 +615,7 @@ mod tests {
             processing: Processing {
                 cut_response_percent: 70,
                 brightness_ramp_seconds: 0.5,
+                color_focus_percent: 60,
                 ..Processing::default()
             },
             ..Settings::default()

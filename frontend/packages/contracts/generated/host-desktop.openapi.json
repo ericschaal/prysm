@@ -800,6 +800,13 @@
             "minimum": 0,
             "type": "number"
           },
+          "color_focus_percent": {
+            "description": "How much each light keeps the colour next to it, taking less from the\nrest of the picture; 0 is the plain average.",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
           "cut_response_percent": {
             "description": "How much of a scene cut the lights take at once; 0 eases a cut in\nlike any other change.",
             "format": "int32",
@@ -850,6 +857,7 @@
           "brightness_ramp_seconds",
           "sample_density",
           "spatial_reach_percent",
+          "color_focus_percent",
           "remove_black_bars"
         ],
         "type": "object"

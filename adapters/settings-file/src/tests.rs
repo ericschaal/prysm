@@ -18,6 +18,7 @@ fn sample() -> Settings {
             smoothing_seconds: 0.3,
             cut_response_percent: 40,
             brightness_ramp_seconds: 0.5,
+            color_focus_percent: 60,
             ..Processing::default()
         },
     }
@@ -76,6 +77,7 @@ fn save_then_load_round_trips_as_pretty_json() {
     assert!(text.contains("\n  \"capture\": {\n"), "{text}");
     assert!(text.contains("\"smoothing_seconds\": 0.3,"), "{text}");
     assert!(text.contains("\"brightness_ramp_seconds\": 0.5,"), "{text}");
+    assert!(text.contains("\"color_focus_percent\": 60,"), "{text}");
     // Saving the loaded value again is byte-for-byte stable.
     let loaded = store.load().unwrap().unwrap();
     store.save(&loaded).unwrap();

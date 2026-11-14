@@ -67,6 +67,12 @@ impl LinearColor {
         }
     }
 
+    /// Rec. 709 luminance of this linear light, 0 black to 1 white.
+    #[must_use]
+    pub fn luminance(self) -> f32 {
+        0.2126 * self.r + 0.7152 * self.g + 0.0722 * self.b
+    }
+
     /// Convert an sRGB u8 color to linear RGB via const LUT.
     #[must_use]
     pub fn from_srgb(color: Color) -> Self {

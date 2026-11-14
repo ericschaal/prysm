@@ -892,6 +892,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         'shadow_lift_percent',
         'spatial_reach_percent',
+        'color_focus_percent',
         'smoothing_seconds',
         'cut_response_percent',
         'brightness_ramp_seconds',
@@ -900,6 +901,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         ['range', '0', '0', '100', '1'],
         ['range', '10', '1', '100', '1'],
+        ['range', '0', '0', '100', '1'],
         // Smoothing and detail as sliders over the range worth tuning.
         ['range', '0', '0', '2', '0.05'],
         ['range', '0', '0', '100', '1'],
@@ -911,6 +913,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         'shadow_lift_percent',
         'spatial_reach_percent',
+        'color_focus_percent',
         'smoothing_seconds',
         'cut_response_percent',
         'brightness_ramp_seconds',
@@ -919,6 +922,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       [
         'Shadow lift',
         'Edge depth',
+        'Colour focus',
         'Smoothing',
         'Scene cuts',
         'Brightness ramp',
@@ -934,6 +938,11 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
     assert.equal(saves(fixture), 2);
 
     await edit(control('sample_density'), 128);
+    await edit(control('color_focus_percent'), 40);
+    assert.equal(
+      $('output', control('color_focus_percent').closest('.field')).textContent,
+      '40%',
+    );
     await edit(control('smoothing_seconds'), 0.5);
     assert.equal(
       $('output', control('smoothing_seconds').closest('.field')).textContent,
@@ -957,6 +966,7 @@ test('Settings keeps brightness and the profile choice on Home; the picture save
       ...defaultProcessing,
       spatial_reach_percent: 20,
       sample_density: 128,
+      color_focus_percent: 40,
       smoothing_seconds: 0.5,
       cut_response_percent: 60,
       brightness_ramp_seconds: 0.5,
@@ -2975,6 +2985,7 @@ test('dragging Home brightness lights as it moves and saves once, where it is le
 });
 
 for (const [name, label, value] of [
+  ['color_focus_percent', 'Colour focus', 60],
   ['cut_response_percent', 'Scene cuts', 70],
   ['brightness_ramp_seconds', 'Brightness ramp', 1.2],
 ]) {

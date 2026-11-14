@@ -262,6 +262,7 @@
       "processing": {
         "brightness_percent": 100,
         "brightness_ramp_seconds": 0,
+        "color_focus_percent": 0,
         "cut_response_percent": 0,
         "remove_black_bars": true,
         "sample_density": 128,
@@ -275,6 +276,7 @@
         "active_profile": "ps5",
         "brightness_percent": 100,
         "brightness_ramp_seconds": 0,
+        "color_focus_percent": 0,
         "cut_response_percent": 0,
         "profiles": [
           {
@@ -334,6 +336,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -361,6 +364,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -377,6 +381,7 @@
           "active_profile": "ps5",
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "profiles": [
             {
@@ -436,6 +441,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -480,6 +486,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -511,6 +518,7 @@
           "active_profile": "ps5",
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "profiles": [
             {
@@ -570,6 +578,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -607,6 +616,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,
@@ -632,6 +642,7 @@
         "processing": {
           "brightness_percent": 100,
           "brightness_ramp_seconds": 0,
+          "color_focus_percent": 0,
           "cut_response_percent": 0,
           "remove_black_bars": true,
           "sample_density": 128,

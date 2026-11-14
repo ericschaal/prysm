@@ -43,6 +43,7 @@ the adapter's factory, not here.
     "brightness_ramp_seconds": 0,
     "sample_density": 128,
     "spatial_reach_percent": 10,
+    "color_focus_percent": 0,
     "remove_black_bars": true,
     "profiles": [
       {

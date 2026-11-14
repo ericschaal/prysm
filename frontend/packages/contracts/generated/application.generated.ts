@@ -294,6 +294,12 @@ export interface components {
             brightness_ramp_seconds: number;
             /**
              * Format: int32
+             * @description How much each light keeps the colour next to it, taking less from the
+             *     rest of the picture; 0 is the plain average.
+             */
+            color_focus_percent: number;
+            /**
+             * Format: int32
              * @description How much of a scene cut the lights take at once; 0 eases a cut in
              *     like any other change.
              */

@@ -273,7 +273,7 @@ fn with_cut(share: f32, at_once: f32) -> f32 {
 /// `Y' = (∛Y_shown ± step)³` (toward the target, at least 0), reached at
 /// `(Y' - Y_shown) / (Y_target - Y_shown)`. Equal luminance needs no cap.
 fn ramp_cap(shown: LinearColor, target: LinearColor, step: f32) -> f32 {
-    let (from, to) = (luminance(shown), luminance(target));
+    let (from, to) = (shown.luminance(), target.luminance());
     let lightness = from.max(0.0).cbrt();
     let allowed = match to.partial_cmp(&from) {
         Some(Ordering::Greater) => (lightness + step).powi(3),
@@ -282,11 +282,6 @@ fn ramp_cap(shown: LinearColor, target: LinearColor, step: f32) -> f32 {
         Some(Ordering::Equal) | None => return 1.0,
     };
     ((allowed - from) / (to - from)).clamp(0.0, 1.0)
-}
-
-/// Rec. 709 luminance of linear light, 0 black to 1 white.
-fn luminance(color: LinearColor) -> f32 {
-    0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
 }
 
 #[cfg(test)]
@@ -347,7 +342,7 @@ mod tests {
     }
 
     fn lightness(color: LinearColor) -> f32 {
-        luminance(color).max(0.0).cbrt()
+        color.luminance().max(0.0).cbrt()
     }
 
     /// Feeds `pictures` at `times` seconds after a start; returns each output.
@@ -744,9 +739,9 @@ mod tests {
     fn a_hue_change_at_equal_luminance_is_not_slowed() {
         let shown = LinearColor::new(0.6, 0.1, 0.3);
         let (r, b) = (0.05, 0.6);
-        let g = (luminance(shown) - 0.2126 * r - 0.0722 * b) / 0.7152;
+        let g = (shown.luminance() - 0.2126 * r - 0.0722 * b) / 0.7152;
         let target = LinearColor::new(r, g, b);
-        assert!((luminance(shown) - luminance(target)).abs() < 1e-6);
+        assert!((shown.luminance() - target.luminance()).abs() < 1e-6);
         let limited = change(
             &mut smoother(0.5, 0, 2.0),
             &uniform(shown),

@@ -13,6 +13,7 @@ pub use nodes::cut_strength;
 /// Detection keeps the raw capture format; sampling reads RGB and NV12 in place
 /// (NV12 per row, without a full-frame conversion) and converts YUYV into reusable
 /// RGB storage, before reducing the picture to a grid and projecting onto the perimeter.
+/// Colour focus, when set, then lets each sample keep the hue next to it.
 /// Pictures above 640x360 are averaged on a lattice of every nth pixel and row
 /// and get the grid of 640x360, so sampling costs about the same at any capture size.
 #[derive(Debug)]
@@ -36,13 +37,15 @@ struct FrameLayout {
 
 impl PrysmProcessor {
     pub fn new(config: &Config) -> Self {
+        let mut sampler = SpatialSampler::new(
+            config.sample_density,
+            config.spatial_reach_percent.as_ratio(),
+        );
+        sampler.set_color_focus(config.color_focus_percent);
         Self {
             config: *config,
             black_bar_detector: config.remove_black_bars.then(BlackBarDetector::new),
-            sampler: SpatialSampler::new(
-                config.sample_density,
-                config.spatial_reach_percent.as_ratio(),
-            ),
+            sampler,
             temporal_smoother: TemporalSmoother::new(config),
             last_viewport: None,
             frame_layout: None,
@@ -62,6 +65,7 @@ impl PrysmProcessor {
             config.sample_density,
             config.spatial_reach_percent.as_ratio(),
         );
+        self.sampler.set_color_focus(config.color_focus_percent);
         if config.remove_black_bars != self.config.remove_black_bars {
             self.black_bar_detector = config.remove_black_bars.then(BlackBarDetector::new);
         }

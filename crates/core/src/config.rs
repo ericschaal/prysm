@@ -54,6 +54,12 @@ pub struct Config {
     /// Higher values spread colors farther. Every picture pixel contributes.
     pub spatial_reach_percent: SpatialReachPercent,
 
+    /// How much each light keeps the hue and saturation next to it, taking
+    /// from the rest of the picture only what agrees with it. Brightness
+    /// stays that of the plain average. Default: 0, the plain average;
+    /// clamped to 0–100.
+    pub color_focus_percent: ColorFocusPercent,
+
     /// Follow the picture inside black bars instead of making the lights dark.
     /// Default: true. Cropping waits for stable bars to avoid flicker.
     pub remove_black_bars: bool,
@@ -70,6 +76,7 @@ impl Default for Config {
             brightness_ramp_seconds: BrightnessRampSeconds(0.0),
             sample_density: SampleDensity(128),
             spatial_reach_percent: SpatialReachPercent(10),
+            color_focus_percent: ColorFocusPercent(0),
             remove_black_bars: true,
         }
     }
@@ -126,6 +133,18 @@ impl SmoothingSeconds {
 pub struct CutResponsePercent(pub u8);
 
 impl CutResponsePercent {
+    #[must_use]
+    pub fn as_ratio(self) -> f32 {
+        f32::from(self.0.min(100)) / 100.0
+    }
+}
+
+/// How strongly each light keeps the colour next to it, in percent, clamped
+/// to 0–100; zero is the plain weighted average.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ColorFocusPercent(pub u8);
+
+impl ColorFocusPercent {
     #[must_use]
     pub fn as_ratio(self) -> f32 {
         f32::from(self.0.min(100)) / 100.0
@@ -189,6 +208,14 @@ mod tests {
         for (percent, ratio) in [(0, 0.0), (40, 0.4), (100, 1.0), (101, 1.0), (255, 1.0)] {
             assert_eq!(CutResponsePercent(percent).as_ratio(), ratio);
         }
+    }
+
+    #[test]
+    fn color_focus_is_clamped_to_full_and_off_by_default() {
+        for (percent, ratio) in [(0, 0.0), (50, 0.5), (100, 1.0), (101, 1.0), (255, 1.0)] {
+            assert_eq!(ColorFocusPercent(percent).as_ratio(), ratio);
+        }
+        assert_eq!(Config::default().color_focus_percent.as_ratio(), 0.0);
     }
 
     #[test]

@@ -216,6 +216,13 @@ export function FineTuning(props: LiveProps) {
           {...processingLimits.spatial_reach_percent}
         />
         <RangeField
+          label="Colour focus"
+          help="Each light keeps the colour next to it and takes less from the rest of the picture. 0 is off."
+          format={percent}
+          {...slider('color_focus_percent')}
+          {...processingLimits.color_focus_percent}
+        />
+        <RangeField
           label="Smoothing"
           help="Softens quick changes. 0 turns it off."
           format={seconds}
