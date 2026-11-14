@@ -1,6 +1,6 @@
 use super::*;
 use crate::source::{Capture, CaptureResult, Deadlines, DeviceFrames};
-use prysm_capture::{CaptureError, CaptureSink};
+use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::error::Error as _;

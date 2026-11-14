@@ -11,7 +11,7 @@ description = "Local video device capture (V4L2 / AVFoundation) as a blocking Pr
 schema = ["dep:utoipa"]
 
 [dependencies]
-prysm-capture = { path = "../../../crates/capture/prysm-capture", default-features = false }
+prysm-capture-device-sys.workspace = true
 prysm-core.workspace = true
 prysm-ports.workspace = true
 serde.workspace = true

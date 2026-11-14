@@ -1,9 +1,9 @@
 //! One opened device. Its [`OwnerThread`] runs the blocking native capture
-//! (`prysm_capture::capture`), which publishes readiness and the newest frame
+//! (`prysm_capture_device_sys::capture`), which publishes readiness and the newest frame
 //! through a [`CaptureSink`]; the capture's result becomes the terminal
 //! failure and the release result. The session thread only waits with a
 //! deadline.
-use prysm_capture::{CaptureError, CaptureSink};
+use prysm_capture_device_sys::{CaptureError, CaptureSink};
 use prysm_core::Frame;
 use prysm_ports::{Error, FrameSource, OwnerThread, Pull, Result, Worker};
 use std::sync::Arc;

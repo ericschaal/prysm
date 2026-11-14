@@ -1736,8 +1736,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "prysm-capture"
-version = "0.1.0"
+name = "prysm-capture-device"
+version = "1.0.0-alpha.0"
+dependencies = [
+ "anyhow",
+ "prysm-capture-device-sys",
+ "prysm-core",
+ "prysm-ports",
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
+name = "prysm-capture-device-sys"
+version = "1.0.0-alpha.0"
 dependencies = [
  "anyhow",
  "av-foundation",
@@ -1745,27 +1758,18 @@ dependencies = [
  "core-media",
  "core-video",
  "dispatch2",
+ "futures",
  "libc",
  "objc2",
  "objc2-foundation",
  "prysm-core",
  "rustix 1.1.6",
  "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "v4l",
-]
-
-[[package]]
-name = "prysm-capture-device"
-version = "1.0.0-alpha.0"
-dependencies = [
- "anyhow",
- "prysm-capture",
- "prysm-core",
- "prysm-ports",
- "serde",
- "serde_json",
- "utoipa",
 ]
 
 [[package]]
@@ -1833,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-core"
-version = "0.1.0"
+version = "1.0.0-alpha.0"
 dependencies = [
  "yuv",
 ]
@@ -1916,9 +1920,9 @@ dependencies = [
 name = "prysm-output-wled"
 version = "1.0.0-alpha.0"
 dependencies = [
+ "ddp-rs",
  "prysm-core",
  "prysm-ports",
- "prysm-renderer-wled",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1938,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "prysm-processor"
-version = "0.1.0"
+version = "1.0.0-alpha.0"
 dependencies = [
  "futures",
  "prysm-core",
@@ -1953,14 +1957,6 @@ dependencies = [
  "serde",
  "serde_json",
  "utoipa",
-]
-
-[[package]]
-name = "prysm-renderer-wled"
-version = "0.1.0"
-dependencies = [
- "ddp-rs",
- "prysm-core",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 use crate::address::{Host, Names};
+use crate::ddp::WledRenderer;
 use crate::observe::{self, Observer};
 use crate::{WledSettings, http};
 use prysm_core::EdgeColors;
@@ -6,7 +7,6 @@ use prysm_ports::{
     Candidate, Error, IdleMode, LedOutput, OutputFactory, OutputIssue, Result, ValidationError,
     system_lookup,
 };
-use prysm_renderer_wled::WledRenderer;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::time::Duration;

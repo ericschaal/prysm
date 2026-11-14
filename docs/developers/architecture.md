@@ -24,9 +24,10 @@ Reference: [v1 README](../../v1/README.md).
 | Hosts | [`v1/hosts`](../../v1/hosts) | Executables: a list of adapters and surfaces, plus process options. |
 
 Ports and settings types are in [`prysm-ports`](../../v1/crates/ports/src/lib.rs).
-`prysm-core` (frame and colour types, colour correction) and `prysm-processor`
-stay at the repository root and are shared; keep application, serialisation
-and runtime code out of `prysm-core`.
+[`prysm-core`](../../v1/crates/core/src/lib.rs) (frame and colour types, colour
+correction) and [`prysm-processor`](../../v1/crates/processor/src/lib.rs) are shared by the
+runtime and the adapters; keep application, serialisation and runtime code out
+of `prysm-core`.
 
 ## Commands and state
 
@@ -90,8 +91,9 @@ The two TV workers run under one supervisor, `prysm-webos-service`; see
 
 ## Workspace map
 
-`v1/crates` (ports, runtime, wire protocol, TV link), `v1/adapters` (sources,
-outputs, settings file, H.264, Luna and capture bindings), `v1/surfaces`,
+`v1/crates` (core types, processor, ports, runtime, wire protocol, TV link),
+`v1/adapters` (sources, outputs, settings file, H.264, Luna and capture
+bindings), `v1/surfaces`,
 `v1/hosts`, `v1/tools/export-contracts` (OpenAPI for frontend codegen),
 `v1/frontend` (portal and TV bundles), `v1/packaging` (Docker, Debian, IPKs).
 Contract ownership: [CONTRACTS.md](../../v1/CONTRACTS.md).

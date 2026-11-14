@@ -1,12 +1,7 @@
-# Context for v1/packaging/docker/Dockerfile (BuildKit picks this file over the
-# root .dockerignore). Only source inputs: v1/ and the root crates it shares.
+# Context for v1/packaging/docker/Dockerfile (BuildKit reads the ignore file
+# next to the Dockerfile). Only source inputs: v1/ and the licence.
 **
-!Cargo.toml
-!clippy.toml
-!README.md
 !LICENSE
-!crates/
-!crates/**
 !v1/
 !v1/**
 **/node_modules

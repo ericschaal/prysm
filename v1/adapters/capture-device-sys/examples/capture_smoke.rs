@@ -1,6 +1,6 @@
 use anyhow::Context;
 use futures::{Stream, StreamExt};
-use prysm_capture::{CaptureError, DeviceCapture, Frame};
+use prysm_capture_device_sys::{CaptureError, DeviceCapture, Frame};
 use std::time::Duration;
 
 #[tokio::main]

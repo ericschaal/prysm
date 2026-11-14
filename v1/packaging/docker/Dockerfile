@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# prysm-headless (v1). Build from the repository root; the context needs v1/
-# and the root crates v1 shares (see Dockerfile.dockerignore):
+# prysm-headless (v1). Build from the repository root; the context is v1/ plus
+# the licence (see Dockerfile.dockerignore):
 #
 #   docker build -f v1/packaging/docker/Dockerfile -t prysm-headless:local .
 #
@@ -20,23 +20,18 @@ RUN --mount=type=cache,target=/root/.npm \
     && node scripts/build.mjs
 
 FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS build
-# prysm-capture -> v4l2-sys-mit generates its bindings with bindgen.
+# prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-# v1 path-depends on root crates, which inherit from the root workspace manifest.
-COPY Cargo.toml clippy.toml README.md LICENSE ./
-COPY crates/ crates/
 COPY v1/ v1/
 COPY --from=frontend /src/v1/frontend/dist/ v1/frontend/dist/
 ARG TARGETARCH
-# No --locked: v1/Cargo.lock is copied and used, but may trail the manifests
-# while v1 is under development.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=prysm-v1-target-${TARGETARCH},target=/src/v1/target,sharing=locked \
-    cargo build --manifest-path v1/Cargo.toml --release -p prysm-headless \
+    cargo build --manifest-path v1/Cargo.toml --locked --release -p prysm-headless \
     && install -D v1/target/release/prysm-headless /out/prysm-headless \
     && strip /out/prysm-headless
 

@@ -11,9 +11,9 @@ description = "Blocking WLED LED output for the Prysm runtime: JSON API for mode
 schema = ["dep:utoipa"]
 
 [dependencies]
+ddp-rs = "1.3.0"
 prysm-core.workspace = true
 prysm-ports.workspace = true
-prysm-renderer-wled = { path = "../../../crates/rendering/prysm-renderer-wled" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

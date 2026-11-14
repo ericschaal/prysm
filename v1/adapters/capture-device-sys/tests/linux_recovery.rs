@@ -2,11 +2,11 @@
 
 //! Use a dedicated v4l2loopback device with no other readers or writers:
 //! `sudo modprobe v4l2loopback video_nr=42 exclusive_caps=1`
-//! `PRYSM_TEST_VIDEO_DEVICE=/dev/video42 cargo test -p prysm-capture --test linux_recovery -- --ignored`
+//! `PRYSM_TEST_VIDEO_DEVICE=/dev/video42 cargo test -p prysm-capture-device-sys --all-features --test linux_recovery -- --ignored`
 
 use anyhow::{Context, Result, ensure};
 use futures::StreamExt;
-use prysm_capture::DeviceCapture;
+use prysm_capture_device_sys::DeviceCapture;
 use std::io::Write;
 use std::time::Duration;
 use tokio::time::{interval, timeout};

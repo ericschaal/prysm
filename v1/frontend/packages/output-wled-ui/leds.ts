@@ -13,7 +13,7 @@ export const ledEdgeLimits = { min: 0, max: 16384, step: 1 } as const;
 export type Corner = 'bottom-left' | 'top-left' | 'top-right' | 'bottom-right';
 
 /**
- * The physical LED order, as `prysm-renderer-wled` `render_edges` writes it:
+ * The physical LED order, as output-wled's `render_edges` writes it:
  * LED 1 at the bottom-left corner seen from the front, then clockwise — left
  * edge upward, top rightward, right downward, bottom leftward. An edge with no
  * LEDs is skipped.

@@ -31,8 +31,9 @@ impl SourceFactory for DeviceSource {
         let fps = NonZeroU32::new(settings.fps)
             .ok_or_else(|| ValidationError::new("fps", "must be a positive frame rate"))?;
         let (path, width, height) = (settings.path.clone(), settings.width, settings.height);
-        let capture: source::Capture =
-            Box::new(move |sink| prysm_capture::capture(Some(&path), width, height, fps, sink));
+        let capture: source::Capture = Box::new(move |sink| {
+            prysm_capture_device_sys::capture(Some(&path), width, height, fps, sink)
+        });
         Ok(Box::new(source::DeviceFrames::start(
             capture,
             source::Deadlines::DEVICE,
@@ -46,7 +47,7 @@ impl SourceFactory for DeviceSource {
         struct Path<'a> {
             path: &'a str,
         }
-        prysm_capture::list_devices()
+        prysm_capture_device_sys::list_devices()
             .into_iter()
             .map(|device| Candidate::new(device.name, &Path { path: &device.id }).detail(device.id))
             .collect()

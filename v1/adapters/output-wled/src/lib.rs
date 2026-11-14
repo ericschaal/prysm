@@ -24,6 +24,7 @@
 //! WLED in live mode, and after a few seconds without frames idles the output
 //! `Native` (WLED's own state) and opens it again at the next frame.
 mod address;
+mod ddp;
 mod discover;
 mod http;
 mod observe;

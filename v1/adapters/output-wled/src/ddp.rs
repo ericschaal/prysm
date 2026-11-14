@@ -1,20 +1,12 @@
-//! Send Prysm colors to WLED using DDP over UDP.
+//! Colours to WLED as DDP over UDP (port 4048): resample the edges to the LED
+//! counts in linear light, convert to 8-bit sRGB and send one packet stream per
+//! frame, clockwise from the bottom-left corner as seen from the front.
 //!
-//! Use port 4048 and enable DDP reception in WLED's Sync Interfaces settings.
-//! WLED controls brightness, gamma, LED color order, and the realtime timeout.
-//!
-//! ```no_run
-//! use prysm_renderer_wled::WledRenderer;
-//! use prysm_core::{Color, EdgeColors};
-//!
-//! # fn main() -> Result<(), ddp_rs::error::DDPError> {
-//! let mut renderer = WledRenderer::new("wled.local:4048")?;
-//! renderer.render(&[Color::new(255, 0, 0), Color::new(0, 0, 255)])?;
-//! // Counts: top, right, bottom, left. Wiring starts at bottom-left, going up.
-//! renderer.render_edges(&EdgeColors::default(), [96, 54, 96, 54])?;
-//! # Ok(())
-//! # }
-//! ```
+//! WLED owns brightness, gamma, channel order and the realtime timeout: enable
+//! **Use Gamma for color** and leave **Disable realtime gamma correction**
+//! unchecked. Sending never blocks and never retries; `WouldBlock` and other
+//! socket errors are returned. Empty frames send nothing, shorter frames leave
+//! the trailing LEDs unchanged, and frames over 65535 LEDs are rejected.
 
 use ddp_rs::connection::DDPConnection;
 use ddp_rs::error::DDPError;
@@ -51,7 +43,7 @@ impl Rgb8Payload {
 /// UDP delivery is not acknowledged. Keep sending frames before WLED's realtime
 /// timeout expires, even for a static picture. Stopping lets WLED resume its effect.
 #[derive(Debug)]
-pub struct WledRenderer {
+pub(crate) struct WledRenderer {
     connection: DDPConnection,
     rgb: Rgb8Payload,
 }
@@ -61,7 +53,7 @@ impl WledRenderer {
     ///
     /// Binds an ephemeral local port. Address resolution happens only here and
     /// may block; rendering uses a nonblocking socket.
-    pub fn new(address: impl ToSocketAddrs) -> Result<Self, DDPError> {
+    pub(crate) fn new(address: impl ToSocketAddrs) -> Result<Self, DDPError> {
         let destination = address
             .to_socket_addrs()?
             .next()
@@ -83,7 +75,8 @@ impl WledRenderer {
     /// Empty input sends nothing. Use a fixed frame length: a shorter frame leaves
     /// trailing LEDs at their previous colors. WLED uses 16-bit LED indices, so
     /// frames with more than 65535 colors are rejected before sending.
-    pub fn render(&mut self, colors: &[Color]) -> Result<(), DDPError> {
+    #[cfg(test)]
+    pub(crate) fn render(&mut self, colors: &[Color]) -> Result<(), DDPError> {
         if !self.prepare(colors.len())? {
             return Ok(());
         }
@@ -98,10 +91,9 @@ impl WledRenderer {
     ///
     /// Output starts at the bottom-left corner and runs clockwise, as viewed from
     /// the screen's front: left bottom-to-top, top left-to-right, right
-    /// top-to-bottom, bottom right-to-left. Zero skips an edge. Other wiring layouts
-    /// can provide their own ordered colors through [`Self::render`].
+    /// top-to-bottom, bottom right-to-left. Zero skips an edge.
     /// Interpolation happens in linear light, followed by conversion to 8-bit sRGB.
-    pub fn render_edges(
+    pub(crate) fn render_edges(
         &mut self,
         edges: &EdgeColors,
         led_counts: [usize; 4],

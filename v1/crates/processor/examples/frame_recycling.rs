@@ -1,6 +1,8 @@
 //! Compare fresh and recycled capture buffers, with and without processing.
-//! Run: `cargo run --release -p prysm-processor --example frame_recycling`
+//! Run: `cargo run --manifest-path v1/Cargo.toml --release -p prysm-processor --example frame_recycling`
 //! This measures in-memory capture copies, not device, decoder or network latency.
+// The counting allocator wraps `System`; the crate denies unsafe code elsewhere.
+#![allow(unsafe_code)]
 use prysm_core::{
     Config, Frame, FramePool, PixelFormat, SampleDensity, YuvRange, YuvStandardMatrix,
 };

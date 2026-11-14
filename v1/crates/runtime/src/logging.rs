@@ -3,12 +3,12 @@
 //! style of the hosts' own status lines:
 //!
 //! ```text
-//! prysm-headless: warn prysm_capture::linux: capture buffer cleanup failed error=...
+//! prysm-headless: warn prysm_capture_device_sys::linux: capture buffer cleanup failed error=...
 //! ```
 //!
 //! `RUST_LOG` takes `tracing_subscriber::filter::Targets` syntax, such as
-//! `debug` or `warn,prysm_capture=debug`. Target prefixes match literally, so
-//! `prysm` covers `prysm_capture`, `prysm_processor` and `prysm::stats`.
+//! `debug` or `warn,prysm_capture_device_sys=debug`. Target prefixes match literally, so
+//! `prysm` covers `prysm_capture_device_sys`, `prysm_processor` and `prysm::stats`.
 use std::fs::File;
 use std::io;
 use std::sync::Mutex;
@@ -135,9 +135,9 @@ mod tests {
     }
 
     fn events() {
-        tracing::warn!(target: "prysm_capture::linux", error = "No such device", "cannot open");
+        tracing::warn!(target: "prysm_capture_device_sys::linux", error = "No such device", "cannot open");
         tracing::info!(target: "prysm_processor", "configured");
-        tracing::debug!(target: "prysm_capture::linux", "frame");
+        tracing::debug!(target: "prysm_capture_device_sys::linux", "frame");
         tracing::info!(target: "hyper::proto", "connection");
         tracing::warn!(target: "hyper::proto", "reset");
     }
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(
             capture(None, events),
             [
-                r#"prysm-test: warn prysm_capture::linux: cannot open error="No such device""#,
+                r#"prysm-test: warn prysm_capture_device_sys::linux: cannot open error="No such device""#,
                 "prysm-test: info prysm_processor: configured",
                 "prysm-test: warn hyper::proto: reset",
             ]
@@ -158,15 +158,19 @@ mod tests {
     #[test]
     fn rust_log_filters_by_target_and_level() {
         assert_eq!(
-            capture(Some("error,prysm_capture=debug"), events),
+            capture(Some("error,prysm_capture_device_sys=debug"), events),
             [
-                r#"prysm-test: warn prysm_capture::linux: cannot open error="No such device""#,
-                "prysm-test: debug prysm_capture::linux: frame",
+                r#"prysm-test: warn prysm_capture_device_sys::linux: cannot open error="No such device""#,
+                "prysm-test: debug prysm_capture_device_sys::linux: frame",
             ]
         );
-        assert!(capture(Some("prysm_capture=error"), events).is_empty());
-        let (_, invalid) = filter(Some("prysm_capture=loud"));
-        assert!(invalid.unwrap().starts_with(r#""prysm_capture=loud": "#));
+        assert!(capture(Some("prysm_capture_device_sys=error"), events).is_empty());
+        let (_, invalid) = filter(Some("prysm_capture_device_sys=loud"));
+        assert!(
+            invalid
+                .unwrap()
+                .starts_with(r#""prysm_capture_device_sys=loud": "#)
+        );
     }
 
     const CHILD: &str = "PRYSM_LOGGING_TEST_CHILD";
@@ -195,7 +199,7 @@ mod tests {
         );
         assert!(!stdout.contains("prysm-child"), "{stdout}");
         assert!(
-            stderr.contains("prysm-child: warn prysm_capture::linux: cannot open\n"),
+            stderr.contains("prysm-child: warn prysm_capture_device_sys::linux: cannot open\n"),
             "{stderr}"
         );
         assert!(!stderr.contains("filtered"), "{stderr}");
@@ -207,8 +211,8 @@ mod tests {
             return;
         }
         init("prysm-child", Logs::Stderr);
-        tracing::warn!(target: "prysm_capture::linux", "cannot open");
+        tracing::warn!(target: "prysm_capture_device_sys::linux", "cannot open");
         tracing::warn!(target: "prysm_processor", "filtered");
-        tracing::info!(target: "prysm_capture::linux", "filtered");
+        tracing::info!(target: "prysm_capture_device_sys::linux", "filtered");
     }
 }

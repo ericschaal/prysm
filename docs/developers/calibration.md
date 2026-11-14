@@ -5,7 +5,7 @@ Calibration is two small pieces, not a session:
 - **Colour profiles** are ordinary settings: `processing.profiles` (at most 32)
   and `processing.active_profile`, saved through `PUT /api/v1/settings` and
   applied at the next frame. The correction maths is in `prysm-core`
-  ([correction.rs](../../crates/common/prysm-core/src/correction.rs)) and runs
+  ([correction.rs](../../v1/crates/core/src/correction.rs)) and runs
   after shadow lift, before brightness, for the LEDs and the preview alike.
 - **The pattern** the TV shows is engine state beside the target:
   `PUT /api/v1/calibration` with `{ pattern, uncorrected }`, cleared by

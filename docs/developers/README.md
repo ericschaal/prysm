@@ -1,8 +1,7 @@
 # Develop Prysm
 
 The product lives in [`v1/`](../../v1/README.md): one Cargo workspace
-(`v1/Cargo.toml`) and one npm workspace (`v1/frontend`). It still path-depends
-on two crates at the repository root, `prysm-core` and `prysm-processor`.
+(`v1/Cargo.toml`) and one npm workspace (`v1/frontend`).
 
 [Architecture](architecture.md) · [Debugging](debugging.md) ·
 [User setup](../users/README.md)

@@ -1,5 +1,7 @@
-# Gate for the v1 workspace (v1/Cargo.toml) and its npm workspace (v1/frontend).
-# v1-release.yml also calls it, so a release is built only from a green gate.
+# Gate for the v1 workspace (v1/Cargo.toml), its npm workspace (v1/frontend)
+# and the repository-wide checks (`quality`: Markdown links, script tests,
+# workflows). v1-release.yml also calls it, so a release is built only from a
+# green gate. No path filters: every push and pull request runs all of it.
 #
 # The hosts include! v1/frontend/dist, so `frontend` builds it once and the Rust
 # jobs download it before compiling. Codegen runs the Rust contract exporter,
@@ -22,36 +24,13 @@
 #   x86-64 and armv7 targets, with a pinned nightly (its mock
 #   swaps dlopen for a placeholder library under Miri).
 #
-# Not here: the shared root crates, Markdown links and actionlint run in
-# check.yml on every push and pull request; on-TV tests (native-smoke.py) need a
-# TV.
+# Not here: on-TV tests (native-smoke.py) need a TV.
 name: V1 workspace
 on:
   push:
-    # Branches only: tag pushes skip path filters, and v1 release tags run this
-    # through v1-release.yml.
+    # Branches only: v1 release tags run this through v1-release.yml.
     branches: ['**']
-    paths:
-      - 'v1/**'
-      # Path dependencies outside v1/ and the root workspace they inherit from.
-      - 'Cargo.toml'
-      - 'clippy.toml'
-      - 'crates/common/prysm-core/**'
-      - 'crates/processing/prysm-processor/**'
-      - 'crates/capture/prysm-capture/**'
-      - 'crates/rendering/prysm-renderer-wled/**'
-      - '.github/workflows/v1.yml'
   pull_request:
-    paths:
-      - 'v1/**'
-      # Path dependencies outside v1/ and the root workspace they inherit from.
-      - 'Cargo.toml'
-      - 'clippy.toml'
-      - 'crates/common/prysm-core/**'
-      - 'crates/processing/prysm-processor/**'
-      - 'crates/capture/prysm-capture/**'
-      - 'crates/rendering/prysm-renderer-wled/**'
-      - '.github/workflows/v1.yml'
   workflow_call:
   workflow_dispatch:
 
@@ -69,6 +48,25 @@ env:
   RUST_BACKTRACE: '1'
 
 jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck v1/adapters/capture-device-sys/video_test.sh
+      - name: Documentation checker tests and repository links
+        run: |
+          python3 -m unittest discover -s scripts/tests
+          python3 scripts/check-doc-links.py
+      - name: GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -81,7 +79,7 @@ jobs:
           cache: npm
           cache-dependency-path: v1/frontend/package-lock.json
       - name: Rust and libclang for the contract exporter
-        # prysm-capture -> v4l2-sys-mit generates its bindings with bindgen.
+        # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang libclang-dev
@@ -126,7 +124,7 @@ jobs:
           rustup component add clippy rustfmt
       - name: Linux build dependencies
         if: runner.os == 'Linux'
-        # prysm-capture -> v4l2-sys-mit generates its bindings with bindgen.
+        # prysm-capture-device-sys -> v4l2-sys-mit generates its bindings with bindgen.
         # OpenH264 builds without nasm (no assembly), as in the release image.
         run: |
           sudo apt-get update
@@ -314,7 +312,7 @@ jobs:
           cache: npm
           cache-dependency-path: v1/frontend/package-lock.json
       - name: webOS build dependencies
-        # libclang: the contract exporter (prysm-capture -> v4l2-sys-mit) and
+        # libclang: the contract exporter (prysm-capture-device-sys -> v4l2-sys-mit) and
         # the Luna binding generator. ares-package: build-ipk.sh.
         run: |
           sudo apt-get update

@@ -5,7 +5,10 @@ members = [
     "crates/runtime",
     "crates/protocol",
     "crates/webos-link",
+    "crates/core",
+    "crates/processor",
     "adapters/capture-device",
+    "adapters/capture-device-sys",
     "adapters/capture-file",
     "adapters/capture-remote",
     "adapters/capture-webos",
@@ -34,9 +37,9 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-# Shared with the shipping workspace at the repository root.
-prysm-core = { path = "../crates/common/prysm-core" }
-prysm-processor = { path = "../crates/processing/prysm-processor" }
+# Frame and colour types, processing
+prysm-core = { path = "crates/core" }
+prysm-processor = { path = "crates/processor" }
 # Runtime
 prysm-ports = { path = "crates/ports" }
 prysm-runtime = { path = "crates/runtime" }
@@ -44,6 +47,7 @@ prysm-protocol = { path = "crates/protocol" }
 prysm-webos-link = { path = "crates/webos-link" }
 # Adapters
 prysm-capture-device = { path = "adapters/capture-device" }
+prysm-capture-device-sys = { path = "adapters/capture-device-sys" }
 prysm-capture-file = { path = "adapters/capture-file" }
 prysm-capture-remote = { path = "adapters/capture-remote" }
 prysm-capture-webos = { path = "adapters/capture-webos" }

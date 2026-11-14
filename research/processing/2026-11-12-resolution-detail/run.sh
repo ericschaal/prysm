@@ -1,5 +1,7 @@
 #!/bin/sh
 # Reproduces the resolution-detail measurement. Nothing is written to the repo.
+# Written for the tree before the shared crates moved into v1/: run it from a
+# checkout of the tag `pre-1.0-consolidation` (with HEAD_REV a revision of that tree).
 #   WORK=/some/scratch/dir sh run.sh
 # Needs cargo, ffmpeg (with lavfi; no libass/drawtext required) and network
 # access to download.blender.org for the Sintel excerpts (skipped when present).
