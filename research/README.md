@@ -10,6 +10,7 @@ For current instructions, use [Run Prysm](../docs/users/README.md) or
 | --- | --- |
 | [Stable black-bar detection](black-bar-detection-2026-11-02/README.md) | Live crop diagnosis, literature review, implemented temporal boundary estimator and offline replay validation; not deployed |
 | [Capture resolution and LED detail](processing/2026-11-12-resolution-detail/README.md) | Offline: 1280×720 adds ≤ 2 steps (p95) over 640×360 on real content; the bounded lattice costs less than dropping to 640; capture size changes black-bar crops in dark scenes; 2026-11-14 follow-up: 320×180 costs a little against 640×360 (about 1 LED in 10 noticeably different) |
+| [How much colour the plain average loses](processing/2026-11-14-mean-colourfulness/README.md) | Offline model on two films: the typical LED keeps 85–90 % of the colourfulness in view; a selective sampler would differ visibly on about 1 LED in 100 and is not worth its cost |
 | [Adaptive smoothing](processing/2026-11-14-adaptive-smoothing/README.md) | Offline, synthetic: 0.5 s smoothing with Response 100 % follows a cut within about a frame and shows less grain than the 0.1 s default; brightness variants compared; not yet seen on the TV |
 | [Sampling A/B protocol](sampling-ab-testing.md) | Historical proposal; not run, and based on a superseded edge-band sampler |
 | [webOS colorimetry](webos-capture/2026-11-01-colorimetry/README.md) | Target-TV evidence for limited-range BT.709 capture decoding |
