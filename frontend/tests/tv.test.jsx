@@ -1653,10 +1653,7 @@ test('lights without a setup are named plainly with the portal address, in both 
     assert(!document.querySelector('.card.lighting'), 'no modes yet');
     // Full has no primary button here: focus rests where OK only opens
     // something, never on the switch.
-    assert.equal(
-      tv.focus(),
-      flavor === 'full' ? 'service-options' : 'primary',
-    );
+    assert.equal(tv.focus(), flavor === 'full' ? 'service-options' : 'primary');
     assert(!tv.el('mode-processed'));
     // Once the portal has lights, the usual home returns by itself; nothing
     // starts until the lights are chosen.
