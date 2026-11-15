@@ -96,6 +96,19 @@ function firstStop(scope: ParentNode | null | undefined) {
   return row ? rowStop(row) : first;
 }
 
+/**
+ * Where focus rests when the app places it: the first stop, unless OK there
+ * would change something (a switch); then the first control that only opens.
+ */
+function restingStop(scope: ParentNode | null | undefined) {
+  const first = firstStop(scope);
+  if (first?.getAttribute('role') !== 'switch') return first;
+  return (
+    focusables(scope).find((el) => el.getAttribute('role') !== 'switch') ??
+    first
+  );
+}
+
 export function useRemoteNavigation<D extends string>({
   root,
   parents,
@@ -140,14 +153,14 @@ export function useRemoteNavigation<D extends string>({
   });
   // A status update can disable the focused control; never leave focus on the
   // page. Until the user moves, focus goes to the primary button, or without
-  // one to the first stop (the chosen lighting mode), once it can.
+  // one to the resting stop (the chosen lighting mode), once it can.
   const automatic = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (dialog) return;
     const active = activeElement();
     const preferred =
       root.current?.querySelector<HTMLElement>('#primary:not(:disabled)') ??
-      firstStop(root.current);
+      restingStop(root.current);
     if (
       active &&
       usable(active) &&

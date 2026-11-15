@@ -1639,7 +1639,7 @@ test('lights without a setup are named plainly with the portal address, in both 
     assert.equal(tv.text('status-title'), 'Set up your lights');
     assert.equal(
       tv.text('status-description'),
-      'Open the web portal on your phone to add them.',
+      'You add them from your phone, in the web portal.',
     );
     assert.equal(tv.text('portal-address-text'), address, 'shown beside it');
     assert.match(
@@ -1649,11 +1649,14 @@ test('lights without a setup are named plainly with the portal address, in both 
     // The portal's QR code leads, in the modes' place; the modes, which
     // could not do anything yet, are not shown.
     assert(tv.el('portal-address').classList.contains('setup-lights'));
-    assert.match(
-      tv.text('portal-address'),
-      /Scan with your phone to set up your lights/,
-    );
+    assert.match(tv.text('portal-address'), /Scan this code with your phone/);
     assert(!document.querySelector('.card.lighting'), 'no modes yet');
+    // Full has no primary button here: focus rests where OK only opens
+    // something, never on the switch.
+    assert.equal(
+      tv.focus(),
+      flavor === 'full' ? 'service-options' : 'primary',
+    );
     assert(!tv.el('mode-processed'));
     // Once the portal has lights, the usual home returns by itself; nothing
     // starts until the lights are chosen.

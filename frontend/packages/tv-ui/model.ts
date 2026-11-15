@@ -242,7 +242,7 @@ export function tvStatus(
   const setupLights = noLights && !failed && phase !== 'stopping';
   if (setupLights) {
     title = 'Set up your lights';
-    description = 'Open the web portal on your phone to add them.';
+    description = 'You add them from your phone, in the web portal.';
     attention = true;
   }
 

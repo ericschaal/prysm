@@ -336,7 +336,7 @@ export function TvApp({
                 ) : null}
                 <p className="setup-text">
                   <span className="setup-step">
-                    Scan with your phone to set up your lights.
+                    Scan this code with your phone.
                   </span>
                   <code id="portal-address-text">{shown(portalAddress)}</code>
                   Or type this address in a browser.
