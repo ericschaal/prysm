@@ -7,6 +7,7 @@ use crate::ffi::{
 use libloading::Library;
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr::{self, NonNull};
+use std::sync::{Mutex, PoisonError};
 
 /// What to capture. LG negotiates exactly these values in `vtCapture_preprocess`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,10 +23,10 @@ pub struct Options {
 }
 
 /// The result of one acquisition attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Acquired {
-    /// A packed NV12 frame (limited-range BT.709) of this size is in the output.
-    Frame { width: u32, height: u32 },
+#[derive(Debug)]
+pub enum Acquired<'a> {
+    /// The driver's current buffer, borrowed until it is copied.
+    Frame(VideoFrame<'a>),
     /// The producer has no buffer yet (status 2). Poll again.
     Pending,
     /// LG finalized the session (status 1) or it is still initializing; the
@@ -72,21 +73,20 @@ impl Error {
 
 macro_rules! api {
     ($name:ident { $($field:ident: $ty:ty = $symbol:literal),* $(,)? }) => {
-        struct $name { $($field: $ty,)* _library: Library }
+        /// The VTCapture entry points. Lives for the whole process.
+        struct $name { $($field: $ty,)* }
         impl $name {
-            fn load(names: &[&str]) -> Result<Self, Error> {
-                let library = library(names)?;
+            fn load(library: &'static Library, names: &[&str]) -> Result<Self, Error> {
                 let missing = |source| Error::Load { library: names.join(" or "), source };
                 Ok(Self {
                     $($field: {
-                        // SAFETY: signatures and layouts match tv-native-apis. Function
-                        // pointers are never used after the owning library is dropped.
+                        // SAFETY: signatures and layouts match tv-native-apis. The
+                        // library is never unloaded, so the pointers stay valid.
                         let symbol = unsafe {
                             library.get::<$ty>(concat!($symbol, "\0").as_bytes())
                         };
                         *symbol.map_err(missing)?
                     },)*
-                    _library: library,
                 })
             }
         }
@@ -105,6 +105,22 @@ api!(VtApi {
     finalize: VtClient = "vtCapture_finalize",
     release: VtRelease = "vtCapture_release",
 });
+
+/// Load `libvtcapture` on first use and keep it for the life of the process.
+fn vt() -> Result<&'static VtApi, Error> {
+    static VT: Mutex<Option<&'static VtApi>> = Mutex::new(None);
+    let mut slot = VT.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(api) = *slot {
+        return Ok(api);
+    }
+    let names = ["libvtcapture.so.1", "libvtcapture.so"];
+    // Never unloaded: the vendor code can leave threads running and global
+    // pointers set, after a failed create or even after a release.
+    let library = &*Box::leak(Box::new(library(&names)?));
+    let api: &'static VtApi = Box::leak(Box::new(VtApi::load(library, &names)?));
+    *slot = Some(api);
+    Ok(api)
+}
 
 pub(crate) fn library(names: &[&str]) -> Result<Library, Error> {
     let mut last = None;
@@ -166,13 +182,13 @@ unsafe fn driver_plane<T>(_: &T, pointer: *const u8, length: i32) -> Result<&[u8
     Ok(unsafe { std::slice::from_raw_parts(pointer, length) })
 }
 
-/// Copy active rows without padding, zero-filling or per-frame allocation.
+/// Copy active rows without padding into `output`, exactly `rows * row_bytes` long.
 fn copy_plane(
     source: &[u8],
     stride: usize,
     row_bytes: usize,
     rows: usize,
-    output: &mut Vec<u8>,
+    output: &mut [u8],
 ) -> Result<(), Error> {
     if rows == 0 || rows > 1080 || row_bytes == 0 || stride < row_bytes || stride > 32768 {
         return Err(Error::Invalid("plane geometry"));
@@ -180,11 +196,43 @@ fn copy_plane(
     if source.len() < stride * (rows - 1) + row_bytes {
         return Err(Error::Invalid("short plane"));
     }
-    output.reserve(row_bytes * rows);
-    for row in source.chunks(stride).take(rows) {
-        output.extend_from_slice(&row[..row_bytes]);
+    if output.len() != row_bytes * rows {
+        return Err(Error::Invalid("NV12 output size"));
+    }
+    let sources = source.chunks(stride);
+    for (target, row) in output.chunks_exact_mut(row_bytes).zip(sources) {
+        target.copy_from_slice(&row[..row_bytes]);
     }
     Ok(())
+}
+
+/// One acquired video frame: the driver's NV12 planes (limited-range BT.709),
+/// borrowed from the capture so no driver call can recycle them before
+/// [`Self::copy_to`].
+#[derive(Debug)]
+pub struct VideoFrame<'a> {
+    pub width: u32,
+    pub height: u32,
+    stride: usize,
+    y: &'a [u8],
+    uv: &'a [u8],
+}
+
+impl VideoFrame<'_> {
+    /// Copy the active rows as packed NV12 into `output`, which must be
+    /// exactly the NV12 size of `width` x `height`.
+    ///
+    /// # Errors
+    /// A wrong `output` length or a malformed driver plane; `output` is then
+    /// partly written and must not be used.
+    pub fn copy_to(&self, output: &mut [u8]) -> Result<(), Error> {
+        let (width, height) = (self.width as usize, self.height as usize);
+        let (y, uv) = output
+            .split_at_mut_checked(width * height)
+            .ok_or(Error::Invalid("NV12 output size"))?;
+        copy_plane(self.y, self.stride, width, height, y)?;
+        copy_plane(self.uv, self.stride, width, height / 2, uv)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -197,7 +245,7 @@ enum Stage {
 
 /// One native capture tap; see the crate documentation.
 pub struct VtCapture {
-    api: VtApi,
+    api: &'static VtApi,
     driver: NonNull<c_void>,
     client: [c_char; 128],
     stage: Stage,
@@ -237,20 +285,16 @@ impl VtCapture {
             fps: i32::from(options.fps),
             ..Properties::default()
         };
-        let api = VtApi::load(&["libvtcapture.so.1", "libvtcapture.so"])?;
+        let api = vt()?;
         check_luna()?;
         let mut driver = ptr::null_mut();
         let mut error = [0_u8; 512];
         // SAFETY: typed create symbol and valid out parameters; C++ catches throws.
         let code =
             unsafe { prysm_vt_create(api.create, &raw mut driver, error.as_mut_ptr().cast()) };
-        if let Err(error) =
-            vt_result(code, &error).and_then(|code| status(code, "vtCapture_create"))
-        {
-            // Failed construction can leave live threads and stale global pointers.
-            std::mem::forget(api);
-            return Err(Error::Create(Box::new(error)));
-        }
+        vt_result(code, &error)
+            .and_then(|code| status(code, "vtCapture_create"))
+            .map_err(|error| Error::Create(Box::new(error)))?;
         let driver = NonNull::new(driver).ok_or(Error::Invalid("null driver"))?;
         let mut this = Self {
             api,
@@ -337,13 +381,12 @@ impl VtCapture {
         Ok(true)
     }
 
-    /// Copy the current frame as packed NV12 into `output` (cleared first, so
-    /// a failure never leaves stale pixels).
+    /// Borrow the driver's current frame. Its size is known only now: a
+    /// re-initialization here can renegotiate it.
     ///
     /// # Errors
     /// A native failure; the caller releases this tap and reopens.
-    pub fn acquire(&mut self, output: &mut Vec<u8>) -> Result<Acquired, Error> {
-        output.clear();
+    pub fn acquire(&mut self) -> Result<Acquired<'_>, Error> {
         if self.stage <= Stage::Initialized && !self.prepare()? {
             return Ok(Acquired::NotReady);
         }
@@ -354,29 +397,23 @@ impl VtCapture {
         }
         status(code, "vtCapture_currentCaptureBuffInfo")?;
         let [_, _, width, height] = self.plane.region;
-        let (width, height) = (
-            usize::from(width.cast_unsigned()),
-            usize::from(height.cast_unsigned()),
-        );
         let stride = usize::try_from(self.plane.stride).map_err(|_| Error::Invalid("stride"))?;
         // SAFETY: successful acquisition supplies driver-owned allocations;
-        // no further driver call or release occurs before both copies finish.
+        // they borrow `self`, so no further driver call or release occurs
+        // before the frame is dropped.
         let (y, uv) = unsafe {
             (
                 driver_plane(self, buffer.y, buffer.y_len)?,
                 driver_plane(self, buffer.uv, buffer.uv_len)?,
             )
         };
-        let copied = copy_plane(y, stride, width, height, output)
-            .and_then(|()| copy_plane(uv, stride, width, height / 2, output));
-        if let Err(error) = copied {
-            output.clear();
-            return Err(error);
-        }
-        Ok(Acquired::Frame {
-            width: width as u32,
-            height: height as u32,
-        })
+        Ok(Acquired::Frame(VideoFrame {
+            width: u32::from(width.cast_unsigned()),
+            height: u32::from(height.cast_unsigned()),
+            stride,
+            y,
+            uv,
+        }))
     }
 
     /// Stop, postprocess, finalize and release the driver.
@@ -534,110 +571,139 @@ mod tests {
         0
     }
 
-    fn fake_capture(driver: &mut Driver, stage: Stage) -> VtCapture {
-        VtCapture {
-            api: VtApi {
-                create: unused_create,
-                init: fake_init,
-                preprocess: fake_preprocess,
-                plane: fake_plane,
-                process: fake_process,
-                buffer: fake_buffer,
-                stop: fake_stop,
-                postprocess: fake_postprocess,
-                finalize: fake_finalize,
-                release: fake_release,
-                _library: libloading::os::unix::Library::this().into(),
-            },
-            driver: NonNull::from(driver).cast(),
-            client: [0; 128],
-            stage,
-            plane: PlaneInfo {
-                stride: 4,
-                region: [0, 0, 2, 2],
-                active: [0; 4],
-            },
-            properties: Properties::default(),
-            released: false,
+    static FAKE_API: VtApi = VtApi {
+        create: unused_create,
+        init: fake_init,
+        preprocess: fake_preprocess,
+        plane: fake_plane,
+        process: fake_process,
+        buffer: fake_buffer,
+        stop: fake_stop,
+        postprocess: fake_postprocess,
+        finalize: fake_finalize,
+        release: fake_release,
+    };
+
+    /// The fake driver, owned through one raw pointer that the test and its
+    /// capture both use, so neither access invalidates the other.
+    struct Fake(NonNull<Driver>);
+
+    impl Fake {
+        fn new(code: i32) -> Self {
+            Self(NonNull::new(Box::into_raw(Box::new(driver(code)))).unwrap())
         }
+
+        /// A capture of this driver; declare it after the `Fake` so it drops first.
+        fn capture(&self, stage: Stage) -> VtCapture {
+            VtCapture {
+                api: &FAKE_API,
+                driver: self.0.cast(),
+                client: [0; 128],
+                stage,
+                plane: PlaneInfo {
+                    stride: 4,
+                    region: [0, 0, 2, 2],
+                    active: [0; 4],
+                },
+                properties: Properties::default(),
+                released: false,
+            }
+        }
+
+        /// Read or change the driver between capture calls.
+        fn with<R>(&self, change: impl FnOnce(&mut Driver) -> R) -> R {
+            // SAFETY: the pointer is live until drop; the capture touches the
+            // driver only inside its own calls, which never overlap this one.
+            change(unsafe { &mut *self.0.as_ptr() })
+        }
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            // SAFETY: allocated by `Box::into_raw` in `new`; its captures were dropped first.
+            drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+        }
+    }
+
+    /// Acquire a frame and copy it as a pooled frame is filled.
+    fn copied(capture: &mut VtCapture) -> Vec<u8> {
+        let Acquired::Frame(frame) = capture.acquire().unwrap() else {
+            panic!("no frame");
+        };
+        let mut output = vec![0; frame.width as usize * frame.height as usize * 3 / 2];
+        frame.copy_to(&mut output).unwrap();
+        output
     }
 
     #[test]
     fn finalized_session_reinitializes_without_recreating_the_driver() {
-        let mut driver = driver(1);
-        let mut capture = fake_capture(&mut driver, Stage::Initialized);
-        let mut output = vec![255; 6];
-        assert_eq!(capture.acquire(&mut output).unwrap(), Acquired::NotReady);
-        assert!(output.is_empty());
-        driver.code = 1;
-        assert_eq!(capture.acquire(&mut output).unwrap(), Acquired::NotReady);
-        assert_eq!(driver.initializations, 1);
-        driver.code = 0;
-        assert_eq!(
-            capture.acquire(&mut output).unwrap(),
-            Acquired::Frame {
-                width: 2,
-                height: 2
-            }
-        );
-        assert_eq!(driver.initializations, 2);
-        assert_eq!(output, [16, 16, 16, 16, 128, 128]);
+        let fake = Fake::new(1);
+        let mut capture = fake.capture(Stage::Initialized);
+        assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
+        assert!(matches!(capture.acquire().unwrap(), Acquired::NotReady));
+        assert_eq!(fake.with(|driver| driver.initializations), 1);
+        fake.with(|driver| driver.code = 0);
+        assert_eq!(copied(&mut capture), [16, 16, 16, 16, 128, 128]);
+        assert_eq!(fake.with(|driver| driver.initializations), 2);
         capture.release().unwrap();
-        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
     #[test]
-    fn reused_buffers_are_copied_and_errors_never_leave_stale_pixels() {
-        let mut driver = driver(0);
-        driver.y = [16, 235, 99, 99, 16, 235, 99, 99];
-        driver.uv = [128, 128, 99, 99];
-        let mut capture = fake_capture(&mut driver, Stage::Running);
-        let mut output = Vec::new();
-        capture.acquire(&mut output).unwrap();
-        assert_eq!(output, [16, 235, 16, 235, 128, 128]);
-        driver.y[0] = 235;
-        capture.acquire(&mut output).unwrap();
-        assert_eq!(output, [235, 235, 16, 235, 128, 128]);
-        driver.code = 12;
+    fn reused_buffers_are_copied_into_exactly_sized_output() {
+        let fake = Fake::new(0);
+        fake.with(|driver| {
+            driver.y = [16, 235, 99, 99, 16, 235, 99, 99];
+            driver.uv = [128, 128, 99, 99];
+        });
+        let mut capture = fake.capture(Stage::Running);
+        assert_eq!(copied(&mut capture), [16, 235, 16, 235, 128, 128]);
+        fake.with(|driver| driver.y[0] = 235);
+        assert_eq!(copied(&mut capture), [235, 235, 16, 235, 128, 128]);
+        let Acquired::Frame(frame) = capture.acquire().unwrap() else {
+            panic!("no frame");
+        };
+        assert_eq!((frame.width, frame.height), (2, 2));
+        for mut wrong in [vec![0; 3], vec![0; 5], vec![0; 7]] {
+            assert!(matches!(
+                frame.copy_to(&mut wrong),
+                Err(Error::Invalid("NV12 output size"))
+            ));
+        }
+        fake.with(|driver| driver.code = 12);
         assert!(matches!(
-            capture.acquire(&mut output),
+            capture.acquire(),
             Err(Error::Status { code: 12, .. })
         ));
-        assert!(output.is_empty());
         drop(capture);
-        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
     #[test]
     fn status_two_is_pending_not_an_error() {
-        let mut driver = driver(2);
-        let mut capture = fake_capture(&mut driver, Stage::Running);
-        let mut output = vec![255; 6];
-        assert_eq!(capture.acquire(&mut output).unwrap(), Acquired::Pending);
-        assert!(output.is_empty());
-        driver.code = 0;
-        assert!(matches!(
-            capture.acquire(&mut output).unwrap(),
-            Acquired::Frame { .. }
-        ));
+        let fake = Fake::new(2);
+        let mut capture = fake.capture(Stage::Running);
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Pending));
+        fake.with(|driver| driver.code = 0);
+        assert!(matches!(capture.acquire().unwrap(), Acquired::Frame(_)));
     }
 
     #[test]
     fn release_reports_a_failed_step_after_running_every_step() {
-        let mut driver = driver(0);
-        driver.stop_code = 5;
-        let capture = fake_capture(&mut driver, Stage::Running);
+        let fake = Fake::new(0);
+        fake.with(|driver| driver.stop_code = 5);
+        let capture = fake.capture(Stage::Running);
         let error = capture.release().unwrap_err();
         assert_eq!(error.to_string(), "vtCapture_stop failed with status 5");
         assert!(!error.is_fatal());
-        assert_eq!(driver.cleanup, [1, 2, 3, 4]);
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [1, 2, 3, 4]);
     }
 
     #[test]
     fn cleanup_follows_the_stage_reached() {
-        let mut driver = driver(0);
-        drop(fake_capture(&mut driver, Stage::Created));
-        assert_eq!(driver.cleanup, [4]);
+        let fake = Fake::new(0);
+        drop(fake.capture(Stage::Created));
+        assert_eq!(fake.with(|driver| driver.cleanup.clone()), [4]);
     }
 
     #[test]

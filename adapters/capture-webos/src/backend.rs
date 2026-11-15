@@ -5,7 +5,7 @@ use crate::WebosSettings;
 use crate::source::{Acquired, Backend, Fault, Tap};
 use crate::ui::Nv12Converter;
 use prysm_capture_webos_sys::{self as sys, UiCapture, VtCapture};
-use prysm_core::{Frame, FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
+use prysm_core::{FramePool, PixelFormat, YuvRange, YuvStandardMatrix};
 use prysm_ports::{Error, Result};
 use std::fs::File;
 use std::path::Path;
@@ -89,7 +89,6 @@ impl Backend for Lg {
             .map_err(|error| fault("cannot open webOS video capture", error))?;
         Ok(Box::new(LgTap {
             capture,
-            nv12: Vec::new(),
             pool: FramePool::default(),
         }))
     }
@@ -145,24 +144,32 @@ impl Tap for HalTap {
     }
 }
 
+/// The driver's packed NV12, forwarded without colour conversion: one copy
+/// from the driver into reused storage, no per-frame allocation.
 struct LgTap {
     capture: VtCapture,
-    nv12: Vec<u8>,
     pool: FramePool,
 }
 
 impl Tap for LgTap {
     fn acquire(&mut self) -> Result<Acquired, Fault> {
-        match self.capture.acquire(&mut self.nv12) {
-            Ok(sys::Acquired::Frame { width, height }) => {
-                nv12_frame(&mut self.pool, width, height, &self.nv12)
-                    .map(Acquired::Frame)
-                    .map_err(Fault::recoverable)
-            }
-            Ok(sys::Acquired::Pending) => Ok(Acquired::Pending),
-            Ok(sys::Acquired::NotReady) => Ok(Acquired::NotReady),
-            Err(error) => Err(fault("webOS video interrupted", error)),
-        }
+        let video = match self.capture.acquire() {
+            Ok(sys::Acquired::Frame(video)) => video,
+            Ok(sys::Acquired::Pending) => return Ok(Acquired::Pending),
+            Ok(sys::Acquired::NotReady) => return Ok(Acquired::NotReady),
+            Err(error) => return Err(fault("webOS video interrupted", error)),
+        };
+        // An unfinished frame publishes nothing and goes back to the pool.
+        let mut frame = self
+            .pool
+            .acquire(video.width, video.height, TAP_FORMAT)
+            .map_err(|error| {
+                Fault::recoverable(Error::adapter("cannot allocate an NV12 frame", error))
+            })?;
+        video
+            .copy_to(frame.as_mut_slice())
+            .map_err(|error| fault("webOS video interrupted", error))?;
+        Ok(Acquired::Frame(frame.finish()))
     }
 
     fn release(self: Box<Self>) -> Result<()> {
@@ -177,27 +184,3 @@ pub(crate) const TAP_FORMAT: PixelFormat = PixelFormat::NV12 {
     range: YuvRange::Limited,
     matrix: YuvStandardMatrix::Bt709,
 };
-
-/// The driver's packed NV12 copy as a pooled frame, without colour
-/// conversion: one copy into reused storage, no per-frame allocation.
-pub(crate) fn nv12_frame(
-    pool: &mut FramePool,
-    width: u32,
-    height: u32,
-    nv12: &[u8],
-) -> Result<Frame> {
-    let expected = TAP_FORMAT
-        .expected_size(width, height)
-        .map_err(|error| Error::adapter("invalid native NV12 geometry", error))?;
-    if expected != Some(nv12.len()) {
-        return Err(Error::other(format!(
-            "native {width}x{height} NV12 frame has {} bytes, not {expected:?}",
-            nv12.len()
-        )));
-    }
-    let mut frame = pool
-        .acquire(width, height, TAP_FORMAT)
-        .map_err(|error| Error::adapter("cannot allocate an NV12 frame", error))?;
-    frame.as_mut_slice().copy_from_slice(nv12);
-    Ok(frame.finish())
-}

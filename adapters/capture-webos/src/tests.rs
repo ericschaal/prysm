@@ -2,7 +2,7 @@
 //! wait bounded.
 use super::*;
 use crate::source::{Acquired, Backend, Fault, Limits, Tap};
-use prysm_core::{Frame, FramePool, PixelFormat};
+use prysm_core::{Frame, PixelFormat};
 use prysm_ports::{AdapterSettings, Error, Registry, Settings, chain};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
@@ -764,6 +764,59 @@ fn drop_without_close_still_releases() {
     eventually(|| driver.count(|s| s.releases) == 1);
 }
 
+/// Records its name when dropped.
+struct Dropped(&'static str, Arc<Mutex<Vec<&'static str>>>);
+
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        self.1.lock().unwrap().push(self.0);
+    }
+}
+
+/// Opens taps that panic on their first acquisition.
+struct PanickingBackend(Dropped);
+
+impl Backend for PanickingBackend {
+    fn open(&mut self, _: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+        Ok(Box::new(PanickingTap {
+            _dropped: Dropped("tap", self.0.1.clone()),
+        }))
+    }
+
+    fn open_ui(&mut self, _: &WebosSettings) -> Result<Box<dyn Tap>, Fault> {
+        unreachable!("video-only settings")
+    }
+}
+
+/// Records its drop, nothing else.
+struct PanickingTap {
+    _dropped: Dropped,
+}
+
+impl Tap for PanickingTap {
+    fn acquire(&mut self) -> Result<Acquired, Fault> {
+        panic!("native bug");
+    }
+
+    fn release(self: Box<Self>) -> prysm_ports::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_panic_drops_the_tap_while_the_backend_still_holds_the_device() {
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let backend = PanickingBackend(Dropped("backend", drops.clone()));
+    let settings = WebosSettings {
+        include_ui: false,
+        ..WebosSettings::default()
+    };
+    let mut frames = WebosFrames::start(backend, settings, VideoSignal::default(), TEST).unwrap();
+    assert!(matches!(failure(&mut frames), Error::Panicked(_)));
+    assert!(close(frames).recv_timeout(LIMIT).unwrap().is_err());
+    assert_eq!(*drops.lock().unwrap(), ["tap", "backend"]);
+}
+
 #[test]
 fn production_limits_fit_the_runtime_deadlines() {
     let tv = Limits::TV;
@@ -802,22 +855,6 @@ fn capture_lock_is_exclusive_until_dropped() {
     let link = directory.path().join("link.lock");
     std::os::unix::fs::symlink(&path, &link).unwrap();
     assert!(backend::capture_lock(&link).is_err(), "followed a symlink");
-}
-
-#[test]
-fn native_nv12_is_forwarded_unconverted_into_reused_storage() {
-    let mut pool = FramePool::default();
-    let pixels = [16, 235, 235, 16, 128, 128];
-    let frame = backend::nv12_frame(&mut pool, 2, 2, &pixels).unwrap();
-    assert_eq!(frame.format(), backend::TAP_FORMAT);
-    assert_eq!((frame.width(), frame.height()), (2, 2));
-    assert_eq!(frame.as_slice(), pixels);
-    let storage = frame.as_slice().as_ptr();
-    drop(frame);
-    let again = backend::nv12_frame(&mut pool, 2, 2, &pixels).unwrap();
-    assert_eq!(again.as_slice().as_ptr(), storage);
-    assert!(backend::nv12_frame(&mut pool, 2, 2, &[16; 5]).is_err());
-    assert!(backend::nv12_frame(&mut pool, 3, 2, &[16; 9]).is_err());
 }
 
 // ---- Settings ------------------------------------------------------------

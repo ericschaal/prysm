@@ -23,6 +23,9 @@ enum UiSupport {
 }
 
 pub(super) struct Native<B> {
+    /// Declared before `backend`: fields drop in order, so on a panic the
+    /// tap's native cleanup still runs while the backend holds the device lock.
+    tap: Option<(Kind, Box<dyn Tap>)>,
     backend: B,
     settings: WebosSettings,
     video: VideoSignal,
@@ -30,7 +33,6 @@ pub(super) struct Native<B> {
     worker: Worker,
     /// The tap kind the video state asks for; `None`: idle.
     kind: Option<Kind>,
-    tap: Option<(Kind, Box<dyn Tap>)>,
     ui: UiSupport,
     /// Earliest time to open or acquire again.
     retry_at: Instant,
@@ -47,13 +49,13 @@ impl<B: Backend> Native<B> {
         worker: Worker,
     ) -> Self {
         Self {
+            tap: None,
             backend,
             settings,
             video,
             limits,
             worker,
             kind: None,
-            tap: None,
             ui: UiSupport::Untried,
             retry_at: Instant::now(),
             not_ready_since: None,

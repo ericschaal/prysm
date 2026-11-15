@@ -11,8 +11,8 @@
 //! Each call is a single native operation; watchdogs, retries, pacing, tap
 //! selection and pixel conversion belong to the caller
 //! (`prysm-capture-webos`). C++ exceptions from VTCapture are caught in
-//! `native/vtcapture.cpp` and never cross into Rust. `libhalgal` is loaded
-//! once and stays loaded for the life of the process.
+//! `native/vtcapture.cpp` and never cross into Rust. `libvtcapture` and
+//! `libhalgal` are each loaded once and stay loaded for the life of the process.
 //!
 //! Requires root and the TV's `libvtcapture.so`, `libluna-service2.so`,
 //! `libhalgal.so.1` and `/dev/gfx`. On any other system both `open`s fail
@@ -22,4 +22,4 @@ mod halgal;
 mod vtcapture;
 
 pub use halgal::{UiCapture, UiFrame};
-pub use vtcapture::{Acquired, Error, Options, VtCapture};
+pub use vtcapture::{Acquired, Error, Options, VideoFrame, VtCapture};
