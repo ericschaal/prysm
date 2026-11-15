@@ -52,10 +52,11 @@ export { deviceNamesKey } from './device-name';
 export { drawPreview, previewLayout } from './preview-canvas';
 export {
   checkForMs,
+  outcomeForMs,
   SectionEditor,
-  workingAfterMs,
   type SectionEditorProps,
 } from './section-editor';
+export { sectionStatus, type LiveState, type Status } from './section-state';
 export { SectionFields } from './section-step';
 export { stepCopy } from './step-copy';
 export { SetupWizard, type SetupWizardProps } from './setup';

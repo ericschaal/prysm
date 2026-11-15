@@ -159,13 +159,25 @@ function controlOf(form: HTMLElement | null, field: string | undefined) {
 export const showsField = (form: HTMLElement | null, field?: string) =>
   controlOf(form, field) !== null;
 
-/** Focus the control for `field` in `form`, or the form's alert. */
+/** Of the fields at `paths`, the one `form` shows first. */
+export function firstField(form: HTMLElement | null, paths: string[]) {
+  const shown = [
+    ...(form?.querySelectorAll<HTMLElement>('[name], [data-field]') ?? []),
+  ].map((control) => control.getAttribute('name') ?? control.dataset.field);
+  return shown.find((path) => path && paths.includes(path)) ?? paths[0];
+}
+
+/**
+ * Focus the control for `field` in `form`, or the form's alert, scrolled to
+ * the middle of the screen so a bar kept at the bottom never covers it.
+ */
 export function focusField(
   form: HTMLElement | null,
   field: string | undefined,
 ) {
-  (
+  const target =
     controlOf(form, field) ??
-    form?.querySelector<HTMLElement>('[data-form-alert]')
-  )?.focus();
+    form?.querySelector<HTMLElement>('[data-form-alert]');
+  target?.scrollIntoView?.({ block: 'center' });
+  target?.focus({ preventScroll: true });
 }

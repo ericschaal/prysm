@@ -166,12 +166,18 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
   const shared = {
     revision: snapshot.revision,
     disabled: !online,
-    target: snapshot.target,
-    path: portal.path,
-    failure: snapshot.failure ?? null,
-    startSync: () => dispatch(commands.setTarget('processed')),
+    live: {
+      online,
+      target: snapshot.target,
+      path: portal.path,
+      failure: snapshot.failure ?? null,
+      input: snapshot.input,
+      outputIssue: snapshot.output_issue,
+      outputBrightness: snapshot.output_brightness,
+    },
     leave: () => nav.back('settings'),
     showPreview: host.preview ? () => nav.go('preview') : undefined,
+    preview: host.preview,
   };
   return (
     <Page
@@ -180,10 +186,6 @@ export function EditorRoute({ section }: { section: 'capture' | 'output' }) {
       name={copy.title}
     >
       <PageHeading title={copy.title} to="settings" backLabel="Settings" />
-      {/* In the save line's place: how this page saves. */}
-      <p className="save-status" data-phase="local">
-        Saved when you choose “{copy.use}”
-      </p>
       <OfflineNotice />
       <DiscoveryContext value={host.discovery ?? null}>
         {section === 'capture' ? (

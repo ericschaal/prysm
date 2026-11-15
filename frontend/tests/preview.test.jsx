@@ -14,7 +14,6 @@ import {
   leaveEditor,
   openEditor,
   renderPortal,
-  row,
   sleep,
 } from './dom';
 
@@ -114,9 +113,17 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert(!$('.preview'), 'not on Home');
     assert.equal(preview.opened(), 0, 'no viewer on Home');
 
-    // From the video source's page.
+    // From the video source's page: its status card, while screen sync is
+    // on (off, the card opens nothing).
     await openEditor('Video source');
-    await click($('.row-link', row('See the picture')));
+    assert(!$('button.section-status-main'), 'off: nothing to open');
+    await act(async () => portal.fixture.publish({ target: 'processed' }));
+    assert.match(
+      $('button.section-status-main').textContent,
+      /See the picture$/,
+    );
+    await click($('button.section-status-main'));
+    await act(async () => portal.fixture.publish({ target: 'off' }));
     assert.equal(window.location.hash, '#/preview');
     assert.equal(document.activeElement.textContent, 'Live preview');
     assert.equal(preview.open(), 1);
@@ -196,7 +203,9 @@ test('the preview has its own page, reached from Settings, and streams only whil
     assert.equal(preview.open(), 0);
     assert(!$('.preview-canvas'));
     await openEditor('Video source');
-    await click($('.row-link', row('See the picture')));
+    await act(async () => portal.fixture.publish({ target: 'processed' }));
+    await click($('button.section-status-main'));
+    await act(async () => portal.fixture.publish({ target: 'off' }));
     assert.equal(preview.open(), 1);
     Object.defineProperty(document, 'visibilityState', {
       value: 'hidden',
@@ -281,11 +290,12 @@ test('a busy or dropped preview says so, offers a retry and leaves the portal wo
 test('without a preview client the portal offers no preview', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   try {
+    await act(async () => portal.fixture.publish({ target: 'processed' }));
     await openEditor('Video source');
-    assert(!row('See the picture'));
+    assert(!$('button.section-status-main'));
     await leaveEditor();
     await openEditor('Lights');
-    assert(!row('Check placement'));
+    assert(!$('button.section-status-main'));
     await leaveEditor();
     await act(async () => {
       window.location.hash = '#/preview';

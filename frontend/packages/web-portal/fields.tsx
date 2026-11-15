@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { nameProblem, numberProblem, type NumberLimits } from './checks';
 import { FieldContext, shownError, useCheck } from './form';
+import { ChevronIcon } from './rows';
 
 /**
  * The line under a control: its help, or in the same place its problem. Both
@@ -445,6 +446,42 @@ export function SelectField<V extends string>({
         ))}
       </select>
       {field.note}
+    </div>
+  );
+}
+
+/**
+ * Options most setups never change, closed until opened, and open while a
+ * field inside (at `paths`) shows a problem. The fields stay mounted while
+ * closed, so their checks still count.
+ */
+export function Advanced({
+  paths,
+  children,
+}: {
+  paths: readonly string[];
+  children: ReactNode;
+}) {
+  const scope = use(FieldContext);
+  const id = useId();
+  const [opened, setOpened] = useState(false);
+  const problem = paths.some((path) => shownError(scope, path, false));
+  const open = opened || problem;
+  return (
+    <div className="advanced">
+      <button
+        type="button"
+        className="row-link row-toggle"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpened(!open)}
+      >
+        <span className="row-label">Advanced</span>
+        <ChevronIcon />
+      </button>
+      <div id={id} hidden={!open}>
+        {children}
+      </div>
     </div>
   );
 }

@@ -334,6 +334,9 @@ export function SetupWizard<
       </h2>
       <p key={`intro-${step}`} className="intro">
         {current.intro}
+        {step === 0
+          ? ` ${adapterFor(captures, capture.kind)?.setup ?? ''}`
+          : null}
       </p>
       <FieldScopeProvider value={scope}>{body}</FieldScopeProvider>
       <p

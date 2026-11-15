@@ -14,8 +14,9 @@ import { RowChoice } from './rows';
 
 /**
  * How much work capture costs, as one choice: a few presets and Custom,
- * in the rows pattern. Nothing new is stored: the ticked row follows from
- * the saved size and rate. Custom opens the three number fields below the
+ * in the rows pattern, one line each; only the ticked row says what it
+ * means. Nothing new is stored: the ticked row follows from the saved size
+ * and rate. Custom opens the three number fields below the
  * list, so nothing above them moves, and stays open while the user types
  * there, even through numbers that match a preset.
  */
@@ -65,16 +66,17 @@ export function PictureChoice<V extends Picture>({
         <ul className="rows">
           {presets.map((key) => {
             const at = picturePresets[key];
+            const checked = !custom && preset === key;
             return (
               <RowChoice
                 key={key}
                 name={nameId}
                 label={at.label}
-                about={at.about}
+                about={checked ? at.about : undefined}
                 facts={pictureFacts(at, at)
                   .map((fact) => fact.value)
                   .join(' · ')}
-                checked={!custom && preset === key}
+                checked={checked}
                 disabled={scope.disabled}
                 onChoose={() => choose(key)}
               />
@@ -83,7 +85,7 @@ export function PictureChoice<V extends Picture>({
           <RowChoice
             name={nameId}
             label={customPicture.label}
-            about={customPicture.about}
+            about={custom ? customPicture.about : undefined}
             checked={custom}
             disabled={scope.disabled}
             onChoose={() => setCustomOpen(true)}

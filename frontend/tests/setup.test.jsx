@@ -471,7 +471,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
     await press(button('Find lights'));
     assert.equal(
       $('.find [role="status"]').textContent,
-      'No WLED lights found on this network. Enter the address below.',
+      'No WLED lights found on this network. Enter the address above.',
     );
     discovery.refuseNext({
       kind: 'unavailable',
@@ -480,7 +480,7 @@ test('nothing found or a failed lookup leaves the typed field', async () => {
     await press(button('Find lights'));
     assert.equal(
       $('.find [role="status"]').textContent,
-      'Couldn’t search just now. Enter the address below.',
+      'Couldn’t search just now. Enter the address above.',
     );
     assert.equal(field('output.address').value, '');
   } finally {

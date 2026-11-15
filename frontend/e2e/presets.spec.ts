@@ -21,10 +21,10 @@ test('a preset saves its size and rate; Custom opens the fields below the list',
   await row('Efficient').click();
   await expect(choice.getByRole('radio', { name: 'Efficient' })).toBeChecked();
   await expect(width).toHaveCount(0);
-  await editor.getByRole('button', { name: 'Use this video source' }).click();
-  await expect(editor.getByRole('status')).toHaveText(
-    'Saved. Screen sync is off, so this source hasn’t been tried.',
-  );
+  const save = editor.getByRole('button', { name: 'Use this video source' });
+  await save.click();
+  // Saved: the bar leaves (Cancel stays while saving).
+  await expect(editor.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
   const saved = (await prysm.savedSettings()) as {
     capture: { width: number; height: number; fps: number };
   };
@@ -34,10 +34,17 @@ test('a preset saves its size and rate; Custom opens the fields below the list',
     saved.capture.fps,
   ]).toEqual([320, 180, 30]);
 
-  const before = await choice.boundingBox();
+  // Where the list is on the page (not the screen: the save bar going may
+  // scroll it), and its size.
+  const place = () =>
+    choice.evaluate((list) => {
+      const box = list.getBoundingClientRect();
+      return [box.top + window.scrollY, box.height];
+    });
+  const before = await place();
   await row('Custom').click();
   await expect(width).toHaveValue('320');
-  expect(await choice.boundingBox()).toEqual(before);
+  expect(await place()).toEqual(before);
 
   // Arrow keys move within the group, as native radios do.
   await choice.getByRole('radio', { name: 'Custom' }).focus();

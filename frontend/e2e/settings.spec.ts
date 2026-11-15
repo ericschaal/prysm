@@ -1,6 +1,6 @@
 // Settings against a real engine fed by a test sender: one column of rows in
 // three groups under one save status; the video source changed on its own
-// page, saved with one button, then tried on request and said to work.
+// page, saved with one button, its status following screen sync live.
 import { expect, test } from './prysm';
 
 test('Settings lists its groups in order, and says whether it is saved', async ({
@@ -37,7 +37,7 @@ test('Settings lists its groups in order, and says whether it is saved', async (
   await expect(page.getByRole('form', { name: 'Your lights' })).toBeVisible();
 });
 
-test('a saved video source is tried on request and said to work', async ({
+test('the video source page shows whether it works, before and after a save', async ({
   page,
   prysm,
   startSender,
@@ -48,22 +48,33 @@ test('a saved video source is tried on request and said to work', async ({
   await expect(page).toHaveURL(/#\/settings\/video$/);
 
   const editor = page.getByRole('form', { name: 'Video source' });
-  const status = editor.getByRole('status');
-  await editor.getByLabel('Frame rate').fill('25');
-  await editor.getByRole('button', { name: 'Use this video source' }).click();
-  await expect(status).toHaveText(
-    'Saved. Screen sync is off, so this source hasn’t been tried.',
+  const now = editor.getByRole('status', { name: 'Video source now' });
+  await expect(now).toContainText(
+    'Screen sync is off, so this source isn’t in use.',
   );
+  await editor.getByLabel('Frame rate').fill('25');
+  const save = editor.getByRole('button', { name: 'Use this video source' });
+  await save.click();
+  // Saved: the bar says so where the user is, then goes; nothing to confirm.
+  await expect(editor.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+  await expect(editor.getByText(/^Saved\. Screen sync is off/)).toBeVisible();
+  await expect(editor.getByText(/^Saved\./)).toHaveCount(0);
   const saved = (await prysm.state()) as unknown as {
     settings: { capture: { fps: number } };
   };
   expect(saved.settings.capture.fps).toBe(25);
 
-  await editor
-    .getByRole('button', { name: 'Turn on screen sync to try' })
-    .click();
+  // Screen sync on (from Home, or here another device): the status follows.
+  const response = await page.request.put('/api/v1/target', {
+    data: { target: 'processed' },
+  });
+  expect(response.status()).toBe(204);
   await sender.waitFor('connected');
-  await expect(status).toHaveText('Saved. The picture is arriving.');
-  await editor.getByRole('button', { name: 'Done' }).click();
+  await expect(now).toContainText('Picture arriving');
+  await expect(now).toContainText('32 × 18');
+  // The card itself opens the large picture.
+  await now.getByRole('button', { name: /See the picture$/ }).click();
+  await expect(page).toHaveURL(/#\/preview$/);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page).toHaveURL(/#\/settings$/);
 });

@@ -114,6 +114,13 @@ export interface AdapterUi<S extends AdapterSection> {
   transport?: (saved: S) => Transport;
   /** Outputs only: the LEDs around the screen, for the drawing on Home. */
   edges?: (saved: S) => LedEdges;
+  /** Setup only: what to do on the device, in one line after the intro. */
+  setup?: string;
+  /**
+   * What to check while the saved section fails, in one line, shown with
+   * the failure in its editor.
+   */
+  trouble?: string;
   /**
    * What a field says when Prysm refuses its value, by field path
    * (`output.address`): how to fill it in. Others say `refusedValue`.

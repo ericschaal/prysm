@@ -162,25 +162,28 @@ colours or delete it; after **Delete calibration** the list offers **Undo** for
 a few seconds. **New calibration** makes one with test patterns on the TV; see
 [Calibrate colours](calibration.md).
 
-Use [Live preview](preview.md) to check a change: **See the picture** on the
-Video source page, or **Check placement** on the Lights page.
+Use [Live preview](preview.md) to check a change: select the status at the top
+of the Video source or the Lights page.
 
 ### Video source and lights
 
 Choose **Video source** or **Lights** to change it on a page of its own, with
-the same steps as the setup wizard. A part not set up yet says **Not set up
-yet** and opens the same page. **Use this video
-source** or **Use these lights** saves; **Cancel** leaves without saving. A
-problem with either shows in its row, in red, and **Change setup** on Home
-opens the part that has the problem.
+the same fields as the setup wizard. The top of the page says whether it works
+now: **Picture arriving** with a small live picture, **Showing screen sync**,
+**Starting…**, **Not in use** while Screen sync is off, or in red what is wrong.
+A part not set up yet says **Not set up yet** and opens the same page. A
+problem with either also shows in its row in Settings, in red, and **Change
+setup** on Home opens the part that has the problem.
 
 <img src="../images/portal-lights.webp" alt="The Lights page: the WLED address and the LEDs per edge (30 top, 18 right, 30 bottom, 18 left) drawn around the screen, starting at the bottom-left corner and running clockwise." width="480">
 
-Saving restarts Screen sync if it is on, and Prysm then checks the change: it
-says when the picture arrives or the lights work, or that they don't. Until
-they work, **Go back to the previous video source** (or lights) puts the old
-one back; **Keep this video source** (or lights) keeps the new one. With
-Screen sync off nothing is tried; **Turn on screen sync to try** does that.
+Once you change something, a bar at the bottom offers **Use this video
+source** or **Use these lights**, which saves, and **Cancel**, which leaves
+without saving. If a field is wrong, the bar says **Fix 1 field** and takes you
+to it. Saving restarts Screen sync if it is on, and the bar then says how it
+went: **Saved. Picture arriving.**, or why it does not work. Until it works,
+**Go back to the previous video source** (or lights) puts the old one back.
+The options few setups change are under **Advanced**.
 
 If someone changed the same part in another browser, Prysm asks: **Use
 theirs** shows their settings, **Keep mine** saves yours.

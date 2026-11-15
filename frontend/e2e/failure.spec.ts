@@ -69,3 +69,18 @@ test('changing brightness on a failed card does not leave it loading', async ({
   await expect(card.getByRole('alert')).toBeVisible();
   await expect(card.getByRole('button', { name: 'Try again' })).toBeEnabled();
 });
+
+test('the video source page shows the failure where it is fixed', async ({
+  page,
+}) => {
+  await page.goto('/#/settings/video');
+  const editor = page.getByRole('form', { name: 'Video source' });
+  const now = editor.getByRole('status', { name: 'Video source now' });
+  await expect(now).toContainText('No picture');
+  // Prysm's own words, shown as they are.
+  await expect(now.getByText(reason)).toBeVisible();
+  // Nothing saved here on this visit: no previous source to go back to.
+  await expect(editor.getByRole('button', { name: /^Go back to/ })).toHaveCount(
+    0,
+  );
+});

@@ -23,7 +23,8 @@ import {
   throttled,
   trialIntervalMs,
   ringDelayMs,
-  workingAfterMs,
+  checkForMs,
+  outcomeForMs,
   ringHoldMs,
   saveTheme,
   slowStartMs,
@@ -56,6 +57,7 @@ import {
 } from '@prysm/capture-remote-ui';
 import { defaultProcessing } from '../testkit/application';
 import { fakeDiscoveryClient } from '../testkit/discovery';
+import { fakePreviewClient } from '../testkit/preview';
 import {
   $,
   $$,
@@ -109,8 +111,13 @@ const chip = (id) => $(`[data-calibration="${id}"]`);
 const note = () => $('.light-calm').textContent || null;
 const hint = (element) =>
   document.getElementById(element.getAttribute('aria-describedby')).textContent;
-/** The editor's one status line. */
+/** The editor's save bar line: a refused save or a conflict. */
 const status = () => $('.form-status').textContent;
+/** Whether the edited section works now: the status at the editor's top. */
+const now = () =>
+  [$('.section-status-title'), $('.section-status-detail')]
+    .map((line) => line?.textContent ?? '')
+    .join(' — ');
 const saves = (fixture) =>
   fixture.calls.filter((call) => call === 'replaceSettings').length;
 /** Home's address: none when first opened, `#/` when gone back to. */
@@ -1134,9 +1141,13 @@ test('the video source editor saves the exact section once; Cancel drops the dra
         ['1', '2147483647'],
       ],
     );
-    // Nothing to save yet: only the way out.
+    // Nothing to save yet: no bar; the way out is the page's back link.
     assert.equal(primary(), undefined);
-    assert(button('Done', form('Video source')));
+    assert.equal(button('Cancel', form('Video source')), undefined);
+    assert.equal(
+      now(),
+      'Not in use — Screen sync is off, so this source isn’t in use.',
+    );
 
     await edit(field('capture.width'), 1280);
     assert.equal(primary().disabled, false);
@@ -1160,21 +1171,23 @@ test('the video source editor saves the exact section once; Cancel drops the dra
       output,
       processing: defaultProcessing,
     });
-    // Screen sync is off: saved, and said not to be tried.
+    // Screen sync is off: saved, the bar gone, the status unchanged.
+    assert.equal(primary(), undefined);
     assert.equal(
-      status(),
-      'Saved. Screen sync is off, so this source hasn’t been tried.',
+      now(),
+      'Not in use — Screen sync is off, so this source isn’t in use.',
     );
 
-    // Out of range: shown at once, never sent, focused on the button.
+    // Out of range: shown at once, never sent; the bar says what to fix.
     await edit(field('capture.width'), 4000);
     assert.equal(
       errorOf(field('capture.width')),
       'Enter a whole number from 1 to 3840.',
     );
+    assert.equal(status(), 'Fix 1 field');
     await submit(form('Video source'));
     assert.equal(saves(fixture), 1);
-    assert.equal(status(), 'Not saved. Check the marked field.');
+    assert.equal(status(), 'Fix 1 field');
     assert.equal(document.activeElement, field('capture.width'));
 
     // An empty path is reported once a save is tried.
@@ -1208,7 +1221,7 @@ test('server field errors land on their control and clear when it is edited', as
       'Use a size the device supports.',
     );
     assert.equal(document.activeElement, field('capture.height'));
-    assert.equal(status(), 'Not saved. Check the marked field.');
+    assert.equal(status(), 'Fix 1 field');
     await edit(field('capture.height'), 1080);
     assert.equal(errorOf(field('capture.height')), undefined);
     assert(!field('capture.height').getAttribute('aria-invalid'));
@@ -1325,7 +1338,7 @@ test('a section changed on another device: use theirs, or keep mine', async () =
 /** The live problem line of a part of the setup, on Settings. */
 const problem = (label) => $('.row-problem', row(label))?.textContent ?? '';
 
-test('new lights are checked after saving; failing ones can be swapped back', async () => {
+test('the status follows saved lights; failing ones can be swapped back', async () => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
@@ -1333,11 +1346,15 @@ test('new lights are checked after saving; failing ones can be swapped back', as
     await openSettings();
     assert.equal(problem('Lights'), '', 'nothing wrong: an empty line, kept');
     await openEditor('Lights');
+    assert.equal(now(), 'Starting… — WLED at 192.0.2.1 · 14 LEDs');
+    assert(!button('Go back to the previous lights'), 'nothing to go back to');
     await edit(field('output.address'), '192.0.2.99');
     await submit(form('Your lights'));
     assert.equal(fixture.snapshot().settings.output.address, '192.0.2.99');
-    assert.equal(status(), 'Saved. Starting the lights…');
-    assert(button('Go back to the previous lights'));
+    // A plain save: the bar leaves, the status follows the new lights.
+    assert.equal(button('Use these lights'), undefined);
+    assert.equal(now(), 'Starting… — WLED at 192.0.2.99 · 14 LEDs');
+    assert(!button('Go back to the previous lights'), 'only when needed');
 
     // The new address does not answer: said plainly, with the way back.
     await act(async () =>
@@ -1350,8 +1367,11 @@ test('new lights are checked after saving; failing ones can be swapped back', as
         },
       }),
     );
-    assert.equal(status(), 'Saved, but the lights are not responding.');
-    assert(!text().includes('no answer from'), 'no raw message');
+    assert.equal(now(), 'Lights not responding — WLED at 192.0.2.99 · 14 LEDs');
+    // Saved here: the bar, where the user is, says why in Prysm's words.
+    assert.equal(status(), 'Lights not responding: no answer from 192.0.2.99.');
+    assert(button('Go back to the previous lights', $('.page-actions')));
+    assert(!$('.section-status-more'), 'said once, in the bar');
 
     // Settings shows the live problem on its row; the way back stays.
     await leaveEditor();
@@ -1360,12 +1380,9 @@ test('new lights are checked after saving; failing ones can be swapped back', as
     assert.equal(valueOf('Lights'), 'WLED · The lights are not responding.');
     assert.equal(problem('Video source'), '');
     await openEditor('Lights');
-    assert.equal(status(), 'The lights are not responding.');
     await click(button('Go back to the previous lights'));
     assert.deepEqual(fixture.snapshot().settings.output, output);
-    assert.equal(status(), 'Saved. Back to the previous lights.');
     assert.equal(field('output.address').value, '192.0.2.1');
-    await leaveEditor();
     await act(async () =>
       fixture.publish({
         session: { state: 'running' },
@@ -1373,40 +1390,177 @@ test('new lights are checked after saving; failing ones can be swapped back', as
         input: { fps: 30, receiving: true },
       }),
     );
+    assert.equal(now(), 'Showing screen sync — WLED at 192.0.2.1 · 14 LEDs');
+    assert(!button('Go back to the previous lights'), 'used up');
+    await leaveEditor();
     assert.equal(problem('Lights'), '');
 
-    // Working: flowing for a moment after the save says so.
+    // The video source: the picture's rate while it arrives.
     await openEditor('Video source');
+    assert.equal(now(), 'Picture arriving — 30 fps');
     await edit(field('capture.path'), '/dev/video3');
     await submit(form('Video source'));
-    assert.equal(status(), 'Saved. Waiting for the picture…');
-    await act(async () => sleep(workingAfterMs + 100));
-    assert.equal(status(), 'Saved. The picture is arriving.');
+    assert.equal(button('Use this video source'), undefined);
     assert(!button('Go back to the previous video source'));
-    await click(button('Done'));
-    assert.equal(window.location.hash, '#/settings');
   } finally {
     await portal.unmount();
   }
 });
 
-test('with screen sync off, a saved source can be tried at once', async () => {
+test('a source that sends nothing for a while is a problem, with the way back', async (t) => {
   const portal = await renderPortal(HeadlessWebPortal, { capture, output });
   const { fixture } = portal;
   try {
+    await press(mode('processed'));
     await openEditor('Video source');
     await edit(field('capture.path'), '/dev/video4');
     await submit(form('Video source'));
+    // The session restarts for the new source: stopped, then running.
+    await act(async () => fixture.publish({ session: { state: 'stopped' } }));
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'running' },
+        input: { fps: 0, receiving: false },
+      }),
+    );
+    assert.equal(now(), 'Starting… — Waiting for the picture.');
+    assert(!button('Go back to the previous video source'));
+    await act(async () => t.mock.timers.tick(checkForMs));
+    t.mock.timers.reset();
+    assert.equal(now(), 'No picture — ');
     assert.equal(
       status(),
-      'Saved. Screen sync is off, so this source hasn’t been tried.',
+      'No picture: Nothing has arrived from this source.',
+      'the reason is said once, in the bar',
     );
-    assert.equal(fixture.snapshot().target, 'off', 'saving starts nothing');
-    await click(button('Turn on screen sync to try'));
-    assert.equal(fixture.snapshot().target, 'processed');
-    assert.equal(status(), 'Saved. Waiting for the picture…');
     await click(button('Go back to the previous video source'));
     assert.deepEqual(fixture.snapshot().settings.capture, capture);
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('after a save the bar stays where the user is: starting, working, then gone; or why it fails', async (t) => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  const { fixture } = portal;
+  const bar = () => $('.page-actions', form('Video source'));
+  try {
+    await press(mode('processed'));
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'running' },
+        input: { fps: 30, receiving: true },
+      }),
+    );
+    await openEditor('Video source');
+    assert.equal(bar().hidden, true, 'nothing to save: no bar');
+    await edit(field('capture.path'), '/dev/video5');
+    assert.equal(status(), 'Saving restarts screen sync.');
+    await submit(form('Video source'));
+    await act(async () => fixture.publish({ session: { state: 'stopped' } }));
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'running' },
+        input: { fps: 0, receiving: false },
+      }),
+    );
+    assert.equal(status(), 'Saved. Starting…');
+    assert.equal(bar().hidden, false);
+    assert(!button('Use this video source'), 'no button to press again');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await act(async () =>
+      fixture.publish({ input: { fps: 30, receiving: true } }),
+    );
+    assert.equal(status(), 'Saved. Picture arriving.');
+    await act(async () => t.mock.timers.tick(outcomeForMs));
+    t.mock.timers.reset();
+    assert.equal(bar().hidden, true, 'working: the bar goes');
+    assert.equal(now(), 'Picture arriving — 30 fps', 'the card stays');
+
+    // A save that fails: Prysm's reason and the way back, in the bar.
+    await edit(field('capture.path'), '/dev/video6');
+    await submit(form('Video source'));
+    await act(async () =>
+      fixture.publish({
+        session: { state: 'stopped' },
+        failure: {
+          kind: 'adapter',
+          section: 'capture',
+          message: 'cannot open /dev/video6',
+        },
+      }),
+    );
+    assert.equal(status(), 'No picture: cannot open /dev/video6.');
+    assert.equal($('.form-status').dataset.tone, 'error');
+    assert(!$('.section-status-more'), 'not said twice');
+    await click(button('Go back to the previous video source', bar()));
+    assert.equal(fixture.snapshot().settings.capture.path, '/dev/video5');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the save bar says how many fields to fix and takes the user to the first', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, {
+    capture: { kind: 'remote' },
+    output,
+  });
+  const { fixture } = portal;
+  const advanced = () => button('Advanced', form('Video source'));
+  try {
+    await openEditor('Video source');
+    // TV-only options wait under Advanced, closed.
+    assert.equal(advanced().getAttribute('aria-expanded'), 'false');
+    assert(field('capture.encoding').closest('[hidden]'));
+    await click(radio('Custom'));
+    await edit(field('capture.fps'), 99);
+    await edit(field('capture.width'), 3);
+    assert.equal(status(), 'Fix 2 fields');
+    await click(button('Fix 2 fields'));
+    assert.equal(document.activeElement, field('capture.width'), 'the first');
+    await edit(field('capture.width'), 320);
+    await edit(field('capture.fps'), 30);
+    // A problem inside Advanced opens it, and the jump lands there.
+    await edit(field('capture.height'), 8);
+    await submit(form('Video source'));
+    assert.equal(saves(fixture), 0);
+    assert.equal(advanced().getAttribute('aria-expanded'), 'true');
+    assert.equal(document.activeElement, field('capture.encoding'));
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('the status never opens the source: off, it says so and shows no picture', async () => {
+  const preview = fakePreviewClient();
+  const portal = await renderPortal(
+    HeadlessWebPortal,
+    { capture, output },
+    undefined,
+    { preview: preview.client },
+  );
+  const { fixture } = portal;
+  try {
+    await openEditor('Video source');
+    assert.equal(
+      now(),
+      'Not in use — Screen sync is off, so this source isn’t in use.',
+    );
+    assert.equal(preview.opened(), 0, 'no preview stream while off');
+    await edit(field('capture.path'), '/dev/video4');
+    await submit(form('Video source'));
+    assert.equal(fixture.snapshot().target, 'off', 'saving starts nothing');
+    assert.equal(preview.opened(), 0);
+    await act(async () =>
+      fixture.publish({
+        target: 'processed',
+        session: { state: 'running' },
+        input: { fps: 29.9, receiving: true },
+      }),
+    );
+    assert.equal(preview.opened(), 1, 'watched while the picture flows');
+    assert.equal(now(), 'Picture arriving — 30 fps');
   } finally {
     await portal.unmount();
   }
@@ -1573,7 +1727,9 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
       caption(),
       'LED 1 is at the bottom-left corner. Order: left upward: LEDs 1–4; top rightward: LEDs 5–14; right: none; bottom: none.',
     );
-    assert.equal($('.total strong').textContent, '14');
+    // The total in the drawing's middle; the maximum only when exceeded.
+    assert.equal($('.screen-label').textContent, '14 LEDs');
+    assert(!text().includes('16384'));
 
     for (const edge of edges) await edit(field(`output.leds.${edge}`), 0);
     assert.equal(caption(), 'No LEDs yet.');
@@ -1617,6 +1773,44 @@ test('the WLED panel edits edge counts and shows the wiring as the renderer orde
     // The way to WLED, with its effects chosen.
     await press(mode('device_native'));
     assert.equal($('.light-calm .device-link').href, 'http://wled.local:8080/');
+  } finally {
+    await portal.unmount();
+  }
+});
+
+test('each edge’s LED count is typed on that edge of the drawing', async () => {
+  const portal = await renderPortal(HeadlessWebPortal, { capture, output });
+  try {
+    await openEditor('Lights');
+    const drawing = $('.led-layout');
+    for (const [edge, label] of [
+      ['top', 'Top LEDs'],
+      ['right', 'Right LEDs'],
+      ['bottom', 'Bottom LEDs'],
+      ['left', 'Left LEDs'],
+    ]) {
+      const input = $(`.led-edge-${edge} input`, drawing);
+      assert.equal(input, field(`output.leds.${edge}`), `${edge} on its edge`);
+      assert.equal(input.labels[0].textContent, label);
+    }
+    assert(!$('.led-counts'), 'no second set of fields');
+    await edit(field('output.leds.right'), 6);
+    assert.equal($('.screen-label').textContent, '20 LEDs');
+    // Too many: said at once, the total marked.
+    await edit(field('output.leds.bottom'), 16384);
+    assert.equal($('.screen-label').dataset.invalid, 'true');
+    assert.equal(
+      $('[data-field-message="output.leds"]').textContent,
+      'Use 1 to 16384 LEDs in total.',
+    );
+    await edit(field('output.leds.bottom'), 0);
+    assert.equal($('.screen-label').dataset.invalid, 'false');
+    // An edge's own problem shows under the drawing too.
+    await edit(field('output.leds.top'), 20000);
+    assert.equal(
+      $('[data-field-message="output.leds"]').textContent,
+      'Enter a whole number from 0 to 16384.',
+    );
   } finally {
     await portal.unmount();
   }
@@ -1735,9 +1929,10 @@ test('a size above 640 × 360 shows a quiet hint in both TV forms; it never bloc
         ],
         [1280, 720],
       );
-      assert.equal(
+      assert.match(
         status(),
-        'Saved. Screen sync is off, so this source hasn’t been tried.',
+        /^Saved\. Screen sync is off/,
+        'saved, said in the bar',
       );
       assert.equal(shown().textContent, hint, 'still shown after saving');
     } finally {
@@ -1828,9 +2023,9 @@ test('the size-and-rate choice is a labelled radio group whose rows describe the
     output,
   });
   const described = (input) =>
-    input
-      .getAttribute('aria-describedby')
+    (input.getAttribute('aria-describedby') ?? '')
       .split(' ')
+      .filter(Boolean)
       .map((id) =>
         document.getElementById(id).textContent.replace(/\u00a0/g, ' '),
       );
@@ -1844,18 +2039,18 @@ test('the size-and-rate choice is a labelled radio group whose rows describe the
     );
     const rows = presetRows();
     assert.equal(new Set(rows.map((input) => input.name)).size, 1, 'one group');
+    // One line each; only the ticked row says what it means.
     assert.deepEqual(rows.map(described), [
       ['Right for most setups.', '640 × 360 · 30 fps'],
-      [
-        'The lights update twice as often. More work for the processor.',
-        '640 × 360 · 60 fps',
-      ],
-      [
-        'Less work for the processor. Slightly softer colours.',
-        '320 × 180 · 30 fps',
-      ],
-      ['Your own size and rate.'],
+      ['640 × 360 · 60 fps'],
+      ['320 × 180 · 30 fps'],
+      [],
     ]);
+    await click(radio('Custom'));
+    assert.deepEqual(presetRows().map(described).at(-1), [
+      'Your own size and rate.',
+    ]);
+    assert.deepEqual(described(radio('Balanced')), ['640 × 360 · 30 fps']);
   } finally {
     await portal.unmount();
   }
@@ -2079,9 +2274,10 @@ test('the remote capture form asks the TV for a stream with the same picture fie
       include_ui: false,
       encoding: 'h264_software',
     });
-    assert.equal(
+    assert.match(
       status(),
-      'Saved. Screen sync is off, so this source hasn’t been tried.',
+      /^Saved\. Screen sync is off/,
+      'saved, said in the bar',
     );
 
     // The server's own check on the encoding lands on the selector.
@@ -2126,9 +2322,10 @@ test('the sender refusing the requested stream is shown in full with the lightin
     assert.equal($('.light-details p').textContent, refusal, 'not shortened');
     // The video source editor says where the fix is.
     await openEditor('Video source');
-    assert.match(
-      form('Video source').textContent,
-      /If the TV can’t send it, Home says why; then change how it sends the picture, or its size, here/,
+    assert.equal(
+      $('.section-status-more').textContent,
+      `${refusal}If the TV can’t send its picture, try another way under Advanced, or a smaller size.`,
+      'Prysm’s words in full, then what to change here',
     );
   } finally {
     await portal.unmount();

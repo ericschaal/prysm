@@ -442,6 +442,11 @@ button.link {
   align-items: flex-end;
   min-height: calc(2 * var(--text-small) * var(--leading));
 }
+/* What to check, under a problem, in the usual colour. */
+.form-status-hint {
+  display: block;
+  color: var(--text-2);
+}
 .form-status:focus {
   outline: none;
 }
@@ -2246,9 +2251,202 @@ fieldset > .help {
   container-type: inline-size;
   padding-top: 0;
 }
-.section-editor .intro {
-  margin-bottom: var(--space-6);
+/*
+ * Whether the section works, first on its page: a 16:9 tile (the live
+ * picture, or the section's mark) beside a title and one line, and a
+ * chevron when the whole card opens the large preview. The tile keeps the
+ * card's height, so it changes in place.
+ */
+.section-status {
+  margin: var(--space-4) 0 var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line) inset;
+  transition: background-color var(--duration) var(--ease-out);
+}
+.section-status-main {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-3);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+}
+button.section-status-main {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  button.section-status-main:hover:enabled {
+    background: none;
+  }
+  button.section-status-main:hover .section-status-title {
+    color: var(--accent-text);
+  }
+}
+button.section-status-main:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.section-status[data-tone='problem'] {
+  background: var(--danger-soft);
+}
+.section-status[data-tone='warning'] {
+  background: var(--warning-soft);
+}
+.section-status-tile {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  background: var(--stage);
+  color: var(--stage-text);
+}
+/* The lights have no picture: their mark, as on Home's path. */
+.section-status[data-section='output'] .section-status-main {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+.section-status[data-section='output'] button.section-status-main {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+.section-status[data-section='output'] .section-status-tile {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: none;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  color: var(--text-3);
+}
+.section-status-tile > * {
+  grid-area: 1 / 1;
+}
+.section-status-tile canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: fade-in var(--duration-slow) var(--ease-out) both;
+}
+.section-status-tile svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.section-status[data-tone='ok'] .section-status-tile {
+  color: var(--success);
+}
+.section-status[data-tone='busy'] .section-status-tile svg {
+  animation: breathe 1.6s var(--ease-in-out) infinite;
+}
+.section-status[data-tone='problem'] .section-status-tile {
+  color: var(--danger);
+}
+.section-status[data-tone='warning'] .section-status-tile {
+  color: var(--warning);
+}
+.section-status-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+/* The title with a dot in the status colour, as the save line has. */
+.section-status-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+.section-status-title::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.section-status[data-tone='ok'] .section-status-title::before {
+  background: var(--success);
+}
+.section-status[data-tone='busy'] .section-status-title::before {
+  background: var(--warning);
+  animation: breathe 1.2s var(--ease-in-out) infinite;
+}
+.section-status[data-tone='warning'] .section-status-title::before {
+  background: var(--warning);
+}
+.section-status[data-tone='problem'] .section-status-title {
+  color: var(--danger);
+}
+.section-status[data-tone='problem'] .section-status-title::before {
+  background: var(--danger);
+}
+.section-status-detail,
+.section-status-more {
   color: var(--text-2);
+  font-size: var(--text-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+}
+.section-status-more {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+/* The save bar stays in reach at the bottom while there is something to save. */
+.section-editor .page-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+.section-editor .page-actions[hidden] {
+  display: none;
+}
+.section-editor .page-actions > .form-status {
+  flex-basis: 100%;
+  min-height: 0;
+}
+.section-editor .page-actions > .form-status:empty {
+  display: none;
+}
+.section-editor .page-actions > .form-status button.link {
+  min-height: 44px;
+}
+/* Options most setups never change: one row, closed. */
+.advanced > .row-toggle {
+  min-height: 52px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.advanced > div {
+  padding-top: var(--space-4);
+}
+/* Straight after the preset rows, the toggle is one more row of them. */
+.picture-choice:has(+ .advanced) {
+  margin-bottom: 0;
+}
+.picture-choice + .advanced > .row-toggle {
+  border-top: 0;
+}
+/* Preset rows are one line each; only the ticked one says more. */
+.picture-choice .row-choice label {
+  min-height: 52px;
 }
 
 /* ── Settings and its pages: one column of rows in small-headed groups ── */
@@ -2464,11 +2662,6 @@ fieldset > .help {
   }
 }
 
-/* The live preview, from an editor: one row above the fields. */
-.editor-preview {
-  margin-bottom: var(--space-6);
-}
-
 /* ── Style, Detail and a calibration: sliders in one column, as Home's ──── */
 .sliders,
 .calibration-page {
@@ -2561,86 +2754,64 @@ fieldset > .help {
 }
 
 /* ── LED layout (WLED editor) ─────────────────────────────────────────── */
-/* The four counts sit around the screen drawing, each beside its edge. */
-.led-editor {
+/* Each edge's count sits on its own edge of the drawing. */
+.led-layout {
   display: grid;
-  grid-template-columns: minmax(76px, 1fr) minmax(0, 2.6fr) minmax(76px, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr) 72px;
   grid-template-areas:
     '. top .'
     'left screen right'
-    '. bottom .'
-    'caption caption caption';
+    '. bottom .';
   align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-3);
+  gap: var(--space-1) var(--space-2);
+  max-width: 480px;
+  margin: 0 auto;
 }
-.led-counts,
-.led-layout {
-  display: contents;
-}
-.led-count {
-  margin: 0;
-  gap: var(--space-1);
-}
-.led-count label {
-  font-size: var(--text-small);
-  color: var(--text-2);
-  text-align: center;
-}
-.led-count.field input:not([type='checkbox'], [type='range'], [type='radio']) {
-  padding-inline: var(--space-2);
-  text-align: center;
-}
-.led-count .field-error {
-  text-align: center;
-}
-.led-count-top {
+.led-edge-top {
   grid-area: top;
 }
-.led-count-right {
+.led-edge-right {
   grid-area: right;
 }
-.led-count-bottom {
+.led-edge-bottom {
   grid-area: bottom;
 }
-.led-count-left {
+.led-edge-left {
   grid-area: left;
 }
-.led-count-top,
-.led-count-bottom {
-  width: min(100%, 128px);
+.led-edge-top,
+.led-edge-bottom {
+  width: 88px;
   justify-self: center;
+}
+/* The label and note are read out; the place says which edge it is. */
+.led-count label,
+.led-count .field-note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.led-count.field {
+  margin: 0;
+}
+.led-count.field input:not([type='checkbox'], [type='range'], [type='radio']) {
+  min-height: 44px;
+  padding-inline: var(--space-2);
+  text-align: center;
 }
 .led-layout svg {
   grid-area: screen;
   display: block;
   width: 100%;
-  max-width: 340px;
   height: auto;
-  margin: 0 auto;
   overflow: visible;
 }
-.led-layout figcaption {
-  grid-area: caption;
+.leds > .field-note {
   margin-top: var(--space-2);
-  font-size: var(--text-small);
-  color: var(--text-3);
   text-align: center;
-}
-@container (max-width: 460px) {
-  .led-editor {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      'screen screen'
-      'caption caption'
-      'top top'
-      'left right'
-      'bottom bottom';
-    gap: var(--space-3);
-  }
-  .led-layout figcaption {
-    margin: 0 0 var(--space-2);
-  }
 }
 .screen {
   fill: var(--stage);
@@ -2652,6 +2823,9 @@ fieldset > .help {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.5px;
+}
+.screen-label[data-invalid='true'] {
+  fill: #ff8a98;
 }
 .screen-sublabel {
   fill: var(--stage-text);
@@ -2681,11 +2855,6 @@ fieldset > .help {
 .strip .arrow {
   fill: var(--text-2);
 }
-.strip .count {
-  fill: var(--text-2);
-  font-size: 14px;
-  font-weight: 600;
-}
 .start circle {
   fill: var(--accent-fill);
 }
@@ -2693,17 +2862,6 @@ fieldset > .help {
   fill: #fff;
   font-size: 11px;
   font-weight: 700;
-}
-.total {
-  margin: var(--space-2) 0 var(--space-4);
-  color: var(--text-2);
-  font-size: var(--text-small);
-  text-align: center;
-}
-.total strong {
-  color: var(--text);
-  font-weight: var(--weight-strong);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Motion ───────────────────────────────────────────────────────────── */

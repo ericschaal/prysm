@@ -22,7 +22,7 @@ export function Group({
   );
 }
 
-function ChevronIcon() {
+export function ChevronIcon() {
   return (
     <svg
       className="chevron"
@@ -132,7 +132,8 @@ export function RowChoice({
   /** The radio group's name: one per choice. */
   name: string;
   label: string;
-  about: string;
+  /** What choosing it means; absent: the label says enough. */
+  about?: string;
   /** What the option sets, quietly beside its label: `640 × 360 · 30 fps`. */
   facts?: string;
   checked: boolean;
@@ -149,7 +150,11 @@ export function RowChoice({
           checked={checked}
           disabled={disabled}
           aria-labelledby={`${id}-label`}
-          aria-describedby={facts ? `${id}-about ${id}-facts` : `${id}-about`}
+          aria-describedby={
+            [about && `${id}-about`, facts && `${id}-facts`]
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
           onChange={onChoose}
         />
         <span className="row-text">
@@ -167,9 +172,11 @@ export function RowChoice({
               {label}
             </span>
           )}
-          <span className="row-value" id={`${id}-about`}>
-            {about}
-          </span>
+          {about ? (
+            <span className="row-value" id={`${id}-about`}>
+              {about}
+            </span>
+          ) : null}
         </span>
         <CheckIcon />
       </label>
