@@ -9,9 +9,7 @@ import { FieldScopeProvider } from './form';
 import { useLiveProcessing, withCalibrations } from './live-processing';
 import {
   correctionLimits,
-  correctionOf,
   corrections,
-  nameOf,
   noCorrection,
   calibrationLimits,
   primaries,
@@ -138,9 +136,7 @@ export function CalibrationList({
                 key={`gone-${row.gone.calibration.id}`}
               >
                 <span className="row-text">
-                  <span className="row-label">
-                    {nameOf(row.gone.calibration)}
-                  </span>
+                  <span className="row-label">{row.gone.calibration.name}</span>
                   <span className="row-value" role="status">
                     Deleted.{' '}
                     {row.gone.undoable ? (
@@ -159,7 +155,7 @@ export function CalibrationList({
             ) : (
               <RowLink
                 key={row.calibration.id}
-                label={nameOf(row.calibration)}
+                label={row.calibration.name}
                 value={row.calibration.id === active ? 'In use' : 'Not in use'}
                 onClick={() => open(row.calibration.id)}
               />
@@ -216,7 +212,7 @@ export function CalibrationPage({
       </p>
     );
   const path = `processing.calibrations[${index}]`;
-  const correction = correctionOf(calibration);
+  const correction = calibration.correction;
   const inUse = active === id;
   function update(change: Partial<Calibration>, at: string) {
     live.slider.slide(

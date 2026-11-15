@@ -80,6 +80,16 @@ import {
 } from './dom';
 
 const capture = { kind: 'device', path: '/dev/video0' };
+const unchanged = { hue: 0, strength: 0 };
+/** A calibration's correction as the server sends it: every control. */
+const noCorrection = {
+  warmth: 0,
+  tint: 0,
+  midtones: 0,
+  red: unchanged,
+  green: unchanged,
+  blue: unchanged,
+};
 const output = {
   kind: 'wled',
   address: '192.0.2.1',
@@ -865,7 +875,7 @@ test('Open WLED derives http://host[:port]/ from the saved address', () => {
 });
 
 test('Settings keeps brightness and the calibration choice on Home; the picture saves live', async () => {
-  const calibrations = [{ id: 'ps5', name: 'PS5' }];
+  const calibrations = [{ id: 'ps5', name: 'PS5', correction: noCorrection }];
   const portal = await renderPortal(
     HeadlessWebPortal,
     { capture, output },
@@ -1637,7 +1647,7 @@ test('fields the forms do not show are preserved on every save', async () => {
         processing: {
           ...snapshot.settings.processing,
           active_calibration: 'ps5',
-          calibrations: [{ id: 'ps5' }],
+          calibrations: [{ id: 'ps5', name: 'PS5', correction: noCorrection }],
         },
       },
     }),
@@ -1665,7 +1675,7 @@ test('fields the forms do not show are preserved on every save', async () => {
         ...defaultProcessing,
         sample_density: 20,
         active_calibration: 'ps5',
-        calibrations: [{ id: 'ps5' }],
+        calibrations: [{ id: 'ps5', name: 'PS5', correction: noCorrection }],
       },
       colour: { calibration: 'warm' },
     });
@@ -2229,7 +2239,9 @@ test('Home holds the light card and the setup; the rest is in Settings', async (
         ...snapshot.settings,
         processing: {
           ...snapshot.settings.processing,
-          calibrations: [{ id: 'movie', name: 'Movie night' }],
+          calibrations: [
+            { id: 'movie', name: 'Movie night', correction: noCorrection },
+          ],
         },
       },
     }),
@@ -2761,8 +2773,8 @@ test('discovered names are kept in this browser: shown at once next time, droppe
 
 test('calibrations swap with one tap on Home, applied at once', async () => {
   const calibrations = [
-    { id: 'tv', name: 'TV' },
-    { id: 'ps5', name: 'PS5' },
+    { id: 'tv', name: 'TV', correction: noCorrection },
+    { id: 'ps5', name: 'PS5', correction: noCorrection },
   ];
   const portal = await renderPortal(
     HeadlessWebPortal,

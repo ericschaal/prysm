@@ -1,9 +1,9 @@
 import type { ThunkAction, UnknownAction } from '@reduxjs/toolkit';
 import {
   ApplicationError,
+  failureOf,
   type ApplicationClient,
   type CalibrationPattern,
-  type Failure,
   type LightingTarget,
   type Settings,
 } from '@prysm/application-client';
@@ -38,14 +38,7 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
         dispatch(actions.commandSucceeded(id));
         return result;
       } catch (error) {
-        const failure: Failure =
-          error instanceof ApplicationError
-            ? error.failure
-            : {
-                kind: 'internal',
-                message: error instanceof Error ? error.message : String(error),
-              };
-        dispatch(actions.commandFailed({ id, failure }));
+        dispatch(actions.commandFailed({ id, failure: failureOf(error) }));
         throw error;
       }
     };
@@ -54,6 +47,8 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
    * Replace one adapter section of the observed settings, keeping the rest.
    * `expected` is the revision the edit started from; a newer observed
    * revision is a conflict the user resolves, never a silent overwrite.
+   * While not connected the observed settings may be stale, so nothing is
+   * merged into them.
    */
   function replaceSection(
     kind: CommandKind,
@@ -61,19 +56,20 @@ export function createCommands<C, O>(actions: ApplicationActions<C, O>) {
     change: (settings: Settings<C, O>) => Settings<C, O>,
   ): ApplicationThunk<C, O, Promise<number>> {
     return submit(kind, (client, state) => {
-      const snapshot = state.connection.snapshot;
-      if (!snapshot || snapshot.revision !== expected)
+      const { status, snapshot } = state.connection;
+      const live = status === 'connected' ? snapshot : null;
+      if (!live || live.revision !== expected)
         return Promise.reject(
           new ApplicationError({
             kind: 'stale_revision',
             message: 'Settings changed; review them before saving again.',
-            ...(snapshot ? { current: snapshot.revision } : {}),
+            ...(live ? { current: live.revision } : {}),
           }),
         );
       return client.replaceSettings(
         expected,
         // Settings are JSON; `structuredClone` needs Chromium 98, newer than many TVs.
-        change(JSON.parse(JSON.stringify(snapshot.settings)) as Settings<C, O>),
+        change(JSON.parse(JSON.stringify(live.settings)) as Settings<C, O>),
       );
     });
   }

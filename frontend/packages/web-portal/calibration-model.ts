@@ -32,18 +32,6 @@ export const noCorrection: CorrectionControls = {
   blue: unchanged,
 };
 
-/** A calibration's correction with absent controls as 0, as the engine reads it. */
-export function correctionOf(calibration: Calibration): CorrectionControls {
-  const correction: Partial<CorrectionControls> = calibration.correction ?? {};
-  return {
-    ...noCorrection,
-    ...correction,
-    red: { ...unchanged, ...correction.red },
-    green: { ...unchanged, ...correction.green },
-    blue: { ...unchanged, ...correction.blue },
-  };
-}
-
 /**
  * A new random id (UUID v4). `crypto.randomUUID` needs a secure context,
  * which a portal on the LAN over plain HTTP is not; `getRandomValues` is not
@@ -76,10 +64,6 @@ export function freeName(base: string, calibrations: readonly Calibration[]) {
     if (!names.has(name)) return name;
   }
 }
-
-/** Names are required, but a list edited by hand may lack one. */
-export const nameOf = (calibration: Calibration): string =>
-  calibration.name ?? calibration.id;
 
 export const signed = (value: number) =>
   value > 0 ? `+${value}` : String(value);

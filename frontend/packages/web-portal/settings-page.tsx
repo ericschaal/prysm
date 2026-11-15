@@ -15,7 +15,6 @@ import { useDeviceName } from './device-name';
 import { CheckboxField } from './fields';
 import { FieldScopeProvider, useFieldErrors, useFieldScope } from './form';
 import { BlackBars } from './processing';
-import { nameOf } from './calibration-model';
 import { Group, RowFact, RowLink, RowSwitch } from './rows';
 import { styles } from './styles';
 import { currentTheme, themeChoices } from './theme';
@@ -121,7 +120,7 @@ export function SettingsPage<
   );
   let calibrationLine = 'None yet';
   if (calibrations.length)
-    calibrationLine = `${calibrations.length} ${calibrations.length === 1 ? 'calibration' : 'calibrations'} · ${active ? `${nameOf(active)} in use` : 'none in use'}`;
+    calibrationLine = `${calibrations.length} ${calibrations.length === 1 ? 'calibration' : 'calibrations'} · ${active ? `${active.name} in use` : 'none in use'}`;
   const theme = themeChoices.find(({ value }) => value === currentTheme());
   return (
     <>

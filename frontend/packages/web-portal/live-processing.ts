@@ -177,6 +177,15 @@ export function rebased(
   return next as unknown as ProcessingControls;
 }
 
+/** A save that failed, shown until the draft changes or it is retried. */
+interface FailedSave {
+  /** The draft that failed; not saved again until it changes. */
+  value: ProcessingControls;
+  message: string;
+  /** The control where a retry is offered, when the save may work again. */
+  retryAt: string | null;
+}
+
 /**
  * The processing section as a draft that saves itself: each change is applied
  * shortly after the user stops adjusting it, and `commit` applies one at once.
@@ -212,13 +221,9 @@ export function useLiveProcessing({
   });
   const errors = useFieldErrors();
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState('');
-  /** The draft that last failed; not retried until it changes. */
-  const [failed, setFailed] = useState<ProcessingControls | null>(null);
+  const [failed, setFailed] = useState<FailedSave | null>(null);
   /** The control last changed, where a failed save is shown. */
   const changedRef = useRef('');
-  /** A failed save that may work again, offered at its control. */
-  const [retryAt, setRetryAt] = useState<string | null>(null);
   /** Refused as stale at this revision: wait for newer settings. */
   const [staleAt, setStaleAt] = useState<number | null>(null);
   /** A slider is held: its value is tried on the lights and saved on release. */
@@ -238,7 +243,7 @@ export function useLiveProcessing({
     draft.syncing ||
     staleAt === revision ||
     invalid ||
-    (failed !== null && same(failed, draft.draft));
+    (failed !== null && same(failed.value, draft.draft));
 
   // `value` decides the calibrations: an absent one was removed.
   const whole = (value: ProcessingControls): Processing => ({
@@ -279,9 +284,7 @@ export function useLiveProcessing({
       setTried(false);
       const next = await save(revision, whole(value));
       draft.saved(value, next);
-      setFailure('');
       setFailed(null);
-      setRetryAt(null);
       return true;
     } catch (error) {
       const reason = failureOf(error);
@@ -293,9 +296,11 @@ export function useLiveProcessing({
       const invalid = reason.kind === 'invalid';
       const at = (invalid && reason.field) || changedRef.current;
       if (at) errors.setServer({ [at]: invalid ? refusedValue : 'Not saved.' });
-      setRetryAt(at && !invalid ? at : null);
-      setFailed(value);
-      setFailure(saveProblem(reason));
+      setFailed({
+        value,
+        message: saveProblem(reason),
+        retryAt: at && !invalid ? at : null,
+      });
       return false;
     } finally {
       setBusy(false);
@@ -322,6 +327,7 @@ export function useLiveProcessing({
   }, [draft.draft, pending, blocked, held, revision]);
 
   const { clearServer } = errors;
+  const retryAt = failed?.retryAt ?? null;
   const retry = useMemo(
     () =>
       retryAt === null
@@ -331,8 +337,6 @@ export function useLiveProcessing({
             run: () => {
               clearServer();
               setFailed(null);
-              setFailure('');
-              setRetryAt(null);
             },
           },
     [retryAt, clearServer],
@@ -345,7 +349,7 @@ export function useLiveProcessing({
     draft.setDraft(next);
   }
   let state: SaveState = 'idle';
-  if (failure || invalid) state = 'failed';
+  if (failed || invalid) state = 'failed';
   else if (busy || draft.syncing || draft.dirty) state = 'saving';
   return {
     value: draft.draft,
@@ -356,7 +360,7 @@ export function useLiveProcessing({
     saving: busy || draft.syncing,
     /** For the page's save status: changes apply by themselves. */
     state,
-    failure,
+    failure: failed?.message ?? '',
     /** Try the failed save again, if it may work. */
     retry: retry?.run,
     scope,

@@ -4,6 +4,10 @@ import type { ApplicationSnapshot, Failure } from '@prysm/application-client';
 export interface Connection<C, O> {
   generation: number;
   status: 'connecting' | 'connected' | 'disconnected';
+  /**
+   * The newest state of this stream (`generation`), kept while it
+   * reconnects; current only while `status` is `connected`.
+   */
   snapshot: ApplicationSnapshot<C, O> | null;
   /** Why the stream was lost; kept while it reconnects. */
   error: Failure | null;
@@ -87,7 +91,6 @@ export function createApplicationSlice<C, O>() {
       ) {
         if (!current(state, action.payload.generation)) return;
         state.connection.status = 'disconnected';
-        state.connection.snapshot = null;
         state.connection.error = action.payload.failure;
       },
       commandSubmitted(
@@ -117,9 +120,6 @@ export function createApplicationSlice<C, O>() {
       selectConnection: (state) => state.connection,
       selectSnapshot: (state) => state.connection.snapshot,
       selectLastCommand: (state) => state.lastCommand,
-      selectCanCommand: (state) =>
-        state.connection.status === 'connected' &&
-        state.connection.snapshot !== null,
     },
   });
 }

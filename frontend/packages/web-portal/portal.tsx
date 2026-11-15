@@ -102,12 +102,9 @@ function PortalFrame() {
   const { application } = host;
   const connection = useApplication(application);
   const dispatch = useApplicationDispatch<AdapterSection, AdapterSection>();
-  // Keep showing the last state (and every draft) while reconnecting.
-  const [last, setLast] = useState<Snapshot | null>(null);
-  if (connection.snapshot && connection.snapshot !== last)
-    setLast(connection.snapshot);
-  const snapshot = connection.snapshot ?? last;
-  const online = connection.status === 'connected' && !!connection.snapshot;
+  // The last state (and every draft) stays shown while reconnecting.
+  const { snapshot } = connection;
+  const online = connection.status === 'connected';
   // Setup opens by itself when the first state lacks capture or lights.
   const [setup, setSetup] = useState<'pending' | 'open' | 'closed'>('pending');
   if (setup === 'pending' && snapshot)

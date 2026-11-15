@@ -65,7 +65,7 @@ test('calibrations are rows; each opens its page, saved live, deleted with Undo'
           ...snapshot.settings.processing,
           calibrations: [
             { id: 'movie', name: 'Movie night', correction: zero },
-            { id: 'ps5', name: 'PS5' },
+            { id: 'ps5', name: 'PS5', correction: zero },
           ],
           active_calibration: 'movie',
         },

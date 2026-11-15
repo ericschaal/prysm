@@ -126,6 +126,25 @@ test('each runtime has its own store and the stream reconnects after loss', asyn
   second.release();
 });
 
+test('a lost stream keeps its last state but saves nothing into it', async () => {
+  const fixture = fakeApplicationPort({ capture, output });
+  const { application, release, state } = await connected(fixture);
+  fixture.drop();
+  await tick();
+  assert.equal(state().connection.status, 'disconnected');
+  assert.deepEqual(state().connection.snapshot.settings.capture, capture);
+  await assert.rejects(
+    application.store.dispatch(
+      application.commands.configureCapture(0, capture),
+    ),
+    (error) =>
+      error instanceof ApplicationError &&
+      error.failure.kind === 'stale_revision',
+  );
+  assert.deepEqual(fixture.calls, ['observe', 'unsubscribe']);
+  release();
+});
+
 test('forbidden streams stop retrying', async () => {
   const fixture = fakeApplicationPort({});
   let attempts = 0;

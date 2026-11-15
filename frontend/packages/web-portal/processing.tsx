@@ -10,7 +10,6 @@ import {
   withCalibrations,
   type ProcessingControls,
 } from './live-processing';
-import { nameOf } from './calibration-model';
 import { RowChoice, RowDisclosure } from './rows';
 import { useSaveReport } from './save-state';
 import { chooseStyle, styleOrder, styleValues, styles } from './styles';
@@ -79,7 +78,7 @@ export function QuickPicture({
   const choices = [
     ...calibrations.map((calibration) => ({
       id: calibration.id,
-      label: nameOf(calibration),
+      label: calibration.name,
     })),
     { id: undefined, label: 'No correction' },
   ];

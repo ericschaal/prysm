@@ -16,7 +16,6 @@ import { useNav, usePortal } from './portal-context';
 import type { Place } from './routes';
 import { PreviewPanel } from './preview';
 import { Detail, QuickPicture, StyleSettings } from './processing';
-import { nameOf } from './calibration-model';
 import { CalibrationList, CalibrationPage } from './calibrations';
 import { SaveStatus, SaveStatusProvider } from './save-status';
 import { SectionEditor } from './section-editor';
@@ -30,7 +29,7 @@ function activeCalibration(processing: Processing) {
   const active = processing.calibrations?.find(
     (calibration) => calibration.id === processing.active_calibration,
   );
-  return active ? nameOf(active) : null;
+  return active ? active.name : null;
 }
 
 /** A page under Settings that saves as it changes: its title and status. */
@@ -250,7 +249,7 @@ export function CalibrationRoute() {
   const calibration = live.processing.calibrations?.find(
     (item) => item.id === id,
   );
-  const heading = calibration ? nameOf(calibration) : 'Calibration';
+  const heading = calibration ? calibration.name : 'Calibration';
   return (
     <LivePage
       className="calibration-page"

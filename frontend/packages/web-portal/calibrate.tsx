@@ -41,9 +41,7 @@ import {
 } from './live-processing';
 import {
   correctionLimits,
-  correctionOf,
   freeName,
-  nameOf,
   newCalibrationId,
   noCorrection,
   calibrationLimits,
@@ -324,10 +322,10 @@ export function CalibrateWizard({
     const calibration = {
       id,
       name: freeName(
-        source ? `${nameOf(source)} calibrated` : 'Calibrated',
+        source ? `${source.name} calibrated` : 'Calibrated',
         calibrations,
       ),
-      correction: source ? correctionOf(source) : noCorrection,
+      correction: source ? source.correction : noCorrection,
     };
     const previous = live.value.active_calibration;
     if (
@@ -355,7 +353,7 @@ export function CalibrateWizard({
     if (!draft) return;
     const next = {
       ...draft,
-      correction: { ...correctionOf(draft), ...change },
+      correction: { ...draft.correction, ...change },
     };
     // The lights follow a held slider at once; its release saves.
     live.slider.slide(
@@ -377,7 +375,7 @@ export function CalibrateWizard({
   }
   function finish() {
     if (!draft) return;
-    const typed = (calibrating?.name ?? nameOf(draft)).trim();
+    const typed = (calibrating?.name ?? draft.name).trim();
     if (nameProblem(typed, calibrationLimits.name)) {
       // The field says what is wrong, in its own note.
       focusField(sectionRef.current, 'calibration.name');
@@ -387,7 +385,7 @@ export function CalibrateWizard({
   }
   async function complete() {
     if (!draft) return false;
-    const typed = (calibrating?.name ?? nameOf(draft)).trim();
+    const typed = (calibrating?.name ?? draft.name).trim();
     const others = calibrations.filter(
       (calibration) => calibration.id !== draft.id,
     );
@@ -413,9 +411,8 @@ export function CalibrateWizard({
     const adjusted =
       !!draft &&
       ((startedWithRef.current !== null &&
-        !same(correctionOf(draft), startedWithRef.current)) ||
-        (calibrating?.name != null &&
-          calibrating.name.trim() !== nameOf(draft)));
+        !same(draft.correction, startedWithRef.current)) ||
+        (calibrating?.name != null && calibrating.name.trim() !== draft.name));
     if (adjusted) setConfirming(true);
     else setClosing('discard');
   }
@@ -631,7 +628,7 @@ function StartScreen({
               { value: '', label: 'New calibration' },
               ...calibrations.map((calibration) => ({
                 value: calibration.id,
-                label: nameOf(calibration),
+                label: calibration.name,
               })),
             ]}
             onChange={choose}
@@ -810,7 +807,7 @@ function StepScreen({
   const sectionIndex = sectionOrder.indexOf(current.section);
   const inSection = screens.filter((item) => item.section === current.section);
   const position = inSection.indexOf(current);
-  const values = draft ? correctionOf(draft) : noCorrection;
+  const values = draft ? draft.correction : noCorrection;
   const go = (to: number, from?: number) =>
     request(screens[to]!.pattern, { screen: to, returnTo: from });
   const range = (
@@ -890,7 +887,7 @@ function StepScreen({
           {heading('Calibration ended')}
           <p className="notice warning" role="alert">
             The TV no longer shows the patterns. Your changes so far are kept in
-            “{draft ? nameOf(draft) : 'your calibration'}”.
+            “{draft ? draft.name : 'your calibration'}”.
             {target !== 'processed' ? ` ${tvInstruction}` : ''}
           </p>
           {notices}
@@ -965,7 +962,7 @@ function StepScreen({
                     path="calibration.name"
                     label="Name"
                     help="A name you will recognise, such as Movie night or PS5."
-                    value={name ?? nameOf(draft)}
+                    value={name ?? draft.name}
                     required
                     check={(value) =>
                       nameProblem(value.trim(), calibrationLimits.name)
