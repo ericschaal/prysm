@@ -22,7 +22,7 @@ import {
 } from './calibrate-wizard';
 import { nameProblem } from './checks';
 import { RangeField, SelectField, TextField } from './fields';
-import { FieldScopeProvider, type FieldScope } from './form';
+import { FieldScopeProvider, focusField, type FieldScope } from './form';
 import { useLiveProcessing, withCalibrations } from './live-processing';
 import {
   correctionLimits,
@@ -43,19 +43,19 @@ import {
 
 /** What the TV shows for each pattern. */
 const patternLabels: Record<Pattern, string> = {
-  'gray-192': 'light gray',
+  'gray-192': 'light grey',
   red: 'red',
   yellow: 'yellow',
   green: 'green',
   cyan: 'cyan',
   blue: 'blue',
   magenta: 'magenta',
-  'blue-pair': 'moderate blue (left), vivid blue (right)',
-  'red-pair': 'moderate red (left), vivid red (right)',
-  'green-pair': 'moderate green (left), vivid green (right)',
-  coast: 'peach (left), teal (right)',
-  garden: 'rose (left), sage (right)',
-  dusk: 'amber (left), violet (right)',
+  'blue-pair': 'blue, moderate left, vivid right',
+  'red-pair': 'red, moderate left, vivid right',
+  'green-pair': 'green, moderate left, vivid right',
+  coast: 'peach left, teal right',
+  garden: 'rose left, sage right',
+  dusk: 'amber left, violet right',
   'review-grid': 'a grid of colours',
 };
 
@@ -77,20 +77,17 @@ const primaryOf = (section: Section) =>
 function wordsOf(screen: Screen): { title: string; lead: string } {
   const primary = primaryOf(screen.section);
   if (primary) {
-    const [left, right] = primary.hue;
     const colour = primary.label.toLowerCase();
-    // “More orange” → “orange”: the colour an end adds.
-    const leaning = (end: string) => end.replace(/^More /, '');
     return {
-      title: `Does the ${colour} on the wall match the ${colour} on the screen?`,
-      lead: `Compare each half of the TV with the wall behind it. If the wall’s ${colour} looks too ${leaning(right)}, move toward ${left}; if too ${leaning(left)}, toward ${right}. If it looks more vivid than the screen, move toward ${strengthEnds[0]}; if paler, toward ${strengthEnds[1]}.`,
+      title: `Does the ${colour} on the wall match the screen?`,
+      lead: 'Compare each half of the TV with the wall behind it.',
     };
   }
   switch (screen.section) {
     case 'white':
       return {
-        title: 'Does the wall look as neutral as the grey on the screen?',
-        lead: 'Ignore brightness. If the wall looks blue, raise Warmth; if it looks yellow, lower it. Use Tint for a green or pink cast. Small changes are enough.',
+        title: 'Does the wall look as neutral as the screen?',
+        lead: 'Compare only the colour, not the brightness. Small changes are enough.',
       };
     case 'checks': {
       const fixes = screen.fixes ?? [];
@@ -98,12 +95,12 @@ function wordsOf(screen: Screen): { title: string; lead: string } {
       if (fixes.includes('white'))
         return {
           title: 'Do both colours on the wall match the screen?',
-          lead: 'Compare each side of the wall with the same side of the TV. If a side looks off, adjust white or the colour it is closest to.',
+          lead: 'Compare each side of the wall with the same side of the TV. If one looks off, adjust white or its closest colour.',
         };
       const colour = patternLabels[screen.pattern];
       return {
         title: `Does the ${colour} on the wall match the screen?`,
-        lead: `${colour[0]!.toUpperCase()}${colour.slice(1)} is ${fixes.join(' and ')} together. If the wall’s ${colour} looks off, adjust one of them.`,
+        lead: `${colour[0]!.toUpperCase()}${colour.slice(1)} mixes ${fixes.join(' and ')}. If it looks off on the wall, adjust one of them.`,
       };
     }
     default:
@@ -133,6 +130,18 @@ function resetOf(
   };
 }
 
+/** “More orange” → “orange”: the colour a slider's end adds. */
+const leaning = (end: string) => end.replace(/^More /, '').toLowerCase();
+
+/** What to do with a slider, from what the wall shows: one line under it. */
+const hueGuidance = ([start, end]: readonly [string, string]) =>
+  `Too ${leaning(end)}? Toward ${leaning(start)}. Too ${leaning(start)}? Toward ${leaning(end)}.`;
+const whiteGuidance = {
+  warmth: 'Looks blue? Warm it up. Looks yellow? Cool it down.',
+  tint: 'Looks green? Toward pink. Looks pink? Toward green.',
+} as const;
+const strengthGuidance = `Too vivid? Toward ${leaning(strengthEnds[0])}. Too pale? Toward ${leaning(strengthEnds[1])}.`;
+
 /** A check's link back to what it is made of. */
 const fixLabels: Record<Adjustable, string> = {
   white: 'Adjust white',
@@ -144,9 +153,10 @@ const fixLabels: Record<Adjustable, string> = {
 const tvInstruction = 'Open Prysm on the TV and choose Calibrate.';
 const needsTv = `The TV needs to show the patterns with screen sync on. ${tvInstruction}`;
 
-const correction = Object.fromEntries(
-  corrections.map(([name, label, help]) => [name, { label, help }]),
-) as Record<keyof typeof correctionLimits, { label: string; help: string }>;
+/** The white controls' names: Warmth, Tint. */
+const correctionLabels = Object.fromEntries(
+  corrections.map(([name, label]) => [name, label]),
+) as Record<keyof typeof correctionLimits, string>;
 
 export interface CalibrateProps {
   processing: Processing;
@@ -193,6 +203,7 @@ export function CalibrateWizard({
   const { phase, busy, problem } = state;
   if (shown && !state.seen) dispatch({ type: 'patternSeen' });
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const headingId = useId();
 
   const calibrating = phase.kind === 'calibrating' ? phase : null;
@@ -207,6 +218,9 @@ export function CalibrateWizard({
   const locked = disabled || busy || live.saving;
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
+    // Each screen opens at its top, where its progress and question are,
+    // also after scrolling down to the last one's controls.
+    if (window.scrollY > 0) window.scrollTo({ top: 0 });
   }, [phase.kind, screen, ended]);
 
   /**
@@ -290,7 +304,8 @@ export function CalibrateWizard({
     const typed = (typedName ?? nameOf(draft)).trim();
     const invalid = nameProblem(typed, calibrationLimits.name);
     if (invalid) {
-      dispatch({ type: 'refused', problem: invalid });
+      // The field says what is wrong, in its own note.
+      focusField(sectionRef.current, 'calibration.name');
       return;
     }
     const others = calibrations.filter(
@@ -356,7 +371,9 @@ export function CalibrateWizard({
   if (phase.kind === 'done')
     content = (
       <>
-        <p className="eyebrow">Calibrate colours</p>
+        <div className="card-heading">
+          <p className="eyebrow">Calibrate colours</p>
+        </div>
         {heading(phase.title)}
         <p className="intro" role="status">
           {phase.message}
@@ -415,7 +432,11 @@ export function CalibrateWizard({
       />
     );
   return (
-    <section className="card calibrate" aria-labelledby={headingId}>
+    <section
+      ref={sectionRef}
+      className="card calibrate"
+      aria-labelledby={headingId}
+    >
       {content}
     </section>
   );
@@ -567,19 +588,20 @@ function StepScreen({
   leave: () => void;
 }) {
   const words = wordsOf(current);
+  const fixesId = useId();
   const sectionIndex = sectionOrder.indexOf(current.section);
   const inSection = screens.filter((item) => item.section === current.section);
   const position = inSection.indexOf(current);
   const values = draft ? correctionOf(draft) : noCorrection;
   const go = (to: number, from?: number) =>
     show(screens[to]!.pattern, false, to, from);
-  const slider = (control: keyof typeof correctionLimits) => (
+  const slider = (control: keyof typeof whiteGuidance) => (
     <RangeField
       key={control}
       className={`slider-${control}`}
       path={`${path}.${control}`}
-      label={correction[control].label}
-      help={correction[control].help}
+      label={correctionLabels[control]}
+      help={whiteGuidance[control]}
       value={values[control]}
       onChange={(value) => correct({ [control]: value })}
       onPress={live.slider.press}
@@ -599,6 +621,7 @@ function StepScreen({
       className={`slider-${name}-${control}`}
       path={`${path}.${name}.${control}`}
       label={endsLabel(ends)}
+      help={control === 'hue' ? hueGuidance(ends) : strengthGuidance}
       ends={ends}
       value={values[name][control]}
       onChange={(value) =>
@@ -616,7 +639,11 @@ function StepScreen({
     <>
       <div className="card-heading">
         <p className="eyebrow">
-          Calibrate colours · step {sectionIndex + 1} of {sectionOrder.length}
+          Calibrate colours
+          <span className="eyebrow-step">
+            {' '}
+            · step {sectionIndex + 1} of {sectionOrder.length}
+          </span>
         </p>
         <button
           type="button"
@@ -635,6 +662,9 @@ function StepScreen({
             aria-current={index === sectionIndex ? 'step' : undefined}
           >
             {sections[id]}
+            {index === sectionIndex && inSection.length > 1
+              ? ` · ${position + 1} of ${inSection.length}`
+              : null}
           </li>
         ))}
       </ol>
@@ -670,9 +700,6 @@ function StepScreen({
             role="status"
           >
             On your TV: {patternLabels[current.pattern]}
-            {inSection.length > 1
-              ? ` (${position + 1} of ${inSection.length})`
-              : ''}
           </p>
           <p className="intro">{words.lead}</p>
           {draft ? (
@@ -690,33 +717,24 @@ function StepScreen({
                     {primarySlider(primary.name, 'strength', strengthEnds)}
                   </>
                 ) : null}
-                {reset ? (
-                  <div className="calibrate-reset">
-                    <button
-                      type="button"
-                      className="quiet"
-                      disabled={locked || !reset.changed}
-                      onClick={() => correct(reset.to)}
-                    >
-                      Reset
-                    </button>
-                  </div>
-                ) : null}
                 {current.fixes ? (
-                  <p className="calibrate-fixes">
-                    Not quite?
+                  <div
+                    className="calibrate-fixes"
+                    role="group"
+                    aria-labelledby={fixesId}
+                  >
+                    <p id={fixesId}>Not quite?</p>
                     {current.fixes.map((fix) => (
                       <button
                         key={fix}
                         type="button"
-                        className="link"
                         disabled={locked}
                         onClick={() => go(screenOf(fix), screen)}
                       >
                         {fixLabels[fix]}
                       </button>
                     ))}
-                  </p>
+                  </div>
                 ) : null}
                 {review ? (
                   <TextField
@@ -725,6 +743,9 @@ function StepScreen({
                     help="A name you will recognise, such as Movie night or PS5."
                     value={name ?? nameOf(draft)}
                     required
+                    check={(value) =>
+                      nameProblem(value.trim(), calibrationLimits.name)
+                    }
                     onChange={(value) =>
                       dispatch({ type: 'named', name: value })
                     }
@@ -737,15 +758,28 @@ function StepScreen({
               This calibration was deleted elsewhere. Cancel to finish.
             </p>
           )}
-          <button
-            type="button"
-            className="compare"
-            aria-pressed={uncorrected}
-            disabled={locked}
-            onClick={() => show(current.pattern, !uncorrected)}
-          >
-            Show without correction
-          </button>
+          {/* Compare and Reset in one row: used often, always in the same place. */}
+          <div className="calibrate-tools">
+            <button
+              type="button"
+              className="compare"
+              aria-pressed={uncorrected}
+              disabled={locked}
+              onClick={() => show(current.pattern, !uncorrected)}
+            >
+              Show without correction
+            </button>
+            {reset && draft ? (
+              <button
+                type="button"
+                className="quiet"
+                disabled={locked || !reset.changed}
+                onClick={() => correct(reset.to)}
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
           {notices}
           <div className="actions">
             {screen > 0 && returnTo === null ? (

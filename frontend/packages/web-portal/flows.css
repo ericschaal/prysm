@@ -181,9 +181,39 @@
 }
 
 /* ── Calibrate: attention on the TV ───────────────────────────────────── */
+/*
+ * One column whose margins add up as written (no collapsing), so every
+ * screen keeps the same rhythm: question, pattern, lead, controls, tools.
+ */
+.calibrate {
+  display: flex;
+  flex-direction: column;
+}
+.calibrate > * {
+  min-width: 0;
+}
+/* As tall with or without its button: the eyebrow never moves between screens. */
+.calibrate .card-heading {
+  min-height: var(--hit);
+}
+.calibrate h2 + .notice {
+  margin-top: var(--space-4);
+}
+/* The step count is in the progress bar too: on a small phone, only there. */
+@container (max-width: 340px) {
+  .calibrate .eyebrow-step {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+/* The swatch sits on the first line when the pattern's words wrap. */
 .calibrate-pattern {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: var(--space-2);
   margin-top: var(--space-3);
   color: var(--text-2);
@@ -193,10 +223,11 @@
   flex: none;
   width: 14px;
   height: 14px;
+  margin-top: calc(var(--leading) * 0.5em - 7px);
   border-radius: 50%;
   background: var(--swatch, #c0c0c0);
   box-shadow:
-    0 0 0 1px rgb(255 255 255 / 0.15) inset,
+    0 0 0 1px var(--line-strong) inset,
     0 0 12px var(--swatch, transparent);
 }
 .calibrate-pattern[data-pattern='gray-192'] {
@@ -226,7 +257,7 @@
 .calibrate-pattern[data-pattern='dusk']::before,
 .calibrate-pattern[data-pattern='review-grid']::before {
   background: linear-gradient(90deg, var(--swatch-a) 50%, var(--swatch-b) 50%);
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.15) inset;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
 }
 .calibrate-pattern[data-pattern='red-pair'] {
   --swatch-a: #b45a5c;
@@ -259,9 +290,6 @@
 .calibrate .help {
   margin-bottom: var(--space-6);
 }
-.calibrate-controls {
-  margin-top: var(--space-2);
-}
 /* Larger thumbs: these sliders are used on a phone while looking at the TV. */
 .calibrate .range input {
   height: 52px;
@@ -274,6 +302,13 @@
 .calibrate .range input::-moz-range-thumb {
   width: 30px;
   height: 30px;
+}
+/* An edge, so a track's pale middle stays a line on a light page. */
+.calibrate .range input::-webkit-slider-runnable-track {
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.calibrate .range input::-moz-range-track {
+  box-shadow: 0 0 0 1px var(--line) inset;
 }
 /* Tracks that show which way each slider turns the colour; no fill: 0 is the middle. */
 .slider-warmth input {
@@ -300,39 +335,80 @@
 .slider-blue-strength input {
   --track: linear-gradient(90deg, #8890b4, #3c5cf0);
 }
-/* Reset sits under the sliders it resets, quiet until needed. */
-.calibrate-reset {
-  display: flex;
-  justify-content: flex-end;
-  margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-3)) var(--space-4) 0;
-}
-.calibrate-reset button {
-  font-size: var(--text-small);
-}
-/* A check's links back to the colours it is made of. */
+/* A check's ways back to the colours it is made of: whole buttons, in even rows. */
 .calibrate-fixes {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-4);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2);
   margin-bottom: var(--space-6);
-  color: var(--text-2);
 }
-.calibrate-fixes button.link {
-  min-height: var(--hit);
+.calibrate-fixes > p {
+  grid-column: 1 / -1;
+  margin-bottom: var(--space-1);
+  font-weight: 500;
 }
-button.compare {
-  width: 100%;
-  margin-top: var(--space-2);
+.calibrate-fixes button {
+  padding-inline: var(--space-3);
+}
+/*
+ * Compare and Reset: one row under the controls, in the same place on every
+ * screen. Compare is used all the time, so it is the large one.
+ */
+.calibrate-tools {
+  display: flex;
+  gap: var(--space-2);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+}
+.calibrate-tools .compare {
+  flex: 1 1 auto;
+}
+.calibrate-tools .quiet {
+  flex: none;
+  margin-right: calc(-1 * var(--space-3));
+}
+/* On, it is ticked and tinted: the wall shows no correction now. */
+button.compare::before,
+button.compare::after {
+  content: '';
+  flex: none;
+  width: 6px;
+}
+button.compare::before {
+  height: 11px;
+  margin-top: -3px;
+  border-right: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  transform: rotate(45deg);
 }
 button.compare[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+button.compare[aria-pressed='true']::before {
+  border-color: currentColor;
+}
+/*
+ * A TV request or a save takes the buttons out for a moment: they dim only
+ * if it lasts, so quick ones do not flicker. Back to enabled is immediate.
+ */
+.calibrate button:disabled {
+  transition-delay: 0s, 0s, 0s, 0s, 160ms, 0s;
+}
 .calibrate .actions > .primary,
 .setup .actions > .primary {
   min-width: 140px;
+}
+.calibrate .actions {
+  margin-top: var(--space-4);
+}
+@media (min-width: 641px) {
+  .calibrate-tools .compare {
+    flex: none;
+  }
+  .calibrate-tools .quiet {
+    margin-left: auto;
+  }
 }
 
 /* ── Phones ───────────────────────────────────────────────────────────── */
@@ -366,6 +442,23 @@ button.compare[aria-pressed='true'] {
   .setup .actions > .primary,
   .calibrate .actions > .primary {
     flex: 2 1 auto;
+  }
+  /*
+   * Calibrate fills the screen, so its actions rest at the bottom on every
+   * screen, short or long: Looks right never moves under the thumb, and a
+   * notice above it pushes nothing.
+   */
+  .portal:has(> main > .calibrate) {
+    display: flex;
+    flex-direction: column;
+    min-height: 100svh;
+    padding-bottom: 0;
+  }
+  .portal:has(> main > .calibrate) > main {
+    flex: 1 0 auto;
+  }
+  .calibrate .actions {
+    margin-top: auto;
   }
 }
 

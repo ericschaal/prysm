@@ -85,7 +85,6 @@ export type WizardAction =
   | { type: 'requestFailed'; problem: string }
   | { type: 'started'; draftId: string; previous: string | undefined }
   | { type: 'named'; name: string }
-  | { type: 'refused'; problem: string }
   /** Finish or Cancel: calibration is being ended on the TV. */
   | { type: 'ending' }
   | { type: 'ended'; title: string; message: string };
@@ -144,8 +143,6 @@ export function wizardReducer(
       return phase.kind === 'calibrating'
         ? { ...state, problem: '', phase: { ...phase, name: action.name } }
         : state;
-    case 'refused':
-      return { ...state, problem: action.problem };
     case 'ending':
       return { ...state, busy: true };
     case 'ended':

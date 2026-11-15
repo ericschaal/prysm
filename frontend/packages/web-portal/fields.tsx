@@ -112,16 +112,21 @@ export function TextField({
   value,
   onChange,
   required = false,
+  check,
   placeholder,
 }: FieldProps & {
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
+  /** The text's own problem, in place of the required one. */
+  check?: (value: string) => string | null;
   placeholder?: string;
 }) {
   const field = useField(path, help);
-  const missing = required && !value.trim();
-  useCheck(path, missing ? 'Enter a value.' : null);
+  let problem: string | null = null;
+  if (check) problem = check(value);
+  else if (required && !value.trim()) problem = 'Enter a value.';
+  useCheck(path, problem);
   return (
     <div className={classes('field', className)}>
       <label htmlFor={field.id}>{label}</label>

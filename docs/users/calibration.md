@@ -35,8 +35,9 @@ have not been tested on a TV with Prysm 1.x.
    **Reset** puts the sliders on the screen you are on back to 0.
 5. Press Back on the TV to leave. The lights stay on.
 
-Changes show on the wall as you move a slider. A button compares the wall
-without the calibration.
+Changes show on the wall as you move a slider; the line under each slider
+says which way to move it. **Show without correction** compares the wall
+without the calibration; it shows a tick while it is on.
 
 **Cancel** deletes the new calibration and brings back the one you used
 before. If calibrating ends on the TV side, the phone offers to resume and

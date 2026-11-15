@@ -15,6 +15,7 @@ import {
   $$,
   button,
   edit,
+  errorOf,
   field,
   openPage,
   renderPortal,
@@ -50,15 +51,16 @@ const processing = (fixture) => fixture.snapshot().settings.processing;
 const patterns = (fixture) =>
   fixture.calls.filter((call) => call.startsWith('calibration:'));
 const heading = () => $('.calibrate h2').textContent;
+const step = () => $('.setup-steps [aria-current="step"]').textContent;
 const sliders = () =>
   $$('.calibrate input[type="range"]').map((input) => input.name);
 const draftField = (name) =>
   field(`processing.calibrations[0].correction.${name}`);
 const questions = {
-  white: 'Does the wall look as neutral as the grey on the screen?',
-  red: 'Does the red on the wall match the red on the screen?',
-  green: 'Does the green on the wall match the green on the screen?',
-  blue: 'Does the blue on the wall match the blue on the screen?',
+  white: 'Does the wall look as neutral as the screen?',
+  red: 'Does the red on the wall match the screen?',
+  green: 'Does the green on the wall match the screen?',
+  blue: 'Does the blue on the wall match the screen?',
   yellow: 'Does the yellow on the wall match the screen?',
   mixed: 'Do both colours on the wall match the screen?',
   review: 'Name your calibration',
@@ -142,8 +144,8 @@ test('a new calibration is made step by step and finished under its name', async
       uncorrected: false,
     });
     assert.equal(heading(), questions.white);
-    assert.equal($('.calibrate-pattern').textContent, 'On your TV: light gray');
-    assert.equal($('.setup-steps [aria-current="step"]').textContent, 'White');
+    assert.equal($('.calibrate-pattern').textContent, 'On your TV: light grey');
+    assert.equal(step(), 'White');
     assert.deepEqual(sliders(), [
       'processing.calibrations[0].correction.warmth',
       'processing.calibrations[0].correction.tint',
@@ -176,7 +178,7 @@ test('a new calibration is made step by step and finished under its name', async
     assert.equal(heading(), questions.red);
     assert.equal(
       $('.calibrate-pattern').textContent,
-      'On your TV: moderate red (left), vivid red (right)',
+      'On your TV: red, moderate left, vivid right',
     );
     assert.deepEqual(sliders(), [
       'processing.calibrations[0].correction.red.hue',
@@ -184,6 +186,11 @@ test('a new calibration is made step by step and finished under its name', async
     ]);
     const hue = draftField('red.hue');
     assert.equal(hue.labels[0].textContent, 'More pink or more orange');
+    // What to do with each slider is the line under it.
+    assert.equal(
+      document.getElementById(hue.getAttribute('aria-describedby')).textContent,
+      'Too orange? Toward pink. Too pink? Toward orange.',
+    );
     assert.deepEqual(
       $$('[aria-hidden="true"]', hue.closest('.range')).map(
         (end) => end.textContent,
@@ -218,11 +225,8 @@ test('a new calibration is made step by step and finished under its name', async
     // A check has no sliders: it asks, and links to what it is made of.
     await press(button('Looks right'));
     assert.equal(heading(), questions.yellow);
-    assert.equal($('.setup-steps [aria-current="step"]').textContent, 'Checks');
-    assert.equal(
-      $('.calibrate-pattern').textContent,
-      'On your TV: yellow (1 of 6)',
-    );
+    assert.equal(step(), 'Checks · 1 of 6');
+    assert.equal($('.calibrate-pattern').textContent, 'On your TV: yellow');
     assert.deepEqual(sliders(), []);
     assert(!button('Reset'), 'nothing to reset on a check');
     assert.deepEqual(
@@ -260,9 +264,10 @@ test('a new calibration is made step by step and finished under its name', async
     assert(!button('Looks right'));
     await press(button('Back'));
     assert.equal(heading(), questions.mixed);
+    assert.equal(step(), 'Checks · 6 of 6');
     assert.equal(
       $('.calibrate-pattern').textContent,
-      'On your TV: amber (left), violet (right) (6 of 6)',
+      'On your TV: amber left, violet right',
     );
     await press(button('Looks right'));
     assert.deepEqual(patterns(fixture), [
@@ -286,7 +291,14 @@ test('a new calibration is made step by step and finished under its name', async
 
     const name = field('calibration.name');
     assert.equal(name.value, 'Calibrated');
+    // A name problem is said at the field, and Finish goes there.
+    await edit(name, '   ');
+    assert.equal(errorOf(name), 'Enter a name.');
+    await press(button('Finish'));
+    assert.equal(document.activeElement, name);
+    assert.equal(heading(), questions.review, 'not finished');
     await edit(name, '  Movie night ');
+    assert.equal(errorOf(name), undefined, 'the name is fine again');
     await press(button('Finish'));
     await act(async () => sleep(5));
     assert.deepEqual(processing(fixture).calibrations, [
@@ -543,11 +555,8 @@ test('the wizard moves only on what the TV confirms and ends once', () => {
   assert.equal(state.problem, 'no');
   assert.equal(wizardReducer(state, { type: 'requestSent' }).problem, '');
 
-  // Typing a name clears a name problem; the last screen is the review.
-  state = [
-    { type: 'refused', problem: 'Enter a name.' },
-    { type: 'named', name: 'Movie night' },
-  ].reduce(wizardReducer, state);
+  // Typing a name clears the problem; the last screen is the review.
+  state = wizardReducer(state, { type: 'named', name: 'Movie night' });
   assert.equal(state.problem, '');
   assert.equal(state.phase.name, 'Movie night');
 
