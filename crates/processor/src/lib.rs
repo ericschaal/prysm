@@ -13,9 +13,9 @@ pub use nodes::cut_strength;
 
 /// Stateful frame processor.
 ///
-/// Detection keeps the raw capture format; sampling reads RGB and NV12 in place
-/// (NV12 per row, without a full-frame conversion) and converts YUYV into reusable
-/// RGB storage, before reducing the picture to a grid and projecting onto the perimeter.
+/// Detection keeps the raw capture format; sampling reads RGB, YUYV and NV12 in
+/// place, without a full-frame conversion, before reducing the picture to a grid
+/// and projecting onto the perimeter.
 /// Colour focus, when set, then lets each sample keep the hue next to it.
 /// Pictures above 640x360 are averaged on a lattice of every nth pixel and row
 /// and get the grid of 640x360, so sampling costs about the same at any capture size.
@@ -62,10 +62,18 @@ struct FrameLayout {
     format: PixelFormat,
 }
 
+impl FrameLayout {
+    /// Whether frames of this layout can be sampled: compressed or empty
+    /// frames cannot.
+    fn is_sampled(self) -> bool {
+        self.width > 0 && self.height > 0 && self.format != PixelFormat::MJPEG
+    }
+}
+
 impl PrysmProcessor {
-    /// A processor that samples on up to three pool threads, one fewer than
-    /// the machine's cores, so the rest of the system keeps a core; on one
-    /// or two cores it uses the calling thread alone.
+    /// A processor that samples on half the machine's cores, at most three
+    /// threads, so the rest of the system keeps the other half; below four
+    /// cores it uses the calling thread alone.
     pub fn new(config: &Config) -> Self {
         Self::with_threads(config, Workers::automatic_threads())
     }
@@ -150,36 +158,25 @@ impl PrysmProcessor {
             let workers = std::mem::take(&mut self.workers);
             *self = Self::with_workers(&self.config, workers);
             self.frame_layout = Some(layout);
+            if !layout.is_sampled() {
+                tracing::error!(
+                    "Unsupported frames, shown as black: {} {}x{}",
+                    layout.format,
+                    layout.width,
+                    layout.height
+                );
+            }
         }
 
-        if frame.width() == 0 || frame.height() == 0 || frame.format() == PixelFormat::MJPEG {
-            tracing::error!(
-                "Unsupported frame: {} {}x{}",
-                frame.format(),
-                frame.width(),
-                frame.height()
-            );
-            return EdgeColors::black(
-                frame.width() as usize,
-                frame.height() as usize,
+        let mut edge_colors = if layout.is_sampled() {
+            self.sample(frame, now, &mut mark)
+        } else {
+            EdgeColors::black(
+                layout.width as usize,
+                layout.height as usize,
                 self.config.sample_density,
-            );
-        }
-
-        let mut view = FrameView::new(frame);
-
-        if let Some(ref mut detector) = self.black_bar_detector {
-            view = detector.process(view, now);
-            mark(Stage::BlackBars);
-        }
-
-        self.last_viewport = Some(view.viewport);
-        let mut edge_colors = self.sampler.process_with(&view, &self.workers, &mut mark);
-
-        if let Some(ref mut smoother) = self.temporal_smoother {
-            edge_colors = smoother.process(edge_colors, now);
-            mark(Stage::Smoothing);
-        }
+            )
+        };
 
         let config = &self.config;
         // Every output step is exact identity at its neutral setting.
@@ -197,6 +194,25 @@ impl PrysmProcessor {
                 strip.map_colors(|color| output_color(config, color));
             }
             mark(Stage::Output);
+        }
+        edge_colors
+    }
+
+    /// The stages before the output: black bars, sampling and smoothing.
+    fn sample(&mut self, frame: Frame, now: Instant, mut mark: impl FnMut(Stage)) -> EdgeColors {
+        let mut view = FrameView::new(frame);
+
+        if let Some(ref mut detector) = self.black_bar_detector {
+            view = detector.process(view, now);
+            mark(Stage::BlackBars);
+        }
+
+        self.last_viewport = Some(view.viewport);
+        let mut edge_colors = self.sampler.process_with(&view, &self.workers, &mut mark);
+
+        if let Some(ref mut smoother) = self.temporal_smoother {
+            edge_colors = smoother.process(edge_colors, now);
+            mark(Stage::Smoothing);
         }
         edge_colors
     }
@@ -391,5 +407,32 @@ mod correction_tests {
             corrected.r > corrected.b,
             "the warm calibration reaches the glow"
         );
+    }
+
+    #[test]
+    fn unsupported_frames_get_the_output_stage_of_a_black_picture() {
+        let config = Config {
+            remove_black_bars: false,
+            smoothing_seconds: prysm_core::SmoothingSeconds(0.0),
+            brightness_percent: prysm_core::BrightnessPercent(50),
+            dark_floor_percent: prysm_core::DarkFloorPercent(10),
+            ..Config::default()
+        };
+        let black = PrysmProcessor::new(&config)
+            .process_frame(Frame::fill(0, 4, 2, PixelFormat::RGB24).unwrap())
+            .top
+            .sample_at(0.5);
+        for frame in [
+            Frame::new(vec![], 4, 2, PixelFormat::MJPEG).unwrap(),
+            Frame::fill(0, 0, 2, PixelFormat::RGB24).unwrap(),
+        ] {
+            let mut processor = PrysmProcessor::new(&config);
+            let mut stages = Vec::new();
+            let output = processor.process_frame_staged(frame, Instant::now(), |stage| {
+                stages.push(stage);
+            });
+            assert_eq!(output.top.sample_at(0.5), black);
+            assert_eq!(stages, [Stage::Output]);
+        }
     }
 }

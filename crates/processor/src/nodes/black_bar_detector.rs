@@ -1,6 +1,6 @@
 use super::spatial_sampler::lattice_step;
 use crate::frames::{FrameView, Viewport, luma_at};
-use prysm_core::{Frame, PixelFormat, YuvRange};
+use prysm_core::{Edge, Frame, PixelFormat, YuvRange};
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -12,8 +12,42 @@ const OUTWARD_CONFIRM: Duration = Duration::from_millis(400);
 const EVIDENCE_GAP: Duration = Duration::from_millis(200);
 /// Boundaries closer than this many lattice steps are the same boundary.
 const DEAD_BAND: u32 = 2;
+/// Each edge is searched in this many sectors across it, so that a logo or a
+/// caption in one sector cannot set the boundary alone.
 const SECTORS: usize = 12;
+/// Blocks read across one sector's line; their median is the line's level.
 const SAMPLES: usize = 8;
+/// Sectors that must agree on a boundary in the first pass, over the whole frame.
+const FIRST_PASS_SUPPORT: usize = 2;
+/// Sectors that must agree in the second pass, over the provisional picture,
+/// spread across at least half of them: bars span the picture, overlays do not.
+const SUPPORT: usize = 4;
+
+/// The brightest limited-range luma that is black: black (16) plus noise.
+const LIMITED_BLACK_CEILING: u8 = 23;
+/// The brightest full-range luma that is black: black (0) plus noise.
+const FULL_BLACK_CEILING: u8 = 8;
+/// Luma above a bar's own level that is weak detail: enough to rule out a
+/// crop, not to place a boundary.
+const WEAK_LUMA: u8 = 3;
+/// Luma above a bar's own level that places a boundary.
+const STRONG_LUMA: u8 = 8;
+/// Chroma away from neutral that is colour, which black bars never have.
+const COLORED: u8 = 8;
+/// Lines without detail that end a run of detail, so grain does not split it.
+const RUN_GAP: u32 = 3;
+
+/// A frame is read on a grid of this many blocks each way to tell whether it
+/// is bright or colourful enough to show its bars at all.
+const INFORMATIVE_GRID: u64 = 12;
+/// Blocks of that grid that must be lit or coloured; fewer is a dark scene.
+const INFORMATIVE_BLOCKS: usize = 4;
+/// Luma above black, or chroma away from neutral, that makes a block lit or
+/// coloured.
+const INFORMATIVE_LEVEL: u8 = 16;
+
+/// The edges in the order of [`BlackBarDetector`]'s crops and [`viewport`].
+const EDGES: [Edge; 4] = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
 
 /// Estimates four independent picture boundaries and holds them through ambiguity.
 ///
@@ -145,11 +179,13 @@ impl BlackBarDetector {
             return [None; 4];
         }
         let full = Viewport::full_frame(frame.width(), frame.height());
-        let initial = std::array::from_fn(|edge| observe_edge(frame, step, edge, full, 2, 0));
+        let initial =
+            EDGES.map(|edge| observe_edge(frame, step, edge, full, FIRST_PASS_SUPPORT, 0));
         // Restrict the transverse search before requiring distributed support in an inset picture.
         let provisional = viewport(frame, initial.map(|value| value.unwrap_or(0))).unwrap_or(full);
-        std::array::from_fn(|edge| {
-            observe_edge(frame, step, edge, provisional, 4, self.edges[edge].current)
+        std::array::from_fn(|index| {
+            let current = self.edges[index].current;
+            observe_edge(frame, step, EDGES[index], provisional, SUPPORT, current)
         })
     }
 
@@ -197,6 +233,39 @@ fn viewport(frame: &Frame, [top, right, bottom, left]: [u32; 4]) -> Option<Viewp
     )
 }
 
+/// Run lengths of one edge's search, in lattice steps, scaled to the frame's
+/// short side so that every capture size decides alike.
+#[derive(Debug, Clone, Copy)]
+struct Runs {
+    /// Lines of detail that make picture: 1/18 of the short side (20 lines
+    /// at 360), at least 3, so a thin bright line does not.
+    sustained: u32,
+    /// Lines of strong detail that place a boundary: `sustained`, or in the
+    /// second pass a fifth of the picture's short side, capped at 1/9 of the
+    /// frame's and at least `sustained`: a larger picture must show more.
+    verification: u32,
+    /// How far inside a boundary weak detail may begin and still belong to
+    /// it: 1/90 of the short side, at least 2.
+    uncertainty: u32,
+}
+
+impl Runs {
+    fn new(frame: &Frame, step: u32, picture: Viewport, required: usize) -> Self {
+        let short = frame.width().min(frame.height()) / step;
+        let sustained = (short / 18).max(3);
+        let verification = if required >= SUPPORT {
+            sustained.max((picture.width.min(picture.height) / step / 5).min(short / 9))
+        } else {
+            sustained
+        };
+        Self {
+            sustained,
+            verification,
+            uncertainty: (short / 90).max(2),
+        }
+    }
+}
+
 /// One edge's boundary in source pixels; `current` is that edge's confirmed crop.
 /// The search itself counts depths in lattice steps of `step` pixels.
 #[allow(
@@ -206,12 +275,12 @@ fn viewport(frame: &Frame, [top, right, bottom, left]: [u32; 4]) -> Option<Viewp
 fn observe_edge(
     frame: &Frame,
     step: u32,
-    edge: usize,
+    edge: Edge,
     picture: Viewport,
     required: usize,
     current: u32,
 ) -> Option<u32> {
-    let horizontal = edge == 0 || edge == 2;
+    let horizontal = matches!(edge, Edge::Top | Edge::Bottom);
     let extent = if horizontal {
         frame.height()
     } else {
@@ -223,13 +292,7 @@ fn observe_edge(
         picture.y..picture.y + picture.height
     };
     let current = current / step;
-    let short = frame.width().min(frame.height()) / step;
-    let sustained = (short / 18).max(3);
-    let verification = if required >= 4 {
-        sustained.max((picture.width.min(picture.height) / step / 5).min(short / 9))
-    } else {
-        sustained
-    };
+    let runs = Runs::new(frame, step, picture, required);
     let mut observations = [Sector::default(); SECTORS];
     for (sector, observation) in observations.iter_mut().enumerate() {
         let start = cross.start
@@ -237,8 +300,7 @@ fn observe_edge(
         let end = cross.start
             + (u64::from(cross.end - cross.start) * (sector + 1) as u64 / SECTORS as u64) as u32;
         if start < end {
-            *observation =
-                sector_boundary(frame, step, edge, start..end, extent, current, verification);
+            *observation = sector_boundary(frame, step, edge, start..end, extent, current, runs);
         }
     }
     let mut result = None;
@@ -258,7 +320,7 @@ fn observe_edge(
                 last = last.max(sector);
             }
         }
-        if count >= required && (required < 4 || last - first >= SECTORS / 2) {
+        if count >= required && (required < SUPPORT || last - first >= SECTORS / 2) {
             let boundary = *supported[..count].select_nth_unstable(count / 2).1;
             result = Some(result.map_or(boundary, |old: u32| old.min(boundary)));
         }
@@ -297,6 +359,7 @@ impl ContentRun {
             let beginning = *self.start.get_or_insert(depth);
             self.count += 1;
             self.gap = 0;
+            // Long enough, with detail on at least three lines in four.
             if depth - beginning + 1 >= sustained
                 && u64::from(self.count) * 4 >= u64::from(depth - beginning + 1) * 3
             {
@@ -304,7 +367,7 @@ impl ContentRun {
             }
         } else if self.start.is_some() {
             self.gap += 1;
-            if self.gap >= 3 {
+            if self.gap >= RUN_GAP {
                 *self = Self::default();
             }
         }
@@ -316,20 +379,22 @@ impl ContentRun {
 fn sector_boundary(
     frame: &Frame,
     step: u32,
-    edge: usize,
+    edge: Edge,
     cross: Range<u32>,
     extent: u32,
     current: u32,
-    verification: u32,
+    runs: Runs,
 ) -> Sector {
+    let Runs {
+        sustained,
+        verification,
+        uncertainty,
+    } = runs;
     let ceiling = black_ceiling(frame);
     let positions = positions(&cross);
     let (base, _, _) = line(frame, step, edge, 0, &positions, ceiling);
     // Weak detail can rule out a crop without being strong enough to locate its boundary.
-    let threshold = ceiling.min(base.saturating_add(3));
-    let short = frame.width().min(frame.height()) / step;
-    let sustained = (short / 18).max(3);
-    let uncertainty = (short / 90).max(2);
+    let threshold = ceiling.min(base.saturating_add(WEAK_LUMA));
     let max_border = extent - extent.div_ceil(10);
     let mut weak = ContentRun::default();
     let mut strong = ContentRun::default();
@@ -339,7 +404,8 @@ fn sector_boundary(
         if content.is_none() {
             content = weak.observe(visible >= SAMPLES / 4, depth, sustained);
         }
-        let strong_pixel = median > ceiling.min(base.saturating_add(8)) || chromatic >= SAMPLES / 2;
+        let strong_pixel =
+            median > ceiling.min(base.saturating_add(STRONG_LUMA)) || chromatic >= SAMPLES / 2;
         // A new outer boundary must connect through the old matte, rather than stop at a caption.
         if let Some(boundary) = strong.observe(strong_pixel, depth, verification)
             && depth.saturating_add(1) >= current.saturating_add(sustained)
@@ -368,8 +434,8 @@ fn black_ceiling(frame: &Frame) -> u8 {
         | PixelFormat::NV12 {
             range: YuvRange::Limited,
             ..
-        } => 23,
-        _ => 8,
+        } => LIMITED_BLACK_CEILING,
+        _ => FULL_BLACK_CEILING,
     }
 }
 
@@ -419,16 +485,18 @@ fn block(frame: &Frame, x: u32, y: u32, step: u32) -> (u8, u8) {
 )]
 fn informative(frame: &Frame, step: u32) -> bool {
     let mut count = 0;
-    for y in 0..12_u64 {
-        for x in 0..12_u64 {
+    for y in 0..INFORMATIVE_GRID {
+        for x in 0..INFORMATIVE_GRID {
             let (level, chroma) = block(
                 frame,
-                (u64::from(frame.width()) * (2 * x + 1) / 24) as u32,
-                (u64::from(frame.height()) * (2 * y + 1) / 24) as u32,
+                (u64::from(frame.width()) * (2 * x + 1) / (2 * INFORMATIVE_GRID)) as u32,
+                (u64::from(frame.height()) * (2 * y + 1) / (2 * INFORMATIVE_GRID)) as u32,
                 step,
             );
-            count += usize::from(level >= black_ceiling(frame) + 16 || chroma > 16);
-            if count >= 4 {
+            count += usize::from(
+                level >= black_ceiling(frame) + INFORMATIVE_LEVEL || chroma > INFORMATIVE_LEVEL,
+            );
+            if count >= INFORMATIVE_BLOCKS {
                 return true;
             }
         }
@@ -454,7 +522,7 @@ fn positions(cross: &Range<u32>) -> [u32; SAMPLES] {
 fn line(
     frame: &Frame,
     step: u32,
-    edge: usize,
+    edge: Edge,
     depth: u32,
     positions: &[u32; SAMPLES],
     threshold: u8,
@@ -465,15 +533,15 @@ fn line(
     let inset = depth * step;
     for (level, &position) in levels.iter_mut().zip(positions) {
         let (x, y) = match edge {
-            0 => (position, inset),
-            1 => (frame.width().saturating_sub(inset + step), position),
-            2 => (position, frame.height().saturating_sub(inset + step)),
-            _ => (inset, position),
+            Edge::Top => (position, inset),
+            Edge::Right => (frame.width().saturating_sub(inset + step), position),
+            Edge::Bottom => (position, frame.height().saturating_sub(inset + step)),
+            Edge::Left => (inset, position),
         };
         let (brightness, chroma) = block(frame, x, y, step);
         *level = brightness;
-        chromatic += usize::from(chroma > 8);
-        visible += usize::from(brightness > threshold || chroma > 8);
+        chromatic += usize::from(chroma > COLORED);
+        visible += usize::from(brightness > threshold || chroma > COLORED);
     }
     let median = *levels.select_nth_unstable(SAMPLES / 2).1;
     (median, visible, chromatic)

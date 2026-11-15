@@ -106,7 +106,8 @@ fn sample_point(edge: Edge, index: usize, count: usize, width: u32, height: u32)
 /// so a small grid is not split into pieces that cost more to hand out than
 /// to compute.
 const CELL_CHUNK: usize = 64;
-/// Fewest samples a worker projects at a time: whole groups of [`GROUP`].
+/// Fewest samples a worker projects at a time: four groups of [`GROUP`]. A
+/// chunk need not hold whole groups; its last group may be short.
 const PROJECTION_CHUNK: usize = 4 * GROUP;
 /// Fewest colour focus samples a worker refines at a time.
 const FOCUS_CHUNK: usize = 8;

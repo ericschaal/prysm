@@ -69,6 +69,8 @@ impl FrameView {
     /// Like [`Self::average_linear`], but reads only every `step`th pixel of
     /// every `step`th row, starting at the region's first pixel, so a region
     /// always contributes at least one pixel. `step` 1 reads every pixel.
+    /// A row missing from the buffer, which a validated frame never has,
+    /// makes the region black in every format.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
@@ -114,12 +116,11 @@ impl FrameView {
             PixelFormat::RGB24 | PixelFormat::BGR24 => {
                 let pixels = data.as_chunks::<3>().0;
                 for y in (y0..y1).step_by(step) {
-                    let row = y * width;
-                    let end = (row + x1).min(pixels.len());
-                    if let Some(span) = pixels.get(row + x0..end) {
-                        for &[r, g, b] in span.iter().step_by(step) {
-                            add(Color::new(r, g, b));
-                        }
+                    let Some(span) = pixels.get(y * width + x0..y * width + x1) else {
+                        return LinearColor::black();
+                    };
+                    for &[r, g, b] in span.iter().step_by(step) {
+                        add(Color::new(r, g, b));
                     }
                 }
                 if format == PixelFormat::BGR24 {
