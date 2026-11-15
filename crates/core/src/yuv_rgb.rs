@@ -10,9 +10,7 @@ const PRECISION: u32 = 13;
 /// maths before rounding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YuvToRgb {
-    /// The rounding half step less the range's black level times `y`: one
-    /// add per pixel instead of a subtract and an add.
-    offset: i32,
+    bias: i32,
     y: i32,
     r_v: i32,
     g_v: i32,
@@ -36,10 +34,9 @@ impl YuvToRgb {
         let kg = 1.0 - kr - kb;
         let scale = f32::from(1_u16 << PRECISION);
         let fixed = |value: f32| (value * scale).round() as i32;
-        let y = fixed(y_scale);
         Self {
-            offset: (1 << (PRECISION - 1)) - bias * y,
-            y,
+            bias,
+            y: fixed(y_scale),
             r_v: fixed(2.0 * (1.0 - kr) * uv_scale),
             g_v: fixed(2.0 * (1.0 - kr) * kr / kg * uv_scale),
             g_u: fixed(2.0 * (1.0 - kb) * kb / kg * uv_scale),
@@ -56,11 +53,11 @@ impl YuvToRgb {
         reason = "RGB is clamped to 8 bits before narrowing"
     )]
     pub fn rgb(&self, y: u8, u: u8, v: u8) -> (u8, u8, u8) {
-        // (y - bias) × y_scale + half, rounded down after the shift.
-        let y = i32::from(y) * self.y + self.offset;
+        let y = (i32::from(y) - self.bias) * self.y;
         let u = i32::from(u) - 128;
         let v = i32::from(v) - 128;
-        let channel = |value: i32| (value >> PRECISION).clamp(0, 255) as u8;
+        let round = 1 << (PRECISION - 1);
+        let channel = |value: i32| ((value + round) >> PRECISION).clamp(0, 255) as u8;
         (
             channel(y + self.r_v * v),
             channel(y - self.g_v * v - self.g_u * u),

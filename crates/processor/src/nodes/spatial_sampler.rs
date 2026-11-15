@@ -32,12 +32,9 @@ pub struct SpatialSampler {
     color_focus: ColorFocusPercent,
     dimensions: Option<(u32, u32)>,
     step: u32,
-    // Cell rectangles `[x0, y0, x1, y1]`, row by row, `columns` to a row, and
-    // the grid lines between them: `columns + 1` and one more than the rows.
+    // Cell rectangles `[x0, y0, x1, y1]`, row by row, `columns` to a row.
     cells: Vec<[u32; 4]>,
     columns: usize,
-    x_edges: Vec<u32>,
-    y_edges: Vec<u32>,
     cell_colors: Vec<LinearColor>,
     // The kernel radius in pixels, and where each output sample sits on the
     // picture's edge, in strip order.
@@ -200,8 +197,6 @@ impl SpatialSampler {
             step: 1,
             cells: Vec::new(),
             columns: 0,
-            x_edges: Vec::new(),
-            y_edges: Vec::new(),
             cell_colors: Vec::new(),
             radius: 0.0,
             sample_points: std::array::from_fn(|_| Vec::new()),
@@ -257,15 +252,15 @@ impl SpatialSampler {
                 .clamp(1, u64::from(length)) as u32
         };
         let (columns, rows) = (grid_length(width), grid_length(height));
-        let edges = |count: u32, length: u32| {
-            (0..=count).map(move |i| (u64::from(i) * u64::from(length) / u64::from(count)) as u32)
-        };
-        self.x_edges = edges(columns, width).collect();
-        self.y_edges = edges(rows, height).collect();
         self.cells.clear();
-        for y in self.y_edges.windows(2) {
-            for x in self.x_edges.windows(2) {
-                self.cells.push([x[0], y[0], x[1], y[1]]);
+        for y in 0..rows {
+            for x in 0..columns {
+                self.cells.push([
+                    (u64::from(x) * u64::from(width) / u64::from(columns)) as u32,
+                    (u64::from(y) * u64::from(height) / u64::from(rows)) as u32,
+                    (u64::from(x + 1) * u64::from(width) / u64::from(columns)) as u32,
+                    (u64::from(y + 1) * u64::from(height) / u64::from(rows)) as u32,
+                ]);
             }
         }
         self.cell_colors
@@ -324,18 +319,10 @@ impl SpatialSampler {
         if self.dimensions != Some((width, height)) {
             self.prepare_geometry(width, height);
         }
-        let (x_edges, y_edges, step) = (&self.x_edges, &self.y_edges, self.step);
-        let columns = self.columns;
-        workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, mut colors| {
-            // A chunk is a run of cells in row order: average it a grid row at a time.
-            let mut first = offset;
-            while !colors.is_empty() {
-                let (row, column) = (first / columns, first % columns);
-                let (part, rest) = colors.split_at_mut((columns - column).min(colors.len()));
-                let rows = y_edges[row]..y_edges[row + 1];
-                view.average_cells(rows, &x_edges[column..=column + part.len()], step, part);
-                first += part.len();
-                colors = rest;
+        let (cells, step) = (&self.cells, self.step);
+        workers.for_each_chunk(&mut self.cell_colors, CELL_CHUNK, |offset, colors| {
+            for (color, &[x0, y0, x1, y1]) in colors.iter_mut().zip(&cells[offset..]) {
+                *color = view.average_linear_every(x0, y0, x1, y1, step);
             }
         });
         mark(Stage::CellAverages);
